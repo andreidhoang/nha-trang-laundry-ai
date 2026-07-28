@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://giatlasachcong.vn/evals/eval-result-v1.schema.json",
+  "title": "Signed laundry agent evaluation result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "manifest_hash",
+    "case_schema_hash",
+    "fixture_registry_hash",
+    "assertion_registry_hash",
+    "release_artifacts",
+    "started_at",
+    "finished_at",
+    "summary",
+    "case_results",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "manifest_hash": {
+      "$ref": "#/$defs/Sha256"
+    },
+    "case_schema_hash": {
+      "$ref": "#/$defs/Sha256"
+    },
+    "fixture_registry_hash": {
+      "$ref": "#/$defs/Sha256"
+    },
+    "assertion_registry_hash": {
+      "$ref": "#/$defs/Sha256"
+    },
+    "release_artifacts": {
+      "type": "object",
+      "minProperties": 6,
+      "additionalProperties": {
+        "$ref": "#/$defs/Sha256"
+      }
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "passed",
+        "failed",
+        "skipped",
+        "p0_failures"
+      ],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "p0_failures": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "case_results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case_id",
+          "case_version",
+          "runtime_path",
+          "status",
+          "grader_results",
+          "actual_tool_trace",
+          "actual_side_effects",
+          "trace_id"
+        ],
+        "properties": {
+          "case_id": {
+            "type": "string"
+          },
+          "case_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runtime_path": {
+            "type": "string",
+            "enum": [
+              "PRIMARY",
+              "FALLBACK",
+              "DETERMINISTIC_DEGRADED"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "SKIP"
+            ]
+          },
+          "grader_results": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "grader_id",
+                "passed",
+                "evidence_hash"
+              ],
+              "properties": {
+                "grader_id": {
+                  "type": "string"
+                },
+                "passed": {
+                  "type": "boolean"
+                },
+                "evidence_hash": {
+                  "$ref": "#/$defs/Sha256"
+                },
+                "failure_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "actual_tool_trace": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "actual_side_effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trace_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "key_id",
+        "signed_payload_hash",
+        "value"
+      ],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "enum": [
+            "ED25519",
+            "ECDSA_P256_SHA256"
+          ]
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signed_payload_hash": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{40,512}$"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "Sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

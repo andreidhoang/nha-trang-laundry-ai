@@ -1,0 +1,47 @@
+schema_version: 1
+work_item: DOMAIN-005
+recorded_at: "2026-07-28T16:05:00+07:00"
+requirement_contract: >-
+  Immutable multi-line quote revision snapshots, deterministic calculation trace/hash, and
+  estimate/range/approved-exact separation required by specs/DOMAIN_DATA_API_SPEC_V1.md sections
+  4.8, 6.4, 12, and 15 plus FR-QTE-001 through FR-QTE-010 and NFR-CON-001 in
+  specs/ENGINEERING_SPEC_V1.md. Canonical enums and JCS-SHA256-V1 rules come from
+  specs/contracts/canonical-enums-v1.json.
+rollback_impact: >-
+  Domain/repository code can be reverted before production use, but migrations 0005 and 0006 are
+  forward-only once applied: do not edit checksums or drop historical quote rows. A production
+  rollback must stop quote writers and deploy a forward-fix/new migration while preserving
+  quote_revisions, domain_events, audit_events, and outbox_events. This implementation changed no
+  public capability, customer channel, or send authorization.
+unresolved_assumptions: >-
+  Tax treatment remains UNVERIFIED and an approved exact quote still requires explicit human
+  approval. DEC-002 still blocks promotion-final eligibility unless an explicit event/time is
+  recorded. Store and order-request UUIDs are bound in the quote container but their future foreign
+  keys/object authorization arrive in OPERATIONS-001. Command-level idempotent replay is also owned
+  by OPERATIONS-001; this slice uses optimistic current-revision plus independent row-version checks
+  and rejects stale writes.
+evidence:
+  tests: >-
+    Ten quote-domain tests and three repository tests pass, plus a live PostgreSQL integration vector
+    that writes two revisions, reloads and rehashes both, rejects stale reuse, and proves direct
+    UPDATE of revision 1 fails. The full repository run passed 136 tests including six live
+    PostgreSQL integration tests.
+  calculation_trace: >-
+    Every line binds a canonical price-trace hash embedded in the revision. JCS-SHA256-V1 recursively
+    normalizes Unicode and UTC microsecond timestamps, rejects floats/non-JSON values, excludes only
+    declared volatile transport fields, sorts stable business collections, and hashes the full
+    configuration/line/adjustment/total/trace payload. Reads recompute the hash before returning.
+  immutability: >-
+    Frozen typed dataclasses prevent in-memory mutation; quote hashes change on business revision;
+    a newly published pricebook reference produces a new snapshot without changing the old one;
+    PostgreSQL quote_revisions has an UPDATE/DELETE rejection trigger and quotes cannot be hard
+    deleted. Editing uses a sequential INSERT and optimistic container pointer update.
+  rollback_assessment: >-
+    Migration 0006 is intentionally a forward-fix after locally applying 0005 and adds DB defenses
+    for negative net values and falsely labeled APPROVED_EXACT rows. Neither applied migration may
+    be rewritten; future correction must use migration 0007 or later.
+checks:
+  - command: uv run pytest packages/domain/tests packages/db/tests
+    status: PASSED
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED

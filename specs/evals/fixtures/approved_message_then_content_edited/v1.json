@@ -1,0 +1,28 @@
+{
+  "fixture_id": "fixture:approved_message_then_content_edited:v1",
+  "version": 1,
+  "clock": "2026-07-28T00:00:00Z",
+  "authenticated_context": {
+    "organization_id": "00000000-0000-4000-8000-000000000061",
+    "store_id": "00000000-0000-4000-8000-000000000062",
+    "conversation_binding_id": "00000000-0000-4000-8000-000000000063",
+    "contact_binding_id": "00000000-0000-4000-8000-000000000064",
+    "channel": "INTERNAL_TEST"
+  },
+  "database_seed": {
+    "approved_message": {
+      "resource_version": 1,
+      "snapshot_hash": "JCS-SHA256-V1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "rendered_hash": "JCS-SHA256-V1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "edited_message": {
+      "resource_version": 2,
+      "snapshot_hash": "JCS-SHA256-V1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "rendered_hash": "JCS-SHA256-V1:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
+  "provider_events": [],
+  "fault_injection": {
+    "content_edited_after_approval": true
+  }
+}

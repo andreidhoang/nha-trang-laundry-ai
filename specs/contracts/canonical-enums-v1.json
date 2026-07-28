@@ -1,0 +1,315 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://giatlasachcong.vn/contracts/canonical-enums-v1.json",
+  "title": "Giặt Là Sạch Cộng canonical enum registry",
+  "contract_version": "1.1.0",
+  "status": "IMPLEMENTATION_BASELINE",
+  "normalization": {
+    "text": "Unicode NFC",
+    "timezone": "Asia/Ho_Chi_Minh",
+    "money": "integer VND",
+    "decimal": "base-10 JSON string, no exponent, strip insignificant trailing zeroes",
+    "canonical_json": "RFC 8785 JCS",
+    "snapshot_hash": "sha256(lowercase_hex(JCS(payload_without_volatile_fields)))"
+  },
+  "volatile_hash_fields": [
+    "trace_id",
+    "request_received_at",
+    "server_generated_at"
+  ],
+  "enums": {
+    "DeploymentStage": [
+      "MANUAL_TRUTH",
+      "SHADOW",
+      "ASSISTED",
+      "BOUNDED"
+    ],
+    "AutomationCapability": [
+      "INTERNAL_SHADOW",
+      "PUBLIC_FAQ",
+      "LIST_PRICE_INFO",
+      "INTAKE_QUESTION",
+      "INTAKE_FACT_CAPTURE",
+      "INTAKE_RECEIPT",
+      "INCIDENT_RECEIPT",
+      "ORDER_STATUS",
+      "SLA_GUIDANCE",
+      "QUOTE_ESTIMATE",
+      "BOOKING",
+      "DELIVERY_ADVISORY",
+      "MARKETING_FOLLOWUP"
+    ],
+    "PolicyCapability": [
+      "CATALOG_READ",
+      "INTAKE_DRAFT",
+      "INTAKE_FACT_WRITE",
+      "QUOTE_ESTIMATE",
+      "FINAL_QUOTE",
+      "DELIVERY_ADVISORY",
+      "CAPACITY_ADVISORY",
+      "MESSAGE_DRAFT",
+      "MESSAGE_SEND",
+      "MARKETING_SEND",
+      "LIST_PRICE_INFO",
+      "ORDER_STATUS_READ",
+      "INCIDENT_INTAKE",
+      "APPROVAL_REQUEST",
+      "CONSENT",
+      "CUSTOMER_CORRECTION"
+    ],
+    "ActorRole": [
+      "OWNER_ADMIN",
+      "OPS_APPROVER",
+      "OPERATOR",
+      "DRIVER",
+      "ACCOUNTANT",
+      "AUDITOR",
+      "PUBLIC_AGENT",
+      "PRIVATE_AGENT",
+      "AGENT_RUNNER",
+      "OUTBOX_WORKER"
+    ],
+    "PolicyOutcome": [
+      "ALLOW",
+      "REQUIRE_HUMAN",
+      "DENY"
+    ],
+    "Unit": [
+      "KG",
+      "ITEM",
+      "PAIR",
+      "SET",
+      "ANIMAL_PLUSH_ITEM",
+      "CASE",
+      "M2"
+    ],
+    "ConfigLifecycle": [
+      "DRAFT",
+      "PUBLISHED",
+      "RETIRED"
+    ],
+    "PriceRuleType": [
+      "FIXED_PER_UNIT",
+      "RANGE_PER_UNIT",
+      "AGGREGATE_TIER_PER_UNIT",
+      "FIXED_PER_ORDER",
+      "MANUAL"
+    ],
+    "PriceResolution": [
+      "AUTO_FIXED",
+      "SHOW_RANGE",
+      "HUMAN_EXACT",
+      "NOT_PRICED"
+    ],
+    "PromotionResolution": [
+      "AUTO_IF_TARGETED",
+      "HUMAN_CONFIRM",
+      "NOT_ELIGIBLE"
+    ],
+    "CommitmentAuthority": [
+      "INFORMATION_ONLY",
+      "DRAFT_ONLY",
+      "HUMAN_CONFIRM",
+      "AUTO_WITHIN_ENVELOPE",
+      "PROHIBITED"
+    ],
+    "QuantityBasis": [
+      "CUSTOMER_ESTIMATE",
+      "STAFF_MEASUREMENT",
+      "APPROVED_MANUAL"
+    ],
+    "QuoteFinality": [
+      "ESTIMATE",
+      "RANGE",
+      "APPROVED_EXACT"
+    ],
+    "QuoteContainerStatus": [
+      "OPEN",
+      "CONVERTED",
+      "CLOSED"
+    ],
+    "QuoteRevisionStatus": [
+      "DRAFT",
+      "PROVISIONAL",
+      "REVIEW_REQUIRED",
+      "APPROVED",
+      "PRESENTED",
+      "ACKNOWLEDGED_ESTIMATE",
+      "ACCEPTED_FINAL",
+      "SUPERSEDED",
+      "EXPIRED",
+      "REJECTED"
+    ],
+    "CommercialOrderStatus": [
+      "DRAFT",
+      "REQUESTED",
+      "STORE_CONFIRMATION_PENDING",
+      "CONFIRMED",
+      "ACTIVE",
+      "CANCELLATION_REVIEW",
+      "CANCELLED",
+      "COMPLETED"
+    ],
+    "IntakeStatus": [
+      "AWAITING_HANDOFF",
+      "RECEIVED_PENDING_INSPECTION",
+      "WAITING_PRICE_APPROVAL",
+      "WAITING_CUSTOMER_RECONFIRMATION",
+      "WAITING_SLOT_APPROVAL",
+      "ACCEPTED",
+      "REJECTED"
+    ],
+    "ProductionStatus": [
+      "NOT_STARTED",
+      "QUEUED",
+      "IN_PROCESS",
+      "QUALITY_CHECK",
+      "READY_AT_STORE",
+      "RELEASED",
+      "ON_HOLD",
+      "EXCEPTION"
+    ],
+    "FulfillmentMode": [
+      "SELF_DROP_SELF_COLLECT",
+      "PICKUP_AND_RETURN",
+      "PICKUP_ONLY",
+      "RETURN_ONLY"
+    ],
+    "DeliveryLegStatus": [
+      "PLANNED",
+      "ASSIGNED",
+      "IN_PROGRESS",
+      "SUCCEEDED",
+      "FAILED",
+      "CANCELLED"
+    ],
+    "PaymentStatus": [
+      "PENDING",
+      "CONFIRMED",
+      "FAILED",
+      "REVERSED"
+    ],
+    "OrderBalanceStatus": [
+      "UNPAID",
+      "PARTIALLY_PAID",
+      "PAID",
+      "OVERPAID",
+      "ON_ACCOUNT"
+    ],
+    "SlaLifecycle": [
+      "DRAFT",
+      "SCHEDULED",
+      "RUNNING",
+      "COMPLETED",
+      "CANCELLED"
+    ],
+    "SlaOutcome": [
+      "PENDING",
+      "MET",
+      "BREACHED",
+      "WAIVED"
+    ],
+    "AdjustmentDirection": [
+      "DEBIT",
+      "CREDIT"
+    ],
+    "PromotionStatus": [
+      "NOT_APPLICABLE",
+      "PROVISIONAL",
+      "ELIGIBLE",
+      "INELIGIBLE",
+      "REQUIRES_HUMAN"
+    ],
+    "PromotionEligibilityEvent": [
+      "QUOTE_PRESENTED",
+      "CUSTOMER_ESTIMATE_ACKNOWLEDGED",
+      "CUSTOMER_FINAL_QUOTE_ACCEPTED",
+      "STORE_COMMERCIAL_ACCEPTED",
+      "PRODUCTION_ACCEPTED"
+    ],
+    "MessageKind": [
+      "LIST_PRICE_INFO",
+      "INTAKE_FACT_REQUEST",
+      "INTAKE_RECEIPT",
+      "INCIDENT_RECEIPT",
+      "ORDER_STATUS",
+      "APPROVED_QUOTE_PRESENTATION",
+      "APPROVED_SLOT_PRESENTATION",
+      "FREE_FORM_TRANSACTIONAL",
+      "MARKETING"
+    ],
+    "RuntimePath": [
+      "PRIMARY",
+      "FALLBACK",
+      "DETERMINISTIC_DEGRADED"
+    ],
+    "DatasetLayer": [
+      "SEED",
+      "FROZEN_REGRESSION",
+      "NORMAL_LANGUAGE",
+      "ADVERSARIAL",
+      "SYNTHETIC_COMBINATORIAL",
+      "PUBLIC_CORPUS",
+      "PRODUCTION_REPLAY"
+    ],
+    "EligibilityLabel": [
+      "ELIGIBLE",
+      "INELIGIBLE",
+      "AMBIGUOUS_ABSTAIN"
+    ],
+    "MessageDeliveryStatus": [
+      "DRAFT",
+      "APPROVAL_REQUIRED",
+      "APPROVED_FOR_WORKER_SEND",
+      "APPROVED_FOR_MANUAL_SEND",
+      "OUTBOX_PENDING",
+      "PROVIDER_ACCEPTED",
+      "DELIVERED",
+      "FAILED",
+      "MANUAL_SEND_RECORDED",
+      "CANCELLED"
+    ],
+    "ApprovalAction": [
+      "PRESENT_QUOTE",
+      "CONFIRM_SLOT",
+      "SET_RANGE_PRICE",
+      "SET_DELIVERY_FEE",
+      "APPLY_PROMOTION",
+      "SEND_MESSAGE",
+      "ACCEPT_ORDER",
+      "CANCEL_ACTIVE_ORDER",
+      "APPROVE_REMEDY",
+      "APPROVE_B2B_TERMS",
+      "PUBLISH_POLICY",
+      "EXPORT_SANITIZED_DATA"
+    ],
+    "ErrorCode": [
+      "VALIDATION_ERROR",
+      "AMBIGUOUS_SERVICE",
+      "INCOMPATIBLE_UNIT",
+      "MISSING_REQUIRED_FACT",
+      "PRICE_RULE_UNRESOLVED",
+      "MEASUREMENT_POLICY_UNRESOLVED",
+      "PROMOTION_ELIGIBILITY_UNRESOLVED",
+      "RANGE_PRICE_REQUIRES_HUMAN",
+      "DELIVERY_DISTANCE_UNVERIFIED",
+      "DELIVERY_FEE_REQUIRES_HUMAN",
+      "SLOT_APPROVAL_REQUIRED",
+      "CUSTOMER_RECONFIRMATION_REQUIRED",
+      "HUMAN_APPROVAL_REQUIRED",
+      "INVALID_STATE_TRANSITION",
+      "STALE_VERSION",
+      "IDEMPOTENCY_CONFLICT",
+      "SUPPRESSED_CONTACT",
+      "POLICY_DENIED",
+      "TOOL_UNAVAILABLE",
+      "RATE_LIMITED"
+    ]
+  },
+  "forbidden_aliases": [
+    "S1_SHADOW",
+    "OWNER",
+    "ACCOUNTING",
+    "PUBLIC AGENT"
+  ]
+}

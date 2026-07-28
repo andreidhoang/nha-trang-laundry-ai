@@ -1,0 +1,25 @@
+[project]
+name = "nha-trang-laundry-agent-tools"
+version = "0.1.0"
+description = "Private, authenticated, fixed-route Agent Tool Facade."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "nha-trang-laundry-contracts",
+  "nha-trang-laundry-db",
+  "nha-trang-laundry-domain",
+  "nha-trang-laundry-policy",
+  "pydantic-settings>=2.10,<3",
+  "pyjwt[crypto]>=2.10,<3",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[tool.uv.sources]
+nha-trang-laundry-contracts = { workspace = true }
+nha-trang-laundry-db = { workspace = true }
+nha-trang-laundry-domain = { workspace = true }
+nha-trang-laundry-policy = { workspace = true }
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"

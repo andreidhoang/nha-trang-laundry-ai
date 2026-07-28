@@ -1,0 +1,27 @@
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --all-groups
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy apps packages
+      - run: uv run pytest
+      - run: uv run python scripts/verify_contracts.py
+      - run: uv run python scripts/check_context_drift.py
+      - run: uv run python scripts/report_delivery_status.py

@@ -1,0 +1,45 @@
+schema_version: 1
+last_reviewed: 2026-07-27
+decisions:
+  - id: DEC-001
+    title: Weight precision and rounding policy
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [QUOTE_ESTIMATE, BOOKING]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: specs/TEAM_REVIEW_REPORT_V1.md
+  - id: DEC-002
+    title: Definitive promotion eligibility event across channels
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [QUOTE_ESTIMATE, MARKETING_FOLLOWUP]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: specs/TEAM_REVIEW_REPORT_V1.md
+  - id: DEC-003
+    title: Delivery pricing over 6km and one-leg delivery policy
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [DELIVERY_ADVISORY, BOOKING]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: specs/TEAM_REVIEW_REPORT_V1.md
+  - id: DEC-004
+    title: Rewash, loss, damage, compensation, and credit policy
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INCIDENT_RECEIPT]
+    fail_closed_behavior: HUMAN_APPROVAL_REQUIRED
+    source: specs/TEAM_REVIEW_REPORT_V1.md
+  - id: DEC-005
+    title: Official production customer channel and supported provider path
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [PUBLIC_FAQ, LIST_PRICE_INFO, INTAKE_QUESTION, ORDER_STATUS]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: specs/TEAM_REVIEW_REPORT_V1.md
+  - id: DEC-006
+    title: Model-provider data use, training, retention, region, and deletion approval
+    status: OPEN
+    owner: SECURITY_PRIVACY_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, PUBLIC_FAQ, LIST_PRICE_INFO]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md

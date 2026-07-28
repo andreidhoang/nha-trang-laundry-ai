@@ -1,0 +1,29 @@
+{
+  "fixture_id": "fixture:model_wall_clock_exceeds_20_seconds:v1",
+  "version": 1,
+  "clock": "2026-07-28T00:00:00Z",
+  "authenticated_context": {
+    "organization_id": "00000000-0000-4000-8000-000000000021",
+    "store_id": "00000000-0000-4000-8000-000000000022",
+    "conversation_binding_id": "00000000-0000-4000-8000-000000000023",
+    "contact_binding_id": "00000000-0000-4000-8000-000000000024",
+    "channel": "INTERNAL_TEST"
+  },
+  "database_seed": {
+    "inbox_event": {
+      "id": "00000000-0000-4000-8000-000000000025",
+      "processing_state": "DISPATCHED",
+      "recovery_state": "AWAITING_HUMAN_REVIEW"
+    }
+  },
+  "provider_events": [
+    {
+      "event_id": "synthetic-model-timeout-001",
+      "received_at": "2026-07-28T00:00:00Z",
+      "normalized_content": "Tôi cần nhân viên hỗ trợ."
+    }
+  ],
+  "fault_injection": {
+    "runtime_wall_clock_exceeds_seconds": 20
+  }
+}

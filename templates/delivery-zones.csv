@@ -1,0 +1,9 @@
+rule_id,weight_rule,distance_rule,vehicle,owner_input,recommended_fee_rule,agent_permission,status,notes
+BIKE_NEAR,"weight_kg < 20","distance_km <= 2","xe máy","Miễn toàn bộ phí nhận + trả cho mọi đơn","0 VND","AUTO_FEE_ONLY","OWNER_CONFIRMED","Slot vẫn cần kiểm tra capacity"
+BIKE_MID,"weight_kg < 20","2 < distance_km <= 6","xe máy","10.000 VND tổng cho cả nhận + trả","10.000 VND/order","AUTO_FEE_ONLY","OWNER_CONFIRMED","Slot vẫn cần kiểm tra capacity"
+BIKE_FAR,"weight_kg < 20","6 < distance_km <= 10","xe máy","Nhập sau khi thỏa thuận với khách","delivery_fee_vnd = HUMAN_INPUT_REQUIRED","HUMAN_INPUT_REQUIRED","OWNER_CONFIRMED_MANUAL","Tổng phí 01 lượt nhận + 01 lượt trả; khách duyệt trước"
+BIKE_REMOTE,"weight_kg < 20","distance_km > 10","xe máy","Nhập sau khi thỏa thuận với khách","delivery_fee_vnd = HUMAN_INPUT_REQUIRED","HUMAN_INPUT_REQUIRED","OWNER_CONFIRMED_MANUAL","Tổng phí 01 lượt nhận + 01 lượt trả; khách duyệt trước"
+CAR_NEAR,"weight_kg >= 20","distance_km <= 2","ô tô","Miễn toàn bộ phí nhận + trả cho mọi đơn","0 VND","AUTO_FEE_ONLY","OWNER_CONFIRMED","Slot vẫn cần kiểm tra capacity"
+CAR_MID,"weight_kg >= 20","2 < distance_km <= 6","ô tô","10.000 VND tổng cho cả nhận + trả","10.000 VND/order","AUTO_FEE_ONLY","OWNER_CONFIRMED","Slot vẫn cần kiểm tra capacity"
+CAR_FAR,"weight_kg >= 20","6 < distance_km <= 10","ô tô","Nhập sau khi thỏa thuận với khách","delivery_fee_vnd = HUMAN_INPUT_REQUIRED","HUMAN_INPUT_REQUIRED","OWNER_CONFIRMED_MANUAL","Tổng phí 01 lượt nhận + 01 lượt trả; khách duyệt trước"
+CAR_REMOTE,"weight_kg >= 20","distance_km > 10","ô tô","Nhập sau khi thỏa thuận với khách","delivery_fee_vnd = HUMAN_INPUT_REQUIRED","HUMAN_INPUT_REQUIRED","OWNER_CONFIRMED_MANUAL","Tổng phí 01 lượt nhận + 01 lượt trả; khách duyệt trước"

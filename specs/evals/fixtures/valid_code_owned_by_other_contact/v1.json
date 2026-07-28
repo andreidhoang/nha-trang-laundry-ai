@@ -1,0 +1,14 @@
+{
+  "fixture_id": "fixture:valid_code_owned_by_other_contact:v1",
+  "version": 1,
+  "clock": "2026-07-28T00:00:00Z",
+  "authenticated_context": {},
+  "database_seed": {
+    "public_order": {
+      "public_code": "OTHER_CONTACT_CODE_20260728",
+      "owner_contact_binding_id": "00000000-0000-4000-8000-000000000049"
+    }
+  },
+  "provider_events": [],
+  "fault_injection": {}
+}

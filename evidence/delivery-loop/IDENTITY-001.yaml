@@ -1,0 +1,33 @@
+schema_version: 1
+work_item: IDENTITY-001
+recorded_at: "2026-07-28T13:00:00+07:00"
+requirement_contract: >-
+  FR-IAM-001 through FR-IAM-005 in specs/ENGINEERING_SPEC_V1.md and identity boundaries in
+  specs/SECURITY_RELIABILITY_SPEC_V1.md.
+rollback_impact: >-
+  Migrations 0003 and 0004 are additive and forward-only. Disable or revoke identities and sessions;
+  repair schema defects with a later migration. Revert API exposure without deleting identity ledgers.
+unresolved_assumptions: >-
+  A maintained non-production OIDC tenant, real signed JWKS validation, recovery, CSRF hardening, and
+  provider configuration evidence remain SECURITY-001 release-readiness work. No real identity
+  provider, production credential, customer data, or release authorization was used here.
+evidence:
+  tests: 13 identity/PostgreSQL tests passed against local PostgreSQL 16.10-alpine.
+  negative_authorization: Non-owner role assignment is rejected in the repository and HTTP boundary.
+  mfa_enforcement: OWNER_ADMIN session creation without configured MFA proof is rejected.
+  audit: Staff create, role changes, session issue/revoke, and disable use atomic event/audit/outbox.
+  aggregate_versions: Repeated staff mutations produced ordered versions 1 through 4.
+  session_security: Revocation, disable-user invalidation, absolute expiry, and sliding idle expiry tested.
+checks:
+  - command: >-
+      uv run pytest packages/db/tests/test_identity.py
+      packages/db/tests/test_postgres_integration.py
+    status: PASSED
+  - command: uv run ruff check .
+    status: PASSED
+  - command: uv run ruff format --check .
+    status: PASSED
+  - command: uv run mypy apps packages
+    status: PASSED
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED

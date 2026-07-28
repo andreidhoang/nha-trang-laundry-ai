@@ -1,0 +1,11 @@
+[project]
+name = "nha-trang-laundry-observability"
+version = "0.1.0"
+description = "Structured logging, tracing, metrics, and redaction contracts."
+requires-python = ">=3.12,<3.14"
+dependencies = []
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+

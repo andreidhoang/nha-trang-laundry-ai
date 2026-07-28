@@ -1,0 +1,44 @@
+schema_version: 1
+work_item: DOMAIN-004
+recorded_at: "2026-07-28T15:15:00+07:00"
+requirement_contract: >-
+  Deterministic promotion, delivery, and production-SLA boundaries in
+  specs/DOMAIN_DATA_API_SPEC_V1.md sections 7 through 9, using canonical enums from
+  specs/contracts/canonical-enums-v1.json and owner-confirmed rules in PROMOTION_2026_08.md,
+  DELIVERY_POLICY_DRAFT.md, and SERVICE_CATALOG_AND_SLA_V1.md.
+rollback_impact: >-
+  Pure domain-code and test change with no database migration, external send, or public capability
+  mutation. Roll back promotion.py, delivery.py, sla.py, their exports/tests, and the matching
+  canonical enum projections in catalog.py together. Existing pricing behavior and stored data are
+  unaffected.
+unresolved_assumptions: >-
+  DEC-002 still has no approved canonical promotion eligibility event, so CURRENT_PROMOTION only
+  produces a provisional candidate calculation with null public eligibility fields. One-leg and
+  over-6km fees require an internally approved manual amount plus customer acknowledgement. Exact
+  closure/cutoff semantics remain unpublished, so the 8-hour engine exposes internal elapsed risk
+  but never auto-promises or auto-authorizes a breach remedy. Delivery slot auto-capacity remains
+  zero and every delivery job requires human slot approval.
+evidence:
+  property_tests: >-
+    Hypothesis verifies integer-VND group discount conservation across up to 25 lines/rates,
+    delivery-zone behavior across 0-50km, the 20kg vehicle threshold across thousandth-kg values,
+    and the standard SLA result across every sampled elapsed-second boundary through 24 hours.
+  boundary_vectors: >-
+    Promotion vectors cover one instant before/exact start/end-of-31-Aug/exact half-open end;
+    delivery covers 2.000km, 2.001km, 6.000km, 6.001km, 19.999kg, and 20.000kg; SLA covers ready
+    exactly +8h, unfinished just after +8h, late completion, and 24-48h guidance without breach.
+  fail_closed_cases: >-
+    The current unresolved promotion event stays PROVISIONAL+REQUIRE_HUMAN; ambiguous targets and
+    stacking require human review; unverified distance, one-leg service, far-zone fee without both
+    approval and acknowledgement, missing vehicle weight, unsupported SLA authority, invalid state,
+    naive timestamps, floats, noncanonical decimals, and malformed enum values never auto-resolve.
+  calculation_trace: >-
+    Frozen traces record promotion interval/event candidate and per-rate largest-remainder inputs,
+    floors/remainders/award order/final allocations; delivery mode, verified zone, exact fee rule,
+    planned weight threshold and non-authorization of dispatch; SLA clock event names, microsecond
+    elapsed/breach values, internal due time, delivery exclusion, and false auto-promise/remedy flags.
+checks:
+  - command: uv run pytest packages/domain/tests
+    status: PASSED
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "importer_version": "1.0.0",
+  "source": {
+    "path": "templates/services-pricebook.csv",
+    "version": "PRICEBOOK_V1",
+    "sha256": "ef2b58e4a4b990253bdf8a46d74706ad202a2242ecf807456af0c07bcaa6b2ac",
+    "row_count": 44
+  },
+  "canonical": {
+    "snapshot_hash": "JCS-SHA256-V1:e9580d747725bf91da07fafbb8cacbdd107b087e26ed61df22dd4d22bfec72a6",
+    "service_count": 43,
+    "price_rule_count": 43,
+    "non_tier_rule_count": 42,
+    "aggregate_tier_rule_count": 1,
+    "tier_count": 2
+  },
+  "legacy_aliases": {
+    "STD_WASH_DRY_LT6": "STANDARD_WASH_DRY",
+    "STD_WASH_DRY_GE6": "STANDARD_WASH_DRY"
+  }
+}

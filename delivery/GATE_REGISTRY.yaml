@@ -1,0 +1,70 @@
+schema_version: 1
+last_updated: 2026-07-28
+release_contract: specs/contracts/release-gate-manifest-v1.schema.json
+default_authorization: NOT_AUTHORIZED
+gates:
+  - id: G1_INTERNAL_SHADOW_READY
+    stage: SHADOW
+    depends_on: []
+    permits_public_ingress: false
+    permits_automatic_send: false
+    summary: Real-order internal Shadow with human approval for every outbound action.
+    required_evidence:
+      - typed tools and deterministic PDP
+      - owner MFA and server-enforced RBAC
+      - atomic mutation event audit and required outbox
+      - provider data-use and retention approval
+      - PITR or WAL restore drill at or below the RPO
+      - P0 primary fallback and degraded-path eval pass
+      - incident manual-send and kill-switch drills
+  - id: G2_PUBLIC_ASSISTED_ENTRY
+    stage: ASSISTED
+    depends_on: [G1_INTERNAL_SHADOW_READY]
+    permits_public_ingress: true
+    permits_automatic_send: true
+    summary: Official public-channel entry; only LIST_PRICE_INFO is initially auto-send eligible.
+    required_evidence:
+      - official supported channel and authenticated webhook
+      - isolated Public OpenClaw VM with loopback-only Gateway
+      - no channel credential generic tool owner mount or direct send in public cell
+      - published public corpus and applicable customer policy
+      - at least 14 Shadow days 100 representative interactions and 30 real orders
+      - zero wrong money unauthorized action disclosure suppression miss or duplicate send
+  - id: G3_ASSISTED_EVIDENCE_COMPLETE
+    stage: ASSISTED
+    depends_on: [G2_PUBLIC_ASSISTED_ENTRY]
+    permits_public_ingress: true
+    permits_automatic_send: true
+    summary: Capability-specific expansion beyond the initial LIST_PRICE_INFO envelope.
+    required_evidence:
+      - first 200 automated sends reviewed by a human
+      - at least 14 capability-operation days
+      - zero zero-tolerance defects
+      - capability-specific accuracy and operational prerequisites
+      - rollback restore outage and queue-replay drills
+  - id: G4_BOUNDED_CAPABILITY_ENTRY
+    stage: BOUNDED
+    depends_on: [G3_ASSISTED_EVIDENCE_COMPLETE]
+    permits_public_ingress: true
+    permits_automatic_send: true
+    summary: Narrow bounded action for one named capability and eligible population.
+    required_evidence:
+      - at least 30 clean days in the directly preceding stage
+      - at least 100 eligible capability-specific real cases
+      - measured economics and capacity where applicable
+      - current published measurement promotion calendar cutoff and customer policies
+      - canary correction kill-switch incident provider-outage restore and rollback drills
+capability_requirements:
+  INTERNAL_SHADOW: [G1_INTERNAL_SHADOW_READY]
+  LIST_PRICE_INFO: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY]
+  PUBLIC_FAQ: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY, G3_ASSISTED_EVIDENCE_COMPLETE]
+  INTAKE_QUESTION: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY, G3_ASSISTED_EVIDENCE_COMPLETE]
+  INTAKE_FACT_CAPTURE: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY, G3_ASSISTED_EVIDENCE_COMPLETE]
+  INTAKE_RECEIPT: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY, G3_ASSISTED_EVIDENCE_COMPLETE]
+  INCIDENT_RECEIPT: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY, G3_ASSISTED_EVIDENCE_COMPLETE]
+  ORDER_STATUS: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY, G3_ASSISTED_EVIDENCE_COMPLETE]
+  SLA_GUIDANCE: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY, G3_ASSISTED_EVIDENCE_COMPLETE]
+  QUOTE_ESTIMATE: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY, G3_ASSISTED_EVIDENCE_COMPLETE, G4_BOUNDED_CAPABILITY_ENTRY]
+  BOOKING: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY, G3_ASSISTED_EVIDENCE_COMPLETE, G4_BOUNDED_CAPABILITY_ENTRY]
+  DELIVERY_ADVISORY: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY, G3_ASSISTED_EVIDENCE_COMPLETE, G4_BOUNDED_CAPABILITY_ENTRY]
+  MARKETING_FOLLOWUP: [G1_INTERNAL_SHADOW_READY, G2_PUBLIC_ASSISTED_ENTRY, G3_ASSISTED_EVIDENCE_COMPLETE, G4_BOUNDED_CAPABILITY_ENTRY]

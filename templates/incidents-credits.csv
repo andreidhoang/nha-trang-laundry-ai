@@ -1,0 +1,1 @@
+incident_id,order_id,account_id,incident_type,reported_at,acknowledged_at,initial_plan_at,resolved_at,evidence,status,store_fault_confirmed,remedy,credit_amount,credit_expires_at,human_approver,notes

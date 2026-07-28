@@ -1,0 +1,27 @@
+[project]
+name = "nha-trang-laundry-evals"
+version = "0.1.0"
+description = "Offline, integration, and adversarial evaluation runners."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "cryptography>=45,<47",
+  "nha-trang-laundry-agent-tools",
+  "nha-trang-laundry-contracts",
+  "nha-trang-laundry-db",
+  "nha-trang-laundry-domain",
+  "nha-trang-laundry-worker",
+  "psycopg[binary]>=3.2,<4",
+  "rfc8785>=0.1.4,<1",
+  "pyyaml>=6.0.2,<7",
+]
+
+[tool.uv.sources]
+nha-trang-laundry-agent-tools = { workspace = true }
+nha-trang-laundry-contracts = { workspace = true }
+nha-trang-laundry-db = { workspace = true }
+nha-trang-laundry-domain = { workspace = true }
+nha-trang-laundry-worker = { workspace = true }
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"

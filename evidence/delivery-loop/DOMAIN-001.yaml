@@ -1,0 +1,23 @@
+schema_version: 1
+work_item: DOMAIN-001
+recorded_at: "2026-07-28T13:30:00+07:00"
+requirement_contract: >-
+  specs/contracts/canonical-enums-v1.json and service normalization rules in
+  specs/DOMAIN_DATA_API_SPEC_V1.md sections 3.3, 4.5, and 5.2.
+rollback_impact: >-
+  Pure additive domain code with no database or release-state mutation. Revert the catalog module and
+  restore the local PriceRuleType definition if rollback is required.
+unresolved_assumptions: >-
+  Only the two standard-wash source aliases are owner-confirmed. No fuzzy aliases, invented services,
+  or runtime CSV reads are allowed. Full 44-row import/count/hash validation is DOMAIN-002.
+evidence:
+  tests: 23 domain tests passed, including 10 catalog/enum/alias boundary tests.
+  contract_validation: Typed domain enum values are compared directly with the canonical JSON contract.
+  fail_closed: Unknown services, incompatible units, invalid aliases, and non-NFC text are rejected.
+checks:
+  - command: uv run pytest packages/domain/tests
+    status: PASSED
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED

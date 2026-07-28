@@ -1,0 +1,52 @@
+schema_version: 1
+registry_version: 1.0.0-eval
+candidate_status: EVAL_ONLY
+openclaw:
+  version: 2026.7.1-2
+  npm_integrity: sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==
+  target_os: linux
+  runtime_type: embedded
+  config_path: runtime/openclaw/public-cell/openclaw.json5
+  config_sha256: sha256:c9360090d11a11b6ab688d644ac029de55bc6328325ec2173ae79044a03df1bc
+  plugin_id: nha-trang-laundry-tools
+  plugin_version: 0.1.0
+  plugin_inventory_sha256: sha256:2f2ec0faf8f9e5d5553a29048ef8093d909caac51acbc1408eb046e86adffdde
+model:
+  provider: openai
+  openclaw_model_ref: openai/gpt-5.6-terra
+  api_model_id: gpt-5.6-terra
+  immutable_release_id: null
+  immutable_release_verified: false
+  agent_runtime_id: openclaw
+  provider_transport: responses
+  reasoning_effort: low
+  required_response_store: false
+  openclaw_documented_default_store: true
+  store_false_override_verified: false
+  fallback_model_refs: []
+provider_data_gate:
+  decision_id: DEC-006
+  documentation_review: DOCUMENTATION_REVIEWED
+  effective_request_storage_verification: NOT_VERIFIED
+  security_approval: NOT_APPROVED
+  privacy_approval: NOT_APPROVED
+  dedicated_service_credential_verified: NOT_VERIFIED
+  real_customer_data_allowed: false
+prompt:
+  bundle_path: runtime/prompts/manifest-v1.yaml
+  bundle_version: 1.0.0-eval
+  bundle_sha256: sha256:690118fd7be4f8cdd23c73fd309301aa68ea789c04bad42d72e2e580839525f8
+tool_contract_path: specs/contracts/agent-tools-v1.openapi.yaml
+tool_contract_sha256: sha256:17c13317d809c07ad29fb6c85bb0f3654435a073a8b8fd3a39a92d8803984af3
+limits:
+  max_model_calls: 3
+  max_tool_calls: 6
+  max_input_tokens: 8000
+  max_output_tokens: 1200
+  hard_deadline_seconds: 20
+  max_turn_cost_usd: "0.10"
+activation:
+  public_ingress_enabled: false
+  real_customer_model_calls_enabled: false
+  automatic_send_enabled: false
+  direct_provider_send_available: false

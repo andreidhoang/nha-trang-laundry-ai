@@ -1,0 +1,6 @@
+rule_id,rule_type,days_count,month_day,description,status,notes
+REGULAR_OPEN,OPEN,,,"Mở cửa 08:00–20:00 hằng ngày",OWNER_CONFIRMED,"Bị ghi đè bởi closure calendar"
+TET_CLOSE,CLOSE,6,,"Đóng 06 ngày Tết Nguyên Đán",OWNER_CONFIRMED_RULE,"Cần điền 06 ngày cụ thể theo từng năm"
+APR30_CLOSE,CLOSE,1,04-30,"Đóng ngày 30/4",OWNER_CONFIRMED,"Ngày dương lịch hằng năm"
+MAY01_CLOSE,CLOSE,1,05-01,"Đóng ngày 01/5",OWNER_CONFIRMED,"Ngày dương lịch hằng năm"
+ADHOC_CLOSE,CLOSE,2,,"02 ngày nghỉ phát sinh",OWNER_CONFIRMED_RULE,"Chỉ đóng khi ngày cụ thể được người phụ trách cập nhật"

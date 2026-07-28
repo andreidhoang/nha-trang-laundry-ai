@@ -1,0 +1,407 @@
+schema_version: 1
+last_updated: '2026-07-28'
+id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
+  items.
+items:
+- id: FOUNDATION-001
+  phase: FOUNDATION
+  title: Python workspace, contracts, context, and delivery foundation
+  status: COMPLETE
+  priority: 10
+  depends_on: []
+  context_domains:
+  - platform
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  contracts: []
+  acceptance_checks:
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - tests
+  - contract_validation
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: DB-001
+  phase: FOUNDATION
+  title: PostgreSQL migration and atomic transaction foundation
+  status: COMPLETE
+  priority: 20
+  depends_on:
+  - FOUNDATION-001
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  acceptance_checks:
+  - uv run pytest packages/db/tests/test_migrations.py packages/db/tests/test_transactions.py
+  - uv run mypy apps packages
+  required_evidence:
+  - tests
+  - live_postgres_validation
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONFIG-001
+  phase: IDENTITY_CONTROL
+  title: Immutable generic configuration publication primitive
+  status: COMPLETE
+  priority: 30
+  depends_on:
+  - DB-001
+  context_domains:
+  - platform
+  - pricing
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks:
+  - uv run pytest packages/db/tests/test_configurations.py
+  - uv run python scripts/verify_contracts.py
+  required_evidence:
+  - tests
+  - live_postgres_validation
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: IDENTITY-001
+  phase: IDENTITY_CONTROL
+  title: Staff identity, server-enforced RBAC, MFA boundaries, and audit primitives
+  status: COMPLETE
+  priority: 40
+  depends_on:
+  - DB-001
+  context_domains:
+  - platform
+  - orders_audit
+  - privacy_consent
+  normative_sources:
+  - specs/ENGINEERING_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks:
+  - uv run pytest packages/db/tests/test_identity.py packages/db/tests/test_postgres_integration.py
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - tests
+  - negative_authorization
+  - mfa_enforcement
+  - audit
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: DOMAIN-001
+  phase: DOMAIN_CORE
+  title: Canonical enum registry, service normalization, and legacy aliases
+  status: COMPLETE
+  priority: 50
+  depends_on:
+  - CONFIG-001
+  context_domains:
+  - pricing
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - PRICEBOOK_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks:
+  - uv run pytest packages/domain/tests
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - tests
+  - contract_validation
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: DOMAIN-002
+  phase: DOMAIN_CORE
+  title: Pricebook import manifest and canonical service/rule counts
+  status: COMPLETE
+  priority: 60
+  depends_on:
+  - DOMAIN-001
+  context_domains:
+  - pricing
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - PRICEBOOK_V1.md
+  - templates/services-pricebook.csv
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  - specs/contracts/pricebook-import-manifest-v1.json
+  acceptance_checks:
+  - uv run pytest packages/domain/tests
+  - uv run python scripts/verify_contracts.py
+  required_evidence:
+  - tests
+  - import_manifest
+  - count_and_hash_validation
+  blocked_by_decisions: []
+- id: DOMAIN-003
+  phase: DOMAIN_CORE
+  title: Deterministic fixed, range, tier, aggregate, and estimate pricing engine
+  status: COMPLETE
+  priority: 70
+  depends_on:
+  - DOMAIN-002
+  context_domains:
+  - pricing
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/ENGINEERING_SPEC_V1.md
+  - PRICEBOOK_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks:
+  - uv run pytest packages/domain/tests
+  - uv run python scripts/verify_contracts.py
+  required_evidence:
+  - property_tests
+  - golden_vectors
+  - calculation_trace
+  - fail_closed_finality
+  blocked_by_decisions: []
+- id: DOMAIN-004
+  phase: DOMAIN_CORE
+  title: Promotion, delivery, SLA, and unresolved-policy decision boundaries
+  status: COMPLETE
+  priority: 80
+  depends_on:
+  - DOMAIN-003
+  context_domains:
+  - promotion_delivery_sla
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - PROMOTION_2026_08.md
+  - DELIVERY_POLICY_DRAFT.md
+  - SERVICE_CATALOG_AND_SLA_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks:
+  - uv run pytest packages/domain/tests
+  - uv run python scripts/verify_contracts.py
+  required_evidence:
+  - property_tests
+  - boundary_vectors
+  - fail_closed_cases
+  - calculation_trace
+  blocked_by_decisions: []
+- id: DOMAIN-005
+  phase: DOMAIN_CORE
+  title: Immutable quote snapshots and reproducible calculation traces
+  status: COMPLETE
+  priority: 90
+  depends_on:
+  - DOMAIN-003
+  context_domains:
+  - pricing
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/ENGINEERING_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks:
+  - uv run pytest packages/domain/tests packages/db/tests
+  - uv run python scripts/verify_contracts.py
+  required_evidence:
+  - tests
+  - calculation_trace
+  - immutability
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: OPERATIONS-001
+  phase: OPERATIONS_CONTROL
+  title: Orders, approvals, inbox/outbox, idempotency, audit, and Staff PWA slice
+  status: COMPLETE
+  priority: 100
+  depends_on:
+  - IDENTITY-001
+  - DOMAIN-004
+  - DOMAIN-005
+  context_domains:
+  - platform
+  - orders_audit
+  - privacy_consent
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks:
+  - uv run pytest
+  - uv run mypy apps packages
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - integration_tests
+  - negative_authorization
+  - replay_tests
+  - approval_hash
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: AGENT-001
+  phase: AGENT_SHADOW
+  title: Isolated OpenClaw Concierge, typed Tool Facade, model registry, and Shadow
+    evals
+  status: IN_PROGRESS
+  priority: 110
+  depends_on:
+  - OPERATIONS-001
+  context_domains:
+  - runtime_architecture
+  - agent_tools
+  - evaluation_release
+  - privacy_consent
+  normative_sources:
+  - docs/adr/0002-production-agent-runtime-and-trust-boundaries.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/agent-tools-v1.openapi.yaml
+  - specs/evals/eval-manifest-v1.yaml
+  - specs/contracts/release-gate-manifest-v1.schema.json
+  acceptance_checks:
+  - uv run pytest
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - p0_evals
+  - tool_escape_tests
+  - runtime_pin
+  - provider_storage_verification
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SECURITY-001
+  phase: REAL_SHADOW_READINESS
+  title: Identity, privacy, PITR, incident, kill-switch, and release-readiness gates
+  status: PENDING
+  priority: 120
+  depends_on:
+  - AGENT-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - privacy_consent
+  - evaluation_release
+  normative_sources:
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  contracts:
+  - delivery/GATE_REGISTRY.yaml
+  - specs/contracts/release-gate-manifest-v1.schema.json
+  acceptance_checks:
+  - uv run pytest
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - security_tests
+  - oidc_provider_integration
+  - csrf_and_recovery
+  - restore_drill
+  - incident_drill
+  - kill_switch_drill
+  - provider_data_review
+  blocked_by_decisions:
+  - DEC-006
+- id: SHADOW-001
+  phase: REAL_SHADOW_READINESS
+  title: Internal real-order Shadow pilot and G1 evidence
+  status: PENDING
+  priority: 130
+  depends_on:
+  - SECURITY-001
+  context_domains:
+  - evaluation_release
+  - orders_audit
+  - privacy_consent
+  normative_sources:
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  contracts:
+  - delivery/GATE_REGISTRY.yaml
+  - specs/contracts/release-gate-manifest-v1.schema.json
+  acceptance_checks:
+  - uv run python scripts/report_delivery_status.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - thirty_real_orders
+  - cycle_logs
+  - delivery_logs
+  - zero_tolerance_results
+  - signed_gate_manifest
+  blocked_by_decisions: []
+- id: CHANNEL-001
+  phase: PUBLIC_ASSISTED
+  title: Official channel and isolated public-cell Assisted entry
+  status: PENDING
+  priority: 140
+  depends_on:
+  - SHADOW-001
+  context_domains:
+  - runtime_architecture
+  - agent_tools
+  - privacy_consent
+  - evaluation_release
+  normative_sources:
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  contracts:
+  - delivery/GATE_REGISTRY.yaml
+  - specs/contracts/agent-tools-v1.openapi.yaml
+  - specs/contracts/release-gate-manifest-v1.schema.json
+  acceptance_checks:
+  - uv run pytest
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - official_channel_review
+  - public_cell_scan
+  - webhook_replay_tests
+  - g2_manifest
+  - rollback_drill
+  blocked_by_decisions:
+  - DEC-005
+  - DEC-006
+- id: AUTONOMY-001
+  phase: BOUNDED_AUTONOMY
+  title: Capability-specific bounded automation canary
+  status: PENDING
+  priority: 150
+  depends_on:
+  - CHANNEL-001
+  context_domains:
+  - runtime_architecture
+  - pricing
+  - promotion_delivery_sla
+  - evaluation_release
+  normative_sources:
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  contracts:
+  - delivery/GATE_REGISTRY.yaml
+  - specs/contracts/release-gate-manifest-v1.schema.json
+  - specs/evals/eval-manifest-v1.yaml
+  acceptance_checks:
+  - uv run pytest
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - eligible_cases
+  - clean_days
+  - zero_tolerance_results
+  - canary
+  - correction_and_rollback_drills
+  blocked_by_decisions:
+  - DEC-001
+  - DEC-002
+  - DEC-003
+  - DEC-004

@@ -1,0 +1,42 @@
+{
+  "name": "@giatlasachcong/openclaw-nha-trang-laundry-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "plugin:build": "npm run build && openclaw plugins build --root . --entry ./dist/index.js",
+    "plugin:check": "npm run build && openclaw plugins build --root . --entry ./dist/index.js --check",
+    "plugin:validate": "npm run build && openclaw plugins validate --root . --entry ./dist/index.js",
+    "test": "npm run build && node --test dist/index.test.js"
+  },
+  "dependencies": {
+    "typebox": "1.1.39"
+  },
+  "devDependencies": {
+    "@types/node": "24.1.0",
+    "openclaw": "2026.7.1-2",
+    "typescript": "5.9.2"
+  },
+  "peerDependencies": {
+    "openclaw": "2026.7.1-2"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.7.1-2",
+      "minGatewayVersion": "2026.7.1-2"
+    },
+    "build": {
+      "openclawVersion": "2026.7.1-2",
+      "pluginSdkVersion": "2026.7.1-2"
+    }
+  }
+}

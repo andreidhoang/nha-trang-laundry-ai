@@ -1,0 +1,25 @@
+[project]
+name = "nha-trang-laundry-worker"
+version = "0.1.0"
+description = "Durable inbox, outbox, and reconciliation worker."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "nha-trang-laundry-contracts",
+  "nha-trang-laundry-db",
+  "nha-trang-laundry-domain",
+  "nha-trang-laundry-observability",
+  "nha-trang-laundry-policy",
+  "pyjwt[crypto]>=2.10,<3",
+]
+
+[tool.uv.sources]
+nha-trang-laundry-contracts = { workspace = true }
+nha-trang-laundry-db = { workspace = true }
+nha-trang-laundry-domain = { workspace = true }
+nha-trang-laundry-observability = { workspace = true }
+nha-trang-laundry-policy = { workspace = true }
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"

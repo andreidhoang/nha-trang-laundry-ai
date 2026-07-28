@@ -1,0 +1,111 @@
+schema_version: 1
+purpose: Deterministic context assembly for engineering and agent work.
+authoritative_order:
+  - owner_published_configuration
+  - postgres_immutable_snapshot
+  - machine_readable_contract
+  - approved_specification
+  - build_engineering_specification
+  - research_or_template
+global_sources:
+  - path: BUILD_ENGINEERING_SPEC.md
+    purpose: English execution contract
+  - path: AGENTS.md
+    purpose: durable Codex repository guidance
+  - path: context/CONTINUATION_PROTOCOL.md
+    purpose: deterministic resume, completion, blocker, and handoff protocol
+  - path: context/PROJECT_CONTINUATION.md
+    purpose: reconciled implementation state, safe next slices, and production handoff
+  - path: specs/README.md
+    purpose: specification hierarchy
+  - path: specs/TEAM_REVIEW_REPORT_V1.md
+    purpose: go/no-go and P0 evidence requirements
+  - path: delivery/PROGRAM_PLAN.yaml
+    purpose: stable implementation phases and dependency order
+  - path: delivery/GATE_REGISTRY.yaml
+    purpose: canonical cumulative release-gate and capability mapping
+domains:
+  platform:
+    sources:
+      - specs/IMPLEMENTATION_ROADMAP_V1.md
+      - docs/adr/0001-python-control-plane.md
+      - delivery/PROGRAM_PLAN.yaml
+      - docs/runbooks/local-development.md
+    contracts: []
+    prohibitions:
+      - Do not introduce public channels or external automation in M0-M3.
+  runtime_architecture:
+    sources:
+      - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+      - specs/SECURITY_RELIABILITY_SPEC_V1.md
+      - docs/adr/0002-production-agent-runtime-and-trust-boundaries.md
+      - delivery/PROGRAM_PLAN.yaml
+    contracts:
+      - specs/contracts/agent-tools-v1.openapi.yaml
+      - specs/contracts/release-gate-manifest-v1.schema.json
+      - delivery/GATE_REGISTRY.yaml
+    prohibitions:
+      - Public OpenClaw is a reasoning runtime, never the business or security authority.
+      - Pin the evaluated model and explicit OpenClaw runtime; never authorize a moving alias.
+      - Real-customer model use is disabled until provider storage and retention behavior is verified.
+  pricing:
+    sources:
+      - specs/DOMAIN_DATA_API_SPEC_V1.md
+      - specs/ENGINEERING_SPEC_V1.md
+      - PRICEBOOK_V1.md
+    contracts:
+      - specs/contracts/canonical-enums-v1.json
+      - specs/contracts/pricebook-import-manifest-v1.json
+    prohibitions:
+      - The model must not calculate, select, or modify money.
+      - Use integer VND only.
+  promotion_delivery_sla:
+    sources:
+      - specs/DOMAIN_DATA_API_SPEC_V1.md
+      - specs/ENGINEERING_SPEC_V1.md
+      - PROMOTION_2026_08.md
+      - DELIVERY_POLICY_DRAFT.md
+      - SERVICE_CATALOG_AND_SLA_V1.md
+    contracts:
+      - specs/contracts/canonical-enums-v1.json
+    prohibitions:
+      - Unresolved or stale policy must return REQUIRE_HUMAN.
+  orders_audit:
+    sources:
+      - specs/DOMAIN_DATA_API_SPEC_V1.md
+      - specs/SECURITY_RELIABILITY_SPEC_V1.md
+    contracts:
+      - specs/contracts/canonical-enums-v1.json
+    prohibitions:
+      - All material mutation, event, audit, and required outbox records commit atomically.
+  agent_tools:
+    sources:
+      - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+      - specs/SECURITY_RELIABILITY_SPEC_V1.md
+    contracts:
+      - specs/contracts/agent-tools-v1.openapi.yaml
+      - specs/contracts/release-gate-manifest-v1.schema.json
+      - specs/evals/eval-manifest-v1.yaml
+    prohibitions:
+      - Do not add a generic tool, raw database access, shell, browser, or direct-send capability.
+      - The public agent cannot choose customer, contact, address, or order identifiers.
+  privacy_consent:
+    sources:
+      - specs/ENGINEERING_SPEC_V1.md
+      - specs/SECURITY_RELIABILITY_SPEC_V1.md
+      - CUSTOMER_SERVICE_POLICY_DRAFT.md
+    contracts:
+      - specs/contracts/canonical-enums-v1.json
+    prohibitions:
+      - STOP and suppression are deterministic ingress and egress checks.
+      - Never add internal risk material to customer retrieval content.
+  evaluation_release:
+    sources:
+      - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+      - specs/TEAM_REVIEW_REPORT_V1.md
+      - delivery/GATE_REGISTRY.yaml
+    contracts:
+      - specs/evals/eval-manifest-v1.yaml
+      - specs/contracts/release-gate-manifest-v1.schema.json
+    prohibitions:
+      - No release is authorized without a valid, signed, unexpired evidence manifest.

@@ -1,0 +1,254 @@
+{
+  // EVAL-ONLY public-cell baseline. Production deployment uses the same hashed
+  // file on a separate Linux VM/OS identity and injects secrets at process start.
+  secrets: {
+    providers: {
+      "runtime-env": {
+        source: "env",
+        allowlist: [
+          "OPENAI_API_KEY",
+          "OPENCLAW_GATEWAY_TOKEN",
+          "AGENT_RUNNER_BRIDGE_BASE_URL",
+          "AGENT_RUNNER_BRIDGE_TOKEN",
+          "AGENT_TOOL_PLUGIN_PATH",
+        ],
+      },
+    },
+    defaults: { env: "runtime-env" },
+  },
+  logging: {
+    level: "info",
+    consoleLevel: "warn",
+    consoleStyle: "json",
+    redactSensitive: "tools",
+  },
+  browser: { enabled: false },
+  cron: { enabled: false },
+  transcripts: { enabled: false },
+  commands: {
+    native: false,
+    nativeSkills: false,
+    text: false,
+    bash: false,
+    config: false,
+    mcp: false,
+    plugins: false,
+    debug: false,
+    restart: false,
+    ownerDisplay: "hash",
+  },
+  session: {
+    scope: "per-sender",
+    store: "/var/lib/openclaw-public/state/sessions.json",
+  },
+  agents: {
+    defaults: {
+      model: {
+        primary: "openai/gpt-5.6-terra",
+        fallbacks: [],
+      },
+      models: {
+        "openai/gpt-5.6-terra": {
+          agentRuntime: { id: "openclaw" },
+          params: {
+            transport: "sse",
+            // This disables server compaction only. OpenClaw 2026.7.1-2 still
+            // documents store:true for direct OpenAI Responses by default, so
+            // real-customer calls remain release-gated until the effective
+                // request proves the approved retention behavior.
+            responsesServerCompaction: false,
+          },
+        },
+      },
+      skills: [],
+      memorySearch: { enabled: false },
+      thinkingDefault: "low",
+      reasoningDefault: "off",
+      timeoutSeconds: 20,
+      maxConcurrent: 1,
+      embeddedAgent: {
+        projectSettingsPolicy: "ignore",
+        executionContract: "default",
+      },
+      sandbox: {
+        mode: "all",
+        scope: "session",
+        workspaceAccess: "none",
+        docker: {
+          image: "openclaw-sandbox@sha256:REPLACE_WITH_SCANNED_IMAGE_DIGEST",
+          readOnlyRoot: true,
+          tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=64m"],
+          network: "none",
+          user: "65532:65532",
+          capDrop: ["ALL"],
+          pidsLimit: 64,
+          memory: "512m",
+          memorySwap: "512m",
+          cpus: 1,
+        },
+        browser: {
+          enabled: false,
+          allowHostControl: false,
+          autoStart: false,
+        },
+      },
+    },
+    list: [
+      {
+        id: "public-concierge",
+        default: true,
+        name: "Public Laundry Concierge",
+        description: "Untrusted Vietnamese draft-and-tool client; never a business authority.",
+        workspace: "/var/lib/openclaw-public/workspace",
+        agentDir: "/var/lib/openclaw-public/agents/public-concierge",
+        runtime: { type: "embedded" },
+        model: {
+          primary: "openai/gpt-5.6-terra",
+          fallbacks: [],
+        },
+        thinkingDefault: "low",
+        reasoningDefault: "off",
+        skills: [],
+        memorySearch: { enabled: false },
+        subagents: {
+          allowAgents: [],
+          requireAgentId: true,
+        },
+        tools: {
+          profile: "minimal",
+          allow: [
+            "laundry_catalog_resolve",
+            "laundry_order_request_create",
+            "laundry_order_request_record_customer_facts",
+            "laundry_quote_estimate",
+            "laundry_delivery_evaluate",
+            "laundry_capacity_check",
+            "laundry_message_draft_create",
+            "laundry_public_order_status_get",
+            "laundry_incident_open",
+            "laundry_approval_request_create",
+          ],
+          deny: [
+            "exec", "process", "read", "write", "edit", "apply_patch",
+            "browser", "web_search", "web_fetch", "message", "nodes", "canvas",
+            "cron", "sessions_spawn", "subagents", "gateway", "mcp",
+          ],
+          codeMode: false,
+          elevated: { enabled: false },
+          exec: { mode: "deny" },
+          fs: { workspaceOnly: true },
+          message: {
+            allowCrossContextSend: false,
+            crossContext: {
+              allowWithinProvider: false,
+              allowAcrossProviders: false,
+            },
+            actions: { allow: [] },
+            broadcast: { enabled: false },
+          },
+          sandbox: {
+            tools: {
+              allow: [
+                "laundry_catalog_resolve",
+                "laundry_order_request_create",
+                "laundry_order_request_record_customer_facts",
+                "laundry_quote_estimate",
+                "laundry_delivery_evaluate",
+                "laundry_capacity_check",
+                "laundry_message_draft_create",
+                "laundry_public_order_status_get",
+                "laundry_incident_open",
+                "laundry_approval_request_create",
+              ],
+              deny: [
+                "exec", "process", "read", "write", "edit", "apply_patch",
+                "browser", "web_search", "web_fetch", "message", "nodes", "canvas",
+                "cron", "sessions_spawn", "subagents", "gateway", "mcp",
+              ],
+            },
+          },
+        },
+      },
+    ],
+  },
+  tools: {
+    profile: "minimal",
+    allow: [
+      "laundry_catalog_resolve",
+      "laundry_order_request_create",
+      "laundry_order_request_record_customer_facts",
+      "laundry_quote_estimate",
+      "laundry_delivery_evaluate",
+      "laundry_capacity_check",
+      "laundry_message_draft_create",
+      "laundry_public_order_status_get",
+      "laundry_incident_open",
+      "laundry_approval_request_create",
+    ],
+    deny: [
+      "exec", "process", "read", "write", "edit", "apply_patch",
+      "browser", "web_search", "web_fetch", "message", "nodes", "canvas",
+      "cron", "sessions_spawn", "subagents", "gateway", "mcp",
+    ],
+    web: {
+      search: { enabled: false },
+      fetch: { enabled: false },
+      x_search: { enabled: false },
+    },
+    codeMode: false,
+    elevated: { enabled: false },
+    exec: { mode: "deny" },
+    agentToAgent: { enabled: false },
+  },
+  plugins: {
+    enabled: true,
+    allow: ["nha-trang-laundry-tools"],
+    load: {
+      paths: ["${AGENT_TOOL_PLUGIN_PATH}"],
+    },
+    bundledDiscovery: "allowlist",
+  },
+  gateway: {
+    mode: "local",
+    bind: "loopback",
+    controlUi: {
+      enabled: false,
+      allowExternalEmbedUrls: false,
+      dangerouslyAllowHostHeaderOriginFallback: false,
+      allowInsecureAuth: false,
+      dangerouslyDisableDeviceAuth: false,
+    },
+    terminal: { enabled: false },
+    auth: {
+      mode: "token",
+      token: { source: "env", provider: "runtime-env", id: "OPENCLAW_GATEWAY_TOKEN" },
+      allowTailscale: false,
+      rateLimit: {
+        maxAttempts: 5,
+        windowMs: 60000,
+        lockoutMs: 300000,
+        exemptLoopback: false,
+      },
+    },
+    allowRealIpFallback: false,
+    tools: {
+      allow: [
+        "laundry_catalog_resolve",
+        "laundry_order_request_create",
+        "laundry_order_request_record_customer_facts",
+        "laundry_quote_estimate",
+        "laundry_delivery_evaluate",
+        "laundry_capacity_check",
+        "laundry_message_draft_create",
+        "laundry_public_order_status_get",
+        "laundry_incident_open",
+        "laundry_approval_request_create",
+      ],
+      deny: [
+        "exec", "process", "read", "write", "edit", "apply_patch",
+        "browser", "web_search", "web_fetch", "message", "nodes", "canvas",
+        "cron", "sessions_spawn", "subagents", "gateway", "mcp",
+      ],
+    },
+  },
+}

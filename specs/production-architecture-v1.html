@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Giặt Là Sạch Cộng — Production Agent Architecture v1</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f8fafc;
+      --fg: #172033;
+      --muted: #596579;
+      --line: #64748b;
+      --zone: #94a3b8;
+      --external: #fde68a;
+      --edge: #bfdbfe;
+      --agent: #fecaca;
+      --process: #c7d2fe;
+      --storage: #99f6e4;
+      --human: #e9d5ff;
+      --neutral: #e2e8f0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --fg: #e5e7eb;
+        --muted: #a3adbd;
+        --line: #94a3b8;
+        --zone: #64748b;
+        --external: #92400e;
+        --edge: #1d4ed8;
+        --agent: #991b1b;
+        --process: #4338ca;
+        --storage: #0f766e;
+        --human: #6b21a8;
+        --neutral: #334155;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { max-width: 1540px; margin: 24px auto; padding: 0 18px; }
+    svg { width: 100%; height: auto; display: block; }
+    .title { font-size: 24px; font-weight: 750; fill: var(--fg); }
+    .subtitle { font-size: 13px; fill: var(--muted); }
+    .label { font-size: 14px; font-weight: 700; fill: var(--fg); }
+    .small { font-size: 12px; fill: var(--muted); }
+    .tiny { font-size: 11px; fill: var(--muted); }
+    .zone {
+      fill: none;
+      stroke: var(--zone);
+      stroke-width: 1.2;
+      stroke-dasharray: 7 5;
+      rx: 14;
+    }
+    .zone-label { font-size: 12px; font-weight: 750; letter-spacing: .3px; fill: var(--muted); }
+    .node { stroke: var(--line); stroke-width: 1.1; rx: 11; }
+    .external { fill: var(--external); }
+    .edge-node { fill: var(--edge); }
+    .agent-node { fill: var(--agent); }
+    .process { fill: var(--process); }
+    .storage { fill: var(--storage); }
+    .human { fill: var(--human); }
+    .neutral { fill: var(--neutral); }
+    .flow { stroke: var(--line); stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .flow-dashed { stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 6 5; fill: none; marker-end: url(#arrow); }
+    .flow-read { stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 2 4; fill: none; marker-end: url(#arrow); }
+    .legend { font-size: 11px; fill: var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <svg viewBox="0 0 1500 1090" role="img" aria-labelledby="diagram-title diagram-desc">
+    <title id="diagram-title">Kiến trúc production agent v1 cho Giặt Là Sạch Cộng</title>
+    <desc id="diagram-desc">
+      Channel adapter persists every inbound event before dispatch. An authenticated agent runner
+      invokes an isolated public OpenClaw runtime with no channel credentials. The public agent can
+      reach only the external model provider and a private policy-enforced tool facade. Deterministic
+      business services own state, approvals and side effects. Only the outbox worker can send.
+    </desc>
+    <defs>
+      <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+        <path d="M0,0 L9,4.5 L0,9 Z" fill="var(--line)"></path>
+      </marker>
+    </defs>
+
+    <text x="34" y="34" class="title">Giặt Là Sạch Cộng — production agent architecture v1</text>
+    <text x="34" y="58" class="subtitle">
+      Durable inbound first · deterministic control plane owns facts and side effects · OpenClaw produces constrained drafts only
+    </text>
+
+    <rect x="20" y="82" width="1460" height="150" class="zone"></rect>
+    <text x="36" y="105" class="zone-label">TZ-0 — EXTERNAL PROCESSORS + CUSTOMER CHANNELS</text>
+
+    <rect x="20" y="252" width="1460" height="125" class="zone"></rect>
+    <text x="36" y="275" class="zone-label">TZ-1 — INTERNET EDGE · ONLY CHANNEL ADAPTER IS EXPOSED</text>
+
+    <rect x="20" y="400" width="525" height="300" class="zone"></rect>
+    <text x="36" y="423" class="zone-label">TZ-2 — PUBLIC AGENT VM/VPS · MANDATORY SEPARATE HOST BEFORE PUBLIC</text>
+
+    <rect x="570" y="400" width="910" height="500" class="zone"></rect>
+    <text x="586" y="423" class="zone-label">TZ-3 — PRIVATE BUSINESS CONTROL PLANE + PROTECTED DATA PLANE</text>
+
+    <rect x="20" y="925" width="1460" height="130" class="zone"></rect>
+    <text x="36" y="948" class="zone-label">TZ-4 — PRIVATE OWNER ENVIRONMENT · NO PUBLIC INBOUND · READ-ONLY ANALYTICS</text>
+
+    <!-- Edges are drawn before nodes so node fills mask crossings. -->
+    <path d="M300 158 H660 V292 H215" class="flow" />
+    <text x="390" y="146" class="tiny">provider webhook / customer inbound</text>
+
+    <path d="M215 342 V472 H660" class="flow" />
+    <text x="230" y="402" class="tiny">1 · verify + normalize + persist</text>
+
+    <path d="M835 492 H875" class="flow" />
+    <text x="838" y="480" class="tiny">2 · claim inbox</text>
+
+    <path d="M875 515 H510 V545 H400" class="flow" />
+    <text x="560" y="505" class="tiny">3 · authenticated run dispatch</text>
+
+    <path d="M280 485 V205 H1160" class="flow-dashed" />
+    <text x="545" y="194" class="tiny">redacted prompt egress · provider terms/retention reviewed</text>
+
+    <path d="M400 585 H615" class="flow" />
+    <text x="445" y="573" class="tiny">strict typed tools only</text>
+
+    <path d="M825 585 H895" class="flow" />
+    <text x="835" y="573" class="tiny">authorized command/query</text>
+
+    <path d="M1145 575 H1195 V515" class="flow" />
+    <text x="1160" y="557" class="tiny">atomic transaction</text>
+
+    <path d="M1145 630 H1195 V685" class="flow" />
+    <text x="1160" y="662" class="tiny">private evidence refs</text>
+
+    <path d="M945 680 V775 H825" class="flow" />
+    <text x="845" y="735" class="tiny">4 · exact snapshot + hash</text>
+
+    <path d="M835 815 H900" class="flow" />
+    <text x="846" y="804" class="tiny">5 · review</text>
+
+    <path d="M1005 775 V710 H1025" class="flow" />
+    <text x="1016" y="750" class="tiny">6 · signed decision</text>
+
+    <path d="M1145 690 H1325 V755" class="flow" />
+    <text x="1185" y="736" class="tiny">7 · approved outbox</text>
+
+    <path d="M1440 798 H1462 V317 H350" class="flow" />
+    <text x="1090" y="306" class="tiny">8 · worker-only egress · final policy/suppression/idempotency check</text>
+
+    <path d="M215 292 V204" class="flow" />
+    <text x="228" y="238" class="tiny">9 · provider send</text>
+
+    <path d="M705 990 H1020 V892" class="flow-read" />
+    <text x="740" y="978" class="tiny">scoped aggregate queries only · no command capability</text>
+
+    <path d="M1415 515 H1450 V998 H1380" class="flow-read" />
+    <text x="1390" y="930" class="tiny">audit / metrics</text>
+
+    <!-- TZ-0 -->
+    <rect x="70" y="120" width="230" height="84" class="node external"></rect>
+    <text x="185" y="147" text-anchor="middle" class="label">Customer channels</text>
+    <text x="185" y="171" text-anchor="middle" class="small">Official Zalo OA · Facebook · Web</text>
+    <text x="185" y="190" text-anchor="middle" class="tiny">untrusted messages and media</text>
+
+    <rect x="1160" y="120" width="255" height="84" class="node external"></rect>
+    <text x="1287" y="147" text-anchor="middle" class="label">External model provider</text>
+    <text x="1287" y="171" text-anchor="middle" class="small">approved model + data terms</text>
+    <text x="1287" y="190" text-anchor="middle" class="tiny">no channel credentials · redacted context</text>
+
+    <!-- TZ-1 -->
+    <rect x="85" y="292" width="265" height="50" class="node edge-node"></rect>
+    <text x="217" y="314" text-anchor="middle" class="label">Channel adapter / egress proxy</text>
+    <text x="217" y="332" text-anchor="middle" class="tiny">TLS · signature · replay · rate limit</text>
+
+    <rect x="440" y="292" width="300" height="50" class="node neutral"></rect>
+    <text x="590" y="314" text-anchor="middle" class="label">Internet reverse proxy</text>
+    <text x="590" y="332" text-anchor="middle" class="tiny">exposes only the channel-adapter route</text>
+
+    <!-- TZ-2 -->
+    <rect x="115" y="472" width="285" height="150" class="node agent-node"></rect>
+    <text x="257" y="502" text-anchor="middle" class="label">Public OpenClaw executor</text>
+    <text x="257" y="527" text-anchor="middle" class="small">Gateway invoked over loopback</text>
+    <text x="257" y="550" text-anchor="middle" class="small">concierge reasoning + draft only</text>
+    <text x="257" y="578" text-anchor="middle" class="tiny">NO channel credentials · DB · browser · exec</text>
+    <text x="257" y="597" text-anchor="middle" class="tiny">egress: model provider + Tool Facade only</text>
+
+    <rect x="115" y="635" width="285" height="38" class="node neutral"></rect>
+    <text x="257" y="650" text-anchor="middle" class="small">Gateway control UI/protocol</text>
+    <text x="257" y="666" text-anchor="middle" class="tiny">loopback only · never reverse-proxied</text>
+    <text x="257" y="692" text-anchor="middle" class="tiny">read-only image · dedicated state/log dirs · no owner mounts</text>
+
+    <!-- TZ-3 top/data ingress -->
+    <rect x="630" y="452" width="205" height="80" class="node storage"></rect>
+    <text x="732" y="479" text-anchor="middle" class="label">Durable inbound inbox</text>
+    <text x="732" y="502" text-anchor="middle" class="small">provider event ID · raw ref</text>
+    <text x="732" y="519" text-anchor="middle" class="tiny">persisted before dispatch/ack</text>
+
+    <rect x="875" y="452" width="210" height="80" class="node process"></rect>
+    <text x="980" y="479" text-anchor="middle" class="label">Agent runner / dispatcher</text>
+    <text x="980" y="502" text-anchor="middle" class="small">short-lived scoped run token</text>
+    <text x="980" y="519" text-anchor="middle" class="tiny">captures trace + draft; cannot send</text>
+
+    <rect x="1195" y="452" width="220" height="125" class="node storage"></rect>
+    <text x="1305" y="480" text-anchor="middle" class="label">PostgreSQL system of record</text>
+    <text x="1305" y="505" text-anchor="middle" class="small">orders · quotes · approvals</text>
+    <text x="1305" y="525" text-anchor="middle" class="small">inbox · outbox · audit · DLQ</text>
+    <text x="1305" y="548" text-anchor="middle" class="tiny">atomic commit · PITR/WAL · off-host backup</text>
+
+    <!-- TZ-3 authorization/control -->
+    <rect x="615" y="545" width="210" height="95" class="node process"></rect>
+    <text x="720" y="573" text-anchor="middle" class="label">Agent Tool Facade + PDP</text>
+    <text x="720" y="597" text-anchor="middle" class="small">OpenAPI strict schemas</text>
+    <text x="720" y="618" text-anchor="middle" class="small">ALLOW · REQUIRE_HUMAN · DENY</text>
+
+    <rect x="895" y="550" width="250" height="160" class="node process"></rect>
+    <text x="1020" y="579" text-anchor="middle" class="label">Business Control Plane</text>
+    <text x="1020" y="604" text-anchor="middle" class="small">catalog · pricing · promotion</text>
+    <text x="1020" y="624" text-anchor="middle" class="small">intake · orders · SLA · delivery</text>
+    <text x="1020" y="644" text-anchor="middle" class="small">consent · policy · state machines</text>
+    <text x="1020" y="669" text-anchor="middle" class="tiny">material mutation + event + audit + outbox</text>
+    <text x="1020" y="688" text-anchor="middle" class="tiny">one PostgreSQL transaction or rollback</text>
+
+    <rect x="1195" y="630" width="220" height="105" class="node storage"></rect>
+    <text x="1305" y="659" text-anchor="middle" class="label">Private object storage</text>
+    <text x="1305" y="684" text-anchor="middle" class="small">evidence · attachments · exports</text>
+    <text x="1305" y="706" text-anchor="middle" class="tiny">encrypted · scoped refs · retention policy</text>
+
+    <!-- TZ-3 human approval loop and egress -->
+    <rect x="625" y="770" width="210" height="90" class="node neutral"></rect>
+    <text x="730" y="798" text-anchor="middle" class="label">Approval queue</text>
+    <text x="730" y="822" text-anchor="middle" class="small">exact revision + rendered hash</text>
+    <text x="730" y="843" text-anchor="middle" class="tiny">role · TTL · obligations server-derived</text>
+
+    <rect x="900" y="770" width="210" height="90" class="node human"></rect>
+    <text x="1005" y="798" text-anchor="middle" class="label">Staff PWA</text>
+    <text x="1005" y="822" text-anchor="middle" class="small">MFA · intake · approve · operate</text>
+    <text x="1005" y="843" text-anchor="middle" class="tiny">only authenticated humans decide</text>
+
+    <rect x="1210" y="755" width="230" height="85" class="node process"></rect>
+    <text x="1325" y="783" text-anchor="middle" class="label">Transactional outbox worker</text>
+    <text x="1325" y="807" text-anchor="middle" class="small">final hash · suppression · policy</text>
+    <text x="1325" y="826" text-anchor="middle" class="tiny">idempotency · retry · receipt · only sender</text>
+
+    <rect x="900" y="862" width="240" height="30" class="node neutral"></rect>
+    <text x="1020" y="882" text-anchor="middle" class="label">Read-only analytics API</text>
+
+    <!-- TZ-4 -->
+    <rect x="430" y="970" width="275" height="56" class="node neutral"></rect>
+    <text x="567" y="994" text-anchor="middle" class="label">Private Owner OpenClaw</text>
+    <text x="567" y="1014" text-anchor="middle" class="tiny">scoped analytics only · no approval or mutation path</text>
+
+    <rect x="1000" y="970" width="380" height="56" class="node neutral"></rect>
+    <text x="1190" y="994" text-anchor="middle" class="label">Operations telemetry + security controls</text>
+    <text x="1190" y="1014" text-anchor="middle" class="tiny">traces · metrics · redaction · alerts · kill switches · restore and incident drills</text>
+
+    <text x="38" y="1080" class="legend">
+      Solid: command/event flow · dashed: controlled external egress · dotted: read-only analytics · all public side effects remain human-approved until capability gates pass
+    </text>
+  </svg>
+</main>
+</body>
+</html>

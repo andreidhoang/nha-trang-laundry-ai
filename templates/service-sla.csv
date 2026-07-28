@@ -1,0 +1,6 @@
+sla_id,service_scope,target_min_hours,target_max_hours,clock_start,clock_end,delivery_included,agent_permission,status,notes
+SLA_STANDARD_CLOTHES,standard_clothing_wash_dry,,8,accepted_at,ready_at_store,false,COMMUNICATE_COMMITMENT_NO_SLOT_CONFIRM,OWNER_CONFIRMED,"Only standard clothing wash-dry; commitment applies after store acceptance; fastest 2h requires human capacity check"
+SLA_SHOES,shoes,24,48,accepted_at,ready_at_store,false,COMMUNICATE_RANGE_HUMAN_PROMISE,OWNER_CONFIRMED,"Average range; staff sets promised_ready_at_store after inspection"
+SLA_CURTAINS,curtains,24,48,accepted_at,ready_at_store,false,COMMUNICATE_RANGE_HUMAN_PROMISE,OWNER_CONFIRMED,"Average range; staff sets promised_ready_at_store after inspection"
+SLA_BLANKETS_SHEETS,blankets_and_bed_sheets,24,48,accepted_at,ready_at_store,false,COMMUNICATE_RANGE_HUMAN_PROMISE,OWNER_CONFIRMED,"Average range; staff sets promised_ready_at_store after inspection"
+SLA_OTHER_SPECIAL,other_special_items,,,accepted_at,ready_at_store,false,HUMAN_ETA_REQUIRED,PENDING,"Includes plush toys bags leather toppers pillows unless a later owner-confirmed rule applies"

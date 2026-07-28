@@ -1,0 +1,1287 @@
+openapi: 3.1.0
+info:
+  title: Giặt Là Sạch Cộng Agent Tool Facade
+  version: 1.1.0
+  summary: Strict, server-scoped tools exposed to the public agent runtime.
+  description: |
+    This is the only source for generated public-agent tools, validators and SDK types.
+    The authenticated agent-run context binds organization, store, channel, conversation
+    and contact. No operation accepts a customer ID, contact ID, address ID, arbitrary
+    distance-measurement ID, policy outcome, approval reason, approval role or recipient.
+    Unknown properties are rejected. Every material result is still subject to the Policy
+    Decision Point and current deployment-stage policy.
+servers:
+  - url: https://agent-tools.internal
+    description: Private service-network endpoint; never internet routable.
+security:
+  - runnerBearer: []
+tags:
+  - name: Catalog
+  - name: Intake
+  - name: Quote
+  - name: Delivery
+  - name: Capacity
+  - name: Messaging
+  - name: Status
+  - name: Incident
+  - name: Approval
+paths:
+  /agent/v1/catalog:resolve:
+    post:
+      operationId: catalogResolve
+      tags: [Catalog]
+      summary: Resolve customer wording to candidate services without selecting a final service.
+      x-agent-tool:
+        capability: CATALOG_READ
+        side_effect: NONE
+        max_calls_per_run: 3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogResolveRequest'
+      responses:
+        '200':
+          description: Ranked candidates plus policy decision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogResolveResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /agent/v1/order-requests:
+    post:
+      operationId: orderRequestCreate
+      tags: [Intake]
+      summary: Create an intake draft bound to the authenticated channel contact.
+      x-agent-tool:
+        capability: INTAKE_DRAFT
+        side_effect: REVERSIBLE_WRITE
+        max_calls_per_run: 1
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRequestCreateRequest'
+      responses:
+        '201':
+          description: Bound request created or the original idempotent result returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderRequestCreateResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /agent/v1/order-requests/{order_request_id}:record-customer-facts:
+    post:
+      operationId: orderRequestRecordCustomerFacts
+      tags: [Intake]
+      summary: Record an allowlisted fact stated by the bound customer.
+      description: |
+        The server verifies that each source_provider_message_id belongs to the bound
+        conversation/contact. This operation cannot set staff measurement, final price,
+        distance, consent, approval, fault or remedy facts.
+      x-agent-tool:
+        capability: INTAKE_FACT_WRITE
+        side_effect: REVERSIBLE_WRITE
+        max_calls_per_run: 3
+      parameters:
+        - $ref: '#/components/parameters/BoundOrderRequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordCustomerFactsRequest'
+      responses:
+        '200':
+          description: Facts recorded with a new aggregate version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordCustomerFactsResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /agent/v1/order-requests/{order_request_id}/quotes:estimate:
+    post:
+      operationId: quoteEstimate
+      tags: [Quote]
+      summary: Compute a provisional customer estimate for the bound request.
+      description: |
+        The public agent cannot create or accept a final commercial revision. Customer,
+        store, address, current distance evidence, calendar, pricebook, promotion and
+        policy versions are derived server-side.
+      x-agent-tool:
+        capability: QUOTE_ESTIMATE
+        side_effect: REVERSIBLE_WRITE
+        max_calls_per_run: 2
+      parameters:
+        - $ref: '#/components/parameters/BoundOrderRequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteEstimateRequest'
+      responses:
+        '200':
+          description: Immutable estimate revision and decision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteEstimateResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /agent/v1/order-requests/{order_request_id}/delivery:evaluate:
+    post:
+      operationId: deliveryEvaluate
+      tags: [Delivery]
+      summary: Evaluate delivery using the request-bound address and distance evidence.
+      x-agent-tool:
+        capability: DELIVERY_ADVISORY
+        side_effect: NONE
+        max_calls_per_run: 2
+      parameters:
+        - $ref: '#/components/parameters/BoundOrderRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliveryEvaluateRequest'
+      responses:
+        '200':
+          description: Advisory fee/vehicle result and obligations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryEvaluateResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /agent/v1/order-requests/{order_request_id}/capacity:check:
+    post:
+      operationId: capacityCheck
+      tags: [Capacity]
+      summary: Read a non-binding capacity advisory; never reserves or confirms a slot.
+      x-agent-tool:
+        capability: CAPACITY_ADVISORY
+        side_effect: NONE
+        max_calls_per_run: 1
+      parameters:
+        - $ref: '#/components/parameters/BoundOrderRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CapacityCheckRequest'
+      responses:
+        '200':
+          description: Advisory window and mandatory slot-approval decision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapacityCheckResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /agent/v1/order-requests/{order_request_id}/message-drafts:
+    post:
+      operationId: messageDraftCreate
+      tags: [Messaging]
+      summary: Request a scoped message draft; this operation cannot send.
+      description: |
+        Deterministic message kinds are rendered by a published template and server-derived
+        fact references. Free-form transactional output is always approval-required.
+        Recipient and channel are server-derived from the bound request.
+      x-agent-tool:
+        capability: MESSAGE_DRAFT
+        side_effect: REVERSIBLE_WRITE
+        max_calls_per_run: 2
+      parameters:
+        - $ref: '#/components/parameters/BoundOrderRequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageDraftCreateRequest'
+      responses:
+        '201':
+          description: Immutable draft revision; no delivery side effect.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageDraftCreateResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /agent/v1/orders/{public_code}/status:
+    get:
+      operationId: publicOrderStatusGet
+      tags: [Status]
+      summary: Return a redacted status only when verified channel ownership also matches.
+      description: |
+        public_code is a random reference of at least 80 bits and is never authentication.
+        The service identity and verified contact/conversation are server-derived. Denied,
+        nonexistent and cross-contact requests return the same generic external response shape.
+        Internally, the PDP/audit trace records ALLOW or DENY and its reason under trace_id; that
+        internal decision is never serialized into the generic denied response.
+      x-agent-tool:
+        capability: ORDER_STATUS_READ
+        side_effect: NONE
+        max_calls_per_run: 2
+        sensitive_parameter_logging: REDACT
+      parameters:
+        - name: public_code
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 64
+            pattern: '^[A-Za-z0-9_-]+$'
+      responses:
+        '200':
+          description: Redacted status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicOrderStatusResponse'
+        '404':
+          description: Generic unavailable response for missing, denied or unowned reference.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericUnavailableResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /agent/v1/order-requests/{order_request_id}/incidents:open:
+    post:
+      operationId: incidentOpen
+      tags: [Incident]
+      summary: Store the bound customer's allegation; never decide fault or remedy.
+      x-agent-tool:
+        capability: INCIDENT_INTAKE
+        side_effect: REVERSIBLE_WRITE
+        max_calls_per_run: 1
+      parameters:
+        - $ref: '#/components/parameters/BoundOrderRequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentOpenRequest'
+      responses:
+        '201':
+          description: Incident opened for human handling.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentOpenResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /agent/v1/order-requests/{order_request_id}/approvals:request:
+    post:
+      operationId: approvalRequestCreate
+      tags: [Approval]
+      summary: Request policy-derived human approval for an exact immutable snapshot.
+      description: |
+        The server derives reason codes, required role, TTL, obligations and executable
+        capability. The public agent cannot provide or weaken any of those values.
+      x-agent-tool:
+        capability: APPROVAL_REQUEST
+        side_effect: REVERSIBLE_WRITE
+        max_calls_per_run: 2
+      parameters:
+        - $ref: '#/components/parameters/BoundOrderRequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalRequestCreateRequest'
+      responses:
+        '201':
+          description: Approval request with server-derived policy requirements.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRequestCreateResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+components:
+  securitySchemes:
+    runnerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: short-lived JWT
+      description: |
+        Minted only for AGENT_RUNNER. Audience, run_id, organization, store, channel,
+        conversation, contact, capabilities and expiry are server-issued claims.
+
+  parameters:
+    BoundOrderRequestId:
+      name: order_request_id
+      in: path
+      required: true
+      description: |
+        Opaque resource reference returned for the current verified contact binding.
+        Possession is insufficient; the server rechecks the token's contact/conversation/store.
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^"[0-9]+"$'
+
+  responses:
+    Error:
+      description: Stable error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+  schemas:
+    PolicyOutcome:
+      type: string
+      enum: [ALLOW, REQUIRE_HUMAN, DENY]
+    Decision:
+      type: object
+      additionalProperties: false
+      required: [outcome, reason_codes, obligations, policy_version, snapshot_hash]
+      properties:
+        outcome:
+          $ref: '#/components/schemas/PolicyOutcome'
+        reason_codes:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            pattern: '^[A-Z0-9_]+$'
+        obligations:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            pattern: '^[A-Z0-9_]+$'
+        policy_version:
+          type: string
+          minLength: 1
+          maxLength: 80
+        snapshot_hash:
+          $ref: '#/components/schemas/Sha256'
+    Sha256:
+      type: string
+      pattern: '^sha256:[0-9a-f]{64}$'
+    Decimal:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)(\.[0-9]{1,3})?$'
+    MoneyVnd:
+      type: integer
+      minimum: 0
+      maximum: 1000000000
+    Unit:
+      type: string
+      enum: [KG, ITEM, PAIR, SET, ANIMAL_PLUSH_ITEM, CASE, M2]
+    QuantityBasis:
+      type: string
+      enum: [CUSTOMER_ESTIMATE]
+      x-canonical-subset: true
+      description: Public agent estimates may use only customer-provided estimated quantity.
+    TraceEnvelope:
+      type: object
+      required: [ok, trace_id, decision]
+      properties:
+        ok:
+          const: true
+        trace_id:
+          type: string
+          minLength: 8
+          maxLength: 80
+        decision:
+          $ref: '#/components/schemas/Decision'
+    ErrorCode:
+      type: string
+      enum:
+        - VALIDATION_ERROR
+        - AMBIGUOUS_SERVICE
+        - INCOMPATIBLE_UNIT
+        - MISSING_REQUIRED_FACT
+        - PRICE_RULE_UNRESOLVED
+        - MEASUREMENT_POLICY_UNRESOLVED
+        - PROMOTION_ELIGIBILITY_UNRESOLVED
+        - RANGE_PRICE_REQUIRES_HUMAN
+        - DELIVERY_DISTANCE_UNVERIFIED
+        - DELIVERY_FEE_REQUIRES_HUMAN
+        - SLOT_APPROVAL_REQUIRED
+        - CUSTOMER_RECONFIRMATION_REQUIRED
+        - HUMAN_APPROVAL_REQUIRED
+        - INVALID_STATE_TRANSITION
+        - STALE_VERSION
+        - IDEMPOTENCY_CONFLICT
+        - SUPPRESSED_CONTACT
+        - POLICY_DENIED
+        - TOOL_UNAVAILABLE
+        - RATE_LIMITED
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, trace_id, error]
+      properties:
+        ok:
+          const: false
+        trace_id:
+          type: string
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, reason_codes, field_errors]
+          properties:
+            code:
+              $ref: '#/components/schemas/ErrorCode'
+            message:
+              type: string
+              maxLength: 300
+            reason_codes:
+              type: array
+              items:
+                type: string
+                pattern: '^[A-Z0-9_]+$'
+            field_errors:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [path, code]
+                properties:
+                  path:
+                    type: string
+                    maxLength: 200
+                  code:
+                    type: string
+                    pattern: '^[A-Z0-9_]+$'
+
+    CatalogResolveRequest:
+      type: object
+      additionalProperties: false
+      required: [query, locale]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 300
+        locale:
+          const: vi-VN
+        known_attributes:
+          type: object
+          additionalProperties: false
+          properties:
+            estimated_quantity:
+              $ref: '#/components/schemas/Decimal'
+            unit:
+              $ref: '#/components/schemas/Unit'
+    CatalogCandidate:
+      type: object
+      additionalProperties: false
+      required: [service_code, service_version, display_name, compatible_units, confidence_band]
+      properties:
+        service_code:
+          type: string
+          pattern: '^[A-Z0-9_]+$'
+        service_version:
+          type: string
+        display_name:
+          type: string
+        compatible_units:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Unit'
+        confidence_band:
+          type: string
+          enum: [HIGH, MEDIUM, LOW]
+        clarification_key:
+          type: [string, 'null']
+    CatalogResolveResponse:
+      type: object
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/TraceEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              additionalProperties: false
+              required: [candidates]
+              properties:
+                candidates:
+                  type: array
+                  maxItems: 5
+                  items:
+                    $ref: '#/components/schemas/CatalogCandidate'
+
+    OrderRequestCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [customer_intent, locale, source_provider_message_ids]
+      properties:
+        customer_intent:
+          type: string
+          minLength: 1
+          maxLength: 500
+        locale:
+          const: vi-VN
+        source_provider_message_ids:
+          type: array
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
+          description: Every ID must belong to the authenticated bound channel conversation; the server rejects cross-conversation or unknown IDs.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+    OrderRequestCreateResponse:
+      type: object
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/TraceEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              additionalProperties: false
+              required: [order_request_id, row_version, status]
+              properties:
+                order_request_id:
+                  type: string
+                  format: uuid
+                row_version:
+                  type: integer
+                  minimum: 1
+                status:
+                  const: DRAFT
+
+    CustomerFact:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [fact_type, service_text, source_provider_message_id]
+          properties:
+            fact_type:
+              const: SERVICE_TEXT
+            service_text:
+              type: string
+              minLength: 1
+              maxLength: 300
+            source_provider_message_id:
+              type: string
+        - type: object
+          additionalProperties: false
+          required: [fact_type, quantity, unit, source_provider_message_id]
+          properties:
+            fact_type:
+              const: ESTIMATED_QUANTITY
+            quantity:
+              $ref: '#/components/schemas/Decimal'
+            unit:
+              $ref: '#/components/schemas/Unit'
+            source_provider_message_id:
+              type: string
+        - type: object
+          additionalProperties: false
+          required: [fact_type, fulfillment_mode, source_provider_message_id]
+          properties:
+            fact_type:
+              const: FULFILLMENT_MODE
+            fulfillment_mode:
+              type: string
+              enum: [SELF_DROP_SELF_COLLECT, PICKUP_AND_RETURN, PICKUP_ONLY, RETURN_ONLY]
+            source_provider_message_id:
+              type: string
+        - type: object
+          additionalProperties: false
+          required: [fact_type, address_text, source_provider_message_id]
+          properties:
+            fact_type:
+              const: CUSTOMER_ADDRESS_TEXT
+            address_text:
+              type: string
+              minLength: 5
+              maxLength: 500
+            source_provider_message_id:
+              type: string
+    RecordCustomerFactsRequest:
+      type: object
+      additionalProperties: false
+      required: [facts]
+      properties:
+        facts:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/CustomerFact'
+    RecordCustomerFactsResponse:
+      type: object
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/TraceEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              additionalProperties: false
+              required: [order_request_id, row_version, accepted_fact_count, unresolved_fact_types]
+              properties:
+                order_request_id:
+                  type: string
+                  format: uuid
+                row_version:
+                  type: integer
+                accepted_fact_count:
+                  type: integer
+                  minimum: 0
+                unresolved_fact_types:
+                  type: array
+                  items:
+                    type: string
+
+    EstimateLine:
+      type: object
+      additionalProperties: false
+      required: [service_code, quantity_basis, quantity, unit]
+      properties:
+        service_code:
+          type: string
+          pattern: '^[A-Z0-9_]+$'
+        quantity_basis:
+          $ref: '#/components/schemas/QuantityBasis'
+        quantity:
+          $ref: '#/components/schemas/Decimal'
+        unit:
+          $ref: '#/components/schemas/Unit'
+    QuoteEstimateRequest:
+      type: object
+      additionalProperties: false
+      required: [lines, fulfillment]
+      properties:
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/EstimateLine'
+        fulfillment:
+          type: object
+          additionalProperties: false
+          required: [mode]
+          properties:
+            mode:
+              type: string
+              enum: [SELF_DROP_SELF_COLLECT, PICKUP_AND_RETURN, PICKUP_ONLY, RETURN_ONLY]
+            planned_transport_weight_kg:
+              $ref: '#/components/schemas/Decimal'
+    QuoteEstimateData:
+      type: object
+      additionalProperties: false
+      required:
+        - quote_id
+        - quote_revision_id
+        - revision
+        - finality
+        - list_service_subtotal_vnd
+        - discount_amount_vnd
+        - net_service_subtotal_vnd
+        - display_total_vnd
+        - tax_treatment
+        - promotion_status
+        - required_approvals
+        - assumptions
+        - snapshot_hash
+      properties:
+        quote_id:
+          type: string
+          format: uuid
+        quote_revision_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        finality:
+          const: ESTIMATE
+        pricebook_version:
+          type: string
+        promotion_version:
+          type: [string, 'null']
+        list_service_subtotal_vnd:
+          $ref: '#/components/schemas/MoneyVnd'
+        discount_amount_vnd:
+          $ref: '#/components/schemas/MoneyVnd'
+        net_service_subtotal_vnd:
+          $ref: '#/components/schemas/MoneyVnd'
+        delivery_fee_vnd:
+          oneOf:
+            - $ref: '#/components/schemas/MoneyVnd'
+            - type: 'null'
+        display_total_vnd:
+          oneOf:
+            - $ref: '#/components/schemas/MoneyVnd'
+            - type: 'null'
+        tax_treatment:
+          type: string
+          enum: [UNVERIFIED, INCLUDED, EXCLUDED, NOT_APPLICABLE]
+        promotion_status:
+          type: string
+          enum: [NOT_APPLICABLE, PROVISIONAL, ELIGIBLE, INELIGIBLE, REQUIRES_HUMAN]
+        promotion_eligibility_event:
+          type: [string, 'null']
+        promotion_eligibility_at:
+          type: [string, 'null']
+          format: date-time
+        vehicle_recommendation:
+          type: [string, 'null']
+          enum: [MOTORCYCLE, CAR, null]
+        required_approvals:
+          type: array
+          items:
+            type: string
+            pattern: '^[A-Z0-9_]+$'
+        assumptions:
+          type: array
+          items:
+            type: string
+            pattern: '^[A-Z0-9_]+$'
+        snapshot_hash:
+          $ref: '#/components/schemas/Sha256'
+    QuoteEstimateResponse:
+      type: object
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/TraceEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/QuoteEstimateData'
+
+    DeliveryEvaluateRequest:
+      type: object
+      additionalProperties: false
+      required: [fulfillment_mode]
+      properties:
+        fulfillment_mode:
+          type: string
+          enum: [SELF_DROP_SELF_COLLECT, PICKUP_AND_RETURN, PICKUP_ONLY, RETURN_ONLY]
+        planned_transport_weight_kg:
+          $ref: '#/components/schemas/Decimal'
+    DeliveryEvaluateResponse:
+      type: object
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/TraceEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              additionalProperties: false
+              required:
+                - distance_status
+                - fee_status
+                - vehicle_recommendation
+                - requires_human
+              properties:
+                distance_status:
+                  type: string
+                  enum: [VERIFIED, UNVERIFIED, STALE, NOT_REQUIRED]
+                distance_km:
+                  oneOf:
+                    - $ref: '#/components/schemas/Decimal'
+                    - type: 'null'
+                fee_status:
+                  type: string
+                  enum: [RESOLVED, REQUIRES_HUMAN, NOT_REQUIRED]
+                delivery_fee_vnd:
+                  oneOf:
+                    - $ref: '#/components/schemas/MoneyVnd'
+                    - type: 'null'
+                vehicle_recommendation:
+                  type: string
+                  enum: [MOTORCYCLE, CAR, STAFF_PLAN_REQUIRED, NOT_REQUIRED]
+                requires_human:
+                  type: boolean
+
+    CapacityCheckRequest:
+      type: object
+      additionalProperties: false
+      description: Service scope, quantity and current intake/quote revision are derived from the path-bound order request.
+      properties:
+        requested_ready_at:
+          type: [string, 'null']
+          format: date-time
+          description: Customer-requested time only; it is never a reservation or promise.
+    CapacityCheckResponse:
+      type: object
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/TraceEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              additionalProperties: false
+              required: [advisory, slot_confirmed, required_approval]
+              properties:
+                advisory:
+                  type: string
+                  enum: [LIKELY_AVAILABLE, CONSTRAINED, UNKNOWN]
+                advisory_ready_window_start:
+                  type: [string, 'null']
+                  format: date-time
+                advisory_ready_window_end:
+                  type: [string, 'null']
+                  format: date-time
+                slot_confirmed:
+                  const: false
+                required_approval:
+                  const: SLOT_CONFIRMATION
+
+    MessageFactRef:
+      type: object
+      additionalProperties: false
+      required:
+        - fact_type
+        - resource_type
+        - resource_id
+        - resource_version
+        - value_hash
+        - contact_scope_hash
+        - effective_at
+        - current
+      properties:
+        fact_type:
+          type: string
+          enum:
+            - CATALOG_PRICE
+            - ORDER_REQUEST_RECEIPT
+            - INCIDENT_RECEIPT
+            - ORDER_STATUS
+            - QUOTE_REVISION
+            - SLOT_PROMISE
+            - CUSTOMER_MESSAGE
+        resource_type:
+          type: string
+          enum:
+            - SERVICE_VERSION
+            - PRICE_RULE
+            - ORDER_REQUEST
+            - INCIDENT
+            - ORDER
+            - QUOTE_REVISION
+            - SLA_PROMISE
+            - PROVIDER_MESSAGE
+        resource_id:
+          type: string
+          format: uuid
+        resource_version:
+          type: integer
+          minimum: 1
+        value_hash:
+          $ref: '#/components/schemas/Sha256'
+        contact_scope_hash:
+          $ref: '#/components/schemas/Sha256'
+        effective_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+        current:
+          const: true
+
+    MessageDraftCreateRequest:
+      description: |
+        The request never accepts a template or business-resource ID. For deterministic
+        kinds, the server selects the current published template and the current bound
+        resource/facts from message kind, locale, stage and effective time.
+      oneOf:
+        - title: Deterministic server-rendered message
+          type: object
+          additionalProperties: false
+          required: [message_kind, locale]
+          properties:
+            message_kind:
+              type: string
+              enum:
+                - LIST_PRICE_INFO
+                - INTAKE_RECEIPT
+                - INCIDENT_RECEIPT
+                - ORDER_STATUS
+                - APPROVED_QUOTE_PRESENTATION
+                - APPROVED_SLOT_PRESENTATION
+            locale:
+              const: vi-VN
+        - title: Grounded intake question draft
+          type: object
+          additionalProperties: false
+          required: [message_kind, locale, customer_question_provider_message_id]
+          properties:
+            message_kind:
+              const: INTAKE_FACT_REQUEST
+            locale:
+              const: vi-VN
+            customer_question_provider_message_id:
+              type: string
+              minLength: 1
+              maxLength: 200
+              description: Must belong to the authenticated bound conversation.
+        - title: Human-only free-form transactional draft
+          type: object
+          additionalProperties: false
+          required: [message_kind, locale, customer_question_provider_message_id]
+          properties:
+            message_kind:
+              const: FREE_FORM_TRANSACTIONAL
+            locale:
+              const: vi-VN
+            customer_question_provider_message_id:
+              type: string
+              minLength: 1
+              maxLength: 200
+              description: Must belong to the authenticated bound conversation.
+    MessageDraftCreateResponse:
+      type: object
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/TraceEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              additionalProperties: false
+              required:
+                - message_draft_id
+                - revision
+                - message_kind
+                - content
+                - content_hash
+                - template_id
+                - template_version
+                - fact_refs
+                - rendered_slots_hash
+                - policy_snapshot_hash
+                - send_capability
+              properties:
+                message_draft_id:
+                  type: string
+                  format: uuid
+                revision:
+                  type: integer
+                  minimum: 1
+                message_kind:
+                  type: string
+                  enum:
+                    - LIST_PRICE_INFO
+                    - INTAKE_FACT_REQUEST
+                    - INTAKE_RECEIPT
+                    - INCIDENT_RECEIPT
+                    - ORDER_STATUS
+                    - APPROVED_QUOTE_PRESENTATION
+                    - APPROVED_SLOT_PRESENTATION
+                    - FREE_FORM_TRANSACTIONAL
+                template_id:
+                  type: [string, 'null']
+                  description: Server-selected published template; null only for a human-only free-form draft.
+                template_version:
+                  type: [string, 'null']
+                  description: Immutable server-selected version; null only for a human-only free-form draft.
+                fact_refs:
+                  type: array
+                  maxItems: 30
+                  items:
+                    $ref: '#/components/schemas/MessageFactRef'
+                content:
+                  type: string
+                  maxLength: 4000
+                content_hash:
+                  $ref: '#/components/schemas/Sha256'
+                rendered_slots_hash:
+                  $ref: '#/components/schemas/Sha256'
+                  description: Hash of canonical JCS slot values; an empty slot object is still hashed.
+                policy_snapshot_hash:
+                  $ref: '#/components/schemas/Sha256'
+                send_capability:
+                  type: string
+                  enum: [NEVER, HUMAN_APPROVAL_REQUIRED, POLICY_ELIGIBLE]
+              allOf:
+                - if:
+                    type: object
+                    properties:
+                      message_kind:
+                        enum:
+                          - LIST_PRICE_INFO
+                          - INTAKE_RECEIPT
+                          - INCIDENT_RECEIPT
+                          - ORDER_STATUS
+                          - APPROVED_QUOTE_PRESENTATION
+                          - APPROVED_SLOT_PRESENTATION
+                    required: [message_kind]
+                  then:
+                    type: object
+                    properties:
+                      template_id:
+                        type: string
+                        minLength: 1
+                      template_version:
+                        type: string
+                        minLength: 1
+                      fact_refs:
+                        type: array
+                        minItems: 1
+
+    PublicOrderStatusResponse:
+      type: object
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/TraceEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              additionalProperties: false
+              required: [public_code, status_label, last_status_at]
+              properties:
+                public_code:
+                  type: string
+                status_label:
+                  type: string
+                  enum:
+                    - REQUEST_RECEIVED
+                    - WAITING_STORE_CONFIRMATION
+                    - IN_PROCESS
+                    - READY_AT_STORE
+                    - OUT_FOR_DELIVERY
+                    - COMPLETED
+                    - STAFF_CONTACT_REQUIRED
+                last_status_at:
+                  type: string
+                  format: date-time
+                ready_window_start:
+                  type: [string, 'null']
+                  format: date-time
+                ready_window_end:
+                  type: [string, 'null']
+                  format: date-time
+    GenericUnavailableResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, message]
+      properties:
+        ok:
+          const: false
+        message:
+          const: Không thể truy cập trạng thái đơn hàng này.
+
+    IncidentOpenRequest:
+      type: object
+      additionalProperties: false
+      required: [allegation_type, statement, source_provider_message_ids]
+      properties:
+        allegation_type:
+          type: string
+          enum: [QUALITY, DELAY, LOSS, DAMAGE, DELIVERY, BILLING, OTHER]
+        statement:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        source_provider_message_ids:
+          type: array
+          minItems: 1
+          maxItems: 20
+          uniqueItems: true
+          description: Every ID must belong to the authenticated bound channel conversation.
+          items:
+            type: string
+        evidence_tokens:
+          type: array
+          maxItems: 10
+          description: Server-issued upload tokens already bound to this contact/conversation; arbitrary object keys are rejected.
+          items:
+            type: string
+            maxLength: 200
+    IncidentOpenResponse:
+      type: object
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/TraceEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              additionalProperties: false
+              required: [incident_id, status, fault_decided, remedy_decided]
+              properties:
+                incident_id:
+                  type: string
+                  format: uuid
+                status:
+                  const: OPEN
+                fault_decided:
+                  const: false
+                remedy_decided:
+                  const: false
+
+    ApprovalRequestCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - action
+        - resource_type
+        - resource_id
+        - resource_version
+        - snapshot_hash
+        - rendered_hash
+      properties:
+        action:
+          type: string
+          enum:
+            - PRESENT_QUOTE
+            - CONFIRM_SLOT
+            - SET_RANGE_PRICE
+            - SET_DELIVERY_FEE
+            - APPLY_PROMOTION
+            - SEND_MESSAGE
+            - ACCEPT_ORDER
+        resource_type:
+          type: string
+          enum: [QUOTE_REVISION, SLOT_PROPOSAL, DELIVERY_FEE_PROPOSAL, MESSAGE_DRAFT, ORDER_REQUEST]
+        resource_id:
+          type: string
+          format: uuid
+          description: Must be a current child resource of the path-bound order request.
+        resource_version:
+          type: integer
+          minimum: 1
+        snapshot_hash:
+          $ref: '#/components/schemas/Sha256'
+        rendered_hash:
+          $ref: '#/components/schemas/Sha256'
+      allOf:
+        - oneOf:
+            - type: object
+              properties:
+                action: { const: PRESENT_QUOTE }
+                resource_type: { const: QUOTE_REVISION }
+            - type: object
+              properties:
+                action: { const: CONFIRM_SLOT }
+                resource_type: { const: SLOT_PROPOSAL }
+            - type: object
+              properties:
+                action: { const: SET_RANGE_PRICE }
+                resource_type: { const: QUOTE_REVISION }
+            - type: object
+              properties:
+                action: { const: SET_DELIVERY_FEE }
+                resource_type: { const: DELIVERY_FEE_PROPOSAL }
+            - type: object
+              properties:
+                action: { const: APPLY_PROMOTION }
+                resource_type: { const: QUOTE_REVISION }
+            - type: object
+              properties:
+                action: { const: SEND_MESSAGE }
+                resource_type: { const: MESSAGE_DRAFT }
+            - type: object
+              properties:
+                action: { const: ACCEPT_ORDER }
+                resource_type: { const: ORDER_REQUEST }
+    ApprovalRequestCreateResponse:
+      type: object
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/TraceEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              additionalProperties: false
+              required:
+                - approval_request_id
+                - status
+                - reason_codes
+                - required_role
+                - expires_at
+                - obligations
+                - execution_capability
+              properties:
+                approval_request_id:
+                  type: string
+                  format: uuid
+                status:
+                  const: PENDING
+                reason_codes:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    pattern: '^[A-Z0-9_]+$'
+                required_role:
+                  type: string
+                  enum: [OWNER_ADMIN, OPS_APPROVER, OPERATOR, ACCOUNTANT]
+                expires_at:
+                  type: string
+                  format: date-time
+                obligations:
+                  type: array
+                  items:
+                    type: string
+                    pattern: '^[A-Z0-9_]+$'
+                execution_capability:
+                  type: string
+                  pattern: '^[A-Z0-9_]+$'

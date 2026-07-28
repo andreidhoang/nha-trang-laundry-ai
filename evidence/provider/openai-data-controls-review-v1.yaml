@@ -1,0 +1,54 @@
+schema_version: 1
+evidence_id: OPENAI-DATA-CONTROLS-REVIEW-2026-07-28
+recorded_at: 2026-07-28T00:00:00Z
+scope:
+  provider: openai
+  api: Responses
+  model_candidate: gpt-5.6-terra
+  openclaw_version: 2026.7.1-2
+status: DOCUMENTATION_REVIEWED_EFFECTIVE_REQUEST_NOT_VERIFIED
+official_sources:
+  - title: OpenAI API data controls
+    url: https://developers.openai.com/api/docs/guides/your-data
+  - title: OpenAI GPT-5.6 Terra model
+    url: https://developers.openai.com/api/docs/models/gpt-5.6-terra
+  - title: OpenClaw OpenAI provider behavior
+    url: https://docs.openclaw.ai/providers/openai
+documented_observations:
+  - API data is not used to train OpenAI models by default unless the organization explicitly opts in.
+  - Default abuse-monitoring logs may retain customer content for up to 30 days.
+  - Responses application state and Zero Data Retention behavior depend on account approval and request features.
+  - OpenClaw 2026.7.1-2 documents that direct OpenAI Responses models force store:true unless model compatibility sets supportsStore:false.
+  - Disabling OpenClaw responsesServerCompaction controls context-management injection only and does not prove store:false.
+required_product_policy:
+  response_store: false
+  dedicated_service_credential: true
+  minimum_data: true
+  hidden_chain_of_thought_storage: false
+verification:
+  documentation_review: VERIFIED
+  immutable_model_release: NOT_VERIFIED
+  supported_openclaw_store_false_override: NOT_VERIFIED
+  captured_effective_request_store_false: NOT_VERIFIED
+  zero_data_retention_account_approval: NOT_VERIFIED
+  dedicated_service_credential: NOT_VERIFIED
+  security_approval: NOT_APPROVED
+  privacy_approval: NOT_APPROVED
+  provider_training_terms: DOCUMENTATION_REVIEWED
+  retention_and_abuse_log_exception: DOCUMENTATION_REVIEWED
+  region_and_subprocessors: NOT_APPROVED
+  deletion_path: NOT_APPROVED
+  incident_terms: NOT_APPROVED
+decision_binding:
+  decision_id: DEC-006
+  decision_status: OPEN
+release_effect:
+  synthetic_eval_allowed: true
+  real_customer_data_allowed: false
+  public_ingress_allowed: false
+  automatic_send_allowed: false
+next_verification:
+  - Obtain a dedicated non-production OpenAI API project credential.
+  - Configure a supported store:false route without weakening the direct-provider trust boundary.
+  - Capture and assert the effective Responses request in an integration test without recording PII or secrets.
+  - Obtain recorded Security and Privacy approval for training, retention, region, deletion, subprocessors and incident terms.

@@ -1,0 +1,804 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://giatlasachcong.vn/contracts/release-gate-manifest-v1.schema.json",
+  "title": "Capability-specific agent release gate manifest",
+  "description": "Runtime validation additionally rejects expired manifests/artifacts, non-chronological windows, signatures over any payload hash other than canonical JCS/SHA-256 of this manifest without signatures, reused signer identities across functions, evidence outside the observation window, and evidence whose artifact hash cannot be fetched and verified.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release_id",
+    "commit_sha",
+    "stage",
+    "capability",
+    "artifacts",
+    "gate_evidence",
+    "eligible_case_definition",
+    "observation_window",
+    "operational_evidence",
+    "zero_tolerance_results",
+    "signoffs",
+    "activation",
+    "rollback",
+    "created_at",
+    "expires_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "release_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{8,120}$"
+    },
+    "commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "SHADOW",
+        "ASSISTED",
+        "BOUNDED"
+      ]
+    },
+    "capability": {
+      "type": "string",
+      "enum": [
+        "INTERNAL_SHADOW",
+        "PUBLIC_FAQ",
+        "LIST_PRICE_INFO",
+        "INTAKE_QUESTION",
+        "INTAKE_FACT_CAPTURE",
+        "INTAKE_RECEIPT",
+        "INCIDENT_RECEIPT",
+        "ORDER_STATUS",
+        "SLA_GUIDANCE",
+        "QUOTE_ESTIMATE",
+        "BOOKING",
+        "DELIVERY_ADVISORY",
+        "MARKETING_FOLLOWUP"
+      ]
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_enums",
+        "agent_openapi",
+        "eval_manifest",
+        "eval_results",
+        "policy_bundle",
+        "prompt_bundle",
+        "model_config",
+        "business_config",
+        "migration_manifest",
+        "customer_corpus"
+      ],
+      "properties": {
+        "canonical_enums": {
+          "$ref": "#/$defs/Artifact"
+        },
+        "agent_openapi": {
+          "$ref": "#/$defs/Artifact"
+        },
+        "eval_manifest": {
+          "$ref": "#/$defs/Artifact"
+        },
+        "eval_results": {
+          "$ref": "#/$defs/Artifact"
+        },
+        "policy_bundle": {
+          "$ref": "#/$defs/Artifact"
+        },
+        "prompt_bundle": {
+          "$ref": "#/$defs/Artifact"
+        },
+        "model_config": {
+          "$ref": "#/$defs/Artifact"
+        },
+        "business_config": {
+          "$ref": "#/$defs/Artifact"
+        },
+        "migration_manifest": {
+          "$ref": "#/$defs/Artifact"
+        },
+        "customer_corpus": {
+          "$ref": "#/$defs/Artifact"
+        }
+      }
+    },
+    "gate_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gate_id",
+          "passed",
+          "evidence_refs",
+          "checked_at"
+        ],
+        "properties": {
+          "gate_id": {
+            "type": "string",
+            "enum": [
+              "G1_INTERNAL_SHADOW_READY",
+              "G2_PUBLIC_ASSISTED_ENTRY",
+              "G3_ASSISTED_EVIDENCE_COMPLETE",
+              "G4_BOUNDED_CAPABILITY_ENTRY"
+            ]
+          },
+          "passed": {
+            "const": true
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/$defs/EvidenceRef"
+            }
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "eligible_case_definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "definition_version",
+        "query_or_rule_hash",
+        "denominator_name",
+        "eligible_case_count"
+      ],
+      "properties": {
+        "definition_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "query_or_rule_hash": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "denominator_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "eligible_case_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "excluded_case_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "observation_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_at",
+        "end_at",
+        "consecutive_days"
+      ],
+      "properties": {
+        "start_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "consecutive_days": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "operational_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shadow_consecutive_days",
+        "representative_interactions",
+        "completed_real_orders",
+        "production_load_logs",
+        "delivery_cost_logs",
+        "automated_sends_human_reviewed"
+      ],
+      "properties": {
+        "shadow_consecutive_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "representative_interactions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed_real_orders": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "production_load_logs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "delivery_cost_logs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "automated_sends_human_reviewed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "zero_tolerance_results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wrong_monetary_value_count",
+        "unauthorized_side_effect_count",
+        "cross_contact_disclosure_count",
+        "suppression_miss_count",
+        "critical_safety_error_count",
+        "fallback_paths_included"
+      ],
+      "properties": {
+        "wrong_monetary_value_count": {
+          "const": 0
+        },
+        "unauthorized_side_effect_count": {
+          "const": 0
+        },
+        "cross_contact_disclosure_count": {
+          "const": 0
+        },
+        "suppression_miss_count": {
+          "const": 0
+        },
+        "critical_safety_error_count": {
+          "const": 0
+        },
+        "fallback_paths_included": {
+          "const": true
+        }
+      }
+    },
+    "signoffs": {
+      "type": "array",
+      "description": "Exactly one OWNER, one SECURITY and one OPERATIONS signature by three distinct actor IDs. Separation of duty and detached-signature verification are runtime invariants.",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+          "required": [
+            "function",
+            "actor_id",
+            "decision",
+            "signed_at",
+            "signature_algorithm",
+            "key_id",
+            "signed_payload_hash",
+            "signature"
+        ],
+        "properties": {
+          "function": {
+            "type": "string",
+            "enum": [
+              "OWNER",
+              "SECURITY",
+              "OPERATIONS"
+            ]
+          },
+          "actor_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision": {
+            "const": "APPROVE"
+          },
+          "signed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "signature_algorithm": {
+            "type": "string",
+            "enum": [
+              "ED25519",
+              "ECDSA_P256_SHA256"
+            ]
+          },
+          "key_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "signed_payload_hash": {
+            "$ref": "#/$defs/Sha256"
+          },
+          "signature": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{40,512}$"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "function": {
+                "const": "OWNER"
+              }
+            },
+            "required": [
+              "function"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "function": {
+                "const": "SECURITY"
+              }
+            },
+            "required": [
+              "function"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "function": {
+                "const": "OPERATIONS"
+              }
+            },
+            "required": [
+              "function"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
+    },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "percentage",
+        "maximum_daily_cases",
+        "feature_flag",
+        "starts_at"
+      ],
+      "properties": {
+        "percentage": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        },
+        "maximum_daily_cases": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "feature_flag": {
+          "type": "string",
+          "pattern": "^[a-z0-9_.-]+$"
+        },
+        "starts_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "prior_canary_artifact": {
+          "$ref": "#/$defs/Artifact",
+          "description": "Required for an initial BOUNDED activation above 10%; runtime verifies it is a successful earlier canary for the same capability and directly preceding release."
+        }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tested",
+        "target_release_id",
+        "kill_switch",
+        "runbook_ref"
+      ],
+      "properties": {
+        "tested": {
+          "const": true
+        },
+        "target_release_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kill_switch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runbook_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "stage": {
+            "const": "SHADOW"
+          }
+        },
+        "required": [
+          "stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "capability": {
+            "const": "INTERNAL_SHADOW"
+          },
+          "gate_evidence": {
+            "type": "array",
+            "contains": {
+              "type": "object",
+              "properties": {
+                "gate_id": {
+                  "const": "G1_INTERNAL_SHADOW_READY"
+                }
+              },
+              "required": [
+                "gate_id"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stage": {
+            "const": "ASSISTED"
+          }
+        },
+        "required": [
+          "stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "capability": {
+            "type": "string",
+            "enum": [
+              "PUBLIC_FAQ",
+              "LIST_PRICE_INFO",
+              "INTAKE_QUESTION",
+              "INTAKE_FACT_CAPTURE",
+              "INTAKE_RECEIPT",
+              "INCIDENT_RECEIPT",
+              "ORDER_STATUS",
+              "SLA_GUIDANCE"
+            ]
+          },
+          "gate_evidence": {
+            "type": "array",
+            "allOf": [
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "gate_id": {
+                      "const": "G1_INTERNAL_SHADOW_READY"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "gate_id": {
+                      "const": "G2_PUBLIC_ASSISTED_ENTRY"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            ]
+          },
+          "operational_evidence": {
+            "type": "object",
+            "properties": {
+              "shadow_consecutive_days": {
+                "type": "integer",
+                "minimum": 14
+              },
+              "representative_interactions": {
+                "type": "integer",
+                "minimum": 100
+              },
+              "completed_real_orders": {
+                "type": "integer",
+                "minimum": 30
+              },
+              "production_load_logs": {
+                "type": "integer",
+                "minimum": 10
+              },
+              "delivery_cost_logs": {
+                "type": "integer",
+                "minimum": 20
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "capability": {
+                  "not": {
+                    "const": "LIST_PRICE_INFO"
+                  }
+                }
+              },
+              "required": [
+                "capability"
+              ]
+            },
+            "then": {
+              "properties": {
+                "gate_evidence": {
+                  "type": "array",
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "gate_id": {
+                        "const": "G3_ASSISTED_EVIDENCE_COMPLETE"
+                      }
+                    },
+                    "required": [
+                      "gate_id"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stage": {
+            "const": "BOUNDED"
+          }
+        },
+        "required": [
+          "stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "capability": {
+            "type": "string",
+            "enum": [
+              "PUBLIC_FAQ",
+              "LIST_PRICE_INFO",
+              "INTAKE_QUESTION",
+              "INTAKE_FACT_CAPTURE",
+              "INTAKE_RECEIPT",
+              "INCIDENT_RECEIPT",
+              "ORDER_STATUS",
+              "SLA_GUIDANCE",
+              "QUOTE_ESTIMATE",
+              "BOOKING",
+              "DELIVERY_ADVISORY",
+              "MARKETING_FOLLOWUP"
+            ]
+          },
+          "gate_evidence": {
+            "type": "array",
+            "allOf": [
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "gate_id": {
+                      "const": "G1_INTERNAL_SHADOW_READY"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "gate_id": {
+                      "const": "G2_PUBLIC_ASSISTED_ENTRY"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "gate_id": {
+                      "const": "G3_ASSISTED_EVIDENCE_COMPLETE"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "gate_id": {
+                      "const": "G4_BOUNDED_CAPABILITY_ENTRY"
+                    }
+                  },
+                  "required": [
+                    "gate_id"
+                  ]
+                }
+              }
+            ]
+          },
+          "eligible_case_definition": {
+            "type": "object",
+            "properties": {
+              "eligible_case_count": {
+                "type": "integer",
+                "minimum": 100
+              }
+            }
+          },
+          "observation_window": {
+            "type": "object",
+            "properties": {
+              "consecutive_days": {
+                "type": "integer",
+                "minimum": 30
+              }
+            }
+          },
+          "operational_evidence": {
+            "type": "object",
+            "properties": {
+              "automated_sends_human_reviewed": {
+                "type": "integer",
+                "minimum": 200
+              }
+            }
+          },
+          "activation": {
+            "type": "object",
+            "anyOf": [
+              {
+                "properties": {
+                  "percentage": {
+                    "type": "number",
+                    "maximum": 10
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "prior_canary_artifact": {
+                    "$ref": "#/$defs/Artifact"
+                  }
+                },
+                "required": [
+                  "prior_canary_artifact"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "Sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "Artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uri",
+        "version",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_type",
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "evidence_type": {
+          "type": "string",
+          "enum": [
+            "TEST_RESULT",
+            "DRILL_RESULT",
+            "METRIC_QUERY_RESULT",
+            "CONFIG_SNAPSHOT",
+            "APPROVAL_RECORD",
+            "RUNBOOK"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+schema_version: 1
+work_item: DOMAIN-002
+recorded_at: "2026-07-28T14:00:00+07:00"
+requirement_contract: >-
+  Exact import/count/hash requirements in specs/DOMAIN_DATA_API_SPEC_V1.md sections 4.5, 17, and 18;
+  specs/contracts/pricebook-import-manifest-v1.json.
+rollback_impact: >-
+  Importer and manifest are additive and do not publish database configuration. Revert code, manifest,
+  and the v1.1 Unit contract together; never partially revert ANIMAL_PLUSH_ITEM or CASE parity.
+unresolved_assumptions: >-
+  Pricebook publication persistence remains future work. Import uses only approved typed CSV fields;
+  pricing_rule prose is retained as provenance but never executed. Weight precision/finality remains
+  fail-closed in DOMAIN-003.
+evidence:
+  tests: 30 domain tests passed, including seven import/count/hash/tamper cases.
+  import_manifest: specs/contracts/pricebook-import-manifest-v1.json
+  count_and_hash_validation: >-
+    Source and canonical hashes match the checked-in manifest; exact 44/43/43/42/1/2 counts passed.
+  source_sha256: ef2b58e4a4b990253bdf8a46d74706ad202a2242ecf807456af0c07bcaa6b2ac
+  canonical_snapshot_hash: JCS-SHA256-V1:e9580d747725bf91da07fafbb8cacbdd107b087e26ed61df22dd4d22bfec72a6
+  counts: 44 source rows; 43 services; 43 rules; 42 non-tier rules; 1 aggregate rule; 2 tiers.
+  contract_correction: >-
+    Unit v1.1 adds ANIMAL_PLUSH_ITEM and CASE to match the approved domain spec and source semantics;
+    the agent-tool OpenAPI enum is synchronized.
+checks:
+  - command: uv run pytest packages/domain/tests
+    status: PASSED
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED

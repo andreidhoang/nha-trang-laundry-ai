@@ -1,0 +1,60 @@
+[project]
+name = "nha-trang-laundry-ai"
+version = "0.1.0"
+description = "Production-constrained AI operations system for Giặt Là Sạch Cộng."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "hypothesis>=6.138,<7",
+  "httpx2>=2,<3",
+  "mypy>=1.18,<2",
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<7",
+  "pyyaml>=6.0.2,<7",
+  "ruff>=0.13,<1",
+  "types-pyyaml>=6.0.12,<7",
+  "types-jsonschema>=4.25,<5",
+]
+
+[tool.uv.workspace]
+members = [
+  "apps/api",
+  "apps/public-agent-tools",
+  "apps/worker",
+  "packages/contracts",
+  "packages/domain",
+  "packages/db",
+  "packages/evals",
+  "packages/observability",
+  "packages/policy",
+]
+
+[tool.uv.sources]
+nha-trang-laundry-contracts = { workspace = true }
+nha-trang-laundry-domain = { workspace = true }
+nha-trang-laundry-db = { workspace = true }
+nha-trang-laundry-evals = { workspace = true }
+nha-trang-laundry-observability = { workspace = true }
+nha-trang-laundry-policy = { workspace = true }
+nha-trang-laundry-agent-tools = { workspace = true }
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["apps", "packages"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+exclude = ["^\\.venv/", "^build/", "^dist/"]

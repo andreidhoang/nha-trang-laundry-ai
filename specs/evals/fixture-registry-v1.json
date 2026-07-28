@@ -1,0 +1,254 @@
+{
+  "schema_version": 1,
+  "registry_version": "1.0.0",
+  "status": "PARTIALLY_IMPLEMENTED_SYNTHETIC",
+  "required_bundle_contract": {
+    "format": "JSON",
+    "canonicalization": "RFC8785_JCS",
+    "hash": "SHA256",
+    "path_pattern": "fixtures/<fixture_id>/v<version>.json",
+    "minimum_fields": [
+      "fixture_id",
+      "version",
+      "clock",
+      "authenticated_context",
+      "database_seed",
+      "provider_events",
+      "fault_injection"
+    ]
+  },
+  "fixtures": [
+    {
+      "fixture_id": "fixture:active_marketing_consent:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "active_marketing_consent",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:approved_message_then_content_edited:v1",
+      "version": 1,
+      "status": "IMPLEMENTED",
+      "description": "approved_message_then_content_edited",
+      "payload_path": "fixtures/approved_message_then_content_edited/v1.json",
+      "payload_sha256": "sha256:967bc4ba4d73e7145af3675a1d86a278613deedc6ca7e7962ea9bea51ea6ca67"
+    },
+    {
+      "fixture_id": "fixture:attacker_contact:v1",
+      "version": 1,
+      "status": "IMPLEMENTED",
+      "description": "attacker_contact",
+      "payload_path": "fixtures/attacker_contact/v1.json",
+      "payload_sha256": "sha256:7704dbcb8f24fb017a5a3c4d8421e10bda288c7275f79c49230e856e232dd551"
+    },
+    {
+      "fixture_id": "fixture:automated_list_price_message_later_found_wrong:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "automated_list_price_message_later_found_wrong",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_clean_request:v1",
+      "version": 1,
+      "status": "IMPLEMENTED",
+      "description": "bound_clean_request",
+      "payload_path": "fixtures/bound_clean_request/v1.json",
+      "payload_sha256": "sha256:daf237692eba83b32bad0c536bebd9fe95bf6e9ea9ad277139ecb1969758ec4e"
+    },
+    {
+      "fixture_id": "fixture:bound_completed_order_for_same_contact:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_completed_order_for_same_contact",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_customer_estimate_0_6kg:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_customer_estimate_0_6kg",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_customer_estimate_5_9kg:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_customer_estimate_5_9kg",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_customer_estimate_6kg:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_customer_estimate_6kg",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_pillow_without_staff_selection:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_pillow_without_staff_selection",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_request_missing_promotion_event:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_request_missing_promotion_event",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_sheet_washing_request:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_sheet_washing_request",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_standard_order_capacity_unknown:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_standard_order_capacity_unknown",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_verified_distance_2km_6kg:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_verified_distance_2km_6kg",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_verified_distance_5km_20kg:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_verified_distance_5km_20kg",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_verified_distance_5km_6_1kg:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_verified_distance_5km_6_1kg",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:bound_verified_distance_6_001km:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "bound_verified_distance_6_001km",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:contact_bound_conversation:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "contact_bound_conversation",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:current_published_standard_wash_list_price:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "current_published_standard_wash_list_price",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:customer_acknowledges_estimate:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "customer_acknowledges_estimate",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:exact_quote_with_tax_treatment_unverified:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "exact_quote_with_tax_treatment_unverified",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:feature_flag_store_unavailable:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "feature_flag_store_unavailable",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:final_measurement_changes_19_9_to_20kg:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "final_measurement_changes_19_9_to_20kg",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:inject_audit_insert_failure:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "inject_audit_insert_failure",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:manual_send_attestation_exists_then_worker_claim:v1",
+      "version": 1,
+      "status": "IMPLEMENTED",
+      "description": "manual_send_attestation_exists_then_worker_claim",
+      "payload_path": "fixtures/manual_send_attestation_exists_then_worker_claim/v1.json",
+      "payload_sha256": "sha256:8d0fe933f87f3dfce97110f1c0785e116315be60bc7978c2316e7b22dffcb79d"
+    },
+    {
+      "fixture_id": "fixture:marketing_outbox_claim_in_progress:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "marketing_outbox_claim_in_progress",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:model_wall_clock_exceeds_20_seconds:v1",
+      "version": 1,
+      "status": "IMPLEMENTED",
+      "description": "model_wall_clock_exceeds_20_seconds",
+      "payload_path": "fixtures/model_wall_clock_exceeds_20_seconds/v1.json",
+      "payload_sha256": "sha256:908c745c83be205f9fd2557b0b99f8f3c10e09b6b98d10f806ddb84a7df2c69c"
+    },
+    {
+      "fixture_id": "fixture:outbound_disabled_after_draft_before_worker_send:v1",
+      "version": 1,
+      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "description": "outbound_disabled_after_draft_before_worker_send",
+      "payload_path": null,
+      "payload_sha256": null
+    },
+    {
+      "fixture_id": "fixture:valid_code_owned_by_other_contact:v1",
+      "version": 1,
+      "status": "IMPLEMENTED",
+      "description": "valid_code_owned_by_other_contact",
+      "payload_path": "fixtures/valid_code_owned_by_other_contact/v1.json",
+      "payload_sha256": "sha256:045b2334fa05d1278c8119c6ba3ebee9629c44c5ad7acf05185c7233a3232746"
+    }
+  ]
+}

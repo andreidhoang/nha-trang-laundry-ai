@@ -1,0 +1,23 @@
+{
+  "fixture_id": "fixture:manual_send_attestation_exists_then_worker_claim:v1",
+  "version": 1,
+  "clock": "2026-07-28T00:00:00Z",
+  "authenticated_context": {
+    "organization_id": "00000000-0000-4000-8000-000000000071",
+    "store_id": "00000000-0000-4000-8000-000000000072",
+    "conversation_binding_id": "00000000-0000-4000-8000-000000000073",
+    "contact_binding_id": "00000000-0000-4000-8000-000000000074",
+    "channel": "INTERNAL_TEST"
+  },
+  "database_seed": {
+    "approved_message": {
+      "resource_version": 1,
+      "snapshot_hash": "JCS-SHA256-V1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "rendered_hash": "JCS-SHA256-V1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "provider_events": [],
+  "fault_injection": {
+    "worker_claim_after_manual_attestation": true
+  }
+}

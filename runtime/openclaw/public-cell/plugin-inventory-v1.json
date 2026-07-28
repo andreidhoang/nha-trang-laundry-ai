@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "inventory_version": "1.0.0-eval",
+  "plugin_id": "nha-trang-laundry-tools",
+  "plugin_version": "0.1.0",
+  "openclaw_version": "2026.7.1-2",
+  "openclaw_npm_integrity": "sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==",
+  "artifacts": {
+    "plugin_manifest": {
+      "path": "runtime/openclaw/public-cell/plugin/openclaw.plugin.json",
+      "sha256": "sha256:565d7287c13025977efc8df5924a939a464068b02a92766c0424511d979363ab"
+    },
+    "package_lock": {
+      "path": "runtime/openclaw/public-cell/plugin/package-lock.json",
+      "sha256": "sha256:31008417ab0d0e0db400bd354a5a7d6c57ff7bc6d61ed59260fdeb6d3ca0bac3"
+    },
+    "generated_operation_contracts": {
+      "path": "runtime/openclaw/public-cell/plugin/src/operation-contracts.ts",
+      "sha256": "sha256:b2293ec35d2d9f18e17ada8dd6774cae59e4361d50e702a3b8ba99914ac312d0"
+    },
+    "runner_bridge_client": {
+      "path": "runtime/openclaw/public-cell/plugin/src/facade-client.ts",
+      "sha256": "sha256:ecf14faa2d4bf49c10e9d847827fa34f8a43d7af8e2818de2a4bbc01cb4e372b"
+    },
+    "plugin_entry": {
+      "path": "runtime/openclaw/public-cell/plugin/src/index.ts",
+      "sha256": "sha256:406343f89bb5815bb42422e69f406a0aef307e6dbce99209bc9a173aa3ff44ba"
+    },
+    "package_tarball": {
+      "path": "releases/candidates/openclaw-nha-trang-laundry-tools-0.1.0.tgz",
+      "sha256": "sha256:b4d106808fbe254629bf2f0e29d039dcc2de63b77b111747daca2fea94712655"
+    }
+  },
+  "tool_names": [
+    "laundry_catalog_resolve",
+    "laundry_order_request_create",
+    "laundry_order_request_record_customer_facts",
+    "laundry_quote_estimate",
+    "laundry_delivery_evaluate",
+    "laundry_capacity_check",
+    "laundry_message_draft_create",
+    "laundry_public_order_status_get",
+    "laundry_incident_open",
+    "laundry_approval_request_create"
+  ],
+  "prohibited_surfaces": [
+    "channel",
+    "direct_send",
+    "shell",
+    "browser",
+    "filesystem",
+    "generic_http",
+    "generic_execute",
+    "configuration_mutation"
+  ]
+}

@@ -1,0 +1,1 @@
+operation_id,date,batch_id,order_id,service_type,operation_type,machine_id,start_at,end_at,nominal_capacity_kg,actual_kg,rewash,staff_minutes,downtime_minutes,operator_id,notes

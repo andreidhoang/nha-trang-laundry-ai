@@ -1,0 +1,16 @@
+schema_version: 1
+bundle_version: 1.0.0-eval
+status: EVAL_ONLY
+locale: vi-VN
+prompt:
+  path: runtime/prompts/public-concierge.vi-VN.md
+  sha256: sha256:c3e05f7452be0efb03b8c15987446b595d90c831c4a4f2d07a028aebc60702eb
+tool_contract:
+  path: specs/contracts/agent-tools-v1.openapi.yaml
+  version: 1.1.0
+  sha256: sha256:17c13317d809c07ad29fb6c85bb0f3654435a073a8b8fd3a39a92d8803984af3
+public_corpus_release: null
+contains_secrets: false
+contains_chain_of_thought: false
+contains_internal_risk_documents: false
+release_authorization: false

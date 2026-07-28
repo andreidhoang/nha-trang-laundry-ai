@@ -1,0 +1,61 @@
+schema_version: 1
+last_updated: '2026-07-28'
+purpose: Stable phase vocabulary for planning; work item identity never depends on
+  milestone numbering.
+work_queue: delivery/WORK_QUEUE.yaml
+status_source: delivery/CAPABILITY_STATUS.yaml
+phases:
+- id: FOUNDATION
+  name: Engineering and delivery foundation
+  status: COMPLETE
+  depends_on: []
+  outcome: Reproducible Python workspace, contracts, context harness, migrations,
+    and delivery controls.
+- id: IDENTITY_CONTROL
+  name: Identity, RBAC, audit authority, and configuration control
+  status: COMPLETE
+  depends_on:
+  - FOUNDATION
+  outcome: Named staff, server-enforced authorization, MFA boundaries, and immutable
+    configuration.
+- id: DOMAIN_CORE
+  name: Deterministic laundry domain
+  status: COMPLETE
+  depends_on:
+  - FOUNDATION
+  outcome: Canonical catalog, pricing, promotion, delivery, SLA, quote, and order
+    rules.
+- id: OPERATIONS_CONTROL
+  name: Operational control plane
+  status: COMPLETE
+  depends_on:
+  - DOMAIN_CORE
+  outcome: Staff PWA, approval, inbox/outbox, idempotency, audit, and pilot instrumentation.
+- id: AGENT_SHADOW
+  name: Constrained OpenClaw Shadow integration
+  status: IN_PROGRESS
+  depends_on:
+  - OPERATIONS_CONTROL
+  outcome: Isolated draft-only Concierge, typed Tool Facade, model registry, traces,
+    and evals.
+- id: REAL_SHADOW_READINESS
+  name: Real-customer internal Shadow readiness
+  status: PENDING
+  depends_on:
+  - AGENT_SHADOW
+  outcome: Identity, privacy, backup, incident, evidence, and human-approval gates
+    for real orders.
+- id: PUBLIC_ASSISTED
+  name: Official-channel Assisted capabilities
+  status: PENDING
+  depends_on:
+  - REAL_SHADOW_READINESS
+  outcome: Separate public cell and capability-specific public entry, beginning with
+    LIST_PRICE_INFO.
+- id: BOUNDED_AUTONOMY
+  name: Evidence-gated bounded capabilities
+  status: PENDING
+  depends_on:
+  - PUBLIC_ASSISTED
+  outcome: Narrow canaried automation with signed evidence, monitoring, correction,
+    and rollback.

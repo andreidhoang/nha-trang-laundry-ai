@@ -1,0 +1,2 @@
+promotion_id,promotion_name,start_at,end_at,timezone,eligibility_timestamp,wet_discount_rate,dry_discount_rate,stacking_rule,status,source
+PROMO_WET30_DRY40_20260717_20260831,"Ưu đãi giặt ướt 30% và giặt khô 40%",2026-07-17T00:00:00+07:00,2026-08-31T23:59:59+07:00,Asia/Ho_Chi_Minh,accepted_at,0.30,0.40,HUMAN_APPROVAL_IF_OTHER_PROMO,OWNER_CONFIRMED,"owner message + storefront sign"

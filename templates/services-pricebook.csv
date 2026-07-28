@@ -1,0 +1,45 @@
+service_id,category,service_name,unit,min_price_vnd,max_price_vnd,pricing_rule,agent_permission,status,source_version
+STD_WASH_DRY_LT6,standard_weight,"Giặt sấy dưới 6kg",kg,25000,25000,"actual_kg < 6; billable_kg=max(actual_kg,1)",AUTO_ESTIMATE,OWNER_CONFIRMED,PRICEBOOK_V1
+STD_WASH_DRY_GE6,standard_weight,"Giặt sấy từ 6kg trở lên",kg,20000,20000,"actual_kg >= 6",AUTO_ESTIMATE,OWNER_CONFIRMED,PRICEBOOK_V1
+DRY_WET_CLOTHES,drying,"Sấy riêng quần áo ướt",kg,20000,20000,"fixed per kg",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+DRY_BEDDING,drying,"Sấy riêng chăn ga",kg,30000,30000,"fixed per kg",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+BED_BLANKET,bedding,"Chăn",kg,30000,30000,"fixed per kg",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+BED_TOPPER,bedding,"Topper",kg,50000,50000,"fixed per kg",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+BED_PILLOW,bedding,"Gối",cái,30000,90000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+IRON_KNIT,ironing,"Áo, quần thun",cái,15000,15000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+IRON_TROUSERS_SHIRT,ironing,"Quần tây, sơ mi",cái,20000,20000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+IRON_SUIT,ironing,"Áo vest",cái,30000,30000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+IRON_DESIGNER_DRESS,ironing,"Váy thiết kế",cái,30000,30000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+LEATHER_JACKET_DRESS,leather,"Áo da, váy da",cái,80000,120000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+LEATHER_HANDBAG,leather,"Túi xách da",cái,80000,150000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_SUIT,dry_cleaning,"Áo vest nam, nữ",cái,100000,150000,"range by item/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_VEST,dry_cleaning,"Áo ghi lê",cái,35000,45000,"range by item/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_WOOL_COAT_SHORT,dry_cleaning,"Áo dạ ngắn dưới 60cm",cái,75000,75000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_WOOL_COAT_LONG,dry_cleaning,"Áo dạ dài 60–80cm",cái,110000,110000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_DOWN_JACKET,dry_cleaning,"Áo lông vũ, áo phao",cái,70000,130000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_EVENING_DRESS,dry_cleaning,"Váy dạ hội",cái,120000,120000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_WEDDING_DRESS,dry_cleaning,"Váy cưới",cái,400000,400000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_SHORT_DRESS,dry_cleaning,"Áo/váy ngắn",cái,65000,65000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_LONG_DRESS,dry_cleaning,"Áo/váy dài",cái,80000,80000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_AO_DAI_PLAIN,dry_cleaning,"Áo dài trơn",cái,65000,65000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_AO_DAI_DECORATED,dry_cleaning,"Áo dài kiểu thêu, đính hạt",cái,75000,200000,"range by detail/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_AO_DAI_TRADITIONAL,dry_cleaning,"Áo dài truyền thống",bộ,80000,240000,"range by detail/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_FUR_COAT,dry_cleaning,"Áo lông thú",cái,200000,400000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_COAT,dry_cleaning,"Áo khoác",cái,50000,100000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_SHIRT,dry_cleaning,"Áo sơ mi",cái,50000,50000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_TROUSERS,dry_cleaning,"Quần tây, kaki, jeans",cái,55000,55000,"fixed per item",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_SKIRT,dry_cleaning,"Chân váy",cái,35000,55000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_SCARF,dry_cleaning,"Khăn choàng",cái,75000,150000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+DC_HAT,dry_cleaning,"Mũ",cái,35000,120000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+SHOE_SPORTS,shoes,"Giày thể thao các loại",đôi,70000,70000,"fixed per pair",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+SHOE_CHILD,shoes,"Giày trẻ em size dưới 35",đôi,30000,30000,"fixed per pair",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+SHOE_SMOOTH_LEATHER,shoes,"Giày da trơn",đôi,90000,120000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+SHOE_SUEDE,shoes,"Giày da lộn cao cấp",đôi,150000,250000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+OTHER_CURTAIN,other,"Giặt rèm thường",kg,35000,35000,"fixed per kg",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+OTHER_CURTAIN_INSTALL,other,"Giặt rèm tháo lắp",kg,45000,45000,"fixed per kg",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+OTHER_SOFA,other,"Vệ sinh sofa",bộ,300000,500000,"range by size/material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+OTHER_SOFT_CARPET,other,"Giặt thảm mềm",kg,30000,50000,"range by material/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+OTHER_HARD_CARPET,other,"Giặt thảm cứng",m2,100000,100000,"fixed per square meter",LIST_PRICE_ONLY,OWNER_CONFIRMED,PRICEBOOK_V1
+OTHER_PLUSH,other,"Giặt gấu bông",con,20000,200000,"range by size",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+OTHER_STAIN,other,"Tẩy vết bẩn",trường hợp,30000,200000,"range by stain/condition; billing basis and final price require staff confirmation",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1
+OTHER_PILLOW_INSERT,other,"Tẩy ruột gối",cái,40000,60000,"range by size/condition",RANGE_ONLY_HUMAN_FINAL,OWNER_CONFIRMED,PRICEBOOK_V1

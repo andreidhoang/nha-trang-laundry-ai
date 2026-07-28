@@ -1,0 +1,29 @@
+schema_version: 1
+work_item: DOMAIN-003
+recorded_at: "2026-07-28T14:30:00+07:00"
+requirement_contract: >-
+  Deterministic pricing and finality rules in specs/DOMAIN_DATA_API_SPEC_V1.md section 6 and
+  FR-QTE-003 through FR-QTE-005 in specs/ENGINEERING_SPEC_V1.md.
+rollback_impact: >-
+  Pure domain-code change with no database/public capability mutation. Revert pricing and its tests
+  together; retain the canonical pricebook manifest and Unit contract correction.
+unresolved_assumptions: >-
+  Weight rounding policy beyond accepting at most three recorded decimal places is unresolved.
+  Therefore the engine never rounds quantity and never emits APPROVED_EXACT. Human approval and
+  immutable final quote proof remain DOMAIN-005.
+evidence:
+  property_tests: >-
+    Hypothesis proves the approved standard-wash formula across thousandth-kg values and invariance
+    when one service quantity is split across lines.
+  golden_vectors: 0.6kg, 5.9kg, 6kg, 6.1kg, 3kg+3kg, fixed, range, and half-up vectors passed.
+  calculation_trace: >-
+    Frozen trace records canonical service/rule/unit, normalized inputs, bases, aggregate/billable
+    quantities, selected tier, unit/range prices, and ROUND_HALF_UP_1_VND.
+  fail_closed_finality: >-
+    Fixed and tier results remain ESTIMATE; range results remain RANGE with requires_human=true;
+    MANUAL, invalid, missing, mismatched-unit, noncanonical, overflow, and gapped-tier inputs fail.
+checks:
+  - command: uv run pytest packages/domain/tests
+    status: PASSED
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED

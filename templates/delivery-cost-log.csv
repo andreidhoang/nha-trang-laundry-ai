@@ -1,0 +1,1 @@
+date,order_id,vehicle,one_way_distance_km,pickup_return_legs,total_route_km,orders_on_route,staff_minutes,fuel_cost,toll_parking_cost,external_quote_total,allocated_internal_cost,delivery_fee_vnd,service_revenue,processing_cost,other_cost_reserve,contribution_after_delivery,notes

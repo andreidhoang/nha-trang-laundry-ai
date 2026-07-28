@@ -1,0 +1,28 @@
+{
+  "id": "nha-trang-laundry-tools",
+  "name": "Nha Trang Laundry Agent Tools",
+  "description": "Fixed, typed adapters to the authenticated laundry Agent Tool Facade.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "laundry_catalog_resolve",
+      "laundry_order_request_create",
+      "laundry_order_request_record_customer_facts",
+      "laundry_quote_estimate",
+      "laundry_delivery_evaluate",
+      "laundry_capacity_check",
+      "laundry_message_draft_create",
+      "laundry_public_order_status_get",
+      "laundry_incident_open",
+      "laundry_approval_request_create"
+    ]
+  }
+}

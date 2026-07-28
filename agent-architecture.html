@@ -1,0 +1,142 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nha Trang Laundry AI Agent Architecture</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f8fafc;
+    --fg: #172033;
+    --muted: #5b6475;
+    --line: #64748b;
+    --neutral: #e2e8f0;
+    --input: #bfdbfe;
+    --process: #c7d2fe;
+    --storage: #99f6e4;
+    --external: #fde68a;
+    --risk: #fecaca;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a;
+      --fg: #e5e7eb;
+      --muted: #a3adbd;
+      --line: #94a3b8;
+      --neutral: #334155;
+      --input: #1d4ed8;
+      --process: #4338ca;
+      --storage: #0f766e;
+      --external: #92400e;
+      --risk: #991b1b;
+    }
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1120px; margin: 32px auto; padding: 0 20px; }
+  svg { width: 100%; height: auto; display: block; }
+  .title { font-size: 22px; font-weight: 700; fill: var(--fg); }
+  .subtitle { font-size: 13px; fill: var(--muted); }
+  .label { font-size: 14px; font-weight: 650; fill: var(--fg); }
+  .small { font-size: 12px; fill: var(--muted); }
+  .node { stroke: var(--line); stroke-width: 1; rx: 10; }
+  .neutral { fill: var(--neutral); }
+  .input { fill: var(--input); }
+  .process { fill: var(--process); }
+  .storage { fill: var(--storage); }
+  .external { fill: var(--external); }
+  .risk { fill: var(--risk); }
+  .edge { stroke: var(--line); stroke-width: 1.6; fill: none; }
+  .edge-dashed { stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 6 5; fill: none; }
+  .zone { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 7 5; opacity: 0.85; }
+  .zone-label { font-size: 12px; font-weight: 650; fill: var(--muted); }
+</style>
+<main>
+  <svg viewBox="0 0 1080 760" role="img" aria-labelledby="diagram-title diagram-desc">
+    <title id="diagram-title">Nha Trang Laundry AI Agent Architecture</title>
+    <desc id="diagram-desc">A hardened public customer gateway is separated from the private owner gateway. CRM, consent, pricebook, approvals, human operations and bounded specialist agents have explicit responsibilities.</desc>
+    <defs>
+      <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+        <path d="M0,0 L9,4.5 L0,9 Z" fill="var(--line)"></path>
+      </marker>
+    </defs>
+
+    <text x="40" y="38" class="title">Nha Trang Laundry AI — production architecture</text>
+    <text x="40" y="62" class="subtitle">Customer access is isolated from the trusted owner/engineering environment.</text>
+
+    <rect x="20" y="82" width="1028" height="298" class="zone"></rect>
+    <text x="34" y="104" class="zone-label">PUBLIC CUSTOMER TRUST ZONE — sandboxed, least privilege</text>
+    <rect x="20" y="410" width="1028" height="322" class="zone"></rect>
+    <text x="34" y="432" class="zone-label">PRIVATE OWNER / OPERATIONS TRUST ZONE</text>
+
+    <!-- Connectors are drawn first so arrows remain behind nodes. -->
+    <path d="M220 190 H300" class="edge" marker-end="url(#arrow)"></path>
+    <path d="M530 190 H610" class="edge" marker-end="url(#arrow)"></path>
+    <path d="M810 170 H850" class="edge" marker-end="url(#arrow)"></path>
+    <path d="M710 245 V300 H850" class="edge" marker-end="url(#arrow)"></path>
+    <path d="M930 235 V280" class="edge" marker-end="url(#arrow)"></path>
+    <path d="M930 350 V500" class="edge-dashed" marker-end="url(#arrow)"></path>
+    <path d="M220 540 H580" class="edge" marker-end="url(#arrow)"></path>
+    <path d="M500 555 H580" class="edge" marker-end="url(#arrow)"></path>
+    <path d="M500 555 H540 V640 H580" class="edge" marker-end="url(#arrow)"></path>
+    <path d="M680 500 V260 H850" class="edge-dashed" marker-end="url(#arrow)"></path>
+    <path d="M770 540 H850" class="edge" marker-end="url(#arrow)"></path>
+    <path d="M770 640 H850 V600" class="edge" marker-end="url(#arrow)"></path>
+    <path d="M850 570 H790 V555 H500" class="edge-dashed" marker-end="url(#arrow)"></path>
+
+    <rect x="45" y="135" width="175" height="110" class="node external"></rect>
+    <text x="132" y="165" text-anchor="middle" class="label">Customer channels</text>
+    <text x="132" y="189" text-anchor="middle" class="small">Zalo OA · website · QR</text>
+    <text x="132" y="209" text-anchor="middle" class="small">WhatsApp · phone</text>
+    <text x="132" y="229" text-anchor="middle" class="small">Official, permission-based</text>
+
+    <rect x="300" y="130" width="230" height="120" class="node risk"></rect>
+    <text x="415" y="160" text-anchor="middle" class="label">Public Gateway + Concierge</text>
+    <text x="415" y="185" text-anchor="middle" class="small">Separate OS user / host</text>
+    <text x="415" y="205" text-anchor="middle" class="small">No exec · browser · nodes</text>
+    <text x="415" y="225" text-anchor="middle" class="small">FAQ · intake · honest handoff</text>
+
+    <rect x="610" y="130" width="200" height="115" class="node process"></rect>
+    <text x="710" y="160" text-anchor="middle" class="label">Scoped business API</text>
+    <text x="710" y="185" text-anchor="middle" class="small">pricebook · zone · capacity</text>
+    <text x="710" y="205" text-anchor="middle" class="small">lead/order request only</text>
+    <text x="710" y="225" text-anchor="middle" class="small">idempotency · rate limits</text>
+
+    <rect x="850" y="130" width="160" height="105" class="node storage"></rect>
+    <text x="930" y="160" text-anchor="middle" class="label">CRM + consent</text>
+    <text x="930" y="184" text-anchor="middle" class="small">accounts · stages · opt-in</text>
+    <text x="930" y="204" text-anchor="middle" class="small">single source of truth</text>
+
+    <rect x="850" y="280" width="160" height="70" class="node input"></rect>
+    <text x="930" y="310" text-anchor="middle" class="label">Approval outbox</text>
+    <text x="930" y="334" text-anchor="middle" class="small">price · send · refund · SLA</text>
+
+    <rect x="45" y="500" width="175" height="80" class="node external"></rect>
+    <text x="132" y="530" text-anchor="middle" class="label">Public lead sources</text>
+    <text x="132" y="554" text-anchor="middle" class="small">Maps · directories · field data</text>
+
+    <rect x="300" y="500" width="200" height="110" class="node neutral"></rect>
+    <text x="400" y="532" text-anchor="middle" class="label">Private Owner Gateway</text>
+    <text x="400" y="557" text-anchor="middle" class="small">LEM · browser · code</text>
+    <text x="400" y="577" text-anchor="middle" class="small">orchestration · analytics</text>
+    <text x="400" y="597" text-anchor="middle" class="small">owner-only access</text>
+
+    <rect x="580" y="465" width="190" height="80" class="node process"></rect>
+    <text x="675" y="495" text-anchor="middle" class="label">Lead Scout</text>
+    <text x="675" y="519" text-anchor="middle" class="small">research · verify · score · draft</text>
+    <text x="675" y="537" text-anchor="middle" class="small">never autonomous cold spam</text>
+
+    <rect x="580" y="600" width="190" height="85" class="node process"></rect>
+    <text x="675" y="630" text-anchor="middle" class="label">Ops + Retention Analyst</text>
+    <text x="675" y="654" text-anchor="middle" class="small">capacity · route · SLA · churn</text>
+    <text x="675" y="672" text-anchor="middle" class="small">opt-in follow-up · weekly KPI</text>
+
+    <rect x="850" y="500" width="160" height="100" class="node input"></rect>
+    <text x="930" y="530" text-anchor="middle" class="label">Owner + laundry team</text>
+    <text x="930" y="554" text-anchor="middle" class="small">approve · decide · escalate</text>
+    <text x="930" y="574" text-anchor="middle" class="small">wash · QA · pickup · delivery</text>
+  </svg>
+</main>

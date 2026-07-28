@@ -1,0 +1,11 @@
+[project]
+name = "nha-trang-laundry-policy"
+version = "0.1.0"
+description = "Typed, deterministic policy decision point."
+requires-python = ">=3.12,<3.14"
+dependencies = []
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+

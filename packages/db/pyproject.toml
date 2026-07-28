@@ -1,0 +1,18 @@
+[project]
+name = "nha-trang-laundry-db"
+version = "0.1.0"
+description = "SQL-first PostgreSQL migrations and transactional control-plane primitives."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "nha-trang-laundry-contracts",
+  "nha-trang-laundry-domain",
+  "psycopg[binary]>=3.2,<4",
+  "rfc8785>=0.1.4,<1",
+]
+
+[tool.uv.sources]
+nha-trang-laundry-contracts = { workspace = true }
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"

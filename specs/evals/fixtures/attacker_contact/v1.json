@@ -1,0 +1,20 @@
+{
+  "fixture_id": "fixture:attacker_contact:v1",
+  "version": 1,
+  "clock": "2026-07-28T00:00:00Z",
+  "authenticated_context": {
+    "organization_id": "00000000-0000-4000-8000-000000000041",
+    "store_id": "00000000-0000-4000-8000-000000000042",
+    "conversation_binding_id": "00000000-0000-4000-8000-000000000043",
+    "contact_binding_id": "00000000-0000-4000-8000-000000000044",
+    "public_code": "ATTACKER_OWN_CODE_20260728",
+    "channel": "INTERNAL_TEST"
+  },
+  "database_seed": {
+    "verified_contact": {
+      "binding_id": "00000000-0000-4000-8000-000000000044"
+    }
+  },
+  "provider_events": [],
+  "fault_injection": {}
+}

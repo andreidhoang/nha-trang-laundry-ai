@@ -1,0 +1,61 @@
+schema_version: 1
+work_item: OPERATIONS-001
+recorded_at: "2026-07-28T15:33:14+07:00"
+requirement_contract: >-
+  Orthogonal order state machines, exact one-time approval envelopes, logical idempotency,
+  durable encrypted inbox replay defense, deterministic STOP/suppression, constrained outbox/DLQ,
+  atomic audit/event/outbox semantics, and a staff-only PWA slice required by
+  specs/DOMAIN_DATA_API_SPEC_V1.md sections 4.4, 4.9, 4.14, 10, 13, 14 and 15;
+  specs/SECURITY_RELIABILITY_SPEC_V1.md sections 7 through 9; and M2/M3 in
+  specs/IMPLEMENTATION_ROADMAP_V1.md. Operational enum values project
+  specs/contracts/canonical-enums-v1.json.
+rollback_impact: >-
+  Application/domain/API/PWA code can be rolled back while public capabilities remain disabled.
+  Migrations 0007 and 0008 are forward-only and have been applied to local PostgreSQL: never edit
+  their checksums or delete order, approval, consent, inbox, audit, domain-event, outbox, attempt or
+  DLQ history. A production rollback must stop affected writers/workers, deploy a forward-fix
+  migration, and preserve immutable ledgers plus lifetime idempotency results. No provider-send
+  client, channel credential, public endpoint, real PII fixture, or release authorization was added.
+unresolved_assumptions: >-
+  The Staff PWA slice is intentionally read-only for order-board and approval-envelope views; it
+  refuses blind approval until a future resource-preview screen can render the exact bound revision.
+  Consent grant/release, provider webhook authentication/encryption adapter, customer party/contact
+  master data, actual provider egress, CSRF/CSP hardening, PITR and kill-switch drills remain in their
+  later scheduled work items. The internal outbox worker has no provider client and excludes
+  message.send_requested.v1. All public and real Shadow capabilities remain NOT_AUTHORIZED.
+evidence:
+  integration_tests: >-
+    Twelve live PostgreSQL integration tests passed. New vectors cover quote-bound order creation,
+    state transition, lifetime command replay, approval request/decision/execution, expiry,
+    encrypted inbox replay, STOP suppression, internal outbox claim/retry/DLQ, and injected audit
+    failure rollback. Migrations 0001 through 0008 are applied with no pending migration.
+  negative_authorization: >-
+    Driver order mutation, non-MFA approval access, self-approval, wrong approver role, and
+    AGENT_RUNNER approval/outbox execution are rejected. API request schemas forbid unknown fields,
+    so client-supplied required_role/TTL/reasons/obligations/capability cannot reach policy code.
+  replay_tests: >-
+    Same logical command key plus canonically identical input returns the original result without a
+    second business mutation; the same key with changed input returns IDEMPOTENCY_CONFLICT. Same
+    provider event ID and raw payload returns the original inbox record; changed raw payload creates
+    an append-only security conflict/audit/outbox record and is rejected.
+  approval_hash: >-
+    Server-derived JCS-SHA256-V1 envelopes bind action, allowlisted resource type, UUID, exact
+    resource version, snapshot hash, rendered hash, policy version, requester, role, reasons,
+    obligations, execution capability and maximum TTL. Hash/version edits, expiry, duplicate
+    decision and duplicate execution fail closed; only OUTBOX_WORKER can claim approved execution.
+  rollback_assessment: >-
+    0008 is a forward hardening migration after locally applying 0007. It protects webhook payloads,
+    approval transitions, suppression monotonicity, order row versions/terminal state and outbox
+    status transitions. Any correction must be migration 0009 or later, never a checksum rewrite.
+  pwa_and_egress_boundary: >-
+    FastAPI exposes only authenticated /internal/v1 operational routes and same-origin /staff static
+    assets. The mobile PWA renders with textContent and does not cache API responses. Its approval
+    queue displays hash/role/TTL but has no decision button. The only implemented worker processes an
+    explicit internal-event allowlist and leaves provider message-send events unclaimed.
+checks:
+  - command: uv run pytest
+    status: PASSED
+  - command: uv run mypy apps packages
+    status: PASSED
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED

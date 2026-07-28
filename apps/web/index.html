@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0b3b36">
+    <meta name="description" content="Bảng vận hành nội bộ Giặt Là Sạch Cộng">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="stylesheet" href="styles.css">
+    <title>Staff Operations</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">GIẶT LÀ SẠCH CỘNG · INTERNAL</p>
+        <h1>Bảng vận hành</h1>
+      </div>
+      <output id="session-status" class="status" aria-live="polite">Đang xác thực…</output>
+    </header>
+
+    <main>
+      <section class="control-card" aria-labelledby="store-heading">
+        <div>
+          <p class="eyebrow">PHẠM VI DỮ LIỆU</p>
+          <h2 id="store-heading">Chọn cửa hàng</h2>
+        </div>
+        <form id="store-form">
+          <label for="store-id">Store UUID</label>
+          <div class="field-row">
+            <input id="store-id" name="store-id" type="text" inputmode="text" required
+              autocomplete="off" placeholder="00000000-0000-0000-0000-000000000000">
+            <button type="submit">Tải bảng</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="grid" aria-label="Operational views">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">ORTHOGONAL STATE</p>
+              <h2>Đơn hàng</h2>
+            </div>
+            <span id="order-count" class="count">0</span>
+          </div>
+          <div id="orders" class="cards" aria-live="polite">
+            <p class="empty">Nhập Store UUID để tải dữ liệu.</p>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">EXACT HASH + TTL</p>
+              <h2>Hàng chờ duyệt</h2>
+            </div>
+            <span id="approval-count" class="count">0</span>
+          </div>
+          <p class="guardrail">Chỉ hiển thị envelope. Không cho duyệt mù khi chưa có resource preview.</p>
+          <div id="approvals" class="cards" aria-live="polite">
+            <p class="empty">Đang chờ phiên staff hợp lệ.</p>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <template id="order-template">
+      <article class="item-card">
+        <div class="item-title"><strong data-field="order"></strong><span data-field="version"></span></div>
+        <dl>
+          <div><dt>Commercial</dt><dd data-field="commercial"></dd></div>
+          <div><dt>Intake</dt><dd data-field="intake"></dd></div>
+          <div><dt>Production</dt><dd data-field="production"></dd></div>
+          <div><dt>Balance</dt><dd data-field="balance"></dd></div>
+        </dl>
+      </article>
+    </template>
+
+    <template id="approval-template">
+      <article class="item-card warning">
+        <div class="item-title"><strong data-field="approval"></strong><span data-field="status"></span></div>
+        <dl>
+          <div><dt>Role</dt><dd data-field="role"></dd></div>
+          <div><dt>Hết hạn</dt><dd data-field="expiry"></dd></div>
+          <div class="hash-row"><dt>Envelope hash</dt><dd data-field="hash"></dd></div>
+        </dl>
+      </article>
+    </template>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>

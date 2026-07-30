@@ -14,6 +14,7 @@ from generate_agent_tool_plugin import typescript_source
 from nha_trang_laundry_contracts import (
     load_agent_tool_registry,
     load_public_runtime_registry,
+    verify_openclaw_cli_version,
     verify_public_runtime_artifacts,
 )
 
@@ -58,6 +59,8 @@ def main() -> None:
         raise RuntimeError("Generated OpenClaw tool schemas drifted from the normative OpenAPI")
     openclaw = executable("openclaw")
     npm = executable("npm")
+    version_output = run_checked([openclaw, "--version"], cwd=ROOT, env=os.environ.copy())
+    openclaw_revision = verify_openclaw_cli_version(version_output, registry.openclaw.version)
 
     with tempfile.TemporaryDirectory(prefix="laundry-openclaw-audit-") as state_dir:
         env = os.environ.copy()
@@ -91,6 +94,7 @@ def main() -> None:
             {
                 "status": "EVAL_ONLY_VERIFIED",
                 "openclaw_version": registry.openclaw.version,
+                "openclaw_build_revision": openclaw_revision,
                 "tool_count": len(tool_registry.operations),
                 "artifact_count": len(artifacts),
                 "security_audit_critical": 0,

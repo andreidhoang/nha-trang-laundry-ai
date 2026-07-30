@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated:** 2026-07-28  
+**Last updated:** 2026-07-29
 **Authoritative machine status:** [`delivery/CAPABILITY_STATUS.yaml`](../delivery/CAPABILITY_STATUS.yaml)
 
 ## Current decision
@@ -37,7 +37,18 @@ release decision is driven by evidence and a signed gate manifest, never by this
 
 ## Next controlled task
 
-`AGENT-001`: complete the remaining executable P0 paths, beginning with the in-flight kill switch
-between draft and worker execution; then collect integrated runtime and provider-data evidence. Read
+`AGENT-001`: local seed fixtures and assertions are complete; obtain the external runtime/provider
+prerequisites and execute PRIMARY/fallback/degraded integration evidence. Local boundary preflights
+cover all 32 manifest cases in a hash-pinned synthetic `SKIP` bundle. Runtime enforcement now also
+requires a schema-valid, JCS-bound, artifact-verified, unexpired three-party release authorization
+before any provider-backed call. Capability status and reporting also revalidate that exact signed
+deployment envelope before displaying `AUTHORIZED`. Checksum-pinned public-key trust-root loading and the sanitized
+candidate verifier are available. The current incomplete provider review is schema-valid and
+hash-pinned, and the version-bound offline OpenClaw audit passes with zero critical findings. No
+approved signer registry, effective-request proof, or authorization exists. The structurally parsed
+OpenClaw configuration still names a placeholder sandbox image; the typed scan gate therefore reports
+a ninth release blocker until an immutable digest, passing scan evidence, and hash-pinned SBOM exist.
+Context drift validation also guarantees that each work item's declared normative inputs are present
+in its assembled context packet. Read
 the [engineering continuation brief](../context/PROJECT_CONTINUATION.md) before resuming and run
 `uv run python scripts/run_delivery_loop.py` for the authoritative work brief.

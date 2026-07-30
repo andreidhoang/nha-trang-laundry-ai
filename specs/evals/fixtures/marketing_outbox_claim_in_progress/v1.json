@@ -1,0 +1,23 @@
+{
+  "fixture_id": "fixture:marketing_outbox_claim_in_progress:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {
+    "channel": "INTERNAL_TEST",
+    "data_classification": "SYNTHETIC"
+  },
+  "database_seed": {
+    "marketing_outbox_status": "PROCESSING",
+    "purpose": "MARKETING"
+  },
+  "provider_events": [
+    {
+      "event_id": "synthetic-stop-outbox-race-001",
+      "received_at": "2026-08-01T03:00:00Z",
+      "normalized_content": "STOP"
+    }
+  ],
+  "fault_injection": {
+    "suppression_commits_after_claim_before_provider_attempt": true
+  }
+}

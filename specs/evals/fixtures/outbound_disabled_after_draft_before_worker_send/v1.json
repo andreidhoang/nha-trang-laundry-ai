@@ -1,0 +1,31 @@
+{
+  "fixture_id": "fixture:outbound_disabled_after_draft_before_worker_send:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {
+    "organization_id": "00000000-0000-4000-8000-000000000061",
+    "store_id": "00000000-0000-4000-8000-000000000062",
+    "conversation_binding_id": "00000000-0000-4000-8000-000000000063",
+    "contact_binding_id": "00000000-0000-4000-8000-000000000064",
+    "channel": "INTERNAL_TEST"
+  },
+  "database_seed": {
+    "automated_envelope": {
+      "capability": "LIST_PRICE_INFO",
+      "status": "PENDING",
+      "hold_policy": "HOLD"
+    }
+  },
+  "provider_events": [
+    {
+      "event_id": "synthetic-kill-switch-inflight-001",
+      "received_at": "2026-08-01T03:00:00Z",
+      "normalized_content": "Synthetic automated execution only."
+    }
+  ],
+  "fault_injection": {
+    "agent_outbound_enabled_after_draft": false,
+    "global_automation_enabled": true,
+    "capability_enabled": false
+  }
+}

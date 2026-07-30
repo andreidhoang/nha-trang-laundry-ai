@@ -11,6 +11,12 @@ openclaw:
   plugin_id: nha-trang-laundry-tools
   plugin_version: 0.1.0
   plugin_inventory_sha256: sha256:2f2ec0faf8f9e5d5553a29048ef8093d909caac51acbc1408eb046e86adffdde
+  sandbox_image:
+    repository: openclaw-sandbox
+    digest: null
+    verified: false
+    scan_evidence_path: null
+    scan_evidence_sha256: null
 model:
   provider: openai
   openclaw_model_ref: openai/gpt-5.6-terra
@@ -26,12 +32,15 @@ model:
   fallback_model_refs: []
 provider_data_gate:
   decision_id: DEC-006
-  documentation_review: DOCUMENTATION_REVIEWED
+  documentation_review: VERIFIED
   effective_request_storage_verification: NOT_VERIFIED
   security_approval: NOT_APPROVED
   privacy_approval: NOT_APPROVED
   dedicated_service_credential_verified: NOT_VERIFIED
   real_customer_data_allowed: false
+provider_data_evidence:
+  path: evidence/provider/openai-data-controls-review-v1.yaml
+  sha256: sha256:d6d3f83baf63c466655744df89b2e6dd45870412eae365f403e02bfb16106277
 prompt:
   bundle_path: runtime/prompts/manifest-v1.yaml
   bundle_version: 1.0.0-eval

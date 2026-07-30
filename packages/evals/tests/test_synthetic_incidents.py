@@ -1,0 +1,64 @@
+from __future__ import annotations
+
+import json
+import os
+from collections.abc import Callable, Generator
+from pathlib import Path
+from typing import Any
+
+import psycopg
+import pytest
+from nha_trang_laundry_db.migrations import apply_migrations
+from nha_trang_laundry_evals import load_synthetic_fixture
+from nha_trang_laundry_evals.synthetic_incidents import (
+    SyntheticIncidentPreflight,
+    execute_correction_preflight,
+    execute_incident_preflight,
+)
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture
+def postgres_connection() -> Generator[psycopg.Connection[Any], None, None]:
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url is None:
+        pytest.skip("DATABASE_URL is required for PostgreSQL integration tests")
+    with psycopg.connect(database_url) as connection:
+        apply_migrations(connection)
+        yield connection
+
+
+@pytest.mark.parametrize(
+    ("fixture_id", "execute"),
+    (
+        (
+            "fixture:automated_list_price_message_later_found_wrong:v1",
+            execute_correction_preflight,
+        ),
+        (
+            "fixture:bound_completed_order_for_same_contact:v1",
+            execute_incident_preflight,
+        ),
+    ),
+)
+def test_incident_assertions_come_from_atomic_postgres_state(
+    postgres_connection: psycopg.Connection[Any],
+    fixture_id: str,
+    execute: Callable[[Any, Any], SyntheticIncidentPreflight],
+) -> None:
+    registry = json.loads(
+        (ROOT / "specs/evals/fixture-registry-v1.json").read_text(encoding="utf-8")
+    )
+    entry = next(item for item in registry["fixtures"] if item["fixture_id"] == fixture_id)
+    fixture = load_synthetic_fixture(
+        ROOT / "specs/evals",
+        fixture_id=fixture_id,
+        version=entry["version"],
+        payload_path=entry["payload_path"],
+        payload_sha256=entry["payload_sha256"],
+    )
+
+    result = execute(postgres_connection, fixture)
+
+    assert all(result.assertion_results.values())

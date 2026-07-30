@@ -40,10 +40,12 @@ def validate_eval_manifest(root: Path, manifest_path: Path) -> EvalContractRepor
     contracts = manifest.get("normative_contracts")
     cases = manifest.get("cases")
     graders = manifest.get("graders")
+    runner = manifest.get("runner")
     if (
         not isinstance(contracts, dict)
         or not isinstance(cases, list)
         or not isinstance(graders, dict)
+        or not isinstance(runner, dict)
     ):
         raise EvalManifestError("Eval manifest lacks contracts, graders, or cases")
 
@@ -56,8 +58,10 @@ def validate_eval_manifest(root: Path, manifest_path: Path) -> EvalContractRepor
     tool_registry = load_agent_tool_registry(tool_path)
     case_schema = json.loads(case_schema_path.read_text(encoding="utf-8"))
     case_validator = Draft202012Validator(case_schema, format_checker=FormatChecker())
-    assertions = json.loads(assertion_path.read_text(encoding="utf-8")).get("assertions")
-    fixtures = json.loads(fixture_path.read_text(encoding="utf-8")).get("fixtures")
+    assertion_registry = json.loads(assertion_path.read_text(encoding="utf-8"))
+    fixture_registry = json.loads(fixture_path.read_text(encoding="utf-8"))
+    assertions = assertion_registry.get("assertions")
+    fixtures = fixture_registry.get("fixtures")
     if not isinstance(assertions, list) or not isinstance(fixtures, list):
         raise EvalManifestError("Assertion and fixture registries must contain lists")
     assertion_by_id = _unique_registry(assertions, "assertion_id", "assertion")
@@ -127,6 +131,41 @@ def validate_eval_manifest(root: Path, manifest_path: Path) -> EvalContractRepor
     blockers = manifest.get("release_blockers")
     if not isinstance(blockers, list) or not all(isinstance(item, str) for item in blockers):
         raise EvalManifestError("release_blockers must be a string list")
+    unimplemented_fixtures = sum(
+        fixture.get("status") != "IMPLEMENTED" for fixture in fixtures if isinstance(fixture, dict)
+    )
+    unimplemented_assertions = sum(
+        assertion.get("implementation_status") != "IMPLEMENTED"
+        for assertion in assertions
+        if isinstance(assertion, dict)
+    )
+    fixture_blocker = "FIXTURE_PAYLOADS_NOT_IMPLEMENTED" in blockers
+    assertion_blocker = "ASSERTION_GRADERS_NOT_IMPLEMENTED" in blockers
+    if fixture_blocker != (unimplemented_fixtures > 0):
+        raise EvalManifestError("fixture implementation blocker contradicts fixture registry")
+    if assertion_blocker != (unimplemented_assertions > 0):
+        raise EvalManifestError("assertion implementation blocker contradicts assertion registry")
+    if unimplemented_fixtures == 0 and (
+        fixture_registry.get("status") != "IMPLEMENTED_SYNTHETIC_NON_RELEASE"
+    ):
+        raise EvalManifestError("fixture registry completion status is stale")
+    if unimplemented_assertions == 0 and (
+        assertion_registry.get("status") != "IMPLEMENTED_SYNTHETIC_NON_RELEASE"
+    ):
+        raise EvalManifestError("assertion registry completion status is stale")
+    if unimplemented_fixtures == 0 and unimplemented_assertions == 0:
+        if manifest.get("status") != "LOCAL_SYNTHETIC_IMPLEMENTED_NON_RELEASE":
+            raise EvalManifestError("eval manifest implementation status is stale")
+        if (
+            manifest.get("execution_state")
+            != "LOCAL_SYNTHETIC_32_CASE_DEGRADED_COMPLETE_INTEGRATED_PROVIDER_PATH_NOT_RUN"
+        ):
+            raise EvalManifestError("eval manifest execution state is stale")
+        if (
+            runner.get("implementation_status")
+            != "LOCAL_SYNTHETIC_32_CASE_DEGRADED_IMPLEMENTED_NON_RELEASE"
+        ):
+            raise EvalManifestError("eval runner implementation status is stale")
     release_eligible = manifest.get("release_eligible")
     if release_eligible is not False:
         raise EvalManifestError("Baseline manifest must remain release_eligible:false")
@@ -136,16 +175,8 @@ def validate_eval_manifest(root: Path, manifest_path: Path) -> EvalContractRepor
         total_cases=len(cases),
         p0_cases=sum(case.get("severity") == "P0" for case in cases if isinstance(case, dict)),
         referenced_tool_calls=referenced_calls,
-        unimplemented_fixture_payloads=sum(
-            fixture.get("status") != "IMPLEMENTED"
-            for fixture in fixtures
-            if isinstance(fixture, dict)
-        ),
-        unimplemented_assertions=sum(
-            assertion.get("implementation_status") != "IMPLEMENTED"
-            for assertion in assertions
-            if isinstance(assertion, dict)
-        ),
+        unimplemented_fixture_payloads=unimplemented_fixtures,
+        unimplemented_assertions=unimplemented_assertions,
         release_eligible=False,
         release_blockers=tuple(blockers),
     )

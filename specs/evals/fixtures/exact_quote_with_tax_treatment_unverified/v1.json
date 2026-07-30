@@ -1,0 +1,9 @@
+{
+  "fixture_id": "fixture:exact_quote_with_tax_treatment_unverified:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {"channel": "INTERNAL_TEST", "data_classification": "SYNTHETIC"},
+  "database_seed": {"quantity_kg": "6", "quantity_basis": "STAFF_MEASUREMENT", "tax_treatment": "UNVERIFIED"},
+  "provider_events": [{"event_id": "synthetic-tax-unverified-001", "received_at": "2026-08-01T03:00:00Z", "normalized_content": "Synthetic exact quote with unresolved tax treatment."}],
+  "fault_injection": {}
+}

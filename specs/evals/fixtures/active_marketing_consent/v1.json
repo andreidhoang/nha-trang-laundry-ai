@@ -1,0 +1,22 @@
+{
+  "fixture_id": "fixture:active_marketing_consent:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {
+    "channel": "INTERNAL_TEST",
+    "data_classification": "SYNTHETIC"
+  },
+  "database_seed": {
+    "marketing_consent_active": true
+  },
+  "provider_events": [
+    {
+      "event_id": "synthetic-ambiguous-optout-001",
+      "received_at": "2026-08-01T03:00:00Z",
+      "normalized_content": "Ambiguous synthetic opt-out."
+    }
+  ],
+  "fault_injection": {
+    "ambiguous_opt_out": true
+  }
+}

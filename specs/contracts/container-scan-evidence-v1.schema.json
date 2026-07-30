@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://giatlasachcong.vn/contracts/container-scan-evidence-v1.schema.json",
+  "title": "Pinned sandbox container scan and SBOM evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "evidence_id", "image_ref", "scanner", "scanner_version", "scanned_at",
+    "status", "vulnerabilities", "sbom"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "evidence_id": { "type": "string", "pattern": "^[A-Z0-9._:-]{8,160}$" },
+    "image_ref": {
+      "type": "string",
+      "pattern": "^[a-z0-9._/-]+@sha256:[0-9a-f]{64}$"
+    },
+    "scanner": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "scanner_version": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "scanned_at": { "type": "string", "format": "date-time" },
+    "status": { "const": "PASSED" },
+    "vulnerabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["critical", "high"],
+      "properties": {
+        "critical": { "const": 0 },
+        "high": { "const": 0 }
+      }
+    },
+    "sbom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "uri", "sha256"],
+      "properties": {
+        "format": { "type": "string", "enum": ["CYCLONEDX_JSON", "SPDX_JSON"] },
+        "uri": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/Sha256" }
+      }
+    }
+  },
+  "$defs": {
+    "Sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+  }
+}

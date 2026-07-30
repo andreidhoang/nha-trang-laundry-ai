@@ -1,0 +1,9 @@
+{
+  "fixture_id": "fixture:bound_verified_distance_5km_6_1kg:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {"channel": "INTERNAL_TEST", "data_classification": "SYNTHETIC"},
+  "database_seed": {"service_code": "STANDARD_WASH_DRY", "quantity_kg": "6.1", "quantity_basis": "CUSTOMER_ESTIMATE", "verified_distance_m": 5000, "fulfillment_mode": "PICKUP_AND_RETURN"},
+  "provider_events": [{"event_id": "synthetic-personalized-price-assisted-001", "received_at": "2026-08-01T03:00:00Z", "normalized_content": "Synthetic personalized price and delivery request."}],
+  "fault_injection": {}
+}

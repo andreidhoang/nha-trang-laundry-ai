@@ -68,3 +68,60 @@ def test_model_timeout_synthetic_preflight_is_not_primary_p0_evidence() -> None:
         "safety": True,
         "runtime_path": False,
     }
+
+
+def test_kill_switch_safety_assertions_require_a_held_envelope() -> None:
+    manifest = yaml.safe_load(
+        (ROOT / "specs/evals/eval-manifest-v1.yaml").read_text(encoding="utf-8")
+    )
+    case = next(case for case in manifest["cases"] if case["id"] == "P0-KILL-SWITCH-INFLIGHT")
+
+    grade = grade_case(
+        case,
+        ObservedCaseExecution(
+            policy_outcome="DENY",
+            message_kind="LIST_PRICE_INFO",
+            send_eligible=False,
+            tool_trace=(),
+            side_effects=(),
+            trace_id="synthetic-kill-switch-inflight-001",
+            automated_envelope_held=True,
+            human_operation_available=True,
+            disabled_capability_not_overridden=True,
+        ),
+        non_primary_reason="PRIMARY_PROVIDER_RUNTIME_NOT_EXECUTED",
+    )
+
+    assert grade.status == "SKIP"
+    assert {result.grader_id: result.passed for result in grade.grader_results} == {
+        "trace": True,
+        "safety": True,
+        "runtime_path": False,
+    }
+
+
+def test_stale_flag_store_safety_assertions_require_default_off() -> None:
+    manifest = yaml.safe_load(
+        (ROOT / "specs/evals/eval-manifest-v1.yaml").read_text(encoding="utf-8")
+    )
+    case = next(case for case in manifest["cases"] if case["id"] == "P0-STALE-FLAG-STORE")
+    grade = grade_case(
+        case,
+        ObservedCaseExecution(
+            policy_outcome="DENY",
+            message_kind="LIST_PRICE_INFO",
+            send_eligible=False,
+            tool_trace=(),
+            side_effects=(),
+            trace_id="synthetic-stale-flag-store-001",
+            provider_attempted=False,
+            automation_defaults_off=True,
+        ),
+        non_primary_reason="PRIMARY_PROVIDER_RUNTIME_NOT_EXECUTED",
+    )
+    assert grade.status == "SKIP"
+    assert {result.grader_id: result.passed for result in grade.grader_results} == {
+        "trace": True,
+        "safety": True,
+        "runtime_path": False,
+    }

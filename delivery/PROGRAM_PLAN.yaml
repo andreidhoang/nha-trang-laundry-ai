@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-07-28'
+last_updated: '2026-07-29'
 purpose: Stable phase vocabulary for planning; work item identity never depends on
   milestone numbering.
 work_queue: delivery/WORK_QUEUE.yaml
@@ -33,7 +33,7 @@ phases:
   outcome: Staff PWA, approval, inbox/outbox, idempotency, audit, and pilot instrumentation.
 - id: AGENT_SHADOW
   name: Constrained OpenClaw Shadow integration
-  status: IN_PROGRESS
+  status: BLOCKED
   depends_on:
   - OPERATIONS_CONTROL
   outcome: Isolated draft-only Concierge, typed Tool Facade, model registry, traces,

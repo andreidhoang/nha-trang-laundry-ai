@@ -1,0 +1,23 @@
+{
+  "fixture_id": "fixture:inject_audit_insert_failure:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {
+    "channel": "INTERNAL_TEST",
+    "data_classification": "SYNTHETIC"
+  },
+  "database_seed": {
+    "agent_run_status": "PROCESSING",
+    "operation_id": "orderRequestRecordCustomerFacts"
+  },
+  "provider_events": [
+    {
+      "event_id": "synthetic-audit-write-failure-001",
+      "received_at": "2026-08-01T03:00:00Z",
+      "normalized_content": "Synthetic audit failure only."
+    }
+  ],
+  "fault_injection": {
+    "reject_audit_action": "AGENT_TOOL_CALL"
+  }
+}

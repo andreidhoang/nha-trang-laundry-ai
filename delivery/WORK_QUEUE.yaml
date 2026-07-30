@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-07-28'
+last_updated: '2026-07-29'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -252,7 +252,7 @@ items:
   phase: AGENT_SHADOW
   title: Isolated OpenClaw Concierge, typed Tool Facade, model registry, and Shadow
     evals
-  status: IN_PROGRESS
+  status: BLOCKED
   priority: 110
   depends_on:
   - OPERATIONS-001
@@ -269,6 +269,10 @@ items:
   - specs/contracts/agent-tools-v1.openapi.yaml
   - specs/evals/eval-manifest-v1.yaml
   - specs/contracts/release-gate-manifest-v1.schema.json
+  - specs/contracts/capability-status-v1.schema.json
+  - specs/contracts/trusted-release-signers-v1.schema.json
+  - specs/contracts/provider-data-evidence-v1.schema.json
+  - specs/contracts/container-scan-evidence-v1.schema.json
   acceptance_checks:
   - uv run pytest
   - uv run python scripts/verify_contracts.py
@@ -280,6 +284,16 @@ items:
   - provider_storage_verification
   - rollback_assessment
   blocked_by_decisions: []
+  blocking_condition: Local fixture/assertion registry, the sanitized 32-case
+    deterministic-degraded evidence bundle, signed-manifest/trust-root and provider-evidence
+    enforcement, version-bound offline runtime audit, context-contract coverage validation,
+    capability-status cryptographic binding, and rollback assessment are complete;
+    313 database-enabled tests pass.
+    PRIMARY/fallback provider evals,
+    immutable model release pin,
+    verified OpenClaw store:false effective request, dedicated credential, scanned sandbox
+    image digest with scan/SBOM evidence, DEC-006 Security/Privacy approval, provider
+    storage/retention verification, and signed release evidence require external authority/services.
 - id: SECURITY-001
   phase: REAL_SHADOW_READINESS
   title: Identity, privacy, PITR, incident, kill-switch, and release-readiness gates

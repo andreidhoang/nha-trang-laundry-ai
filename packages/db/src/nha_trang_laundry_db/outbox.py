@@ -27,6 +27,7 @@ INTERNAL_EVENT_TYPES: Final = frozenset(
         "inbox.dispatch_requested.v1",
         "message.manual_send_attested.v1",
         "message.manual_send_prepared.v1",
+        "marketing.delivery_held.v1",
         "order.requested.v1",
         "order.state_transitioned.v1",
         "quote.revision_created.v1",

@@ -1,0 +1,9 @@
+{
+  "fixture_id": "fixture:automated_list_price_message_later_found_wrong:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {"channel": "INTERNAL_TEST", "data_classification": "SYNTHETIC"},
+  "database_seed": {"affected_policy_version": "list-price-policy-v1", "affected_capability": "LIST_PRICE_INFO", "error_class": "WRONG_AUTOMATED_FACT"},
+  "provider_events": [{"event_id": "synthetic-correction-notice-001", "received_at": "2026-08-01T03:00:00Z", "normalized_content": "Synthetic automated message correction case."}],
+  "fault_injection": {}
+}

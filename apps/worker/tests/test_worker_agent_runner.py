@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from threading import Event
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import jwt
@@ -15,6 +15,7 @@ from nha_trang_laundry_contracts import (
     AgentDeploymentStage,
     AgentToolOperation,
     ReleaseCapability,
+    VerifiedReleaseAuthorization,
 )
 from nha_trang_laundry_worker.agent_runner import (
     AgentRunJob,
@@ -42,6 +43,19 @@ class RecordingTransport:
         if self.responses:
             return self.responses.pop(0)
         return catalog_response()
+
+
+class NeverCalledProviderRuntime:
+    provider_backed = True
+
+    def invoke(self, invocation: Any, bridge: Any) -> Any:
+        del invocation, bridge
+        raise AssertionError("provider runtime must not be invoked without release authorization")
+
+
+class UnblockedRuntimeRegistry:
+    def release_blockers(self) -> tuple[str, ...]:
+        return ()
 
 
 def now() -> datetime:
@@ -431,6 +445,48 @@ def test_real_customer_and_provider_paths_are_fail_closed() -> None:
         )
     with pytest.raises(AgentRunRejected, match="provider runtime release gates are incomplete"):
         runner.execute(job=job(), runtime=DisabledOpenClawProviderRuntime(), transport=transport)
+
+
+def test_provider_runtime_also_requires_exact_signed_release_authorization() -> None:
+    token_issuer, _ = issuer()
+    runner = AgentRunner(token_issuer)
+    cast(Any, runner)._registry = UnblockedRuntimeRegistry()
+
+    with pytest.raises(AgentRunRejected, match="signed release manifest authorization"):
+        runner.execute(
+            job=job(), runtime=NeverCalledProviderRuntime(), transport=RecordingTransport()
+        )
+
+    current = now()
+    authorization = VerifiedReleaseAuthorization(
+        release_id="release-shadow-001",
+        commit_sha="a" * 40,
+        stage="SHADOW",
+        capability=ReleaseCapability.PUBLIC_FAQ,
+        starts_at=current - timedelta(minutes=1),
+        expires_at=current + timedelta(minutes=1),
+        payload_hash=f"sha256:{'1' * 64}",
+        verified_uris=("evidence/release.json",),
+    )
+    mismatched = AgentRunner(
+        token_issuer,
+        release_authorization=authorization,
+        deployed_commit_sha="a" * 40,
+    )
+    cast(Any, mismatched)._registry = UnblockedRuntimeRegistry()
+    with pytest.raises(AgentRunRejected, match="signed release manifest authorization"):
+        mismatched.execute(
+            job=job(capability=ReleaseCapability.INTERNAL_SHADOW),
+            runtime=NeverCalledProviderRuntime(),
+            transport=RecordingTransport(),
+            now=current,
+        )
+
+
+def test_runner_rejects_partial_release_authorization_configuration() -> None:
+    token_issuer, _ = issuer()
+    with pytest.raises(ValueError, match="configured together"):
+        AgentRunner(token_issuer, deployed_commit_sha="a" * 40)
 
 
 def test_create_binds_new_order_request_for_subsequent_fixed_paths() -> None:

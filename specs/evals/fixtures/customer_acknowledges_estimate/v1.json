@@ -1,0 +1,9 @@
+{
+  "fixture_id": "fixture:customer_acknowledges_estimate:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {"channel": "INTERNAL_TEST", "data_classification": "SYNTHETIC"},
+  "database_seed": {"quantity_kg": "6", "quote_finality": "ESTIMATE", "acknowledged_at": "2026-08-01T03:01:00Z"},
+  "provider_events": [{"event_id": "synthetic-estimate-acknowledgment-001", "received_at": "2026-08-01T03:01:00Z", "normalized_content": "Synthetic estimate acknowledgment."}],
+  "fault_injection": {}
+}

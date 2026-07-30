@@ -1,0 +1,24 @@
+{
+  "fixture_id": "fixture:bound_pillow_without_staff_selection:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {
+    "channel": "INTERNAL_TEST",
+    "data_classification": "SYNTHETIC"
+  },
+  "database_seed": {
+    "service_code": "BED_PILLOW",
+    "quantity": "1",
+    "quantity_basis": "CUSTOMER_ESTIMATE",
+    "unit": "ITEM",
+    "staff_exact_price_selection_vnd": null
+  },
+  "provider_events": [
+    {
+      "event_id": "synthetic-range-no-selection-001",
+      "received_at": "2026-08-01T03:00:00Z",
+      "normalized_content": "Synthetic pillow range request."
+    }
+  ],
+  "fault_injection": {}
+}

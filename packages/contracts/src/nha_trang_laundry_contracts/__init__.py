@@ -7,11 +7,23 @@ from .agent_runner import (
     AgentRunnerClaims,
     operation_is_authorized,
 )
+from .release_manifest import (
+    ReleaseManifestError,
+    ReleaseSignatureAlgorithm,
+    ReleaseSignerFunction,
+    RepositoryArtifactResolver,
+    TrustedReleaseSigner,
+    VerifiedReleaseAuthorization,
+    load_and_verify_release_manifest,
+    load_trusted_release_signers,
+    verify_release_manifest,
+)
 from .runtime_registry import (
     PublicRuntimeRegistry,
     ReleaseCapability,
     RuntimeArtifactError,
     load_public_runtime_registry,
+    verify_openclaw_cli_version,
     verify_public_runtime_artifacts,
 )
 from .tool_registry import (
@@ -35,11 +47,21 @@ __all__ = [
     "AgentToolSideEffect",
     "PublicRuntimeRegistry",
     "ReleaseCapability",
+    "ReleaseManifestError",
+    "ReleaseSignatureAlgorithm",
+    "ReleaseSignerFunction",
+    "RepositoryArtifactResolver",
     "RuntimeArtifactError",
     "ToolArgumentsInvalid",
     "ToolRegistryError",
+    "TrustedReleaseSigner",
+    "VerifiedReleaseAuthorization",
     "load_agent_tool_registry",
+    "load_and_verify_release_manifest",
     "load_public_runtime_registry",
+    "load_trusted_release_signers",
     "operation_is_authorized",
+    "verify_openclaw_cli_version",
     "verify_public_runtime_artifacts",
+    "verify_release_manifest",
 ]

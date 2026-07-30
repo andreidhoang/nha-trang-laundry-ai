@@ -1,0 +1,25 @@
+{
+  "fixture_id": "fixture:bound_request_missing_promotion_event:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {
+    "channel": "INTERNAL_TEST",
+    "data_classification": "SYNTHETIC"
+  },
+  "database_seed": {
+    "service_code": "STANDARD_WASH_DRY",
+    "quantity": "6",
+    "quantity_basis": "CUSTOMER_ESTIMATE",
+    "unit": "KG",
+    "promotion_eligibility_event": null,
+    "promotion_eligibility_at": null
+  },
+  "provider_events": [
+    {
+      "event_id": "synthetic-promotion-unresolved-event-001",
+      "received_at": "2026-08-01T03:00:00Z",
+      "normalized_content": "Synthetic unresolved promotion event."
+    }
+  ],
+  "fault_injection": {}
+}

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "evidence_type": "OPENCLAW_OFFLINE_NON_RELEASE",
+  "captured_at": "2026-07-29T16:23:39.324821Z",
+  "command": "uv run python scripts/verify_agent_runtime.py",
+  "release_effect": "NONE",
+  "provider_request_executed": false,
+  "artifact_hashes": {
+    "runtime/model-registry-v1.yaml": "sha256:ecbb35fc67ea3e1e087b44e69f843f02a972dffe0ebb48ad14591b1f010fdee7",
+    "runtime/openclaw/public-cell/openclaw.json5": "sha256:c9360090d11a11b6ab688d644ac029de55bc6328325ec2173ae79044a03df1bc",
+    "runtime/openclaw/public-cell/plugin-inventory-v1.json": "sha256:2f2ec0faf8f9e5d5553a29048ef8093d909caac51acbc1408eb046e86adffdde",
+    "runtime/openclaw/public-cell/plugin/package-lock.json": "sha256:31008417ab0d0e0db400bd354a5a7d6c57ff7bc6d61ed59260fdeb6d3ca0bac3",
+    "evidence/provider/openai-data-controls-review-v1.yaml": "sha256:d6d3f83baf63c466655744df89b2e6dd45870412eae365f403e02bfb16106277",
+    "specs/contracts/capability-status-v1.schema.json": "sha256:b2e3c7127f134e95dff224f69045c33a2d229cb5110d6cfd9bdb4dacf7542881",
+    "specs/contracts/container-scan-evidence-v1.schema.json": "sha256:385717e92dd1c024e811fa28f719f835884ffb92ab7b0df9122324ff0f2f1a44",
+    "specs/contracts/provider-data-evidence-v1.schema.json": "sha256:d05413194bd1508681b790a5d0e41f65c44367c5631a480384ff84e1c326fd99",
+    "scripts/verify_agent_runtime.py": "sha256:c65dfd59a2350de66361c72ad5f56083bf9d271befa85c30ad56d42e520daf5d",
+    "scripts/capture_openclaw_offline_evidence.py": "sha256:8c000eb488884fbadccf6006de00a5aeb76b280050177498eb12c268322936cf"
+  },
+  "result": {
+    "status": "EVAL_ONLY_VERIFIED",
+    "openclaw_version": "2026.7.1-2",
+    "openclaw_build_revision": "0790d9f",
+    "tool_count": 10,
+    "artifact_count": 12,
+    "security_audit_critical": 0,
+    "release_blockers": [
+      "IMMUTABLE_MODEL_RELEASE_NOT_VERIFIED",
+      "OPENCLAW_STORE_FALSE_ROUTE_NOT_VERIFIED",
+      "SANDBOX_IMAGE_NOT_VERIFIED",
+      "EFFECTIVE_PROVIDER_REQUEST_NOT_VERIFIED",
+      "SECURITY_PROVIDER_DATA_APPROVAL_MISSING",
+      "PRIVACY_PROVIDER_DATA_APPROVAL_MISSING",
+      "DEDICATED_PROVIDER_CREDENTIAL_NOT_VERIFIED",
+      "REAL_CUSTOMER_DATA_DISABLED",
+      "CANDIDATE_IS_EVAL_ONLY"
+    ],
+    "real_customer_data_allowed": false
+  }
+}

@@ -1,9 +1,9 @@
 schema_version: 1
 manifest_id: laundry-agent-evals-v1
 manifest_version: 1.0.0
-status: IMPLEMENTATION_BASELINE
+status: LOCAL_SYNTHETIC_IMPLEMENTED_NON_RELEASE
 release_eligible: false
-execution_state: CONTRACT_AND_TOOL_ESCAPE_RUNNER_IMPLEMENTED_INTEGRATED_PATH_NOT_RUN
+execution_state: LOCAL_SYNTHETIC_32_CASE_DEGRADED_COMPLETE_INTEGRATED_PROVIDER_PATH_NOT_RUN
 locale: vi-VN
 timezone: Asia/Ho_Chi_Minh
 normative_contracts:
@@ -15,7 +15,7 @@ normative_contracts:
   assertion_registry: assertion-registry-v1.json
 runner:
   command: uv run --package nha-trang-laundry-evals python -m nha_trang_laundry_evals.runner --manifest specs/evals/eval-manifest-v1.yaml
-  implementation_status: CONTRACT_VALIDATION_AND_TOOL_ESCAPE_IMPLEMENTED
+  implementation_status: LOCAL_SYNTHETIC_32_CASE_DEGRADED_IMPLEMENTED_NON_RELEASE
   required_runtime_paths:
     - PRIMARY
     - FALLBACK
@@ -95,8 +95,6 @@ actual_dataset_inventory:
   PRODUCTION_REPLAY: 0
   SYNTHETIC_COMBINATORIAL: 0
 release_blockers:
-  - FIXTURE_PAYLOADS_NOT_IMPLEMENTED
-  - ASSERTION_GRADERS_NOT_IMPLEMENTED
   - REQUIRED_DATASET_MINIMA_NOT_MET
   - PRIMARY_PROVIDER_RESULTS_MISSING
   - FALLBACK_AND_DEGRADED_PATH_RESULTS_MISSING

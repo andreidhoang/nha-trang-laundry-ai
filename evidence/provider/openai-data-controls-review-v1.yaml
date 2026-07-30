@@ -1,6 +1,6 @@
 schema_version: 1
 evidence_id: OPENAI-DATA-CONTROLS-REVIEW-2026-07-28
-recorded_at: 2026-07-28T00:00:00Z
+recorded_at: "2026-07-28T00:00:00Z"
 scope:
   provider: openai
   api: Responses

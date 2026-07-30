@@ -1,0 +1,9 @@
+{
+  "fixture_id": "fixture:bound_verified_distance_2km_6kg:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {"channel": "INTERNAL_TEST", "data_classification": "SYNTHETIC"},
+  "database_seed": {"verified_distance_m": 2000, "planned_transport_weight_kg": "6", "fulfillment_mode": "PICKUP_AND_RETURN"},
+  "provider_events": [{"event_id": "synthetic-delivery-2km-001", "received_at": "2026-08-01T03:00:00Z", "normalized_content": "Synthetic 2km delivery."}],
+  "fault_injection": {}
+}

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from jsonschema import Draft202012Validator
 from nha_trang_laundry_contracts import (
     load_agent_tool_registry,
     load_public_runtime_registry,
@@ -17,9 +18,13 @@ from nha_trang_laundry_contracts import (
 
 ROOT = Path(__file__).resolve().parents[1]
 JSON_CONTRACTS = (
+    "specs/contracts/capability-status-v1.schema.json",
     "specs/contracts/canonical-enums-v1.json",
+    "specs/contracts/container-scan-evidence-v1.schema.json",
     "specs/contracts/pricebook-import-manifest-v1.json",
+    "specs/contracts/provider-data-evidence-v1.schema.json",
     "specs/contracts/release-gate-manifest-v1.schema.json",
+    "specs/contracts/trusted-release-signers-v1.schema.json",
     "specs/evals/assertion-registry-v1.json",
     "specs/evals/eval-case-v1.schema.json",
     "specs/evals/eval-result-v1.schema.json",
@@ -91,6 +96,31 @@ def validate_pricebook_manifest() -> None:
         raise ValueError("Pricebook source row count drifted from its import manifest")
 
 
+def validate_release_gate_schema() -> None:
+    schema = load_json("specs/contracts/release-gate-manifest-v1.schema.json")
+    Draft202012Validator.check_schema(schema)
+    signer_schema = load_json("specs/contracts/trusted-release-signers-v1.schema.json")
+    Draft202012Validator.check_schema(signer_schema)
+    provider_schema = load_json("specs/contracts/provider-data-evidence-v1.schema.json")
+    Draft202012Validator.check_schema(provider_schema)
+    container_schema = load_json("specs/contracts/container-scan-evidence-v1.schema.json")
+    Draft202012Validator.check_schema(container_schema)
+    capability_schema = load_json("specs/contracts/capability-status-v1.schema.json")
+    Draft202012Validator.check_schema(capability_schema)
+    capability_status = load_yaml("delivery/CAPABILITY_STATUS.yaml")
+    errors = sorted(
+        Draft202012Validator(capability_schema).iter_errors(capability_status),
+        key=lambda error: list(error.path),
+    )
+    if errors:
+        details = "; ".join(error.message for error in errors)
+        raise ValueError(f"Capability status violates schema: {details}")
+    release_capabilities = schema["properties"]["capability"]["enum"]
+    status_capabilities = capability_schema["$defs"]["CapabilityId"]["enum"]
+    if status_capabilities != release_capabilities:
+        raise ValueError("Capability status IDs drifted from the release-gate contract")
+
+
 def main() -> None:
     for contract in JSON_CONTRACTS:
         load_json(contract)
@@ -98,6 +128,7 @@ def main() -> None:
         load_yaml(contract)
     validate_enum_parity()
     validate_pricebook_manifest()
+    validate_release_gate_schema()
     load_agent_tool_registry(ROOT / "specs/contracts/agent-tools-v1.openapi.yaml")
     runtime_registry = load_public_runtime_registry(ROOT / "runtime/model-registry-v1.yaml")
     runtime_artifacts = verify_public_runtime_artifacts(ROOT, runtime_registry)

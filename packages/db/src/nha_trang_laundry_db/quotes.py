@@ -101,10 +101,11 @@ class QuoteRepository:
                     net_service_subtotal_min_vnd, net_service_subtotal_max_vnd,
                     delivery_fee_vnd, approved_surcharge_vnd,
                     display_total_min_vnd, display_total_max_vnd, approval_id,
-                    priced_at, valid_until, created_by, created_at
+                    priced_at, valid_until, customer_estimate_acknowledged_at,
+                    created_by, created_at
                 ) VALUES (
                     %s, %s, %s, %s, %s::jsonb, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -129,6 +130,7 @@ class QuoteRepository:
                     data.approval_id,
                     data.priced_at,
                     data.valid_until,
+                    data.customer_estimate_acknowledged_at,
                     command.created_by,
                     occurred_at,
                 ),

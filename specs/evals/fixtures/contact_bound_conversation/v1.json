@@ -1,0 +1,9 @@
+{
+  "fixture_id": "fixture:contact_bound_conversation:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {"channel": "INTERNAL_TEST", "data_classification": "SYNTHETIC", "store_id": "00000000-0000-4000-8000-000000000201", "contact_binding_id": "00000000-0000-4000-8000-000000000202", "conversation_binding_id": "00000000-0000-4000-8000-000000000203"},
+  "database_seed": {"initial_service_text": "Synthetic standard wash request."},
+  "provider_events": [{"event_id": "synthetic-bound-intake-001", "received_at": "2026-08-01T03:00:00Z", "normalized_content": "Synthetic bound intake request."}],
+  "fault_injection": {}
+}

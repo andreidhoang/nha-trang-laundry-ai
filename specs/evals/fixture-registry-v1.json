@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "registry_version": "1.0.0",
-  "status": "PARTIALLY_IMPLEMENTED_SYNTHETIC",
+  "status": "IMPLEMENTED_SYNTHETIC_NON_RELEASE",
   "required_bundle_contract": {
     "format": "JSON",
     "canonicalization": "RFC8785_JCS",
@@ -21,10 +21,10 @@
     {
       "fixture_id": "fixture:active_marketing_consent:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "active_marketing_consent",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/active_marketing_consent/v1.json",
+      "payload_sha256": "sha256:2ba6982d32eebca6376b30f1ae6267b5ab0dc5ccdf8023cdbdb8a78635adc610"
     },
     {
       "fixture_id": "fixture:approved_message_then_content_edited:v1",
@@ -45,10 +45,10 @@
     {
       "fixture_id": "fixture:automated_list_price_message_later_found_wrong:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "automated_list_price_message_later_found_wrong",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/automated_list_price_message_later_found_wrong/v1.json",
+      "payload_sha256": "sha256:13b93f358f705e3fecf1e8d912d410d82f86e8e1841f462ac3f4fbcab658e45a"
     },
     {
       "fixture_id": "fixture:bound_clean_request:v1",
@@ -61,154 +61,154 @@
     {
       "fixture_id": "fixture:bound_completed_order_for_same_contact:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_completed_order_for_same_contact",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_completed_order_for_same_contact/v1.json",
+      "payload_sha256": "sha256:15fb7aae7b502fd31fbce3d57e3fcfc2e3bb722ddc4955d1c334f97a8ce4974a"
     },
     {
       "fixture_id": "fixture:bound_customer_estimate_0_6kg:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_customer_estimate_0_6kg",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_customer_estimate_0_6kg/v1.json",
+      "payload_sha256": "sha256:c98a1003ad4808f8aaed3fae5081ebd64ab28d18a3e60f6021c8c9d492eb4598"
     },
     {
       "fixture_id": "fixture:bound_customer_estimate_5_9kg:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_customer_estimate_5_9kg",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_customer_estimate_5_9kg/v1.json",
+      "payload_sha256": "sha256:b9ec3d852332211b533eefcb8efa8a8a3875d7ff136110a44e8697cf3e6ef95c"
     },
     {
       "fixture_id": "fixture:bound_customer_estimate_6kg:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_customer_estimate_6kg",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_customer_estimate_6kg/v1.json",
+      "payload_sha256": "sha256:239b808e10e71f88c6802cd287e002e45052ec6cc678afef3b7d1e52150852bc"
     },
     {
       "fixture_id": "fixture:bound_pillow_without_staff_selection:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_pillow_without_staff_selection",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_pillow_without_staff_selection/v1.json",
+      "payload_sha256": "sha256:0b7d10bc41d62db6b70db4e26fb69b29d0c4e98009dcd558832df79d8ae8f9db"
     },
     {
       "fixture_id": "fixture:bound_request_missing_promotion_event:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_request_missing_promotion_event",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_request_missing_promotion_event/v1.json",
+      "payload_sha256": "sha256:76a9a54c1f94c94141daf7ebe5f6301dba41d2918990147ff92eab0267cf1a3b"
     },
     {
       "fixture_id": "fixture:bound_sheet_washing_request:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_sheet_washing_request",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_sheet_washing_request/v1.json",
+      "payload_sha256": "sha256:77c421ebd28b5cead2ff5e638b6d636782c77551ec0fcd317ff21f25fcfa054a"
     },
     {
       "fixture_id": "fixture:bound_standard_order_capacity_unknown:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_standard_order_capacity_unknown",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_standard_order_capacity_unknown/v1.json",
+      "payload_sha256": "sha256:ae990cc994be280c8c48bc36be05b84914587049c0f452f88b1a0fd81ad106bc"
     },
     {
       "fixture_id": "fixture:bound_verified_distance_2km_6kg:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_verified_distance_2km_6kg",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_verified_distance_2km_6kg/v1.json",
+      "payload_sha256": "sha256:8bc093a2c66731ba666eb9c7eded575af879d6b619faad92c280dbb9fc3b0daf"
     },
     {
       "fixture_id": "fixture:bound_verified_distance_5km_20kg:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_verified_distance_5km_20kg",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_verified_distance_5km_20kg/v1.json",
+      "payload_sha256": "sha256:16c6b4fa0bf468add2988a082ca86191bdd39847b257291be61f005cff4677fb"
     },
     {
       "fixture_id": "fixture:bound_verified_distance_5km_6_1kg:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_verified_distance_5km_6_1kg",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_verified_distance_5km_6_1kg/v1.json",
+      "payload_sha256": "sha256:1ba2d162afddcdce4aa0328c41d3692f19eb48d6204302aa74db6918b23bd070"
     },
     {
       "fixture_id": "fixture:bound_verified_distance_6_001km:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "bound_verified_distance_6_001km",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/bound_verified_distance_6_001km/v1.json",
+      "payload_sha256": "sha256:08349d4c7817b8ecb528cbcc2df44086d765e74eda51dd8436575a4b7b4c42f6"
     },
     {
       "fixture_id": "fixture:contact_bound_conversation:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "contact_bound_conversation",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/contact_bound_conversation/v1.json",
+      "payload_sha256": "sha256:9de83a99d7f62fca673dd1945fe3af59ee8c1bcee81244626503f1a18acf97ba"
     },
     {
       "fixture_id": "fixture:current_published_standard_wash_list_price:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "current_published_standard_wash_list_price",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/current_published_standard_wash_list_price/v1.json",
+      "payload_sha256": "sha256:e86e338ed92a5d95249ab6fc2c223785963cb27c330287262144581488ed054a"
     },
     {
       "fixture_id": "fixture:customer_acknowledges_estimate:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "customer_acknowledges_estimate",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/customer_acknowledges_estimate/v1.json",
+      "payload_sha256": "sha256:444f118b16c84017eab444ae9784db8a01253a47dc6dc9d7f49afc15ecbb0d9f"
     },
     {
       "fixture_id": "fixture:exact_quote_with_tax_treatment_unverified:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "exact_quote_with_tax_treatment_unverified",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/exact_quote_with_tax_treatment_unverified/v1.json",
+      "payload_sha256": "sha256:1a51774da6132a8add74f2f9957891c52230904b91bce633fedc7e85e25e53b2"
     },
     {
       "fixture_id": "fixture:feature_flag_store_unavailable:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "feature_flag_store_unavailable",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/feature_flag_store_unavailable/v1.json",
+      "payload_sha256": "sha256:a7b39e69d26c0277d0717ffe6a5f873144d4b5b0e3ac6681afd6378740dd9299"
     },
     {
       "fixture_id": "fixture:final_measurement_changes_19_9_to_20kg:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "final_measurement_changes_19_9_to_20kg",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/final_measurement_changes_19_9_to_20kg/v1.json",
+      "payload_sha256": "sha256:db76315e519b75be30adea3b3b6f2320b98ddc28579f37c0c206d3c952180c8f"
     },
     {
       "fixture_id": "fixture:inject_audit_insert_failure:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "inject_audit_insert_failure",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/inject_audit_insert_failure/v1.json",
+      "payload_sha256": "sha256:717f7c1dac3cce651d51a8c7347d6e49cbc85b71c0b78c6e1cb1ec9124c9b611"
     },
     {
       "fixture_id": "fixture:manual_send_attestation_exists_then_worker_claim:v1",
@@ -221,10 +221,10 @@
     {
       "fixture_id": "fixture:marketing_outbox_claim_in_progress:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "marketing_outbox_claim_in_progress",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/marketing_outbox_claim_in_progress/v1.json",
+      "payload_sha256": "sha256:be09cb636af02c5d70c045ba86d43c8e11a069505b1010e876a5512705e3ecff"
     },
     {
       "fixture_id": "fixture:model_wall_clock_exceeds_20_seconds:v1",
@@ -237,10 +237,10 @@
     {
       "fixture_id": "fixture:outbound_disabled_after_draft_before_worker_send:v1",
       "version": 1,
-      "status": "PAYLOAD_NOT_IMPLEMENTED",
+      "status": "IMPLEMENTED",
       "description": "outbound_disabled_after_draft_before_worker_send",
-      "payload_path": null,
-      "payload_sha256": null
+      "payload_path": "fixtures/outbound_disabled_after_draft_before_worker_send/v1.json",
+      "payload_sha256": "sha256:9009b37a1c3842bb98219d2f392f17a9cdce13c3a259d10a63f9c43a131a1ab8"
     },
     {
       "fixture_id": "fixture:valid_code_owned_by_other_contact:v1",

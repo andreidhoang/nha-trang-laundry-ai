@@ -1,6 +1,7 @@
 schema_version: 1
-last_updated: 2026-07-28
+last_updated: '2026-07-29'
 project_stage: DOMAIN_CORE_ACTIVE
+default_authorization: NOT_AUTHORIZED
 capabilities:
   - id: INTERNAL_SHADOW
     stage: MANUAL_TRUTH
@@ -19,10 +20,18 @@ capabilities:
       required: 0
     kill_switch_drill: NOT_RUN
     release_manifest: null
+    trusted_signers: null
     blockers:
-      - AGENT-001 local controls are partially implemented: fixed-tool, timeout, IDOR, approval-edit, and manual/worker-exclusion preflights exist; in-flight kill-switch, stale-flag, STOP-race, audit-failure, generic-unavailable, and broader P0 paths remain incomplete.
+      - AGENT-001 local fixture and assertion registries are complete, including fixed-tool, authorization/reliability, quote lifecycle, tax/capacity, personalized-price, correction, incident, list-price, and bound-intake preflights. These are synthetic local checks only.
+      - The hash-pinned local evidence bundle covers all 32 manifest cases as DETERMINISTIC_DEGRADED SKIP results, and a forward-only rollback assessment exists; neither is PRIMARY-provider or release evidence.
+      - Signed release-manifest validation and exact Runner authorization binding are implemented locally; no signed release manifest or external approval has been supplied.
+      - Capability status and reporting cryptographically revalidate any AUTHORIZED entry against its exact deployment envelope and reject stale authority metadata while NOT_AUTHORIZED.
+      - Checksum-pinned public-key trust-root loading and sanitized candidate verification tooling are implemented; the approved signer registry, its deployment pin, and signatures remain externally supplied.
       - Local synthetic results are non-release SKIP records; required PRIMARY, fallback, degraded-path provider evaluations and dataset minima remain incomplete.
       - Exact immutable model release, OpenClaw store:false route, effective provider-request storage verification, dedicated credential verification, and Security/Privacy approval remain unresolved.
+      - The current incomplete provider data-control review is schema-valid and hash-pinned into the runtime registry; registry status cannot advance beyond that evidence without failing artifact verification.
+      - Version-bound OpenClaw config/plugin/security/npm verification passes locally with zero critical audit findings; its captured artifact is offline non-release evidence and made no provider request.
+      - The OpenClaw sandbox image is typed and structurally cross-checked against JSON5 config, but its digest is still a placeholder and no schema-valid scan evidence or hash-pinned SBOM has been supplied.
       - Model-provider data use and retention decision DEC-006 is open; real customer processing remains disabled.
   - id: PUBLIC_FAQ
     stage: MANUAL_TRUTH
@@ -41,6 +50,7 @@ capabilities:
       required: 14
     kill_switch_drill: NOT_RUN
     release_manifest: null
+    trusted_signers: null
     blockers:
       - No official channel, public host, corpus release, or Shadow evidence exists.
   - id: LIST_PRICE_INFO
@@ -60,6 +70,7 @@ capabilities:
       required: 14
     kill_switch_drill: NOT_RUN
     release_manifest: null
+    trusted_signers: null
     blockers:
       - Deterministic list-price rendering, published disclosure policy, official channel, isolated public cell, and G1/G2 evidence are absent.
       - Official channel DEC-005 and model-provider data decision DEC-006 are open.

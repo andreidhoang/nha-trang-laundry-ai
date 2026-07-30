@@ -1,0 +1,9 @@
+{
+  "fixture_id": "fixture:final_measurement_changes_19_9_to_20kg:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {"channel": "INTERNAL_TEST", "data_classification": "SYNTHETIC"},
+  "database_seed": {"prior_quantity_kg": "19.9", "staff_measurement_kg": "20", "verified_distance_m": 5000, "prior_delivery_approval": "APPROVED"},
+  "provider_events": [{"event_id": "synthetic-measurement-vehicle-change-001", "received_at": "2026-08-01T03:00:00Z", "normalized_content": "Synthetic measurement change."}],
+  "fault_injection": {}
+}

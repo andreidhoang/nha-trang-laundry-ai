@@ -1,0 +1,56 @@
+schema_version: 1
+evidence_id: AGENT-SHADOW-ROLLBACK-ASSESSMENT-V1
+recorded_at: 2026-07-29T00:00:00Z
+status: REVIEWABLE_LOCAL_ASSESSMENT_NOT_RELEASE_EVIDENCE
+scope:
+  work_item: AGENT-001
+  capabilities:
+    - INTERNAL_SHADOW
+    - PUBLIC_FAQ
+    - LIST_PRICE_INFO
+  migrations:
+    first: 0009_agent_run_ledger.sql
+    last: 0015_order_request_drafts.sql
+preconditions:
+  - All customer-facing capability authorizations remain NOT_AUTHORIZED.
+  - Public ingress, real-customer model calls, automatic sends, and direct provider sends remain disabled.
+  - No rollback may rewrite an applied migration or mutate append-only domain, audit, approval, send, or idempotency history.
+containment_sequence:
+  - Set every affected automation execution gate to disabled and allow no expired or missing gate to fail open.
+  - Stop agent-run claims and hold pending automated execution envelopes before changing application code.
+  - Revoke the short-lived Runner bridge and provider credential independently; preserve deterministic manual operation only when authorized.
+  - Keep provider message-send event types outside the internal outbox worker allowlist.
+application_rollback:
+  strategy: Deploy the last known-compatible application/runtime artifact while all affected capabilities remain disabled.
+  compatibility: New nullable evidence fields and additive tables remain in place; older application code must ignore them safely.
+  prohibited_actions:
+    - Drop incident, correction, order-request, quote-acknowledgment, execution-gate, agent-run, or tool-call records.
+    - Reuse an approval, idempotency key, manual-send attestation, or automated execution claim.
+    - Relabel deterministic-degraded synthetic results as PRIMARY, fallback, release-passing, or signed gate evidence.
+database_rollback:
+  strategy: Forward-fix only.
+  required_actions:
+    - Preserve checksums for migrations 0009 through 0015.
+    - Add a new migration for any schema correction after stopping affected writers.
+    - Reconcile domain events, audit events, outbox events, approval state, and idempotency results before resuming claims.
+runtime_rollback:
+  strategy: Rebuild the isolated public cell from a pinned, scanned image and verified configuration hashes.
+  required_actions:
+    - Keep browser, shell, filesystem, messaging, generic MCP, subagent, and direct-send tools denied.
+    - Verify the fixed ten-tool allowlist and server-owned identifier bindings before any non-production canary.
+    - Do not enable real-customer calls until immutable model and effective store:false evidence are approved.
+verification_after_rollback:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  - uv run python scripts/report_delivery_status.py
+release_effect: NONE
+unresolved_external_requirements:
+  - Immutable provider model release is not selected or verified.
+  - Effective OpenClaw Responses request with store:false is not captured or verified.
+  - Dedicated service credential and provider storage/retention behavior are not verified.
+  - DEC-006 Security and Privacy approvals remain open.
+  - PRIMARY and fallback provider evaluations and signed release-gate evidence are absent.

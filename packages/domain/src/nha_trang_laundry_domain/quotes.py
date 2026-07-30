@@ -141,6 +141,7 @@ class QuoteRevisionData:
     approval_id: UUID | None
     tax_treatment: str = "UNVERIFIED"
     tax_vnd: None = None
+    customer_estimate_acknowledged_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -472,6 +473,13 @@ def _validate_finality(data: QuoteRevisionData) -> None:
         data.status is QuoteRevisionStatus.ACCEPTED_FINAL or data.approval_id is not None
     ):
         raise QuoteSnapshotError("estimate cannot become approved final")
+    acknowledged = data.customer_estimate_acknowledged_at
+    if (data.status is QuoteRevisionStatus.ACKNOWLEDGED_ESTIMATE) != (acknowledged is not None):
+        raise QuoteSnapshotError("estimate acknowledgment status requires timestamp evidence")
+    if acknowledged is not None:
+        _aware(acknowledged)
+        if data.finality is not QuoteFinality.ESTIMATE or acknowledged < data.priced_at:
+            raise QuoteSnapshotError("estimate acknowledgment evidence is invalid")
     if data.finality is QuoteFinality.APPROVED_EXACT and (
         not isinstance(data.approval_id, UUID)
         or data.required_approvals

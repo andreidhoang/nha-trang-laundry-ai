@@ -1,0 +1,23 @@
+{
+  "fixture_id": "fixture:bound_customer_estimate_6kg:v1",
+  "version": 1,
+  "clock": "2026-07-27T03:00:00Z",
+  "authenticated_context": {
+    "channel": "INTERNAL_TEST",
+    "data_classification": "SYNTHETIC"
+  },
+  "database_seed": {
+    "service_code": "STANDARD_WASH_DRY",
+    "quantity": "6",
+    "quantity_basis": "CUSTOMER_ESTIMATE",
+    "unit": "KG"
+  },
+  "provider_events": [
+    {
+      "event_id": "synthetic-price-boundary-6-0-001",
+      "received_at": "2026-07-27T03:00:00Z",
+      "normalized_content": "Synthetic 6kg estimate."
+    }
+  ],
+  "fault_injection": {}
+}

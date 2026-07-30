@@ -1,0 +1,23 @@
+{
+  "fixture_id": "fixture:bound_sheet_washing_request:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {
+    "channel": "INTERNAL_TEST",
+    "data_classification": "SYNTHETIC"
+  },
+  "database_seed": {
+    "candidate_query": "giặt ga giường",
+    "confirmed_service_code": null,
+    "quantity": null,
+    "unit": null
+  },
+  "provider_events": [
+    {
+      "event_id": "synthetic-sheet-no-invented-price-001",
+      "received_at": "2026-08-01T03:00:00Z",
+      "normalized_content": "Synthetic sheet washing request."
+    }
+  ],
+  "fault_injection": {}
+}

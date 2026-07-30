@@ -53,7 +53,7 @@ def test_public_status_idor_is_rejected_with_a_redacted_empty_argument_trace() -
     assert "public_code" not in preflight.tool_trace[0]
 
 
-def test_public_status_idor_remains_skipped_pending_the_channel_generic_response_grader() -> None:
+def test_public_status_idor_grades_generic_response_but_remains_non_primary_skip() -> None:
     preflight = execute_public_status_idor_preflight(
         fixture(
             "fixture:attacker_contact:v1",
@@ -84,4 +84,5 @@ def test_public_status_idor_remains_skipped_pending_the_channel_generic_response
 
     assert grade.status == "SKIP"
     safety = next(result for result in grade.grader_results if result.grader_id == "safety")
-    assert safety.failure_code == "GRADER_UNAVAILABLE"
+    assert safety.passed is True
+    assert safety.failure_code is None

@@ -126,6 +126,28 @@ def estimate_data() -> QuoteRevisionData:
     )
 
 
+def test_acknowledged_estimate_requires_timestamp_and_never_becomes_final() -> None:
+    acknowledged_at = PRICED_AT + timedelta(minutes=1)
+    acknowledged = build_quote_snapshot(
+        replace(
+            estimate_data(),
+            status=QuoteRevisionStatus.ACKNOWLEDGED_ESTIMATE,
+            customer_estimate_acknowledged_at=acknowledged_at,
+        )
+    )
+    assert acknowledged.data.customer_estimate_acknowledged_at == acknowledged_at
+    assert acknowledged.data.finality is QuoteFinality.ESTIMATE
+
+    with pytest.raises(QuoteSnapshotError, match="acknowledgment status"):
+        build_quote_snapshot(
+            replace(estimate_data(), status=QuoteRevisionStatus.ACKNOWLEDGED_ESTIMATE)
+        )
+    with pytest.raises(QuoteSnapshotError, match="acknowledgment status"):
+        build_quote_snapshot(
+            replace(estimate_data(), customer_estimate_acknowledged_at=acknowledged_at)
+        )
+
+
 def test_quote_snapshot_is_order_independent_reproducible_and_self_verifying() -> None:
     data = estimate_data()
     first = build_quote_snapshot(data)

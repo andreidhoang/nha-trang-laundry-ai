@@ -43,6 +43,9 @@ domains:
     contracts:
       - specs/contracts/agent-tools-v1.openapi.yaml
       - specs/contracts/release-gate-manifest-v1.schema.json
+      - specs/contracts/capability-status-v1.schema.json
+      - specs/contracts/provider-data-evidence-v1.schema.json
+      - specs/contracts/container-scan-evidence-v1.schema.json
       - delivery/GATE_REGISTRY.yaml
     prohibitions:
       - Public OpenClaw is a reasoning runtime, never the business or security authority.
@@ -53,6 +56,7 @@ domains:
       - specs/DOMAIN_DATA_API_SPEC_V1.md
       - specs/ENGINEERING_SPEC_V1.md
       - PRICEBOOK_V1.md
+      - templates/services-pricebook.csv
     contracts:
       - specs/contracts/canonical-enums-v1.json
       - specs/contracts/pricebook-import-manifest-v1.json
@@ -107,5 +111,9 @@ domains:
     contracts:
       - specs/evals/eval-manifest-v1.yaml
       - specs/contracts/release-gate-manifest-v1.schema.json
+      - specs/contracts/capability-status-v1.schema.json
+      - specs/contracts/trusted-release-signers-v1.schema.json
+      - specs/contracts/provider-data-evidence-v1.schema.json
+      - specs/contracts/container-scan-evidence-v1.schema.json
     prohibitions:
       - No release is authorized without a valid, signed, unexpired evidence manifest.

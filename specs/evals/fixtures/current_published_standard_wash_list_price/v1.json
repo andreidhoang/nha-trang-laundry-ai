@@ -1,0 +1,9 @@
+{
+  "fixture_id": "fixture:current_published_standard_wash_list_price:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {"channel": "INTERNAL_TEST", "data_classification": "SYNTHETIC"},
+  "database_seed": {"service_code": "STANDARD_WASH_DRY", "publication_status": "PUBLISHED", "template_kind": "LIST_PRICE_INFO"},
+  "provider_events": [{"event_id": "synthetic-list-price-assisted-001", "received_at": "2026-08-01T03:00:00Z", "normalized_content": "Synthetic published list-price question."}],
+  "fault_injection": {}
+}

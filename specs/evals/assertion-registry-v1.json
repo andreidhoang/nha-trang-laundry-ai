@@ -1,84 +1,84 @@
 {
   "schema_version": 1,
   "registry_version": "1.0.0",
-  "status": "PARTIALLY_EXECUTABLE_SYNTHETIC",
+  "status": "IMPLEMENTED_SYNTHETIC_NON_RELEASE",
   "assertions": [
     {
       "assertion_id": "ASSERT_07F3240B5647192E",
       "description": "estimate_disclosure_present",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_08EB2F12ED5A9D6E",
       "description": "no promised_ready_at_store created",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_0EBEED9799C33357",
       "description": "no global flag overrides disabled capability",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_0EC6B1E02B292E44",
       "description": "display_total_vnd == 17500",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_0F17C3F4B4B4B0AC",
       "description": "remedy_decided == false",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_0F1EFE6042E87FDD",
       "description": "no provider send attempt after suppression commit",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_103C6F33CB68166F",
       "description": "finality == ESTIMATE",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_103C92043CC1F076",
       "description": "list_service_subtotal_vnd == 147500",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_1077DD73B62FB035",
       "description": "response_shape == generic_unavailable",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_1364154901F8CB6D",
       "description": "discount_amount_vnd == 36000",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_15C73B10FCE65AF9",
       "description": "commercial_order_not_activated",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_1754ECA0D3447628",
       "description": "list_service_subtotal_vnd == 25000",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_1B5BC58C471C270B",
       "description": "no commercial order exists",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -96,13 +96,13 @@
     {
       "assertion_id": "ASSERT_2C4A08E08C610B39",
       "description": "slot_confirmed == false",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_31D7E5EA1D1883DD",
       "description": "customer_estimate_acknowledged_at is not null",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -114,7 +114,7 @@
     {
       "assertion_id": "ASSERT_3796949284505FE1",
       "description": "reason_or_obligation contains DELIVERY_FEE_REQUIRES_HUMAN",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -126,43 +126,43 @@
     {
       "assertion_id": "ASSERT_3C848C4C82F09CF4",
       "description": "new quote revision created",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_4094D60FB3416AA6",
       "description": "TAX_TREATMENT_UNVERIFIED obligation present",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_4162B28467EA1D00",
       "description": "bounded finalization blocked",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_4356C90B5FCD4B95",
       "description": "selected_service_code != DRY_BEDDING",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_46739EB70578435E",
       "description": "promotion_eligibility_event is null",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_489D63B68B7E3B66",
       "description": "error_or_reason contains RANGE_PRICE_REQUIRES_HUMAN",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_4D1725E85F0C0F5C",
       "description": "automation defaults off",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -180,13 +180,13 @@
     {
       "assertion_id": "ASSERT_53A4500F6420D84A",
       "description": "approval snapshot binds exact rendered hash",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_550C92EA0CD57A6C",
       "description": "customer_final_quote_accepted_at is null",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -198,19 +198,19 @@
     {
       "assertion_id": "ASSERT_5C27FB438C136323",
       "description": "domain event rolled back",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_5DAD914F801836EB",
       "description": "promotion_eligibility_at is null",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_635D3AF4C8D41C73",
       "description": "order request contact/conversation/store are server-derived",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -222,31 +222,31 @@
     {
       "assertion_id": "ASSERT_701C4AC98D18DFC5",
       "description": "invoice automation blocked",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_74F765F05480796A",
       "description": "final send authorization denied",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_762236CC74577447",
       "description": "incident linked to affected message and policy version",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_764C64CB95D1452D",
       "description": "required_approval == SLOT_CONFIRMATION",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_76FA56700F61D1E9",
       "description": "discount_amount_vnd == 0",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -258,49 +258,49 @@
     {
       "assertion_id": "ASSERT_7BB6FB89FD5CCEAD",
       "description": "affected_contact_scope_computed",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_7DB13EDB190AE97D",
       "description": "list_service_subtotal_vnd == 120000",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_823B0B30D498E01B",
       "description": "personalized monetary output not auto-sent",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_8C820C34A5FDA599",
       "description": "billable_quantity_kg == \"1\"",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_8D6B83536D4E829D",
       "description": "automation capability disabled pending review",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_8FC969DA64FB1757",
       "description": "no personalized subtotal_or_total",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_92DD665E4FDC9302",
       "description": "business mutation rolled back",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_96D9A7041ECED258",
       "description": "correction draft requires approval",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -312,13 +312,13 @@
     {
       "assertion_id": "ASSERT_98E26C7E113960B9",
       "description": "required outbox event rolled back",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_9F5A260BBCB12400",
       "description": "consent projection unchanged",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -330,79 +330,79 @@
     {
       "assertion_id": "ASSERT_A70EF07DD2D593A6",
       "description": "human consent review opened",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_AC241907F7EC56A2",
       "description": "fee_status == REQUIRES_HUMAN",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_AEE3096B0F757ED1",
       "description": "pricing_quantity_kg == \"0.6\"",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_B029035C2082A2A8",
       "description": "display_total_vnd == 120000",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_B3BF81C65A524038",
       "description": "display_total_vnd == 103250",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_B5A9A7B225726F62",
       "description": "display_total_vnd == 84000",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_B6C08D0DEF76A2CB",
       "description": "deterministic_published_template_used",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_B73187E62D43BB8B",
       "description": "discount_amount_vnd == 44250",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_B77BF851014FE24A",
       "description": "no public consent-grant tool exists",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_BB5D0A4AFCCA98E2",
       "description": "suppression persisted before model invocation",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_BD71AA82464EFB74",
       "description": "human operation remains available",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_BD7847F343A72520",
       "description": "unexecuted automated outbox held_or_cancelled",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_C018984283A70097",
       "description": "incident status == OPEN",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -420,7 +420,7 @@
     {
       "assertion_id": "ASSERT_CC263977DEB8FC77",
       "description": "material write has audit and domain event",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -438,49 +438,49 @@
     {
       "assertion_id": "ASSERT_D10103DD645DC423",
       "description": "marketing blocked immediately",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_D3F2782BEB10F7DE",
       "description": "fault_decided == false",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_D61B2DC6692A427B",
       "description": "promotion_status == PROVISIONAL",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_D8ACE300E9205231",
       "description": "vehicle_recommendation == MOTORCYCLE",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_D95CE7BB838C09FA",
       "description": "vehicle_recommendation == CAR",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_D96ED29F85BD977D",
       "description": "no accepted final revision exists",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_DE0F80E7D02DA98D",
       "description": "required_approvals contains PROMOTION_ELIGIBILITY",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_DF79C2EFC1788F2A",
       "description": "no invented sheet price",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -492,19 +492,19 @@
     {
       "assertion_id": "ASSERT_E75BB6E15EBBF7CE",
       "description": "delivery_fee_vnd is null",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_E9B0003C2F4D3A12",
       "description": "no refund credit or rewash command executed",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
       "assertion_id": "ASSERT_EEE2CF71E34CCA59",
       "description": "delivery_fee_vnd == 0",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -516,7 +516,7 @@
     {
       "assertion_id": "ASSERT_F384FE2C4E0ED46A",
       "description": "prior delivery approval invalidated",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     },
     {
@@ -528,7 +528,7 @@
     {
       "assertion_id": "ASSERT_FC5122E81AB8BC47",
       "description": "delivery_fee_vnd == 10000",
-      "implementation_status": "NOT_IMPLEMENTED",
+      "implementation_status": "IMPLEMENTED",
       "grader_id": "safety"
     }
   ]

@@ -23,6 +23,7 @@ from nha_trang_laundry_contracts import (
     ReleaseCapability,
     ToolArgumentsInvalid,
 )
+from nha_trang_laundry_worker.response_templates import render_generic_order_status_unavailable
 
 from .fixtures import SyntheticFixtureBundle
 
@@ -271,8 +272,7 @@ def execute_public_status_idor_preflight(
             trace_id="synthetic-public-status-idor-001",
         )
     except AgentAuthorizationError:
-        # This is the fixed facade's typed, bodyless denial boundary.  A channel renderer must map
-        # it to its generic unavailable template; neither public code nor ownership is persisted.
+        draft = render_generic_order_status_unavailable()
         return SyntheticPublicStatusIdorPreflight(
             tool_trace=(
                 {
@@ -284,7 +284,10 @@ def execute_public_status_idor_preflight(
                     "trace_id": "synthetic-public-status-idor-001",
                 },
             ),
-            generic_unavailable_response=True,
+            generic_unavailable_response=(
+                draft["response_shape"] == "GENERIC_UNAVAILABLE"
+                and draft["disposition"] == "REQUIRE_HUMAN"
+            ),
             ownership_fact_leaked=False,
             public_code_redacted_from_trace=True,
             trace_id="synthetic-public-status-idor-001",

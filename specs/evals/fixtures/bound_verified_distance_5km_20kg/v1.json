@@ -1,0 +1,9 @@
+{
+  "fixture_id": "fixture:bound_verified_distance_5km_20kg:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {"channel": "INTERNAL_TEST", "data_classification": "SYNTHETIC"},
+  "database_seed": {"verified_distance_m": 5000, "planned_transport_weight_kg": "20", "fulfillment_mode": "PICKUP_AND_RETURN"},
+  "provider_events": [{"event_id": "synthetic-delivery-5km-20kg-001", "received_at": "2026-08-01T03:00:00Z", "normalized_content": "Synthetic 5km 20kg delivery."}],
+  "fault_injection": {}
+}

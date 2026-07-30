@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
+from nha_trang_laundry_contracts import (
+    ReleaseCapability,
+    RepositoryArtifactResolver,
+    load_and_verify_release_manifest,
+    load_trusted_release_signers,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_DECISION_STATUS = {"OPEN", "RESOLVED", "DEFERRED"}
@@ -14,6 +22,9 @@ ALLOWED_AUTHORIZATION = {"NOT_AUTHORIZED", "AUTHORIZED"}
 ALLOWED_CODE_STATUS = {"NOT_STARTED", "IN_PROGRESS", "COMPLETE", "BLOCKED"}
 ALLOWED_PHASE_STATUS = {"PENDING", "IN_PROGRESS", "COMPLETE", "BLOCKED"}
 WORK_ITEM_ID_PATTERN = re.compile(r"^[A-Z]+-[0-9]{3}$")
+RELEASE_COMMIT_ENV = "RELEASE_DEPLOYED_COMMIT_SHA"
+RELEASE_STAGE_ENV = "RELEASE_DEPLOYMENT_STAGE"
+RELEASE_TRUST_PIN_ENV = "RELEASE_TRUSTED_SIGNERS_SHA256"
 
 
 def load_yaml(relative_path: str) -> dict[str, object]:
@@ -24,9 +35,21 @@ def load_yaml(relative_path: str) -> dict[str, object]:
     return content
 
 
-def require_file(relative_path: str) -> None:
-    if not (ROOT / relative_path).is_file():
+def repository_file(relative_path: str) -> Path:
+    candidate = Path(relative_path)
+    if candidate.is_absolute():
+        raise ValueError(f"Repository file reference must be relative: {relative_path}")
+    root = ROOT.resolve()
+    path = (root / candidate).resolve()
+    if path == root or root not in path.parents:
+        raise ValueError(f"Repository file reference escapes root: {relative_path}")
+    if not path.is_file():
         raise ValueError(f"Missing referenced file: {relative_path}")
+    return path
+
+
+def require_file(relative_path: str) -> None:
+    repository_file(relative_path)
 
 
 def validate_context_map() -> int:
@@ -219,12 +242,23 @@ def validate_program_plan() -> tuple[int, int]:
     in_progress_ids: list[str] = []
     work_statuses: dict[str, str] = {}
     work_items_by_id: dict[str, dict[str, object]] = {}
+    context_map = load_yaml("context/CONTEXT_MAP.yaml")
+    context_domains = context_map.get("domains")
+    global_sources = context_map.get("global_sources")
+    if not isinstance(context_domains, dict) or not isinstance(global_sources, list):
+        raise ValueError("CONTEXT_MAP.yaml must contain global_sources and domains")
+    global_paths = {
+        source["path"]
+        for source in global_sources
+        if isinstance(source, dict) and isinstance(source.get("path"), str)
+    }
     for item in items:
         if not isinstance(item, dict):
             raise ValueError("Each work item must be a mapping")
         item_id = item.get("id")
         phase_id = item.get("phase")
         dependencies = item.get("depends_on")
+        item_domains = item.get("context_domains")
         if not isinstance(item_id, str) or not WORK_ITEM_ID_PATTERN.fullmatch(item_id):
             raise ValueError("Work item IDs must use a stable DOMAIN-001 style")
         if item_id in work_ids:
@@ -235,6 +269,30 @@ def validate_program_plan() -> tuple[int, int]:
             isinstance(dependency, str) for dependency in dependencies
         ):
             raise ValueError(f"Work item {item_id} has invalid dependencies")
+        if not isinstance(item_domains, list) or not all(
+            isinstance(domain, str) and domain in context_domains for domain in item_domains
+        ):
+            raise ValueError(f"Work item {item_id} has invalid context domains")
+        available_paths = set(global_paths)
+        for domain in item_domains:
+            details = context_domains[domain]
+            if not isinstance(details, dict):
+                raise ValueError(f"Context domain {domain} must be a mapping")
+            for section in ("sources", "contracts"):
+                available_paths.update(details.get(section, []))
+        for section in ("normative_sources", "contracts"):
+            declared_paths = item.get(section)
+            if not isinstance(declared_paths, list) or not all(
+                isinstance(path, str) for path in declared_paths
+            ):
+                raise ValueError(f"Work item {item_id} has invalid {section}")
+            for path in declared_paths:
+                require_file(path)
+                if path not in available_paths:
+                    raise ValueError(
+                        f"Work item {item_id} {section} path is absent from "
+                        f"its context packet: {path}"
+                    )
         item_status = item.get("status")
         if item_status not in ALLOWED_PHASE_STATUS | {"READY"}:
             raise ValueError(f"Work item {item_id} has invalid status")
@@ -328,6 +386,8 @@ def validate_capability_status(gate_requirements: dict[str, list[str]]) -> int:
     capabilities = status.get("capabilities")
     if not isinstance(capabilities, list):
         raise ValueError("CAPABILITY_STATUS.yaml must contain capabilities")
+    if status.get("default_authorization") != "NOT_AUTHORIZED":
+        raise ValueError("CAPABILITY_STATUS default authorization must remain NOT_AUTHORIZED")
     allowed = allowed_capabilities()
     seen: set[str] = set()
     for capability in capabilities:
@@ -337,6 +397,7 @@ def validate_capability_status(gate_requirements: dict[str, list[str]]) -> int:
         authorization = capability.get("authorization")
         code_status = capability.get("code_status")
         manifest = capability.get("release_manifest")
+        trusted_signers_path = capability.get("trusted_signers")
         required_gates = capability.get("required_gates")
         if (
             not isinstance(capability_id, str)
@@ -350,12 +411,64 @@ def validate_capability_status(gate_requirements: dict[str, list[str]]) -> int:
             raise ValueError(f"Capability {capability_id} has invalid code status")
         if required_gates != gate_requirements[capability_id]:
             raise ValueError(f"Capability {capability_id} gate requirements drifted")
-        if authorization == "AUTHORIZED" and not isinstance(manifest, str):
-            raise ValueError(f"Authorized capability {capability_id} requires a release manifest")
-        if isinstance(manifest, str):
-            require_file(manifest)
+        release_metadata = (manifest, trusted_signers_path)
+        if authorization == "NOT_AUTHORIZED":
+            if any(value is not None for value in release_metadata):
+                raise ValueError(
+                    f"Unauthorized capability {capability_id} must not retain release authority"
+                )
+        elif not all(isinstance(value, str) for value in release_metadata):
+            raise ValueError(
+                f"Authorized capability {capability_id} requires verified release metadata"
+            )
+        else:
+            assert isinstance(manifest, str)
+            assert isinstance(trusted_signers_path, str)
+            deployed_commit_sha = os.environ.get(RELEASE_COMMIT_ENV)
+            deployment_stage = os.environ.get(RELEASE_STAGE_ENV)
+            trusted_signers_sha256 = os.environ.get(RELEASE_TRUST_PIN_ENV)
+            if not all(
+                isinstance(value, str) and value
+                for value in (
+                    deployed_commit_sha,
+                    deployment_stage,
+                    trusted_signers_sha256,
+                )
+            ):
+                raise ValueError(
+                    f"Authorized capability {capability_id} requires out-of-band "
+                    "deployment release context"
+                )
+            assert isinstance(deployed_commit_sha, str)
+            assert isinstance(deployment_stage, str)
+            assert isinstance(trusted_signers_sha256, str)
+            current = datetime.now(UTC)
+            trusted_signers = load_trusted_release_signers(
+                root=ROOT,
+                path=repository_file(trusted_signers_path),
+                expected_sha256=trusted_signers_sha256,
+            )
+            verified = load_and_verify_release_manifest(
+                root=ROOT,
+                path=repository_file(manifest),
+                trusted_signers=trusted_signers,
+                expected_commit_sha=deployed_commit_sha,
+                expected_stage=deployment_stage,
+                expected_capability=ReleaseCapability(capability_id),
+                now=current,
+                artifact_resolver=RepositoryArtifactResolver(ROOT),
+            )
+            if not verified.authorizes(
+                commit_sha=deployed_commit_sha,
+                stage=deployment_stage,
+                capability=ReleaseCapability(capability_id),
+                now=current,
+            ):
+                raise ValueError(
+                    f"Capability {capability_id} release authorization is not currently active"
+                )
         seen.add(capability_id)
-    return len(seen)
+    return len(allowed)
 
 
 def main() -> None:

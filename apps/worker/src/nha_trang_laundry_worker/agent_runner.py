@@ -30,6 +30,7 @@ from nha_trang_laundry_contracts import (
     AgentToolSideEffect,
     ReleaseCapability,
     ToolArgumentsInvalid,
+    VerifiedReleaseAuthorization,
     load_agent_tool_registry,
     load_public_runtime_registry,
     operation_is_authorized,
@@ -627,9 +628,21 @@ class AgentRunResult:
 class AgentRunner:
     """Control-plane coordinator for one bounded draft-only agent run."""
 
-    def __init__(self, issuer: AgentRunnerTokenIssuer) -> None:
+    def __init__(
+        self,
+        issuer: AgentRunnerTokenIssuer,
+        *,
+        release_authorization: VerifiedReleaseAuthorization | None = None,
+        deployed_commit_sha: str | None = None,
+    ) -> None:
+        if (release_authorization is None) != (deployed_commit_sha is None):
+            raise ValueError(
+                "release authorization and deployed commit SHA must be configured together"
+            )
         self._issuer = issuer
         self._registry = load_public_runtime_registry(ROOT / "runtime/model-registry-v1.yaml")
+        self._release_authorization = release_authorization
+        self._deployed_commit_sha = deployed_commit_sha
 
     def execute(
         self,
@@ -721,8 +734,26 @@ class AgentRunner:
             raise AgentRunRejected("POLICY_DENIED: real-customer processing is disabled")
         if job.stage is not AgentDeploymentStage.SHADOW:
             raise AgentRunRejected("POLICY_DENIED: non-shadow agent stages are disabled")
-        if runtime.provider_backed and self._registry.release_blockers():
-            raise AgentRunRejected("POLICY_DENIED: provider runtime release gates are incomplete")
+        if runtime.provider_backed:
+            if self._registry.release_blockers():
+                raise AgentRunRejected(
+                    "POLICY_DENIED: provider runtime release gates are incomplete"
+                )
+            authorization = self._release_authorization
+            commit_sha = self._deployed_commit_sha
+            if (
+                authorization is None
+                or commit_sha is None
+                or not authorization.authorizes(
+                    commit_sha=commit_sha,
+                    stage=job.stage.value,
+                    capability=job.capability,
+                    now=now,
+                )
+            ):
+                raise AgentRunRejected(
+                    "POLICY_DENIED: signed release manifest authorization is missing or invalid"
+                )
 
 
 __all__ = [

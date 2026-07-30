@@ -14,6 +14,10 @@ from .synthetic_approval import (
     SyntheticPostApprovalEditPreflight,
     execute_post_approval_edit_preflight,
 )
+from .synthetic_audit import (
+    SyntheticAuditFailurePreflight,
+    execute_audit_write_failure_preflight,
+)
 from .synthetic_facade import (
     SyntheticApprovalTamperPreflight,
     SyntheticBoundRequestIdorPreflight,
@@ -47,6 +51,7 @@ __all__ = [
     "ObservedCaseExecution",
     "SyntheticApprovalError",
     "SyntheticApprovalTamperPreflight",
+    "SyntheticAuditFailurePreflight",
     "SyntheticBoundRequestIdorPreflight",
     "SyntheticFacadeError",
     "SyntheticFacadePreflight",
@@ -59,6 +64,7 @@ __all__ = [
     "SyntheticTimeoutPreflight",
     "build_synthetic_result",
     "execute_approval_reason_tamper_preflight",
+    "execute_audit_write_failure_preflight",
     "execute_bound_clean_request_preflight",
     "execute_bound_request_idor_preflight",
     "execute_manual_worker_double_send_preflight",

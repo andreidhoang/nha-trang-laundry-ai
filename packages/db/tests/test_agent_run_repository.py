@@ -145,6 +145,77 @@ def test_agent_run_queue_tool_ledger_and_draft_completion_are_durable(
     assert outbox_count == (3,)
 
 
+def test_agent_tool_audit_failure_rolls_back_tool_event_and_outbox(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    repository = AgentRunRepository()
+    queued = command()
+    repository.enqueue(postgres_connection, queued)
+    claimed = repository.claim_next(
+        postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=NOW
+    )
+    assert claimed is not None
+    with postgres_connection.transaction(), postgres_connection.cursor() as cursor:
+        cursor.execute(
+            """
+            CREATE FUNCTION reject_agent_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN RAISE EXCEPTION 'injected agent audit failure'; END;
+            $$
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TRIGGER agent_audit_failure BEFORE INSERT ON audit_events
+            FOR EACH ROW EXECUTE FUNCTION reject_agent_audit()
+            """
+        )
+    try:
+        with pytest.raises(psycopg.Error, match="injected agent audit failure"):
+            repository.record_tool_call(
+                postgres_connection,
+                AgentToolCallLedgerEntry(
+                    claimed.agent_run_id,
+                    claimed.claim_token,
+                    1,
+                    AgentToolOperation.ORDER_REQUEST_RECORD_CUSTOMER_FACTS,
+                    request_fingerprint({"fact_count": 1}),
+                    200,
+                    "REQUIRE_HUMAN",
+                    "synthetic-audit-failure",
+                    {"result_code": "REQUIRE_HUMAN"},
+                    NOW,
+                    NOW,
+                    queued.correlation_id,
+                ),
+            )
+        with postgres_connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT count(*) FROM agent_tool_calls WHERE agent_run_id = %s",
+                (queued.agent_run_id,),
+            )
+            assert cursor.fetchone() == (0,)
+            cursor.execute(
+                """
+                SELECT count(*) FROM domain_events
+                WHERE aggregate_id = %s AND event_type = 'AGENT_TOOL_CALL_RECORDED'
+                """,
+                (queued.agent_run_id,),
+            )
+            assert cursor.fetchone() == (0,)
+            cursor.execute(
+                """
+                SELECT count(*) FROM outbox_events
+                WHERE aggregate_id = %s AND event_type = 'agent.tool_called.v1'
+                """,
+                (queued.agent_run_id,),
+            )
+            assert cursor.fetchone() == (0,)
+    finally:
+        with postgres_connection.transaction(), postgres_connection.cursor() as cursor:
+            cursor.execute("DROP TRIGGER IF EXISTS agent_audit_failure ON audit_events")
+            cursor.execute("DROP FUNCTION IF EXISTS reject_agent_audit()")
+
+
 def test_agent_run_rejects_non_shadow_raw_reasoning_and_stale_claim(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:

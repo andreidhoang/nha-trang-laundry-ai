@@ -48,6 +48,28 @@ Read it after assembling this task's context packet; it cannot override contract
   after `MANUAL_SEND_RECORDED`, a worker claim is rejected and no `approval_executions` row exists.
   The only currently configured channel is synthetic `INTERNAL_TEST`; marketing, unconfigured channels,
   and non-Shadow stages fail closed pending owner channel policy.
+- `packages/contracts` / `apps/worker`: release manifests receive runtime schema, JCS payload,
+  trusted separated-signature, chronology, expiry, deployment-envelope, and referenced-artifact hash
+  verification. Provider-backed Runner calls require the resulting authorization for their exact
+  commit, stage, and capability; changing the runtime registry alone cannot enable provider calls.
+- `packages/contracts` / `scripts`: the three-function trusted signer registry is public-key-only,
+  checksum-pinned out of band, and separation-of-duty validated. The candidate verification CLI emits
+  only a sanitized verified envelope and cannot generate or record release authority.
+- `runtime/model-registry-v1.yaml` / `packages/contracts`: provider data-control evidence is now a
+  schema-valid, hash-pinned runtime artifact. Its scope, DEC-006 state, required policy, release
+  effects, and verification statuses must exactly match the registry or startup verification fails.
+- `scripts/verify_agent_runtime.py` now verifies the observed OpenClaw executable version and build
+  revision rather than echoing configuration. Its config, plugin, security and npm checks are captured
+  as hash-pinned, explicitly non-release offline evidence with no provider request.
+- `runtime/model-registry-v1.yaml` / `packages/contracts`: the public-cell sandbox image now has a
+  typed immutable digest pin. Release verification parses the JSON5 configuration and requires
+  schema-valid scan evidence plus a hash-pinned SBOM; the placeholder remains unverified and blocked.
+- `context/CONTEXT_MAP.yaml` / `scripts/check_context_drift.py`: work-item normative sources and
+  contracts must be reachable from their declared context domains. The active packet now includes
+  all signer, provider-data, and sandbox scan schemas used at the release boundary.
+- `delivery/CAPABILITY_STATUS.yaml` / `scripts`: authorization status and reporting now fail closed
+  unless the complete release manifest and hash-pinned trust root cryptographically verify for the
+  exact deployed commit, stage, capability, artifact set, activation window, and current time.
 
 ## Constraints
 
@@ -59,21 +81,29 @@ Read it after assembling this task's context packet; it cannot override contract
   chain-of-thought, raw provider response, secrets or raw PII test fixtures.
 - Do not claim P0, provider-storage or release gates pass without durable, reviewable evidence.
 
-## Next bounded slice
+## Current bounded slice
 
-Implement `P0-KILL-SWITCH-INFLIGHT`: an in-flight server-owned execution gate after draft creation and
-before a worker can send. The test must hold/cancel an unexecuted automated outbox action, retain the
-human path, and prove no global override can re-enable a disabled capability. Use a PII-free pinned
-fixture, a negative PostgreSQL test, a hash-only synthetic runner result, and a safety grader. Do not
-synthesize PRIMARY results or turn a `SKIP` into a `PASS`. Keep result traces hash-only and execute Facade
-adapters whenever the case contains a registered public tool. It must leave these release blockers intact
-until separate evidence exists:
+All seed-manifest fixture payloads and declared assertions now have pinned local implementations.
+PostgreSQL-backed preflights cover quote revision invalidation, estimate acknowledgment, personalized
+approval binding, correction containment, incident intake, and server-bound intake drafts. Typed
+domain preflights cover tax finality, zero-authority R1 capacity, pricing, promotions, catalog and
+delivery. `evidence/agent-shadow/local-synthetic-suite-v1.json` captures sanitized coverage for all
+32 cases and pins the evaluator, runtime, and release-boundary artifacts;
+`evidence/agent-shadow/rollback-assessment-v1.yaml`
+documents forward-only rollback. Every synthetic result remains a non-release `SKIP`.
+The manifest/registry implementation statuses are synchronized with computed coverage, and validation
+rejects any stale fixture/assertion blocker instead of allowing contradictory release evidence.
+
+No further provider-independent manifest backlog remains. The next work is the controlled integrated
+runtime evaluation, which cannot execute until the external provider/runtime prerequisites below are
+resolved. Do not synthesize PRIMARY results or turn a `SKIP` into a `PASS`:
 
 1. exact immutable model release;
 2. OpenClaw `store:false` route;
 3. effective provider storage/retention verification;
 4. dedicated credential verification and Security/Privacy approvals;
-5. required primary/fallback/degraded provider evaluations and dataset minima.
+5. immutable scanned sandbox image digest, passing scan evidence, and hash-pinned SBOM;
+6. required primary/fallback/degraded provider evaluations and dataset minima.
 
 ## Acceptance before completion
 

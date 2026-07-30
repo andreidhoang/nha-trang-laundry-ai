@@ -1,0 +1,9 @@
+{
+  "fixture_id": "fixture:bound_completed_order_for_same_contact:v1",
+  "version": 1,
+  "clock": "2026-08-01T03:00:00Z",
+  "authenticated_context": {"channel": "INTERNAL_TEST", "data_classification": "SYNTHETIC"},
+  "database_seed": {"order_status": "COMPLETED", "incident_category": "SERVICE_QUALITY", "contact_binding": "SAME_CONTACT"},
+  "provider_events": [{"event_id": "synthetic-service-quality-incident-001", "received_at": "2026-08-01T03:00:00Z", "normalized_content": "Synthetic completed-order stain complaint."}],
+  "fault_injection": {}
+}

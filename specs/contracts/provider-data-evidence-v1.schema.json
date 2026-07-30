@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://giatlasachcong.vn/contracts/provider-data-evidence-v1.schema.json",
+  "title": "Provider data-control review and effective-request evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "evidence_id", "recorded_at", "scope", "status", "official_sources",
+    "documented_observations", "required_product_policy", "verification", "decision_binding",
+    "release_effect", "next_verification"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "evidence_id": { "type": "string", "pattern": "^[A-Z0-9._:-]{8,160}$" },
+    "recorded_at": { "type": "string", "format": "date-time" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "api", "model_candidate", "openclaw_version"],
+      "properties": {
+        "provider": { "const": "openai" },
+        "api": { "const": "Responses" },
+        "model_candidate": { "type": "string", "minLength": 1 },
+        "openclaw_version": { "type": "string", "pattern": "^[0-9]{4}\\.[0-9]+\\.[0-9]+-[0-9]+$" }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "DOCUMENTATION_REVIEWED_EFFECTIVE_REQUEST_NOT_VERIFIED",
+        "EFFECTIVE_REQUEST_VERIFIED_APPROVALS_PENDING",
+        "VERIFIED_APPROVED"
+      ]
+    },
+    "official_sources": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "url"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1 },
+          "url": { "type": "string", "format": "uri", "pattern": "^https://" }
+        }
+      }
+    },
+    "documented_observations": {
+      "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }
+    },
+    "required_product_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["response_store", "dedicated_service_credential", "minimum_data", "hidden_chain_of_thought_storage"],
+      "properties": {
+        "response_store": { "const": false },
+        "dedicated_service_credential": { "const": true },
+        "minimum_data": { "const": true },
+        "hidden_chain_of_thought_storage": { "const": false }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentation_review", "immutable_model_release", "supported_openclaw_store_false_override",
+        "captured_effective_request_store_false", "zero_data_retention_account_approval",
+        "dedicated_service_credential", "security_approval", "privacy_approval",
+        "provider_training_terms", "retention_and_abuse_log_exception", "region_and_subprocessors",
+        "deletion_path", "incident_terms"
+      ],
+      "properties": {
+        "documentation_review": { "$ref": "#/$defs/VerificationStatus" },
+        "immutable_model_release": { "$ref": "#/$defs/VerificationStatus" },
+        "supported_openclaw_store_false_override": { "$ref": "#/$defs/VerificationStatus" },
+        "captured_effective_request_store_false": { "$ref": "#/$defs/VerificationStatus" },
+        "zero_data_retention_account_approval": { "$ref": "#/$defs/VerificationStatus" },
+        "dedicated_service_credential": { "$ref": "#/$defs/VerificationStatus" },
+        "security_approval": { "$ref": "#/$defs/ApprovalStatus" },
+        "privacy_approval": { "$ref": "#/$defs/ApprovalStatus" },
+        "provider_training_terms": { "$ref": "#/$defs/ReviewStatus" },
+        "retention_and_abuse_log_exception": { "$ref": "#/$defs/ReviewStatus" },
+        "region_and_subprocessors": { "$ref": "#/$defs/ApprovalStatus" },
+        "deletion_path": { "$ref": "#/$defs/ApprovalStatus" },
+        "incident_terms": { "$ref": "#/$defs/ApprovalStatus" }
+      }
+    },
+    "decision_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision_id", "decision_status"],
+      "properties": {
+        "decision_id": { "const": "DEC-006" },
+        "decision_status": { "type": "string", "enum": ["OPEN", "APPROVED"] }
+      }
+    },
+    "release_effect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["synthetic_eval_allowed", "real_customer_data_allowed", "public_ingress_allowed", "automatic_send_allowed"],
+      "properties": {
+        "synthetic_eval_allowed": { "type": "boolean" },
+        "real_customer_data_allowed": { "type": "boolean" },
+        "public_ingress_allowed": { "type": "boolean" },
+        "automatic_send_allowed": { "type": "boolean" }
+      }
+    },
+    "next_verification": {
+      "type": "array", "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "VerificationStatus": {
+      "type": "string", "enum": ["NOT_VERIFIED", "DOCUMENTATION_REVIEWED", "VERIFIED"]
+    },
+    "ApprovalStatus": {
+      "type": "string", "enum": ["NOT_APPROVED", "APPROVED"]
+    },
+    "ReviewStatus": {
+      "type": "string", "enum": ["NOT_VERIFIED", "DOCUMENTATION_REVIEWED", "VERIFIED", "NOT_APPROVED", "APPROVED"]
+    }
+  }
+}

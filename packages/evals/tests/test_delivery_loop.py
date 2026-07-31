@@ -38,6 +38,9 @@ def _active_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     workspace = _copied_workspace(tmp_path)
     queue_path = workspace / "delivery/WORK_QUEUE.yaml"
     queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    for candidate in queue["items"]:
+        if candidate["status"] == "IN_PROGRESS":
+            candidate["status"] = "PENDING"
     item = next(candidate for candidate in queue["items"] if candidate["id"] == "AGENT-001")
     item["status"] = "IN_PROGRESS"
     item.pop("blocking_condition", None)
@@ -73,8 +76,23 @@ def test_delivery_loop_selects_first_safe_ready_item(tmp_path: Path) -> None:
     assert "Do not advance the queue" in result.stdout
 
 
-def test_delivery_loop_selects_local_hardening_while_agent_is_blocked() -> None:
-    result = run_script("run_delivery_loop.py")
+def test_delivery_loop_selects_local_hardening_while_agent_is_blocked(
+    tmp_path: Path,
+) -> None:
+    workspace = _copied_workspace(tmp_path)
+    queue_path = workspace / "delivery/WORK_QUEUE.yaml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    for item in queue["items"]:
+        if item["status"] == "IN_PROGRESS":
+            item["status"] = "PENDING"
+        if item["id"] == "AGENT-001":
+            item["status"] = "BLOCKED"
+        if item["id"] == "HARDEN-CI-001":
+            item["status"] = "PENDING"
+            item.pop("blocking_condition", None)
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+
+    result = _run_workspace(workspace, "run_delivery_loop.py")
 
     assert result.returncode == 0, result.stderr
     assert "# Delivery loop brief: HARDEN-CI-001" in result.stdout

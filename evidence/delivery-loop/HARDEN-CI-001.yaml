@@ -1,0 +1,20 @@
+work_item: HARDEN-CI-001
+recorded_at: '2026-07-31T03:25:20.5805594Z'
+requirement_contract: context/tasks/TASK-harden-ci-001.md
+rollback_impact: Revert the CI workflow, repository pytest guard, workflow contract tests, delivery-loop test isolation, and local-development runbook changes; no production state, customer capability, or database migration rollback is required.
+unresolved_assumptions: Remote GitHub Actions execution has not been observed because no push was authorized; local workflow contract tests, live PostgreSQL 16 gates, and OpenClaw plugin gates passed.
+evidence:
+  workflow_contract_tests: Five CI workflow contract tests passed locally.
+  postgres_integration_not_skipped: 339 tests passed against a healthy PostgreSQL 16 service with the non-skippable integration guard enabled; zero tests were skipped.
+  plugin_build_and_tests: The TypeScript plugin build passed and all three plugin tests passed.
+checks:
+- command: uv run pytest packages/evals/tests/test_ci_quality_workflow.py
+  status: PASSED
+- command: uv run pytest
+  status: PASSED
+- command: npm --prefix runtime/openclaw/public-cell/plugin test
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

@@ -295,7 +295,7 @@ items:
 - id: HARDEN-CI-001
   phase: PRODUCTION_HARDENING
   title: Non-skippable PostgreSQL integration and OpenClaw plugin checks in CI
-  status: IN_PROGRESS
+  status: COMPLETE
   priority: 101
   depends_on:
   - OPERATIONS-001

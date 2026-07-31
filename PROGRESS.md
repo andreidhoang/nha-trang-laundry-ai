@@ -2,8 +2,8 @@
 
 **Assessed:** 2026-07-31
 **Repository:** `C:\Users\DELL\OneDrive\Desktop\nha-trang-laundry-ai`
-**Branch:** `main` tracking `origin/main`
-**Working tree at assessment start:** clean
+**Branch:** local `main` (no push or deployment authorized)
+**Working tree at assessment start:** clean; controller hardening was verified on a dedicated feature branch
 **Current machine stage:** `DOMAIN_CORE_ACTIVE`
 **Production authorization:** `NOT_AUTHORIZED`
 
@@ -13,24 +13,29 @@ This is not an empty prototype. It is a Python-first modular monolith with a sub
 domain and PostgreSQL control plane, a constrained OpenClaw Tool Facade, machine-readable delivery
 state, and a large synthetic evaluation suite.
 
-Ten work items through `OPERATIONS-001` are recorded complete. `AGENT-001` is blocked because local
-synthetic evidence is not equivalent to provider-backed release evidence. No public or autonomous
-capability is authorized.
+Eleven work items, including `HARDEN-CI-001`, are recorded complete. `AGENT-001` is blocked because
+local synthetic evidence is not equivalent to provider-backed release evidence. The next safe local
+slice is `OBSERVABILITY-001`. No public or autonomous capability is authorized.
 
-The repository is locally healthy for the checks that can run without PostgreSQL:
+The repository is locally healthy with PostgreSQL integration required:
 
-- Ruff format: pass (`184 files already formatted`)
+- Ruff format: pass (`202 files already formatted`)
 - Ruff lint: pass
-- mypy strict mode: pass (`127 source files`)
-- pytest without `DATABASE_URL`: `267 passed, 47 skipped` from 314 collected tests
+- mypy strict mode: pass (`132 source files`, plus the seven controller scripts)
+- PostgreSQL migrations: pass (`No pending migrations`)
+- pytest with `--require-postgres-integration`: `410 passed`, no required integration skips
 - contract validation: pass (`11 JSON`, `2 YAML`)
-- context drift validation: pass
-- pinned public-runtime artifact validation: pass with `9` release blockers
+- context drift validation: pass (`55` sources, `6` decisions, `4` gates, `9` phases,
+  `20` work items, `13` capabilities)
+- pinned public-runtime artifact validation: `12` artifacts pass structural validation with
+  `9` honest release blockers
 - OpenClaw TypeScript plugin: build pass, `3/3` tests pass
 
-The database-enabled claim recorded in delivery state (`313 database-enabled tests pass`) could not be
-reproduced during this assessment because Docker Desktop was not running. This is an environment
-blocker, not a newly observed test failure.
+The local automation controller is hardened with a schema-v2 lease/attempt state machine, bounded
+retry count, delivery mutex plus write-ahead recovery, generation compare-and-swap, Git parent/path
+proofs, and fail-closed recovery tests. Independent audit permits a disabled preflight job only.
+Autonomous cron activation remains blocked until native child lookup, reattachment, and
+no-duplicate interruption recovery are proven end to end.
 
 ## 2. Current architecture and stack
 
@@ -111,10 +116,8 @@ Until these exist, `INTERNAL_SHADOW`, public ingress, and automated outbound mus
 
 ### Local production-hardening gaps
 
-- Docker Desktop is not running, so PostgreSQL integration tests were skipped in this assessment.
-- CI has no PostgreSQL service/migration step; its default `pytest` command can silently skip database
-  integration coverage.
-- CI does not build or test the TypeScript OpenClaw plugin.
+- Native Codex child lookup/reattachment and interruption recovery have not yet been proven by an
+  isolated scheduler harness, so the auto-development cron must remain disabled.
 - There are no production Dockerfiles for API, worker, or Tool Facade; `compose.yaml` contains only
   PostgreSQL.
 - `packages/observability` is a one-line placeholder and is not integrated into runtime code.
@@ -126,12 +129,12 @@ Until these exist, `INTERNAL_SHADOW`, public ingress, and automated outbound mus
 - Real-customer Shadow readiness, PITR/restore drill, incident drill, kill-switch drill, and production
   monitoring evidence are absent.
 
-## 5. First five Codex-executable tasks
+## 5. Codex-executable hardening queue
 
 The following are safe, local, reviewable tasks. They improve production readiness without pretending
 to resolve external approvals or authorize public operation.
 
-### `HARDEN-CI-001` — Make database and plugin checks non-skippable in CI
+### `HARDEN-CI-001` — COMPLETE
 
 **Files:** `.github/workflows/quality.yml`, test configuration or a small verification script if
 needed, and CI documentation.
@@ -142,8 +145,9 @@ database-enabled suite, and build/test the TypeScript OpenClaw plugin.
 **Constraints:** no real credentials; fail if required integration tests are skipped; preserve existing
 Ruff/mypy/contracts/context gates.
 
-**Done when:** a clean CI run executes migrations, all Python tests including PostgreSQL integration
-tests, and `npm test` for the plugin.
+The checked-in quality workflow now provisions PostgreSQL, applies migrations, requires database
+integration coverage, and builds/tests the OpenClaw plugin. Workflow contract tests and the local
+equivalent gates pass.
 
 ### `OBSERVABILITY-001` — Implement the minimum redacted observability foundation
 
@@ -199,19 +203,22 @@ evidence must be schema-valid and bound to exact artifacts; never fabricate the 
 **Done when:** CI produces verifiable SBOM/scan artifacts for each image and the release verifier
 rejects missing, stale, mismatched, or failing evidence.
 
-## 6. Orchestration recommendation
+## 6. Orchestration state
 
-After explicit approval:
+The repository now has one authoritative queue and a recoverable local controller:
 
-1. Add the five items above to the existing delivery state model with stable IDs and dependencies.
-2. Use one durable TaskFlow as the owner/resume context.
-3. Let the scheduler select only one dependency-ready item at a time.
-4. Give Codex a bounded prompt containing `Goal / Context / Constraints / Done when`.
-5. Use a short-lived branch per task and run targeted checks plus the full repository gates.
-6. Retry a genuine implementation failure up to three times with the exact failing output.
-7. Never merge a skipped required test, weaken a gate, or mark external evidence complete.
-8. Stop at external credentials, approvals, public deployment, production data, or destructive
-   migrations and request explicit authority.
+1. `delivery/WORK_QUEUE.yaml`, `LOOP_STATE.yaml`, and `PROGRAM_PLAN.yaml` are committed as one
+   mutex/WAL-protected generation.
+2. `.openclaw/state.json` persists a fenced lease, phase, branch, base/task/control commits, and
+   deterministic child identifiers with a machine-enforced three-attempt limit.
+3. The tick inspector selects at most one legal next action and fails closed on divergent Git,
+   malformed state, stale generation, unsupported recovery, secrets, or unexpected paths.
+4. Delivery control commits use an isolated Git index, hook-free tree construction, semantic
+   named-item proof, and compare-and-swap ref update.
+5. A disabled, delivery-read-only preflight cron may be force-run to verify lease cleanup. It is not
+   permission to begin work.
 
-The scheduler should be on-demand first. A 15-minute cron is appropriate only after one complete
-task has successfully passed the branch, verification, evidence, and merge lifecycle.
+Do not enable recurring autonomous execution until an isolated runtime test proves deterministic
+native child lookup/poll/reattachment and no duplicate child across a simulated interruption.
+Push, PR, deployment, public/customer-facing changes, secrets, and external messages remain outside
+the authorization granted here.

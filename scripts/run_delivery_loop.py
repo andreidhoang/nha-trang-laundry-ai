@@ -13,9 +13,18 @@ from typing import Any
 
 import yaml
 from assemble_context import assemble_packet, load_context_map
+from check_context_drift import validate_all
+from delivery_state import (
+    JOURNAL_NAME,
+    delivery_generation_digest,
+    delivery_state_mutex,
+    recover_delivery_state,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 QUEUE_PATH = ROOT / "delivery/WORK_QUEUE.yaml"
+STATE_PATH = ROOT / "delivery/LOOP_STATE.yaml"
+PROGRAM_PATH = ROOT / "delivery/PROGRAM_PLAN.yaml"
 DECISIONS_PATH = ROOT / "context/DECISION_REGISTRY.yaml"
 ALLOWED_STATUSES = {"PENDING", "READY", "IN_PROGRESS", "COMPLETE", "BLOCKED"}
 
@@ -163,18 +172,62 @@ def render_brief(item: dict[str, Any]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    parser.add_argument(
+        "--format",
+        choices=("markdown", "json", "controller-json"),
+        default="markdown",
+    )
+    parser.add_argument(
+        "--no-recover",
+        action="store_true",
+        help="Fail closed on a pending journal instead of rolling it forward.",
+    )
     arguments = parser.parse_args()
+    if arguments.no_recover and arguments.format != "controller-json":
+        raise SystemExit("--no-recover is supported only with --format controller-json.")
 
-    items = queue_items()
-    validate_queue(items)
-    selected = select_next_item(items)
-    if selected is None:
-        raise SystemExit("No current or dependency-complete, policy-unblocked work item exists.")
-    if arguments.format == "json":
-        print(json.dumps(selected, indent=2, sort_keys=True))
-    else:
-        print(render_brief(selected), end="")
+    with delivery_state_mutex():
+        journal_path = ROOT / "delivery" / JOURNAL_NAME
+        if arguments.no_recover:
+            if journal_path.exists():
+                raise SystemExit(
+                    "Pending delivery transaction requires recovery; preflight made no mutation."
+                )
+        else:
+            recover_delivery_state()
+        context_validation = validate_all() if arguments.format == "controller-json" else None
+        queue = load_mapping(QUEUE_PATH)
+        items = queue.get("items")
+        if queue.get("schema_version") != 1 or not isinstance(items, list):
+            raise ValueError("WORK_QUEUE.yaml must have schema_version 1 and an items list")
+        validate_queue(items)
+        selected = select_next_item(items)
+        if selected is None and arguments.format != "controller-json":
+            raise SystemExit(
+                "No current or dependency-complete, policy-unblocked work item exists."
+            )
+        if arguments.format == "controller-json":
+            generation = delivery_generation_digest(
+                queue,
+                load_mapping(STATE_PATH),
+                load_mapping(PROGRAM_PATH),
+            )
+            output = json.dumps(
+                {
+                    "context_validation": context_validation,
+                    "generation": generation,
+                    "selected": selected,
+                    "statuses": {str(item["id"]): str(item["status"]) for item in items},
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        elif arguments.format == "json":
+            output = json.dumps(selected, indent=2, sort_keys=True)
+        else:
+            assert selected is not None
+            output = render_brief(selected)
+    print(output, end="" if output.endswith("\n") else "\n")
 
 
 if __name__ == "__main__":

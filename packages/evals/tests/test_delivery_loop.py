@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -22,7 +23,19 @@ def run_script(script: str, *arguments: str) -> subprocess.CompletedProcess[str]
 
 def _copied_workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
-    for directory in ("context", "delivery", "scripts", "specs"):
+    for root_file in ROOT.iterdir():
+        if root_file.is_file():
+            workspace.mkdir(parents=True, exist_ok=True)
+            (workspace / root_file.name).write_bytes(root_file.read_bytes())
+    for directory in (
+        "context",
+        "delivery",
+        "docs",
+        "evidence",
+        "scripts",
+        "specs",
+        "templates",
+    ):
         source = ROOT / directory
         destination = workspace / directory
         destination.mkdir(parents=True, exist_ok=True)
@@ -49,6 +62,21 @@ def _active_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     state = yaml.safe_load(state_path.read_text(encoding="utf-8"))
     state.update(current_work_item=item["id"], last_result="IN_PROGRESS", blocker=None)
     state_path.write_text(yaml.safe_dump(state, sort_keys=False), encoding="utf-8")
+    program_path = workspace / "delivery/PROGRAM_PLAN.yaml"
+    program = yaml.safe_load(program_path.read_text(encoding="utf-8"))
+    for phase in program["phases"]:
+        phase_statuses = {
+            candidate["status"] for candidate in queue["items"] if candidate["phase"] == phase["id"]
+        }
+        if phase_statuses == {"COMPLETE"}:
+            phase["status"] = "COMPLETE"
+        elif "IN_PROGRESS" in phase_statuses or "COMPLETE" in phase_statuses:
+            phase["status"] = "IN_PROGRESS"
+        elif phase_statuses == {"BLOCKED"}:
+            phase["status"] = "BLOCKED"
+        else:
+            phase["status"] = "PENDING"
+    program_path.write_text(yaml.safe_dump(program, sort_keys=False), encoding="utf-8")
     return workspace, item
 
 
@@ -64,6 +92,19 @@ def _run_workspace(
     )
 
 
+def _controller_generation(workspace: Path) -> str:
+    snapshot = _run_workspace(
+        workspace,
+        "run_delivery_loop.py",
+        "--format",
+        "controller-json",
+    )
+    assert snapshot.returncode == 0, snapshot.stderr
+    generation = json.loads(snapshot.stdout)["generation"]
+    assert isinstance(generation, str)
+    return generation
+
+
 def test_delivery_loop_selects_first_safe_ready_item(tmp_path: Path) -> None:
     workspace, _ = _active_workspace(tmp_path)
     result = _run_workspace(workspace, "run_delivery_loop.py")
@@ -74,6 +115,52 @@ def test_delivery_loop_selects_first_safe_ready_item(tmp_path: Path) -> None:
     assert f"# Delivery loop brief: {current}" in result.stdout
     assert f"# Context packet: {current}" in result.stdout
     assert "Do not advance the queue" in result.stdout
+
+
+def test_delivery_loop_emits_one_locked_controller_snapshot(tmp_path: Path) -> None:
+    workspace = _copied_workspace(tmp_path)
+    result = _run_workspace(
+        workspace,
+        "run_delivery_loop.py",
+        "--format",
+        "controller-json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    snapshot = json.loads(result.stdout)
+    context_validation = snapshot["context_validation"]
+    generation = snapshot["generation"]
+    selected = snapshot["selected"]
+    statuses = snapshot["statuses"]
+    assert context_validation["work_items"] == len(statuses)
+    assert len(generation) == 64
+    assert int(generation, 16) >= 0
+    assert isinstance(selected, dict)
+    assert statuses[selected["id"]] == selected["status"]
+    assert set(statuses) == {
+        item["id"]
+        for item in yaml.safe_load(
+            (workspace / "delivery/WORK_QUEUE.yaml").read_text(encoding="utf-8")
+        )["items"]
+    }
+
+
+def test_delivery_preflight_refuses_pending_journal_without_recovery(tmp_path: Path) -> None:
+    workspace = _copied_workspace(tmp_path)
+    journal = workspace / "delivery/.delivery-state.transaction.json"
+    journal.write_text("{}", encoding="utf-8")
+
+    result = _run_workspace(
+        workspace,
+        "run_delivery_loop.py",
+        "--format",
+        "controller-json",
+        "--no-recover",
+    )
+
+    assert result.returncode != 0
+    assert "preflight made no mutation" in result.stderr
+    assert journal.read_text(encoding="utf-8") == "{}"
 
 
 def test_delivery_loop_selects_local_hardening_while_agent_is_blocked(
@@ -156,7 +243,14 @@ def test_agent_context_packet_contains_release_support_contracts() -> None:
 
 
 def test_evidence_recorder_rejects_completion_without_an_active_slice() -> None:
-    result = run_script("record_delivery_evidence.py", "--work-item", "DOMAIN-001", "--complete")
+    result = run_script(
+        "record_delivery_evidence.py",
+        "--work-item",
+        "DOMAIN-001",
+        "--complete",
+        "--expected-generation",
+        _controller_generation(ROOT),
+    )
 
     assert result.returncode != 0
     assert "current IN_PROGRESS" in result.stderr
@@ -164,7 +258,8 @@ def test_evidence_recorder_rejects_completion_without_an_active_slice() -> None:
 
 def test_evidence_recorder_advances_only_with_declared_passing_checks(tmp_path: Path) -> None:
     workspace, item = _active_workspace(tmp_path)
-    evidence = workspace / "evidence.yaml"
+    evidence = workspace / f"evidence/delivery-loop/{item['id']}.yaml"
+    evidence.parent.mkdir(parents=True, exist_ok=True)
     evidence.write_text(
         yaml.safe_dump(
             {
@@ -195,7 +290,9 @@ def test_evidence_recorder_advances_only_with_declared_passing_checks(tmp_path: 
             item["id"],
             "--complete",
             "--evidence",
-            "evidence.yaml",
+            f"evidence/delivery-loop/{item['id']}.yaml",
+            "--expected-generation",
+            _controller_generation(workspace),
         ],
         cwd=workspace,
         check=False,
@@ -211,6 +308,30 @@ def test_evidence_recorder_advances_only_with_declared_passing_checks(tmp_path: 
     assert completed["status"] == "COMPLETE"
 
 
+def test_evidence_recorder_rejects_gitignored_noncanonical_evidence(
+    tmp_path: Path,
+) -> None:
+    workspace, item = _active_workspace(tmp_path)
+    ignored_evidence = workspace / ".openclaw/ignored-evidence.yaml"
+    ignored_evidence.parent.mkdir(parents=True)
+    ignored_evidence.write_text("work_item: ignored\n", encoding="utf-8")
+
+    result = _run_workspace(
+        workspace,
+        "record_delivery_evidence.py",
+        "--work-item",
+        str(item["id"]),
+        "--complete",
+        "--evidence",
+        ".openclaw/ignored-evidence.yaml",
+        "--expected-generation",
+        _controller_generation(workspace),
+    )
+
+    assert result.returncode != 0
+    assert f"evidence/delivery-loop/{item['id']}.yaml" in result.stderr
+
+
 def test_evidence_recorder_records_blocker_and_releases_active_slot(tmp_path: Path) -> None:
     workspace, item = _active_workspace(tmp_path)
     blocked = subprocess.run(
@@ -222,6 +343,8 @@ def test_evidence_recorder_records_blocker_and_releases_active_slot(tmp_path: Pa
             "--block",
             "--reason",
             "Non-production OIDC tenant is unavailable.",
+            "--expected-generation",
+            _controller_generation(workspace),
         ],
         cwd=workspace,
         check=False,
@@ -248,6 +371,8 @@ def test_evidence_recorder_records_blocker_and_releases_active_slot(tmp_path: Pa
             "--unblock",
             "--reason",
             "The external test condition is now verified available.",
+            "--expected-generation",
+            _controller_generation(workspace),
         ],
         cwd=workspace,
         check=False,

@@ -24,6 +24,15 @@ dist/
 .openclaw/state.json
 .openclaw/state.md
 .openclaw/.state.mutex
+.openclaw/.state.*.tmp
+
+# Delivery-state lock, write-ahead journal, and crash leftovers
+delivery/.delivery-state.lock
+delivery/.delivery-state.transaction.json
+delivery/..delivery-state.transaction.json.*.tmp
+delivery/.WORK_QUEUE.yaml.*.tmp
+delivery/.LOOP_STATE.yaml.*.tmp
+delivery/.PROGRAM_PLAN.yaml.*.tmp
 
 # Editors and operating systems
 .DS_Store

@@ -35,13 +35,22 @@ uv run python scripts/apply_migrations.py
 
 When the user's instruction is `continue`, `continue execute`, or an equivalent request to resume:
 
+**Scheduled-controller precedence:** an OpenClaw cron run or any process holding
+the `.openclaw/state.json` automation lease must follow
+`context/AUTOMATION_PROTOCOL.md` instead of the generic manual sequence below.
+It must persist `begin-attempt` before branch/queue/child mutations, obey
+`scripts/run_automation_tick.py`, execute at most one returned action per tick,
+and use the snapshot generation CAS for delivery mutations. These rules take
+precedence over any “continue to the next item” wording in this section.
+
 1. Read `delivery/LOOP_STATE.yaml`, then run `uv run python scripts/check_context_drift.py` and
    `uv run python scripts/run_delivery_loop.py`. The machine-readable queue and state override prose
    status pages.
 2. Resume the one `IN_PROGRESS` item; do not restart it from a milestone description or the previous
    chat summary. Inspect its code, tests, declared contracts, and existing evidence first.
-3. If no item is active, start only the item selected by `scripts/run_delivery_loop.py`, using
-   `scripts/record_delivery_evidence.py --work-item <ID> --start`.
+3. If no item is active, start only the item selected by `scripts/run_delivery_loop.py`. Obtain the
+   current generation from `run_delivery_loop.py --format controller-json` and pass it to
+   `record_delivery_evidence.py --expected-generation <SHA-256>`.
 4. Work through safe local implementation and verification without asking for another prompt. After
    a task's declared checks genuinely pass, create its evidence record, mark it complete with
    `scripts/record_delivery_evidence.py`, and continue to the next dependency-complete item when the
@@ -51,10 +60,10 @@ When the user's instruction is `continue`, `continue execute`, or an equivalent 
    mark a release/capability gate passed.
 6. If blocked by an unknown policy, missing external credential/service, destructive action, public
    deployment, or authority outside this repository, fail closed. Record the blocker with
-   `scripts/record_delivery_evidence.py --work-item <ID> --block --reason <text>`, then continue an
-   independent ready item if one exists. After the condition is verifiably resolved, use `--unblock
-   --reason <resolution evidence>`; this returns the item to `PENDING` and never bypasses unresolved
-   decision blockers. Ask the user only when no safe independent progress remains.
+   `scripts/record_delivery_evidence.py` using a fresh expected-generation digest, then continue an
+   independent ready item if one exists. Unblock also requires a fresh digest; it returns the item to
+   `PENDING` and never bypasses unresolved decision blockers. Ask the user only when no safe
+   independent progress remains.
 7. Keep `delivery/WORK_QUEUE.yaml`, `delivery/LOOP_STATE.yaml`, evidence, and human status projections
    synchronized. Run the full repository gates before handoff.
 

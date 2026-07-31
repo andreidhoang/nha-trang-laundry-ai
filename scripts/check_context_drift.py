@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import re
@@ -15,6 +16,13 @@ from nha_trang_laundry_contracts import (
     load_and_verify_release_manifest,
     load_trusted_release_signers,
 )
+
+try:
+    _delivery_state = importlib.import_module("delivery_state")
+except ModuleNotFoundError:
+    _delivery_state = importlib.import_module("scripts.delivery_state")
+delivery_state_mutex = _delivery_state.delivery_state_mutex
+recover_delivery_state = _delivery_state.recover_delivery_state
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_DECISION_STATUS = {"OPEN", "RESOLVED", "DEFERRED"}
@@ -479,17 +487,35 @@ def validate_capability_status(gate_requirements: dict[str, list[str]]) -> int:
     return len(allowed)
 
 
-def main() -> None:
+def validate_all() -> dict[str, int]:
+    """Validate every control artifact while the caller holds delivery mutex."""
+
     source_count = validate_context_map()
     decision_count = validate_decision_registry()
     gate_count, gate_requirements = validate_gate_registry()
     phase_count, work_item_count = validate_program_plan()
     capability_count = validate_capability_status(gate_requirements)
+    return {
+        "source_references": source_count,
+        "decisions": decision_count,
+        "gates": gate_count,
+        "phases": phase_count,
+        "work_items": work_item_count,
+        "capabilities": capability_count,
+    }
+
+
+def main() -> None:
+    with delivery_state_mutex():
+        recover_delivery_state()
+        counts = validate_all()
     print(
         "Context drift check passed: "
-        f"{source_count} source references, {decision_count} decisions, "
-        f"{gate_count} gates, {phase_count} phases, {work_item_count} work items, "
-        f"{capability_count} capabilities."
+        f"{counts['source_references']} source references, "
+        f"{counts['decisions']} decisions, "
+        f"{counts['gates']} gates, {counts['phases']} phases, "
+        f"{counts['work_items']} work items, "
+        f"{counts['capabilities']} capabilities."
     )
 
 

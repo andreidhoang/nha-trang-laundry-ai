@@ -8,9 +8,11 @@ Internal operations and constrained AI concierge for **Giặt Là Sạch Cộng*
 `DOMAIN_CORE_ACTIVE — PUBLIC_AUTOMATION_NOT_AUTHORIZED — SPEC_APPROVED_WITH_EXECUTION_GATES`
 
 The repository contains verified business truth, price/promotion/SLA seed data, an implementation-ready
-specification pack, Python workspace, locally validated PostgreSQL/identity control, canonical catalog
-registry, exact pricebook import manifest, and deterministic pricing engine. Promotion/delivery/SLA
-boundaries are active work. There is no deployed customer-facing agent.
+specification pack, Python workspace, locally validated PostgreSQL/identity and operations control,
+canonical catalog registry, exact pricebook import manifest, deterministic pricing/promotion/delivery/
+SLA engines, and a constrained EVAL_ONLY agent/tool boundary. Provider-backed agent evidence remains
+externally blocked while the independent production-hardening queue is ready. There is no deployed
+customer-facing agent.
 
 Approved next build scope:
 

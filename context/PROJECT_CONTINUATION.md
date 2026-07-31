@@ -1,8 +1,8 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-07-29 (Asia/Ho_Chi_Minh)
-**Active work item:** `AGENT-001`  
-**Code stage:** `AGENT_SHADOW` / `IN_PROGRESS`  
+**Last reconciled:** 2026-07-31 (Asia/Ho_Chi_Minh)
+**Active work item:** none; next local item is `HARDEN-CI-001`
+**Code stage:** `AGENT_SHADOW` blocked externally / `PRODUCTION_HARDENING` pending locally
 **Production authorization:** `NOT_AUTHORIZED` for every capability
 
 This brief is the human-readable entry point for an engineer or coding agent resuming implementation.
@@ -14,11 +14,8 @@ PostgreSQL state remain authoritative in the order defined by `context/CONTINUAT
 ```text
 1. Read AGENTS.md and BUILD_ENGINEERING_SPEC.md.
 2. Read delivery/LOOP_STATE.yaml, delivery/WORK_QUEUE.yaml, delivery/CAPABILITY_STATUS.yaml.
-3. Assemble the active packet:
-   uv run python scripts/assemble_context.py --task-id AGENT-001 \
-     --domain runtime_architecture --domain agent_tools \
-     --domain evaluation_release --domain privacy_consent
-4. Read context/tasks/TASK-agent-001.md and this brief.
+3. Run `uv run python scripts/run_delivery_loop.py` to select and assemble the authoritative packet.
+4. Read the selected `task_packet` and this brief.
 5. Implement one bounded slice, then run its targeted tests and the full verification suite.
 ```
 
@@ -115,17 +112,22 @@ The following is local engineering evidence only, not release evidence:
 
 ## Next implementation sequence
 
-Work in this order unless a higher-authority contract changes it. After each slice, update
-`TASK-agent-001.md`, this brief, the relevant machine status, and tests; do not mark `AGENT-001`
-complete.
+Work in this order unless a higher-authority contract changes it. After each slice, update its task
+packet, this brief, the relevant machine status, and tests. Do not mark `AGENT-001` complete from local
+hardening evidence.
 
-1. **Integrated runtime evaluation.** The provider-independent fixture/assertion backlog is complete.
+1. **Local production hardening.** Execute `HARDEN-CI-001`, `OBSERVABILITY-001`, `POLICY-001`, and
+   `CONTAINER-001` as independent reviewable tasks. Run `SUPPLYCHAIN-001` only after its CI/container
+   dependencies complete. These tasks may proceed while `AGENT-001` is externally blocked, but their
+   engineering evidence does not authorize real data or release.
+
+2. **Integrated runtime evaluation.** The provider-independent fixture/assertion backlog is complete.
    After the external prerequisites are resolved, run a separately
    controlled non-production integration harness for PRIMARY, fallback, and deterministic-degraded
    paths. It must pin the runtime/model/prompt/tool/config artifacts, validate result schema, and retain
    only permitted hash-safe evidence. No synthetic result may be relabeled as PRIMARY or release-ready.
 
-2. **External/provider prerequisites — blocked, not improvable by code alone.**
+3. **External/provider prerequisites — blocked, not improvable by code alone.**
    - `DEC-006`: obtain Security/Privacy decisions for training, retention, region, deletion,
      subprocessors, incident terms, and dedicated credential use.
    - Prove a supported OpenClaw Responses `store:false` route with a non-production dedicated API
@@ -134,10 +136,10 @@ complete.
    - Supply an immutable sandbox image digest with schema-valid vulnerability scan evidence and a
      hash-pinned SBOM; the checked-in placeholder cannot be used for release.
 
-3. **`SECURITY-001` only after `AGENT-001` declared acceptance is evidenced.** It requires real
-   security, OIDC, PITR/restore, incident, and kill-switch drills. It is not authorized by passing unit
-   tests. `SHADOW-001`, `CHANNEL-001`, and automation work remain downstream and may not be started as
-   release work before their dependencies and owner decisions are satisfied.
+4. **`SECURITY-001` only after both tracks are complete.** It depends on declared `AGENT-001`
+   acceptance plus observability, policy, and supply-chain hardening. It requires real security, OIDC,
+   PITR/restore, incident, and kill-switch drills and is not authorized by passing unit tests.
+   `SHADOW-001`, `CHANNEL-001`, and customer-facing automation remain downstream.
 
 ## Acceptance and verification
 

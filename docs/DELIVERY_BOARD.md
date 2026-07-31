@@ -18,7 +18,12 @@ authorization source. A code status never authorizes a release.
 | `DOMAIN-005` | DOMAIN_CORE | Immutable quote snapshots and calculation traces | DOMAIN-003 | Complete |
 | `OPERATIONS-001` | OPERATIONS_CONTROL | Orders, approvals, inbox/outbox, audit and Staff PWA | identity + domain | Complete |
 | `AGENT-001` | AGENT_SHADOW | Isolated OpenClaw Concierge, Tool Facade and evals | OPERATIONS-001 | Blocked externally - all 32 local degraded preflights, release/status cryptographic enforcement, offline audit, sandbox scan gate, and context coverage checks are complete; integrated provider proof, scanned image/SBOM, and approvals remain missing |
-| `SECURITY-001` | REAL_SHADOW_READINESS | Privacy, PITR, incident, kill switch and G1 readiness | AGENT-001 | Pending / DEC-006 |
+| `HARDEN-CI-001` | PRODUCTION_HARDENING | Non-skippable PostgreSQL and OpenClaw plugin CI gates | OPERATIONS-001 | Pending / next local task |
+| `OBSERVABILITY-001` | PRODUCTION_HARDENING | Redacted structured logs and correlation propagation | OPERATIONS-001 | Pending |
+| `POLICY-001` | PRODUCTION_HARDENING | Typed fail-closed policy decision point | OPERATIONS-001 | Pending |
+| `CONTAINER-001` | PRODUCTION_HARDENING | Reproducible non-root production images | OPERATIONS-001 | Pending |
+| `SUPPLYCHAIN-001` | PRODUCTION_HARDENING | SBOM, scans and artifact-bound release evidence | HARDEN-CI-001 + CONTAINER-001 | Pending |
+| `SECURITY-001` | REAL_SHADOW_READINESS | Privacy, PITR, incident, kill switch and G1 readiness | AGENT-001 + production hardening | Pending / DEC-006 |
 | `SHADOW-001` | REAL_SHADOW_READINESS | Internal real-order Shadow pilot | SECURITY-001 | Pending |
 | `CHANNEL-001` | PUBLIC_ASSISTED | Official channel and isolated public-cell entry | SHADOW-001 | Pending / DEC-005, DEC-006 |
 | `AUTONOMY-001` | BOUNDED_AUTONOMY | Capability-specific bounded canary | CHANNEL-001 | Pending / commercial decisions |

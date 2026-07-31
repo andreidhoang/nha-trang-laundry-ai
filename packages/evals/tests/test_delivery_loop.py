@@ -20,7 +20,7 @@ def run_script(script: str, *arguments: str) -> subprocess.CompletedProcess[str]
     )
 
 
-def _active_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+def _copied_workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
     for directory in ("context", "delivery", "scripts", "specs"):
         source = ROOT / directory
@@ -31,6 +31,11 @@ def _active_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
                 target = destination / file_path.relative_to(source)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(file_path.read_bytes())
+    return workspace
+
+
+def _active_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+    workspace = _copied_workspace(tmp_path)
     queue_path = workspace / "delivery/WORK_QUEUE.yaml"
     queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
     item = next(candidate for candidate in queue["items"] if candidate["id"] == "AGENT-001")
@@ -66,6 +71,46 @@ def test_delivery_loop_selects_first_safe_ready_item(tmp_path: Path) -> None:
     assert f"# Delivery loop brief: {current}" in result.stdout
     assert f"# Context packet: {current}" in result.stdout
     assert "Do not advance the queue" in result.stdout
+
+
+def test_delivery_loop_selects_local_hardening_while_agent_is_blocked() -> None:
+    result = run_script("run_delivery_loop.py")
+
+    assert result.returncode == 0, result.stderr
+    assert "# Delivery loop brief: HARDEN-CI-001" in result.stdout
+    assert "Source: `context/tasks/TASK-harden-ci-001.md`" in result.stdout
+    assert "Make PostgreSQL integration coverage" in result.stdout
+
+
+def test_delivery_loop_continues_independent_hardening_after_ci_block(
+    tmp_path: Path,
+) -> None:
+    workspace = _copied_workspace(tmp_path)
+    queue_path = workspace / "delivery/WORK_QUEUE.yaml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    ci_item = next(candidate for candidate in queue["items"] if candidate["id"] == "HARDEN-CI-001")
+    ci_item["status"] = "BLOCKED"
+    ci_item["blocking_condition"] = "Synthetic CI runner is unavailable."
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+
+    result = _run_workspace(workspace, "run_delivery_loop.py")
+
+    assert result.returncode == 0, result.stderr
+    assert "# Delivery loop brief: OBSERVABILITY-001" in result.stdout
+
+
+def test_hardening_dependency_graph_preserves_release_boundaries() -> None:
+    queue = yaml.safe_load((ROOT / "delivery/WORK_QUEUE.yaml").read_text(encoding="utf-8"))
+    by_id = {item["id"]: item for item in queue["items"]}
+
+    assert by_id["SUPPLYCHAIN-001"]["depends_on"] == ["HARDEN-CI-001", "CONTAINER-001"]
+    assert set(by_id["SECURITY-001"]["depends_on"]) == {
+        "AGENT-001",
+        "OBSERVABILITY-001",
+        "POLICY-001",
+        "SUPPLYCHAIN-001",
+    }
+    assert by_id["AGENT-001"]["status"] == "BLOCKED"
 
 
 def test_agent_context_packet_contains_release_support_contracts() -> None:

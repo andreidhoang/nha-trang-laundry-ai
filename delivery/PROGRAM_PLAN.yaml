@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-07-29'
+last_updated: '2026-07-31'
 purpose: Stable phase vocabulary for planning; work item identity never depends on
   milestone numbering.
 work_queue: delivery/WORK_QUEUE.yaml
@@ -38,11 +38,19 @@ phases:
   - OPERATIONS_CONTROL
   outcome: Isolated draft-only Concierge, typed Tool Facade, model registry, traces,
     and evals.
+- id: PRODUCTION_HARDENING
+  name: CI, policy, observability, containers, and supply-chain hardening
+  status: PENDING
+  depends_on:
+  - OPERATIONS_CONTROL
+  outcome: Non-skippable integration gates, fail-closed policy, redacted telemetry,
+    reproducible images, and artifact-bound security evidence.
 - id: REAL_SHADOW_READINESS
   name: Real-customer internal Shadow readiness
   status: PENDING
   depends_on:
   - AGENT_SHADOW
+  - PRODUCTION_HARDENING
   outcome: Identity, privacy, backup, incident, evidence, and human-approval gates
     for real orders.
 - id: PUBLIC_ASSISTED

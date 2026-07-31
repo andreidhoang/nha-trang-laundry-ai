@@ -21,7 +21,7 @@ ALLOWED_DECISION_STATUS = {"OPEN", "RESOLVED", "DEFERRED"}
 ALLOWED_AUTHORIZATION = {"NOT_AUTHORIZED", "AUTHORIZED"}
 ALLOWED_CODE_STATUS = {"NOT_STARTED", "IN_PROGRESS", "COMPLETE", "BLOCKED"}
 ALLOWED_PHASE_STATUS = {"PENDING", "IN_PROGRESS", "COMPLETE", "BLOCKED"}
-WORK_ITEM_ID_PATTERN = re.compile(r"^[A-Z]+-[0-9]{3}$")
+WORK_ITEM_ID_PATTERN = re.compile(r"^[A-Z]+(?:-[A-Z]+)*-[0-9]{3}$")
 RELEASE_COMMIT_ENV = "RELEASE_DEPLOYED_COMMIT_SHA"
 RELEASE_STAGE_ENV = "RELEASE_DEPLOYMENT_STAGE"
 RELEASE_TRUST_PIN_ENV = "RELEASE_TRUSTED_SIGNERS_SHA256"
@@ -293,6 +293,14 @@ def validate_program_plan() -> tuple[int, int]:
                         f"Work item {item_id} {section} path is absent from "
                         f"its context packet: {path}"
                     )
+        task_packet = item.get("task_packet")
+        if task_packet is not None:
+            if not isinstance(task_packet, str):
+                raise ValueError(f"Work item {item_id} has an invalid task_packet")
+            require_file(task_packet)
+            packet_text = (ROOT / task_packet).read_text(encoding="utf-8")
+            if item_id not in packet_text:
+                raise ValueError(f"Work item {item_id} task packet does not name the work item")
         item_status = item.get("status")
         if item_status not in ALLOWED_PHASE_STATUS | {"READY"}:
             raise ValueError(f"Work item {item_id} has invalid status")

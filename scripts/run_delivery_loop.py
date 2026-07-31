@@ -68,6 +68,7 @@ def validate_queue(items: list[dict[str, Any]]) -> None:
         blockers = item.get("blocked_by_decisions")
         checks = item.get("acceptance_checks")
         phase = item.get("phase")
+        task_packet = item.get("task_packet")
         if not isinstance(item_id, str) or item_id in ids:
             raise ValueError("Each work item needs a unique string id")
         if status not in ALLOWED_STATUSES:
@@ -92,6 +93,12 @@ def validate_queue(items: list[dict[str, Any]]) -> None:
             or not all(isinstance(value, str) for value in checks)
         ):
             raise ValueError(f"Work item {item_id} requires acceptance checks")
+        if task_packet is not None:
+            if not isinstance(task_packet, str) or not task_packet:
+                raise ValueError(f"Work item {item_id} has an invalid task packet")
+            packet_path = (ROOT / task_packet).resolve()
+            if not packet_path.is_relative_to(ROOT.resolve()) or not packet_path.is_file():
+                raise ValueError(f"Work item {item_id} task packet does not exist")
         ids.add(item_id)
     if in_progress > 1:
         raise ValueError("Only one delivery work item may be IN_PROGRESS")
@@ -129,11 +136,19 @@ def render_brief(item: dict[str, Any]) -> str:
     context = assemble_packet(str(item["id"]), list(item["context_domains"]))
     checks = "\n".join(f"- `{command}`" for command in item["acceptance_checks"])
     evidence = "\n".join(f"- {entry}" for entry in item["required_evidence"])
+    task_packet_section = ""
+    task_packet = item.get("task_packet")
+    if isinstance(task_packet, str):
+        packet_text = (ROOT / task_packet).read_text(encoding="utf-8").strip()
+        task_packet_section = (
+            f"## Atomic task packet\n\nSource: `{task_packet}`\n\n{packet_text}\n\n"
+        )
     return (
         f"# Delivery loop brief: {item['id']}\n\n"
         f"**Phase:** {item['phase']}  \n"
         f"**Outcome:** {item['title']}\n\n"
         f"{context}\n"
+        f"{task_packet_section}"
         "## Acceptance checks\n\n"
         f"{checks}\n\n"
         "## Required evidence\n\n"

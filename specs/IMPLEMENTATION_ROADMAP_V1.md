@@ -232,10 +232,12 @@ Never copy production raw customer database into development.
 Effort ranges are planning estimates for one primary engineer with automated review support, not delivery promises.
 
 The stable execution vocabulary is `FOUNDATION`, `IDENTITY_CONTROL`, `DOMAIN_CORE`,
-`OPERATIONS_CONTROL`, `AGENT_SHADOW`, `REAL_SHADOW_READINESS`, `PUBLIC_ASSISTED` and
-`BOUNDED_AUTONOMY` in `delivery/PROGRAM_PLAN.yaml`. The M0–M8 labels below are retained as a readable
-historical decomposition only. Queue items use stable domain IDs such as `IDENTITY-001` and
-`DOMAIN-001`.
+`OPERATIONS_CONTROL`, `AGENT_SHADOW`, `PRODUCTION_HARDENING`, `REAL_SHADOW_READINESS`,
+`PUBLIC_ASSISTED` and `BOUNDED_AUTONOMY` in `delivery/PROGRAM_PLAN.yaml`. `PRODUCTION_HARDENING`
+is a local engineering track that may proceed while external `AGENT_SHADOW` evidence is blocked; both
+tracks are required before real-customer Shadow readiness. The M0–M8 labels below are retained as a
+readable historical decomposition only. Queue items use stable domain IDs such as `IDENTITY-001` and
+`HARDEN-CI-001`.
 
 ## M0 — Repository, ADR and CI foundation
 

@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-07-29'
+last_updated: '2026-07-31'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -294,6 +294,169 @@ items:
     verified OpenClaw store:false effective request, dedicated credential, scanned sandbox
     image digest with scan/SBOM evidence, DEC-006 Security/Privacy approval, provider
     storage/retention verification, and signed release evidence require external authority/services.
+- id: HARDEN-CI-001
+  phase: PRODUCTION_HARDENING
+  title: Non-skippable PostgreSQL integration and OpenClaw plugin checks in CI
+  status: PENDING
+  priority: 101
+  depends_on:
+  - OPERATIONS-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-harden-ci-001.md
+  acceptance_checks:
+  - uv run pytest packages/evals/tests/test_ci_quality_workflow.py
+  - uv run pytest
+  - npm --prefix runtime/openclaw/public-cell/plugin test
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - workflow_contract_tests
+  - postgres_integration_not_skipped
+  - plugin_build_and_tests
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: OBSERVABILITY-001
+  phase: PRODUCTION_HARDENING
+  title: Redacted structured logs and correlation propagation
+  status: PENDING
+  priority: 102
+  depends_on:
+  - OPERATIONS-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - privacy_consent
+  - orders_audit
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-observability-001.md
+  acceptance_checks:
+  - uv run pytest packages/observability/tests
+  - uv run pytest apps/api/tests apps/worker/tests apps/public-agent-tools/tests
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - structured_log_tests
+  - pii_and_secret_redaction
+  - correlation_propagation
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: POLICY-001
+  phase: PRODUCTION_HARDENING
+  title: Typed fail-closed policy decision point and capability isolation
+  status: PENDING
+  priority: 103
+  depends_on:
+  - OPERATIONS-001
+  context_domains:
+  - runtime_architecture
+  - privacy_consent
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - delivery/GATE_REGISTRY.yaml
+  - specs/contracts/capability-status-v1.schema.json
+  task_packet: context/tasks/TASK-policy-001.md
+  acceptance_checks:
+  - uv run pytest packages/policy/tests
+  - uv run pytest packages/db/tests/test_automation_execution.py
+  - uv run pytest apps/public-agent-tools/tests packages/evals/tests/test_context_harness.py
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - fail_closed_tests
+  - negative_authorization
+  - capability_isolation
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONTAINER-001
+  phase: PRODUCTION_HARDENING
+  title: Reproducible non-root production images for internal services
+  status: PENDING
+  priority: 104
+  depends_on:
+  - OPERATIONS-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - privacy_consent
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/container-scan-evidence-v1.schema.json
+  task_packet: context/tasks/TASK-container-001.md
+  acceptance_checks:
+  - uv run pytest packages/evals/tests/test_container_build_contract.py
+  - docker compose -f compose.yaml -f compose.production.yaml config
+  - docker build --file apps/api/Dockerfile --tag nha-trang-laundry-api:local .
+  - docker build --file apps/worker/Dockerfile --tag nha-trang-laundry-worker:local .
+  - docker build --file apps/public-agent-tools/Dockerfile --tag nha-trang-laundry-agent-tools:local
+    .
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - reproducible_image_builds
+  - non_root_runtime
+  - build_context_exclusion
+  - healthcheck_smoke_tests
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SUPPLYCHAIN-001
+  phase: PRODUCTION_HARDENING
+  title: SBOM, secret, dependency, license, and container scan release gates
+  status: PENDING
+  priority: 105
+  depends_on:
+  - HARDEN-CI-001
+  - CONTAINER-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  contracts:
+  - specs/contracts/container-scan-evidence-v1.schema.json
+  - specs/contracts/release-gate-manifest-v1.schema.json
+  task_packet: context/tasks/TASK-supplychain-001.md
+  acceptance_checks:
+  - uv run pytest packages/evals/tests/test_supply_chain_workflow.py
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/verify_release_candidate.py --help
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - secret_scan
+  - dependency_and_license_audit
+  - sbom
+  - container_scan
+  - artifact_hash_binding
+  - rollback_assessment
+  blocked_by_decisions: []
 - id: SECURITY-001
   phase: REAL_SHADOW_READINESS
   title: Identity, privacy, PITR, incident, kill-switch, and release-readiness gates
@@ -301,6 +464,9 @@ items:
   priority: 120
   depends_on:
   - AGENT-001
+  - OBSERVABILITY-001
+  - POLICY-001
+  - SUPPLYCHAIN-001
   context_domains:
   - platform
   - runtime_architecture

@@ -40,7 +40,7 @@ phases:
     and evals.
 - id: PRODUCTION_HARDENING
   name: CI, policy, observability, containers, and supply-chain hardening
-  status: PENDING
+  status: IN_PROGRESS
   depends_on:
   - OPERATIONS_CONTROL
   outcome: Non-skippable integration gates, fail-closed policy, redacted telemetry,

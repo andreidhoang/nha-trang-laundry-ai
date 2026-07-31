@@ -284,20 +284,18 @@ items:
   - provider_storage_verification
   - rollback_assessment
   blocked_by_decisions: []
-  blocking_condition: Local fixture/assertion registry, the sanitized 32-case
-    deterministic-degraded evidence bundle, signed-manifest/trust-root and provider-evidence
-    enforcement, version-bound offline runtime audit, context-contract coverage validation,
-    capability-status cryptographic binding, and rollback assessment are complete;
-    313 database-enabled tests pass.
-    PRIMARY/fallback provider evals,
-    immutable model release pin,
-    verified OpenClaw store:false effective request, dedicated credential, scanned sandbox
+  blocking_condition: Local fixture/assertion registry, the sanitized 32-case deterministic-degraded
+    evidence bundle, signed-manifest/trust-root and provider-evidence enforcement,
+    version-bound offline runtime audit, context-contract coverage validation, capability-status
+    cryptographic binding, and rollback assessment are complete; 313 database-enabled
+    tests pass. PRIMARY/fallback provider evals, immutable model release pin, verified
+    OpenClaw store:false effective request, dedicated credential, scanned sandbox
     image digest with scan/SBOM evidence, DEC-006 Security/Privacy approval, provider
     storage/retention verification, and signed release evidence require external authority/services.
 - id: HARDEN-CI-001
   phase: PRODUCTION_HARDENING
   title: Non-skippable PostgreSQL integration and OpenClaw plugin checks in CI
-  status: PENDING
+  status: IN_PROGRESS
   priority: 101
   depends_on:
   - OPERATIONS-001
@@ -410,7 +408,8 @@ items:
   - uv run pytest packages/evals/tests/test_container_build_contract.py
   - docker compose -f compose.yaml -f compose.production.yaml config
   - docker build --file apps/api/Dockerfile --tag nha-trang-laundry-api:local .
-  - docker build --file apps/worker/Dockerfile --tag nha-trang-laundry-worker:local .
+  - docker build --file apps/worker/Dockerfile --tag nha-trang-laundry-worker:local
+    .
   - docker build --file apps/public-agent-tools/Dockerfile --tag nha-trang-laundry-agent-tools:local
     .
   - uv run python scripts/check_context_drift.py

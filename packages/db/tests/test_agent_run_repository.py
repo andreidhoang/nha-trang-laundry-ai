@@ -26,7 +26,7 @@ from nha_trang_laundry_db.agent_runs import (
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_domain.catalog import ActorRole
 
-NOW = datetime(2026, 8, 1, 3, tzinfo=UTC)
+NOW = datetime.now(UTC)
 SHA_A = f"sha256:{'a' * 64}"
 SHA_B = f"sha256:{'b' * 64}"
 SHA_C = f"sha256:{'c' * 64}"

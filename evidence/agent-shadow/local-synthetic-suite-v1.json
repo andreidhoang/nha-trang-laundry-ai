@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "evidence_type": "LOCAL_SYNTHETIC_NON_RELEASE",
-  "captured_at": "2026-07-29T15:51:08.313581Z",
+  "captured_at": "2026-07-31T11:55:18.806790Z",
   "command": "uv run python -m nha_trang_laundry_evals.runner --mode synthetic-local-suite",
   "release_effect": "NONE",
   "primary_provider_evidence": false,
@@ -10,6 +10,7 @@
     "specs/evals/fixture-registry-v1.json": "sha256:9999176b5bc71fbbafab60ed4c519dccc15b926aa16f0d5b63c7f8152bc3f47e",
     "specs/evals/assertion-registry-v1.json": "sha256:010bf47851988a4d3cc3a778add92a1f8866daeb204c5c206c830bea6e7d7937",
     "specs/contracts/agent-tools-v1.openapi.yaml": "sha256:17c13317d809c07ad29fb6c85bb0f3654435a073a8b8fd3a39a92d8803984af3",
+    "specs/contracts/capability-status-v1.schema.json": "sha256:b2e3c7127f134e95dff224f69045c33a2d229cb5110d6cfd9bdb4dacf7542881",
     "specs/contracts/container-scan-evidence-v1.schema.json": "sha256:385717e92dd1c024e811fa28f719f835884ffb92ab7b0df9122324ff0f2f1a44",
     "specs/contracts/provider-data-evidence-v1.schema.json": "sha256:d05413194bd1508681b790a5d0e41f65c44367c5631a480384ff84e1c326fd99",
     "specs/contracts/release-gate-manifest-v1.schema.json": "sha256:a6927c3dd408c9bab52043e966335767aa2c8cbdd68370885129c34d4b396ad0",
@@ -20,11 +21,11 @@
     "packages/evals/src/nha_trang_laundry_evals/runner.py": "sha256:1451c948b1d645abdf0244617e3246c3babd311ab9cdac4bd76d8e80cb1a2188",
     "packages/evals/src/nha_trang_laundry_evals/graders.py": "sha256:29512e24b06d3e149b50ccecd9b0e60a02c2c7e97bd786e5c4d2d70bad75af1b",
     "packages/contracts/src/nha_trang_laundry_contracts/release_manifest.py": "sha256:c1e36e03cb9a85b17a0ec08219f0d4b06332c6b9be28b22ed7a1521b629db2a2",
-    "apps/worker/src/nha_trang_laundry_worker/agent_runner.py": "sha256:14d8b6619051b130aa5b9e0954bea48de22768098b34521cf4096c6511e00664",
+    "apps/worker/src/nha_trang_laundry_worker/agent_runner.py": "sha256:656ceeab0fc0f110c730fc1b8511d682dcf32d710fef99cae727ca2c9d3bf0a6",
     "scripts/capture_local_agent_evidence.py": "sha256:84ff3f92853c90f8399859b33c2359e98a5f5b5c4380f72fceb62eda629adb2a",
     "scripts/capture_openclaw_offline_evidence.py": "sha256:8c000eb488884fbadccf6006de00a5aeb76b280050177498eb12c268322936cf",
     "scripts/verify_agent_runtime.py": "sha256:c65dfd59a2350de66361c72ad5f56083bf9d271befa85c30ad56d42e520daf5d",
-    "scripts/verify_release_candidate.py": "sha256:4054f03ed8f4fb8539fdf81958fee457e5d287a2713ee502f123b2ca303caf81",
+    "scripts/verify_release_candidate.py": "sha256:912a0005245e422186e16a556ae8a39c219ec65b3146bfeed2f908a4576dbf3e",
     "evidence/agent-shadow/rollback-assessment-v1.yaml": "sha256:63591f2bcf95c631f97da09ac758ab6b955a4cf597e6d7bbe22c54d1a3bce754"
   },
   "result": {

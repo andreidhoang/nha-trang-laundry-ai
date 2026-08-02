@@ -1,0 +1,25 @@
+work_item: RELEASE-BASELINE-001
+recorded_at: '2026-08-02T01:28:00.5788704Z'
+requirement_contract: context/tasks/TASK-release-baseline-001.md
+rollback_impact: Revert the queue/task-packet and status-projection changes plus the synthetic clock and controller-fixture corrections. No migration, stored production data, provider, channel, capability authorization, or outbound state rollback is required.
+unresolved_assumptions: The baseline is local engineering evidence pending a reviewed commit. AGENT-001 retains nine release blockers; real-customer model calls, public ingress, and automatic send remain disabled.
+evidence:
+  complete_quality_gates: The strict PostgreSQL suite passed 454 tests with zero skips; Ruff check, Ruff format, mypy over 142 source files, 12 JSON and 2 YAML contract validation, 12 runtime artifact validation, and all three OpenClaw plugin tests passed.
+  delivery_state_reconciliation: Context drift passed with 57 sources, 6 decisions, 4 gates, 9 phases, 27 work items, and 13 capabilities. Machine queue, program phase, capability project stage, continuation brief, and human status projection now agree on active production hardening.
+  capability_fail_closed: The status reporter confirms all 13 capabilities remain NOT_AUTHORIZED. Runtime artifact verification retains nine release blockers and no public, provider, channel, real-customer, or automatic-send flag was enabled.
+  rollback_assessment: All baseline corrections are code/test/planning projections only and introduce no forward migration or external state. The live PostgreSQL lease check was deliberately preserved; only expired synthetic test clocks were corrected.
+checks:
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+- command: npm --prefix runtime/openclaw/public-cell/plugin test
+  status: PASSED

@@ -1,0 +1,12 @@
+title = "Nha Trang Laundry repository secret scan"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Exact non-secret test identifiers verified during SUPPLYCHAIN-001"
+regexTarget = "line"
+regexes = [
+  '''PrivateReleaseKey\s*=\s*Ed25519PrivateKey\s*\|\s*EllipticCurvePrivateKey''',
+  '''idempotency_key="synthetic-approval-tamper-001"''',
+]

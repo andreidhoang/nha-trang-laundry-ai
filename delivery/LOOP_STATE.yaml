@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-07-31T03:26:46.632228+00:00'
+last_updated: '2026-08-02T01:29:07.969276+00:00'
 current_work_item: null
 last_result: COMPLETE
 blocker: null
@@ -28,6 +28,21 @@ evidence_records:
 - work_item: HARDEN-CI-001
   path: evidence/delivery-loop/HARDEN-CI-001.yaml
   recorded_at: '2026-07-31T03:26:46.632228+00:00'
+- work_item: OBSERVABILITY-001
+  path: evidence/delivery-loop/OBSERVABILITY-001.yaml
+  recorded_at: '2026-07-31T09:59:29.343079+00:00'
+- work_item: POLICY-001
+  path: evidence/delivery-loop/POLICY-001.yaml
+  recorded_at: '2026-07-31T10:05:54.678606+00:00'
+- work_item: CONTAINER-001
+  path: evidence/delivery-loop/CONTAINER-001.yaml
+  recorded_at: '2026-07-31T10:12:35.368917+00:00'
+- work_item: SUPPLYCHAIN-001
+  path: evidence/delivery-loop/SUPPLYCHAIN-001.yaml
+  recorded_at: '2026-07-31T10:42:51.668857+00:00'
+- work_item: RELEASE-BASELINE-001
+  path: evidence/delivery-loop/RELEASE-BASELINE-001.yaml
+  recorded_at: '2026-08-02T01:29:07.969276+00:00'
 blocked_records:
 - work_item: AGENT-001
   reason: Local fixture/assertion registry is complete and 289 tests pass, but PRIMARY/fallback

@@ -7,12 +7,15 @@ import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from nha_trang_laundry_contracts import (
     ReleaseCapability,
     RepositoryArtifactResolver,
+    SupplyChainEvidenceError,
     load_and_verify_release_manifest,
     load_trusted_release_signers,
+    verify_supply_chain_evidence,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +44,7 @@ def parser() -> argparse.ArgumentParser:
         required=True,
     )
     candidate.add_argument("--artifact-root", type=Path, default=ROOT)
+    candidate.add_argument("--supply-chain-evidence", type=Path, required=True)
     candidate.add_argument("--at", type=_timestamp)
     return candidate
 
@@ -63,6 +67,26 @@ def main(argv: list[str] | None = None) -> int:
         now=current,
         artifact_resolver=RepositoryArtifactResolver(args.artifact_root),
     )
+    artifact_root = args.artifact_root.resolve()
+    evidence_path = args.supply_chain_evidence.resolve()
+    try:
+        evidence_relative = evidence_path.relative_to(artifact_root).as_posix()
+    except ValueError as error:
+        raise SupplyChainEvidenceError(
+            "supply-chain evidence escapes the release artifact root"
+        ) from error
+    signed_paths = {_repository_path(uri) for uri in authorization.verified_uris}
+    if evidence_relative not in signed_paths:
+        raise SupplyChainEvidenceError(
+            "supply-chain evidence is not hash-bound by the signed release manifest"
+        )
+    supply_chain = verify_supply_chain_evidence(
+        artifact_root=artifact_root,
+        schema_root=ROOT,
+        path=evidence_path,
+        expected_commit_sha=args.expected_commit_sha,
+        now=current,
+    )
     print(
         json.dumps(
             {
@@ -75,11 +99,22 @@ def main(argv: list[str] | None = None) -> int:
                 "expires_at": authorization.expires_at.isoformat().replace("+00:00", "Z"),
                 "payload_hash": authorization.payload_hash,
                 "verified_artifact_count": len(authorization.verified_uris),
+                "supply_chain_evidence_id": supply_chain.evidence_id,
+                "verified_image_count": len(supply_chain.image_refs),
             },
             indent=2,
         )
     )
     return 0
+
+
+def _repository_path(uri: str) -> str:
+    parsed = urlparse(uri)
+    if parsed.scheme == "repo" and not parsed.netloc:
+        return parsed.path.lstrip("/")
+    if not parsed.scheme:
+        return uri.replace("\\", "/").lstrip("/")
+    return ""
 
 
 if __name__ == "__main__":

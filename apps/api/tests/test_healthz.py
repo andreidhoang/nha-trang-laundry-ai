@@ -76,6 +76,20 @@ def test_healthz_returns_ok() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+    assert UUID(response.headers["X-Correlation-ID"])
+
+
+def test_api_preserves_canonical_correlation_and_replaces_malformed_input() -> None:
+    expected = "00000000-0000-0000-0000-000000000901"
+
+    propagated = TestClient(app).get("/healthz", headers={"X-Correlation-ID": expected})
+    replaced = TestClient(app).get(
+        "/healthz", headers={"X-Correlation-ID": "not-a-canonical-correlation"}
+    )
+
+    assert propagated.headers["X-Correlation-ID"] == expected
+    assert replaced.headers["X-Correlation-ID"] != "not-a-canonical-correlation"
+    assert UUID(replaced.headers["X-Correlation-ID"])
 
 
 def test_staff_pwa_shell_is_served_without_public_customer_controls() -> None:

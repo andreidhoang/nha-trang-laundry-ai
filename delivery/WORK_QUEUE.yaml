@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-07-31'
+last_updated: '2026-08-02'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -324,7 +324,7 @@ items:
 - id: OBSERVABILITY-001
   phase: PRODUCTION_HARDENING
   title: Redacted structured logs and correlation propagation
-  status: PENDING
+  status: COMPLETE
   priority: 102
   depends_on:
   - OPERATIONS-001
@@ -355,7 +355,7 @@ items:
 - id: POLICY-001
   phase: PRODUCTION_HARDENING
   title: Typed fail-closed policy decision point and capability isolation
-  status: PENDING
+  status: COMPLETE
   priority: 103
   depends_on:
   - OPERATIONS-001
@@ -389,7 +389,7 @@ items:
 - id: CONTAINER-001
   phase: PRODUCTION_HARDENING
   title: Reproducible non-root production images for internal services
-  status: PENDING
+  status: COMPLETE
   priority: 104
   depends_on:
   - OPERATIONS-001
@@ -423,7 +423,7 @@ items:
 - id: SUPPLYCHAIN-001
   phase: PRODUCTION_HARDENING
   title: SBOM, secret, dependency, license, and container scan release gates
-  status: PENDING
+  status: COMPLETE
   priority: 105
   depends_on:
   - HARDEN-CI-001
@@ -456,6 +456,235 @@ items:
   - artifact_hash_binding
   - rollback_assessment
   blocked_by_decisions: []
+- id: RELEASE-BASELINE-001
+  phase: PRODUCTION_HARDENING
+  title: Immutable reviewed production-hardening baseline
+  status: COMPLETE
+  priority: 106
+  depends_on:
+  - SUPPLYCHAIN-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-release-baseline-001.md
+  acceptance_checks:
+  - uv run pytest --require-postgres-integration
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  - npm --prefix runtime/openclaw/public-cell/plugin test
+  required_evidence:
+  - complete_quality_gates
+  - delivery_state_reconciliation
+  - capability_fail_closed
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: WORKER-HOST-001
+  phase: PRODUCTION_HARDENING
+  title: PostgreSQL-backed worker supervisor, readiness, leases, and recovery
+  status: PENDING
+  priority: 107
+  depends_on:
+  - RELEASE-BASELINE-001
+  - OPERATIONS-001
+  - OBSERVABILITY-001
+  - POLICY-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - orders_audit
+  - privacy_consent
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-worker-host-001.md
+  acceptance_checks:
+  - uv run pytest apps/worker/tests packages/db/tests/test_outbox_repository.py packages/db/tests/test_agent_run_repository.py
+  - uv run pytest packages/evals/tests/test_worker_host_contract.py
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - supervisor_integration_tests
+  - readiness_and_shutdown
+  - lease_and_recovery
+  - provider_send_absence
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: STAFF-OPS-001
+  phase: PRODUCTION_HARDENING
+  title: Complete staff Shadow operations and manual-send console
+  status: PENDING
+  priority: 108
+  depends_on:
+  - RELEASE-BASELINE-001
+  - OPERATIONS-001
+  context_domains:
+  - platform
+  - pricing
+  - orders_audit
+  - privacy_consent
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-staff-ops-001.md
+  acceptance_checks:
+  - uv run pytest apps/api/tests packages/db/tests packages/domain/tests
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - staff_workflow_integration
+  - negative_authorization
+  - concurrency_and_idempotency
+  - manual_send_integrity
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: HTTP-SECURITY-001
+  phase: PRODUCTION_HARDENING
+  title: Browser security, CSRF, OIDC integration, and abuse controls
+  status: PENDING
+  priority: 109
+  depends_on:
+  - STAFF-OPS-001
+  - IDENTITY-001
+  - OBSERVABILITY-001
+  context_domains:
+  - platform
+  - privacy_consent
+  - orders_audit
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-http-security-001.md
+  acceptance_checks:
+  - uv run pytest apps/api/tests packages/db/tests/test_identity.py
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - csrf_and_origin_enforcement
+  - browser_security_headers
+  - oidc_negative_integration
+  - authentication_abuse_controls
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: TELEMETRY-001
+  phase: PRODUCTION_HARDENING
+  title: OpenTelemetry metrics, traces, SLOs, and alert contracts
+  status: PENDING
+  priority: 111
+  depends_on:
+  - WORKER-HOST-001
+  - OBSERVABILITY-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - evaluation_release
+  - privacy_consent
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-telemetry-001.md
+  acceptance_checks:
+  - uv run pytest packages/observability/tests apps/api/tests apps/worker/tests
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - pii_safe_metrics
+  - distributed_trace_propagation
+  - slo_metric_contracts
+  - alert_rule_validation
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: STAGING-001
+  phase: PRODUCTION_HARDENING
+  title: Private TLS staging topology, secrets, and deployment rollback
+  status: PENDING
+  priority: 112
+  depends_on:
+  - WORKER-HOST-001
+  - HTTP-SECURITY-001
+  - TELEMETRY-001
+  - CONTAINER-001
+  - SUPPLYCHAIN-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - privacy_consent
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/container-scan-evidence-v1.schema.json
+  - specs/contracts/supply-chain-evidence-v1.schema.json
+  task_packet: context/tasks/TASK-staging-001.md
+  acceptance_checks:
+  - docker compose -f compose.yaml -f compose.production.yaml config
+  - uv run pytest packages/evals/tests/test_staging_deployment_contract.py
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - tls_and_private_network_topology
+  - external_secret_contract
+  - least_privilege_runtime
+  - deployment_and_rollback_smoke
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: BACKUP-RESTORE-001
+  phase: REAL_SHADOW_READINESS
+  title: Continuous PostgreSQL recovery and restore-drill automation
+  status: PENDING
+  priority: 113
+  depends_on:
+  - STAGING-001
+  - DB-001
+  context_domains:
+  - platform
+  - orders_audit
+  - evaluation_release
+  - privacy_consent
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-backup-restore-001.md
+  acceptance_checks:
+  - uv run pytest packages/evals/tests/test_backup_restore_contract.py packages/db/tests
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - pitr_configuration
+  - encrypted_off_host_copy
+  - restore_integrity_checks
+  - achieved_rpo_rto
+  - duplicate_send_reconciliation
+  - rollback_assessment
+  blocked_by_decisions: []
 - id: SECURITY-001
   phase: REAL_SHADOW_READINESS
   title: Identity, privacy, PITR, incident, kill-switch, and release-readiness gates
@@ -466,6 +695,10 @@ items:
   - OBSERVABILITY-001
   - POLICY-001
   - SUPPLYCHAIN-001
+  - HTTP-SECURITY-001
+  - TELEMETRY-001
+  - STAGING-001
+  - BACKUP-RESTORE-001
   context_domains:
   - platform
   - runtime_architecture

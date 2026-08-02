@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-07-31'
+last_updated: '2026-08-02'
 purpose: Stable phase vocabulary for planning; work item identity never depends on
   milestone numbering.
 work_queue: delivery/WORK_QUEUE.yaml
@@ -44,7 +44,8 @@ phases:
   depends_on:
   - OPERATIONS_CONTROL
   outcome: Non-skippable integration gates, fail-closed policy, redacted telemetry,
-    reproducible images, and artifact-bound security evidence.
+    reproducible images, artifact-bound security evidence, operable worker processes,
+    secure staff workflows, and a private staging deployment.
 - id: REAL_SHADOW_READINESS
   name: Real-customer internal Shadow readiness
   status: PENDING

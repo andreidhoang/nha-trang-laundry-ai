@@ -69,7 +69,9 @@ def execute_audit_write_failure_preflight(
         created_at=timestamp,
     )
     repository.enqueue(connection, command)
-    claimed = repository.claim_next(connection, worker_role=ActorRole.AGENT_RUNNER, now=timestamp)
+    claimed = repository.claim_next(
+        connection, worker_role=ActorRole.AGENT_RUNNER, now=datetime.now(UTC)
+    )
     if claimed is None:
         raise ValueError("synthetic agent run was not claimable")
     entry = AgentToolCallLedgerEntry(

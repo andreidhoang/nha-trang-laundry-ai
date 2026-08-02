@@ -3,9 +3,11 @@ name = "nha-trang-laundry-policy"
 version = "0.1.0"
 description = "Typed, deterministic policy decision point."
 requires-python = ">=3.12,<3.14"
-dependencies = []
+dependencies = ["nha-trang-laundry-contracts"]
+
+[tool.uv.sources]
+nha-trang-laundry-contracts = { workspace = true }
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
-

@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated:** 2026-07-31
+**Last updated:** 2026-08-02
 **Authoritative machine status:** [`delivery/CAPABILITY_STATUS.yaml`](../delivery/CAPABILITY_STATUS.yaml)
 
 ## Current decision
@@ -17,7 +17,7 @@ public channel, automated send, autonomous quote, booking, delivery decision, or
 | `DOMAIN_CORE` | Complete locally | canonical registry, exact pricebook import, pricing, promotion/delivery/SLA boundaries, immutable quote snapshots and calculation traces |
 | `OPERATIONS_CONTROL` | Complete locally | Staff PWA slice, approvals, inbox/outbox, idempotency, audit and operational workflows |
 | `AGENT_SHADOW` | Blocked externally | isolated EVAL_ONLY OpenClaw cell, fixed Tool Facade, short-lived Runner bridge and durable run/tool ledger exist; P0 integrated eval and provider-data evidence require external prerequisites |
-| `PRODUCTION_HARDENING` | Pending | local CI, observability, policy, container and supply-chain work is queued independently of the external provider blocker |
+| `PRODUCTION_HARDENING` | In progress | CI, observability, policy, container and supply-chain controls are complete; worker hosting, staff workflows, HTTP security, telemetry, and private staging are now explicit local readiness work |
 | `REAL_SHADOW_READINESS` | Not authorized | `G1_INTERNAL_SHADOW_READY` evidence absent |
 | `PUBLIC_ASSISTED` | Not authorized | G1/G2 and capability-specific evidence absent |
 | `BOUNDED_AUTONOMY` | Not authorized | cumulative G1–G4 evidence absent |
@@ -38,10 +38,10 @@ release decision is driven by evidence and a signed gate manifest, never by this
 
 ## Next controlled task
 
-`HARDEN-CI-001` is the next dependency-ready local task: make PostgreSQL integration tests and the
-OpenClaw TypeScript plugin non-skippable CI gates. `OBSERVABILITY-001`, `POLICY-001`, and
-`CONTAINER-001` are independent local successors; `SUPPLYCHAIN-001` depends on the CI and container
-work.
+`RELEASE-BASELINE-001` is the active dependency-ready task. It reconciles the completed CI,
+observability, policy, container, and supply-chain implementation into a fully verified immutable
+engineering baseline. `WORKER-HOST-001` follows it, then the independent staff/security/telemetry and
+private-staging readiness chain. These tasks do not authorize provider use, public ingress, or send.
 
 In parallel, `AGENT-001` remains blocked externally. Its local seed fixtures and assertions are
 complete; external prerequisites are required before PRIMARY/fallback/degraded integration evidence.

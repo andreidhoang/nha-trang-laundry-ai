@@ -1,0 +1,27 @@
+work_item: POLICY-001
+recorded_at: '2026-07-31T10:05:31.6089316Z'
+requirement_contract: context/tasks/TASK-policy-001.md
+rollback_impact: Revert the typed policy package and Tool Facade synthetic-policy integration; database schema and stored execution gates are unchanged, and all release/capability defaults remain disabled.
+unresolved_assumptions: Production policy snapshots will be assembled from the existing authoritative gate, capability, release, identity, approval, and suppression stores by later deployment work. The only release-evidence bypass is typed and restricted to SYNTHETIC INTERNAL_SHADOW Tool Facade tests; it denies real-customer data and every other capability/stage combination.
+evidence:
+  fail_closed_tests: Twenty-two PDP tests cover every conjunctive global term, missing values, stale/expired state, malformed types, unavailable policy, version mismatch, release mismatch, suppression, and approval state.
+  negative_authorization: Tenant, contact, identity, release commit/stage, capability substitution, and model-supplied policy_outcome attempts are denied before backend execution; database execution gates passed against synthetic PostgreSQL with zero skips.
+  capability_isolation: The enabled-capability set, authoritative capability binding, release capability, required gates, and fixed operation registry must all match; one capability cannot authorize another.
+  rollback_assessment: Code/config revert only; no flag, capability status, release manifest, provider path, public ingress, or sender was enabled.
+checks:
+- command: uv run pytest packages/policy/tests
+  status: PASSED
+- command: uv run pytest packages/db/tests/test_automation_execution.py
+  status: PASSED
+- command: uv run pytest apps/public-agent-tools/tests packages/evals/tests/test_context_harness.py
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

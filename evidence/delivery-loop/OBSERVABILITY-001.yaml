@@ -1,0 +1,23 @@
+work_item: OBSERVABILITY-001
+recorded_at: '2026-07-31T09:58:10.6635423Z'
+requirement_contract: context/tasks/TASK-observability-001.md
+rollback_impact: Revert the observability package, correlation middleware, worker instrumentation, Tool Facade correlation header, and workspace lockfile change; no schema, stored data, capability, model, provider, channel, or outbound rollback is required.
+unresolved_assumptions: External telemetry exporters and alert routing remain deployment configuration for later hardening. Correlation IDs are diagnostic identifiers only and confer no identity, binding, policy, or authorization authority.
+evidence:
+  structured_log_tests: Eight observability tests passed for typed stable fields, canonical correlation, bounded serialization, and fail-safe logger behavior.
+  pii_and_secret_redaction: Complete serialized-output tests prove bearer material, API keys, cookies, synthetic Vietnamese phone values, addresses, prompts/reasoning, tool payloads, nested collections, attacker-controlled field names, oversized values, and exception text do not survive.
+  correlation_propagation: API and Tool Facade HTTP tests preserve one canonical X-Correlation-ID and derive the same trace identifier; the Runner forwards the server-owned job correlation through the fixed Tool Facade request, and all 33 guarded app/worker/Tool Facade tests passed against synthetic PostgreSQL with zero skips.
+  rollback_assessment: Instrumentation is additive and local-output-only; removing it requires no database or production-state rollback and cannot authorize a side effect.
+checks:
+- command: uv run pytest packages/observability/tests
+  status: PASSED
+- command: uv run pytest apps/api/tests apps/worker/tests apps/public-agent-tools/tests
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

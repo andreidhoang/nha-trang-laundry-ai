@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://giatlasachcong.vn/contracts/supply-chain-evidence-v1.schema.json",
+  "title": "Release-bound software supply-chain evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "evidence_id", "release_commit_sha", "generated_at", "expires_at",
+    "status", "secret_scan", "dependency_audit", "license_audit", "images", "waivers"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "evidence_id": { "type": "string", "pattern": "^[A-Z0-9._:-]{8,160}$" },
+    "release_commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "status": { "const": "PASSED" },
+    "secret_scan": { "$ref": "#/$defs/SecretScan" },
+    "dependency_audit": { "$ref": "#/$defs/DependencyAudit" },
+    "license_audit": { "$ref": "#/$defs/LicenseAudit" },
+    "images": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["image_ref", "scan_evidence"],
+        "properties": {
+          "image_ref": {
+            "type": "string",
+            "pattern": "^[a-z0-9._/-]+@sha256:[0-9a-f]{64}$"
+          },
+          "scan_evidence": { "$ref": "#/$defs/Artifact" }
+        }
+      }
+    },
+    "waivers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "waiver_id", "finding_id", "severity", "reason", "approved_by",
+          "authority", "approved_at", "expires_at"
+        ],
+        "properties": {
+          "waiver_id": { "type": "string", "pattern": "^[A-Z0-9._:-]{8,120}$" },
+          "finding_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "severity": { "type": "string", "enum": ["MEDIUM", "LOW", "LICENSE"] },
+          "reason": { "type": "string", "minLength": 8, "maxLength": 500 },
+          "approved_by": { "type": "string", "pattern": "^human:[A-Za-z0-9._@:-]{3,120}$" },
+          "authority": { "const": "HUMAN_SECURITY_REVIEW" },
+          "approved_at": { "type": "string", "format": "date-time" },
+          "expires_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "Sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "Artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "sha256"],
+      "properties": {
+        "uri": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "SecretScan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scanner", "scanner_version", "status", "scanned_commit_sha", "findings", "report"
+      ],
+      "properties": {
+        "scanner": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "scanner_version": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "status": { "const": "PASSED" },
+        "scanned_commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "findings": { "const": 0 },
+        "report": { "$ref": "#/$defs/Artifact" }
+      }
+    },
+    "DependencyAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scanner", "scanner_version", "status", "lockfiles", "vulnerabilities", "reports"
+      ],
+      "properties": {
+        "scanner": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "scanner_version": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "status": { "const": "PASSED" },
+        "lockfiles": { "$ref": "#/$defs/Lockfiles" },
+        "reports": {
+          "type": "array", "minItems": 2, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/Artifact" }
+        },
+        "vulnerabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["critical", "high"],
+          "properties": { "critical": { "const": 0 }, "high": { "const": 0 } }
+        }
+      }
+    },
+    "LicenseAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scanner", "scanner_version", "status", "lockfiles", "forbidden_or_unknown_count", "report"
+      ],
+      "properties": {
+        "scanner": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "scanner_version": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "status": { "const": "PASSED" },
+        "lockfiles": { "$ref": "#/$defs/Lockfiles" },
+        "forbidden_or_unknown_count": { "const": 0 },
+        "report": { "$ref": "#/$defs/Artifact" }
+      }
+    },
+    "Lockfiles": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/Artifact" }
+    }
+  }
+}

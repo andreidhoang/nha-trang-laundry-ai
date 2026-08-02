@@ -242,6 +242,102 @@ def _write_signer_registry(
     return path, f"sha256:{sha256(content).hexdigest()}", registry
 
 
+def _add_supply_chain_evidence(
+    manifest: dict[str, Any], repository: Path, private_keys: dict[str, PrivateReleaseKey]
+) -> Path:
+    evidence = repository / "evidence"
+    uv_content = b"locked-python\n"
+    node_content = b'{"lockfileVersion":3}\n'
+    (repository / "uv.lock").write_bytes(uv_content)
+    (evidence / "package-lock.json").write_bytes(node_content)
+    sbom_content = b'{"spdxVersion":"SPDX-2.3"}\n'
+    (evidence / "api.spdx.json").write_bytes(sbom_content)
+    image_ref = f"registry.example/api@sha256:{'b' * 64}"
+    scan = {
+        "schema_version": 1,
+        "evidence_id": "SCAN:RELEASE:01",
+        "image_ref": image_ref,
+        "scanner": "docker-scout",
+        "scanner_version": "1.23.1",
+        "scanned_at": "2026-07-02T02:30:00Z",
+        "status": "PASSED",
+        "vulnerabilities": {"critical": 0, "high": 0},
+        "sbom": {
+            "format": "SPDX_JSON",
+            "uri": "evidence/api.spdx.json",
+            "sha256": f"sha256:{sha256(sbom_content).hexdigest()}",
+        },
+    }
+    scan_content = (json.dumps(scan, indent=2) + "\n").encode()
+    (evidence / "api-scan.json").write_bytes(scan_content)
+    report_content = b"[]\n"
+    for report_name in ("gitleaks", "pip-audit", "npm-audit", "licenses"):
+        (evidence / f"{report_name}.json").write_bytes(report_content)
+
+    def report(name: str) -> dict[str, str]:
+        return {
+            "uri": f"evidence/{name}.json",
+            "sha256": f"sha256:{sha256(report_content).hexdigest()}",
+        }
+
+    lockfiles = [
+        {"uri": "uv.lock", "sha256": f"sha256:{sha256(uv_content).hexdigest()}"},
+        {
+            "uri": "evidence/package-lock.json",
+            "sha256": f"sha256:{sha256(node_content).hexdigest()}",
+        },
+    ]
+    scanner = {"scanner": "test", "scanner_version": "1", "status": "PASSED"}
+    bundle = {
+        "schema_version": 1,
+        "evidence_id": "SUPPLY:RELEASE:01",
+        "release_commit_sha": COMMIT_SHA,
+        "generated_at": "2026-07-02T03:00:00Z",
+        "expires_at": "2026-07-03T03:00:00Z",
+        "status": "PASSED",
+        "secret_scan": {
+            **scanner,
+            "scanned_commit_sha": COMMIT_SHA,
+            "findings": 0,
+            "report": report("gitleaks"),
+        },
+        "dependency_audit": {
+            **scanner,
+            "lockfiles": lockfiles,
+            "reports": [report("pip-audit"), report("npm-audit")],
+            "vulnerabilities": {"critical": 0, "high": 0},
+        },
+        "license_audit": {
+            **scanner,
+            "lockfiles": lockfiles,
+            "forbidden_or_unknown_count": 0,
+            "report": report("licenses"),
+        },
+        "images": [
+            {
+                "image_ref": image_ref,
+                "scan_evidence": {
+                    "uri": "evidence/api-scan.json",
+                    "sha256": f"sha256:{sha256(scan_content).hexdigest()}",
+                },
+            }
+        ],
+        "waivers": [],
+    }
+    path = evidence / "supply-chain.json"
+    content = (json.dumps(bundle, indent=2) + "\n").encode()
+    path.write_bytes(content)
+    manifest["gate_evidence"][0]["evidence_refs"].append(
+        {
+            "evidence_type": "CONFIG_SNAPSHOT",
+            "uri": "evidence/supply-chain.json",
+            "sha256": f"sha256:{sha256(content).hexdigest()}",
+        }
+    )
+    _resign(manifest, private_keys)
+    return path
+
+
 def _verify(
     manifest: dict[str, Any], trusted: dict[str, TrustedReleaseSigner], repository: Path
 ) -> None:
@@ -412,6 +508,7 @@ def test_trusted_signer_registry_rejects_private_or_wrong_algorithm_key(tmp_path
 
 def test_release_candidate_cli_verifies_sanitized_envelope(tmp_path: Path) -> None:
     manifest, _, repository, private_keys = _fixture(tmp_path)
+    supply_chain_path = _add_supply_chain_evidence(manifest, repository, private_keys)
     manifest_path = tmp_path / "release-manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     signer_path, signer_hash, _ = _write_signer_registry(
@@ -436,6 +533,8 @@ def test_release_candidate_cli_verifies_sanitized_envelope(tmp_path: Path) -> No
             "INTERNAL_SHADOW",
             "--artifact-root",
             str(repository),
+            "--supply-chain-evidence",
+            str(supply_chain_path),
             "--at",
             "2026-07-02T05:00:00Z",
         ],
@@ -457,6 +556,31 @@ def test_release_candidate_cli_verifies_sanitized_envelope(tmp_path: Path) -> No
         "starts_at": "2026-07-02T04:00:00Z",
         "expires_at": "2026-07-03T00:00:00Z",
         "payload_hash": output["payload_hash"],
-        "verified_artifact_count": 11,
+        "verified_artifact_count": 12,
+        "supply_chain_evidence_id": "SUPPLY:RELEASE:01",
+        "verified_image_count": 1,
     }
     assert output["payload_hash"].startswith("sha256:")
+
+    unsigned = deepcopy(manifest)
+    unsigned["gate_evidence"][0]["evidence_refs"] = [
+        reference
+        for reference in unsigned["gate_evidence"][0]["evidence_refs"]
+        if reference["uri"] != "evidence/supply-chain.json"
+    ]
+    _resign(unsigned, private_keys)
+    unsigned_path = tmp_path / "release-manifest-without-supply-chain.json"
+    unsigned_path.write_text(json.dumps(unsigned, indent=2) + "\n", encoding="utf-8")
+    unsigned_command = list(result.args)
+    manifest_index = unsigned_command.index("--manifest") + 1
+    unsigned_command[manifest_index] = str(unsigned_path)
+    rejected = subprocess.run(
+        unsigned_command,
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert rejected.returncode == 1
+    assert "not hash-bound by the signed release manifest" in rejected.stderr

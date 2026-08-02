@@ -35,6 +35,7 @@ from nha_trang_laundry_contracts import (
     load_public_runtime_registry,
     operation_is_authorized,
 )
+from nha_trang_laundry_observability import CORRELATION_HEADER
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -103,6 +104,7 @@ class AgentRunJob:
     data_classification: AgentDataClassification
     started_at: datetime
     deadline_at: datetime
+    correlation_id: UUID = field(default_factory=uuid4)
     order_request_id: UUID | None = None
     public_code: str | None = None
     row_version: int = 0
@@ -461,7 +463,11 @@ class AgentToolBridgeSession:
             order_request_id=self._order_request_id,
             public_code=self._public_code,
         )
-        headers = {"Authorization": f"Bearer {bearer}", "Accept": "application/json"}
+        headers = {
+            "Authorization": f"Bearer {bearer}",
+            "Accept": "application/json",
+            CORRELATION_HEADER: str(self._job.correlation_id),
+        }
         if "Idempotency-Key" in contract.header_parameters:
             if idempotency_key is None:
                 raise AgentToolBridgeRejected("VALIDATION_ERROR: idempotency key is required")

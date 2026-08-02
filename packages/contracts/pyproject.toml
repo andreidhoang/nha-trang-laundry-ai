@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Typed, language-neutral boundary contracts and generated adapters."
 requires-python = ">=3.12,<3.14"
 dependencies = [
-  "cryptography>=45,<47",
+  "cryptography>=48.0.1,<49",
   "jsonschema>=4.25,<5",
   "json5>=0.12,<1",
   "pydantic>=2.11,<3",

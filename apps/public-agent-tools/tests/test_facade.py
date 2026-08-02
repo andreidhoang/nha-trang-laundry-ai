@@ -114,20 +114,31 @@ def test_mock_facade_path_accepts_only_registered_strict_body() -> None:
     client = configured_client(private, public, backend)
     token = runner_token(private)
 
+    correlation_id = "00000000-0000-0000-0000-000000000902"
     response = client.post(
         "/agent/v1/catalog:resolve",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Correlation-ID": correlation_id,
+        },
         json={"query": "giặt chăn", "locale": "vi-VN"},
     )
 
     assert response.status_code == 200
     assert response.json()["decision"]["outcome"] == "REQUIRE_HUMAN"
+    assert response.headers["X-Correlation-ID"] == correlation_id
+    assert response.json()["trace_id"] == "tr_00000000000000000000000000000902"
     assert len(backend.calls) == 1
 
     injected = client.post(
         "/agent/v1/catalog:resolve",
         headers={"Authorization": f"Bearer {token}"},
-        json={"query": "giặt chăn", "locale": "vi-VN", "customer_id": str(uuid4())},
+        json={
+            "query": "giặt chăn",
+            "locale": "vi-VN",
+            "customer_id": str(uuid4()),
+            "policy_outcome": "ALLOW",
+        },
     )
     assert injected.status_code == 422
     assert injected.json()["error"]["code"] == "VALIDATION_ERROR"

@@ -1,0 +1,24 @@
+work_item: CONTAINER-001
+recorded_at: '2026-07-31T10:12:10.2802405Z'
+requirement_contract: context/tasks/TASK-container-001.md
+rollback_impact: Stop and remove the three local application services/images and revert Dockerfiles, the production Compose overlay, worker liveness host, dependency lock, contract tests, and runbook; no database mutation or capability-state rollback is required.
+unresolved_assumptions: The worker image intentionally hosts only a liveness endpoint and reports automation disabled until later authorized runtime wiring exists. Local image IDs and scans are engineering evidence, not signed release, public-cell, or deployment authority.
+evidence:
+  reproducible_image_builds: All three images build from python:3.12.13-alpine3.23 pinned at sha256:601d3d3797e90e2534782e69c85fafb7971b43f24c7b1b079b7e48dd435e458d using uv 0.11.32 and the frozen production dependency lock; current local image IDs are API sha256:1ff7b547d0fce2b8291d9a98f0264a471b56b8417e81f794d3d040f585f731e7, worker sha256:bccf55526dd1ecd40cd257b4287b98a0a6a1e71c6508ab9ecc6148611deb66ae, and Tool Facade sha256:08bcdb1e12781f36c9b6dcfabba7ed4184fded8eb8ac96d7b997aad9aac662e9. The unused SQLite runtime package/extension is removed; cryptography is locked at the fixed 48.0.1 release.
+  non_root_runtime: Image inspection and hardened smoke containers prove numeric user 10001:10001, read-only root, all capabilities dropped, no-new-privileges, and bounded tmpfs operation.
+  build_context_exclusion: Contract tests reject broad COPY, environment files, Git/Codex/OpenClaw state, evidence, release artifacts, owner/risk material, private keys, raw templates, Docker socket, host networking, privileged mode, and owner mounts.
+  healthcheck_smoke_tests: API, fail-closed worker host, and Tool Facade containers all reached Docker healthy without database, identity, model, channel, customer, or production credentials.
+  rollback_assessment: Images and Compose overlay are additive; removing them leaves PostgreSQL and immutable evidence untouched and all automation flags disabled.
+checks:
+- command: uv run pytest packages/evals/tests/test_container_build_contract.py
+  status: PASSED
+- command: docker compose -f compose.yaml -f compose.production.yaml config
+  status: PASSED
+- command: docker build --file apps/api/Dockerfile --tag nha-trang-laundry-api:local .
+  status: PASSED
+- command: docker build --file apps/worker/Dockerfile --tag nha-trang-laundry-worker:local .
+  status: PASSED
+- command: docker build --file apps/public-agent-tools/Dockerfile --tag nha-trang-laundry-agent-tools:local .
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

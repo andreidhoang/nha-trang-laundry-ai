@@ -24,6 +24,7 @@ JSON_CONTRACTS = (
     "specs/contracts/pricebook-import-manifest-v1.json",
     "specs/contracts/provider-data-evidence-v1.schema.json",
     "specs/contracts/release-gate-manifest-v1.schema.json",
+    "specs/contracts/supply-chain-evidence-v1.schema.json",
     "specs/contracts/trusted-release-signers-v1.schema.json",
     "specs/evals/assertion-registry-v1.json",
     "specs/evals/eval-case-v1.schema.json",

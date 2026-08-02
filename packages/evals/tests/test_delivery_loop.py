@@ -105,6 +105,43 @@ def _controller_generation(workspace: Path) -> str:
     return generation
 
 
+def _reset_to_observability_pending(workspace: Path) -> None:
+    queue_path = workspace / "delivery/WORK_QUEUE.yaml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    reset_items = {
+        "OBSERVABILITY-001",
+        "POLICY-001",
+        "CONTAINER-001",
+        "SUPPLYCHAIN-001",
+    }
+    for item in queue["items"]:
+        if item["status"] == "IN_PROGRESS":
+            item["status"] = "PENDING"
+        if item["id"] in reset_items:
+            item["status"] = "PENDING"
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+    state_path = workspace / "delivery/LOOP_STATE.yaml"
+    state = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    state.update(current_work_item=None, last_result="COMPLETE", blocker=None)
+    state["evidence_records"] = [
+        record for record in state["evidence_records"] if record["work_item"] not in reset_items
+    ]
+    state_path.write_text(yaml.safe_dump(state, sort_keys=False), encoding="utf-8")
+    program_path = workspace / "delivery/PROGRAM_PLAN.yaml"
+    program = yaml.safe_load(program_path.read_text(encoding="utf-8"))
+    for phase in program["phases"]:
+        statuses = {item["status"] for item in queue["items"] if item["phase"] == phase["id"]}
+        if statuses == {"COMPLETE"}:
+            phase["status"] = "COMPLETE"
+        elif "IN_PROGRESS" in statuses or "COMPLETE" in statuses:
+            phase["status"] = "IN_PROGRESS"
+        elif statuses == {"BLOCKED"}:
+            phase["status"] = "BLOCKED"
+        else:
+            phase["status"] = "PENDING"
+    program_path.write_text(yaml.safe_dump(program, sort_keys=False), encoding="utf-8")
+
+
 def test_delivery_loop_selects_first_safe_ready_item(tmp_path: Path) -> None:
     workspace, _ = _active_workspace(tmp_path)
     result = _run_workspace(workspace, "run_delivery_loop.py")
@@ -119,6 +156,7 @@ def test_delivery_loop_selects_first_safe_ready_item(tmp_path: Path) -> None:
 
 def test_delivery_loop_emits_one_locked_controller_snapshot(tmp_path: Path) -> None:
     workspace = _copied_workspace(tmp_path)
+    _reset_to_observability_pending(workspace)
     result = _run_workspace(
         workspace,
         "run_delivery_loop.py",
@@ -191,6 +229,7 @@ def test_delivery_loop_continues_independent_hardening_after_ci_block(
     tmp_path: Path,
 ) -> None:
     workspace = _copied_workspace(tmp_path)
+    _reset_to_observability_pending(workspace)
     queue_path = workspace / "delivery/WORK_QUEUE.yaml"
     queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
     ci_item = next(candidate for candidate in queue["items"] if candidate["id"] == "HARDEN-CI-001")
@@ -214,7 +253,17 @@ def test_hardening_dependency_graph_preserves_release_boundaries() -> None:
         "OBSERVABILITY-001",
         "POLICY-001",
         "SUPPLYCHAIN-001",
+        "HTTP-SECURITY-001",
+        "TELEMETRY-001",
+        "STAGING-001",
+        "BACKUP-RESTORE-001",
     }
+    assert by_id["WORKER-HOST-001"]["depends_on"] == [
+        "RELEASE-BASELINE-001",
+        "OPERATIONS-001",
+        "OBSERVABILITY-001",
+        "POLICY-001",
+    ]
     assert by_id["AGENT-001"]["status"] == "BLOCKED"
 
 

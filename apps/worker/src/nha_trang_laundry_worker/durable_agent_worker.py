@@ -16,6 +16,12 @@ from nha_trang_laundry_db.agent_runs import (
     request_fingerprint,
 )
 from nha_trang_laundry_domain.catalog import ActorRole
+from nha_trang_laundry_observability import (
+    CorrelationContext,
+    EventSeverity,
+    SafeStructuredLogger,
+    correlation_scope,
+)
 
 from .agent_runner import (
     AgentRunJob,
@@ -85,9 +91,15 @@ class _DatabaseToolCallObserver(AgentToolCallObserver):
 class DurableAgentRunWorker:
     """Claims one durable job, runs only a bounded draft path, then persists a safe outcome."""
 
-    def __init__(self, runner: AgentRunner, repository: AgentRunRepository | None = None) -> None:
+    def __init__(
+        self,
+        runner: AgentRunner,
+        repository: AgentRunRepository | None = None,
+        logger: SafeStructuredLogger | None = None,
+    ) -> None:
         self._runner = runner
         self._repository = repository or AgentRunRepository()
+        self._logger = logger or SafeStructuredLogger()
 
     def run_once(
         self,
@@ -99,48 +111,70 @@ class DurableAgentRunWorker:
         now: datetime | None = None,
     ) -> DurableAgentRunWorkerResult:
         timestamp = now or datetime.now(UTC)
+        context = CorrelationContext.from_uuid(correlation_id)
         claimed = self._repository.claim_next(
             connection, worker_role=ActorRole.AGENT_RUNNER, now=timestamp
         )
         if claimed is None:
             return DurableAgentRunWorkerResult(None, "IDLE")
-        try:
-            result = self._runner.execute(
-                job=_job_from_claim(claimed, timestamp),
-                runtime=runtime,
-                transport=transport,
-                observer=_DatabaseToolCallObserver(
-                    connection, self._repository, claimed, correlation_id
-                ),
-                now=timestamp,
-            )
-        except Exception as error:
-            failure_code = _failure_code(error)
-            self._repository.fail(
+        with correlation_scope(context):
+            try:
+                result = self._runner.execute(
+                    job=_job_from_claim(claimed, timestamp, correlation_id),
+                    runtime=runtime,
+                    transport=transport,
+                    observer=_DatabaseToolCallObserver(
+                        connection, self._repository, claimed, correlation_id
+                    ),
+                    now=timestamp,
+                )
+            except Exception as error:
+                failure_code = _failure_code(error)
+                self._repository.fail(
+                    connection,
+                    agent_run_id=claimed.agent_run_id,
+                    claim_token=claimed.claim_token,
+                    failure_code=failure_code,
+                    correlation_id=correlation_id,
+                    completed_at=timestamp,
+                )
+                self._logger.record(
+                    component="agent-worker",
+                    name="agent.run.completed",
+                    outcome="failed",
+                    severity=EventSeverity.ERROR,
+                    correlation=context,
+                    fields={"agent_run_id": claimed.agent_run_id, "failure_code": failure_code},
+                )
+                return DurableAgentRunWorkerResult(str(claimed.agent_run_id), "FAILED")
+            self._repository.complete_draft(
                 connection,
                 agent_run_id=claimed.agent_run_id,
                 claim_token=claimed.claim_token,
-                failure_code=failure_code,
+                safe_summary={
+                    "disposition": "REQUIRE_HUMAN",
+                    "draft_character_count": len(result.draft_text),
+                    "tool_call_count": result.tool_call_count,
+                },
                 correlation_id=correlation_id,
                 completed_at=timestamp,
             )
-            return DurableAgentRunWorkerResult(str(claimed.agent_run_id), "FAILED")
-        self._repository.complete_draft(
-            connection,
-            agent_run_id=claimed.agent_run_id,
-            claim_token=claimed.claim_token,
-            safe_summary={
-                "disposition": "REQUIRE_HUMAN",
-                "draft_character_count": len(result.draft_text),
-                "tool_call_count": result.tool_call_count,
-            },
-            correlation_id=correlation_id,
-            completed_at=timestamp,
-        )
-        return DurableAgentRunWorkerResult(str(claimed.agent_run_id), result.status)
+            self._logger.record(
+                component="agent-worker",
+                name="agent.run.completed",
+                outcome="requires_human",
+                correlation=context,
+                fields={
+                    "agent_run_id": claimed.agent_run_id,
+                    "tool_call_count": result.tool_call_count,
+                },
+            )
+            return DurableAgentRunWorkerResult(str(claimed.agent_run_id), result.status)
 
 
-def _job_from_claim(claimed: ClaimedAgentRun, started_at: datetime) -> AgentRunJob:
+def _job_from_claim(
+    claimed: ClaimedAgentRun, started_at: datetime, correlation_id: UUID
+) -> AgentRunJob:
     return AgentRunJob(
         run_id=claimed.agent_run_id,
         organization_id=claimed.organization_id,
@@ -153,6 +187,7 @@ def _job_from_claim(claimed: ClaimedAgentRun, started_at: datetime) -> AgentRunJ
         data_classification=claimed.data_classification,
         started_at=started_at,
         deadline_at=min(started_at + timedelta(seconds=20), claimed.lease_expires_at),
+        correlation_id=correlation_id,
         order_request_id=claimed.order_request_id,
         public_code=claimed.public_code,
         row_version=claimed.bound_row_version,

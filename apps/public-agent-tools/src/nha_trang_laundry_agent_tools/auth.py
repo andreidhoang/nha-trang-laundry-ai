@@ -11,8 +11,8 @@ from nha_trang_laundry_contracts import (
     AgentRunnerClaims,
     AgentToolOperation,
     load_public_runtime_registry,
-    operation_is_authorized,
 )
+from nha_trang_laundry_policy import PolicyDecisionPoint
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -92,5 +92,5 @@ class AgentRunnerTokenVerifier:
 
 
 def authorize_operation(claims: AgentRunnerClaims, operation: AgentToolOperation) -> None:
-    if not operation_is_authorized(claims, operation):
+    if not PolicyDecisionPoint().evaluate_synthetic_tool(claims, operation).allowed:
         raise AgentAuthorizationError("runner capability does not authorize operation")

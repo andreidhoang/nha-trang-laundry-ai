@@ -1,8 +1,8 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-07-31 (Asia/Ho_Chi_Minh)
-**Active work item:** none; next local item is `HARDEN-CI-001`
-**Code stage:** `AGENT_SHADOW` blocked externally / `PRODUCTION_HARDENING` pending locally
+**Last reconciled:** 2026-08-02 (Asia/Ho_Chi_Minh)
+**Active work item:** `RELEASE-BASELINE-001`
+**Code stage:** `AGENT_SHADOW` blocked externally / `PRODUCTION_HARDENING` active locally
 **Production authorization:** `NOT_AUTHORIZED` for every capability
 
 This brief is the human-readable entry point for an engineer or coding agent resuming implementation.
@@ -116,10 +116,11 @@ Work in this order unless a higher-authority contract changes it. After each sli
 packet, this brief, the relevant machine status, and tests. Do not mark `AGENT-001` complete from local
 hardening evidence.
 
-1. **Local production hardening.** Execute `HARDEN-CI-001`, `OBSERVABILITY-001`, `POLICY-001`, and
-   `CONTAINER-001` as independent reviewable tasks. Run `SUPPLYCHAIN-001` only after its CI/container
-   dependencies complete. These tasks may proceed while `AGENT-001` is externally blocked, but their
-   engineering evidence does not authorize real data or release.
+1. **Local production readiness.** Complete `RELEASE-BASELINE-001`, then implement the dependency-safe
+   `WORKER-HOST-001`, `STAFF-OPS-001`, `HTTP-SECURITY-001`, `TELEMETRY-001`, `STAGING-001`, and
+   `BACKUP-RESTORE-001` chain. CI, observability, policy, container, and supply-chain hardening are
+   already complete. This engineering work may proceed while `AGENT-001` is externally blocked, but
+   it does not authorize real data, public ingress, provider use, or release.
 
 2. **Integrated runtime evaluation.** The provider-independent fixture/assertion backlog is complete.
    After the external prerequisites are resolved, run a separately

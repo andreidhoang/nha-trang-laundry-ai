@@ -86,17 +86,42 @@ def _script(
 
 def _ready_workspace(tmp_path: Path) -> Path:
     workspace = _copy_workspace(tmp_path)
-    queue, state, _program = _generation(workspace)
+    queue, state, program = _generation(workspace)
+    reset_items = {
+        "OBSERVABILITY-001",
+        "POLICY-001",
+        "CONTAINER-001",
+        "SUPPLYCHAIN-001",
+    }
     for item in queue["items"]:
         if item["status"] == "IN_PROGRESS":
             item["status"] = "PENDING"
+        if item["id"] in reset_items:
+            item["status"] = "PENDING"
     state.update(current_work_item=None, last_result="COMPLETE", blocker=None)
+    state["evidence_records"] = [
+        record for record in state["evidence_records"] if record["work_item"] not in reset_items
+    ]
+    for phase in program["phases"]:
+        statuses = {item["status"] for item in queue["items"] if item["phase"] == phase["id"]}
+        if statuses == {"COMPLETE"}:
+            phase["status"] = "COMPLETE"
+        elif "IN_PROGRESS" in statuses or "COMPLETE" in statuses:
+            phase["status"] = "IN_PROGRESS"
+        elif statuses == {"BLOCKED"}:
+            phase["status"] = "BLOCKED"
+        else:
+            phase["status"] = "PENDING"
     (workspace / TARGET_PATHS[0]).write_text(
         yaml.safe_dump(queue, sort_keys=False),
         encoding="utf-8",
     )
     (workspace / TARGET_PATHS[1]).write_text(
         yaml.safe_dump(state, sort_keys=False),
+        encoding="utf-8",
+    )
+    (workspace / TARGET_PATHS[2]).write_text(
+        yaml.safe_dump(program, sort_keys=False),
         encoding="utf-8",
     )
     (workspace / ".gitignore").write_text(

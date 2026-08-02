@@ -8,6 +8,7 @@ dependencies = [
   "nha-trang-laundry-contracts",
   "nha-trang-laundry-db",
   "nha-trang-laundry-domain",
+  "nha-trang-laundry-observability",
   "nha-trang-laundry-policy",
   "pydantic-settings>=2.10,<3",
   "pyjwt[crypto]>=2.10,<3",
@@ -18,6 +19,7 @@ dependencies = [
 nha-trang-laundry-contracts = { workspace = true }
 nha-trang-laundry-db = { workspace = true }
 nha-trang-laundry-domain = { workspace = true }
+nha-trang-laundry-observability = { workspace = true }
 nha-trang-laundry-policy = { workspace = true }
 
 [build-system]

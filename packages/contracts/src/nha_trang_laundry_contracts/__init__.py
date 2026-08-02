@@ -26,6 +26,11 @@ from .runtime_registry import (
     verify_openclaw_cli_version,
     verify_public_runtime_artifacts,
 )
+from .supply_chain import (
+    SupplyChainEvidenceError,
+    VerifiedSupplyChainEvidence,
+    verify_supply_chain_evidence,
+)
 from .tool_registry import (
     OPENCLAW_TOOL_NAMES,
     AgentToolOperation,
@@ -52,10 +57,12 @@ __all__ = [
     "ReleaseSignerFunction",
     "RepositoryArtifactResolver",
     "RuntimeArtifactError",
+    "SupplyChainEvidenceError",
     "ToolArgumentsInvalid",
     "ToolRegistryError",
     "TrustedReleaseSigner",
     "VerifiedReleaseAuthorization",
+    "VerifiedSupplyChainEvidence",
     "load_agent_tool_registry",
     "load_and_verify_release_manifest",
     "load_public_runtime_registry",
@@ -64,4 +71,5 @@ __all__ = [
     "verify_openclaw_cli_version",
     "verify_public_runtime_artifacts",
     "verify_release_manifest",
+    "verify_supply_chain_evidence",
 ]

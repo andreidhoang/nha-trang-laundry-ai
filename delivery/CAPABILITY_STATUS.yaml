@@ -1,6 +1,6 @@
 schema_version: 1
-last_updated: '2026-07-29'
-project_stage: DOMAIN_CORE_ACTIVE
+last_updated: '2026-08-02'
+project_stage: PRODUCTION_HARDENING_ACTIVE
 default_authorization: NOT_AUTHORIZED
 capabilities:
   - id: INTERNAL_SHADOW

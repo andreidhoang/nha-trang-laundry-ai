@@ -1,11 +1,12 @@
 """Staff-only API entry point. Public customer endpoints are intentionally absent."""
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
 from uuid import UUID
 
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response, status
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.staticfiles import StaticFiles
 from nha_trang_laundry_db.approvals import (
     ApprovalAuthorizationError,
@@ -26,6 +27,12 @@ from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     FulfillmentMode,
 )
+from nha_trang_laundry_observability import (
+    CORRELATION_HEADER,
+    CorrelationContext,
+    SafeStructuredLogger,
+    correlation_scope,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 from nha_trang_laundry_api.auth import (
@@ -43,7 +50,30 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+_LOGGER = SafeStructuredLogger()
 WEB_DIRECTORY = Path(__file__).resolve().parents[3] / "web"
+
+
+@app.middleware("http")
+async def correlation_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    context = CorrelationContext.from_http_header(request.headers.get(CORRELATION_HEADER))
+    with correlation_scope(context):
+        response = await call_next(request)
+    response.headers[CORRELATION_HEADER] = context.header_value
+    _LOGGER.record(
+        component="api",
+        name="http.request.completed",
+        outcome="completed",
+        correlation=context,
+        fields={
+            "method": request.method,
+            "route": request.url.path,
+            "status_code": response.status_code,
+        },
+    )
+    return response
 
 
 class SessionResponse(BaseModel):

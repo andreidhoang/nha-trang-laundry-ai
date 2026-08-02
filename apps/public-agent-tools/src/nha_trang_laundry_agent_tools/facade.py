@@ -17,6 +17,7 @@ from nha_trang_laundry_contracts import (
     ToolArgumentsInvalid,
     load_agent_tool_registry,
 )
+from nha_trang_laundry_observability import current_correlation
 
 from nha_trang_laundry_agent_tools.auth import (
     AgentAuthenticationError,
@@ -131,7 +132,8 @@ def get_agent_facade_service() -> AgentFacadeService:
 
 
 def _trace_id() -> str:
-    return f"tr_{uuid4().hex}"
+    context = current_correlation()
+    return context.trace_id if context is not None else f"tr_{uuid4().hex}"
 
 
 def _error_response(

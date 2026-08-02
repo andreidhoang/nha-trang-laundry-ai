@@ -8,6 +8,7 @@ __pycache__/
 .tmp-openclaw-state/
 coverage.xml
 htmlcov/
+artifacts/supply-chain/
 
 # Node/browser app (added later)
 node_modules/

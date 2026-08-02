@@ -240,6 +240,7 @@ def test_bridge_mints_short_lived_contact_bound_jwt_and_uses_fixed_facade_path()
         issuer="https://control-plane.test",
     )
     assert request.path == "/agent/v1/catalog:resolve"
+    assert request.headers["X-Correlation-ID"] == str(current_job.correlation_id)
     assert claims["contact_binding_id"] == str(current_job.contact_binding_id)
     assert claims["capabilities"] == ["INTERNAL_SHADOW"]
     assert claims["exp"] - claims["iat"] <= 20

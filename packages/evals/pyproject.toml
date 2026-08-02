@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Offline, integration, and adversarial evaluation runners."
 requires-python = ">=3.12,<3.14"
 dependencies = [
-  "cryptography>=45,<47",
+  "cryptography>=48.0.1,<49",
   "nha-trang-laundry-agent-tools",
   "nha-trang-laundry-contracts",
   "nha-trang-laundry-db",

@@ -30,7 +30,7 @@ from nha_trang_laundry_worker.agent_runner import (
 )
 from nha_trang_laundry_worker.durable_agent_worker import DurableAgentRunWorker
 
-NOW = datetime(2026, 8, 1, 3, tzinfo=UTC)
+NOW = datetime.now(UTC)
 
 
 @pytest.fixture

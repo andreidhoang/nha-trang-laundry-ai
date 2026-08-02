@@ -1,0 +1,77 @@
+name: nha-trang-laundry-control-plane
+
+services:
+  postgres:
+    profiles: ["local-database"]
+
+  api:
+    image: nha-trang-laundry-api:local
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-}
+      FEATURE_PUBLIC_CHANNELS_ENABLED: "false"
+      FEATURE_AUTOMATED_SENDS_ENABLED: "false"
+      FEATURE_AGENT_RUNTIME_ENABLED: "false"
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks: [control-private]
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+  worker:
+    image: nha-trang-laundry-worker:local
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-}
+      FEATURE_PUBLIC_CHANNELS_ENABLED: "false"
+      FEATURE_AUTOMATED_SENDS_ENABLED: "false"
+      FEATURE_AGENT_RUNTIME_ENABLED: "false"
+    ports:
+      - "127.0.0.1:8020:8000"
+    networks: [control-private]
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+  agent-tools:
+    image: nha-trang-laundry-agent-tools:local
+    build:
+      context: .
+      dockerfile: apps/public-agent-tools/Dockerfile
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    environment:
+      FEATURE_PUBLIC_CHANNELS_ENABLED: "false"
+      FEATURE_AUTOMATED_SENDS_ENABLED: "false"
+      FEATURE_AGENT_RUNTIME_ENABLED: "false"
+    ports:
+      - "127.0.0.1:8010:8000"
+    networks: [control-private]
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+networks:
+  control-private:
+    internal: true

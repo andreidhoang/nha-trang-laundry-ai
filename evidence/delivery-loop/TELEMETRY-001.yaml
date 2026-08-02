@@ -1,0 +1,23 @@
+work_item: TELEMETRY-001
+recorded_at: '2026-08-02T08:42:50.5798374Z'
+requirement_contract: context/tasks/TASK-telemetry-001.md
+rollback_impact: The API and worker instrumentation can be disabled by reverting their Telemetry wiring while leaving the vendor-neutral API package installed. Migration 0019 is forward-only and adds nullable, immutable traceparent/tracestate columns; an application rollback can safely leave those columns unused. Physically removing them would be a destructive schema change and is neither required nor authorized. Reverting the metric registry or contract document must be atomic because validation deliberately rejects runtime/contract drift.
+unresolved_assumptions: Production must select and configure an OpenTelemetry SDK exporter/collector, dashboard backend, alert receiver, on-call routing, and published operating-day calendar outside this repository. Alert rules here are executable validated contracts, not proof that external alert delivery is installed. Metrics whose targets are explicitly marked for baseline remain non-gating until reviewed evidence supplies thresholds. Public and automated capabilities remain NOT_AUTHORIZED.
+full_repository_verification: PostgreSQL migration 0019 applied; uv run pytest --require-postgres-integration passed 495 tests; verify_contracts validated 12 JSON, 2 YAML, and 12 pinned public-runtime artifacts with 9 release blockers preserved; git diff --check passed.
+evidence:
+  pii_safe_metrics: The vendor-neutral registry defines 26 versioned OpenTelemetry counters and histograms for API, database, queues, retries, DLQ, agent budgets/latency/cost, approvals, suppression, kill-switch freshness, backup/restore freshness, and normative safety metrics. Every label key and value is drawn from fixed allowlists; raw PII, prompts, tool payloads, secrets, arbitrary identifiers, unknown dimensions, floats, noncanonical values, and oversized values are rejected before recording. Negative tests exercise contact_id, prompt, unsafe outcomes, unknown operations, and contract-injected PII dimensions.
+  distributed_trace_propagation: API middleware extracts and returns W3C trace context with bounded span attributes. Atomic material changes inject the active traceparent/tracestate into dedicated nullable outbox columns in the same transaction, outside business payloads. Migration 0019 constrains their shape and makes them immutable across outbox state transitions. Claimed events carry this context to an outbox worker child span. Unit and PostgreSQL tests verify exact parent continuity, malformed context rejection, absence from business payloads, and absence from span attributes.
+  slo_metric_contracts: The bundled telemetry-v1 JSON defines every runtime metric with version, business question, numerator/value, denominator, inclusion/exclusion rules, source/required fields, event-time window/timezone, late-event policy, bounded dimensions, owner, target, alert, and rollback threshold. Eight executable SLO rules encode the normative availability, quote latency, agent latency, queue latency, audit coverage, wrong-money, unauthorized-action, and cross-customer-disclosure objectives. Validation requires exact parity with the runtime registry.
+  alert_rule_validation: Thirteen executable alert contracts reference declared metrics and validate comparison, numeric threshold, window, hold duration, severity, schedule, owner, and runbook. They cover the five-minute business-hours DLQ rule, queue age, suppression misses, stale kill switches, backup/restore freshness, agent timeout and 50/80/100 percent cost thresholds, wrong money, duplicate sends, and cross-customer disclosure. Tampered unknown metrics and nonnumeric thresholds fail closed. External delivery is explicitly not claimed.
+  rollback_assessment: This slice adds no provider client, public endpoint, direct-send tool, automation authority, customer-facing capability, or secret. Rollback is application-compatible with the nullable forward-only migration left in place. Removing observability reduces operational evidence and must not be used to claim an SLO or release gate; all capabilities remain NOT_AUTHORIZED.
+checks:
+- command: uv run pytest packages/observability/tests apps/api/tests apps/worker/tests
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

@@ -55,16 +55,19 @@ def test_production_compose_is_unprivileged_private_and_disabled_by_default() ->
     services = compose["services"]
 
     assert services["postgres"]["profiles"] == ["local-database"]
-    assert compose["networks"]["control-private"]["internal"] is True
-    for name in SERVICES:
+    assert services["postgres"]["ports"] == []
+    assert compose["networks"]["ingress-private"]["internal"] is True
+    assert compose["networks"]["database-private"]["external"] is True
+    assert "agent-tools" not in services
+    for name in ("api", "worker"):
         service = services[name]
-        assert service["user"] == "10001:10001"
+        assert service["user"] in {"10001:10001", "10002:10002"}
         assert service["read_only"] is True
         assert service["cap_drop"] == ["ALL"]
         assert service["security_opt"] == ["no-new-privileges:true"]
         assert service.get("privileged") is not True
         assert service.get("network_mode") != "host"
-        assert service["networks"] == ["control-private"]
+        assert "ports" not in service
         environment = service["environment"]
         assert environment["FEATURE_PUBLIC_CHANNELS_ENABLED"] == "false"
         assert environment["FEATURE_AUTOMATED_SENDS_ENABLED"] == "false"
@@ -73,6 +76,8 @@ def test_production_compose_is_unprivileged_private_and_disabled_by_default() ->
         assert "/var/run/docker.sock" not in serialized
         assert ".openclaw" not in serialized
         assert "owner" not in serialized.casefold()
+    assert services["tls"]["ports"][0]["host_ip"] == "127.0.0.1"
+    assert services["tls"]["ports"][0]["target"] == 8443
 
 
 def test_worker_health_host_is_explicitly_non_authoritative() -> None:
@@ -82,4 +87,5 @@ def test_worker_health_host_is_explicitly_non_authoritative() -> None:
 
     assert '"automation": "disabled"' in content
     assert "process liveness only" in content.casefold()
-    assert "run_once" not in content
+    assert '"provider_send_available": False' in content
+    assert '"/readyz"' in content

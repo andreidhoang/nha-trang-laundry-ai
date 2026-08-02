@@ -42,6 +42,7 @@ COPY --chown=10001:10001 apps/api/src apps/api/src
 COPY --chown=10001:10001 apps/web apps/web
 COPY --chown=10001:10001 packages/contracts/src packages/contracts/src
 COPY --chown=10001:10001 packages/db/src packages/db/src
+COPY --chown=10001:10001 packages/db/migrations packages/db/migrations
 COPY --chown=10001:10001 packages/domain/src packages/domain/src
 COPY --chown=10001:10001 packages/observability/src packages/observability/src
 COPY --chown=10001:10001 packages/policy/src packages/policy/src

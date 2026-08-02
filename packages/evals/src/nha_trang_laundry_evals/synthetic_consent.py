@@ -48,16 +48,18 @@ def execute_stop_outbox_race_preflight(
     timestamp = _clock(payload)
     contact_id = uuid4()
     outbox_event_id = uuid4()
+    claim_token = uuid4()
     correlation_id = uuid4()
     with connection.transaction(), connection.cursor() as cursor:
         cursor.execute(
             """
             INSERT INTO outbox_events (
                 id, aggregate_type, aggregate_id, event_type, payload, idempotency_key,
-                correlation_id, occurred_at, status, recipient_binding_id, purpose
+                correlation_id, occurred_at, status, attempt_count, recipient_binding_id,
+                purpose, claim_token, claimed_at, lease_expires_at
             ) VALUES (
                 %s, 'MESSAGE', %s, 'message.send_requested.v1', %s::jsonb, %s,
-                %s, %s, 'PROCESSING', %s, 'MARKETING'
+                %s, %s, 'PROCESSING', 1, %s, 'MARKETING', %s, %s, %s
             )
             """,
             (
@@ -68,6 +70,9 @@ def execute_stop_outbox_race_preflight(
                 correlation_id,
                 timestamp,
                 contact_id,
+                claim_token,
+                timestamp,
+                timestamp + timedelta(seconds=30),
             ),
         )
     inbox_result = InboxRepository().record(
@@ -96,6 +101,7 @@ def execute_stop_outbox_race_preflight(
     reason = MarketingDeliveryRepository().hold_if_not_authorized(
         connection,
         outbox_event_id=outbox_event_id,
+        claim_token=claim_token,
         worker_role=ActorRole.OUTBOX_WORKER,
         actor_id=uuid4(),
         correlation_id=correlation_id,

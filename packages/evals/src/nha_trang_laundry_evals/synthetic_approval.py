@@ -85,6 +85,7 @@ def execute_post_approval_edit_preflight(
             approved.resource_version,
             approved.snapshot_hash,
             approved.rendered_hash,
+            "SYNTHETIC_HUMAN_REVIEW",
             owner,
             uuid4(),
             occurred_at + timedelta(seconds=1),

@@ -35,6 +35,9 @@ The base Compose PostgreSQL service is behind the `local-database` profile in th
 deployment uses an externally managed PostgreSQL endpoint with PITR and a least-privilege runtime
 identity.
 
+The executable private TLS topology, external-secret inventory, migration ordering, synthetic smoke
+drill, and forward-only rollback procedure are documented in `docs/runbooks/private-staging.md`.
+
 ## Rollback
 
 Stop the three application services and redeploy the preceding immutable image digests. Container

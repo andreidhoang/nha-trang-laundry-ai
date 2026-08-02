@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -86,7 +86,7 @@ def runner() -> AgentRunner:
     )
 
 
-def enqueue_command() -> AgentRunEnqueueCommand:
+def enqueue_command(*, created_at: datetime | None = None) -> AgentRunEnqueueCommand:
     return AgentRunEnqueueCommand(
         agent_run_id=uuid4(),
         source_webhook_event_id=None,
@@ -104,7 +104,7 @@ def enqueue_command() -> AgentRunEnqueueCommand:
         prompt_bundle_hash=f"sha256:{'b' * 64}",
         tool_contract_hash=f"sha256:{'c' * 64}",
         correlation_id=uuid4(),
-        created_at=NOW,
+        created_at=created_at or NOW,
     )
 
 
@@ -112,7 +112,7 @@ def test_durable_worker_claims_runs_persists_safe_tool_ledger_and_requires_human
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
     repository = AgentRunRepository()
-    command = enqueue_command()
+    command = enqueue_command(created_at=_before_pending_agent_run(postgres_connection))
     repository.enqueue(postgres_connection, command)
     transport = CatalogTransport()
     worker = DurableAgentRunWorker(runner(), repository)
@@ -173,7 +173,7 @@ def test_durable_worker_records_fail_closed_provider_rejection(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
     repository = AgentRunRepository()
-    command = enqueue_command()
+    command = enqueue_command(created_at=_before_pending_agent_run(postgres_connection))
     repository.enqueue(postgres_connection, command)
     worker = DurableAgentRunWorker(runner(), repository)
 
@@ -206,7 +206,7 @@ def test_durable_worker_preserves_timeout_run_for_human_recovery(
             raise AgentRuntimeTimeout("MODEL_TIMEOUT: synthetic hard deadline reached")
 
     repository = AgentRunRepository()
-    command = enqueue_command()
+    command = enqueue_command(created_at=_before_pending_agent_run(postgres_connection))
     repository.enqueue(postgres_connection, command)
     worker = DurableAgentRunWorker(runner(), repository)
 
@@ -231,3 +231,13 @@ def test_durable_worker_preserves_timeout_run_for_human_recovery(
     assert row is not None
     assert row[0:3] == ("FAILED", "MODEL_TIMEOUT", False)
     assert row[3] == NOW
+
+
+def _before_pending_agent_run(connection: psycopg.Connection[Any]) -> datetime:
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute("SELECT min(created_at) FROM agent_runs WHERE status = 'PENDING'")
+        row = cursor.fetchone()
+    earliest = None if row is None else row[0]
+    if not isinstance(earliest, datetime):
+        return datetime(1970, 1, 1, tzinfo=UTC)
+    return earliest - timedelta(days=1)

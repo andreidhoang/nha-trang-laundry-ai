@@ -1,0 +1,24 @@
+work_item: STAFF-OPS-001
+recorded_at: '2026-08-02T08:03:17.2845740Z'
+requirement_contract: context/tasks/TASK-staff-ops-001.md
+rollback_impact: The staff PWA and internal endpoints can be disabled or reverted without enabling any customer-facing or automatic delivery. Migration 0018 is forward-only once deployed; its explicit human-decision evidence columns and legacy backfill must be preserved and reconciled by a reviewed forward migration rather than dropped. Manual-send envelopes and attestations are immutable operational evidence and must not be deleted during rollback.
+unresolved_assumptions: The only configured manual-send channel remains INTERNAL_TEST, all preparation is server-fixed to TRANSACTIONAL and SHADOW, queue recovery is observation-only, and the PWA intentionally provides no approval-decision control until a bound resource preview is available. Public/customer automation, provider sends, replay controls, and all 13 release capabilities remain NOT_AUTHORIZED.
+evidence:
+  staff_workflow_integration: The authenticated internal API and mobile staff shell cover current quote revisions, orthogonal order state, pending approval envelopes, exact-bound Shadow manual-send preparation and attestation, customer-incident intake, and queue-health observation. The declared API/database/domain suite passed 180 tests, and the repository-wide suite passed all 476 tests with PostgreSQL integration required.
+  negative_authorization: Boundary tests reject injected deployment authority fields, missing human reason codes, missing If-Match versions, non-MFA staff mutations, and non-approver queue access. Repository tests reject self-approval, missing MFA, stale hashes and versions, invalid reason codes, cross-store incident bindings, marketing/manual-send escalation, non-Shadow execution, and unconfigured channels.
+  concurrency_and_idempotency: Real-service PostgreSQL tests prove manual-send preparation and attestation replay the original result for the same canonical request, reject altered payloads with IDEMPOTENCY_CONFLICT, reject stale envelope row versions, and create exactly one attestation. Approval decisions require an Idempotency-Key, and expired decisions can commit their durable EXPIRED state before the API fails closed.
+  manual_send_integrity: The service derives TRANSACTIONAL purpose and SHADOW stage server-side, accepts only INTERNAL_TEST, binds approval resource version plus snapshot/rendered hashes, requires MFA and If-Match, records the exact rendered hash and sent timestamp atomically with domain/audit/outbox evidence, and leaves approval_executions at zero. The PWA never calls a provider and disables mutations offline without IndexedDB, background sync, retry buffers, or authoritative local queues.
+  rollback_assessment: Application rollback cannot authorize public delivery because no provider-send path, replay mutation, public route, or automation capability was added. Keep the forward-only human-decision schema and all append-only approval/manual-send/incident evidence; disable the internal routes or staff shell first if rollback is required.
+checks:
+- command: uv run pytest apps/api/tests packages/db/tests packages/domain/tests
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

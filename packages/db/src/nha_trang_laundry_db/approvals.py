@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -56,9 +57,11 @@ class ApprovalDecisionCommand:
     observed_resource_version: int
     observed_snapshot_hash: str
     observed_rendered_hash: str
+    reason_code: str
     principal: StaffPrincipal
     correlation_id: UUID
     decided_at: datetime | None = None
+    note: str | None = None
 
 
 @dataclass(frozen=True)
@@ -211,7 +214,14 @@ class ApprovalRepository:
         )
         return _stored_approval(result.response, result.replayed)
 
-    def decide(self, connection: Any, command: ApprovalDecisionCommand) -> StoredApproval:
+    def decide(
+        self,
+        connection: Any,
+        command: ApprovalDecisionCommand,
+        *,
+        return_expired: bool = False,
+    ) -> StoredApproval:
+        _validate_human_decision(command)
         decided_at = command.decided_at or datetime.now(UTC)
         expired = False
         stored: StoredApproval | None = None
@@ -240,6 +250,13 @@ class ApprovalRepository:
                     occurred_at=decided_at,
                 )
                 expired = True
+                stored = StoredApproval(
+                    command.approval_request_id,
+                    "EXPIRED",
+                    str(row[9]),
+                    ActorRole(str(row[6])),
+                    _datetime(row[8]),
+                )
             else:
                 decision_id = uuid4()
 
@@ -264,16 +281,20 @@ class ApprovalRepository:
                     change_cursor.execute(
                         """
                         INSERT INTO approval_decisions (
-                            id, approval_request_id, decision, decided_by,
+                            id, approval_request_id, decision_type, decision, decided_by,
+                            reason_code, note,
                             observed_resource_version, observed_snapshot_hash,
                             observed_rendered_hash, decided_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             decision_id,
                             command.approval_request_id,
+                            str(row[12]),
                             command.decision.value,
                             command.principal.staff_user_id,
+                            command.reason_code,
+                            command.note,
                             command.observed_resource_version,
                             command.observed_snapshot_hash,
                             command.observed_rendered_hash,
@@ -289,7 +310,11 @@ class ApprovalRepository:
                         aggregate_id=command.approval_request_id,
                         aggregate_version=next_version,
                         event_type="APPROVAL_DECIDED",
-                        event_payload={"decision": command.decision.value},
+                        event_payload={
+                            "decision_type": str(row[12]),
+                            "decision": command.decision.value,
+                            "reason_code": command.reason_code,
+                        },
                         audit_action="APPROVAL_DECIDE",
                         actor_type="STAFF",
                         actor_id=command.principal.staff_user_id,
@@ -299,12 +324,20 @@ class ApprovalRepository:
                                 "approval.decided.v1",
                                 {
                                     "approval_request_id": str(command.approval_request_id),
+                                    "decision_type": str(row[12]),
                                     "decision": command.decision.value,
+                                    "reason_code": command.reason_code,
                                 },
                                 f"approval:{command.approval_request_id}:decision",
                             ),
                         ),
                         occurred_at=decided_at,
+                        audit_details={
+                            "decision_type": str(row[12]),
+                            "decision": command.decision.value,
+                            "reason_code": command.reason_code,
+                            "resource_version": command.observed_resource_version,
+                        },
                     ),
                     mutation,
                 )
@@ -315,7 +348,7 @@ class ApprovalRepository:
                     ActorRole(str(row[6])),
                     _datetime(row[8]),
                 )
-        if expired:
+        if expired and not return_expired:
             raise ApprovalStateError("approval expired")
         if stored is None:
             raise ApprovalStateError("approval decision did not complete")
@@ -460,7 +493,7 @@ def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
         """
         SELECT r.resource_id, r.resource_version, r.snapshot_hash, r.rendered_hash,
                r.requested_by, r.policy_version, r.required_role, r.requested_at,
-               r.expires_at, r.envelope_hash, s.status, s.row_version
+               r.expires_at, r.envelope_hash, s.status, s.row_version, r.action
         FROM approval_requests r
         JOIN approval_request_states s ON s.approval_request_id = r.id
         WHERE r.id = %s
@@ -472,6 +505,13 @@ def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
     if row is None:
         raise ApprovalStateError("approval is unavailable")
     return tuple(row)
+
+
+def _validate_human_decision(command: ApprovalDecisionCommand) -> None:
+    if re.fullmatch(r"[A-Z][A-Z0-9_]{1,99}", command.reason_code) is None:
+        raise ApprovalStateError("approval reason code is invalid")
+    if command.note is not None and len(command.note) > 500:
+        raise ApprovalStateError("approval note is too long")
 
 
 def _authorize_decision(row: tuple[object, ...], principal: StaffPrincipal) -> None:

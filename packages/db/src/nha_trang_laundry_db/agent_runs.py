@@ -381,6 +381,103 @@ class AgentRunRepository:
             mutation,
         )
 
+    def recover_expired(
+        self,
+        connection: Any,
+        *,
+        worker_role: ActorRole,
+        now: datetime | None = None,
+    ) -> UUID | None:
+        """Fail one expired run to human recovery; never rerun an unknown outcome."""
+
+        _require_runner(worker_role)
+        timestamp = now or datetime.now(UTC)
+        with connection.transaction(), connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT run.id, source.correlation_id
+                FROM agent_runs AS run
+                JOIN LATERAL (
+                    SELECT correlation_id
+                    FROM domain_events
+                    WHERE aggregate_type = 'AGENT_RUN' AND aggregate_id = run.id
+                      AND event_type = 'AGENT_RUN_ENQUEUED'
+                    ORDER BY occurred_at, id
+                    LIMIT 1
+                ) AS source ON TRUE
+                WHERE run.status = 'PROCESSING' AND run.lease_expires_at < %s
+                ORDER BY run.lease_expires_at, run.id
+                FOR UPDATE OF run SKIP LOCKED
+                LIMIT 1
+                """,
+                (timestamp,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            agent_run_id = _uuid(row[0])
+            correlation_id = _uuid(row[1])
+            cursor.execute(
+                """
+                UPDATE agent_runs
+                SET status = 'FAILED', claim_token = NULL, claimed_at = NULL,
+                    lease_expires_at = NULL, failure_code = 'LEASE_EXPIRED',
+                    completed_at = %s
+                WHERE id = %s AND status = 'PROCESSING' AND lease_expires_at < %s
+                RETURNING id
+                """,
+                (timestamp, agent_run_id, timestamp),
+            )
+            if cursor.fetchone() is None:
+                raise AgentRunStateError("expired agent run changed during recovery")
+            cursor.execute(
+                """
+                INSERT INTO domain_events (
+                    id, aggregate_type, aggregate_id, aggregate_version, event_type,
+                    payload, correlation_id, occurred_at
+                ) VALUES (
+                    %s, 'AGENT_RUN', %s, 8, 'AGENT_RUN_FAILED',
+                    '{"failure_code":"LEASE_EXPIRED"}'::jsonb, %s, %s
+                )
+                """,
+                (uuid4(), agent_run_id, correlation_id, timestamp),
+            )
+            cursor.execute(
+                """
+                INSERT INTO audit_events (
+                    id, aggregate_type, aggregate_id, action, actor_type, actor_id,
+                    correlation_id, details, occurred_at
+                ) VALUES (
+                    %s, 'AGENT_RUN', %s, 'AGENT_RUN_LEASE_EXPIRED',
+                    'AGENT_RUNNER', NULL, %s,
+                    '{"event_type":"AGENT_RUN_FAILED","failure_code":"LEASE_EXPIRED"}'::jsonb,
+                    %s
+                )
+                """,
+                (uuid4(), agent_run_id, correlation_id, timestamp),
+            )
+            cursor.execute(
+                """
+                INSERT INTO outbox_events (
+                    id, aggregate_type, aggregate_id, event_type, payload,
+                    idempotency_key, correlation_id, occurred_at
+                ) VALUES (
+                    %s, 'AGENT_RUN', %s, 'agent.run_completed.v1',
+                    jsonb_build_object('agent_run_id', %s::text, 'disposition', 'REQUIRE_HUMAN'),
+                    %s, %s, %s
+                )
+                """,
+                (
+                    uuid4(),
+                    agent_run_id,
+                    agent_run_id,
+                    f"agent-run:{agent_run_id}:lease-expired",
+                    correlation_id,
+                    timestamp,
+                ),
+            )
+        return agent_run_id
+
 
 def _validate_enqueue(command: AgentRunEnqueueCommand) -> None:
     if command.deployment_stage is not AgentDeploymentStage.SHADOW:

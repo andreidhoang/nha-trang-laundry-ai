@@ -76,6 +76,7 @@ def execute_manual_worker_double_send_preflight(
             binding.resource_version,
             binding.snapshot_hash,
             binding.rendered_hash,
+            "SYNTHETIC_HUMAN_REVIEW",
             owner,
             uuid4(),
             occurred_at + timedelta(seconds=1),

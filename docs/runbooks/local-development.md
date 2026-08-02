@@ -18,6 +18,13 @@ uv run pytest
 Use only synthetic data locally. Public channels and automated sends are disabled by the default
 environment template.
 
+The staff browser boundary accepts only the exact origins and hosts in `STAFF_ALLOWED_ORIGINS` and
+`API_TRUSTED_HOSTS`. The local template assumes `http://localhost:8000`; change both values together
+when using a different local hostname. Production must use an exact HTTPS origin and host, terminate
+TLS with the ASGI request scheme preserved, and enforce a shared edge authentication rate limit in
+addition to the process-local fail-closed limit. Browser mutations require the strict session cookie,
+the readable `staff_csrf` cookie, the matching `X-CSRF-Token` header, and an allowed `Origin`.
+
 ## Quality gate
 
 ```text

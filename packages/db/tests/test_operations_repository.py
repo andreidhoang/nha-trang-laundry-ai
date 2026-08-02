@@ -27,6 +27,7 @@ from nha_trang_laundry_db.inbox import (
     InboxReplayConflictError,
     InboxRepository,
 )
+from nha_trang_laundry_db.incidents import IncidentOpenCommand, IncidentRepository
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.orders import (
     CreateOrderCommand,
@@ -188,6 +189,7 @@ def test_approval_is_server_derived_hash_bound_authorized_and_one_time(
         3,
         HASH_A,
         HASH_B,
+        "HUMAN_REVIEW_COMPLETE",
         owner,
         uuid4(),
         NOW + timedelta(minutes=1),
@@ -211,9 +213,37 @@ def test_approval_is_server_derived_hash_bound_authorized_and_one_time(
             postgres_connection,
             replace(decision, observed_rendered_hash=HASH_A, correlation_id=uuid4()),
         )
+    with pytest.raises(ApprovalStateError, match="reason code"):
+        repository.decide(
+            postgres_connection,
+            replace(decision, reason_code="free text", correlation_id=uuid4()),
+        )
 
     approved = repository.decide(postgres_connection, decision)
     assert approved.status == "APPROVED"
+    with postgres_connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT decision_type, decision, reason_code, note
+            FROM approval_decisions WHERE approval_request_id = %s
+            """,
+            (created.approval_request_id,),
+        )
+        assert cursor.fetchone() == (
+            "SEND_MESSAGE",
+            "APPROVED",
+            "HUMAN_REVIEW_COMPLETE",
+            None,
+        )
+        cursor.execute(
+            """
+            SELECT details->>'reason_code', details->>'decision_type'
+            FROM audit_events
+            WHERE aggregate_id = %s AND action = 'APPROVAL_DECIDE'
+            """,
+            (created.approval_request_id,),
+        )
+        assert cursor.fetchone() == ("HUMAN_REVIEW_COMPLETE", "SEND_MESSAGE")
     execution = ApprovalExecutionCommand(
         created.approval_request_id,
         ActorRole.OUTBOX_WORKER,
@@ -263,6 +293,7 @@ def test_expired_approval_is_durably_expired_not_silently_extended(
                 1,
                 HASH_A,
                 HASH_B,
+                "HUMAN_REVIEW_COMPLETE",
                 owner,
                 uuid4(),
                 NOW + timedelta(minutes=16),
@@ -353,6 +384,29 @@ def test_order_creation_transition_replay_authorization_and_atomic_audit(
                 correlation_id=uuid4(),
             ),
         )
+
+    incidents = IncidentRepository()
+    incident_command = IncidentOpenCommand(
+        store_id=store_id,
+        order_id=first.order_id,
+        affected_message_id=None,
+        affected_policy_version=None,
+        contact_scope_hash="sha256:" + "c" * 64,
+        category="SERVICE_QUALITY",
+        evidence_summary_hash="sha256:" + "d" * 64,
+        actor_id=owner.staff_user_id,
+        correlation_id=uuid4(),
+        opened_at=NOW + timedelta(minutes=2),
+        actor_type="STAFF",
+    )
+    with pytest.raises(ValueError, match="order binding"):
+        incidents.open(postgres_connection, replace(incident_command, store_id=uuid4()))
+    opened = incidents.open(postgres_connection, incident_command)
+    with postgres_connection.cursor() as cursor:
+        listed = incidents.list_for_store(cursor, store_id=store_id, limit=100)
+    assert [item.incident_id for item in listed] == [opened.incident_id]
+    assert listed[0].fault_decided is False
+    assert listed[0].remedy_decided is False
 
     with postgres_connection.transaction(), postgres_connection.cursor() as cursor:
         cursor.execute(

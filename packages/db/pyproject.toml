@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
   "nha-trang-laundry-contracts",
   "nha-trang-laundry-domain",
+  "opentelemetry-api>=1.36,<2",
   "psycopg[binary]>=3.2,<4",
   "rfc8785>=0.1.4,<1",
 ]

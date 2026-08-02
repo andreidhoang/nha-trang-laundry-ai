@@ -223,6 +223,7 @@ def execute_measurement_change_preflight(
             1,
             first.document.snapshot_hash,
             rendered_one,
+            "SYNTHETIC_HUMAN_REVIEW",
             approver,
             uuid4(),
             timestamp + timedelta(seconds=10),

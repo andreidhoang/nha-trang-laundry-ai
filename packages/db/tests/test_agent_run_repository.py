@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Generator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -42,7 +43,7 @@ def postgres_connection() -> Generator[psycopg.Connection[Any], None, None]:
         yield connection
 
 
-def command() -> AgentRunEnqueueCommand:
+def command(*, created_at: datetime | None = None) -> AgentRunEnqueueCommand:
     return AgentRunEnqueueCommand(
         agent_run_id=uuid4(),
         source_webhook_event_id=None,
@@ -60,7 +61,7 @@ def command() -> AgentRunEnqueueCommand:
         prompt_bundle_hash=SHA_B,
         tool_contract_hash=SHA_C,
         correlation_id=uuid4(),
-        created_at=NOW,
+        created_at=created_at or NOW,
     )
 
 
@@ -68,7 +69,7 @@ def test_agent_run_queue_tool_ledger_and_draft_completion_are_durable(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
     repository = AgentRunRepository()
-    queued = command()
+    queued = command(created_at=_before_pending_agent_run(postgres_connection))
     repository.enqueue(postgres_connection, queued)
 
     with pytest.raises(AgentRunAuthorizationError, match="AGENT_RUNNER"):
@@ -149,7 +150,7 @@ def test_agent_tool_audit_failure_rolls_back_tool_event_and_outbox(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
     repository = AgentRunRepository()
-    queued = command()
+    queued = command(created_at=_before_pending_agent_run(postgres_connection))
     repository.enqueue(postgres_connection, queued)
     claimed = repository.claim_next(
         postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=NOW
@@ -226,7 +227,7 @@ def test_agent_run_rejects_non_shadow_raw_reasoning_and_stale_claim(
             replace(command(), deployment_stage=AgentDeploymentStage.ASSISTED),
         )
 
-    queued = command()
+    queued = command(created_at=_before_pending_agent_run(postgres_connection))
     repository.enqueue(postgres_connection, queued)
     claimed = repository.claim_next(
         postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=NOW
@@ -241,6 +242,67 @@ def test_agent_run_rejects_non_shadow_raw_reasoning_and_stale_claim(
             correlation_id=queued.correlation_id,
             completed_at=NOW,
         )
+
+
+def test_expired_agent_run_fails_to_human_recovery_without_replay(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    repository = AgentRunRepository()
+    claim_time = datetime(1970, 1, 2, tzinfo=UTC)
+    queued = command(created_at=_before_pending_agent_run(postgres_connection))
+    repository.enqueue(postgres_connection, queued)
+    claimed = repository.claim_next(
+        postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=claim_time
+    )
+    assert claimed is not None and claimed.agent_run_id == queued.agent_run_id
+
+    recovered = repository.recover_expired(
+        postgres_connection,
+        worker_role=ActorRole.AGENT_RUNNER,
+        now=claim_time + timedelta(seconds=21),
+    )
+    assert recovered == queued.agent_run_id
+    assert (
+        repository.recover_expired(
+            postgres_connection,
+            worker_role=ActorRole.AGENT_RUNNER,
+            now=claim_time + timedelta(seconds=21),
+        )
+        is None
+    )
+    with postgres_connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT status, failure_code, automatic_send_authorized, claim_token
+            FROM agent_runs WHERE id = %s
+            """,
+            (queued.agent_run_id,),
+        )
+        assert cursor.fetchone() == ("FAILED", "LEASE_EXPIRED", False, None)
+        cursor.execute(
+            """
+            SELECT count(*) FROM audit_events
+            WHERE aggregate_type = 'AGENT_RUN' AND aggregate_id = %s
+              AND action = 'AGENT_RUN_LEASE_EXPIRED'
+            """,
+            (queued.agent_run_id,),
+        )
+        assert cursor.fetchone() == (1,)
+        cursor.execute(
+            """
+            SELECT payload, idempotency_key FROM outbox_events
+            WHERE aggregate_type = 'AGENT_RUN' AND aggregate_id = %s
+              AND event_type = 'agent.run_completed.v1'
+            """,
+            (queued.agent_run_id,),
+        )
+        assert cursor.fetchone() == (
+            {
+                "agent_run_id": str(queued.agent_run_id),
+                "disposition": "REQUIRE_HUMAN",
+            },
+            f"agent-run:{queued.agent_run_id}:lease-expired",
+        )
     with pytest.raises(AgentRunStateError, match="stale or unavailable"):
         repository.complete_draft(
             postgres_connection,
@@ -250,3 +312,66 @@ def test_agent_run_rejects_non_shadow_raw_reasoning_and_stale_claim(
             correlation_id=queued.correlation_id,
             completed_at=NOW,
         )
+
+
+def test_two_agent_workers_cannot_claim_the_same_run(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    repository = AgentRunRepository()
+    queued = replace(command(), created_at=_before_pending_agent_run(postgres_connection))
+    repository.enqueue(postgres_connection, queued)
+    claim_time = datetime.now(UTC)
+    barrier = threading.Barrier(2)
+    claimed: list[tuple[UUID, UUID] | None] = []
+    errors: list[BaseException] = []
+
+    def claim() -> None:
+        try:
+            with psycopg.connect(os.environ["DATABASE_URL"]) as connection:
+                barrier.wait(timeout=2)
+                result = repository.claim_next(
+                    connection,
+                    worker_role=ActorRole.AGENT_RUNNER,
+                    now=claim_time,
+                )
+                claimed.append(
+                    None if result is None else (result.agent_run_id, result.claim_token)
+                )
+        except BaseException as error:
+            errors.append(error)
+
+    workers = [threading.Thread(target=claim) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=3)
+
+    assert errors == []
+    matching_claims = [
+        item for item in claimed if item is not None and item[0] == queued.agent_run_id
+    ]
+    assert len(matching_claims) == 1
+    with postgres_connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT status, attempt_count FROM agent_runs WHERE id = %s",
+            (queued.agent_run_id,),
+        )
+        assert cursor.fetchone() == ("PROCESSING", 1)
+    repository.fail(
+        postgres_connection,
+        agent_run_id=queued.agent_run_id,
+        claim_token=matching_claims[0][1],
+        failure_code="SYNTHETIC_TEST_CLEANUP",
+        correlation_id=queued.correlation_id,
+        completed_at=claim_time,
+    )
+
+
+def _before_pending_agent_run(connection: psycopg.Connection[Any]) -> datetime:
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute("SELECT min(created_at) FROM agent_runs WHERE status = 'PENDING'")
+        row = cursor.fetchone()
+    earliest = None if row is None else row[0]
+    if not isinstance(earliest, datetime):
+        return datetime(1970, 1, 1, tzinfo=UTC)
+    return earliest - timedelta(days=1)

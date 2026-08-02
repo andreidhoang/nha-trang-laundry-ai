@@ -24,6 +24,7 @@ class IncidentOpenCommand:
     actor_id: UUID
     correlation_id: UUID
     opened_at: datetime
+    actor_type: str = ActorRole.AGENT_RUNNER.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,18 @@ class StoredIncident:
     remedy_decided: bool
 
 
+@dataclass(frozen=True, slots=True)
+class IncidentSummary:
+    incident_id: UUID
+    store_id: UUID
+    order_id: UUID | None
+    category: str
+    status: str
+    fault_decided: bool
+    remedy_decided: bool
+    opened_at: datetime
+
+
 class IncidentRepository:
     def open(self, connection: Any, command: IncidentOpenCommand) -> StoredIncident:
         _validate_incident(command)
@@ -65,7 +78,7 @@ class IncidentRepository:
                 event_type="INCIDENT_OPENED",
                 event_payload={"category": command.category, "order_id": str(command.order_id)},
                 audit_action="INCIDENT_OPEN",
-                actor_type=ActorRole.AGENT_RUNNER.value,
+                actor_type=command.actor_type,
                 actor_id=command.actor_id,
                 correlation_id=command.correlation_id,
                 outbox_events=(
@@ -80,6 +93,35 @@ class IncidentRepository:
             mutation,
         )
         return StoredIncident(incident_id, "OPEN", False, False)
+
+    @staticmethod
+    def list_for_store(cursor: Any, *, store_id: UUID, limit: int) -> tuple[IncidentSummary, ...]:
+        if not 1 <= limit <= 200:
+            raise ValueError("incident list limit must be between 1 and 200")
+        cursor.execute(
+            """
+            SELECT id, store_id, order_id, category, status, fault_decided,
+                   remedy_decided, opened_at
+            FROM customer_incidents
+            WHERE store_id = %s
+            ORDER BY opened_at DESC, id DESC
+            LIMIT %s
+            """,
+            (store_id, limit),
+        )
+        return tuple(
+            IncidentSummary(
+                _uuid(row[0]),
+                _uuid(row[1]),
+                None if row[2] is None else _uuid(row[2]),
+                str(row[3]),
+                str(row[4]),
+                bool(row[5]),
+                bool(row[6]),
+                _datetime(row[7]),
+            )
+            for row in cursor.fetchall()
+        )
 
     def open_correction(self, connection: Any, command: CorrectionOpenCommand) -> StoredIncident:
         if not command.affected_policy_version.strip() or not command.affected_capability.strip():
@@ -175,11 +217,19 @@ def _validate_incident(command: IncidentOpenCommand) -> None:
         command.opened_at.tzinfo is None
         or (command.order_id is None and command.affected_message_id is None)
         or command.category not in {"SERVICE_QUALITY", "AUTOMATED_MESSAGE_ERROR"}
+        or command.actor_type not in {"STAFF", ActorRole.AGENT_RUNNER.value}
     ):
         raise ValueError("incident binding is invalid")
 
 
 def _insert_incident(cursor: Any, incident_id: UUID, command: IncidentOpenCommand) -> None:
+    if command.order_id is not None:
+        cursor.execute(
+            "SELECT id FROM orders WHERE id = %s AND store_id = %s",
+            (command.order_id, command.store_id),
+        )
+        if cursor.fetchone() is None:
+            raise ValueError("incident order binding is unavailable")
     cursor.execute(
         """
         INSERT INTO customer_incidents (
@@ -206,5 +256,16 @@ __all__ = [
     "CorrectionOpenCommand",
     "IncidentOpenCommand",
     "IncidentRepository",
+    "IncidentSummary",
     "StoredIncident",
 ]
+
+
+def _datetime(value: object) -> datetime:
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise ValueError("stored incident timestamp is invalid")
+    return value
+
+
+def _uuid(value: object) -> UUID:
+    return value if isinstance(value, UUID) else UUID(str(value))

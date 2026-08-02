@@ -1,0 +1,57 @@
+# Local synthetic deployment drill only. Never use this override with real staging credentials/data.
+services:
+  postgres:
+    ports: !reset []
+    environment: !override
+      POSTGRES_DB: nha_trang_laundry
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - source: smoke_postgres_password
+        target: postgres_password
+    networks: [database-private]
+
+  tls:
+    configs: !override
+      - source: smoke_caddyfile
+        target: /etc/caddy/Caddyfile
+        uid: "10004"
+        gid: "10004"
+        mode: 0440
+    secrets: !reset []
+
+configs:
+  staging_caddyfile: !reset null
+  smoke_caddyfile:
+    file: deploy/staging/Caddyfile.smoke
+
+secrets:
+  staging_migration_database_url: !override
+    file: ${STAGING_SMOKE_SECRET_DIRECTORY}/database_url
+  staging_api_database_url: !override
+    file: ${STAGING_SMOKE_SECRET_DIRECTORY}/database_url
+  staging_worker_database_url: !override
+    file: ${STAGING_SMOKE_SECRET_DIRECTORY}/database_url
+  staging_oidc_issuer: !override
+    file: ${STAGING_SMOKE_SECRET_DIRECTORY}/oidc_issuer
+  staging_oidc_audience: !override
+    file: ${STAGING_SMOKE_SECRET_DIRECTORY}/oidc_audience
+  staging_oidc_jwks_url: !override
+    file: ${STAGING_SMOKE_SECRET_DIRECTORY}/oidc_jwks_url
+  staging_oidc_mfa_claim: !override
+    file: ${STAGING_SMOKE_SECRET_DIRECTORY}/oidc_mfa_claim
+  staging_oidc_mfa_value: !override
+    file: ${STAGING_SMOKE_SECRET_DIRECTORY}/oidc_mfa_value
+  staging_tls_certificate: !reset null
+  staging_tls_private_key: !reset null
+  smoke_postgres_password:
+    file: ${STAGING_SMOKE_SECRET_DIRECTORY}/postgres_password
+
+networks:
+  database-private: !override
+    internal: true
+    driver: bridge
+
+volumes:
+  postgres-data:
+    name: nha-trang-laundry-private-staging-synthetic-smoke-data

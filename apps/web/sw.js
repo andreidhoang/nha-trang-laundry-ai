@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE = "staff-shell-v1";
+const CACHE = "staff-shell-v3";
 const SHELL = ["/staff/", "/staff/styles.css", "/staff/app.js", "/staff/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

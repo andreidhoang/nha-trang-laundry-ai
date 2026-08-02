@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from opentelemetry import propagate
+
 JsonObject = Mapping[str, Any]
 Mutation = Callable[[Any], None]
 
@@ -37,6 +39,7 @@ class MaterialChange:
     correlation_id: UUID
     outbox_events: Sequence[OutboxEvent]
     occurred_at: datetime | None = None
+    audit_details: JsonObject | None = None
 
 
 def commit_material_change(connection: Any, change: MaterialChange, mutate: Mutation) -> None:
@@ -52,6 +55,10 @@ def commit_material_change(connection: Any, change: MaterialChange, mutate: Muta
         raise ValueError("a material change requires at least one outbox event")
 
     occurred_at = change.occurred_at or datetime.now(UTC)
+    trace_carrier: dict[str, str] = {}
+    propagate.inject(trace_carrier)
+    traceparent = trace_carrier.get("traceparent")
+    tracestate = trace_carrier.get("tracestate")
     with connection.transaction(), connection.cursor() as cursor:
         mutate(cursor)
         cursor.execute(
@@ -87,7 +94,10 @@ def commit_material_change(connection: Any, change: MaterialChange, mutate: Muta
                 change.actor_type,
                 change.actor_id,
                 change.correlation_id,
-                json.dumps({"event_type": change.event_type}),
+                json.dumps(
+                    {"event_type": change.event_type, **(change.audit_details or {})},
+                    sort_keys=True,
+                ),
                 occurred_at,
             ),
         )
@@ -96,8 +106,8 @@ def commit_material_change(connection: Any, change: MaterialChange, mutate: Muta
                 """
                     INSERT INTO outbox_events (
                         id, aggregate_type, aggregate_id, event_type, payload, idempotency_key,
-                        correlation_id, occurred_at
-                    ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+                        correlation_id, occurred_at, traceparent, tracestate
+                    ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)
                     """,
                 (
                     uuid4(),
@@ -108,5 +118,7 @@ def commit_material_change(connection: Any, change: MaterialChange, mutate: Muta
                     outbox_event.idempotency_key,
                     change.correlation_id,
                     occurred_at,
+                    traceparent,
+                    tracestate,
                 ),
             )

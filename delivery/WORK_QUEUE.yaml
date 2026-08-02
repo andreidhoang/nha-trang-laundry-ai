@@ -490,7 +490,7 @@ items:
 - id: WORKER-HOST-001
   phase: PRODUCTION_HARDENING
   title: PostgreSQL-backed worker supervisor, readiness, leases, and recovery
-  status: PENDING
+  status: COMPLETE
   priority: 107
   depends_on:
   - RELEASE-BASELINE-001
@@ -525,7 +525,7 @@ items:
 - id: STAFF-OPS-001
   phase: PRODUCTION_HARDENING
   title: Complete staff Shadow operations and manual-send console
-  status: PENDING
+  status: COMPLETE
   priority: 108
   depends_on:
   - RELEASE-BASELINE-001
@@ -559,7 +559,7 @@ items:
 - id: HTTP-SECURITY-001
   phase: PRODUCTION_HARDENING
   title: Browser security, CSRF, OIDC integration, and abuse controls
-  status: PENDING
+  status: COMPLETE
   priority: 109
   depends_on:
   - STAFF-OPS-001
@@ -590,7 +590,7 @@ items:
 - id: TELEMETRY-001
   phase: PRODUCTION_HARDENING
   title: OpenTelemetry metrics, traces, SLOs, and alert contracts
-  status: PENDING
+  status: COMPLETE
   priority: 111
   depends_on:
   - WORKER-HOST-001
@@ -622,7 +622,7 @@ items:
 - id: STAGING-001
   phase: PRODUCTION_HARDENING
   title: Private TLS staging topology, secrets, and deployment rollback
-  status: PENDING
+  status: COMPLETE
   priority: 112
   depends_on:
   - WORKER-HOST-001
@@ -657,7 +657,7 @@ items:
 - id: BACKUP-RESTORE-001
   phase: REAL_SHADOW_READINESS
   title: Continuous PostgreSQL recovery and restore-drill automation
-  status: PENDING
+  status: BLOCKED
   priority: 113
   depends_on:
   - STAGING-001
@@ -685,6 +685,11 @@ items:
   - duplicate_send_reconciliation
   - rollback_assessment
   blocked_by_decisions: []
+  blocking_condition: Requires an operator-provisioned encrypted off-host PostgreSQL
+    recovery repository in a separate failure domain and a reviewed restore drill
+    demonstrating a recovery point no older than 15 minutes, restoration within 4
+    hours, object evidence access, quote/audit integrity, and duplicate-send reconciliation.
+    Local configuration and synthetic data cannot satisfy this external evidence requirement.
 - id: SECURITY-001
   phase: REAL_SHADOW_READINESS
   title: Identity, privacy, PITR, incident, kill-switch, and release-readiness gates

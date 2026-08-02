@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "target_rpo_seconds": 900,
+  "target_rto_seconds": 14400,
+  "wal_archive_max_interval_seconds": 300,
+  "base_backup_max_interval_seconds": 86400,
+  "daily_recovery_copy_retention_days": 35,
+  "continuous_wal_archiving": true,
+  "off_host": true,
+  "separate_failure_domain": true,
+  "object_versioning": true,
+  "encryption_at_rest": "AES-256",
+  "encryption_in_transit": "TLS1.2+",
+  "credential_reference": "backup_repository_credential",
+  "encryption_key_reference": "backup_repository_encryption_key"
+}

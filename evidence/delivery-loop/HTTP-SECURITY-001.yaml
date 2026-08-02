@@ -1,0 +1,22 @@
+work_item: HTTP-SECURITY-001
+recorded_at: '2026-08-02T08:19:59.9747773Z'
+requirement_contract: context/tasks/TASK-http-security-001.md
+rollback_impact: No database migration or external service was added. The middleware, strict cookies, CSRF client header, and environment settings can be reverted together, but doing so weakens the staff browser boundary; disable staff HTTP access before rollback and restore it only after equivalent origin, CSRF, host, size, header, and authentication-abuse controls are present.
+unresolved_assumptions: Production must configure an exact HTTPS STAFF_ALLOWED_ORIGINS value and exact API_TRUSTED_HOSTS value, preserve the HTTPS ASGI scheme behind its trusted TLS terminator, and add a shared edge authentication limiter when running more than one API process. The application limiter is intentionally process-local defense in depth. No password recovery endpoint or local password authority exists, so recovery throttling remains not applicable until a separately reviewed recovery flow is introduced.
+evidence:
+  csrf_and_origin_enforcement: Cookie-authorized internal mutations require an exact allowlisted Origin and a constant-time double-submit match between the readable staff_csrf cookie and X-CSRF-Token. Identity exchange requires an exact trusted Origin even without a session, replaces any fixed session, issues new random CSRF material, and sets both cookies Secure and SameSite=strict. Cross-origin, missing-origin, missing-token, and mismatched authority tests fail closed.
+  browser_security_headers: A dedicated browser boundary emits a self-only CSP with no objects, frames, external forms, inline scripts, or inline styles; nosniff, DENY framing, no-referrer, restricted browser permissions, COOP, CORP, internal no-store, and HTTPS HSTS are covered by tests. TrustedHost rejects unknown hosts, and the request-size middleware rejects bodies above 262144 bytes before endpoint dispatch. The staff service-worker cache was advanced so the CSRF-aware client is deployed as a new shell version.
+  oidc_negative_integration: Tests sign real RS256 tokens, fetch a real JWKS document from a local HTTP boundary through PyJWKClient, and verify the configured issuer, audience, expiry, issued-at, subject, signing key, algorithm allowlist, and nested MFA claim. Wrong issuer, audience, expiry, missing required claims, invalid signature, HS256 substitution, unknown key ID, missing MFA, empty tokens, and oversized tokens fail closed or yield non-MFA identity as appropriate.
+  authentication_abuse_controls: Identity exchange is bounded per direct source by a locked fixed-window limiter, returns 429 with Retry-After before verification when exhausted, resets only after successful exchange, and never retains a raw token or source address. Accepted, rejected, throttled, missing/invalid session, origin/CSRF rejection, and role/MFA denial outcomes emit sanitized structured security records with correlation and reason codes. Deployment guidance requires a shared edge limiter for multi-process production.
+  rollback_assessment: This slice adds no public route, local password store, recovery authority, provider client, or automation capability. Rollback is application/configuration-only, but the staff boundary must remain unavailable during rollback because restoring service without equivalent controls would reintroduce browser and authentication abuse risk.
+checks:
+- command: uv run pytest apps/api/tests packages/db/tests/test_identity.py
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

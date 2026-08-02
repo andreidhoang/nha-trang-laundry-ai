@@ -27,6 +27,7 @@ class MarketingDeliveryRepository:
         connection: Any,
         *,
         outbox_event_id: UUID,
+        claim_token: UUID,
         worker_role: ActorRole,
         actor_id: UUID,
         correlation_id: UUID,
@@ -47,10 +48,11 @@ class MarketingDeliveryRepository:
                   ON suppression.contact_binding_id = event.recipient_binding_id
                  AND suppression.purpose = 'MARKETING'
                  AND suppression.channel = event.payload->>'channel'
-                WHERE event.id = %s
+                WHERE event.id = %s AND event.claim_token = %s
+                  AND event.lease_expires_at >= %s
                 FOR UPDATE OF event
                 """,
-                (outbox_event_id,),
+                (outbox_event_id, claim_token, timestamp),
             )
             row = cursor.fetchone()
             if row is None:
@@ -67,11 +69,15 @@ class MarketingDeliveryRepository:
             cursor.execute(
                 """
                 UPDATE outbox_events
-                SET status = 'HELD', held_reason = %s
-                WHERE id = %s AND status = 'PROCESSING'
+                SET status = 'HELD', held_reason = %s, claim_token = NULL,
+                    claimed_at = NULL, lease_expires_at = NULL
+                WHERE id = %s AND status = 'PROCESSING' AND claim_token = %s
+                RETURNING id
                 """,
-                (reason, outbox_event_id),
+                (reason, outbox_event_id, claim_token),
             )
+            if cursor.fetchone() is None:
+                raise MarketingDeliveryStateError("marketing outbox claim is stale")
             result.append(reason)
 
         commit_material_change(

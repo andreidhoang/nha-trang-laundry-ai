@@ -64,6 +64,16 @@ def _ready_workspace(tmp_path: Path) -> Path:
         "CONTAINER-001",
         "SUPPLYCHAIN-001",
     }
+    while True:
+        dependents = {
+            item["id"]
+            for item in queue["items"]
+            if reset_items.intersection(item.get("depends_on", []))
+        }
+        expanded = reset_items | dependents
+        if expanded == reset_items:
+            break
+        reset_items = expanded
     for item in queue["items"]:
         if item["status"] == "IN_PROGRESS":
             item["status"] = "PENDING"

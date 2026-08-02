@@ -1,0 +1,24 @@
+work_item: WORKER-HOST-001
+recorded_at: '2026-08-02T03:27:42.0038254Z'
+requirement_contract: context/tasks/TASK-worker-host-001.md
+rollback_impact: The worker process and queue execution flags remain fail-closed, so code can be rolled back without enabling a provider, channel, customer send, or capability. Migrations 0016 and 0017 are forward-only once deployed; rollback requires disabling the worker queue modes and a reviewed forward reconciliation migration, never dropping claim evidence or replaying unknown outcomes.
+unresolved_assumptions: Production fixed-handler and Agent Runner cycle wiring remains deployment-disabled until separately configured and reviewed. Provider-backed agent execution retains nine release blockers; real-customer model calls, public ingress, automated sends, and every release capability remain NOT_AUTHORIZED.
+evidence:
+  supervisor_integration_tests: The database-backed worker and queue repository suite passed 39 tests twice consecutively against the same persistent PostgreSQL instance, covering both supervised queues, two-worker contention, database outage, unknown handlers, bounded polling, retry exhaustion, and repeatable fixture isolation. The strict repository run then passed all 472 tests with PostgreSQL integration required and no skips.
+  readiness_and_shutdown: Separate liveness and readiness endpoints are exercised. Readiness fails for missing database configuration, database outage, missing fixed internal registry, or missing fixed agent cycle; liveness never reports dependency or automation authority. A blocking-handler test proves the grace deadline revokes in-process authority, prevents late completion, leaves the fenced claim for explicit recovery, and stops cleanly after release.
+  lease_and_recovery: Forward migrations add claim tokens, claimed timestamps, expiry ordering, processing-state lease constraints, and fail-closed rejection of unreconciled legacy PROCESSING rows. Outbox and agent claims use PostgreSQL SKIP LOCKED fencing; stale outbox outcomes move atomically to a non-replayable DLQ with domain and audit events, while expired agent runs fail to REQUIRE_HUMAN with domain, audit, and outbox evidence. STOP-after-claim suppression now requires the exact live claim token and clears the lease atomically when held.
+  provider_send_absence: Container/source contract tests prove the worker healthcheck uses dependency readiness, release flags remain false, and the worker source has no channel SDK, provider-send client, generic handler loader, or message-send operation. The disabled provider-runtime integration fails closed, all 13 capabilities remain NOT_AUTHORIZED, and the isolated OpenClaw plugin exposes no direct-send or generic execution tool.
+  rollback_assessment: The host defaults keep internal execution, agent queue processing, provider runtime, public channels, and automated sends disabled. Reverting application code cannot authorize an external action; deployed lease columns and evidence must be preserved and changed only by a forward migration with explicit unknown-outcome reconciliation.
+checks:
+- command: uv run pytest apps/worker/tests packages/db/tests/test_outbox_repository.py packages/db/tests/test_agent_run_repository.py
+  status: PASSED
+- command: uv run pytest packages/evals/tests/test_worker_host_contract.py
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

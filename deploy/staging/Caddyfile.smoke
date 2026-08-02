@@ -1,0 +1,12 @@
+{
+	admin off
+}
+
+https://staging.internal:8443 {
+	tls internal
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	reverse_proxy api:8000
+}

@@ -44,6 +44,19 @@ class StoredQuoteRevision:
     document: CanonicalDocument
 
 
+@dataclass(frozen=True, slots=True)
+class QuoteSummary:
+    quote_id: UUID
+    revision: int
+    row_version: int
+    finality: str
+    status: str
+    snapshot_hash: str
+    display_total_min_vnd: int
+    display_total_max_vnd: int
+    valid_until: datetime
+
+
 class QuoteRepository:
     """Create-only quote revisions with optimistic container concurrency."""
 
@@ -191,3 +204,44 @@ class QuoteRepository:
         # Round-trip JSON once to ensure no driver-specific non-JSON values survived.
         json.loads(rebuilt.canonical_json)
         return StoredQuoteRevision(quote_id, revision, str(row[0]), str(row[1]), rebuilt)
+
+    @staticmethod
+    def list_for_store(cursor: Any, *, store_id: UUID, limit: int) -> tuple[QuoteSummary, ...]:
+        if not 1 <= limit <= 200:
+            raise ValueError("quote list limit must be between 1 and 200")
+        cursor.execute(
+            """
+            SELECT quote.id, quote.current_revision, quote.row_version,
+                   revision.finality, revision.status, revision.snapshot_hash,
+                   revision.display_total_min_vnd, revision.display_total_max_vnd,
+                   revision.valid_until
+            FROM quotes AS quote
+            JOIN quote_revisions AS revision
+              ON revision.quote_id = quote.id
+             AND revision.revision = quote.current_revision
+            WHERE quote.store_id = %s
+            ORDER BY quote.created_at DESC, quote.id DESC
+            LIMIT %s
+            """,
+            (store_id, limit),
+        )
+        return tuple(
+            QuoteSummary(
+                UUID(str(row[0])),
+                int(row[1]),
+                int(row[2]),
+                str(row[3]),
+                str(row[4]),
+                str(row[5]),
+                int(row[6]),
+                int(row[7]),
+                _timestamp(row[8]),
+            )
+            for row in cursor.fetchall()
+        )
+
+
+def _timestamp(value: object) -> datetime:
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise QuoteIntegrityError("stored quote timestamp is invalid")
+    return value

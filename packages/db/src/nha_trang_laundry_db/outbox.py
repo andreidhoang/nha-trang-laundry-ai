@@ -57,6 +57,7 @@ class OutboxStateError(ValueError):
 @dataclass(frozen=True)
 class ClaimedOutboxEvent:
     event_id: UUID
+    claim_token: UUID
     aggregate_type: str
     aggregate_id: UUID
     event_type: str
@@ -64,6 +65,9 @@ class ClaimedOutboxEvent:
     idempotency_key: str
     correlation_id: UUID
     attempt_count: int
+    lease_expires_at: datetime
+    traceparent: str | None
+    tracestate: str | None
 
 
 class OutboxRepository:
@@ -78,6 +82,8 @@ class OutboxRepository:
     ) -> ClaimedOutboxEvent | None:
         _require_worker(worker_role)
         claimed_at = now or datetime.now(UTC)
+        claim_token = uuid4()
+        lease_expires_at = claimed_at + timedelta(seconds=30)
         with connection.transaction(), connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -92,23 +98,32 @@ class OutboxRepository:
                 )
                 UPDATE outbox_events AS event
                 SET status = 'PROCESSING', attempt_count = attempt_count + 1,
-                    held_reason = NULL
+                    held_reason = NULL, claim_token = %s, claimed_at = %s,
+                    lease_expires_at = %s
                 FROM candidate
                 WHERE event.id = candidate.id
                 RETURNING event.id, event.aggregate_type, event.aggregate_id,
                           event.event_type, event.payload, event.idempotency_key,
-                          event.correlation_id, event.attempt_count
+                          event.correlation_id, event.attempt_count, event.lease_expires_at,
+                          event.traceparent, event.tracestate
                 """,
-                (claimed_at, list(sorted(INTERNAL_EVENT_TYPES))),
+                (
+                    claimed_at,
+                    list(sorted(INTERNAL_EVENT_TYPES)),
+                    claim_token,
+                    claimed_at,
+                    lease_expires_at,
+                ),
             )
             row = cursor.fetchone()
-        return None if row is None else _claimed_event(tuple(row))
+        return None if row is None else _claimed_event(tuple(row), claim_token)
 
     def complete_internal(
         self,
         connection: Any,
         *,
         event_id: UUID,
+        claim_token: UUID,
         worker_role: ActorRole,
         completed_at: datetime | None = None,
     ) -> None:
@@ -118,11 +133,13 @@ class OutboxRepository:
             cursor.execute(
                 """
                 UPDATE outbox_events
-                SET status = 'SENT', sent_at = %s
-                WHERE id = %s AND status = 'PROCESSING'
+                SET status = 'SENT', sent_at = %s, claim_token = NULL,
+                    claimed_at = NULL, lease_expires_at = NULL
+                WHERE id = %s AND status = 'PROCESSING' AND claim_token = %s
+                    AND lease_expires_at >= CURRENT_TIMESTAMP
                 RETURNING id
                 """,
-                (timestamp, event_id),
+                (timestamp, event_id, claim_token),
             )
             if cursor.fetchone() is None:
                 raise OutboxStateError("outbox completion claim is stale")
@@ -132,6 +149,7 @@ class OutboxRepository:
         connection: Any,
         *,
         event_id: UUID,
+        claim_token: UUID,
         worker_role: ActorRole,
         error_class: str,
         retryable: bool,
@@ -146,10 +164,11 @@ class OutboxRepository:
                 """
                 SELECT payload, attempt_count, occurred_at
                 FROM outbox_events
-                WHERE id = %s AND status = 'PROCESSING'
+                WHERE id = %s AND status = 'PROCESSING' AND claim_token = %s
+                    AND lease_expires_at >= CURRENT_TIMESTAMP
                 FOR UPDATE
                 """,
-                (event_id,),
+                (event_id, claim_token),
             )
             row = cursor.fetchone()
             if row is None:
@@ -160,10 +179,11 @@ class OutboxRepository:
                 cursor.execute(
                     """
                     UPDATE outbox_events
-                    SET status = 'PENDING', available_at = %s, held_reason = %s
-                    WHERE id = %s AND status = 'PROCESSING'
+                    SET status = 'PENDING', available_at = %s, held_reason = %s,
+                        claim_token = NULL, claimed_at = NULL, lease_expires_at = NULL
+                    WHERE id = %s AND status = 'PROCESSING' AND claim_token = %s
                     """,
-                    (timestamp + delay, error_class, event_id),
+                    (timestamp + delay, error_class, event_id, claim_token),
                 )
                 return "PENDING"
 
@@ -175,10 +195,11 @@ class OutboxRepository:
             cursor.execute(
                 """
                 UPDATE outbox_events
-                SET status = 'DEAD', held_reason = %s
-                WHERE id = %s AND status = 'PROCESSING'
+                SET status = 'DEAD', held_reason = %s, claim_token = NULL,
+                    claimed_at = NULL, lease_expires_at = NULL
+                WHERE id = %s AND status = 'PROCESSING' AND claim_token = %s
                 """,
-                (error_class, event_id),
+                (error_class, event_id, claim_token),
             )
             cursor.execute(
                 """
@@ -201,13 +222,98 @@ class OutboxRepository:
             )
             return "DEAD"
 
+    def recover_expired_internal(
+        self,
+        connection: Any,
+        *,
+        worker_role: ActorRole,
+        now: datetime | None = None,
+    ) -> UUID | None:
+        """Move one expired unknown-outcome claim to DLQ; never replay it automatically."""
+
+        _require_worker(worker_role)
+        timestamp = now or datetime.now(UTC)
+        with connection.transaction(), connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, payload, attempt_count, occurred_at
+                FROM outbox_events
+                WHERE status = 'PROCESSING' AND lease_expires_at < %s
+                    AND event_type = ANY(%s)
+                ORDER BY lease_expires_at, id
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+                """,
+                (timestamp, list(sorted(INTERNAL_EVENT_TYPES))),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            event_id = _uuid(row[0])
+            payload = row[1]
+            if not isinstance(payload, dict):
+                raise OutboxStateError("outbox payload is not a JSON object")
+            attempt_count = int(row[2])
+            occurred_at = _datetime(row[3])
+            payload_hash = canonical_document(payload).snapshot_hash
+            cursor.execute(
+                """
+                UPDATE outbox_events
+                SET status = 'DEAD', held_reason = 'UNKNOWN_INTERNAL_HANDLER_OUTCOME',
+                    claim_token = NULL, claimed_at = NULL, lease_expires_at = NULL
+                WHERE id = %s AND status = 'PROCESSING' AND lease_expires_at < %s
+                RETURNING id
+                """,
+                (event_id, timestamp),
+            )
+            if cursor.fetchone() is None:
+                raise OutboxStateError("expired outbox claim changed during recovery")
+            cursor.execute(
+                """
+                INSERT INTO dead_letter_events (
+                    id, outbox_event_id, normalized_payload_hash, last_error_class,
+                    attempts, first_attempted_at, last_attempted_at, replay_eligible,
+                    operator_decision
+                ) VALUES (%s, %s, %s, 'UNKNOWN_INTERNAL_HANDLER_OUTCOME', %s, %s, %s, FALSE, NULL)
+                """,
+                (uuid4(), event_id, payload_hash, attempt_count, occurred_at, timestamp),
+            )
+            cursor.execute(
+                """
+                INSERT INTO domain_events (
+                    id, aggregate_type, aggregate_id, aggregate_version, event_type,
+                    payload, occurred_at, correlation_id
+                )
+                SELECT %s, 'OUTBOX_EVENT', id, attempt_count,
+                    'OUTBOX_PROCESSING_LEASE_EXPIRED',
+                    jsonb_build_object('failure_code', 'UNKNOWN_INTERNAL_HANDLER_OUTCOME'),
+                    %s, correlation_id
+                FROM outbox_events WHERE id = %s
+                """,
+                (uuid4(), timestamp, event_id),
+            )
+            cursor.execute(
+                """
+                INSERT INTO audit_events (
+                    id, aggregate_type, aggregate_id, action, actor_type, actor_id,
+                    correlation_id, details, occurred_at
+                )
+                SELECT %s, 'OUTBOX_EVENT', id, 'OUTBOX_EXPIRED_TO_DLQ',
+                    'OUTBOX_WORKER', NULL, correlation_id,
+                    jsonb_build_object('failure_code', 'UNKNOWN_INTERNAL_HANDLER_OUTCOME'), %s
+                FROM outbox_events WHERE id = %s
+                """,
+                (uuid4(), timestamp, event_id),
+            )
+        return event_id
+
 
 def _require_worker(role: ActorRole) -> None:
     if role is not ActorRole.OUTBOX_WORKER:
         raise OutboxAuthorizationError("only OUTBOX_WORKER may claim outbox events")
 
 
-def _claimed_event(row: tuple[object, ...]) -> ClaimedOutboxEvent:
+def _claimed_event(row: tuple[object, ...], claim_token: UUID) -> ClaimedOutboxEvent:
     payload = row[4]
     if not isinstance(payload, dict) or not all(isinstance(key, str) for key in payload):
         raise OutboxStateError("outbox payload is not a string-keyed JSON object")
@@ -216,6 +322,7 @@ def _claimed_event(row: tuple[object, ...]) -> ClaimedOutboxEvent:
         raise OutboxStateError("outbox payload is not a JSON object")
     return ClaimedOutboxEvent(
         _uuid(row[0]),
+        claim_token,
         str(row[1]),
         _uuid(row[2]),
         str(row[3]),
@@ -223,6 +330,9 @@ def _claimed_event(row: tuple[object, ...]) -> ClaimedOutboxEvent:
         str(row[5]),
         _uuid(row[6]),
         int(str(row[7])),
+        _datetime(row[8]),
+        None if row[9] is None else str(row[9]),
+        None if row[10] is None else str(row[10]),
     )
 
 

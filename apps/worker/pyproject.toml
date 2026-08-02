@@ -10,6 +10,7 @@ dependencies = [
   "nha-trang-laundry-domain",
   "nha-trang-laundry-observability",
   "nha-trang-laundry-policy",
+  "pydantic-settings>=2.10,<3",
   "pyjwt[crypto]>=2.10,<3",
   "uvicorn[standard]>=0.35,<1",
 ]

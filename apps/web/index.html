@@ -38,6 +38,19 @@
         <article class="panel">
           <div class="panel-heading">
             <div>
+              <p class="eyebrow">IMMUTABLE SNAPSHOT</p>
+              <h2>Báo giá</h2>
+            </div>
+            <span id="quote-count" class="count">0</span>
+          </div>
+          <div id="quotes" class="cards" aria-live="polite">
+            <p class="empty">Nhập Store UUID để tải dữ liệu.</p>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
               <p class="eyebrow">ORTHOGONAL STATE</p>
               <h2>Đơn hàng</h2>
             </div>
@@ -59,6 +72,86 @@
           <p class="guardrail">Chỉ hiển thị envelope. Không cho duyệt mù khi chưa có resource preview.</p>
           <div id="approvals" class="cards" aria-live="polite">
             <p class="empty">Đang chờ phiên staff hợp lệ.</p>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">HUMAN INTAKE ONLY</p>
+              <h2>Sự cố khách hàng</h2>
+            </div>
+            <span id="incident-count" class="count">0</span>
+          </div>
+          <p class="guardrail">Ghi nhận sự cố không quyết định lỗi hoặc phương án bồi hoàn.</p>
+          <div id="incidents" class="cards" aria-live="polite">
+            <p class="empty">Nhập Store UUID để tải dữ liệu.</p>
+          </div>
+          <form id="incident-form" class="action-form mutation-form">
+            <label for="incident-order-id">Order UUID</label>
+            <input id="incident-order-id" name="order_id" required autocomplete="off">
+            <label for="contact-scope-hash">Contact scope hash</label>
+            <input id="contact-scope-hash" name="contact_scope_hash" required autocomplete="off"
+              placeholder="sha256:…">
+            <label for="incident-evidence-hash">Evidence summary hash</label>
+            <input id="incident-evidence-hash" name="evidence_summary_hash" required
+              autocomplete="off" placeholder="sha256:…">
+            <button type="submit">Mở sự cố</button>
+            <output id="incident-result" class="form-result" aria-live="polite"></output>
+          </form>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">SHADOW · MANUAL ONLY</p>
+              <h2>Gửi thủ công</h2>
+            </div>
+          </div>
+          <p class="guardrail">Chỉ khóa envelope đã duyệt. Hệ thống không gửi tin; staff phải xác nhận đúng hash sau khi gửi thủ công.</p>
+          <form id="manual-prepare-form" class="action-form mutation-form">
+            <label for="manual-approval-id">Approval UUID</label>
+            <input id="manual-approval-id" name="approval_id" required autocomplete="off">
+            <label for="manual-resource-version">Resource version</label>
+            <input id="manual-resource-version" name="resource_version" type="number" min="1" required>
+            <label for="manual-snapshot-hash">Snapshot hash</label>
+            <input id="manual-snapshot-hash" name="snapshot_hash" required autocomplete="off"
+              placeholder="JCS-SHA256-V1:…">
+            <label for="manual-rendered-hash">Rendered hash</label>
+            <input id="manual-rendered-hash" name="rendered_hash" required autocomplete="off"
+              placeholder="JCS-SHA256-V1:…">
+            <label for="manual-recipient-id">Recipient binding UUID</label>
+            <input id="manual-recipient-id" name="recipient_id" required autocomplete="off">
+            <button type="submit">Khóa envelope Shadow</button>
+            <output id="manual-prepare-result" class="form-result" aria-live="polite"></output>
+          </form>
+          <form id="manual-attest-form" class="action-form mutation-form">
+            <label for="manual-envelope-id">Envelope UUID</label>
+            <input id="manual-envelope-id" name="envelope_id" required autocomplete="off">
+            <label for="manual-attest-version">Envelope row version</label>
+            <input id="manual-attest-version" name="envelope_version" type="number" min="1" value="1" required>
+            <label for="manual-attest-resource-version">Resource version</label>
+            <input id="manual-attest-resource-version" name="resource_version" type="number" min="1" required>
+            <label for="manual-exact-hash">Exact rendered hash</label>
+            <input id="manual-exact-hash" name="exact_rendered_hash" required autocomplete="off"
+              placeholder="JCS-SHA256-V1:…">
+            <label for="manual-sent-at">Sent at</label>
+            <input id="manual-sent-at" name="sent_at" type="datetime-local" required>
+            <button type="submit">Ghi nhận đã gửi</button>
+            <output id="manual-attest-result" class="form-result" aria-live="polite"></output>
+          </form>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">OBSERVE · NO REPLAY</p>
+              <h2>Khôi phục hàng đợi</h2>
+            </div>
+          </div>
+          <p class="guardrail">Màn hình chỉ quan sát. Không có thao tác replay hoặc gửi lại.</p>
+          <div id="queue-recovery" class="cards" aria-live="polite">
+            <p class="empty">Đang chờ phiên approver hợp lệ.</p>
           </div>
         </article>
       </section>
@@ -83,6 +176,30 @@
           <div><dt>Role</dt><dd data-field="role"></dd></div>
           <div><dt>Hết hạn</dt><dd data-field="expiry"></dd></div>
           <div class="hash-row"><dt>Envelope hash</dt><dd data-field="hash"></dd></div>
+        </dl>
+      </article>
+    </template>
+
+    <template id="quote-template">
+      <article class="item-card">
+        <div class="item-title"><strong data-field="quote"></strong><span data-field="status"></span></div>
+        <dl>
+          <div><dt>Revision</dt><dd data-field="revision"></dd></div>
+          <div><dt>Finality</dt><dd data-field="finality"></dd></div>
+          <div><dt>Total</dt><dd data-field="total"></dd></div>
+          <div class="hash-row"><dt>Snapshot hash</dt><dd data-field="hash"></dd></div>
+        </dl>
+      </article>
+    </template>
+
+    <template id="incident-template">
+      <article class="item-card warning">
+        <div class="item-title"><strong data-field="incident"></strong><span data-field="status"></span></div>
+        <dl>
+          <div><dt>Order</dt><dd data-field="order"></dd></div>
+          <div><dt>Category</dt><dd data-field="category"></dd></div>
+          <div><dt>Fault decided</dt><dd data-field="fault"></dd></div>
+          <div><dt>Remedy decided</dt><dd data-field="remedy"></dd></div>
         </dl>
       </article>
     </template>

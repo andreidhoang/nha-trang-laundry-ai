@@ -47,6 +47,7 @@ class ManualSendAttestationCommand:
     correlation_id: UUID
     sent_at: datetime | None = None
     recorded_at: datetime | None = None
+    expected_envelope_row_version: int = 1
 
 
 @dataclass(frozen=True)
@@ -155,6 +156,8 @@ class ManualSendRepository:
             approval = _lock_approval(cursor, _uuid(envelope[1]))
             if str(envelope[9]) != "APPROVED_FOR_MANUAL_SEND":
                 raise ManualSendStateError("manual-send envelope is not attestable")
+            if int(str(envelope[10])) != command.expected_envelope_row_version:
+                raise ManualSendStateError("manual-send envelope version is stale")
             if str(approval[7]) != "APPROVED" or recorded_at >= _datetime(approval[6]):
                 raise ManualSendStateError("manual-send approval is unavailable")
             if int(

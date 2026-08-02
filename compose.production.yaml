@@ -1,77 +1,195 @@
-name: nha-trang-laundry-control-plane
+name: nha-trang-laundry-private-staging
+
+x-runtime-hardening: &runtime-hardening
+  init: true
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+  pids_limit: 128
+  restart: unless-stopped
+  stop_grace_period: 20s
+
+x-disabled-capabilities: &disabled-capabilities
+  FEATURE_PUBLIC_CHANNELS_ENABLED: "false"
+  FEATURE_AUTOMATED_SENDS_ENABLED: "false"
+  FEATURE_AGENT_RUNTIME_ENABLED: "false"
 
 services:
+  # Development convenience only. Private staging uses an externally managed PostgreSQL endpoint
+  # reachable solely through the pre-provisioned database-private Docker network.
   postgres:
     profiles: ["local-database"]
+    ports: []
+    networks: [database-private]
 
-  api:
-    image: nha-trang-laundry-api:local
+  migrate:
+    image: ${STAGING_API_IMAGE:-nha-trang-laundry-api:local}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    entrypoint: ["python", "-m", "nha_trang_laundry_db.migration_job"]
+    command: []
     init: true
-    user: "10001:10001"
+    user: "10003:10003"
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=16m
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=1777
+    pids_limit: 32
+    restart: "no"
+    secrets:
+      - source: staging_migration_database_url
+        target: database_url
+        uid: "10003"
+        gid: "10003"
+        mode: 0400
+    networks: [database-private]
+
+  api:
+    <<: *runtime-hardening
+    image: ${STAGING_API_IMAGE:-nha-trang-laundry-api:local}
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    user: "10001:10001"
     environment:
-      DATABASE_URL: ${DATABASE_URL:-}
-      FEATURE_PUBLIC_CHANNELS_ENABLED: "false"
-      FEATURE_AUTOMATED_SENDS_ENABLED: "false"
-      FEATURE_AGENT_RUNTIME_ENABLED: "false"
-    ports:
-      - "127.0.0.1:8000:8000"
-    networks: [control-private]
-    restart: unless-stopped
-    stop_grace_period: 20s
+      <<: *disabled-capabilities
+      STAFF_ALLOWED_ORIGINS: "https://staging.internal:8443"
+      API_TRUSTED_HOSTS: "staging.internal,api,localhost,127.0.0.1"
+    secrets:
+      - source: staging_api_database_url
+        target: database_url
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: staging_oidc_issuer
+        target: oidc_issuer
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: staging_oidc_audience
+        target: oidc_audience
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: staging_oidc_jwks_url
+        target: oidc_jwks_url
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: staging_oidc_mfa_claim
+        target: oidc_mfa_claim
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: staging_oidc_mfa_value
+        target: oidc_mfa_value
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [ingress-private, database-private]
 
   worker:
-    image: nha-trang-laundry-worker:local
+    <<: *runtime-hardening
+    image: ${STAGING_WORKER_IMAGE:-nha-trang-laundry-worker:local}
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
-    init: true
-    user: "10001:10001"
-    read_only: true
-    cap_drop: ["ALL"]
-    security_opt: ["no-new-privileges:true"]
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    user: "10002:10002"
     environment:
-      DATABASE_URL: ${DATABASE_URL:-}
-      FEATURE_PUBLIC_CHANNELS_ENABLED: "false"
-      FEATURE_AUTOMATED_SENDS_ENABLED: "false"
-      FEATURE_AGENT_RUNTIME_ENABLED: "false"
-    ports:
-      - "127.0.0.1:8020:8000"
-    networks: [control-private]
-    restart: unless-stopped
-    stop_grace_period: 20s
+      <<: *disabled-capabilities
+      WORKER_INTERNAL_OUTBOX_ENABLED: "false"
+      WORKER_AGENT_QUEUE_ENABLED: "false"
+    secrets:
+      - source: staging_worker_database_url
+        target: database_url
+        uid: "10002"
+        gid: "10002"
+        mode: 0400
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [database-private]
 
-  agent-tools:
-    image: nha-trang-laundry-agent-tools:local
+  tls:
+    <<: *runtime-hardening
+    image: ${STAGING_TLS_IMAGE:-nha-trang-laundry-tls:local}
     build:
       context: .
-      dockerfile: apps/public-agent-tools/Dockerfile
-    init: true
-    user: "10001:10001"
-    read_only: true
-    cap_drop: ["ALL"]
-    security_opt: ["no-new-privileges:true"]
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=16m
-    environment:
-      FEATURE_PUBLIC_CHANNELS_ENABLED: "false"
-      FEATURE_AUTOMATED_SENDS_ENABLED: "false"
-      FEATURE_AGENT_RUNTIME_ENABLED: "false"
+      dockerfile: deploy/staging/Caddy.Dockerfile
+    user: "10004:10004"
+    entrypoint: ["caddy"]
+    command: ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     ports:
-      - "127.0.0.1:8010:8000"
-    networks: [control-private]
-    restart: unless-stopped
-    stop_grace_period: 20s
+      - name: private-operator-https
+        target: 8443
+        published: "8443"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    configs:
+      - source: staging_caddyfile
+        target: /etc/caddy/Caddyfile
+        uid: "10004"
+        gid: "10004"
+        mode: 0440
+    secrets:
+      - source: staging_tls_certificate
+        target: tls_certificate
+        uid: "10004"
+        gid: "10004"
+        mode: 0400
+      - source: staging_tls_private_key
+        target: tls_private_key
+        uid: "10004"
+        gid: "10004"
+        mode: 0400
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=1777
+      - /config:rw,noexec,nosuid,nodev,size=4m,mode=0700,uid=10004,gid=10004
+      - /data:rw,noexec,nosuid,nodev,size=4m,mode=0700,uid=10004,gid=10004
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      ingress-private:
+        aliases: [staging.internal]
+
+configs:
+  staging_caddyfile:
+    file: deploy/staging/Caddyfile
+
+secrets:
+  staging_migration_database_url:
+    external: true
+  staging_api_database_url:
+    external: true
+  staging_worker_database_url:
+    external: true
+  staging_oidc_issuer:
+    external: true
+  staging_oidc_audience:
+    external: true
+  staging_oidc_jwks_url:
+    external: true
+  staging_oidc_mfa_claim:
+    external: true
+  staging_oidc_mfa_value:
+    external: true
+  staging_tls_certificate:
+    external: true
+  staging_tls_private_key:
+    external: true
 
 networks:
-  control-private:
+  ingress-private:
     internal: true
+    driver: bridge
+  database-private:
+    external: true
+    name: ${STAGING_DATABASE_NETWORK:-nha-trang-laundry-staging-database-private}

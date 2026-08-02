@@ -78,6 +78,7 @@ def _approved_message(connection: psycopg.Connection[Any]) -> tuple[UUID, UUID]:
             1,
             HASH_A,
             HASH_B,
+            "HUMAN_REVIEW_COMPLETE",
             owner,
             uuid4(),
             NOW + timedelta(seconds=1),
@@ -108,6 +109,20 @@ def test_manual_attestation_consumes_exact_approval_and_blocks_worker_execution(
             NOW + timedelta(seconds=2),
         ),
     )
+    with pytest.raises(ManualSendStateError, match="version is stale"):
+        manual.attest(
+            postgres_connection,
+            ManualSendAttestationCommand(
+                prepared.manual_send_envelope_id,
+                1,
+                HASH_B,
+                sender,
+                uuid4(),
+                NOW + timedelta(seconds=3),
+                NOW + timedelta(seconds=4),
+                expected_envelope_row_version=2,
+            ),
+        )
     recorded = manual.attest(
         postgres_connection,
         ManualSendAttestationCommand(

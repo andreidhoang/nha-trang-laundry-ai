@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -32,6 +33,11 @@ class FakeCursor:
 
     def fetchone(self) -> tuple[object, ...] | None:
         return self.rows.pop(0) if self.rows else None
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        rows = [row for row in self.rows if row is not None]
+        self.rows.clear()
+        return rows
 
     def __enter__(self) -> FakeCursor:
         return self
@@ -117,3 +123,30 @@ def test_read_recomputes_stored_snapshot_hash() -> None:
     bad_cursor = FakeCursor(rows=[("ESTIMATE", "DRAFT", payload, "JCS-SHA256-V1:" + "f" * 64)])
     with pytest.raises(QuoteIntegrityError, match="hash mismatch"):
         QuoteRepository.get_revision(bad_cursor, QUOTE_ID, 1)
+
+
+def test_quote_board_returns_only_server_scoped_current_revisions() -> None:
+    valid_until = datetime(2026, 8, 2, tzinfo=UTC)
+    cursor = FakeCursor(
+        rows=[
+            (
+                QUOTE_ID,
+                2,
+                3,
+                "APPROVED_EXACT",
+                "ACCEPTED_FINAL",
+                "JCS-SHA256-V1:" + "a" * 64,
+                100_000,
+                100_000,
+                valid_until,
+            )
+        ]
+    )
+
+    listed = QuoteRepository.list_for_store(cursor, store_id=STORE_ID, limit=100)
+
+    assert len(listed) == 1
+    assert listed[0].quote_id == QUOTE_ID
+    assert listed[0].row_version == 3
+    assert listed[0].valid_until == valid_until
+    assert "WHERE quote.store_id = %s" in cursor.executed[0]

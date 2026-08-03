@@ -31,6 +31,8 @@ PINNED_ARTIFACTS = (
 
 
 def _sha256(path: Path) -> str:
+    """Hash repository bytes after Git has enforced the declared checkout line endings."""
+
     return f"sha256:{sha256(path.read_bytes()).hexdigest()}"
 
 

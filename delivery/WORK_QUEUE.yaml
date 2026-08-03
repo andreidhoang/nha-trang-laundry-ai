@@ -932,3 +932,42 @@ items:
   - regression_suite
   - rollback_assessment
   blocked_by_decisions: []
+- id: RUNTIME-EVIDENCE-PORTABILITY-001
+  phase: PRODUCTION_HARDENING
+  title: Cross-platform pinned-runtime shim and artifact-hash portability
+  status: COMPLETE
+  priority: 99
+  depends_on:
+  - HARDEN-PORTABILITY-001
+  - RUNTIME-EVIDENCE-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/container-scan-evidence-v1.schema.json
+  - specs/contracts/supply-chain-evidence-v1.schema.json
+  task_packet: context/tasks/TASK-runtime-evidence-portability-001.md
+  acceptance_checks:
+  - uv run pytest packages/evals/tests/test_runtime_verifier.py packages/evals/tests/test_local_agent_evidence.py
+    packages/contracts/tests/test_runtime_registry.py packages/evals/tests/test_context_harness.py
+    packages/evals/tests/test_delivery_loop.py packages/evals/tests/test_delivery_state.py
+  - uv run pytest --require-postgres-integration
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  - npm --prefix runtime/openclaw/public-cell/plugin test
+  required_evidence:
+  - windows_workspace_shim_pin
+  - deterministic_artifact_line_endings
+  - global_path_fallback_rejection
+  - postgres_integration_suite
+  - rollback_assessment
+  blocked_by_decisions: []

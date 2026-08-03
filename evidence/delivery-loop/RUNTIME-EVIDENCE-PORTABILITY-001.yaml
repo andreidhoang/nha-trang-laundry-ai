@@ -1,0 +1,28 @@
+work_item: RUNTIME-EVIDENCE-PORTABILITY-001
+recorded_at: '2026-08-03T05:12:06Z'
+requirement_contract: context/tasks/TASK-runtime-evidence-portability-001.md
+rollback_impact: Revert the Git/Ruff LF policy, Windows shim regression updates, regenerated non-release evidence, and this corrective delivery record. No migration, database content, runtime dependency, capability authorization, provider call, public ingress, outbound message, or deployed artifact is affected.
+unresolved_assumptions: The npm registry still reports openclaw 2026.7.1-2 as latest stable. Its complete pinned tree has zero critical, two high, and seven moderate findings, so RUNTIME-SECURITY-001 remains blocked and no real-customer, public, provider, capability, or send authority is granted.
+evidence:
+  windows_workspace_shim_pin: Native Windows tests now create and resolve the lockfile-installed openclaw.cmd shim. The verifier continues to derive the platform suffix itself and does not use PATH resolution for OpenClaw.
+  deterministic_artifact_line_endings: Git declares LF for text artifacts and CRLF only for Windows command shims; Ruff is pinned to LF output. git check-attr and the Windows regression test prove the hash-bound Python, YAML, and JSON5 artifacts resolve to eol=lf.
+  global_path_fallback_rejection: The regression test places an otherwise valid openclaw.cmd in PATH, verifies that resolution fails while the workspace shim is absent, and succeeds only after the workspace node_modules/.bin shim exists.
+  postgres_integration_suite: A disposable PostgreSQL 16.10 container with no persistent volume applied forward migrations 0001 through 0019. The guarded suite passed all 512 tests with no skips; the affected runtime, evidence, context, and delivery set passed 47 tests natively on Windows.
+  rollback_assessment: The change affects repository checkout/format policy, tests, and sanitized non-release evidence only. A source revert requires no data or external-state rollback and leaves every capability NOT_AUTHORIZED.
+checks:
+- command: uv run pytest packages/evals/tests/test_runtime_verifier.py packages/evals/tests/test_local_agent_evidence.py packages/contracts/tests/test_runtime_registry.py packages/evals/tests/test_context_harness.py packages/evals/tests/test_delivery_loop.py packages/evals/tests/test_delivery_state.py
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+- command: npm --prefix runtime/openclaw/public-cell/plugin test
+  status: PASSED

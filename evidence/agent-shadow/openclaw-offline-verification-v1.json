@@ -1,10 +1,11 @@
 {
   "schema_version": 1,
   "evidence_type": "OPENCLAW_OFFLINE_NON_RELEASE",
-  "captured_at": "2026-07-29T16:23:39.324821Z",
+  "captured_at": "2026-08-03T03:42:56.178705Z",
   "command": "uv run python scripts/verify_agent_runtime.py",
   "release_effect": "NONE",
   "provider_request_executed": false,
+  "verification_exit_code": 2,
   "artifact_hashes": {
     "runtime/model-registry-v1.yaml": "sha256:ecbb35fc67ea3e1e087b44e69f843f02a972dffe0ebb48ad14591b1f010fdee7",
     "runtime/openclaw/public-cell/openclaw.json5": "sha256:c9360090d11a11b6ab688d644ac029de55bc6328325ec2173ae79044a03df1bc",
@@ -14,16 +15,18 @@
     "specs/contracts/capability-status-v1.schema.json": "sha256:b2e3c7127f134e95dff224f69045c33a2d229cb5110d6cfd9bdb4dacf7542881",
     "specs/contracts/container-scan-evidence-v1.schema.json": "sha256:385717e92dd1c024e811fa28f719f835884ffb92ab7b0df9122324ff0f2f1a44",
     "specs/contracts/provider-data-evidence-v1.schema.json": "sha256:d05413194bd1508681b790a5d0e41f65c44367c5631a480384ff84e1c326fd99",
-    "scripts/verify_agent_runtime.py": "sha256:c65dfd59a2350de66361c72ad5f56083bf9d271befa85c30ad56d42e520daf5d",
-    "scripts/capture_openclaw_offline_evidence.py": "sha256:8c000eb488884fbadccf6006de00a5aeb76b280050177498eb12c268322936cf"
+    "scripts/verify_agent_runtime.py": "sha256:6b4322597a70bf5bdb4c1b09fc3e7a21c982d37623fc4d41c4f31f8e00a5ec4a",
+    "scripts/capture_openclaw_offline_evidence.py": "sha256:b735a322208a49abe21c188b02bf2957c2238684bc1d2c3ba8d30a531ef28b16"
   },
   "result": {
-    "status": "EVAL_ONLY_VERIFIED",
+    "status": "EVAL_ONLY_BLOCKED",
     "openclaw_version": "2026.7.1-2",
     "openclaw_build_revision": "0790d9f",
     "tool_count": 10,
     "artifact_count": 12,
     "security_audit_critical": 0,
+    "dependency_audit_critical": 0,
+    "dependency_audit_high": 2,
     "release_blockers": [
       "IMMUTABLE_MODEL_RELEASE_NOT_VERIFIED",
       "OPENCLAW_STORE_FALSE_ROUTE_NOT_VERIFIED",
@@ -33,7 +36,8 @@
       "PRIVACY_PROVIDER_DATA_APPROVAL_MISSING",
       "DEDICATED_PROVIDER_CREDENTIAL_NOT_VERIFIED",
       "REAL_CUSTOMER_DATA_DISABLED",
-      "CANDIDATE_IS_EVAL_ONLY"
+      "CANDIDATE_IS_EVAL_ONLY",
+      "OPENCLAW_DEPENDENCY_AUDIT_HIGH"
     ],
     "real_customer_data_allowed": false
   }

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "evidence_type": "LOCAL_SYNTHETIC_NON_RELEASE",
-  "captured_at": "2026-07-31T11:55:18.806790Z",
+  "captured_at": "2026-08-03T03:39:08.816858Z",
   "command": "uv run python -m nha_trang_laundry_evals.runner --mode synthetic-local-suite",
   "release_effect": "NONE",
   "primary_provider_evidence": false,
@@ -23,8 +23,8 @@
     "packages/contracts/src/nha_trang_laundry_contracts/release_manifest.py": "sha256:c1e36e03cb9a85b17a0ec08219f0d4b06332c6b9be28b22ed7a1521b629db2a2",
     "apps/worker/src/nha_trang_laundry_worker/agent_runner.py": "sha256:656ceeab0fc0f110c730fc1b8511d682dcf32d710fef99cae727ca2c9d3bf0a6",
     "scripts/capture_local_agent_evidence.py": "sha256:84ff3f92853c90f8399859b33c2359e98a5f5b5c4380f72fceb62eda629adb2a",
-    "scripts/capture_openclaw_offline_evidence.py": "sha256:8c000eb488884fbadccf6006de00a5aeb76b280050177498eb12c268322936cf",
-    "scripts/verify_agent_runtime.py": "sha256:c65dfd59a2350de66361c72ad5f56083bf9d271befa85c30ad56d42e520daf5d",
+    "scripts/capture_openclaw_offline_evidence.py": "sha256:b735a322208a49abe21c188b02bf2957c2238684bc1d2c3ba8d30a531ef28b16",
+    "scripts/verify_agent_runtime.py": "sha256:6b4322597a70bf5bdb4c1b09fc3e7a21c982d37623fc4d41c4f31f8e00a5ec4a",
     "scripts/verify_release_candidate.py": "sha256:912a0005245e422186e16a556ae8a39c219ec65b3146bfeed2f908a4576dbf3e",
     "evidence/agent-shadow/rollback-assessment-v1.yaml": "sha256:63591f2bcf95c631f97da09ac758ab6b955a4cf597e6d7bbe22c54d1a3bce754"
   },

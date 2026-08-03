@@ -1,0 +1,30 @@
+work_item: RUNTIME-EVIDENCE-001
+recorded_at: '2026-08-03T03:43:09Z'
+requirement_contract: context/tasks/TASK-runtime-evidence-001.md
+rollback_impact: Revert the typed blocked-result path in the verifier and capture script, the runtime evidence tests, and the refreshed non-release evidence artifacts. No dependency, database migration, customer data, capability authorization, provider call, public ingress, outbound message, or deployed runtime is changed.
+unresolved_assumptions: The latest stable OpenClaw dependency remains blocked by two high-severity transitive advisories under RUNTIME-SECURITY-001. This work makes that block current and machine-verifiable; it does not remediate or waive either advisory and cannot authorize deployment.
+evidence:
+  blocked_result_contract: The pinned verifier emits EVAL_ONLY_BLOCKED with direct exit code 2, zero critical and two high dependency findings, the exact OPENCLAW_DEPENDENCY_AUDIT_HIGH blocker, and no real-customer authority. The capture command accepts only exit codes 0 or 2 with a matching typed payload.
+  negative_evidence_validation: Tests reject blocked results with zero findings, a false EVAL_ONLY_VERIFIED status, a missing blocker, a successful exit code, malformed JSON, and stale artifact hashes.
+  current_artifact_hash_binding: Both non-release evidence bundles were regenerated after the verifier and capture implementation stabilized. Their tests recompute every declared artifact SHA-256 and pass.
+  regression_suite: The guarded PostgreSQL suite passed 511 tests with no skips; targeted runtime/evidence tests passed 10 cases. Ruff, format, strict mypy, contracts, context drift, and plugin tests all passed.
+  rollback_assessment: The change is evidence and verification code only. Reverting it requires no data or external-state rollback; runtime authorization remains disabled before and after rollback.
+checks:
+- command: uv run python scripts/capture_openclaw_offline_evidence.py
+  status: PASSED
+- command: uv run pytest packages/evals/tests/test_runtime_verifier.py packages/evals/tests/test_local_agent_evidence.py packages/contracts/tests/test_runtime_registry.py
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+- command: npm --prefix runtime/openclaw/public-cell/plugin test
+  status: PASSED

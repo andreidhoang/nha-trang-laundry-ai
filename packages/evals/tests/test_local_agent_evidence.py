@@ -51,10 +51,14 @@ def test_openclaw_offline_evidence_is_current_and_non_release() -> None:
     assert evidence["evidence_type"] == "OPENCLAW_OFFLINE_NON_RELEASE"
     assert evidence["release_effect"] == "NONE"
     assert evidence["provider_request_executed"] is False
-    assert result["status"] == "EVAL_ONLY_VERIFIED"
+    assert evidence["verification_exit_code"] == 2
+    assert result["status"] == "EVAL_ONLY_BLOCKED"
     assert result["security_audit_critical"] == 0
+    assert result["dependency_audit_critical"] == 0
+    assert result["dependency_audit_high"] == 2
     assert result["real_customer_data_allowed"] is False
-    assert len(result["release_blockers"]) == 9
+    assert len(result["release_blockers"]) == 10
+    assert result["release_blockers"][-1] == "OPENCLAW_DEPENDENCY_AUDIT_HIGH"
     assert result["openclaw_build_revision"]
     for relative, expected in evidence["artifact_hashes"].items():
         actual = f"sha256:{sha256((ROOT / relative).read_bytes()).hexdigest()}"

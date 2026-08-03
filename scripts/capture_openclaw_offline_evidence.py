@@ -34,21 +34,39 @@ def _sha256(path: Path) -> str:
     return f"sha256:{sha256(path.read_bytes()).hexdigest()}"
 
 
-def _validated_result(value: Any) -> dict[str, Any]:
+def _validated_result(value: Any, *, returncode: int) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("OpenClaw verification output must be an object")
     registry = load_public_runtime_registry(ROOT / "runtime/model-registry-v1.yaml")
-    if (
-        value.get("status") != "EVAL_ONLY_VERIFIED"
-        or value.get("openclaw_version") != registry.openclaw.version
+    base_blockers = list(registry.release_blockers())
+    common_invalid = (
+        value.get("openclaw_version") != registry.openclaw.version
         or not isinstance(value.get("openclaw_build_revision"), str)
         or re.fullmatch(r"[0-9a-f]{7,40}", value["openclaw_build_revision"]) is None
         or value.get("tool_count") != 10
         or value.get("artifact_count") != 12
         or value.get("security_audit_critical") != 0
-        or value.get("release_blockers") != list(registry.release_blockers())
         or value.get("real_customer_data_allowed") is not False
-    ):
+        or not isinstance(value.get("dependency_audit_critical"), int)
+        or not isinstance(value.get("dependency_audit_high"), int)
+    )
+    verified = (
+        returncode == 0
+        and value.get("status") == "EVAL_ONLY_VERIFIED"
+        and value.get("dependency_audit_critical") == 0
+        and value.get("dependency_audit_high") == 0
+        and value.get("release_blockers") == base_blockers
+    )
+    blocked = (
+        returncode == 2
+        and value.get("status") == "EVAL_ONLY_BLOCKED"
+        and (
+            value.get("dependency_audit_critical", 0) > 0
+            or value.get("dependency_audit_high", 0) > 0
+        )
+        and value.get("release_blockers") == [*base_blockers, "OPENCLAW_DEPENDENCY_AUDIT_HIGH"]
+    )
+    if common_invalid or not (verified or blocked):
         raise ValueError("OpenClaw verification output violates the non-release evidence contract")
     return value
 
@@ -68,9 +86,13 @@ def main() -> int:
         text=True,
         timeout=180,
     )
-    if completed.returncode != 0:
-        raise SystemExit(completed.stderr or "OpenClaw offline verification failed")
-    result = _validated_result(json.loads(completed.stdout))
+    if completed.returncode not in {0, 2}:
+        raise SystemExit("OpenClaw offline verification failed without a capturable result")
+    try:
+        raw_result = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise SystemExit("OpenClaw offline verification returned malformed JSON") from error
+    result = _validated_result(raw_result, returncode=completed.returncode)
     evidence = {
         "schema_version": 1,
         "evidence_type": "OPENCLAW_OFFLINE_NON_RELEASE",
@@ -78,6 +100,7 @@ def main() -> int:
         "command": "uv run python scripts/verify_agent_runtime.py",
         "release_effect": "NONE",
         "provider_request_executed": False,
+        "verification_exit_code": completed.returncode,
         "artifact_hashes": {path: _sha256(ROOT / path) for path in PINNED_ARTIFACTS},
         "result": result,
     }

@@ -219,7 +219,15 @@ def test_release_workflow_has_least_privilege_and_local_scanners() -> None:
     assert "id-token: write" not in text
     assert "gitleaks" in text
     assert "pip-audit" in text
-    assert "docker scout" in text
+    assert (
+        "aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f"
+        in text
+    )
+    assert "docker scout" not in text
+    assert "docker/scout-action" not in text
+    assert "/var/run/docker.sock" not in text
+    assert "docker save" in text
+    assert "--scanner trivy" in text
 
 
 def test_normalizer_rejects_sbom_for_a_different_image_digest(tmp_path: Path) -> None:
@@ -252,5 +260,118 @@ def test_normalizer_rejects_sbom_for_a_different_image_digest(tmp_path: Path) ->
                 "SCAN:TEST:0001",
                 "--output",
                 str(tmp_path / "evidence.json"),
+            ]
+        )
+
+
+def test_trivy_cyclonedx_and_sarif_bind_the_exact_scanned_image(tmp_path: Path) -> None:
+    sarif = tmp_path / "scan.sarif"
+    _write_json(
+        sarif,
+        {
+            "runs": [
+                {
+                    "results": [],
+                    "properties": {"imageID": "sha256:" + "b" * 64},
+                }
+            ]
+        },
+    )
+    sbom = tmp_path / "sbom.cdx.json"
+    _write_json(
+        sbom,
+        {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.7",
+            "metadata": {
+                "component": {
+                    "properties": [
+                        {
+                            "name": "aquasecurity:trivy:ImageID",
+                            "value": "sha256:" + "b" * 64,
+                        }
+                    ]
+                }
+            },
+        },
+    )
+    output = tmp_path / "evidence.json"
+
+    assert (
+        normalize_container_scan(
+            [
+                "--sarif",
+                str(sarif),
+                "--sbom",
+                str(sbom),
+                "--sbom-uri",
+                "artifacts/sbom.cdx.json",
+                "--image-ref",
+                IMAGE,
+                "--scanner",
+                "trivy",
+                "--scanner-version",
+                "0.72.0",
+                "--evidence-id",
+                "SCAN:TEST:TRIVY",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    evidence = json.loads(output.read_text(encoding="utf-8"))
+    assert evidence["scanner"] == "trivy"
+    assert evidence["sbom"]["format"] == "CYCLONEDX_JSON"
+
+    changed = json.loads(sbom.read_text(encoding="utf-8"))
+    changed["metadata"]["component"]["properties"][0]["value"] = "sha256:" + "c" * 64
+    _write_json(sbom, changed)
+    with pytest.raises(ValueError, match="SBOM is not bound"):
+        normalize_container_scan(
+            [
+                "--sarif",
+                str(sarif),
+                "--sbom",
+                str(sbom),
+                "--sbom-uri",
+                "artifacts/sbom.cdx.json",
+                "--image-ref",
+                IMAGE,
+                "--scanner",
+                "trivy",
+                "--scanner-version",
+                "0.72.0",
+                "--evidence-id",
+                "SCAN:TEST:TRIVY",
+                "--output",
+                str(output),
+            ]
+        )
+
+    changed["metadata"]["component"]["properties"][0]["value"] = "sha256:" + "b" * 64
+    _write_json(sbom, changed)
+    changed_sarif = json.loads(sarif.read_text(encoding="utf-8"))
+    changed_sarif["runs"][0]["properties"]["imageID"] = "sha256:" + "c" * 64
+    _write_json(sarif, changed_sarif)
+    with pytest.raises(ValueError, match="SARIF is not bound"):
+        normalize_container_scan(
+            [
+                "--sarif",
+                str(sarif),
+                "--sbom",
+                str(sbom),
+                "--sbom-uri",
+                "artifacts/sbom.cdx.json",
+                "--image-ref",
+                IMAGE,
+                "--scanner",
+                "trivy",
+                "--scanner-version",
+                "0.72.0",
+                "--evidence-id",
+                "SCAN:TEST:TRIVY",
+                "--output",
+                str(output),
             ]
         )

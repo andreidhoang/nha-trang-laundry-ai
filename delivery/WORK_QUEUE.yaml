@@ -971,3 +971,39 @@ items:
   - postgres_integration_suite
   - rollback_assessment
   blocked_by_decisions: []
+- id: SUPPLYCHAIN-CI-PORTABILITY-001
+  phase: PRODUCTION_HARDENING
+  title: Entitlement-free immutable container scanning in release CI
+  status: IN_PROGRESS
+  priority: 98
+  depends_on:
+  - SUPPLYCHAIN-001
+  - RUNTIME-EVIDENCE-PORTABILITY-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  contracts:
+  - specs/contracts/container-scan-evidence-v1.schema.json
+  - specs/contracts/supply-chain-evidence-v1.schema.json
+  task_packet: context/tasks/TASK-supplychain-ci-portability-001.md
+  acceptance_checks:
+  - uv run pytest packages/evals/tests/test_supply_chain_workflow.py packages/evals/tests/test_ci_quality_workflow.py
+  - uv run pytest --require-postgres-integration
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  - npm --prefix runtime/openclaw/public-cell/plugin test
+  required_evidence:
+  - digest_pinned_open_source_scanner
+  - archive_isolated_exact_image_scans
+  - hosted_supply_chain_run
+  - postgres_integration_suite
+  - rollback_assessment
+  blocked_by_decisions: []

@@ -228,6 +228,7 @@ def test_release_workflow_has_least_privilege_and_local_scanners() -> None:
     assert "/var/run/docker.sock" not in text
     assert "docker save" in text
     assert "--scanner trivy" in text
+    assert "--severity CRITICAL,HIGH --exit-code 1" in text
 
 
 def test_normalizer_rejects_sbom_for_a_different_image_digest(tmp_path: Path) -> None:

@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+# Windows command shims require CRLF even though source and evidence artifacts are LF-normalized.
+*.bat text eol=crlf
+*.cmd text eol=crlf

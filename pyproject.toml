@@ -49,6 +49,9 @@ extend-exclude = [".venv", "build", "dist"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
+[tool.ruff.format]
+line-ending = "lf"
+
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"
 testpaths = ["apps", "packages"]

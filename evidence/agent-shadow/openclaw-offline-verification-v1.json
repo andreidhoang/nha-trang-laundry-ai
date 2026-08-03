@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "evidence_type": "OPENCLAW_OFFLINE_NON_RELEASE",
-  "captured_at": "2026-08-03T03:42:56.178705Z",
+  "captured_at": "2026-08-03T04:59:20.801248Z",
   "command": "uv run python scripts/verify_agent_runtime.py",
   "release_effect": "NONE",
   "provider_request_executed": false,
@@ -15,8 +15,8 @@
     "specs/contracts/capability-status-v1.schema.json": "sha256:b2e3c7127f134e95dff224f69045c33a2d229cb5110d6cfd9bdb4dacf7542881",
     "specs/contracts/container-scan-evidence-v1.schema.json": "sha256:385717e92dd1c024e811fa28f719f835884ffb92ab7b0df9122324ff0f2f1a44",
     "specs/contracts/provider-data-evidence-v1.schema.json": "sha256:d05413194bd1508681b790a5d0e41f65c44367c5631a480384ff84e1c326fd99",
-    "scripts/verify_agent_runtime.py": "sha256:6b4322597a70bf5bdb4c1b09fc3e7a21c982d37623fc4d41c4f31f8e00a5ec4a",
-    "scripts/capture_openclaw_offline_evidence.py": "sha256:b735a322208a49abe21c188b02bf2957c2238684bc1d2c3ba8d30a531ef28b16"
+    "scripts/verify_agent_runtime.py": "sha256:82e40831cc70aeb1dd77d19df30975a8453363a482ccb8706d6341488f276e3b",
+    "scripts/capture_openclaw_offline_evidence.py": "sha256:10bc380e2057a3e578d569ea45808275f7a81ab416e2d65ab931ffea914a85cc"
   },
   "result": {
     "status": "EVAL_ONLY_BLOCKED",

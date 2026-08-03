@@ -1,4 +1,4 @@
-"""Normalize Docker Scout SARIF and an SPDX SBOM into strict container-scan evidence."""
+"""Normalize scanner SARIF and a standard SBOM into strict container-scan evidence."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ def parser() -> argparse.ArgumentParser:
     candidate.add_argument("--sbom", type=Path, required=True)
     candidate.add_argument("--sbom-uri", required=True)
     candidate.add_argument("--image-ref", required=True)
+    candidate.add_argument("--scanner", default="docker-scout")
     candidate.add_argument("--scanner-version", required=True)
     candidate.add_argument("--evidence-id", required=True)
     candidate.add_argument("--output", type=Path, required=True)
@@ -29,6 +30,33 @@ def _severity(result: dict[str, Any]) -> str:
     text = message.get("text", "") if isinstance(message, dict) else ""
     match = re.search(r"(?m)^Severity\s*:\s*(CRITICAL|HIGH)\s*$", str(text))
     return match.group(1) if match else "UNKNOWN"
+
+
+def _sbom_binding(sbom: dict[str, Any]) -> tuple[str, set[str]]:
+    if sbom.get("spdxVersion") == "SPDX-2.3":
+        locators = {
+            reference.get("referenceLocator")
+            for package in sbom.get("packages", [])
+            if isinstance(package, dict)
+            for reference in package.get("externalRefs", [])
+            if isinstance(reference, dict)
+        }
+        return "SPDX_JSON", {value for value in locators if isinstance(value, str)}
+    if sbom.get("bomFormat") == "CycloneDX" and sbom.get("specVersion") in {
+        "1.5",
+        "1.6",
+        "1.7",
+    }:
+        metadata = sbom.get("metadata", {})
+        component = metadata.get("component", {}) if isinstance(metadata, dict) else {}
+        properties = component.get("properties", []) if isinstance(component, dict) else []
+        image_ids = {
+            str(prop.get("value"))
+            for prop in properties
+            if isinstance(prop, dict) and prop.get("name") == "aquasecurity:trivy:ImageID"
+        }
+        return "CYCLONEDX_JSON", image_ids
+    raise ValueError("SBOM is not supported SPDX 2.3 or CycloneDX JSON")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,20 +80,18 @@ def main(argv: list[str] | None = None) -> int:
         )
     if not re.fullmatch(r"[a-z0-9._/-]+@sha256:[0-9a-f]{64}", args.image_ref):
         raise ValueError("--image-ref must be an immutable lowercase sha256 reference")
+    expected_digest = args.image_ref.rsplit("@", maxsplit=1)[1]
+    run_properties = sarif["runs"][0].get("properties", {})
+    sarif_image_id = run_properties.get("imageID") if isinstance(run_properties, dict) else None
+    if args.scanner == "trivy" and sarif_image_id is None:
+        raise ValueError("Trivy SARIF has no imageID binding")
+    if sarif_image_id is not None and sarif_image_id != expected_digest:
+        raise ValueError("scanner SARIF is not bound to --image-ref digest")
     sbom_bytes = args.sbom.read_bytes()
     sbom = json.loads(sbom_bytes)
-    if sbom.get("spdxVersion") != "SPDX-2.3":
-        raise ValueError("SBOM is not SPDX 2.3 JSON")
-    expected_digest = args.image_ref.rsplit("@", maxsplit=1)[1]
-    locators = {
-        reference.get("referenceLocator")
-        for package in sbom.get("packages", [])
-        if isinstance(package, dict)
-        for reference in package.get("externalRefs", [])
-        if isinstance(reference, dict)
-    }
+    sbom_format, bindings = _sbom_binding(sbom)
     if not any(
-        isinstance(locator, str) and f"@{expected_digest}" in locator for locator in locators
+        binding == expected_digest or f"@{expected_digest}" in binding for binding in bindings
     ):
         raise ValueError("SBOM is not bound to --image-ref digest")
     scanned_at = args.scanned_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -73,13 +99,13 @@ def main(argv: list[str] | None = None) -> int:
         "schema_version": 1,
         "evidence_id": args.evidence_id,
         "image_ref": args.image_ref,
-        "scanner": "docker-scout",
+        "scanner": args.scanner,
         "scanner_version": args.scanner_version,
         "scanned_at": scanned_at,
         "status": "PASSED",
         "vulnerabilities": {"critical": 0, "high": 0},
         "sbom": {
-            "format": "SPDX_JSON",
+            "format": sbom_format,
             "uri": args.sbom_uri,
             "sha256": f"sha256:{sha256(sbom_bytes).hexdigest()}",
         },

@@ -52,30 +52,41 @@ jobs:
           uv run python scripts/audit_dependency_licenses.py
           --package-lock runtime/openclaw/public-cell/plugin/package-lock.json
           --output artifacts/supply-chain/licenses.json
-      - name: Install Docker Scout
-        uses: docker/scout-action@v1.18.2
-        with:
-          command: version
       - name: Build exact images and create SBOM/scan evidence
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/supply-chain
-          scout_version="$(docker scout version | sed -n 's/^version: v\([^ ]*\).*/\1/p')"
-          test -n "$scout_version"
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          trivy_image="aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f"
+          trivy_version="$(docker run --rm "$trivy_image" --version | sed -n 's/^Version: //p' | head -1)"
+          test "$trivy_version" = "0.72.0"
           for service in api worker public-agent-tools; do
             tag="nha-trang-laundry-${service}:candidate"
             docker build --pull=false --file "apps/${service}/Dockerfile" --tag "$tag" .
-            image_id="$(docker image inspect "$tag" --format '{{.Id}}')"
+            archive="$RUNNER_TEMP/${service}.tar"
+            docker save "$tag" --output "$archive"
+            docker run --rm \
+              --volume "$RUNNER_TEMP:/work:ro" \
+              --volume "$PWD/artifacts/supply-chain:/out" \
+              --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+              "$trivy_image" image --input "/work/${service}.tar" --scanners vuln \
+              --format cyclonedx --output "/out/${service}.cdx.json"
+            docker run --rm \
+              --volume "$RUNNER_TEMP:/work:ro" \
+              --volume "$PWD/artifacts/supply-chain:/out" \
+              --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+              "$trivy_image" image --input "/work/${service}.tar" --scanners vuln \
+              --format sarif --severity CRITICAL,HIGH --exit-code 1 \
+              --output "/out/${service}.sarif"
+            image_id="$(jq -er '.runs[0].properties.imageID | select(test("^sha256:[0-9a-f]{64}$"))' \
+              "artifacts/supply-chain/${service}.sarif")"
             image_ref="nha-trang-laundry-${service}@${image_id}"
-            docker scout sbom --format spdx --output "artifacts/supply-chain/${service}.spdx.json" "local://${tag}"
-            docker scout cves --only-severity critical,high --format sarif \
-              --output "artifacts/supply-chain/${service}.sarif" "local://${tag}"
             uv run python scripts/normalize_container_scan.py \
               --sarif "artifacts/supply-chain/${service}.sarif" \
-              --sbom "artifacts/supply-chain/${service}.spdx.json" \
-              --sbom-uri "artifacts/supply-chain/${service}.spdx.json" \
-              --image-ref "$image_ref" --scanner-version "$scout_version" \
+              --sbom "artifacts/supply-chain/${service}.cdx.json" \
+              --sbom-uri "artifacts/supply-chain/${service}.cdx.json" \
+              --image-ref "$image_ref" --scanner trivy --scanner-version "$trivy_version" \
               --evidence-id "SCAN:${service^^}:${GITHUB_RUN_ID}" \
               --output "artifacts/supply-chain/${service}-scan.json"
             printf '%s=%s\n' "$image_ref" "artifacts/supply-chain/${service}-scan.json" \
@@ -111,7 +122,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: |
-            artifacts/supply-chain/*.spdx.json
+            artifacts/supply-chain/*.cdx.json
             artifacts/supply-chain/*-scan.json
             artifacts/supply-chain/evidence.json
             artifacts/supply-chain/licenses.json

@@ -51,7 +51,7 @@ def executable(name: str) -> str:
 
 
 def plugin_executable(name: str) -> str:
-    """Resolve a lockfile-installed plugin tool without falling back to global PATH."""
+    """Resolve the platform shim installed by the plugin lockfile, never global PATH."""
 
     suffix = ".cmd" if os.name == "nt" else ""
     candidate = PLUGIN_ROOT / "node_modules" / ".bin" / f"{name}{suffix}"

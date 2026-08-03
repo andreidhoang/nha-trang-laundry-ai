@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from copy import deepcopy
 from importlib.util import module_from_spec, spec_from_file_location
@@ -10,6 +11,13 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
+
+HASH_BOUND_TEXT_ARTIFACTS = (
+    "scripts/verify_agent_runtime.py",
+    "scripts/capture_openclaw_offline_evidence.py",
+    "specs/evals/eval-manifest-v1.yaml",
+    "runtime/model-registry-v1.yaml",
+)
 
 
 def _load_verifier() -> ModuleType:
@@ -41,9 +49,10 @@ def test_pinned_runtime_executable_never_falls_back_to_global_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     verifier = _load_verifier()
+    executable_suffix = ".cmd" if verifier.os.name == "nt" else ""
     global_bin = tmp_path / "global-bin"
     global_bin.mkdir()
-    (global_bin / "openclaw").write_text("global executable", encoding="utf-8")
+    (global_bin / f"openclaw{executable_suffix}").write_text("global executable", encoding="utf-8")
     monkeypatch.setenv("PATH", str(global_bin))
     monkeypatch.setattr(verifier, "PLUGIN_ROOT", tmp_path / "plugin")
 
@@ -52,10 +61,24 @@ def test_pinned_runtime_executable_never_falls_back_to_global_path(
 
     local_bin = verifier.PLUGIN_ROOT / "node_modules" / ".bin"
     local_bin.mkdir(parents=True)
-    expected = local_bin / "openclaw"
+    expected = local_bin / f"openclaw{executable_suffix}"
     expected.write_text("pinned executable", encoding="utf-8")
 
     assert verifier.plugin_executable("openclaw") == str(expected)
+
+
+def test_hash_bound_text_artifacts_have_deterministic_git_line_endings() -> None:
+    completed = subprocess.run(
+        ["git", "check-attr", "eol", "--", *HASH_BOUND_TEXT_ARTIFACTS],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        f"{path}: eol: lf" for path in HASH_BOUND_TEXT_ARTIFACTS
+    ]
 
 
 def test_runtime_audit_includes_pinned_development_tree() -> None:

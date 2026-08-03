@@ -974,7 +974,7 @@ items:
 - id: SUPPLYCHAIN-CI-PORTABILITY-001
   phase: PRODUCTION_HARDENING
   title: Entitlement-free immutable container scanning in release CI
-  status: IN_PROGRESS
+  status: COMPLETE
   priority: 98
   depends_on:
   - SUPPLYCHAIN-001

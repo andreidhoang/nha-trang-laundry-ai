@@ -1,0 +1,28 @@
+work_item: SUPPLYCHAIN-CI-PORTABILITY-001
+recorded_at: '2026-08-03T05:48:12Z'
+requirement_contract: context/tasks/TASK-supplychain-ci-portability-001.md
+rollback_impact: Revert the Trivy workflow, generic container-scan normalizer extension, regression tests, and this delivery record. No image was published or deployed, no database or external service changed, and no capability, provider, public-traffic, or send authority was granted.
+unresolved_assumptions: This evidence is engineering CI evidence for pull-request head dc11f35ea150f42db7762d28237fb6854d55adc0 and its GitHub-generated merge commit, not a signed production release manifest. OpenClaw 2026.7.1-2 still has two high and seven moderate complete-tree findings; RUNTIME-SECURITY-001 and real-customer runtime use remain blocked, and every capability remains NOT_AUTHORIZED.
+evidence:
+  digest_pinned_open_source_scanner: Trivy 0.72.0 is invoked from aquasec/trivy@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f. Hosted run 30787906548 proved the scanner needs no Docker Scout entitlement, paid account, credential, Docker socket, repository write permission, OIDC permission, or package permission.
+  archive_isolated_exact_image_scans: Hosted run 30787906548 saved and scanned three local image archives. Trivy SARIF and CycloneDX 1.7 both bind API sha256:d3a42a07845a71895f4604c4b45b56a720517b6f6e4f61bf08e221cf1255281d, worker sha256:b914b64d500a8d8fc77fe9bf3aa82ea5e50f1827d65216e5561db080820cd823, and public-agent-tools sha256:08097fba22f5c0049b4213e2e1026c50c9ed191acc1aa92313173a727190ab55. Each normalized result reports zero critical and zero high findings; mismatch and malformed-result regressions fail closed.
+  hosted_supply_chain_run: GitHub Actions run 30787906548 and job 91605095225 passed on exact head dc11f35ea150f42db7762d28237fb6854d55adc0. Artifact 8845926766 has GitHub digest sha256:8122487113aefb67ebeae6bad8375b369ae5cd9195416bc343371d1f7bec6678; the downloaded bundle SUPPLY:30787906548 independently verified all 12 referenced artifacts and has evidence hash sha256:afedb2eb7d2c064d3f6725b53dbfce18a5f953772f63ee8642105fa8ed82ef3c.
+  postgres_integration_suite: Local PostgreSQL 16.10 verification passed 513 tests with zero skips on the implementation parent, and exact-head GitHub quality run 30787906544 applied migrations then passed the guarded 513-test suite with zero skips in 95.12 seconds. The same exact-head run passed Ruff, formatting, mypy over 156 files, 12 JSON and 2 YAML contracts, context drift for 32 work items, and all three plugin tests.
+  rollback_assessment: The change replaces a CI scanner integration and extends accepted standard SBOM evidence only. A source revert restores the preceding workflow; there is no data, deployment, customer, DNS, secret, runtime authorization, or provider side effect to roll back.
+checks:
+- command: uv run pytest packages/evals/tests/test_supply_chain_workflow.py packages/evals/tests/test_ci_quality_workflow.py
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+- command: npm --prefix runtime/openclaw/public-cell/plugin test
+  status: PASSED

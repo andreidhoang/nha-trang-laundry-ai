@@ -4,15 +4,24 @@
   "plugin_id": "nha-trang-laundry-tools",
   "plugin_version": "0.1.0",
   "openclaw_version": "2026.7.1-2",
-  "openclaw_npm_integrity": "sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==",
+  "openclaw_upstream_npm_integrity": "sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==",
+  "openclaw_npm_integrity": "sha512-8Mx+tv9tYy53lIhvZM9aMGF8OATg/kovktAJkkWlYFnZAJ5DClmXsflBl3moPZjMMiNAfbXdnQColWuasg+Rlw==",
   "artifacts": {
+    "repackage_manifest": {
+      "path": "runtime/openclaw/repack/manifest-v1.json",
+      "sha256": "sha256:421986c177315e026bfb0344ed7826d3a437c5276c5c605d1f76fdc792fb3ae0"
+    },
+    "repackage_tarball": {
+      "path": "runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r1.tgz",
+      "sha256": "sha256:8478f9110425449a7162a8fefd0ca866594e91a584dc681f9a382b8cd0454dcc"
+    },
     "plugin_manifest": {
       "path": "runtime/openclaw/public-cell/plugin/openclaw.plugin.json",
       "sha256": "sha256:565d7287c13025977efc8df5924a939a464068b02a92766c0424511d979363ab"
     },
     "package_lock": {
       "path": "runtime/openclaw/public-cell/plugin/package-lock.json",
-      "sha256": "sha256:31008417ab0d0e0db400bd354a5a7d6c57ff7bc6d61ed59260fdeb6d3ca0bac3"
+      "sha256": "sha256:f34095c238794373c81a1ba12cb59297fd1ffbb1395095786b943df0cbdb4e46"
     },
     "generated_operation_contracts": {
       "path": "runtime/openclaw/public-cell/plugin/src/operation-contracts.ts",
@@ -28,7 +37,7 @@
     },
     "package_tarball": {
       "path": "releases/candidates/openclaw-nha-trang-laundry-tools-0.1.0.tgz",
-      "sha256": "sha256:b4d106808fbe254629bf2f0e29d039dcc2de63b77b111747daca2fea94712655"
+      "sha256": "sha256:617dcbdede123cb76cb845fb1cdb823fdf9375f6e629320347461d76c0306eb1"
     }
   },
   "tool_names": [

@@ -29,6 +29,12 @@ jobs:
           cache-dependency-path: runtime/openclaw/public-cell/plugin/package-lock.json
       - name: Install locked workspace
         run: uv sync --all-packages --all-groups --frozen
+      - name: Verify immutable EVAL_ONLY OpenClaw repackage
+        run: |
+          uv run python scripts/build_openclaw_repackage.py --verify-reproducible
+          uv run python scripts/verify_openclaw_repackage.py
+          npm ci --prefix runtime/openclaw/public-cell/plugin --ignore-scripts
+          uv run python scripts/verify_agent_runtime.py
       - name: Scan committed content locally with gitleaks
         run: |
           mkdir -p artifacts/supply-chain
@@ -45,7 +51,7 @@ jobs:
             --format json --output artifacts/supply-chain/pip-audit.json
       - name: Audit Node dependencies from package-lock.json
         run: >-
-          npm audit --prefix runtime/openclaw/public-cell/plugin --omit=dev --audit-level=high
+          npm audit --prefix runtime/openclaw/public-cell/plugin --audit-level=high
           --json > artifacts/supply-chain/npm-audit.json
       - name: Audit dependency licenses
         run: >-
@@ -92,6 +98,43 @@ jobs:
             printf '%s=%s\n' "$image_ref" "artifacts/supply-chain/${service}-scan.json" \
               >> artifacts/supply-chain/image-bindings.txt
           done
+          openclaw_archive="$RUNNER_TEMP/openclaw.oci.tar"
+          docker buildx build --pull=false --platform linux/amd64 \
+            --file runtime/openclaw/repack/Dockerfile \
+            --provenance=mode=max --sbom=true \
+            --output "type=oci,dest=${openclaw_archive}" .
+          uv run python scripts/verify_openclaw_oci_attestations.py \
+            --oci-archive "$openclaw_archive" \
+            --output artifacts/supply-chain/openclaw-provenance.json
+          openclaw_oci_dir="$RUNNER_TEMP/openclaw-oci"
+          mkdir -p "$openclaw_oci_dir"
+          tar -xf "$openclaw_archive" -C "$openclaw_oci_dir"
+          openclaw_digest="$(jq -er \
+            'select(.predicate_type == "https://slsa.dev/provenance/v1") | .image_digest' \
+            artifacts/supply-chain/openclaw-provenance.json)"
+          openclaw_ref="nha-trang-laundry-openclaw@${openclaw_digest}"
+          docker run --rm \
+            --volume "$RUNNER_TEMP:/work:ro" \
+            --volume "$PWD/artifacts/supply-chain:/out" \
+            --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+            "$trivy_image" image --input /work/openclaw-oci --scanners vuln \
+            --format cyclonedx --output /out/openclaw.cdx.json
+          docker run --rm \
+            --volume "$RUNNER_TEMP:/work:ro" \
+            --volume "$PWD/artifacts/supply-chain:/out" \
+            --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+            "$trivy_image" image --input /work/openclaw-oci --scanners vuln \
+            --format sarif --severity CRITICAL,HIGH --exit-code 1 \
+            --output /out/openclaw.sarif
+          uv run python scripts/normalize_container_scan.py \
+            --sarif artifacts/supply-chain/openclaw.sarif \
+            --sbom artifacts/supply-chain/openclaw.cdx.json \
+            --sbom-uri artifacts/supply-chain/openclaw.cdx.json \
+            --image-ref "$openclaw_ref" --scanner trivy --scanner-version "$trivy_version" \
+            --evidence-id "SCAN:OPENCLAW:${GITHUB_RUN_ID}" \
+            --output artifacts/supply-chain/openclaw-scan.json
+          printf '%s=%s\n' "$openclaw_ref" artifacts/supply-chain/openclaw-scan.json \
+            >> artifacts/supply-chain/image-bindings.txt
       - name: Assemble and independently verify release evidence
         shell: bash
         run: |
@@ -129,3 +172,4 @@ jobs:
             artifacts/supply-chain/gitleaks.json
             artifacts/supply-chain/pip-audit.json
             artifacts/supply-chain/npm-audit.json
+            artifacts/supply-chain/openclaw-provenance.json

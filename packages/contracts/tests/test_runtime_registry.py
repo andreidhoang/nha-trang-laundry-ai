@@ -9,7 +9,11 @@ from nha_trang_laundry_contracts import (
     verify_openclaw_cli_version,
     verify_public_runtime_artifacts,
 )
-from nha_trang_laundry_contracts.runtime_registry import SandboxImagePin, VerificationStatus
+from nha_trang_laundry_contracts.runtime_registry import (
+    RuntimeImagePin,
+    SandboxImagePin,
+    VerificationStatus,
+)
 from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -27,6 +31,7 @@ def test_public_runtime_candidate_is_fail_closed() -> None:
         "IMMUTABLE_MODEL_RELEASE_NOT_VERIFIED",
         "OPENCLAW_STORE_FALSE_ROUTE_NOT_VERIFIED",
         "SANDBOX_IMAGE_NOT_VERIFIED",
+        "PUBLIC_CELL_RUNTIME_IMAGE_NOT_VERIFIED",
         "EFFECTIVE_PROVIDER_REQUEST_NOT_VERIFIED",
         "SECURITY_PROVIDER_DATA_APPROVAL_MISSING",
         "PRIVACY_PROVIDER_DATA_APPROVAL_MISSING",
@@ -35,7 +40,7 @@ def test_public_runtime_candidate_is_fail_closed() -> None:
     }.issubset(registry.release_blockers())
     artifacts = verify_public_runtime_artifacts(ROOT, registry)
     assert "evidence/provider/openai-data-controls-review-v1.yaml" in artifacts
-    assert len(artifacts) >= 8
+    assert len(artifacts) >= 14
 
 
 def test_provider_data_evidence_hash_and_status_drift_fail_closed() -> None:
@@ -72,5 +77,20 @@ def test_sandbox_image_cannot_be_verified_without_scan_and_sbom_pins() -> None:
                 "verified": True,
                 "scan_evidence_path": None,
                 "scan_evidence_sha256": None,
+            }
+        )
+
+
+def test_runtime_image_cannot_be_verified_without_scan_and_provenance_pins() -> None:
+    with pytest.raises(ValidationError, match="runtime image verification fields"):
+        RuntimeImagePin.model_validate(
+            {
+                "repository": "nha-trang-laundry-openclaw",
+                "digest": f"sha256:{'1' * 64}",
+                "verified": True,
+                "scan_evidence_path": "artifacts/openclaw-scan.json",
+                "scan_evidence_sha256": f"sha256:{'2' * 64}",
+                "provenance_path": None,
+                "provenance_sha256": None,
             }
         )

@@ -71,11 +71,43 @@ class SandboxImagePin(BaseModel):
         return self
 
 
+class RuntimeImagePin(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    repository: Literal["nha-trang-laundry-openclaw"]
+    digest: Sha256 | None
+    verified: bool
+    scan_evidence_path: str | None
+    scan_evidence_sha256: Sha256 | None
+    provenance_path: str | None
+    provenance_sha256: Sha256 | None
+
+    @model_validator(mode="after")
+    def verification_fields_are_consistent(self) -> RuntimeImagePin:
+        complete = all(
+            value is not None
+            for value in (
+                self.digest,
+                self.scan_evidence_path,
+                self.scan_evidence_sha256,
+                self.provenance_path,
+                self.provenance_sha256,
+            )
+        )
+        if self.verified != complete:
+            raise ValueError("runtime image verification fields must be complete together")
+        return self
+
+
 class OpenClawPin(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     version: Annotated[str, StringConstraints(pattern=r"^[0-9]{4}\.[0-9]+\.[0-9]+-[0-9]+$")]
+    distribution: Literal["REPACKAGED_EVAL_ONLY"]
+    upstream_npm_integrity: Sha512Integrity
     npm_integrity: Sha512Integrity
+    repackage_manifest_path: str
+    repackage_manifest_sha256: Sha256
     target_os: Literal["linux"]
     runtime_type: Literal["embedded"]
     config_path: str
@@ -83,6 +115,7 @@ class OpenClawPin(BaseModel):
     plugin_id: Literal["nha-trang-laundry-tools"]
     plugin_version: str
     plugin_inventory_sha256: Sha256
+    runtime_image: RuntimeImagePin
     sandbox_image: SandboxImagePin
 
 
@@ -182,6 +215,8 @@ class PublicRuntimeRegistry(BaseModel):
             blockers.append("OPENCLAW_STORE_FALSE_ROUTE_NOT_VERIFIED")
         if not self.openclaw.sandbox_image.verified:
             blockers.append("SANDBOX_IMAGE_NOT_VERIFIED")
+        if not self.openclaw.runtime_image.verified:
+            blockers.append("PUBLIC_CELL_RUNTIME_IMAGE_NOT_VERIFIED")
         gate = self.provider_data_gate
         if gate.effective_request_storage_verification is not VerificationStatus.VERIFIED:
             blockers.append("EFFECTIVE_PROVIDER_REQUEST_NOT_VERIFIED")
@@ -226,6 +261,40 @@ def verify_public_runtime_artifacts(root: Path, registry: PublicRuntimeRegistry)
     """Verify the complete local pin chain without making a provider call."""
 
     verified: list[str] = []
+    repackage_manifest = _verified_file(
+        root,
+        registry.openclaw.repackage_manifest_path,
+        registry.openclaw.repackage_manifest_sha256,
+    )
+    repackage = json.loads(repackage_manifest.read_text(encoding="utf-8"))
+    source = repackage.get("source", {})
+    output = repackage.get("output", {})
+    activation = repackage.get("activation", {})
+    if (
+        repackage.get("schema_version") != 1
+        or repackage.get("artifact_status") != "EVAL_ONLY"
+        or source.get("version") != registry.openclaw.version
+        or source.get("integrity") != registry.openclaw.upstream_npm_integrity
+        or output.get("integrity") != registry.openclaw.npm_integrity
+        or not isinstance(activation, dict)
+        or any(activation.values())
+    ):
+        raise RuntimeArtifactError("OpenClaw repackage manifest drifted from runtime registry")
+    filename = output.get("filename")
+    output_sha256 = output.get("sha256")
+    if not isinstance(filename, str) or not isinstance(output_sha256, str):
+        raise RuntimeArtifactError("OpenClaw repackage output pin is incomplete")
+    repackage_artifact = _verified_file(
+        root,
+        f"runtime/openclaw/repack/dist/{filename}",
+        output_sha256,
+    )
+    verified.extend(
+        (
+            repackage_manifest.relative_to(root).as_posix(),
+            repackage_artifact.relative_to(root).as_posix(),
+        )
+    )
     config = _verified_file(root, registry.openclaw.config_path, registry.openclaw.config_sha256)
     verified.append(config.relative_to(root).as_posix())
     configured_image = _openclaw_sandbox_image(config)
@@ -244,6 +313,34 @@ def verify_public_runtime_artifacts(root: Path, registry: PublicRuntimeRegistry)
         )
     elif configured_image != "openclaw-sandbox@sha256:REPLACE_WITH_SCANNED_IMAGE_DIGEST":
         raise RuntimeArtifactError("Unverified OpenClaw sandbox image must retain the placeholder")
+    runtime_image = registry.openclaw.runtime_image
+    if runtime_image.verified:
+        assert runtime_image.digest is not None
+        assert runtime_image.scan_evidence_path is not None
+        assert runtime_image.scan_evidence_sha256 is not None
+        assert runtime_image.provenance_path is not None
+        assert runtime_image.provenance_sha256 is not None
+        expected_runtime_image = f"{runtime_image.repository}@{runtime_image.digest}"
+        scan = _verified_file(
+            root, runtime_image.scan_evidence_path, runtime_image.scan_evidence_sha256
+        )
+        sbom = _verify_container_scan_evidence(root, scan, expected_runtime_image)
+        provenance = _verified_file(
+            root, runtime_image.provenance_path, runtime_image.provenance_sha256
+        )
+        provenance_data = json.loads(provenance.read_text(encoding="utf-8"))
+        if (
+            provenance_data.get("image_digest") != runtime_image.digest
+            or provenance_data.get("predicate_type") != "https://slsa.dev/provenance/v1"
+        ):
+            raise RuntimeArtifactError("OpenClaw runtime provenance drifted from image pin")
+        verified.extend(
+            (
+                scan.relative_to(root).as_posix(),
+                sbom.relative_to(root).as_posix(),
+                provenance.relative_to(root).as_posix(),
+            )
+        )
     prompt_manifest = _verified_file(
         root, registry.prompt.bundle_path, registry.prompt.bundle_sha256
     )
@@ -265,6 +362,10 @@ def verify_public_runtime_artifacts(root: Path, registry: PublicRuntimeRegistry)
     inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     if inventory.get("openclaw_version") != registry.openclaw.version:
         raise RuntimeArtifactError("Plugin inventory OpenClaw version drifted")
+    if inventory.get("openclaw_upstream_npm_integrity") != (
+        registry.openclaw.upstream_npm_integrity
+    ):
+        raise RuntimeArtifactError("Plugin inventory upstream OpenClaw integrity drifted")
     if inventory.get("openclaw_npm_integrity") != registry.openclaw.npm_integrity:
         raise RuntimeArtifactError("Plugin inventory OpenClaw integrity drifted")
     artifacts = inventory.get("artifacts")

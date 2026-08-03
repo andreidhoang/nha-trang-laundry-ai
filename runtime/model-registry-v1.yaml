@@ -3,14 +3,26 @@ registry_version: 1.0.0-eval
 candidate_status: EVAL_ONLY
 openclaw:
   version: 2026.7.1-2
-  npm_integrity: sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==
+  distribution: REPACKAGED_EVAL_ONLY
+  upstream_npm_integrity: sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==
+  npm_integrity: sha512-8Mx+tv9tYy53lIhvZM9aMGF8OATg/kovktAJkkWlYFnZAJ5DClmXsflBl3moPZjMMiNAfbXdnQColWuasg+Rlw==
+  repackage_manifest_path: runtime/openclaw/repack/manifest-v1.json
+  repackage_manifest_sha256: sha256:421986c177315e026bfb0344ed7826d3a437c5276c5c605d1f76fdc792fb3ae0
   target_os: linux
   runtime_type: embedded
   config_path: runtime/openclaw/public-cell/openclaw.json5
   config_sha256: sha256:c9360090d11a11b6ab688d644ac029de55bc6328325ec2173ae79044a03df1bc
   plugin_id: nha-trang-laundry-tools
   plugin_version: 0.1.0
-  plugin_inventory_sha256: sha256:2f2ec0faf8f9e5d5553a29048ef8093d909caac51acbc1408eb046e86adffdde
+  plugin_inventory_sha256: sha256:773676b4f7d8467a327011f62654529f7f9e5ef78f32197eebee48b180ec2492
+  runtime_image:
+    repository: nha-trang-laundry-openclaw
+    digest: null
+    verified: false
+    scan_evidence_path: null
+    scan_evidence_sha256: null
+    provenance_path: null
+    provenance_sha256: null
   sandbox_image:
     repository: openclaw-sandbox
     digest: null

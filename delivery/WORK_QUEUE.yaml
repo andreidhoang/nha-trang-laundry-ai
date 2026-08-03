@@ -1007,3 +1007,53 @@ items:
   - postgres_integration_suite
   - rollback_assessment
   blocked_by_decisions: []
+- id: OPENCLAW-REPACK-001
+  phase: PRODUCTION_HARDENING
+  title: Immutable EVAL_ONLY OpenClaw transitive-security repackage
+  status: BLOCKED
+  priority: 100
+  depends_on:
+  - RUNTIME-EVIDENCE-PORTABILITY-001
+  - SUPPLYCHAIN-CI-PORTABILITY-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  contracts:
+  - specs/contracts/container-scan-evidence-v1.schema.json
+  - specs/contracts/supply-chain-evidence-v1.schema.json
+  - specs/contracts/openclaw-repackage-manifest-v1.schema.json
+  task_packet: context/tasks/TASK-openclaw-repack-001.md
+  acceptance_checks:
+  - uv run python scripts/build_openclaw_repackage.py --verify-reproducible
+  - uv run python scripts/verify_openclaw_repackage.py
+  - npm --prefix runtime/openclaw/public-cell/plugin audit --audit-level=high
+  - uv run python scripts/verify_agent_runtime.py
+  - uv run pytest packages/evals/tests/test_runtime_repackage.py packages/evals/tests/test_runtime_verifier.py
+    packages/evals/tests/test_local_agent_evidence.py packages/evals/tests/test_synthetic_tool_escape.py
+  - uv run pytest --require-postgres-integration
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  - npm --prefix runtime/openclaw/public-cell/plugin test
+  required_evidence:
+  - upstream_source_integrity
+  - compatible_transitive_replacements
+  - reproducible_repacked_artifact
+  - complete_dependency_and_security_audits
+  - immutable_runtime_image_scan_sbom_provenance
+  - regression_suite
+  - disabled_authority_and_rollback
+  blocked_by_decisions: []
+  blocking_condition: Local reproducible package, SLSA v1 OCI provenance, CycloneDX
+    SBOM, zero critical/high Trivy findings, and all repository gates pass, but completion
+    requires an exact-commit hosted GitHub workflow run. No remote branch, pull request,
+    or workflow trigger is authorized, so hosted provenance, SBOM, scan, and evidence
+    bundle are absent.

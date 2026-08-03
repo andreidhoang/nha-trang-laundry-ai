@@ -47,6 +47,7 @@ domains:
       - specs/contracts/provider-data-evidence-v1.schema.json
       - specs/contracts/container-scan-evidence-v1.schema.json
       - specs/contracts/supply-chain-evidence-v1.schema.json
+      - specs/contracts/openclaw-repackage-manifest-v1.schema.json
       - delivery/GATE_REGISTRY.yaml
     prohibitions:
       - Public OpenClaw is a reasoning runtime, never the business or security authority.
@@ -117,5 +118,6 @@ domains:
       - specs/contracts/provider-data-evidence-v1.schema.json
       - specs/contracts/container-scan-evidence-v1.schema.json
       - specs/contracts/supply-chain-evidence-v1.schema.json
+      - specs/contracts/openclaw-repackage-manifest-v1.schema.json
     prohibitions:
       - No release is authorized without a valid, signed, unexpired evidence manifest.

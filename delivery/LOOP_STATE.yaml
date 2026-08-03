@@ -1,8 +1,12 @@
 schema_version: 1
-last_updated: '2026-08-03T05:49:28.428956+00:00'
+last_updated: '2026-08-03T16:56:33.724666+00:00'
 current_work_item: null
-last_result: COMPLETE
-blocker: null
+last_result: BLOCKED
+blocker: Local reproducible package, SLSA v1 OCI provenance, CycloneDX SBOM, zero
+  critical/high Trivy findings, and all repository gates pass, but completion requires
+  an exact-commit hosted GitHub workflow run. No remote branch, pull request, or workflow
+  trigger is authorized, so hosted provenance, SBOM, scan, and evidence bundle are
+  absent.
 evidence_records:
 - work_item: IDENTITY-001
   path: evidence/delivery-loop/IDENTITY-001.yaml
@@ -92,4 +96,11 @@ blocked_records:
     reviewed upstream OpenClaw release or separately reviewed immutable runtime repackaging;
     high findings cannot be waived or relabeled.
   recorded_at: '2026-08-03T03:34:40.199322+00:00'
+- work_item: OPENCLAW-REPACK-001
+  reason: Local reproducible package, SLSA v1 OCI provenance, CycloneDX SBOM, zero
+    critical/high Trivy findings, and all repository gates pass, but completion requires
+    an exact-commit hosted GitHub workflow run. No remote branch, pull request, or
+    workflow trigger is authorized, so hosted provenance, SBOM, scan, and evidence
+    bundle are absent.
+  recorded_at: '2026-08-03T16:56:33.724666+00:00'
 unblocked_records: []

@@ -99,7 +99,7 @@ def test_blocked_evidence_requires_consistent_counts_exit_and_blocker() -> None:
         "openclaw_version": registry.openclaw.version,
         "openclaw_build_revision": "0790d9f",
         "tool_count": 10,
-        "artifact_count": 12,
+        "artifact_count": 14,
         "security_audit_critical": 0,
         "dependency_audit_critical": 0,
         "dependency_audit_high": 2,

@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-02'
+last_updated: '2026-08-03'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -822,3 +822,113 @@ items:
   - DEC-002
   - DEC-003
   - DEC-004
+- id: HARDEN-PORTABILITY-001
+  phase: PRODUCTION_HARDENING
+  title: Cross-platform type-safe delivery and automation mutexes
+  status: COMPLETE
+  priority: 100
+  depends_on:
+  - HARDEN-CI-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-harden-portability-001.md
+  acceptance_checks:
+  - uv run pytest packages/evals/tests/test_delivery_state.py packages/evals/tests/test_manage_automation_state.py
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  - npm --prefix runtime/openclaw/public-cell/plugin test
+  required_evidence:
+  - cross_platform_mutex_typing
+  - delivery_and_automation_regressions
+  - postgres_integration_suite
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: RUNTIME-SECURITY-001
+  phase: PRODUCTION_HARDENING
+  title: Pinned OpenClaw verifier and transitive advisory remediation
+  status: BLOCKED
+  priority: 100
+  depends_on:
+  - HARDEN-PORTABILITY-001
+  - SUPPLYCHAIN-001
+  context_domains:
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/container-scan-evidence-v1.schema.json
+  - specs/contracts/supply-chain-evidence-v1.schema.json
+  task_packet: context/tasks/TASK-runtime-security-001.md
+  acceptance_checks:
+  - npm --prefix runtime/openclaw/public-cell/plugin test
+  - npm --prefix runtime/openclaw/public-cell/plugin audit --audit-level=high
+  - uv run python scripts/verify_agent_runtime.py
+  - uv run pytest packages/evals/tests/test_local_agent_evidence.py packages/contracts/tests/test_runtime_registry.py
+  - uv run pytest --require-postgres-integration
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - workspace_pinned_runtime_verification
+  - high_severity_dependency_audit
+  - artifact_hash_reconciliation
+  - regression_suite
+  - rollback_assessment
+  blocked_by_decisions: []
+  blocking_condition: The current latest stable openclaw 2026.7.1-2 package embeds
+    a nested npm shrinkwrap containing brace-expansion 5.0.7 and fast-uri 3.1.2, which
+    now have two high-severity advisories. Root patch-level overrides were proven
+    ineffective because the embedded shrinkwrap retains those versions. Completion
+    requires a reviewed upstream OpenClaw release or separately reviewed immutable
+    runtime repackaging; high findings cannot be waived or relabeled.
+- id: RUNTIME-EVIDENCE-001
+  phase: PRODUCTION_HARDENING
+  title: Explicit fail-closed evidence for blocked pinned-runtime verification
+  status: COMPLETE
+  priority: 100
+  depends_on:
+  - HARDEN-PORTABILITY-001
+  - SUPPLYCHAIN-001
+  context_domains:
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/container-scan-evidence-v1.schema.json
+  - specs/contracts/supply-chain-evidence-v1.schema.json
+  task_packet: context/tasks/TASK-runtime-evidence-001.md
+  acceptance_checks:
+  - uv run python scripts/capture_openclaw_offline_evidence.py
+  - uv run pytest packages/evals/tests/test_runtime_verifier.py packages/evals/tests/test_local_agent_evidence.py
+    packages/contracts/tests/test_runtime_registry.py
+  - uv run pytest --require-postgres-integration
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  - npm --prefix runtime/openclaw/public-cell/plugin test
+  required_evidence:
+  - blocked_result_contract
+  - negative_evidence_validation
+  - current_artifact_hash_binding
+  - regression_suite
+  - rollback_assessment
+  blocked_by_decisions: []

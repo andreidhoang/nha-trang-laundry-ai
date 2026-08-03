@@ -62,10 +62,12 @@ def _ensure_lock_byte(handle: IO[bytes]) -> None:
 def _try_lock(handle: IO[bytes]) -> bool:
     handle.seek(0)
     if os.name == "nt":
-        import msvcrt
+        msvcrt_attributes = vars(importlib.import_module("msvcrt"))
+        locking = cast(Callable[[int, int, int], None], msvcrt_attributes["locking"])
+        lock_nonblocking = cast(int, msvcrt_attributes["LK_NBLCK"])
 
         try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            locking(handle.fileno(), lock_nonblocking, 1)
         except OSError as error:
             if error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
                 return False
@@ -86,9 +88,10 @@ def _try_lock(handle: IO[bytes]) -> bool:
 def _unlock(handle: IO[bytes]) -> None:
     handle.seek(0)
     if os.name == "nt":
-        import msvcrt
-
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        msvcrt_attributes = vars(importlib.import_module("msvcrt"))
+        locking = cast(Callable[[int, int, int], None], msvcrt_attributes["locking"])
+        lock_un = cast(int, msvcrt_attributes["LK_UNLCK"])
+        locking(handle.fileno(), lock_un, 1)
         return
 
     fcntl_attributes = vars(importlib.import_module("fcntl"))

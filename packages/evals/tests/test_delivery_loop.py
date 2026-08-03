@@ -225,6 +225,10 @@ def test_delivery_loop_selects_local_hardening_while_agent_is_blocked(
         if item["id"] == "HARDEN-CI-001":
             item["status"] = "PENDING"
             item.pop("blocking_condition", None)
+        elif item["phase"] == "PRODUCTION_HARDENING" and item["status"] != "BLOCKED":
+            # Preserve the historical selection scenario when later corrective
+            # hardening items are registered with an earlier priority.
+            item["status"] = "COMPLETE"
     queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
 
     result = _run_workspace(workspace, "run_delivery_loop.py")

@@ -736,10 +736,12 @@ def _ensure_mutex_byte(handle: IO[bytes]) -> None:
 def _try_lock_mutex(handle: IO[bytes]) -> bool:
     handle.seek(0)
     if os.name == "nt":
-        import msvcrt
+        msvcrt_attributes = vars(importlib.import_module("msvcrt"))
+        locking = cast(Callable[[int, int, int], None], msvcrt_attributes["locking"])
+        lock_nonblocking = cast(int, msvcrt_attributes["LK_NBLCK"])
 
         try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            locking(handle.fileno(), lock_nonblocking, 1)
         except OSError as error:
             if error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
                 return False
@@ -759,10 +761,11 @@ def _try_lock_mutex(handle: IO[bytes]) -> bool:
 
 def _unlock_mutex(handle: IO[bytes]) -> None:
     if os.name == "nt":
-        import msvcrt
-
+        msvcrt_attributes = vars(importlib.import_module("msvcrt"))
+        locking = cast(Callable[[int, int, int], None], msvcrt_attributes["locking"])
+        lock_un = cast(int, msvcrt_attributes["LK_UNLCK"])
         handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        locking(handle.fileno(), lock_un, 1)
     else:
         fcntl_attributes = vars(importlib.import_module("fcntl"))
         flock = cast(Callable[[int, int], None], fcntl_attributes["flock"])

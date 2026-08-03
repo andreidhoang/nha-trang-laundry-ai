@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-02'
+last_updated: '2026-08-03'
 purpose: Stable phase vocabulary for planning; work item identity never depends on
   milestone numbering.
 work_queue: delivery/WORK_QUEUE.yaml
@@ -40,7 +40,7 @@ phases:
     and evals.
 - id: PRODUCTION_HARDENING
   name: CI, policy, observability, containers, and supply-chain hardening
-  status: COMPLETE
+  status: IN_PROGRESS
   depends_on:
   - OPERATIONS_CONTROL
   outcome: Non-skippable integration gates, fail-closed policy, redacted telemetry,

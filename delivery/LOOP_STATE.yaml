@@ -1,12 +1,8 @@
 schema_version: 1
-last_updated: '2026-08-02T09:36:39.680452+00:00'
+last_updated: '2026-08-03T03:43:39.674629+00:00'
 current_work_item: null
-last_result: BLOCKED
-blocker: Requires an operator-provisioned encrypted off-host PostgreSQL recovery repository
-  in a separate failure domain and a reviewed restore drill demonstrating a recovery
-  point no older than 15 minutes, restoration within 4 hours, object evidence access,
-  quote/audit integrity, and duplicate-send reconciliation. Local configuration and
-  synthetic data cannot satisfy this external evidence requirement.
+last_result: COMPLETE
+blocker: null
 evidence_records:
 - work_item: IDENTITY-001
   path: evidence/delivery-loop/IDENTITY-001.yaml
@@ -62,6 +58,12 @@ evidence_records:
 - work_item: STAGING-001
   path: evidence/delivery-loop/STAGING-001.yaml
   recorded_at: '2026-08-02T09:32:06.863133+00:00'
+- work_item: HARDEN-PORTABILITY-001
+  path: evidence/delivery-loop/HARDEN-PORTABILITY-001.yaml
+  recorded_at: '2026-08-03T03:28:28.323018+00:00'
+- work_item: RUNTIME-EVIDENCE-001
+  path: evidence/delivery-loop/RUNTIME-EVIDENCE-001.yaml
+  recorded_at: '2026-08-03T03:43:39.674629+00:00'
 blocked_records:
 - work_item: AGENT-001
   reason: Local fixture/assertion registry is complete and 289 tests pass, but PRIMARY/fallback
@@ -76,4 +78,12 @@ blocked_records:
     evidence access, quote/audit integrity, and duplicate-send reconciliation. Local
     configuration and synthetic data cannot satisfy this external evidence requirement.
   recorded_at: '2026-08-02T09:36:39.680452+00:00'
+- work_item: RUNTIME-SECURITY-001
+  reason: The current latest stable openclaw 2026.7.1-2 package embeds a nested npm
+    shrinkwrap containing brace-expansion 5.0.7 and fast-uri 3.1.2, which now have
+    two high-severity advisories. Root patch-level overrides were proven ineffective
+    because the embedded shrinkwrap retains those versions. Completion requires a
+    reviewed upstream OpenClaw release or separately reviewed immutable runtime repackaging;
+    high findings cannot be waived or relabeled.
+  recorded_at: '2026-08-03T03:34:40.199322+00:00'
 unblocked_records: []

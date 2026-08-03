@@ -79,6 +79,10 @@ def _ready_workspace(tmp_path: Path) -> Path:
             item["status"] = "PENDING"
         if item["id"] in reset_items:
             item["status"] = "PENDING"
+        elif item["phase"] == "PRODUCTION_HARDENING" and item["status"] != "BLOCKED":
+            # Isolate this historical queue scenario from later dependency-complete
+            # corrective hardening items with a higher controller priority.
+            item["status"] = "COMPLETE"
     state.update(current_work_item=None, last_result="COMPLETE", blocker=None)
     state["evidence_records"] = [
         record for record in state["evidence_records"] if record["work_item"] not in reset_items

@@ -1,0 +1,27 @@
+work_item: HARDEN-PORTABILITY-001
+recorded_at: '2026-08-03T03:27:43Z'
+requirement_contract: context/tasks/TASK-harden-portability-001.md
+rollback_impact: Revert the two mutex source refactors, the isolated historical queue-fixture updates, and this corrective delivery record. No migration, database content, capability authorization, provider call, public ingress, outbound message, or deployed runtime is affected.
+unresolved_assumptions: The Windows msvcrt calls retain their existing constants, byte range, error handling, and unlock semantics through dynamic attribute binding; native Windows execution was not available in this macOS run. All capabilities remain NOT_AUTHORIZED. Two newly reported high-severity transitive advisories in the pinned OpenClaw development dependency require a separate fail-closed runtime security refresh and are not waived by this evidence.
+evidence:
+  cross_platform_mutex_typing: Both delivery-state and automation-state Windows lock branches now resolve msvcrt dynamically, matching the existing dynamic POSIX fcntl boundary and preventing foreign-platform stub binding. Strict mypy passes across 155 source files.
+  delivery_and_automation_regressions: The 54 declared delivery-state and automation-state tests pass; the broader 67-test controller/context set also passes after historical queue fixtures were isolated from future corrective work items.
+  postgres_integration_suite: A clean synthetic PostgreSQL 16 database applied forward migrations 0001 through 0019, and the required guarded suite passed all 508 tests with no skips.
+  rollback_assessment: The implementation is source-only and preserves locking, timeout, fencing, journaling, authorization, and fail-closed behavior. Reverting it requires no data or external-state rollback.
+checks:
+- command: uv run pytest packages/evals/tests/test_delivery_state.py packages/evals/tests/test_manage_automation_state.py
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+- command: npm --prefix runtime/openclaw/public-cell/plugin test
+  status: PASSED

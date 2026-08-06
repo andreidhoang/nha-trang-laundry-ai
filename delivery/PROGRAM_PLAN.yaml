@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-03'
+last_updated: '2026-08-06'
 purpose: Stable phase vocabulary for planning; work item identity never depends on
   milestone numbering.
 work_queue: delivery/WORK_QUEUE.yaml

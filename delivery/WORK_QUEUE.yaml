@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-03'
+last_updated: '2026-08-06'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -1052,8 +1052,12 @@ items:
   - regression_suite
   - disabled_authority_and_rollback
   blocked_by_decisions: []
-  blocking_condition: Local reproducible package, SLSA v1 OCI provenance, CycloneDX
-    SBOM, zero critical/high Trivy findings, and all repository gates pass, but completion
-    requires an exact-commit hosted GitHub workflow run. No remote branch, pull request,
-    or workflow trigger is authorized, so hosted provenance, SBOM, scan, and evidence
-    bundle are absent.
+  blocking_condition: Hosted GitHub run 31107366888 for exact commit 178e64b2901c5b5bdf2b92385036a238bed6ff12
+    failed immutable repackage verification because Linux npm pack bytes differ from
+    the Windows-pinned manifest. A canonical cross-platform tar construction was locally
+    proven, but the current registry audit now also reports four high advisories.
+    Registry-published compatible fixes exist for brace-expansion, fast-uri, and ip-address;
+    however OpenClaw pins undici exactly to 8.5.0 while the fixed release starts at
+    8.9.0, and latest stable OpenClaw remains 2026.7.1-2. Completion requires a reviewed
+    stable upstream OpenClaw release or explicit reviewed expansion permitting its
+    exact dependency/package metadata to change; no high finding can be waived.

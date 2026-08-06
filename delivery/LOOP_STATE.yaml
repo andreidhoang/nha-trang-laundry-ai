@@ -1,12 +1,16 @@
 schema_version: 1
-last_updated: '2026-08-03T16:56:33.724666+00:00'
+last_updated: '2026-08-06T14:09:14.090331+00:00'
 current_work_item: null
 last_result: BLOCKED
-blocker: Local reproducible package, SLSA v1 OCI provenance, CycloneDX SBOM, zero
-  critical/high Trivy findings, and all repository gates pass, but completion requires
-  an exact-commit hosted GitHub workflow run. No remote branch, pull request, or workflow
-  trigger is authorized, so hosted provenance, SBOM, scan, and evidence bundle are
-  absent.
+blocker: Hosted GitHub run 31107366888 for exact commit 178e64b2901c5b5bdf2b92385036a238bed6ff12
+  failed immutable repackage verification because Linux npm pack bytes differ from
+  the Windows-pinned manifest. A canonical cross-platform tar construction was locally
+  proven, but the current registry audit now also reports four high advisories. Registry-published
+  compatible fixes exist for brace-expansion, fast-uri, and ip-address; however OpenClaw
+  pins undici exactly to 8.5.0 while the fixed release starts at 8.9.0, and latest
+  stable OpenClaw remains 2026.7.1-2. Completion requires a reviewed stable upstream
+  OpenClaw release or explicit reviewed expansion permitting its exact dependency/package
+  metadata to change; no high finding can be waived.
 evidence_records:
 - work_item: IDENTITY-001
   path: evidence/delivery-loop/IDENTITY-001.yaml
@@ -103,4 +107,19 @@ blocked_records:
     workflow trigger is authorized, so hosted provenance, SBOM, scan, and evidence
     bundle are absent.
   recorded_at: '2026-08-03T16:56:33.724666+00:00'
-unblocked_records: []
+- work_item: OPENCLAW-REPACK-001
+  reason: Hosted GitHub run 31107366888 for exact commit 178e64b2901c5b5bdf2b92385036a238bed6ff12
+    failed immutable repackage verification because Linux npm pack bytes differ from
+    the Windows-pinned manifest. A canonical cross-platform tar construction was locally
+    proven, but the current registry audit now also reports four high advisories.
+    Registry-published compatible fixes exist for brace-expansion, fast-uri, and ip-address;
+    however OpenClaw pins undici exactly to 8.5.0 while the fixed release starts at
+    8.9.0, and latest stable OpenClaw remains 2026.7.1-2. Completion requires a reviewed
+    stable upstream OpenClaw release or explicit reviewed expansion permitting its
+    exact dependency/package metadata to change; no high finding can be waived.
+  recorded_at: '2026-08-06T14:09:14.090331+00:00'
+unblocked_records:
+- work_item: OPENCLAW-REPACK-001
+  reason: The exact-commit hosted GitHub workflow was authorized and executed; reevaluating
+    the prior missing-hosted-run blocker against run 31107366888.
+  recorded_at: '2026-08-06T14:08:54.137504+00:00'

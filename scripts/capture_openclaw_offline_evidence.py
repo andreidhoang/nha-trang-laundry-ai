@@ -26,13 +26,18 @@ PINNED_ARTIFACTS = (
     "runtime/openclaw/public-cell/plugin/package-lock.json",
     "runtime/openclaw/repack/manifest-v1.json",
     "runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r1.tgz",
+    "runtime/openclaw/repack/manifest-v2.json",
+    "runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r2.tgz",
     "evidence/provider/openai-data-controls-review-v1.yaml",
     "specs/contracts/capability-status-v1.schema.json",
     "specs/contracts/container-scan-evidence-v1.schema.json",
+    "specs/contracts/openclaw-cross-platform-result-v1.schema.json",
     "specs/contracts/provider-data-evidence-v1.schema.json",
+    ".github/workflows/release-supply-chain.yml",
     "scripts/verify_agent_runtime.py",
     "scripts/build_openclaw_repackage.py",
     "scripts/verify_openclaw_repackage.py",
+    "scripts/verify_openclaw_cross_platform.py",
     "scripts/capture_openclaw_offline_evidence.py",
 )
 

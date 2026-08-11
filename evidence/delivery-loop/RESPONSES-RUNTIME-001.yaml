@@ -1,0 +1,83 @@
+schema_version: 1
+work_item: RESPONSES-RUNTIME-001
+recorded_at: '2026-08-11T14:15:57+07:00'
+requirement_contract: >-
+  context/tasks/TASK-responses-runtime-001.md and section 4.3 plus sections 18-19 of
+  specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md require a smallest bounded custom Responses adapter behind
+  ConstrainedAgentRuntime: immutable run/context/model/prompt/tool/price pins, pre-call worst-case
+  turn-cost reservation, store=false, strict fixed function tools, parallel_tool_calls=false, one
+  serial bridge-mediated tool call at a time, original absolute budgets across continuations,
+  draft-or-deterministic-handoff validation, bridge revocation, and redacted terminal evidence.
+  specs/SECURITY_RELIABILITY_SPEC_V1.md and the normative Agent Tool OpenAPI remain authoritative for
+  identity, policy, authorization, business calculations, mutations, audit and release authority.
+rollback_impact: >-
+  Remove or disable apps/worker/src/nha_trang_laundry_worker/responses_runtime.py, its package exports,
+  direct jsonschema dependency/lock entry and tests. The stable ConstrainedAgentRuntime protocol,
+  AgentRunner, contact-bound bridge, durable agent ledger, normative OpenAPI, synthetic runtime and
+  OpenClaw comparison/rollback candidate remain unchanged. There is no migration, database content,
+  provider credential, network call, public ingress, outbound send, deployment, real-customer data or
+  capability authorization to roll back.
+unresolved_assumptions: >-
+  This is intentionally a local scripted M4A adapter, not provider or release evidence. The exact
+  production model release, approved versioned price table, real OpenAI transport, dedicated
+  credential, effective store=false/provider-data controls, security/privacy approvals, durable
+  production evidence sink, and daily/monthly spend-reservation ledger remain required before any
+  provider-backed or real-customer execution. PostgreSQL-dependent repository tests were skipped
+  because DATABASE_URL was not present; this work item changes no DB schema or DB adapter. All
+  capabilities, public ingress, real-customer model calls, direct send and automatic send remain
+  NOT_AUTHORIZED/false, and verify_contracts continues to report ten release blockers.
+evidence:
+  scripted_transport_state_machine_tests: >-
+    apps/worker/tests/test_responses_runtime.py contains 32 deterministic no-network tests. They prove
+    a valid zero-tool draft, a serial function-call/result continuation, ephemeral encrypted reasoning
+    pass-through, exact /v1/responses request fields, strict function schemas, store=false, no provider
+    built-ins, parallel_tool_calls=false, exact model/release/prompt/tool/price pins, typed final JSON,
+    deterministic handoff and irreversible bridge close. The exact worker plus eval acceptance command
+    passed 268 tests with 33 declared PostgreSQL skips; full repository pytest passed 516 tests with 59
+    declared PostgreSQL skips.
+  tool_and_identity_negative_tests: >-
+    Tests reject unknown tools, generic dispatch, malformed JSON, non-object/unknown/nullable-unknown
+    fields, malformed facade output, unsupported provider items, mixed/multiple/parallel calls,
+    duplicate call IDs, and customer/server identity substitution before facade transport. Optional
+    nulls required by provider strict mode are removed only after strict-schema validation, then the
+    original OpenAPI and AgentToolBridgeSession revalidate authority, arguments, bound paths,
+    idempotency and typed results.
+  timeout_cancellation_and_late_call_tests: >-
+    Deterministic clocks cover deadline exhaustion before provider use, after provider response and
+    while the fixed facade call is in flight. Typed cancellation and provider timeout settle the
+    conservative reservation, make no hidden retry, return a safe handoff and persist one terminal
+    record. A post-terminal tool call using the former bridge capability is rejected because the
+    bridge was irreversibly closed.
+  budget_cost_and_provider_ambiguity_tests: >-
+    Per-intent and global model-call ceilings survive every tool continuation. The runtime reserves
+    the worst-case remaining turn allowance before each attempt using a self-hashed, model-bound,
+    effective, versioned USD price table with separate cached-input pricing. Known-not-sent connection
+    failure releases the reservation; known usage settles actual cost and releases the remainder;
+    cancelled, timed-out, malformed or otherwise ambiguous outcomes settle conservatively. An
+    unreservable hard turn cap blocks the provider before any request, and retry_count remains zero.
+  redaction_and_structured_trace_review: >-
+    ResponsesRuntimeEvidence has extra=forbid typed fields for safe outcome/failure code, immutable
+    hashes, release/price versions, bounded call/tool/token counts, reserved/settled/released cost,
+    provider-backed classification, zero retries and bridge-revoked state. Tests serialize terminal
+    evidence and prove that prompt/input text, drafts, tool arguments/results, opaque reasoning,
+    provider response IDs, raw responses and chain-of-thought are absent. A required evidence sink is
+    invoked exactly once on each tested terminal path and persistence failure is fail-closed.
+  rollback_assessment: >-
+    The new adapter is additive behind the unchanged runtime protocol and is not selected by the host
+    or any public route. Its scripted transport declares provider_backed=false; a transport declaring
+    provider_backed=true is rejected by the existing AgentRunner release gates before invocation.
+    Removing the module/export/test/dependency is therefore a source-only rollback with no durable or
+    external side effect, while the synthetic runtime and OpenClaw comparator remain available.
+checks:
+- command: uv run pytest apps/worker/tests packages/evals/tests
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

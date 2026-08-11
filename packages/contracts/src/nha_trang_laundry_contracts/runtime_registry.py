@@ -103,7 +103,7 @@ class OpenClawPin(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     version: Annotated[str, StringConstraints(pattern=r"^[0-9]{4}\.[0-9]+\.[0-9]+-[0-9]+$")]
-    distribution: Literal["REPACKAGED_EVAL_ONLY"]
+    distribution: Literal["DERIVED_REPACKAGED_EVAL_ONLY"]
     upstream_npm_integrity: Sha512Integrity
     npm_integrity: Sha512Integrity
     repackage_manifest_path: str
@@ -267,14 +267,16 @@ def verify_public_runtime_artifacts(root: Path, registry: PublicRuntimeRegistry)
         registry.openclaw.repackage_manifest_sha256,
     )
     repackage = json.loads(repackage_manifest.read_text(encoding="utf-8"))
-    source = repackage.get("source", {})
+    upstream = repackage.get("upstream", {})
+    base = repackage.get("base", {})
     output = repackage.get("output", {})
     activation = repackage.get("activation", {})
     if (
-        repackage.get("schema_version") != 1
+        repackage.get("schema_version") != 2
+        or repackage.get("artifact_origin") != "DERIVED"
         or repackage.get("artifact_status") != "EVAL_ONLY"
-        or source.get("version") != registry.openclaw.version
-        or source.get("integrity") != registry.openclaw.upstream_npm_integrity
+        or upstream.get("version") != registry.openclaw.version
+        or upstream.get("integrity") != registry.openclaw.upstream_npm_integrity
         or output.get("integrity") != registry.openclaw.npm_integrity
         or not isinstance(activation, dict)
         or any(activation.values())
@@ -289,10 +291,32 @@ def verify_public_runtime_artifacts(root: Path, registry: PublicRuntimeRegistry)
         f"runtime/openclaw/repack/dist/{filename}",
         output_sha256,
     )
+    base_filename = base.get("filename")
+    base_sha256 = base.get("sha256")
+    base_manifest_path = base.get("manifest_path")
+    base_manifest_sha256 = base.get("manifest_sha256")
+    if not all(
+        isinstance(value, str)
+        for value in (
+            base_filename,
+            base_sha256,
+            base_manifest_path,
+            base_manifest_sha256,
+        )
+    ):
+        raise RuntimeArtifactError("OpenClaw rollback pin is incomplete")
+    base_manifest = _verified_file(root, base_manifest_path, base_manifest_sha256)
+    base_artifact = _verified_file(
+        root,
+        f"runtime/openclaw/repack/dist/{base_filename}",
+        base_sha256,
+    )
     verified.extend(
         (
             repackage_manifest.relative_to(root).as_posix(),
             repackage_artifact.relative_to(root).as_posix(),
+            base_manifest.relative_to(root).as_posix(),
+            base_artifact.relative_to(root).as_posix(),
         )
     )
     config = _verified_file(root, registry.openclaw.config_path, registry.openclaw.config_sha256)
@@ -368,6 +392,8 @@ def verify_public_runtime_artifacts(root: Path, registry: PublicRuntimeRegistry)
         raise RuntimeArtifactError("Plugin inventory upstream OpenClaw integrity drifted")
     if inventory.get("openclaw_npm_integrity") != registry.openclaw.npm_integrity:
         raise RuntimeArtifactError("Plugin inventory OpenClaw integrity drifted")
+    if inventory.get("openclaw_distribution") != "DERIVED_REPACKAGED_EVAL_ONLY":
+        raise RuntimeArtifactError("Plugin inventory OpenClaw distribution drifted")
     artifacts = inventory.get("artifacts")
     if not isinstance(artifacts, dict):
         raise RuntimeArtifactError("Plugin inventory artifacts are missing")

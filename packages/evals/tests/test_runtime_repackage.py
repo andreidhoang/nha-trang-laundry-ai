@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+import gzip
 import io
 import json
 import tarfile
+from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -15,8 +17,8 @@ from scripts import verify_openclaw_oci_attestations as oci_verifier
 from scripts import verify_openclaw_repackage as verifier
 
 ROOT = Path(__file__).resolve().parents[3]
-MANIFEST_PATH = ROOT / "runtime/openclaw/repack/manifest-v1.json"
-ARTIFACT_PATH = ROOT / "runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r1.tgz"
+MANIFEST_PATH = ROOT / "runtime/openclaw/repack/manifest-v2.json"
+ARTIFACT_PATH = ROOT / "runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r2.tgz"
 
 
 def _manifest() -> dict[str, Any]:
@@ -27,6 +29,7 @@ def test_repackage_manifest_and_committed_artifact_are_digest_bound() -> None:
     manifest = verifier._load_manifest()
     artifact = ARTIFACT_PATH.read_bytes()
 
+    assert manifest["artifact_origin"] == "DERIVED"
     assert manifest["artifact_status"] == "EVAL_ONLY"
     assert all(value is False for value in manifest["activation"].values())
     assert verifier._sha256(artifact) == manifest["output"]["sha256"]
@@ -52,28 +55,18 @@ def test_manifest_schema_rejects_authority_or_unpinned_material(tmp_path: Path) 
 
 def test_builder_rejects_source_drift_and_unsupported_ranges(tmp_path: Path) -> None:
     manifest = _manifest()
-    package_root = tmp_path / "package"
-    package_root.mkdir()
-    shrinkwrap = {
-        "packages": {
-            "node_modules/brace-expansion": {
-                "version": "5.0.6",
-                "resolved": manifest["replacements"][0]["source"]["url"],
-                "integrity": manifest["replacements"][0]["source"]["integrity"],
-            },
-            "node_modules/minimatch": {"dependencies": {"brace-expansion": "^5.0.5"}},
-            "node_modules/fast-uri": {
-                "version": "3.1.2",
-                "resolved": manifest["replacements"][1]["source"]["url"],
-                "integrity": manifest["replacements"][1]["source"]["integrity"],
-            },
-            "node_modules/ajv": {"dependencies": {"fast-uri": "^3.0.1"}},
-        }
-    }
-    (package_root / "npm-shrinkwrap.json").write_text(json.dumps(shrinkwrap), encoding="utf-8")
+    entries = builder._read_archive(
+        ROOT / "runtime/openclaw/repack/dist" / manifest["base"]["filename"]
+    )
+    shrinkwrap = json.loads(entries[builder.SHRINKWRAP][0])
+    shrinkwrap["packages"]["node_modules/brace-expansion"]["version"] = "5.0.6"
+    entries[builder.SHRINKWRAP] = (
+        (json.dumps(shrinkwrap, indent=2) + "\n").encode(),
+        entries[builder.SHRINKWRAP][1],
+    )
 
     with pytest.raises(ValueError, match="unexpected source version"):
-        builder._patch_shrinkwrap(package_root, manifest)
+        builder._patch_entries(entries, manifest)
     with pytest.raises(ValueError, match="unsupported dependency range"):
         builder._satisfies_caret("5.0.8", ">=5.0.5")
 
@@ -85,8 +78,10 @@ def test_plugin_lock_uses_only_the_repacked_fixed_tree() -> None:
         (ROOT / "runtime/openclaw/public-cell/plugin/package-lock.json").read_text(encoding="utf-8")
     )
     packages = lock["packages"]
-    assert packages["node_modules/openclaw/node_modules/brace-expansion"]["version"] == "5.0.8"
-    assert packages["node_modules/openclaw/node_modules/fast-uri"]["version"] == "3.1.4"
+    assert packages["node_modules/openclaw/node_modules/brace-expansion"]["version"] == "5.0.9"
+    assert packages["node_modules/openclaw/node_modules/fast-uri"]["version"] == "3.1.5"
+    assert packages["node_modules/openclaw/node_modules/ip-address"]["version"] == "10.3.1"
+    assert packages["node_modules/undici"]["version"] == "8.9.0"
 
 
 def _json_blob(value: object) -> tuple[str, bytes]:
@@ -226,3 +221,144 @@ def test_replacement_set_cannot_expand_silently(tmp_path: Path) -> None:
     expanded.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ValueError, match="violates schema"):
         verifier._load_manifest(expanded)
+
+
+def _write_archive(
+    path: Path,
+    members: list[tuple[str, bytes, bytes, int]],
+    *,
+    mtime: int = 0,
+    uid: int = 0,
+    gid: int = 0,
+    gzip_filename: str = "",
+) -> None:
+    with (
+        path.open("wb") as raw,
+        gzip.GzipFile(
+            filename=gzip_filename,
+            mode="wb",
+            compresslevel=9,
+            fileobj=raw,
+            mtime=mtime,
+        ) as zipped,
+        tarfile.open(fileobj=zipped, mode="w|", format=tarfile.PAX_FORMAT) as archive,
+    ):
+        for name, data, member_type, mode in members:
+            info = tarfile.TarInfo(name)
+            info.type = member_type
+            info.mode = mode
+            info.mtime = mtime
+            info.uid = uid
+            info.gid = gid
+            info.uname = "" if uid == 0 else "unsafe"
+            info.gname = "" if gid == 0 else "unsafe"
+            if member_type in (tarfile.SYMTYPE, tarfile.LNKTYPE):
+                info.linkname = "package/package.json"
+                archive.addfile(info)
+            else:
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+
+
+def _minimal_members() -> list[tuple[str, bytes, bytes, int]]:
+    return [
+        ("package/package.json", b"{}", tarfile.REGTYPE, 0o644),
+        ("package/npm-shrinkwrap.json", b"{}", tarfile.REGTYPE, 0o644),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "member_type", "mode", "message"),
+    [
+        ("../escape", tarfile.REGTYPE, 0o644, "unsafe path"),
+        ("/absolute", tarfile.REGTYPE, 0o644, "unsafe path"),
+        ("package\\windows", tarfile.REGTYPE, 0o644, "platform-dependent"),
+        ("package/link", tarfile.SYMTYPE, 0o644, "links are not permitted"),
+        ("package/hardlink", tarfile.LNKTYPE, 0o644, "links are not permitted"),
+        ("package/world-writable", tarfile.REGTYPE, 0o666, "unsafe permissions"),
+        ("package/directory", tarfile.DIRTYPE, 0o755, "unsupported member type"),
+    ],
+)
+def test_archive_reader_rejects_unsafe_members(
+    tmp_path: Path, name: str, member_type: bytes, mode: int, message: str
+) -> None:
+    archive = tmp_path / "unsafe.tgz"
+    _write_archive(archive, [(name, b"x", member_type, mode), *_minimal_members()])
+    with pytest.raises(ValueError, match=message):
+        builder._read_archive(archive)
+
+
+def test_archive_reader_rejects_duplicates_and_case_collisions(tmp_path: Path) -> None:
+    duplicate = tmp_path / "duplicate.tgz"
+    _write_archive(duplicate, [*_minimal_members(), _minimal_members()[0]])
+    with pytest.raises(ValueError, match="duplicate member"):
+        builder._read_archive(duplicate)
+
+    collision = tmp_path / "collision.tgz"
+    _write_archive(
+        collision,
+        [*_minimal_members(), ("package/Package.json", b"{}", tarfile.REGTYPE, 0o644)],
+    )
+    with pytest.raises(ValueError, match="case-colliding"):
+        builder._read_archive(collision)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"mtime": 1}, "gzip timestamp|canonical tar metadata"),
+        ({"uid": 1}, "canonical tar metadata"),
+        ({"gid": 1}, "canonical tar metadata"),
+        ({"gzip_filename": "platform.tgz"}, "gzip header flags"),
+    ],
+)
+def test_canonical_verifier_rejects_metadata_drift(
+    tmp_path: Path, kwargs: dict[str, int | str], message: str
+) -> None:
+    archive = tmp_path / "metadata-drift.tgz"
+    _write_archive(archive, _minimal_members(), **kwargs)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=message):
+        verifier._tree(archive, require_canonical=True)
+
+
+def test_canonical_verifier_rejects_unstable_order_and_unexpected_files(tmp_path: Path) -> None:
+    unstable = tmp_path / "unstable.tgz"
+    _write_archive(unstable, _minimal_members())
+    with pytest.raises(ValueError, match="ordering"):
+        verifier._tree(unstable, require_canonical=True)
+
+    manifest = verifier._load_manifest()
+    base = ROOT / "runtime/openclaw/repack/dist" / manifest["base"]["filename"]
+    entries = builder._patch_entries(builder._read_archive(base), manifest)
+    entries["package/unexpected.txt"] = (b"unexpected", 0o644)
+    unexpected = tmp_path / "unexpected.tgz"
+    builder._write_canonical_archive(entries, unexpected)
+    with pytest.raises(ValueError, match="inventory differs"):
+        verifier._verify_repack_delta(base, unexpected, manifest)
+
+
+def test_manifest_rejects_every_unreviewed_binding_or_metadata_field(tmp_path: Path) -> None:
+    def add_unexpected(value: dict[str, Any]) -> None:
+        value["unexpected"] = True
+
+    mutations: tuple[Callable[[dict[str, Any]], None], ...] = (
+        lambda value: value["replacements"][0].update(path="node_modules/not-reviewed"),
+        lambda value: value["replacements"][0].update(required_by_path="node_modules/other"),
+        lambda value: value["replacements"][0].update(required_range="^5.0.6"),
+        lambda value: value["replacements"][0]["source"].update(version="5.0.7"),
+        lambda value: value["replacements"][0]["replacement"].update(version="5.0.10"),
+        lambda value: value["replacements"][0]["replacement"].update(
+            url="https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.10.tgz"
+        ),
+        lambda value: value["replacements"][0]["replacement"].update(integrity="sha512-AA=="),
+        lambda value: value["replacements"][0]["replacement"].update(sha256="sha256:" + "0" * 64),
+        lambda value: add_unexpected(value["replacements"][0]),
+        lambda value: value["allowed_file_mutations"].append("package/unexpected.txt"),
+    )
+    for index, mutate in enumerate(mutations):
+        manifest = copy.deepcopy(_manifest())
+        mutate(manifest)
+        candidate = tmp_path / f"unreviewed-{index}.json"
+        candidate.write_text(json.dumps(manifest), encoding="utf-8")
+        with pytest.raises(ValueError, match=r"violates schema|reviewed|allowed file mutation"):
+            verifier._load_manifest(candidate)

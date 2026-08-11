@@ -1,9 +1,10 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-08-03 (Asia/Ho_Chi_Minh)
-**Active work item:** none; `OPENCLAW-REPACK-001` is `BLOCKED`
+**Last reconciled:** 2026-08-10 (Asia/Ho_Chi_Minh)
+**Active work item:** none; `RESPONSES-RUNTIME-001` is the next safe local candidate and
+`OPENCLAW-REPACK-001` remains `BLOCKED`
 **Active branch:** `fix/openclaw-immutable-repack` from `36909e7`
-**Code stage:** `PRODUCTION_HARDENING` blocked on hosted exact-commit evidence
+**Code stage:** `PRODUCTION_HARDENING`; Phase B1 workflow preparation verified, Phase B2 not authorized
 **Production authorization:** `NOT_AUTHORIZED` for every capability
 
 This brief is the human-readable entry point for an engineer or coding agent resuming implementation.
@@ -23,7 +24,75 @@ PostgreSQL state remain authoritative in the order defined by `context/CONTINUAT
 `continue execute` authorizes only safe repository engineering. It does not authorize a provider call,
 real-customer data, public ingress, public automation, a credential, a deployment, or a release gate.
 
-## Blocked engineering handoff: OPENCLAW-REPACK-001
+## Approved architecture direction — not queue or release authorization
+
+ADR-0003 makes `ConstrainedAgentRuntime` the stable public-agent boundary and selects a bounded custom
+OpenAI Responses adapter as the preferred production target. The current OpenClaw work remains
+immutable `EVAL_ONLY` comparison/rollback evidence; it is not silently complete and must not be deleted
+until custom-runtime parity, provider-data, security and rollback gates pass. Channel adapters and the
+Staff PWA remain independent of either runtime. Telegram Bot API is an engineering-sandbox candidate;
+official Zalo OA is a later provider candidate; DEC-005 remains open and Zalo Personal is prohibited.
+The daily operations dashboard uses versioned deterministic read models, while AI may provide only a
+grounded read-only explanation. This direction creates no provider call, credential, public ingress,
+send, deployment or capability authority and does not replace the current machine-readable queue.
+
+The machine plan now separates three work items: `RESPONSES-RUNTIME-001` builds the minimum adapter
+with scripted transport and can proceed without external authority; `RUNTIME-PARITY-001` waits for the
+custom candidate, comparator and DEC-006/provider evidence; `OPENCLAW-RETIRE-001` is the only item that
+may later remove the public dependency. This separation preserves the immutable blocked history of
+`AGENT-001` and `OPENCLAW-REPACK-001` while allowing independent local progress.
+
+## Current blocked engineering handoff: OPENCLAW-REPACK-001 Phase B1
+
+The local workflow now has the fail-closed dependency graph
+`openclaw-repackage-windows + openclaw-repackage-linux -> openclaw-cross-platform-compare ->
+supply-chain`. Both clean hosted build jobs pin Python `3.12.13`, uv `0.11.32`, Node `24.18.0`, the
+npm lockfile, manifest v2, and the exact source/replacement materials. They emit independently named
+r2 artifacts and schema-valid platform results bound to the same Git commit and full runner identity.
+
+The comparison job downloads both artifacts, validates commit/runner/manifest/source/artifact metadata,
+compares the tarballs byte-for-byte, and publishes only the compared r2 plus its typed comparison
+record. The Linux supply-chain job depends on this comparison, verifies the downloaded record, uses
+`cmp` against the committed r2, then copies those exact compared bytes into the Docker build context.
+Final evidence hash-binds the comparison, sanitized runtime/OpenClaw audit, OCI provenance, normalized
+zero-HIGH/CRITICAL scan, and CycloneDX SBOM. Every workflow/job permission remains `contents: read`.
+
+Local Phase B1 verification passed `23` focused workflow/contract tests, `30` runtime/evidence tests,
+`9` plugin/undici tests, and `543` guarded PostgreSQL tests with no final failures or skips. The r2
+artifact remains byte-identical at SHA-256
+`0c4d5d0dcdccde0290932c9baf17c1e371a12d46660ebba32dfa3b878124edab`; the complete npm audit remains
+zero critical/high with seven visible moderate findings. Ruff, format, mypy, contracts, context drift,
+runtime verification, delivery projection, and diff validation passed.
+
+Phase B2 remains blocked pending independent Security/Supply-chain review, authorization to create the
+exact commit and push the dedicated branch, authorization to run the reviewed hosted workflow, hosted
+Windows/Linux byte identity, and exact r2 OCI SBOM, SLSA provenance, and zero-HIGH/CRITICAL scan
+evidence. Phase B1 granted no commit, push, remote run, credential, provider/customer data, release,
+deployment, or capability authority.
+
+## Phase A r2 engineering record
+
+The dirty working tree contains the local-only `DERIVED`/`EVAL_ONLY` r2 expansion authorized on
+2026-08-06. It starts from immutable disabled r1 and replaces exactly `brace-expansion 5.0.8 ->
+5.0.9`, `fast-uri 3.1.4 -> 3.1.5`, `ip-address 10.2.0 -> 10.3.1`, and `undici 8.5.0 -> 8.9.0`.
+The undici change permits only its exact `package/package.json` dependency value and corresponding
+allowlisted shrinkwrap records.
+
+Two independent canonical builds of
+`runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r2.tgz` were byte-identical: SHA-256
+`0c4d5d0dcdccde0290932c9baf17c1e371a12d46660ebba32dfa3b878124edab`, npm integrity
+`sha512-yFjlTDU5sv+4lPR7kIM+iIsMAqkkfY2Jd07+f0wubCPK6nFl3vYFHcELtln+q3/9x1flCLtxp3G7ukAFougSgA==`,
+size `19,535,080` bytes. Independent verification passed, the complete installed npm tree reported
+zero critical/high findings (seven moderate), focused tests passed `30/30`, plugin tests passed `9/9`,
+and the guarded PostgreSQL suite passed `535/535` with no skips. Ruff, format, mypy, contracts,
+context drift, migrations, runtime verification, and capability-status reporting also passed.
+
+Completion remains blocked on separately authorized hosted Windows/Linux reproducibility, exact r2
+image SBOM, SLSA provenance, and zero-HIGH/CRITICAL scan evidence plus independent Security and
+Supply-chain review. Do not push, open a pull request, trigger a hosted workflow, release, deploy, use
+provider/customer data, or authorize any capability under the Phase A record.
+
+## Historical r1 engineering handoff — superseded by r2
 
 The current branch contains a **dirty, uncommitted implementation that passes every local acceptance
 gate**. Preserve it; do not restart the work item, discard its files, mark it complete, or substitute
@@ -95,10 +164,12 @@ selects no independent ready item. Obtain a fresh generation before any later un
 ## Architecture that must remain true
 
 ```text
-untrusted language
-      |
-      v
-Public OpenClaw (reasoning/draft only; EVAL_ONLY)
+untrusted language -> authenticated adapter -> durable inbox
+                                            |
+                                            v
+                         ConstrainedAgentRuntime (reasoning/draft only)
+                           custom Responses target
+                           OpenClaw EVAL_ONLY comparator
       |
       v
 typed Tool Facade -> deterministic domain + policy -> approval
@@ -186,32 +257,35 @@ evidence. Current branch verification must be rerun before relying on these base
 Work in this order unless a higher-authority contract changes it. After each slice, update its task
 packet, this brief, the relevant machine status, and tests.
 
-1. **Resolve the external blocker for `OPENCLAW-REPACK-001`.** Follow the exact sequence in the blocked
-   handoff above. Do not advance it with stale hash pins, an unrun workflow, skipped PostgreSQL
-   integration, or a high/critical result. This correction remains EVAL_ONLY and is not a launch or
-   capability gate.
+1. **`RESPONSES-RUNTIME-001` — safe local implementation.** Let `run_delivery_loop.py` select/start it
+   with a fresh generation. Implement only the bounded state machine in its task packet with scripted
+   provider transport and negative/failure tests. It must not call a provider, use a credential, alter
+   a release gate or rewrite existing OpenClaw evidence.
 
-2. **Reconcile the original runtime-security blocker.** After the repack item has valid engineering
-   evidence, create or use the controller-selected corrective path for `RUNTIME-SECURITY-001`; never
-   silently rewrite its immutable blocked history. Confirm the complete installed tree and exact image
-   remain free of high/critical findings at the evidence commit.
+2. **OpenClaw evidence track remains independently blocked.** Resolve `OPENCLAW-REPACK-001` only through
+   the exact authorized sequence in its blocked handoff. Do not advance it with stale pins, an unrun
+   workflow, skipped PostgreSQL integration or a high/critical result. Afterwards reconcile
+   `RUNTIME-SECURITY-001` through a controller-selected path without rewriting immutable history.
 
-3. **Integrated runtime evaluation.** The provider-independent fixture/assertion backlog is complete.
-   After the external prerequisites are resolved, run a separately
-   controlled non-production integration harness for PRIMARY, fallback, and deterministic-degraded
-   paths. It must pin the runtime/model/prompt/tool/config artifacts, validate result schema, and retain
-   only permitted hash-safe evidence. No synthetic result may be relabeled as PRIMARY or release-ready.
+3. **`RUNTIME-PARITY-001` — integrated same-envelope selection.** After both candidate dependencies and
+   external prerequisites exist, compare the exact same model/prompt/context/tools/budgets/datasets and
+   safety denominator. Retain only permitted hash-safe evidence; no synthetic result may be relabeled
+   as PRIMARY/provider-backed or release-ready.
 
-4. **External/provider prerequisites — blocked, not improvable by code alone.**
+4. **External/provider prerequisites — still blocked, not improvable by code alone.**
    - `DEC-006`: obtain Security/Privacy decisions for training, retention, region, deletion,
      subprocessors, incident terms, and dedicated credential use.
-   - Prove a supported OpenClaw Responses `store:false` route with a non-production dedicated API
-     credential, then capture/assert the effective request without PII or secrets.
+   - Capture/assert the effective `store:false` request for each compared runtime route using a
+     non-production dedicated API credential and no PII/secrets.
    - Pin an immutable model release ID. Moving aliases remain EVAL_ONLY.
-   - Supply an immutable sandbox image digest with schema-valid vulnerability scan evidence and a
-     hash-pinned SBOM; the checked-in placeholder cannot be used for release.
+   - Supply immutable candidate deployment inventories/image digests with schema-valid scan/SBOM
+     evidence; checked-in placeholders cannot be used for release.
 
-5. **`SECURITY-001` only after both tracks are complete.** It depends on declared `AGENT-001`
+5. **`OPENCLAW-RETIRE-001` only after accepted parity.** Remove OpenClaw from public routing/deployment
+   first, rehearse rollback, then remove mutable build inputs while retaining immutable evidence and
+   Private Owner OpenClaw. Do not combine cleanup with launch or capability authorization.
+
+6. **`SECURITY-001` only after both tracks are complete.** It depends on declared `AGENT-001`
    acceptance plus observability, policy, and supply-chain hardening. It requires real security, OIDC,
    PITR/restore, incident, and kill-switch drills and is not authorized by passing unit tests.
    `SHADOW-001`, `CHANNEL-001`, and customer-facing automation remain downstream.

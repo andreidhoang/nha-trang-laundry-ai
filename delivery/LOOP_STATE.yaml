@@ -1,16 +1,8 @@
 schema_version: 1
-last_updated: '2026-08-06T14:09:14.090331+00:00'
+last_updated: '2026-08-11T07:16:54.759566+00:00'
 current_work_item: null
-last_result: BLOCKED
-blocker: Hosted GitHub run 31107366888 for exact commit 178e64b2901c5b5bdf2b92385036a238bed6ff12
-  failed immutable repackage verification because Linux npm pack bytes differ from
-  the Windows-pinned manifest. A canonical cross-platform tar construction was locally
-  proven, but the current registry audit now also reports four high advisories. Registry-published
-  compatible fixes exist for brace-expansion, fast-uri, and ip-address; however OpenClaw
-  pins undici exactly to 8.5.0 while the fixed release starts at 8.9.0, and latest
-  stable OpenClaw remains 2026.7.1-2. Completion requires a reviewed stable upstream
-  OpenClaw release or explicit reviewed expansion permitting its exact dependency/package
-  metadata to change; no high finding can be waived.
+last_result: COMPLETE
+blocker: null
 evidence_records:
 - work_item: IDENTITY-001
   path: evidence/delivery-loop/IDENTITY-001.yaml
@@ -78,6 +70,9 @@ evidence_records:
 - work_item: SUPPLYCHAIN-CI-PORTABILITY-001
   path: evidence/delivery-loop/SUPPLYCHAIN-CI-PORTABILITY-001.yaml
   recorded_at: '2026-08-03T05:49:28.428956+00:00'
+- work_item: RESPONSES-RUNTIME-001
+  path: evidence/delivery-loop/RESPONSES-RUNTIME-001.yaml
+  recorded_at: '2026-08-11T07:16:54.759566+00:00'
 blocked_records:
 - work_item: AGENT-001
   reason: Local fixture/assertion registry is complete and 289 tests pass, but PRIMARY/fallback
@@ -118,8 +113,43 @@ blocked_records:
     stable upstream OpenClaw release or explicit reviewed expansion permitting its
     exact dependency/package metadata to change; no high finding can be waived.
   recorded_at: '2026-08-06T14:09:14.090331+00:00'
+- work_item: OPENCLAW-REPACK-001
+  reason: Phase A local-only DERIVED EVAL_ONLY r2 engineering passed all declared
+    local checks with no required skips, zero npm critical/high findings, byte-identical
+    canonical builds, and all customer/provider/send capabilities disabled. Completion
+    remains unauthorized and blocked pending independent Security/Supply-chain review
+    plus separately authorized hosted Windows/Linux reproducibility and exact r2 image
+    SBOM, SLSA provenance, and zero-HIGH/CRITICAL scan evidence; no remote workflow
+    or release action was performed.
+  recorded_at: '2026-08-06T16:37:21.667276+00:00'
+- work_item: OPENCLAW-REPACK-001
+  reason: Phase B1 local-only least-privilege Windows/Linux r2 build, typed metadata,
+    byte-comparison, compared-byte OCI binding, and final evidence workflow preparation
+    passed all local checks with no required skips. Completion remains blocked pending
+    independent Security/Supply-chain review; authorization to create the exact commit
+    and push the dedicated branch; authorization to run the reviewed hosted workflow;
+    hosted Windows/Linux byte-identity evidence; and exact r2 OCI CycloneDX SBOM,
+    SLSA v1 provenance, and zero-HIGH/CRITICAL scan evidence. No commit, push, hosted
+    run, credential, provider/customer data, release, deployment, or capability authorization
+    occurred.
+  recorded_at: '2026-08-09T04:06:22.430801+00:00'
 unblocked_records:
 - work_item: OPENCLAW-REPACK-001
   reason: The exact-commit hosted GitHub workflow was authorized and executed; reevaluating
     the prior missing-hosted-run blocker against run 31107366888.
   recorded_at: '2026-08-06T14:08:54.137504+00:00'
+- work_item: OPENCLAW-REPACK-001
+  reason: Platform/Runtime owner authorized Phase A local-only EVAL_ONLY expansion
+    for exactly brace-expansion 5.0.9, fast-uri 3.1.5, ip-address 10.3.1, and undici
+    8.9.0 plus deterministic canonical r2 packaging; Security/Supply-chain review,
+    hosted evidence, release, remote actions, provider use, customer data, and capabilities
+    remain unauthorized.
+  recorded_at: '2026-08-06T15:03:47.024436+00:00'
+- work_item: OPENCLAW-REPACK-001
+  reason: Platform/Runtime owner authorized Phase B1 local-only preparation and static
+    verification of a least-privilege hosted Windows/Linux r2 reproducibility, comparison,
+    OCI binding, and supply-chain evidence workflow. No commit, push, hosted run,
+    credential, provider/customer data, release, deployment, or capability authorization
+    is granted; independent Security/Supply-chain review and Phase B2 hosted evidence
+    remain required.
+  recorded_at: '2026-08-09T03:30:51.765347+00:00'

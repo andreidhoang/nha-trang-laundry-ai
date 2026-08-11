@@ -1,15 +1,21 @@
 # EVAL_ONLY OpenClaw repackage
 
-This directory binds OpenClaw `2026.7.1-2` to its reviewed upstream npm tarball and changes only the
-two vulnerable records in the upstream shrinkwrap:
+This directory binds OpenClaw `2026.7.1-2` to its reviewed upstream npm tarball. The current derived
+revision, `r2`, starts from the immutable disabled `r1` artifact and permits exactly four reviewed
+replacements:
 
-- `brace-expansion` `5.0.7` to `5.0.8`, satisfying `minimatch`'s `^5.0.5` range;
-- `fast-uri` `3.1.2` to `3.1.4`, satisfying `ajv`'s `^3.0.1` range.
+- `brace-expansion` `5.0.8` to `5.0.9`, satisfying `minimatch`'s `^5.0.5` range;
+- `fast-uri` `3.1.4` to `3.1.5`, satisfying `ajv`'s `^3.0.1` range;
+- `ip-address` `10.2.0` to `10.3.1`, satisfying `express-rate-limit`'s `^10.2.0` range;
+- `undici` `8.5.0` to `8.9.0`, with the exact reviewed `package/package.json` dependency mutation.
 
-`manifest-v1.json` pins every source and output by registry integrity, SHA-256, and byte size. The
-build command performs two independent builds and requires byte-identical output. The independent
-verifier downloads the exact pinned materials again, validates package metadata, proves that only the
-approved shrinkwrap fields changed, and checks the installed plugin lock binding.
+`manifest-v2.json` pins the upstream, r1 base, every source and replacement package, and r2 output by
+name, path, version, registry URL, integrity, SHA-256, byte size, required-by path/range, and expected
+package metadata. The builder emits a canonical tar/gzip stream with normalized ordering, UTF-8 POSIX
+paths, timestamps, ownership, permissions, tar headers, and gzip metadata. It performs two independent
+builds and requires byte-identical output. The independent verifier reconstructs and compares the
+archive, validates the complete tree, and rejects every mutation outside `package/package.json` and
+the explicitly allowlisted shrinkwrap records.
 
 The Linux image is synthetic-evaluation infrastructure only. Its final stage pins the fixed Alpine
 OpenSSL libraries and removes the base image's unused global npm tree; OpenClaw runs directly through
@@ -18,5 +24,6 @@ provenance, create a digest-bound CycloneDX SBOM, and fail on any critical or hi
 or hosted engineering evidence authorizes customer data, provider calls, public ingress, automatic
 sends, direct sends, or any capability.
 
-Rollback restores the preceding disabled upstream `openclaw@2026.7.1-2` package and placeholder image
-pin. It changes no database, customer, credential, provider, DNS, channel, or deployed state.
+Rollback restores the preceding disabled derived `r1` artifact (or its pinned upstream source) and
+placeholder image pin. It changes no database, customer, credential, provider, DNS, channel, or
+deployed state.

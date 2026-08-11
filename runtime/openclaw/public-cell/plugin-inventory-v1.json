@@ -4,16 +4,17 @@
   "plugin_id": "nha-trang-laundry-tools",
   "plugin_version": "0.1.0",
   "openclaw_version": "2026.7.1-2",
+  "openclaw_distribution": "DERIVED_REPACKAGED_EVAL_ONLY",
   "openclaw_upstream_npm_integrity": "sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==",
-  "openclaw_npm_integrity": "sha512-8Mx+tv9tYy53lIhvZM9aMGF8OATg/kovktAJkkWlYFnZAJ5DClmXsflBl3moPZjMMiNAfbXdnQColWuasg+Rlw==",
+  "openclaw_npm_integrity": "sha512-yFjlTDU5sv+4lPR7kIM+iIsMAqkkfY2Jd07+f0wubCPK6nFl3vYFHcELtln+q3/9x1flCLtxp3G7ukAFougSgA==",
   "artifacts": {
     "repackage_manifest": {
-      "path": "runtime/openclaw/repack/manifest-v1.json",
-      "sha256": "sha256:421986c177315e026bfb0344ed7826d3a437c5276c5c605d1f76fdc792fb3ae0"
+      "path": "runtime/openclaw/repack/manifest-v2.json",
+      "sha256": "sha256:62daffa414f01aef7f7ded93276237b01d866c42f8e318f697c037360e244039"
     },
     "repackage_tarball": {
-      "path": "runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r1.tgz",
-      "sha256": "sha256:8478f9110425449a7162a8fefd0ca866594e91a584dc681f9a382b8cd0454dcc"
+      "path": "runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r2.tgz",
+      "sha256": "sha256:0c4d5d0dcdccde0290932c9baf17c1e371a12d46660ebba32dfa3b878124edab"
     },
     "plugin_manifest": {
       "path": "runtime/openclaw/public-cell/plugin/openclaw.plugin.json",
@@ -21,7 +22,7 @@
     },
     "package_lock": {
       "path": "runtime/openclaw/public-cell/plugin/package-lock.json",
-      "sha256": "sha256:f34095c238794373c81a1ba12cb59297fd1ffbb1395095786b943df0cbdb4e46"
+      "sha256": "sha256:faa1be7a78fd10bc4e23e6812c1e8b27ac15a9a6436a159b3944efde9feda577"
     },
     "generated_operation_contracts": {
       "path": "runtime/openclaw/public-cell/plugin/src/operation-contracts.ts",
@@ -37,7 +38,7 @@
     },
     "package_tarball": {
       "path": "releases/candidates/openclaw-nha-trang-laundry-tools-0.1.0.tgz",
-      "sha256": "sha256:617dcbdede123cb76cb845fb1cdb823fdf9375f6e629320347461d76c0306eb1"
+      "sha256": "sha256:ef0c5212e137f5b5229a45b7bf5ab7188146b1fa99983c70f892e086d1c81109"
     }
   },
   "tool_names": [

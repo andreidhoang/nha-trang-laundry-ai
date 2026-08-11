@@ -1,7 +1,7 @@
 # Implementation Roadmap v1
 
-**Version:** 1.1-runtime-and-delivery-alignment  
-**Date:** 2026-07-27  
+**Version:** 1.2-first-principles-runtime-transition
+**Date:** 2026-08-10
 **Goal:** Production-quality Shadow Mode MVP, then evidence-gated autonomy
 
 ## 0. Authorization boundary
@@ -21,7 +21,19 @@ Zalo rules are explicit:
 - no Zalo channel is connected during internal Shadow Mode;
 - an official Zalo OA path may be considered only in M7 after connector, webhook, consent, public-policy and separate-VM gates pass.
 
+Telegram Bot API may be used as the first provider sandbox for adapter engineering, but no Telegram
+public ingress or send is authorized before DEC-005 and the same cumulative public-channel gates.
+
 ## 1. Build-vs-buy preflight
+
+### 1.0 Runtime decision function
+
+The public runtime is selected only after filtering candidates through all authority, isolation, data
+and release invariants. For valid candidates, minimize total lifecycle risk and cost rather than
+maximize framework features. The current one-agent, ten-tool, three-model-call/six-tool-call workload
+makes a bounded Responses adapter the preferred target; OpenClaw remains the comparison/rollback
+candidate. This is falsifiable through parity evidence and must be revisited if browser/host tools,
+dynamic plugins, broad channel orchestration or multi-agent workflows become real requirements.
 
 ## 1.1 Laundry-specific repositories
 
@@ -51,7 +63,8 @@ Reasons:
 | Chatwoot | multi-channel human inbox | valuable later when channel handoff becomes painful |
 | Activepieces | integration automation | not safe authority for core order/financial transitions |
 | Google Sheets/Forms | fast manual pilot | insufficient concurrency, RBAC, audit and invariants for production SoT |
-| OpenClaw | agent runtime/orchestration | not CRM, transaction engine or approval ledger |
+| Custom Responses adapter | narrow public agent loop | preferred target; not business authority or sender |
+| OpenClaw | current EVAL_ONLY comparison/rollback runtime | not a mandatory production dependency |
 
 ## 1.3 Decision
 
@@ -66,7 +79,8 @@ Reuse mature components:
 
 - PostgreSQL;
 - standard auth/OIDC component;
-- OpenClaw;
+- official OpenAI Responses API/SDK behind the project runtime contract;
+- OpenClaw only as a temporary `EVAL_ONLY` parity/rollback comparator;
 - OpenTelemetry;
 - maintained PostgreSQL job library;
 - official channel APIs;
@@ -80,7 +94,8 @@ Do not build:
 - generic omnichannel inbox;
 - workflow engine;
 - vector database;
-- custom model runtime.
+- generic agent framework, generic workflow engine or multi-agent runtime. The project does build the
+  small bounded adapter required by `ConstrainedAgentRuntime`.
 
 ## 2. Recommended technical stack
 
@@ -125,27 +140,33 @@ Final versions are pinned in lockfiles at implementation kickoff.
 - Docker Compose for local/staging and initial single-host control plane.
 - Linux production host.
 - Caddy or equivalent reverse proxy.
-- Separate public OpenClaw VM/VPS security cell is mandatory before any public channel; a same-host profile/OS user is development-only isolation.
-- Public OpenClaw is the selected customer-agent runtime from the Shadow-agent integration phase
-  onward; Python remains the business/security authority and PostgreSQL remains the source of truth.
+- Separate public agent-runtime VM/VPS security cell is mandatory before any public channel; a same-host
+  profile/OS user is development-only isolation.
+- `ConstrainedAgentRuntime` is the stable boundary. Custom Responses is the preferred production target;
+  OpenClaw remains the current `EVAL_ONLY` comparison/rollback candidate until parity and retirement
+  evidence pass. Python remains the business/security authority and PostgreSQL remains the source of truth.
 - Stable phase names and dependencies are machine-readable in `../delivery/PROGRAM_PLAN.yaml`; legacy
   M-number headings in this roadmap remain explanatory, not work-item identity.
 
-### OpenClaw implementation baseline
+### Runtime transition baseline
 
-- Audited local installation: **OpenClaw 2026.7.1-2**.
+- Existing comparator: audited/repackaged **OpenClaw 2026.7.1-2**, still `EVAL_ONLY`.
 - OpenClaw supports isolated named Gateway profiles/state/workspaces, but public production traffic still requires a stronger separate VM/OS security cell.
 - Bundled Zalo Bot support is experimental and is not the same product surface as Zalo OA.
 - Zalo Personal support is unofficial and carries suspension/ban risk; it is excluded from production.
 - Tool policy, sandbox and elevated mode are separate controls; the public cell must deny the capability at every applicable layer.
-- Model, prompt, plugin and OpenClaw upgrades are versioned releases with regression/security review.
-- Pin an explicit OpenClaw agent runtime route. Do not release a customer cell with runtime `auto`, a
+- Model, prompt, runtime package/plugin and adapter upgrades are versioned releases with regression/security review.
+- Pin an explicit runtime implementation and provider route. Do not release a customer cell with runtime `auto`, a
   moving model alias or an interactive owner credential.
 - Initial public eval candidate: `openai/gpt-5.6-terra` at low reasoning effort. Record and evaluate an
   exact model release before deployment; `openai/gpt-5.6-sol` is a quality-first comparison/escalation
   candidate and receives no additional permissions.
 - Before real PII, verify the effective provider request and storage/retention behavior end to end. A
   route that cannot enforce the approved provider-data policy remains disabled.
+- Custom Responses implementation uses strict functions generated from the agent-tool OpenAPI, disables
+  built-in provider tools and parallel public tool calls, and routes every call through the existing
+  server-bound bridge. OpenClaw removal occurs only after equivalent P0, timeout, budget, isolation,
+  provider-data and rollback evidence exists.
 
 ### Testing
 
@@ -362,7 +383,8 @@ Deliver critical screens:
 11. incident;
 12. machine/batch/cycle and staff-minute capture;
 13. delivery-cost/cost-event capture;
-14. pilot dashboards/export.
+14. daily operations dashboard/export: unified inbox, approvals, orders, exceptions, SLA risk,
+    deterministic revenue/operations metrics, channel/queue health, AI quality and audit freshness.
 
 Exit:
 
@@ -381,7 +403,10 @@ Exit:
 Deliver:
 
 - isolated agent dev profile;
-- explicit Public OpenClaw runtime and provider route;
+- explicit `ConstrainedAgentRuntime` implementation and provider route;
+- bounded custom Responses tool loop with strict OpenAPI-derived functions, explicit non-storage,
+  no provider built-in tools and no parallel public tool execution;
+- OpenClaw comparator retained only for parity/rollback evidence;
 - provider storage/retention request verification;
 - future customer Concierge prompt evaluated internally only;
 - tool facade;
@@ -392,7 +417,8 @@ Deliver:
 - no-send policy;
 - model/tool trace;
 - frozen eval dataset and graders;
-- eval manifest containing dataset hashes, prompt/model/OpenClaw/tool versions, policy/contract hashes, thresholds and results.
+- deterministic context compiler with packet schema/version/hash, fact provenance and exclusion tests;
+- eval manifest containing dataset hashes, prompt/model/runtime/tool versions, policy/contract hashes, thresholds and results.
 
 Exit:
 
@@ -401,6 +427,28 @@ Exit:
 - no direct send tool;
 - offline eval thresholds pass;
 - eval manifest is reproducible from the release commit and blocks release on missing/mismatched hashes.
+- custom runtime matches or improves the retained comparator on every P0/safety threshold before
+  OpenClaw retirement; retirement is reversible and preserves historical evidence.
+
+Execution slices and dependency order:
+
+1. **`RESPONSES-RUNTIME-001` — local bounded implementation.** Preserve the existing protocol/bridge and
+   implement validate → reserve → request → serial tool → validate draft/handoff → revoke/settle.
+   Use an injectable scripted transport; add all negative, timeout, cancellation, ambiguity and budget
+   tests. No provider credential, public channel or release authority is part of this slice.
+2. **`RUNTIME-PARITY-001` — evidence-backed selection.** Run custom and retained OpenClaw candidates
+   against identical pinned model/prompt/context/tools/budgets/datasets/graders. Record P0, quality,
+   handoff, tool correctness, latency/cost, failure recovery, effective provider request, deployed
+   inventories and rollback rehearsal. Synthetic and provider-backed evidence stay separate.
+3. **`OPENCLAW-RETIRE-001` — reversible cleanup.** Only after parity, DEC-006, security, provider-data
+   and signed release gates pass: remove OpenClaw from public routing/deployment dependencies, rehearse
+   rollback, then remove mutable runtime/build inputs. Preserve immutable manifests, hashes, evals,
+   audit and rollback documentation. Private Owner OpenClaw is out of scope.
+
+The custom candidate loses selection if any zero-tolerance gate fails, a critical regression exists,
+registered latency/cost budgets fail, provider-data behavior is unapproved, or deployed operational
+surface is not actually simpler. In that case OpenClaw remains `EVAL_ONLY` while the candidate is fixed
+or a new ADR changes direction.
 
 ## M5A — Identity, application security and privacy
 
@@ -514,7 +562,7 @@ Deliver:
 - channel dedupe/receipts;
 - safe intent auto-send flags;
 - consent/suppression;
-- mandatory separate public OpenClaw VM/VPS security cell;
+- mandatory separate public agent-runtime VM/VPS security cell;
 - MFA enforced for every role that can access PII, approve, export, publish policy or handle finance;
 - approved `PUBLIC_CUSTOMER` policy/knowledge bundle with version, audience, effective period and hash;
 - public-policy correction workflow: disable bad version, invalidate pending actions, identify affected messages/orders, approve correction text, notify affected customers when required and preserve audit;
@@ -523,8 +571,12 @@ Deliver:
 Rules:
 
 - Zalo Personal automation remains prohibited.
+- Telegram Bot API is the preferred adapter sandbox candidate, not an implicit production choice;
+  its secret-header, update dedupe, sender receipt, rate-limit and unknown-outcome tests must pass.
 - No public Zalo automation is authorized merely by completing the adapter.
 - Official Zalo OA may be enabled only after its connector/webhook/security review, public-policy publication gate, consent test, separate-VM gate and explicit owner approval pass.
+- All providers normalize to one canonical inbound envelope and share domain behavior, while keeping
+  provider-specific credentials, webhook verification, rate limits, receipts and reconciliation.
 
 ## M8 — Bounded autonomy
 
@@ -680,6 +732,11 @@ Special, B2B, refund, credit, compensation and >6km remain human.
 - `E11-T07` model budgets;
 - `E11-T08` fallback/handoff;
 - `E11-T09` eval manifest generation and verification.
+- `E11-T10` custom Responses runtime adapter and bounded tool loop;
+- `E11-T11` runtime parity, provider-data capture and OpenClaw retirement gate;
+- `E11-T12` context packet schema/version/hash and provenance tests.
+- `E11-T13` custom-runtime timeout/cancel/late-call/provider-ambiguity negative suite;
+- `E11-T14` signed runtime-selection evidence and reversible OpenClaw public-path retirement.
 
 ## Epic E12 — Evals and contract gates
 
@@ -713,6 +770,18 @@ Special, B2B, refund, credit, compensation and >6km remain human.
 - `E14-T06` container scan/SBOM;
 - `E14-T07` signed/hashed release manifest;
 - `E14-T08` public-policy publish/correction/affected-customer workflow.
+
+## Epic E15 — Official channels and daily operations intelligence
+
+- `E15-T01` canonical inbound envelope and provider-adapter contract;
+- `E15-T02` Telegram Bot API sandbox adapter, webhook authentication and dedupe;
+- `E15-T03` Telegram outbox sender, receipts and unknown-outcome reconciliation;
+- `E15-T04` official Zalo OA adapter contract and credential lifecycle;
+- `E15-T05` Zalo OA sender, receipts and reconciliation;
+- `E15-T06` unified Staff PWA inbox, channel health and exception recovery;
+- `E15-T07` versioned daily metrics/read models with numerator, denominator and freshness;
+- `E15-T08` read-only AI operations brief grounded only in typed metric facts;
+- `E15-T09` dashboard RBAC/IDOR, AI-grounding and no-action-authority tests.
 
 ## 7. CI pipeline
 
@@ -820,6 +889,9 @@ Mobile-first requirements:
 - human-required fields grouped;
 - offline/network failure clearly shown;
 - every commit action confirms result once.
+- channel identity and provider delivery state are visible without exposing provider credentials;
+- every AI-generated operations summary links to metric IDs/versions and freshness timestamps;
+- dashboard AI cannot issue SQL, choose arbitrary object IDs, mutate state or send.
 
 Critical warning colors/labels:
 

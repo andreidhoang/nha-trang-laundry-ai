@@ -1,8 +1,8 @@
 # Agent System & Evaluation Specification v1
 
-**Version:** 1.2-runtime-decision  
-**Date:** 2026-07-27  
-**Runtime:** OpenClaw public/private cells + deterministic Business Control Plane
+**Version:** 1.4-bounded-responses-runtime
+**Date:** 2026-08-10
+**Runtime:** replaceable public `ConstrainedAgentRuntime` + deterministic Business Control Plane
 
 ## 1. Core design
 
@@ -27,8 +27,8 @@ Các “agent roles” phía dưới là logical roles/use cases. Chúng có th�
 Runtime invariant:
 
 - channel adapter persists the normalized event before any agent invocation;
-- `agent-runner` reads a claimed inbox item, invokes Public OpenClaw and captures only a draft/tool result;
-- Public OpenClaw has no channel-provider credential and cannot call the provider;
+- `agent-runner` reads a claimed inbox item, invokes the selected public runtime and captures only a draft/tool result;
+- the public runtime has no channel-provider credential and cannot call the channel provider;
 - only the outbox worker may send an approved or policy-authorized envelope;
 - recovery resumes from inbox/outbox state, never from model memory.
 
@@ -81,10 +81,19 @@ Principle:
 
 ## 4. Runtime boundaries
 
-## 4.1 Public OpenClaw
+### 4.0 Candidate selection invariant
+
+A runtime candidate is eligible only when it preserves the same tool, context, authority, isolation,
+budget, provider-data, evidence and rollback contracts. Feature count is not a selection metric.
+For the current one-agent/ten-tool workload, the preferred candidate is the smallest bounded loop;
+OpenClaw remains the broader `EVAL_ONLY` comparator. Custom implementation is not credited as safer
+until comparative evidence proves the deployed result, and it must not acquire generic framework
+responsibilities.
+
+## 4.1 Public Agent Runtime
 
 - separate host/VM before public channel;
-- separate workspace/state/secrets;
+- separate identity/state/secrets;
 - no channel-provider credential, SDK or direct provider network route;
 - no personal memory;
 - no arbitrary filesystem;
@@ -92,18 +101,22 @@ Principle:
 - no browser;
 - no nodes/canvas;
 - no generic web fetch;
-- no plugin install/config mutation;
+- no framework/plugin install or config mutation;
 - no direct messaging send tool;
 - only allowlisted business tools;
 - outbound network allowlist contains only the approved model provider and Agent Tool Facade;
 - inbound work arrives only through authenticated `agent-runner`, never directly from an Internet webhook;
 - its output is an untrusted draft/result captured by `agent-runner`, never a delivered message.
-- provider/model configuration pins `agentRuntime.id: openclaw`; implicit/`auto` runtime selection is
-  prohibited for a release identity;
+- the stable application boundary is `ConstrainedAgentRuntime`; custom OpenAI Responses is the
+  preferred production implementation and OpenClaw remains `EVAL_ONLY` comparison/rollback;
+- provider/model configuration pins an explicit runtime implementation and route; implicit/`auto`
+  runtime selection is prohibited for a release identity;
+- only strict custom functions generated from the agent-tool OpenAPI are supplied; provider built-in
+  tools and parallel public tool execution are disabled;
 - production provider authentication uses a dedicated service/API credential, not the owner's
   interactive personal subscription identity;
-- the exact OpenClaw version, model release, reasoning settings, prompt, plugin inventory, tool policy
-  and public-cell configuration hash are release artifacts;
+- the exact runtime package/image, model release, reasoning settings, prompt, tool policy and
+  public-cell configuration hash are release artifacts;
 - before real PII, an integration test verifies the effective provider request and storage/retention
   behavior. A route that cannot enforce the approved provider-data policy remains disabled.
 
@@ -114,6 +127,37 @@ Principle:
 - accesses business system through scoped API/export;
 - never receives public untrusted messages directly;
 - cannot silently bypass approval/consent.
+
+## 4.3 `ConstrainedAgentRuntime` execution contract
+
+Input is a server-created immutable run job containing the runtime/model/prompt/tool/config pins,
+context packet hash, contact-bound bridge capability, per-intent limits, absolute deadline and trace
+correlation. The runtime never accepts stage, capability, contact, customer, order, policy or
+authorization values from model output.
+
+Required state transitions:
+
+1. validate job/pins/context and reject stale, missing or mismatched input before provider use;
+2. reserve worst-case cost and check remaining model/tool/token/deadline budgets;
+3. create an explicit Responses request with the exact model, `store=false`, strict fixed functions,
+   no provider built-in tools and no parallel public tool calls;
+4. accept zero or one serial tool-call step at a time; reject unknown names, unknown fields, malformed
+   JSON, duplicated call IDs, server-owned fields, over-budget calls and unsupported output items;
+5. invoke only the existing `AgentToolBridgeSession`; treat its typed result as untrusted model input,
+   append the call/result correlation and continue inside the original absolute budgets;
+6. validate the final response as draft-only or deterministic handoff; never interpret text as an
+   action, approval, state transition or send instruction;
+7. persist structured usage/outcome/failure evidence, revoke the bridge and settle/release reservations
+   on every success, cancellation, timeout and exception path.
+
+The runtime must expose an injectable provider transport. Unit and integration tests use a scripted
+fake transport to cover all state transitions without credentials. Provider-backed tests are separate,
+explicitly authorized evidence and may never be synthesized from fake results.
+
+Required negative/failure coverage includes unknown tools/fields, identity substitution, multiple or
+parallel calls, malformed arguments and tool results, timeout before/during/after a tool, cancellation,
+late call after bridge revocation, repeated call ID, provider connection ambiguity, cost exhaustion,
+invalid final output and attempts to return an unauthorized action.
 
 ## 5. Deployment stage
 
@@ -560,6 +604,11 @@ Per turn, include only:
 7. last 4–6 relevant turns;
 8. sanitized rolling summary;
 9. at most 1–2 approved public knowledge chunks.
+10. exact tool schema set, call/model/token/cost/deadline budgets and handoff contract.
+
+The context assembler is a deterministic compiler. It records packet schema/version/hash and the
+provenance/version of every verified fact. Provider or framework session state is recoverable routing
+state, never authority.
 
 Exclude:
 
@@ -571,6 +620,8 @@ Exclude:
 - exact bank data;
 - owner memory;
 - internal research files.
+- raw webhook bodies, arbitrary database rows or full dashboard exports;
+- secrets, provider credentials or hidden chain-of-thought.
 
 ## 13. Knowledge and retrieval
 
@@ -753,7 +804,7 @@ Personalized subtotal, promotion, delivery fee, quote total/range, invoice/payme
 ### 17.1 Route
 
 1. deterministic keyword/rule handling first;
-2. one bounded Public OpenClaw Concierge run using the exact evaluated primary model;
+2. one bounded public `ConstrainedAgentRuntime` Concierge run using the exact evaluated primary model;
 3. use structured tool calls for extraction/classification and verified-fact composition inside the
    same bounded run where practical;
 4. introduce a separate utility/classifier model only when representative evals prove a quality,
@@ -763,11 +814,15 @@ Personalized subtotal, promotion, delivery fee, quote total/range, invoice/payme
 
 No larger model gets more permissions.
 
+The selection between custom Responses and OpenClaw uses identical model release, reasoning settings,
+prompt/context/tool hashes, budgets, datasets and graders. A comparison with different permissions,
+tools, data or safety denominator is invalid.
+
 Initial candidate profile—not production authorization:
 
 ```text
-provider/model: openai/gpt-5.6-terra
-agent runtime:  explicit OpenClaw embedded runtime
+provider/model: exact evaluated OpenAI release through Responses
+agent runtime:  explicit custom Responses adapter target; OpenClaw EVAL_ONLY comparator
 reasoning:      low baseline; compare medium only on representative cases
 ```
 
@@ -818,6 +873,10 @@ Exact per-turn ceilings:
 | Unknown/mixed | 2 | 4 | 1 | 20s |
 
 Global absolute ceiling is 3 model calls and 6 tool calls. A single repair call consumes the same budget; it does not extend it. Any attempted call beyond an intent/global ceiling returns a deterministic handoff.
+
+The runtime loop may not reset a counter, deadline or cost reservation when continuing from a provider
+response ID, retrying transport, repairing output or executing a tool. Unknown provider outcome is a
+failed/ambiguous attempt recorded for reconciliation, not permission for an invisible fresh call.
 
 Initial economic guardrails:
 
@@ -1251,8 +1310,8 @@ Operation:
 Required in addition to G1 before accepting any untrusted public channel event or enabling any auto-send:
 
 - official/supported channel integration and authenticated webhook validation;
-- Public OpenClaw on a separate VM/host with no channel credentials;
-- Gateway control plane loopback-only; only the adapter is Internet-exposed;
+- public agent runtime on a separate VM/host with no channel credentials;
+- runtime control endpoint private/loopback-only; only the channel adapter is Internet-exposed;
 - MFA for every role with PII, approval, export, policy, finance or address access;
 - Security “before public” checklist, IDOR/enumeration suite, rate limits and incident drill pass;
 - public corpus release and applicable customer policy published;
@@ -1394,7 +1453,7 @@ Correction messages never overwrite or delete the original. Counts remain in wro
 16. Fallback model is disabled unless certified.
 17. Trace reconstructs facts/versions/approval/send.
 18. Webhook event is durable before `agent-runner` invocation; crash/restart yields one claimed run.
-19. Public OpenClaw cannot resolve or connect to channel-provider endpoints and contains no provider credential.
+19. Public agent runtime cannot resolve or connect to channel-provider endpoints and contains no channel-provider credential.
 20. Public tool call with arbitrary customer/contact/address/distance ID is schema-rejected; a request bound to another contact is policy-denied and audited.
 21. Approval request cannot supply reason, role, TTL, obligation or capability; server derives each and rejects stale/substituted resource hashes.
 22. Assisted auto-sends only deterministic allowlisted templates; personalized subtotal/promotion/delivery/total and every free-form transactional draft require human.
@@ -1406,3 +1465,7 @@ Correction messages never overwrite or delete the original. Counts remain in wro
 28. Primary, fallback and degraded/template paths all pass the same P0 zero-tolerance manifest cases.
 29. Address/distance/weight changes invalidate delivery policy, vehicle, fee and approval; Stage 3C cannot activate without its own G4 manifest.
 30. Wrong automated fact disables capability, identifies affected logical sends and produces immutable, approved correction records without overwriting originals.
+31. Custom Responses runtime and every retained comparator pass the same P0 suite, budgets, timeout,
+    contact-binding, non-storage verification and no-direct-send assertions before runtime promotion.
+32. Dashboard AI summary exactly cites versioned read-model facts and cannot originate a metric,
+    priority, SLA flag, identifier, SQL query or mutation.

@@ -38,7 +38,10 @@ domains:
     sources:
       - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
       - specs/SECURITY_RELIABILITY_SPEC_V1.md
+      - specs/IMPLEMENTATION_ROADMAP_V1.md
+      - docs/PROJECT_ENGINEERING_FIRST_PRINCIPLES_VI.md
       - docs/adr/0002-production-agent-runtime-and-trust-boundaries.md
+      - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
       - delivery/PROGRAM_PLAN.yaml
     contracts:
       - specs/contracts/agent-tools-v1.openapi.yaml
@@ -48,11 +51,16 @@ domains:
       - specs/contracts/container-scan-evidence-v1.schema.json
       - specs/contracts/supply-chain-evidence-v1.schema.json
       - specs/contracts/openclaw-repackage-manifest-v1.schema.json
+      - specs/contracts/openclaw-repackage-manifest-v2.schema.json
+      - specs/contracts/openclaw-cross-platform-result-v1.schema.json
       - delivery/GATE_REGISTRY.yaml
     prohibitions:
-      - Public OpenClaw is a reasoning runtime, never the business or security authority.
-      - Pin the evaluated model and explicit OpenClaw runtime; never authorize a moving alias.
+      - Every public agent runtime is a reasoning client, never the business or security authority.
+      - Pin the evaluated model and explicit runtime implementation/route; never authorize a moving alias.
       - Real-customer model use is disabled until provider storage and retention behavior is verified.
+      - OpenClaw remains EVAL_ONLY until custom-runtime parity and retirement evidence pass.
+      - The custom adapter remains a bounded finite state machine; do not build a generic agent framework.
+      - Runtime comparisons use identical model, prompt, context, tools, budgets, datasets and safety denominator.
   pricing:
     sources:
       - specs/DOMAIN_DATA_API_SPEC_V1.md
@@ -105,6 +113,21 @@ domains:
     prohibitions:
       - STOP and suppression are deterministic ingress and egress checks.
       - Never add internal risk material to customer retrieval content.
+  channel_operations:
+    sources:
+      - specs/ENGINEERING_SPEC_V1.md
+      - specs/SECURITY_RELIABILITY_SPEC_V1.md
+      - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+      - specs/IMPLEMENTATION_ROADMAP_V1.md
+      - docs/PROJECT_ENGINEERING_FIRST_PRINCIPLES_VI.md
+      - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+    contracts:
+      - specs/contracts/canonical-enums-v1.json
+    prohibitions:
+      - Channel adapters persist and deduplicate before any model call.
+      - Public agent runtimes never receive channel credentials or direct-send capability.
+      - Zalo Personal automation is prohibited; only official Zalo OA may be evaluated.
+      - Dashboard metrics and priorities are deterministic; AI may explain but not originate or mutate them.
   evaluation_release:
     sources:
       - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
@@ -119,5 +142,7 @@ domains:
       - specs/contracts/container-scan-evidence-v1.schema.json
       - specs/contracts/supply-chain-evidence-v1.schema.json
       - specs/contracts/openclaw-repackage-manifest-v1.schema.json
+      - specs/contracts/openclaw-repackage-manifest-v2.schema.json
+      - specs/contracts/openclaw-cross-platform-result-v1.schema.json
     prohibitions:
       - No release is authorized without a valid, signed, unexpired evidence manifest.

@@ -2,8 +2,8 @@ ARG NODE_BASE="node:24.15.0-alpine3.23@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc9
 FROM ${NODE_BASE} AS builder
 
 WORKDIR /workspace/runtime/openclaw/public-cell/plugin
-COPY runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r1.tgz \
-  /workspace/runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r1.tgz
+COPY runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r2.tgz \
+  /workspace/runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r2.tgz
 COPY runtime/openclaw/public-cell/plugin/package.json \
   runtime/openclaw/public-cell/plugin/package-lock.json ./
 COPY runtime/openclaw/public-cell/plugin/tsconfig.json \

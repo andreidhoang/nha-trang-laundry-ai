@@ -4,7 +4,7 @@
 **Status:** implementation baseline  
 **Audience:** engineers, Codex coding agents, reviewers, operations owner  
 **Language:** English execution specification; Vietnamese business specifications remain normative.  
-**Last reviewed:** 2026-07-27
+**Last reviewed:** 2026-08-10
 
 ## 1. Purpose and decision
 
@@ -90,10 +90,19 @@ PostgreSQL-backed worker, `uv` workspace/lockfile, Docker Compose, and OpenTelem
 production host. React/Vite with TypeScript is retained only for the browser-based Staff PWA; browser
 code has no business authority.
 
-OpenClaw is not required to begin M0–M3. From M4 onward, Public OpenClaw is the selected constrained
-customer-agent runtime and Private Owner OpenClaw remains a separate productivity runtime. OpenClaw is
-not the CRM, ledger, workflow authority, database, policy decision point, or delivery sender. The
-binding architecture decision is `docs/adr/0002-production-agent-runtime-and-trust-boundaries.md`.
+No agent framework is required to begin M0–M3. From M4 onward, the Python `ConstrainedAgentRuntime`
+contract is the stable boundary and a custom OpenAI Responses adapter is the preferred production
+target. OpenClaw remains an `EVAL_ONLY` comparison/rollback implementation until runtime-parity and
+retirement evidence pass. Neither runtime is the CRM, ledger, workflow authority, database, policy
+decision point, channel adapter, or delivery sender. ADR-0003 supersedes only the mandatory OpenClaw
+selection in ADR-0002; its isolation, provider-data, authority, and egress constraints remain binding.
+
+This is a smallest-sufficient-system decision for the current workload: one bounded Concierge, ten
+fixed tools, at most three model calls and six tool calls, and no browser, shell, filesystem, channel
+send, generic plugin or multi-agent requirement. It is not a general rejection of OpenClaw. The custom
+target remains an unproven candidate until equivalent comparative evidence exists, and it must not
+grow into a project-owned generic agent framework. Revisit the decision through an ADR if the required
+capability set materially expands.
 
 ## 4. Non-negotiable system invariants
 
@@ -170,29 +179,48 @@ not executable instructions.
 Private Owner OpenClaw may assist trusted owner workflows such as research, analytics, and engineering.
 It never receives public untrusted messages directly and never bypasses policy, approval, or consent.
 
-Before accepting any public inbound traffic, deploy Public OpenClaw on a separate VM/VPS and OS
-identity with separate state, workspace, secrets, model credential, network policy, and logs. It has:
+Before accepting any public inbound traffic, deploy the selected public agent runtime on a separate
+VM/VPS and OS identity with separate state, secrets, model credential, network policy, and logs. It has:
 
 - no channel-provider credential, SDK, or network route;
 - no owner workspace, personal memory, raw database route, filesystem mutation, shell, browser, nodes,
   generic web fetch, plugin installation, or direct messaging tool;
 - only model-provider and Tool Facade outbound routes;
-- loopback-only control plane; no public gateway UI/protocol.
+- private/loopback-only control plane; no public runtime UI/protocol.
 
-OpenClaw documentation explicitly treats a Gateway as one trusted-operator boundary, not hostile
-multi-tenant isolation; this architecture therefore uses a separate public cell rather than exposing
-the owner's Gateway. See [OpenClaw security guidance](https://docs.openclaw.ai/gateway/security).
+The separate-cell boundary applies to every runtime. For the retained OpenClaw comparator, OpenClaw
+documentation explicitly treats a Gateway as one trusted-operator boundary, not hostile multi-tenant
+isolation; never expose the owner's Gateway. See
+[OpenClaw security guidance](https://docs.openclaw.ai/gateway/security).
 
-The public release must pin the exact provider/model, an explicit OpenClaw agent-runtime route, prompt
-bundle, plugin inventory and public-cell configuration. Runtime `auto`, moving model aliases and
-interactive personal credentials are not release identities. The initial eval candidate is
-`openai/gpt-5.6-terra` through the OpenAI Responses path with explicit OpenClaw runtime selection;
-this candidate grants no production authorization until the integrated eval and release gates pass.
+The public release must pin the exact provider/model, explicit runtime implementation/route, prompt
+bundle, package/plugin inventory and public-cell configuration. Runtime `auto`, moving model aliases
+and interactive personal credentials are not release identities. The custom Responses adapter is the
+preferred target; the existing OpenClaw route remains an `EVAL_ONLY` comparator. Neither candidate
+grants production authorization until integrated parity, provider-data, security and release gates pass.
 
 Before any real customer data reaches the model provider, an integration test must verify the
 effective request's storage/retention behavior and Security/Privacy must approve provider training,
 retention, region, deletion, subprocessors and incident terms. A runtime/provider combination that
 cannot enforce the approved data policy remains disabled for real-customer processing.
+
+### 5.4 Minimum public runtime state machine
+
+The preferred adapter owns only the bounded provider/tool loop:
+
+1. validate the server-created job, signed context packet, runtime/model pin and remaining deadline;
+2. reserve the worst-case registered cost before each model call;
+3. send the exact prompt/context and strict allowlisted functions with explicit non-storage, provider
+   built-in tools disabled and parallel public tool calls disabled;
+4. reject unknown/malformed/duplicate/out-of-budget calls and execute an accepted call only through the
+   already contact-bound `AgentToolBridgeSession`;
+5. append the typed tool result and continue within the same absolute call/deadline budget;
+6. validate and persist a draft or deterministic handoff plus structured evidence;
+7. revoke the bridge and settle/release reservations on success, cancellation, timeout or failure.
+
+Provider/framework conversation state is never durable business state. The adapter must not implement
+channels, plugins, arbitrary tools, business workflows, policy calculation, database access, generic
+memory or multi-agent scheduling.
 
 ## 6. Domain and data engineering requirements
 
@@ -347,7 +375,7 @@ envelope, measurable evidence, accountable approval, monitoring, and rollback.
 
 ## 10. Repository and delivery structure
 
-Create the following as a dedicated repository; never initialize or publish the personal OpenClaw
+Create the following as a dedicated repository; never initialize or publish a personal agent-runtime
 workspace.
 
 ```text
@@ -355,6 +383,7 @@ apps/
   web/                 # React/Vite mobile-first staff PWA
   api/                 # FastAPI HTTP boundary / command handlers
   worker/              # inbox, outbox, jobs, reconciliation
+  channel-adapters/    # official provider ingress/egress normalization; no AI authority
   public-agent-tools/  # separate facade deployment/module and auth audience
 packages/
   domain/              # pure deterministic money, state, delivery, SLA rules
@@ -374,8 +403,9 @@ scripts/
   import/ verify/
 ```
 
-Dependencies must be pinned through `uv.lock`. Upgrading runtime, model, prompt, OpenClaw,
-plugin, SDK, or tool schema is a versioned change with regression, security, and rollback review.
+Dependencies must be pinned through `uv.lock`. Upgrading runtime, model, prompt, framework/plugin,
+SDK, provider adapter, or tool schema is a versioned change with regression, security, and rollback
+review.
 
 Planning uses stable work-item and phase IDs from `delivery/WORK_QUEUE.yaml` and
 `delivery/PROGRAM_PLAN.yaml`; milestone numbers in older prose are descriptive only. Release gate IDs
@@ -412,8 +442,10 @@ expiry, and range-price rules require correct reapproval; no endpoint bypasses c
 
 ### M3 — Operations control plane
 
-Implement staff PWA, approval revisions/content hashes, audit timeline, inbox/outbox, idempotency,
-manual-send attestation, feature flags, and pilot instrumentation.
+Implement staff PWA, unified internal inbox, approval revisions/content hashes, order/exception boards,
+versioned metric projections with freshness, audit timeline, inbox/outbox, idempotency, manual-send
+attestation, feature flags, channel-health views, and pilot instrumentation. AI may explain verified
+dashboard facts but never calculate a metric or execute a dashboard action.
 
 **Exit:** failure injection proves atomic mutation/event/audit/outbox behavior; duplicate/replayed input
 produces one logical send; edited draft cannot send under an old approval; an operator can reconstruct
@@ -421,14 +453,28 @@ the full decision chain.
 
 ### M4 — Constrained Shadow concierge
 
-Implement Agent Runner and Tool Facade, then invoke the isolated Public OpenClaw runtime using
-mock/provider test paths. Pin an explicit OpenClaw runtime route and evaluated model release. Add
-prompt/model/public-cell config registries, cost/timeout ceilings, provider-storage verification,
-redaction, evaluation runners, and human draft review.
+Implement Agent Runner and Tool Facade, then invoke an isolated runtime through
+`ConstrainedAgentRuntime`. Build the bounded custom Responses adapter with strict allowlisted function
+tools, no provider built-in tools, no parallel public tool execution, and explicit non-storage; retain
+OpenClaw only as an `EVAL_ONLY` parity/rollback candidate. Pin the runtime implementation, provider
+route, and evaluated model release. Add prompt/model/public-cell config registries, context packet
+schema/version/hash, cost/timeout ceilings, provider-storage verification, redaction, evaluation
+runners, and human draft review.
 
 **Exit:** the agent has only registered typed tools; it cannot choose cross-customer IDs, call provider
 send, mutate configuration, browse/exec, or make unverified commercial claims; P0 integrated evals
 pass for all enabled paths.
+
+Execute M4 as three separately reviewable slices:
+
+- **M4A — Responses runtime:** implement and locally verify the finite state machine behind the existing
+  runtime protocol using fake/injectable transport; no provider credential or public route is required.
+- **M4B — parity and selection:** compare the custom adapter and retained OpenClaw candidate with the
+  same pinned model/prompt/context/tools/budgets/datasets; provider-backed and synthetic results remain
+  visibly distinct.
+- **M4C — OpenClaw retirement:** only after M4B, provider-data, security, rollback and signed release
+  gates pass, remove OpenClaw from the public dependency/deployment path while preserving immutable
+  evidence and the separately isolated Private Owner OpenClaw environment.
 
 ### M5 — Real-customer Shadow readiness
 

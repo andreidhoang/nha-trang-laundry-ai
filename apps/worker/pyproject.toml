@@ -5,6 +5,7 @@ description = "Durable inbox, outbox, and reconciliation worker."
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "fastapi>=0.116,<1",
+  "jsonschema>=4.25,<5",
   "nha-trang-laundry-contracts",
   "nha-trang-laundry-db",
   "nha-trang-laundry-domain",

@@ -642,6 +642,7 @@ version = "0.1.0"
 source = { editable = "apps/worker" }
 dependencies = [
     { name = "fastapi" },
+    { name = "jsonschema" },
     { name = "nha-trang-laundry-contracts" },
     { name = "nha-trang-laundry-db" },
     { name = "nha-trang-laundry-domain" },
@@ -655,6 +656,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.116,<1" },
+    { name = "jsonschema", specifier = ">=4.25,<5" },
     { name = "nha-trang-laundry-contracts", editable = "packages/contracts" },
     { name = "nha-trang-laundry-db", editable = "packages/db" },
     { name = "nha-trang-laundry-domain", editable = "packages/domain" },

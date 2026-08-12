@@ -69,18 +69,19 @@ def test_agent_run_queue_tool_ledger_and_draft_completion_are_durable(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
     repository = AgentRunRepository()
+    now = datetime.now(UTC)
     queued = command(created_at=_before_pending_agent_run(postgres_connection))
     repository.enqueue(postgres_connection, queued)
 
     with pytest.raises(AgentRunAuthorizationError, match="AGENT_RUNNER"):
-        repository.claim_next(postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=NOW)
+        repository.claim_next(postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=now)
     claimed = repository.claim_next(
-        postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=NOW
+        postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=now
     )
     assert claimed is not None
     assert claimed.agent_run_id == queued.agent_run_id
     assert claimed.attempt_count == 1
-    assert claimed.lease_expires_at == NOW + timedelta(seconds=20)
+    assert claimed.lease_expires_at == now + timedelta(seconds=20)
 
     repository.record_tool_call(
         postgres_connection,
@@ -94,8 +95,8 @@ def test_agent_run_queue_tool_ledger_and_draft_completion_are_durable(
             result_code="REQUIRE_HUMAN",
             trace_id="tr_12345678",
             safe_summary={"candidate_count": 1, "decision": "REQUIRE_HUMAN"},
-            started_at=NOW,
-            completed_at=NOW + timedelta(milliseconds=40),
+            started_at=now,
+            completed_at=now + timedelta(milliseconds=40),
             correlation_id=queued.correlation_id,
         ),
     )
@@ -105,7 +106,7 @@ def test_agent_run_queue_tool_ledger_and_draft_completion_are_durable(
         claim_token=claimed.claim_token,
         safe_summary={"disposition": "REQUIRE_HUMAN", "draft_chars": 42},
         correlation_id=queued.correlation_id,
-        completed_at=NOW + timedelta(seconds=1),
+        completed_at=now + timedelta(seconds=1),
     )
 
     with postgres_connection.cursor() as cursor:
@@ -139,7 +140,7 @@ def test_agent_run_queue_tool_ledger_and_draft_completion_are_durable(
         "DRAFT_REQUIRES_HUMAN",
         False,
         {"disposition": "REQUIRE_HUMAN", "draft_chars": 42},
-        NOW + timedelta(seconds=1),
+        now + timedelta(seconds=1),
     )
     assert tool_count == (1,)
     assert audit_count == (3,)
@@ -150,10 +151,11 @@ def test_agent_tool_audit_failure_rolls_back_tool_event_and_outbox(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
     repository = AgentRunRepository()
+    now = datetime.now(UTC)
     queued = command(created_at=_before_pending_agent_run(postgres_connection))
     repository.enqueue(postgres_connection, queued)
     claimed = repository.claim_next(
-        postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=NOW
+        postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=now
     )
     assert claimed is not None
     with postgres_connection.transaction(), postgres_connection.cursor() as cursor:
@@ -184,8 +186,8 @@ def test_agent_tool_audit_failure_rolls_back_tool_event_and_outbox(
                     "REQUIRE_HUMAN",
                     "synthetic-audit-failure",
                     {"result_code": "REQUIRE_HUMAN"},
-                    NOW,
-                    NOW,
+                    now,
+                    now,
                     queued.correlation_id,
                 ),
             )
@@ -221,6 +223,7 @@ def test_agent_run_rejects_non_shadow_raw_reasoning_and_stale_claim(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
     repository = AgentRunRepository()
+    now = datetime.now(UTC)
     with pytest.raises(AgentRunStateError, match="only shadow"):
         repository.enqueue(
             postgres_connection,
@@ -230,7 +233,7 @@ def test_agent_run_rejects_non_shadow_raw_reasoning_and_stale_claim(
     queued = command(created_at=_before_pending_agent_run(postgres_connection))
     repository.enqueue(postgres_connection, queued)
     claimed = repository.claim_next(
-        postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=NOW
+        postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=now
     )
     assert claimed is not None
     with pytest.raises(AgentRunStateError, match="prohibited internal content"):
@@ -240,7 +243,7 @@ def test_agent_run_rejects_non_shadow_raw_reasoning_and_stale_claim(
             claim_token=claimed.claim_token,
             safe_summary={"chain_of_thought": "never persist this"},
             correlation_id=queued.correlation_id,
-            completed_at=NOW,
+            completed_at=now,
         )
 
 

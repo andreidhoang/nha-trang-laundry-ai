@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://giatlasachcong.vn/contracts/public-policy-bundle-v1.schema.json",
+  "title": "Published PUBLIC_CUSTOMER policy and knowledge bundle",
+  "description": "The only content a public agent runtime may state to a customer. Resolved by active bundle hash through an allowlist, never by post-retrieval filtering. An expired bundle degrades the agent to REQUIRE_HUMAN; it never falls back to an older version.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "bundle_id",
+    "version",
+    "audience",
+    "lifecycle",
+    "effective_from",
+    "content_sha256",
+    "authorized_capabilities",
+    "facts",
+    "publication_checks",
+    "approval"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "bundle_id": { "type": "string", "pattern": "^[A-Z0-9._:-]{8,160}$" },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic. A corrected bundle is a new version; an existing version is never edited."
+    },
+    "audience": {
+      "const": "PUBLIC_CUSTOMER",
+      "description": "INTERNAL_OPERATIONS, INTERNAL_RISK and DRAFT content can never appear in this contract, which is why the public allowlist is keyed on it."
+    },
+    "lifecycle": {
+      "type": "string",
+      "enum": ["DRAFT", "PUBLISHED", "WITHDRAWN"],
+      "description": "Only PUBLISHED within its effective period is active. WITHDRAWN takes effect immediately and needs no re-approval."
+    },
+    "effective_from": { "type": "string", "format": "date-time" },
+    "effective_until": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Null means open-ended. Time-bounded content such as a promotion must set this to the exact published end date."
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Recorded on every outbound message derived from this bundle, so a correction can identify the affected set."
+    },
+    "authorized_capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["PUBLIC_FAQ", "LIST_PRICE_INFO", "ORDER_STATUS", "SLA_GUIDANCE"]
+      },
+      "description": "Listing a capability here grants no authorization. The capability still requires its own signed gate manifest."
+    },
+    "facts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fact_id", "kind", "text_vi", "provenance"],
+        "properties": {
+          "fact_id": { "type": "string", "pattern": "^[A-Z0-9._:-]{4,120}$" },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "BUSINESS_IDENTITY",
+              "OPENING_HOURS",
+              "CONTACT",
+              "SERVICE_CATALOG",
+              "LIST_PRICE",
+              "PROMOTION",
+              "DELIVERY_ZONE",
+              "TURNAROUND",
+              "DISCLOSURE"
+            ],
+            "description": "LIABILITY, COMPENSATION and REWASH are deliberately absent. They depend on DEC-004 and must not be publishable until it resolves."
+          },
+          "text_vi": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "verified"],
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "OWNER_PUBLISHED_CONFIGURATION",
+                  "DETERMINISTIC_DOMAIN_ENGINE",
+                  "BUSINESS_TRUTH_CONFIRMED"
+                ],
+                "description": "No other provenance is publishable. Internal risk material has no admissible source value by construction."
+              },
+              "verified": { "const": true },
+              "reference": { "type": "string", "minLength": 1, "maxLength": 300 }
+            }
+          },
+          "deterministic_check": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["engine", "matched"],
+            "description": "Required for LIST_PRICE, PROMOTION, DELIVERY_ZONE and TURNAROUND facts.",
+            "properties": {
+              "engine": {
+                "type": "string",
+                "enum": ["PRICING", "PROMOTION", "DELIVERY", "SLA"]
+              },
+              "matched": {
+                "const": true,
+                "description": "The fact was re-derived from the engine and matched exactly. A price the engine does not produce, including a smoothed tier boundary, fails publication."
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": ["LIST_PRICE", "PROMOTION", "DELIVERY_ZONE", "TURNAROUND"]
+                }
+              },
+              "required": ["kind"]
+            },
+            "then": { "required": ["deterministic_check"] }
+          }
+        ]
+      }
+    },
+    "publication_checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prohibited_content_scan",
+        "deterministic_dry_run",
+        "business_review",
+        "legal_review"
+      ],
+      "properties": {
+        "prohibited_content_scan": {
+          "type": "string",
+          "enum": ["PASSED"],
+          "description": "Fail-closed. An unclassifiable fact is rejected; ambiguity is never resolved toward publication."
+        },
+        "deterministic_dry_run": { "type": "string", "enum": ["PASSED"] },
+        "business_review": { "type": "string", "enum": ["PASSED"] },
+        "legal_review": {
+          "type": "string",
+          "enum": ["PASSED", "NOT_REQUIRED"],
+          "description": "NOT_REQUIRED is legal only when the bundle contains no liability, compensation, data-processing or contractual terms."
+        },
+        "open_decisions_excluded": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^DEC-[0-9]{3}$" },
+          "description": "Open decisions the scan confirmed are not asserted anywhere in this bundle."
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approved_by", "approved_at", "approved_content_sha256"],
+      "properties": {
+        "approved_by": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The business owner. Approval of a hash whose contents were not read is not approval."
+        },
+        "approved_at": { "type": "string", "format": "date-time" },
+        "approved_content_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Must equal content_sha256. A mismatch means the bundle changed after approval and is invalid."
+        }
+      }
+    },
+    "supersedes": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Version this bundle corrects, when published through the correction workflow."
+    }
+  }
+}

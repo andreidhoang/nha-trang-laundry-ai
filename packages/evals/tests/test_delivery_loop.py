@@ -262,8 +262,10 @@ def test_hardening_dependency_graph_preserves_release_boundaries() -> None:
     by_id = {item["id"]: item for item in queue["items"]}
 
     assert by_id["SUPPLYCHAIN-001"]["depends_on"] == ["HARDEN-CI-001", "CONTAINER-001"]
+    # ADR-0004 re-points SECURITY-001 off the frozen AGENT-001 onto AGENT-002 and adds the
+    # production deployment and monitoring prerequisites introduced by ADR-0007.
     assert set(by_id["SECURITY-001"]["depends_on"]) == {
-        "AGENT-001",
+        "AGENT-002",
         "OBSERVABILITY-001",
         "POLICY-001",
         "SUPPLYCHAIN-001",
@@ -271,14 +273,24 @@ def test_hardening_dependency_graph_preserves_release_boundaries() -> None:
         "TELEMETRY-001",
         "STAGING-001",
         "BACKUP-RESTORE-001",
+        "DEPLOY-TARGET-001",
+        "MONITORING-001",
     }
+    assert "AGENT-001" not in by_id["SECURITY-001"]["depends_on"]
     assert by_id["WORKER-HOST-001"]["depends_on"] == [
         "RELEASE-BASELINE-001",
         "OPERATIONS-001",
         "OBSERVABILITY-001",
         "POLICY-001",
     ]
-    assert by_id["AGENT-001"]["status"] == "BLOCKED"
+    # The frozen items keep their blocked history; nothing may quietly complete them.
+    for frozen in ("AGENT-001", "OPENCLAW-REPACK-001", "RUNTIME-SECURITY-001"):
+        assert by_id[frozen]["status"] == "BLOCKED"
+        assert "FROZEN by ADR-0004" in by_id[frozen]["blocking_condition"]
+    # AGENT-002 carries G1 agent evidence and starts with no inherited dependencies on it.
+    assert by_id["AGENT-002"]["status"] == "PENDING"
+    assert "AGENT-001" not in by_id["AGENT-002"]["depends_on"]
+    assert set(by_id["RUNTIME-PARITY-001"]["depends_on"]) == {"AGENT-002"}
 
 
 def test_agent_context_packet_contains_release_support_contracts() -> None:

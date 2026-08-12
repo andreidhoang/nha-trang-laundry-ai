@@ -29,11 +29,17 @@ domains:
     sources:
       - specs/IMPLEMENTATION_ROADMAP_V1.md
       - docs/adr/0001-python-control-plane.md
+      - docs/adr/0007-production-deployment-topology.md
       - delivery/PROGRAM_PLAN.yaml
       - docs/runbooks/local-development.md
+      - docs/runbooks/container-deployment.md
+      - docs/runbooks/private-staging.md
+      - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
     contracts: []
     prohibitions:
       - Do not introduce public channels or external automation in M0-M3.
+      - The public agent runtime cell runs on a separate host and may reach only the approved model endpoint and Tool Facade.
+      - Production feature flags ship closed; deploying code never enables a capability.
   runtime_architecture:
     sources:
       - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
@@ -42,6 +48,7 @@ domains:
       - docs/PROJECT_ENGINEERING_FIRST_PRINCIPLES_VI.md
       - docs/adr/0002-production-agent-runtime-and-trust-boundaries.md
       - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+      - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
       - delivery/PROGRAM_PLAN.yaml
     contracts:
       - specs/contracts/agent-tools-v1.openapi.yaml
@@ -121,21 +128,49 @@ domains:
       - specs/IMPLEMENTATION_ROADMAP_V1.md
       - docs/PROJECT_ENGINEERING_FIRST_PRINCIPLES_VI.md
       - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+      - docs/adr/0005-official-channel-selection-zalo-oa.md
+      - docs/adr/0007-production-deployment-topology.md
+      - specs/CHANNEL_ADAPTER_SPEC_V1.md
+      - specs/PUBLIC_CUSTOMER_POLICY_SPEC_V1.md
     contracts:
       - specs/contracts/canonical-enums-v1.json
+      - specs/contracts/channel-inbound-envelope-v1.schema.json
+      - specs/contracts/channel-outbound-receipt-v1.schema.json
+      - specs/contracts/public-policy-bundle-v1.schema.json
     prohibitions:
       - Channel adapters persist and deduplicate before any model call.
       - Public agent runtimes never receive channel credentials or direct-send capability.
       - Zalo Personal automation is prohibited; only official Zalo OA may be evaluated.
+      - Telegram is an engineering sandbox only and never counts toward any gate evidence minimum.
+      - An unknown send outcome is never retried automatically; only provider confirmation or a human may resolve it.
       - Dashboard metrics and priorities are deterministic; AI may explain but not originate or mutate them.
+  business_truth:
+    sources:
+      - BUSINESS_TRUTH_INTAKE.md
+      - MACHINE_INVENTORY.md
+      - PRICEBOOK_V1.md
+      - PROMOTION_2026_08.md
+      - SERVICE_CATALOG_AND_SLA_V1.md
+      - templates/business-profile.csv
+      - templates/delivery-cost-log.csv
+      - templates/machine-master.csv
+    contracts:
+      - specs/contracts/pricebook-import-manifest-v1.json
+    prohibitions:
+      - Fields marked CẦN ĐO or CẦN CHỐT are unmeasured; never let an agent commit to them.
+      - Owner-confirmed values are business truth; observed document values are evidence, not configuration.
+      - POLICY_RISK_REVIEW.md is internal risk material and never enters a customer-facing corpus.
   evaluation_release:
     sources:
       - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
       - specs/TEAM_REVIEW_REPORT_V1.md
+      - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
+      - docs/adr/0006-two-party-release-authorization.md
       - delivery/GATE_REGISTRY.yaml
     contracts:
       - specs/evals/eval-manifest-v1.yaml
       - specs/contracts/release-gate-manifest-v1.schema.json
+      - specs/contracts/release-gate-manifest-v2.schema.json
       - specs/contracts/capability-status-v1.schema.json
       - specs/contracts/trusted-release-signers-v1.schema.json
       - specs/contracts/provider-data-evidence-v1.schema.json

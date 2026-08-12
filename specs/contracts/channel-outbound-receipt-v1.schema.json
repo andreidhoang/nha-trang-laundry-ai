@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://giatlasachcong.vn/contracts/channel-outbound-receipt-v1.schema.json",
+  "title": "Canonical outbound send attempt and receipt",
+  "description": "Exactly one receipt per send attempt, including attempts that fail or time out. An unknown outcome is never retried automatically and is resolved only by provider confirmation or a human.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "outbox_id",
+    "idempotency_key",
+    "provider",
+    "message_kind",
+    "authorization",
+    "attempt",
+    "delivery_status",
+    "reconciliation_state"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "receipt_id": { "type": "string", "format": "uuid" },
+    "outbox_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The transactional outbox row that authorized this send. A send with no outbox row is a defect, not a receipt."
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 200,
+      "description": "Stable across retries of a known-failed attempt. Never regenerated to force a resend."
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["ZALO_OA", "TELEGRAM_SANDBOX", "FACEBOOK_MESSENGER"]
+    },
+    "message_kind": {
+      "type": "string",
+      "enum": [
+        "LIST_PRICE_INFO",
+        "INTAKE_FACT_REQUEST",
+        "INTAKE_RECEIPT",
+        "INCIDENT_RECEIPT",
+        "ORDER_STATUS",
+        "APPROVED_QUOTE_PRESENTATION",
+        "APPROVED_SLOT_PRESENTATION",
+        "FREE_FORM_TRANSACTIONAL",
+        "MARKETING"
+      ],
+      "description": "Mirrors the canonical MessageKind enum. Drift between this list and canonical-enums-v1.json must fail CI."
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "egress_suppression_check"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": ["HUMAN_APPROVAL", "CAPABILITY_AUTHORIZED"],
+          "description": "CAPABILITY_AUTHORIZED requires a currently valid signed gate manifest for that exact capability. Absent one, only HUMAN_APPROVAL is legal."
+        },
+        "approval_ref": { "type": "string", "format": "uuid" },
+        "capability": {
+          "type": "string",
+          "enum": [
+            "INTERNAL_SHADOW", "PUBLIC_FAQ", "LIST_PRICE_INFO", "INTAKE_QUESTION",
+            "INTAKE_FACT_CAPTURE", "INTAKE_RECEIPT", "INCIDENT_RECEIPT", "ORDER_STATUS",
+            "SLA_GUIDANCE", "QUOTE_ESTIMATE", "BOOKING", "DELIVERY_ADVISORY", "MARKETING_FOLLOWUP"
+          ]
+        },
+        "egress_suppression_check": {
+          "type": "string",
+          "enum": ["PASSED_IN_SEND_TRANSACTION"],
+          "description": "Suppression is re-checked inside the send transaction immediately before the provider call. A check performed only at outbox creation is insufficient."
+        },
+        "messaging_window": {
+          "type": "string",
+          "enum": ["IN_WINDOW", "TEMPLATE_APPROVED", "HELD_REQUIRE_HUMAN"],
+          "description": "An expired or unknown window fails closed to HELD_REQUIRE_HUMAN. The send is held for staff, never attempted and never silently dropped."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "source": { "const": "HUMAN_APPROVAL" } } },
+          "then": { "required": ["approval_ref"] }
+        },
+        {
+          "if": { "properties": { "source": { "const": "CAPABILITY_AUTHORIZED" } } },
+          "then": { "required": ["capability"] }
+        }
+      ]
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt_number", "started_at", "outcome"],
+      "properties": {
+        "attempt_number": { "type": "integer", "minimum": 1 },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": ["string", "null"], "format": "date-time" },
+        "outcome": {
+          "type": "string",
+          "enum": ["ACCEPTED", "REJECTED", "TIMEOUT", "TRANSPORT_ERROR"],
+          "description": "TIMEOUT and TRANSPORT_ERROR are ambiguous outcomes and must set reconciliation_state to UNKNOWN or UNKNOWN_REQUIRES_HUMAN."
+        },
+        "provider_message_ref": { "type": ["string", "null"], "maxLength": 200 },
+        "provider_error_code": { "type": ["string", "null"], "maxLength": 120 },
+        "rate_limited": { "type": "boolean" }
+      }
+    },
+    "delivery_status": {
+      "type": "string",
+      "enum": [
+        "OUTBOX_PENDING",
+        "PROVIDER_ACCEPTED",
+        "DELIVERED",
+        "FAILED",
+        "MANUAL_SEND_RECORDED",
+        "CANCELLED"
+      ],
+      "description": "Subset of the canonical MessageDeliveryStatus enum reachable at send time. No parallel status vocabulary may be introduced."
+    },
+    "reconciliation_state": {
+      "type": "string",
+      "enum": [
+        "NOT_REQUIRED",
+        "UNKNOWN",
+        "UNKNOWN_REQUIRES_HUMAN",
+        "CONFIRMED_SENT",
+        "CONFIRMED_NOT_SENT"
+      ],
+      "description": "An attempt with an ambiguous outcome enters UNKNOWN and is never retried automatically. Only provider-side confirmation or an explicit human decision may leave UNKNOWN."
+    },
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resolved_by", "resolved_at"],
+      "properties": {
+        "resolved_by": {
+          "type": "string",
+          "enum": ["PROVIDER_CONFIRMATION", "HUMAN_DECISION"],
+          "description": "An automatic retry may never resolve an unknown outcome. That is how a customer receives the same message twice."
+        },
+        "resolved_at": { "type": "string", "format": "date-time" },
+        "actor_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "note": { "type": "string", "maxLength": 500 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "reconciliation_state": {
+            "enum": ["CONFIRMED_SENT", "CONFIRMED_NOT_SENT"]
+          }
+        },
+        "required": ["reconciliation_state"]
+      },
+      "then": { "required": ["resolution"] }
+    }
+  ]
+}

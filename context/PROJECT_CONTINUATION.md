@@ -1,11 +1,39 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-08-10 (Asia/Ho_Chi_Minh)
-**Active work item:** none; `RESPONSES-RUNTIME-001` is the next safe local candidate and
-`OPENCLAW-REPACK-001` remains `BLOCKED`
-**Active branch:** `fix/openclaw-immutable-repack` from `36909e7`
-**Code stage:** `PRODUCTION_HARDENING`; Phase B1 workflow preparation verified, Phase B2 not authorized
+**Last reconciled:** 2026-08-12 (Asia/Ho_Chi_Minh)
+**Active work item:** none; `RUNTIME-FREEZE-001` is the next controller-selected candidate
+**Active branch:** `feat/production-spec-pack` from `98810bf`
+**Code stage:** `PRODUCTION_HARDENING`; production spec pack authored, nothing provisioned
 **Production authorization:** `NOT_AUTHORIZED` for every capability
+
+## Read this first — 2026-08-12 planning change
+
+`RESPONSES-RUNTIME-001` completed on 2026-08-11 and was the last dependency-free local item. The
+queue drained: every remaining item routed through a blocked node, so the binding constraint became
+external decisions rather than engineering.
+
+Four ADRs and three specifications were authored to define the path to production. **None of them
+provisions infrastructure, resolves a decision by fiat, or authorizes a capability.**
+
+| ADR | Effect on the queue |
+|---|---|
+| [ADR-0004](../docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md) | Freezes `AGENT-001`, `OPENCLAW-REPACK-001`, `RUNTIME-SECURITY-001` as immutable blocked history; creates `AGENT-002` as the G1 evidence carrier; re-points `SECURITY-001` and `RUNTIME-PARITY-001` |
+| [ADR-0005](../docs/adr/0005-official-channel-selection-zalo-oa.md) | Selects official Zalo OA as the production channel; Telegram is a sandbox only |
+| [ADR-0006](../docs/adr/0006-two-party-release-authorization.md) | Amends the three-signature gate to two parties with schema-required compensating controls |
+| [ADR-0007](../docs/adr/0007-production-deployment-topology.md) | Fixes the three-zone, two-host topology; hosting provider still unselected |
+
+New specifications: [`CHANNEL_ADAPTER_SPEC_V1.md`](../specs/CHANNEL_ADAPTER_SPEC_V1.md),
+[`PRODUCTION_OPERATIONS_SPEC_V1.md`](../specs/PRODUCTION_OPERATIONS_SPEC_V1.md),
+[`PUBLIC_CUSTOMER_POLICY_SPEC_V1.md`](../specs/PUBLIC_CUSTOMER_POLICY_SPEC_V1.md).
+
+New contracts: channel inbound envelope, channel outbound receipt, public policy bundle, and
+release-gate manifest v2 (mechanically derived from v1; `verify_contracts.py` fails if it diverges
+beyond the ADR-0006 amendment).
+
+Nineteen work items were added across four phases. The longest lead times are calendar-bound and
+**start before any code**: `SHOP-INSTRUMENT-001` (4–6 weeks of real cycle and delivery-cost data,
+without which `SHADOW-001` has no valid denominator), `CHANNEL-ZALO-APPLY-001` (2–8 weeks of external
+OA verification) and `PROVIDER-ACCESS-001` (resolves `DEC-006`).
 
 This brief is the human-readable entry point for an engineer or coding agent resuming implementation.
 It is navigation only; machine-readable contracts, the work queue, capability status, and immutable
@@ -42,7 +70,13 @@ custom candidate, comparator and DEC-006/provider evidence; `OPENCLAW-RETIRE-001
 may later remove the public dependency. This separation preserves the immutable blocked history of
 `AGENT-001` and `OPENCLAW-REPACK-001` while allowing independent local progress.
 
-## Current blocked engineering handoff: OPENCLAW-REPACK-001 Phase B1
+## Historical engineering handoff: OPENCLAW-REPACK-001 Phase B1
+
+> **FROZEN by [ADR-0004](../docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md) on
+> 2026-08-12. Do not resume.** Everything from here to the end of the r1 section is preserved as the
+> record of what was attempted and why it stopped. The "Exact next sequence" it contains — obtaining
+> authorization for a hosted supply-chain workflow run — is exactly the effort ADR-0004 halts. G1
+> agent evidence is carried by `AGENT-002` instead.
 
 The local workflow now has the fail-closed dependency graph
 `openclaw-repackage-windows + openclaw-repackage-linux -> openclaw-cross-platform-compare ->
@@ -257,20 +291,23 @@ evidence. Current branch verification must be rerun before relying on these base
 Work in this order unless a higher-authority contract changes it. After each slice, update its task
 packet, this brief, the relevant machine status, and tests.
 
-1. **`RESPONSES-RUNTIME-001` — safe local implementation.** Let `run_delivery_loop.py` select/start it
-   with a fresh generation. Implement only the bounded state machine in its task packet with scripted
-   provider transport and negative/failure tests. It must not call a provider, use a credential, alter
-   a release gate or rewrite existing OpenClaw evidence.
+1. **`RUNTIME-FREEZE-001` — apply ADR-0004 to the machine state.** Its packet is
+   `context/tasks/TASK-runtime-freeze-001.md`. Nothing under `evidence/` may be modified; the three
+   frozen items keep `BLOCKED` status and gain only a `blocking_condition` note. Freezing is a
+   scheduling decision, never a completion claim.
 
-2. **OpenClaw evidence track remains independently blocked.** Resolve `OPENCLAW-REPACK-001` only through
-   the exact authorized sequence in its blocked handoff. Do not advance it with stale pins, an unrun
-   workflow, skipped PostgreSQL integration or a high/critical result. Afterwards reconcile
-   `RUNTIME-SECURITY-001` through a controller-selected path without rewriting immutable history.
+2. **Start the three calendar-bound external items immediately** — `SHOP-INSTRUMENT-001`,
+   `CHANNEL-ZALO-APPLY-001`, `PROVIDER-ACCESS-001`. They need no code and gate everything
+   downstream. Every week they are not started is a week added to the end of the project.
 
-3. **`RUNTIME-PARITY-001` — integrated same-envelope selection.** After both candidate dependencies and
-   external prerequisites exist, compare the exact same model/prompt/context/tools/budgets/datasets and
-   safety denominator. Retain only permitted hash-safe evidence; no synthetic result may be relabeled
-   as PRIMARY/provider-backed or release-ready.
+3. **OpenClaw evidence track is frozen, not resumed.** Do not advance `OPENCLAW-REPACK-001` or
+   `RUNTIME-SECURITY-001`. Do not rewrite their immutable history. The rollback target for the
+   custom runtime is deterministic degraded mode plus human handling, which is already built and
+   tested — not a second agent runtime (ADR-0004).
+
+4. **`RUNTIME-PARITY-001` — absolute bar, not a bake-off.** Rescoped by ADR-0004 to prove the custom
+   adapter meets the declared P0, latency and cost bar with a rehearsed rollback to degraded mode.
+   No synthetic result may be relabeled as PRIMARY, provider-backed or release-ready.
 
 4. **External/provider prerequisites — still blocked, not improvable by code alone.**
    - `DEC-006`: obtain Security/Privacy decisions for training, retention, region, deletion,

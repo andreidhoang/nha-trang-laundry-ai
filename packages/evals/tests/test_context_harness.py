@@ -40,7 +40,8 @@ def test_context_drift_check_passes() -> None:
     assert "Context drift check passed" in result.stdout
     assert "4 gates" in result.stdout
     assert "9 phases" in result.stdout
-    assert "36 work items" in result.stdout
+    # 36 baseline items plus the 19 production-path items added by ADR-0004 through ADR-0007.
+    assert "55 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

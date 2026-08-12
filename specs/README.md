@@ -42,6 +42,33 @@
     Giải thích tiếng Việt từ big picture xuống runtime/context/harness, bao gồm lý do chọn custom
     Responses cho workload hiện tại và cách chứng minh trước khi retire OpenClaw.
 
+## Bộ spec đường tới production (2026-08-12)
+
+11. [`CHANNEL_ADAPTER_SPEC_V1.md`](./CHANNEL_ADAPTER_SPEC_V1.md)
+    Canonical inbound envelope, webhook auth/replay, dedupe, receipt và reconciliation cho outcome
+    không xác định, STOP/suppression, profile Zalo OA và Telegram.
+
+12. [`PRODUCTION_OPERATIONS_SPEC_V1.md`](./PRODUCTION_OPERATIONS_SPEC_V1.md)
+    Topology triển khai, vòng đời secret, WAL archive và restore drill, alert nào được page, kill
+    switch, phân loại sự cố và runbook bắt buộc trước G1.
+
+13. [`PUBLIC_CUSTOMER_POLICY_SPEC_V1.md`](./PUBLIC_CUSTOMER_POLICY_SPEC_V1.md)
+    Cổng xuất bản `PUBLIC_CUSTOMER`, phân lớp audience, quy trình sửa sai sáu bước, và quy tắc
+    ẩn danh hoá lịch sử hội thoại thật trước khi thành fixture.
+
+14. [`../docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md`](../docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md)
+    Đóng băng nhánh bằng chứng OpenClaw thành lịch sử bất biến, tạo `AGENT-002` làm vật mang bằng
+    chứng G1, và chuyển phụ thuộc downstream khỏi nút đã đóng băng.
+
+15. [`../docs/adr/0005-official-channel-selection-zalo-oa.md`](../docs/adr/0005-official-channel-selection-zalo-oa.md)
+    Giải quyết `DEC-005`: Zalo OA chính thức là kênh production, Telegram chỉ là sandbox kỹ thuật.
+
+16. [`../docs/adr/0006-two-party-release-authorization.md`](../docs/adr/0006-two-party-release-authorization.md)
+    Sửa quy tắc ba chữ ký thành hai người với compensating control bắt buộc trong schema.
+
+17. [`../docs/adr/0007-production-deployment-topology.md`](../docs/adr/0007-production-deployment-topology.md)
+    Ba vùng mạng, hai host tối thiểu, và hàm quyết định nhà cung cấp hosting.
+
 ## Contracts có thể chạy bằng máy
 
 - [`contracts/canonical-enums-v1.json`](./contracts/canonical-enums-v1.json) — enum, canonicalization

@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-11'
+last_updated: '2026-08-12'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -284,7 +284,7 @@ items:
   - provider_storage_verification
   - rollback_assessment
   blocked_by_decisions: []
-  blocking_condition: Local fixture/assertion registry, the sanitized 32-case deterministic-degraded
+  blocking_condition: 'Local fixture/assertion registry, the sanitized 32-case deterministic-degraded
     evidence bundle, signed-manifest/trust-root and provider-evidence enforcement,
     version-bound offline runtime audit, context-contract coverage validation, capability-status
     cryptographic binding, and rollback assessment are complete; 313 database-enabled
@@ -292,6 +292,9 @@ items:
     OpenClaw store:false effective request, dedicated credential, scanned sandbox
     image digest with scan/SBOM evidence, DEC-006 Security/Privacy approval, provider
     storage/retention verification, and signed release evidence require external authority/services.
+    FROZEN by ADR-0004 on 2026-08-12: this item is immutable blocked history. It is
+    not completed, rewritten, unblocked or deleted, and no further engineering effort
+    is spent on it. G1 agent evidence is carried by AGENT-002 instead.'
 - id: HARDEN-CI-001
   phase: PRODUCTION_HARDENING
   title: Non-skippable PostgreSQL integration and OpenClaw plugin checks in CI
@@ -660,8 +663,9 @@ items:
   status: BLOCKED
   priority: 113
   depends_on:
-  - STAGING-001
   - DB-001
+  - DEPLOY-TARGET-001
+  - STAGING-001
   context_domains:
   - platform
   - orders_audit
@@ -696,7 +700,7 @@ items:
   status: PENDING
   priority: 120
   depends_on:
-  - AGENT-001
+  - AGENT-002
   - OBSERVABILITY-001
   - POLICY-001
   - SUPPLYCHAIN-001
@@ -704,6 +708,8 @@ items:
   - TELEMETRY-001
   - STAGING-001
   - BACKUP-RESTORE-001
+  - DEPLOY-TARGET-001
+  - MONITORING-001
   context_domains:
   - platform
   - runtime_architecture
@@ -736,6 +742,8 @@ items:
   priority: 130
   depends_on:
   - SECURITY-001
+  - SHOP-INSTRUMENT-001
+  - SIGNER-REGISTRY-001
   context_domains:
   - evaluation_release
   - orders_audit
@@ -762,6 +770,9 @@ items:
   status: PENDING
   priority: 140
   depends_on:
+  - CHANNEL-ZALO-001
+  - CONSENT-STOP-001
+  - PUBLIC-POLICY-001
   - SHADOW-001
   context_domains:
   - runtime_architecture
@@ -889,12 +900,15 @@ items:
   - regression_suite
   - rollback_assessment
   blocked_by_decisions: []
-  blocking_condition: The current latest stable openclaw 2026.7.1-2 package embeds
+  blocking_condition: 'The current latest stable openclaw 2026.7.1-2 package embeds
     a nested npm shrinkwrap containing brace-expansion 5.0.7 and fast-uri 3.1.2, which
     now have two high-severity advisories. Root patch-level overrides were proven
     ineffective because the embedded shrinkwrap retains those versions. Completion
     requires a reviewed upstream OpenClaw release or separately reviewed immutable
-    runtime repackaging; high findings cannot be waived or relabeled.
+    runtime repackaging; high findings cannot be waived or relabeled. FROZEN by ADR-0004
+    on 2026-08-12: this item is immutable blocked history. It is not completed, rewritten,
+    unblocked or deleted, and no further engineering effort is spent on it. G1 agent
+    evidence is carried by AGENT-002 instead.'
 - id: RUNTIME-EVIDENCE-001
   phase: PRODUCTION_HARDENING
   title: Explicit fail-closed evidence for blocked pinned-runtime verification
@@ -1052,7 +1066,7 @@ items:
   - regression_suite
   - disabled_authority_and_rollback
   blocked_by_decisions: []
-  blocking_condition: Phase B1 local-only least-privilege Windows/Linux r2 build,
+  blocking_condition: 'Phase B1 local-only least-privilege Windows/Linux r2 build,
     typed metadata, byte-comparison, compared-byte OCI binding, and final evidence
     workflow preparation passed all local checks with no required skips. Completion
     remains blocked pending independent Security/Supply-chain review; authorization
@@ -1060,7 +1074,10 @@ items:
     the reviewed hosted workflow; hosted Windows/Linux byte-identity evidence; and
     exact r2 OCI CycloneDX SBOM, SLSA v1 provenance, and zero-HIGH/CRITICAL scan evidence.
     No commit, push, hosted run, credential, provider/customer data, release, deployment,
-    or capability authorization occurred.
+    or capability authorization occurred. FROZEN by ADR-0004 on 2026-08-12: this item
+    is immutable blocked history. It is not completed, rewritten, unblocked or deleted,
+    and no further engineering effort is spent on it. G1 agent evidence is carried
+    by AGENT-002 instead.'
 - id: RESPONSES-RUNTIME-001
   phase: AGENT_SHADOW
   title: Minimum bounded custom Responses adapter behind ConstrainedAgentRuntime
@@ -1100,18 +1117,18 @@ items:
   blocked_by_decisions: []
 - id: RUNTIME-PARITY-001
   phase: AGENT_SHADOW
-  title: Same-envelope custom Responses versus OpenClaw parity and selection evidence
+  title: Custom Responses runtime absolute P0, latency, cost, and rollback bar
   status: PENDING
   priority: 111
   depends_on:
-  - RESPONSES-RUNTIME-001
-  - AGENT-001
+  - AGENT-002
   context_domains:
   - runtime_architecture
   - agent_tools
   - evaluation_release
   - privacy_consent
   normative_sources:
+  - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
   - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
   - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
   - specs/SECURITY_RELIABILITY_SPEC_V1.md
@@ -1127,10 +1144,9 @@ items:
   - uv run python scripts/verify_contracts.py
   - uv run python scripts/check_context_drift.py
   required_evidence:
-  - same_envelope_runtime_comparison
   - p0_quality_tool_handoff_latency_and_cost_results
   - provider_effective_request_and_data_review
-  - deployed_surface_and_supply_chain_comparison
+  - degraded_mode_rollback_rehearsal
   - signed_runtime_selection
   - rollback_rehearsal
   blocked_by_decisions:
@@ -1169,4 +1185,505 @@ items:
   - historical_evidence_preservation
   - startup_fail_closed_tests
   - rollback_rehearsal
+  blocked_by_decisions: []
+- id: RUNTIME-FREEZE-001
+  phase: AGENT_SHADOW
+  title: Freeze the OpenClaw evidence track and re-point the dependency graph
+  status: PENDING
+  priority: 200
+  depends_on: []
+  context_domains:
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
+  - delivery/PROGRAM_PLAN.yaml
+  contracts:
+  - delivery/GATE_REGISTRY.yaml
+  - specs/contracts/release-gate-manifest-v1.schema.json
+  task_packet: context/tasks/TASK-runtime-freeze-001.md
+  acceptance_checks:
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  - uv run python scripts/report_delivery_status.py
+  required_evidence:
+  - frozen_history_unmodified
+  - dependency_repoint
+  - capability_status_unchanged
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: DECISION-HOSTING-001
+  phase: PRODUCTION_HARDENING
+  title: Hosting decision packet and admissibility verdict for ADR-0007
+  status: PENDING
+  priority: 201
+  depends_on: []
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/adr/0007-production-deployment-topology.md
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  contracts: []
+  acceptance_checks: &id001
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - admissibility_verdict_per_candidate
+  - verified_cost_and_residency
+  - restore_feasibility_assessment
+  - owner_written_approval
+  blocked_by_decisions: []
+- id: PROVIDER-ACCESS-001
+  phase: AGENT_SHADOW
+  title: Dedicated provider organization, credential, and data-control posture
+  status: PENDING
+  priority: 202
+  depends_on: []
+  context_domains:
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/provider-data-evidence-v1.schema.json
+  acceptance_checks: *id001
+  required_evidence:
+  - dedicated_non_personal_credential
+  - data_use_retention_region_deletion_posture
+  - subprocessor_and_incident_terms
+  - dec_006_decision_record
+  blocked_by_decisions: []
+- id: SHOP-INSTRUMENT-001
+  phase: REAL_SHADOW_READINESS
+  title: 'Physical shop instrumentation: cycle, capacity, and delivery cost baselines'
+  status: PENDING
+  priority: 203
+  depends_on: []
+  context_domains:
+  - business_truth
+  - promotion_delivery_sla
+  normative_sources:
+  - BUSINESS_TRUTH_INTAKE.md
+  - MACHINE_INVENTORY.md
+  - SERVICE_CATALOG_AND_SLA_V1.md
+  - templates/delivery-cost-log.csv
+  - templates/machine-master.csv
+  contracts: []
+  acceptance_checks: *id001
+  required_evidence:
+  - ten_timed_loads
+  - twenty_delivery_logs
+  - measured_cost_per_kg
+  - owner_confirmed_safe_capacity
+  - item_count_handoff_checklist
+  blocked_by_decisions: []
+- id: DECISION-BUSINESS-001
+  phase: REAL_SHADOW_READINESS
+  title: Owner decision session closing DEC-001 through DEC-004
+  status: PENDING
+  priority: 204
+  depends_on: []
+  context_domains:
+  - business_truth
+  - pricing
+  - promotion_delivery_sla
+  normative_sources:
+  - BUSINESS_TRUTH_INTAKE.md
+  - PRICEBOOK_V1.md
+  - PROMOTION_2026_08.md
+  - DELIVERY_POLICY_DRAFT.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks: *id001
+  required_evidence:
+  - weight_rounding_rule
+  - promotion_eligibility_event
+  - delivery_over_six_km_rule
+  - rewash_loss_damage_policy
+  - versioned_configuration_publication
+  blocked_by_decisions: []
+- id: CHANNEL-ZALO-APPLY-001
+  phase: PUBLIC_ASSISTED
+  title: Official Zalo OA registration and business verification
+  status: PENDING
+  priority: 205
+  depends_on: []
+  context_domains:
+  - channel_operations
+  - business_truth
+  normative_sources:
+  - docs/adr/0005-official-channel-selection-zalo-oa.md
+  - specs/CHANNEL_ADAPTER_SPEC_V1.md
+  - BUSINESS_TRUTH_INTAKE.md
+  contracts: []
+  acceptance_checks: *id001
+  required_evidence:
+  - oa_business_verification
+  - api_tier_provisioned
+  - separation_from_personal_account
+  - dec_005_decision_record
+  blocked_by_decisions: []
+- id: CHANNEL-ENVELOPE-001
+  phase: PRODUCTION_HARDENING
+  title: Canonical inbound envelope and outbound receipt wired to inbox/outbox
+  status: PENDING
+  priority: 206
+  depends_on: []
+  context_domains:
+  - channel_operations
+  - orders_audit
+  normative_sources:
+  - specs/CHANNEL_ADAPTER_SPEC_V1.md
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  contracts:
+  - specs/contracts/channel-inbound-envelope-v1.schema.json
+  - specs/contracts/channel-outbound-receipt-v1.schema.json
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-channel-envelope-001.md
+  acceptance_checks: &id002
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - envelope_schema_conformance
+  - dedupe_uniqueness
+  - server_side_contact_binding
+  - receipt_per_attempt
+  - unknown_outcome_never_auto_retried
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: PROVIDER-TRANSPORT-001
+  phase: AGENT_SHADOW
+  title: Real Responses provider transport behind the existing injectable boundary
+  status: PENDING
+  priority: 207
+  depends_on:
+  - PROVIDER-ACCESS-001
+  context_domains:
+  - runtime_architecture
+  - agent_tools
+  - evaluation_release
+  normative_sources:
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/agent-tools-v1.openapi.yaml
+  - specs/contracts/provider-data-evidence-v1.schema.json
+  - specs/evals/eval-manifest-v1.yaml
+  task_packet: context/tasks/TASK-provider-transport-001.md
+  acceptance_checks: *id002
+  required_evidence:
+  - transport_state_machine_tests
+  - timeout_cancellation_and_ambiguity_tests
+  - no_hidden_retry
+  - cost_accounting_settlement
+  - effective_request_capture_schema_valid
+  - redaction_review
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CORPUS-CONSENT-001
+  phase: AGENT_SHADOW
+  title: Consent basis and reviewed anonymization of real customer message history
+  status: PENDING
+  priority: 208
+  depends_on: []
+  context_domains:
+  - privacy_consent
+  - business_truth
+  - evaluation_release
+  normative_sources:
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - CUSTOMER_SERVICE_POLICY_DRAFT.md
+  - BUSINESS_TRUTH_INTAKE.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  - specs/evals/eval-manifest-v1.yaml
+  acceptance_checks:
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  - uv run pytest packages/evals/tests
+  required_evidence:
+  - lawful_basis_or_consent
+  - identifier_substitution_preserving_linguistic_shape
+  - mapping_table_excluded_from_repository
+  - human_review_of_free_text
+  - no_raw_pii_fixture
+  blocked_by_decisions: []
+- id: CHANNEL-TELEGRAM-001
+  phase: PRODUCTION_HARDENING
+  title: Telegram sandbox adapter proving the channel contract end to end
+  status: PENDING
+  priority: 209
+  depends_on:
+  - CHANNEL-ENVELOPE-001
+  context_domains:
+  - channel_operations
+  normative_sources:
+  - specs/CHANNEL_ADAPTER_SPEC_V1.md
+  - docs/adr/0005-official-channel-selection-zalo-oa.md
+  contracts:
+  - specs/contracts/channel-inbound-envelope-v1.schema.json
+  - specs/contracts/channel-outbound-receipt-v1.schema.json
+  acceptance_checks: *id002
+  required_evidence:
+  - webhook_authentication_and_replay
+  - duplicate_update_acknowledged_once
+  - oversized_and_malformed_rejection
+  - send_receipt_and_reconciliation
+  - sandbox_only_no_real_pii
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSENT-STOP-001
+  phase: PRODUCTION_HARDENING
+  title: Consent capture, STOP suppression, and opt-out versus in-flight send race
+  status: PENDING
+  priority: 210
+  depends_on:
+  - CHANNEL-ENVELOPE-001
+  context_domains:
+  - privacy_consent
+  - channel_operations
+  normative_sources:
+  - specs/CHANNEL_ADAPTER_SPEC_V1.md
+  - CUSTOMER_SERVICE_POLICY_DRAFT.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  - specs/contracts/channel-outbound-receipt-v1.schema.json
+  acceptance_checks: *id002
+  required_evidence:
+  - ingress_suppression_atomic
+  - egress_recheck_in_send_transaction
+  - optout_versus_send_claim_race
+  - ambiguous_optout_requires_human
+  - forged_consent_denied
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: MODEL-PIN-001
+  phase: AGENT_SHADOW
+  title: Immutable model release pin and registry artifact verification
+  status: PENDING
+  priority: 211
+  depends_on:
+  - PROVIDER-TRANSPORT-001
+  context_domains:
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  contracts:
+  - specs/contracts/provider-data-evidence-v1.schema.json
+  - specs/contracts/capability-status-v1.schema.json
+  acceptance_checks: *id002
+  required_evidence:
+  - immutable_model_release_pinned
+  - moving_alias_rejected
+  - registry_artifact_verification
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: EVAL-CORPUS-001
+  phase: AGENT_SHADOW
+  title: Frozen Vietnamese regression corpus raised toward the manifest minimum
+  status: PENDING
+  priority: 212
+  depends_on:
+  - CORPUS-CONSENT-001
+  context_domains:
+  - evaluation_release
+  - agent_tools
+  normative_sources:
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  contracts:
+  - specs/evals/eval-manifest-v1.yaml
+  - specs/contracts/agent-tools-v1.openapi.yaml
+  acceptance_checks: *id002
+  required_evidence:
+  - frozen_regression_minimum_cases
+  - adversarial_layer
+  - grader_calibration
+  - no_raw_pii_fixture
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: DEPLOY-TARGET-001
+  phase: PRODUCTION_HARDENING
+  title: Production topology, isolated agent cell host, and closed capability flags
+  status: PENDING
+  priority: 213
+  depends_on:
+  - DECISION-HOSTING-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/adr/0007-production-deployment-topology.md
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  - docs/runbooks/container-deployment.md
+  - docs/runbooks/private-staging.md
+  contracts: []
+  acceptance_checks: *id002
+  required_evidence:
+  - external_port_scan_single_path
+  - agent_cell_isolation_proven_by_attempt
+  - no_secret_in_image_or_archive
+  - capability_flags_closed_on_fresh_instance
+  - credential_rotation_drill
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: MONITORING-001
+  phase: PRODUCTION_HARDENING
+  title: Telemetry collector, retention, and paging alert contracts
+  status: PENDING
+  priority: 214
+  depends_on:
+  - DEPLOY-TARGET-001
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  - docs/adr/0007-production-deployment-topology.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  acceptance_checks: *id002
+  required_evidence:
+  - collector_receives_existing_otel_contracts
+  - redaction_verified_in_transit
+  - paging_alerts_exercised
+  - archive_gap_alert
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SIGNER-REGISTRY-001
+  phase: PRODUCTION_HARDENING
+  title: Two-party release schema, verifier enforcement, and signer key ceremony
+  status: PENDING
+  priority: 215
+  depends_on: []
+  context_domains:
+  - evaluation_release
+  normative_sources:
+  - docs/adr/0006-two-party-release-authorization.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  contracts:
+  - specs/contracts/release-gate-manifest-v1.schema.json
+  - specs/contracts/release-gate-manifest-v2.schema.json
+  - specs/contracts/trusted-release-signers-v1.schema.json
+  task_packet: context/tasks/TASK-signer-registry-001.md
+  acceptance_checks: *id002
+  required_evidence:
+  - owner_actor_distinctness_enforced
+  - compensating_controls_required
+  - cooling_off_computed_from_timestamps
+  - external_review_required_at_assisted
+  - public_key_only_registry
+  - rotation_and_revocation_exercised
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: AGENT-002
+  phase: AGENT_SHADOW
+  title: Custom-runtime Shadow evidence and P0 provider-backed evaluation
+  status: PENDING
+  priority: 216
+  depends_on:
+  - RUNTIME-FREEZE-001
+  - PROVIDER-TRANSPORT-001
+  - MODEL-PIN-001
+  - EVAL-CORPUS-001
+  context_domains:
+  - runtime_architecture
+  - agent_tools
+  - evaluation_release
+  - privacy_consent
+  normative_sources:
+  - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/agent-tools-v1.openapi.yaml
+  - specs/evals/eval-manifest-v1.yaml
+  - specs/contracts/provider-data-evidence-v1.schema.json
+  - specs/contracts/release-gate-manifest-v1.schema.json
+  task_packet: context/tasks/TASK-agent-002.md
+  acceptance_checks: *id002
+  required_evidence:
+  - primary_path_eval_pass
+  - fallback_path_eval_pass
+  - degraded_path_eval_pass
+  - effective_provider_request_verified
+  - exact_runtime_prompt_tool_context_pins
+  - structured_redacted_run_evidence
+  - rollback_assessment
+  blocked_by_decisions:
+  - DEC-006
+- id: CHANNEL-ZALO-001
+  phase: PUBLIC_ASSISTED
+  title: Official Zalo OA adapter with verified provider behavior
+  status: PENDING
+  priority: 217
+  depends_on:
+  - CHANNEL-ENVELOPE-001
+  - CHANNEL-ZALO-APPLY-001
+  - CONSENT-STOP-001
+  context_domains:
+  - channel_operations
+  - privacy_consent
+  normative_sources:
+  - specs/CHANNEL_ADAPTER_SPEC_V1.md
+  - docs/adr/0005-official-channel-selection-zalo-oa.md
+  - docs/adr/0007-production-deployment-topology.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/channel-inbound-envelope-v1.schema.json
+  - specs/contracts/channel-outbound-receipt-v1.schema.json
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks: *id002
+  required_evidence:
+  - provider_behavior_verified_against_official_documentation
+  - webhook_authentication_replay_and_payload_limits
+  - token_refresh_without_loss
+  - messaging_window_fails_closed
+  - unknown_outcome_reconciliation
+  - no_credential_reachable_from_agent_cell
+  - rollback_assessment
+  blocked_by_decisions:
+  - DEC-005
+- id: PUBLIC-POLICY-001
+  phase: PUBLIC_ASSISTED
+  title: Published PUBLIC_CUSTOMER bundle and tested correction workflow
+  status: PENDING
+  priority: 218
+  depends_on:
+  - DECISION-BUSINESS-001
+  context_domains:
+  - channel_operations
+  - pricing
+  - business_truth
+  normative_sources:
+  - specs/PUBLIC_CUSTOMER_POLICY_SPEC_V1.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  - PRICEBOOK_V1.md
+  contracts:
+  - specs/contracts/public-policy-bundle-v1.schema.json
+  - specs/contracts/pricebook-import-manifest-v1.json
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks: *id002
+  required_evidence:
+  - one_published_hashed_bundle
+  - internal_content_unreachable_by_public_runtime
+  - prohibited_content_scan_rejects_risk_material
+  - deterministic_dry_run_rejects_wrong_price
+  - correction_drill_executed
+  - expired_bundle_degrades_to_require_human
+  - rollback_assessment
   blocked_by_decisions: []

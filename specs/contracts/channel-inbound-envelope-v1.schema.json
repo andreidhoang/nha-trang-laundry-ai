@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://giatlasachcong.vn/contracts/channel-inbound-envelope-v1.schema.json",
+  "title": "Canonical inbound channel envelope",
+  "description": "One normalized shape every messaging provider maps into before any durable inbox write. Contains no raw provider payload, no attachment bytes, and no model-supplied identity. Contact binding is server-resolved.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "envelope_id",
+    "provider",
+    "provider_update_id",
+    "dedupe_key_source",
+    "received_at",
+    "authentication",
+    "contact_binding",
+    "content",
+    "suppression"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "envelope_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Server-generated. Never provider-supplied."
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["ZALO_OA", "TELEGRAM_SANDBOX", "FACEBOOK_MESSENGER"],
+      "description": "TELEGRAM_SANDBOX is development and private staging only and may never carry real PII or gate evidence. FACEBOOK_MESSENGER is reserved and not implemented."
+    },
+    "provider_update_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Deduplication key together with provider. Unique per (provider, provider_update_id)."
+    },
+    "dedupe_key_source": {
+      "type": "string",
+      "enum": ["PROVIDER_ASSIGNED", "DERIVED"],
+      "description": "DERIVED means the provider guarantees no stable update identifier and the key was computed from stable fields. A declared weakness, never a silent fallback."
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Server receipt time. Provider-claimed timestamps are transport metadata only."
+    },
+    "provider_sent_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Provider-claimed send time. Advisory only; never used for ordering, SLA or promotion eligibility."
+    },
+    "authentication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scheme", "verified", "skew_seconds"],
+      "properties": {
+        "scheme": {
+          "type": "string",
+          "enum": ["PROVIDER_SIGNATURE", "SECRET_HEADER", "MUTUAL_TLS"]
+        },
+        "verified": {
+          "const": true,
+          "description": "An unverified request is never normalized into an envelope and never persisted."
+        },
+        "skew_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Observed difference between provider timestamp and server receipt, when the provider supplies one."
+        },
+        "key_id": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "contact_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_user_ref", "contact_id", "verification_state", "resolved_by"],
+      "properties": {
+        "provider_user_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Provider-scoped opaque user reference. Not a phone number and not a customer identifier."
+        },
+        "contact_id": { "type": "string", "format": "uuid" },
+        "verification_state": {
+          "type": "string",
+          "enum": ["UNVERIFIED", "VERIFIED"],
+          "description": "UNVERIFIED contacts receive only capabilities whose disclosure policy permits an unauthenticated audience. Never order status, quotes or customer-specific facts."
+        },
+        "resolved_by": {
+          "const": "SERVER_BINDING_TABLE",
+          "description": "Model output may never establish, influence or override the binding."
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content_type"],
+      "properties": {
+        "content_type": {
+          "type": "string",
+          "enum": ["TEXT", "IMAGE", "FILE", "STICKER", "LOCATION", "UNSUPPORTED"]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000,
+          "description": "Present only when content_type is TEXT. Untrusted data; never an instruction to any component."
+        },
+        "attachments": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["attachment_ref", "declared_media_type", "byte_size"],
+            "properties": {
+              "attachment_ref": { "type": "string", "minLength": 1, "maxLength": 500 },
+              "declared_media_type": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "byte_size": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "description": "References only. Attachment bytes never enter the envelope, a trace, or evidence."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "content_type": { "const": "TEXT" } } },
+          "then": { "required": ["text"] }
+        }
+      ]
+    },
+    "suppression": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ingress_decision"],
+      "properties": {
+        "ingress_decision": {
+          "type": "string",
+          "enum": ["ALLOW", "SUPPRESS_RECORDED", "REQUIRE_HUMAN"],
+          "description": "SUPPRESS_RECORDED means an opt-out was recognized and written atomically with this envelope. REQUIRE_HUMAN means the opt-out reading is ambiguous and must never be resolved by a model."
+        },
+        "matched_rule_id": { "type": "string", "minLength": 1, "maxLength": 120 }
+      }
+    },
+    "provider_metadata": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "integer", "boolean", "null"] },
+      "maxProperties": 20,
+      "description": "Bounded allowlist of transport fields only. Never a raw payload dump and never free-form customer content."
+    }
+  }
+}

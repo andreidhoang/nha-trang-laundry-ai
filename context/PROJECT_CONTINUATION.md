@@ -2,7 +2,8 @@
 
 **Last reconciled:** 2026-08-12 (Asia/Ho_Chi_Minh)
 **Active work item:** none; `RUNTIME-FREEZE-001` is the next controller-selected candidate
-**Active branch:** `feat/production-spec-pack` from `98810bf`
+**Active branch:** `main` on `andreidhoang/nha-trang-laundry-ai` (the working repository).
+`ngocduong-coder/nha-trang-laundry-ai` is read-only `upstream`; contribute there by pull request only.
 **Code stage:** `PRODUCTION_HARDENING`; production spec pack authored, nothing provisioned
 **Production authorization:** `NOT_AUTHORIZED` for every capability
 

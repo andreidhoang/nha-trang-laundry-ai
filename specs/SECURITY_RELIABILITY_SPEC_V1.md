@@ -1,7 +1,7 @@
 # Security & Reliability Specification v1
 
-**Version:** 1.2-runtime-decision  
-**Date:** 2026-07-27  
+**Version:** 1.4-custom-runtime-threat-delta
+**Date:** 2026-08-10
 **Applies to:** R1 Shadow Mode through R3 Bounded Autonomy
 
 ## 1. Security objective
@@ -12,9 +12,10 @@ Hệ thống phải bảo vệ đồng thời:
 2. quyền quyết định của chủ/nhân viên;
 3. tính đúng của giá và trạng thái đơn;
 4. khả năng vận hành khi AI hoặc channel lỗi;
-5. môi trường OpenClaw cá nhân của chủ tiệm.
+5. môi trường agent/productivity cá nhân của chủ tiệm.
 
-OpenClaw public cell được xem là một **untrusted reasoning client** của Business Control Plane. Nó không phải security boundary, database hay authority.
+Mọi public agent runtime cell được xem là một **untrusted reasoning client** của Business Control
+Plane. Nó không phải security boundary, database hay authority.
 
 ## 2. Trust zones
 
@@ -54,25 +55,25 @@ Responsibilities:
 
 TZ-1 không được chứa business pricing logic.
 
-### TZ-2 — Public OpenClaw cell
+### TZ-2 — Public Agent Runtime cell
 
 Requirements:
 
-- separate OpenClaw profile, config, state and workspace;
+- separate service/OS identity, config, state and secrets;
 - a separate VM/VPS is mandatory before any public or otherwise untrusted inbound is connected;
 - same-host isolation is permitted only for development and internal pre-channel Shadow;
 - no access to personal workspace or memory;
 - no `exec`, browser, node, canvas, generic filesystem mutation, cron mutation, session-control or generic messaging tools;
 - no channel-provider credentials, provider webhook secret or outbound-send capability;
 - no owner workspace mount, Docker socket, host administration interface or shared runtime directory;
-- runtime writes are limited to dedicated OpenClaw state/log directories owned by the public-cell OS identity; no filesystem-mutation tool is exposed to the model;
+- runtime writes are limited to dedicated state/log directories owned by the public-cell OS identity; no filesystem-mutation tool is exposed to the model;
 - elevated mode disabled;
 - no arbitrary web fetch from customer-provided URLs;
 - egress allowlist only to the approved model provider and Agent Tool Facade;
 - inbound agent runs only from the authenticated control-plane `AGENT_RUNNER`; it dispatches a
   signed, contact-bound job over a private queue/pull transport, and a minimal public-cell executor
-  invokes the loopback Gateway. The public Internet and channel adapter cannot invoke the Gateway
-  control plane directly;
+  invokes the private runtime endpoint. The public Internet and channel adapter cannot invoke the
+  runtime control plane directly;
 - disposable/rebuildable.
 
 ### TZ-3 — Business control plane
@@ -98,14 +99,14 @@ channel provider
   -> edge adapter
   -> durable inbox
   -> authenticated AGENT_RUNNER
-  -> public OpenClaw draft/tool calls
+  -> public agent runtime draft/tool calls
   -> approval or allowlisted deterministic-template decision
   -> transactional outbox
   -> OUTBOX_WORKER
   -> channel provider
 ```
 
-OpenClaw never receives a channel credential and never sends directly.
+The public agent runtime never receives a channel credential and never sends directly.
 
 ### TZ-4 — Private owner environment
 
@@ -126,7 +127,7 @@ Rules:
 Channel providers and the model provider remain external processors, outside TZ-1–TZ-4:
 
 - only the edge adapter and `OUTBOX_WORKER` may communicate with a channel provider;
-- only the public OpenClaw cell may call the approved model endpoint;
+- only the public agent runtime cell may call the approved model endpoint;
 - prompts use the minimum necessary data and exclude secrets, bank configuration and unnecessary addresses;
 - provider data-use, training, regional processing and retention terms require documented review before public launch;
 - private object storage is in TZ-3, has no public bucket, and is accessed only through scoped service identities or signed expiring URLs.
@@ -138,15 +139,15 @@ Channel providers and the model provider remain external processors, outside TZ-
 | Internet | Edge HTTPS | Yes | 443 only |
 | Internet | Operator UI | No by default | VPN/IAP/private network preferred |
 | Internet | PostgreSQL | Never | no public listener |
-| Internet | Public OpenClaw Gateway/control UI | Never | no reverse-proxy route |
+| Internet | Public runtime control endpoint/UI | Never | no reverse-proxy route |
 | Edge | Durable inbox/API | Yes | authenticated private hop; persist before dispatch |
 | Control-plane `AGENT_RUNNER` | Public-cell job transport | Yes | authenticated private queue/pull; signed, expiring, contact-bound job |
-| Public-cell executor | Public OpenClaw loopback | Yes | same public VM; no network-exposed Gateway |
-| Public OpenClaw | Agent Tool Facade | Yes | narrow audience/scopes |
-| Public OpenClaw | Approved model provider | Yes | dedicated credential; minimum data |
-| Public OpenClaw | Channel APIs | Never | no route or credential |
-| Public OpenClaw | PostgreSQL | Never | no route/credential |
-| Public OpenClaw | Private owner Gateway | Never | separate trust boundary |
+| Public-cell executor | Public runtime private endpoint | Yes | same public VM; no Internet-exposed control plane |
+| Public agent runtime | Agent Tool Facade | Yes | narrow audience/scopes |
+| Public agent runtime | Approved model provider | Yes | dedicated credential; minimum data |
+| Public agent runtime | Channel APIs | Never | no route or credential |
+| Public agent runtime | PostgreSQL | Never | no route/credential |
+| Public agent runtime | Private owner Gateway/workspace | Never | separate trust boundary |
 | Business API | PostgreSQL | Yes | least-privilege DB role |
 | Business services | Private object storage | Yes | scoped identity; private endpoint/bucket |
 | Worker | Channel APIs | Yes | approved egress only |
@@ -156,17 +157,17 @@ Channel providers and the model provider remain external processors, outside TZ-
 
 Production firewall must deny by default.
 
-## 4. OpenClaw hardening profile
+## 4. Public runtime hardening profile
 
 Before any public or otherwise untrusted inbound:
 
-- `allowInsecureAuth = false`;
-- OpenClaw Gateway control protocol and control UI bind to loopback only;
-- the Internet-facing reverse proxy exposes only the channel adapter HTTP routes, never the OpenClaw Gateway control plane;
+- insecure authentication is disabled;
+- runtime control protocol/UI binds to loopback or an authenticated private transport only;
+- the Internet-facing reverse proxy exposes only channel-adapter HTTP routes, never the runtime control plane;
 - the control-plane `AGENT_RUNNER` creates authenticated, contact-bound job references; a minimal
-  public-cell executor receives them through a private pull/queue mechanism and invokes OpenClaw
-  over loopback;
-- strong randomly generated Gateway token;
+  public-cell executor receives them through a private pull/queue mechanism and invokes the selected
+  runtime over the private endpoint;
+- strong randomly generated short-lived runtime credential;
 - public control UI disabled/unreachable;
 - session isolation per server-bound contact/conversation supplied by `AGENT_RUNNER`;
 - tool allowlist contains only named business tools;
@@ -175,22 +176,50 @@ Before any public or otherwise untrusted inbound:
 - no channel plugin/credential is installed in the public cell; channel access policy is enforced by the edge adapter and business control plane;
 - no secrets inside workspace/prompt;
 - security audit has no unresolved high/critical finding;
-- plugins pinned to reviewed versions;
-- plugin inventory and hashes recorded;
+- runtime packages/plugins pinned to reviewed versions;
+- package/plugin inventory and hashes recorded;
 - model/provider credentials unique to public cell;
 - channel credentials are unique to the business channel and exist only in the edge adapter/`OUTBOX_WORKER` secret scope;
 - credential rotation runbook tested.
-- provider/model configuration pins the explicit OpenClaw agent runtime; runtime `auto` is prohibited
-  for the public release identity;
+- provider/model configuration pins the explicit runtime implementation and route; runtime `auto` is
+  prohibited for the public release identity;
 - a dedicated production provider service/API credential is used; owner interactive credentials are
   absent from the public cell;
-- the deployed OpenClaw version, image digest, config hash, plugin inventory, tool policy, model route
+- the deployed runtime version, image digest, config hash, package/plugin inventory, tool policy, model route
   and provider request/storage behavior match the signed release artifacts;
 - a pre-real-data integration test verifies effective provider storage/retention behavior. Any
   mismatch, undocumented forced storage or inability to meet the approved retention policy disables
   real-customer model processing.
 
 These requirements apply before any untrusted inbound, including a “private beta” channel. Container-only isolation on the same personal host is insufficient as the final public boundary.
+
+For the preferred custom Responses adapter, only strict custom functions generated from the approved
+OpenAPI are included; provider built-in tools and parallel public tool execution are disabled. For the
+retained OpenClaw `EVAL_ONLY` comparator, the OpenClaw-specific loopback Gateway, plugin-inventory,
+sandbox and repackage controls in ADR-0002 and its immutable evidence remain required until retirement.
+
+### 4.1 Custom adapter threat delta
+
+Removing a framework reduces unused capability and dependency surface but transfers correctness to
+project code. Security review and tests must cover at least:
+
+| Threat | Required hard control |
+|---|---|
+| unknown/generic tool injection | exact generated allowlist plus strict schema and unknown-field rejection |
+| server-owned identity substitution | contact/order/stage/capability omitted from model schema and bound in bridge session |
+| parallel/replayed tool calls | serial execution, unique call IDs, bridge budgets and idempotent domain commands |
+| timeout/cancellation race | one absolute deadline, bridge revocation and late-call rejection |
+| retry/cost amplification | reservations and counters survive retries/repairs/response continuation |
+| provider response ambiguity | fail closed, record attempt and reconcile; no hidden retry |
+| untrusted tool output injection | typed result envelope, output encoding and no interpretation as instructions |
+| session state treated as authority | PostgreSQL/context facts rebuilt independently; provider IDs are transport metadata |
+| data retention drift | capture effective request and verify approved storage/retention before real PII |
+| adapter scope creep | architectural test/review rejects channel, plugin, generic memory/tool and multi-agent surfaces |
+
+Comparative evidence must use the same public-cell network restrictions and safety denominator for
+custom and OpenClaw candidates. A smaller source tree is not proof of a smaller deployed attack surface;
+the review includes packages, image, credentials, endpoints, egress, runtime configuration and recovery
+procedures.
 
 ## 5. Authentication
 
@@ -454,6 +483,17 @@ Consent withdrawal is an ingress safety control, not an LLM intent:
 
 A consent grant is valid only when the server can bind an affirmative provider event to a pending consent request with exact wording version, purpose, channel, contact and expiry. The model cannot choose the evidence, contact, scope, wording version or consent status. Every grant, withdrawal, ambiguous block and review decision is audited.
 
+### 8.5 Provider profiles
+
+- Telegram integration uses the official Bot API. Production webhook registration must configure and
+  verify the provider secret header, restrict accepted update types, preserve `update_id` for dedupe,
+  and keep the bot token only in adapter/sender secret scopes.
+- Zalo integration uses official Zalo OA/OpenAPI only. Provider-specific signature/token lifecycle,
+  event schemas, scopes, rate limits and receipts require a reviewed adapter contract before activation.
+- Zalo Personal automation, browser emulation and unofficial personal-session libraries are prohibited.
+- A provider adapter may be completed and tested while its public-ingress and outbound flags remain
+  false; implementation completion never grants channel or automation authority.
+
 ## 9. Inbox, outbox, retry and DLQ
 
 ### 9.1 Transactional invariant
@@ -659,7 +699,7 @@ Audit events are append-only. Corrections create new events.
 - No secrets in Git, CSV, Markdown, prompt, logs or screenshots.
 - Use environment/secret references appropriate to deployment.
 - Separate dev/staging/prod.
-- Separate public/private OpenClaw Gateway, model and tool credentials; the public cell has no channel credential.
+- Separate public-runtime/private-owner, model and tool credentials; the public cell has no channel credential.
 - Rotate model/channel/service tokens independently.
 - Record owner, purpose, created/rotated/expires dates.
 - Secret access is audited.
@@ -876,10 +916,10 @@ Every drill records backup identifiers, chosen recovery timestamp, achieved RPO/
 - move to manual;
 - investigate dependency/provider.
 
-### Public OpenClaw compromise
+### Public agent runtime compromise
 
 1. activate `PUBLIC_AGENT`/agent-processing kill switches;
-2. revoke public-cell Gateway, tool and model credentials; rotate channel credentials only if evidence shows the edge/worker scope was affected;
+2. revoke public-cell runtime, tool and model credentials; rotate channel credentials only if evidence shows the edge/worker scope was affected;
 3. block network identity;
 4. preserve logs/audit;
 5. rebuild public cell from clean image;
@@ -977,7 +1017,7 @@ P0 tests:
 - Public status code enumeration, cross-contact replay and generic-denial equivalence.
 - Public status token/log redaction and >=80-bit generator property.
 - Missing/stale kill-switch input, kill during approved queued send and independent credential revoke.
-- External scan proves OpenClaw Gateway control protocol/UI is unreachable while adapter webhook remains reachable.
+- External scan proves the selected runtime control protocol/UI is unreachable while adapter webhook remains reachable; the retained OpenClaw comparator additionally proves its Gateway is unreachable.
 - Public-cell image/config scan proves no channel credential/plugin, owner mount, Docker socket or filesystem-mutation tool.
 - Agent processing path proves edge persist -> runner -> draft -> approval -> outbox worker; no direct agent send.
 - Failure injection at domain-event, audit and required-outbox insert proves aggregate mutation rollback.
@@ -1020,12 +1060,12 @@ P1:
 - every Shadow outbound is either `OUTBOX_WORKER` execution of an exact approved envelope or a valid exact-hash manual-send attestation;
 - zero unsupported customer commitment in the reviewed pilot sample;
 - separate public VM/cell;
-- OpenClaw Gateway/control UI loopback only; reverse proxy exposes the adapter only;
+- runtime control endpoint/UI private or loopback only; reverse proxy exposes the adapter only;
 - public cell has no channel credential, channel plugin, generic mutation tool, owner mount or Docker socket;
 - official channel credentials;
 - channel credentials scoped to adapter/`OUTBOX_WORKER` only;
 - webhook verification/replay defense;
-- durable inbox -> authenticated `AGENT_RUNNER` -> public OpenClaw draft -> approval/policy -> outbox -> `OUTBOX_WORKER` path;
+- durable inbox -> authenticated `AGENT_RUNNER` -> public runtime draft -> approval/policy -> outbox -> `OUTBOX_WORKER` path;
 - encrypted/retained/audited inbox/outbox/DLQ;
 - consent/suppression;
 - deterministic STOP/ambiguous opt-out before model;
@@ -1035,7 +1075,7 @@ P1:
 - public order-status ownership/IDOR/enumeration tests;
 - fail-closed six-input kill-switch and hold/cancel drill;
 - model-provider data-use/training/retention review;
-- OpenClaw audit clean of high/critical;
+- selected runtime/package/image audit clean of high/critical;
 - prompt-injection and authorization suite pass.
 
 ### Before bounded autonomy

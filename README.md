@@ -23,9 +23,11 @@ Approved next build scope:
 5. internal Staff PWA, approval queue, audit and transactional outbox;
 6. synthetic and internal Shadow evaluation.
 
-The final target uses an isolated Public OpenClaw cell as the customer-agent runtime from the agent
-integration phase onward. Python/PostgreSQL remain the business, security and side-effect authority;
-only the outbox worker may send.
+The final target uses an isolated, replaceable public agent-runtime cell behind
+`ConstrainedAgentRuntime`. A bounded custom OpenAI Responses adapter is the preferred production
+target; OpenClaw remains an `EVAL_ONLY` comparison/rollback implementation until parity and retirement
+gates pass. Python/PostgreSQL remain the business, security and side-effect authority; channel
+adapters are independent and only the outbox worker may send.
 
 Public channels and autonomous sends remain gated.
 
@@ -58,6 +60,7 @@ future browser PWA.
 - [Stable program plan](./delivery/PROGRAM_PLAN.yaml)
 - [Release gate registry](./delivery/GATE_REGISTRY.yaml)
 - [Production agent runtime ADR](./docs/adr/0002-production-agent-runtime-and-trust-boundaries.md)
+- [Provider-neutral runtime and channel-operations ADR](./docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md)
 - [Engineering specification index](./specs/README.md)
 - [Team review and go/no-go report](./specs/TEAM_REVIEW_REPORT_V1.md)
 - [Production architecture](./specs/production-architecture-v1.html)

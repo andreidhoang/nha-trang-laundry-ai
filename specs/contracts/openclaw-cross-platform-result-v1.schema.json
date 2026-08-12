@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://giatlasachcong.vn/contracts/openclaw-cross-platform-result-v1.schema.json",
+  "title": "OpenClaw hosted cross-platform reproducibility result",
+  "oneOf": [
+    { "$ref": "#/$defs/PlatformResult" },
+    { "$ref": "#/$defs/ComparisonResult" }
+  ],
+  "$defs": {
+    "Sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "Integrity": {
+      "type": "string",
+      "pattern": "^sha512-[A-Za-z0-9+/]+={0,2}$"
+    },
+    "Artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filename", "sha256", "integrity", "size"],
+      "properties": {
+        "filename": { "const": "openclaw-2026.7.1-2-nha-trang-r2.tgz" },
+        "sha256": { "$ref": "#/$defs/Sha256" },
+        "integrity": { "$ref": "#/$defs/Integrity" },
+        "size": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "Runner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "name", "image_os", "image_version"],
+      "properties": {
+        "os": { "enum": ["Windows", "Linux"] },
+        "arch": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "image_os": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "image_version": { "type": "string", "minLength": 1, "maxLength": 120 }
+      }
+    },
+    "PlatformResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record_type",
+        "status",
+        "release_effect",
+        "release_commit_sha",
+        "runner",
+        "manifest_sha256",
+        "upstream_source_sha256",
+        "artifact"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "record_type": { "const": "PLATFORM_RESULT" },
+        "status": { "const": "VERIFIED_DERIVED_EVAL_ONLY_REPACKAGE" },
+        "release_effect": { "const": "NONE" },
+        "release_commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "runner": { "$ref": "#/$defs/Runner" },
+        "manifest_sha256": { "$ref": "#/$defs/Sha256" },
+        "upstream_source_sha256": { "$ref": "#/$defs/Sha256" },
+        "artifact": { "$ref": "#/$defs/Artifact" }
+      }
+    },
+    "Comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "bytes_equal", "metadata_equal", "compared_size"],
+      "properties": {
+        "method": { "const": "BYTE_FOR_BYTE" },
+        "bytes_equal": { "const": true },
+        "metadata_equal": { "const": true },
+        "compared_size": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ComparisonResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record_type",
+        "status",
+        "release_effect",
+        "release_commit_sha",
+        "manifest_sha256",
+        "upstream_source_sha256",
+        "artifact",
+        "windows",
+        "linux",
+        "comparison"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "record_type": { "const": "CROSS_PLATFORM_COMPARISON" },
+        "status": { "const": "BYTE_IDENTICAL" },
+        "release_effect": { "const": "NONE" },
+        "release_commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "manifest_sha256": { "$ref": "#/$defs/Sha256" },
+        "upstream_source_sha256": { "$ref": "#/$defs/Sha256" },
+        "artifact": { "$ref": "#/$defs/Artifact" },
+        "windows": { "$ref": "#/$defs/PlatformResult" },
+        "linux": { "$ref": "#/$defs/PlatformResult" },
+        "comparison": { "$ref": "#/$defs/Comparison" }
+      }
+    }
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "artifact_status": "EVAL_ONLY",
+  "source": {
+    "name": "openclaw",
+    "version": "2026.7.1-2",
+    "url": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1-2.tgz",
+    "integrity": "sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==",
+    "sha256": "sha256:5bb525f36f471a41239615d321c441778c7e1c007018ed6d84b795be77803276",
+    "size": 19728152
+  },
+  "replacements": [
+    {
+      "path": "node_modules/brace-expansion",
+      "required_by_path": "node_modules/minimatch",
+      "required_range": "^5.0.5",
+      "source": {
+        "name": "brace-expansion",
+        "version": "5.0.7",
+        "url": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
+        "integrity": "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
+        "sha256": "sha256:e6f29666db5a9503146d8fd93a2a492a64694bc819ce158b18c584610f240fba",
+        "size": 8317
+      },
+      "replacement": {
+        "name": "brace-expansion",
+        "version": "5.0.8",
+        "url": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz",
+        "integrity": "sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==",
+        "sha256": "sha256:a03b06e66d862d0278b1ff45b66427f245f99c665800dc9bd790c0c13d2247fe",
+        "size": 10242,
+        "dependencies": {
+          "balanced-match": "^4.0.2"
+        }
+      }
+    },
+    {
+      "path": "node_modules/fast-uri",
+      "required_by_path": "node_modules/ajv",
+      "required_range": "^3.0.1",
+      "source": {
+        "name": "fast-uri",
+        "version": "3.1.2",
+        "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.2.tgz",
+        "integrity": "sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==",
+        "sha256": "sha256:93fee3e901ff8dab91781ba63c4f80873eff047420517db5e1beb814cf33c143",
+        "size": 29039
+      },
+      "replacement": {
+        "name": "fast-uri",
+        "version": "3.1.4",
+        "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz",
+        "integrity": "sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==",
+        "sha256": "sha256:9950db3e5239f5c113314344836e9eb5e8d760a13b177687a08cabc25b64d390",
+        "size": 30556,
+        "dependencies": {}
+      }
+    }
+  ],
+  "output": {
+    "filename": "openclaw-2026.7.1-2-nha-trang-r1.tgz",
+    "sha256": "sha256:8478f9110425449a7162a8fefd0ca866594e91a584dc681f9a382b8cd0454dcc",
+    "integrity": "sha512-8Mx+tv9tYy53lIhvZM9aMGF8OATg/kovktAJkkWlYFnZAJ5DClmXsflBl3moPZjMMiNAfbXdnQColWuasg+Rlw==",
+    "size": 19728669
+  },
+  "image": {
+    "repository": "nha-trang-laundry-openclaw",
+    "dockerfile": "runtime/openclaw/repack/Dockerfile",
+    "base_image": "node:24.15.0-alpine3.23@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f",
+    "target_platform": "linux/amd64",
+    "provenance_predicate_type": "https://slsa.dev/provenance/v1",
+    "hosted_evidence_required": true
+  },
+  "activation": {
+    "real_customer_data_allowed": false,
+    "public_ingress_enabled": false,
+    "provider_calls_enabled": false,
+    "automatic_send_enabled": false,
+    "direct_send_enabled": false
+  }
+}

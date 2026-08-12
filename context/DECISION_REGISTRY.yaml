@@ -1,5 +1,5 @@
 schema_version: 1
-last_reviewed: 2026-07-27
+last_reviewed: 2026-08-10
 decisions:
   - id: DEC-001
     title: Weight precision and rounding policy
@@ -43,3 +43,14 @@ decisions:
     affected_capabilities: [INTERNAL_SHADOW, PUBLIC_FAQ, LIST_PRICE_INFO]
     fail_closed_behavior: NOT_SUPPORTED
     source: specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - id: DEC-007
+    title: Provider-neutral public runtime with custom Responses target
+    status: RESOLVED
+    owner: PRODUCT_ENGINEERING_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, PUBLIC_FAQ, LIST_PRICE_INFO, INTAKE_QUESTION, ORDER_STATUS]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+    validation_status: EVIDENCE_PENDING
+    selected_target: CUSTOM_OPENAI_RESPONSES_ADAPTER
+    comparison_candidate: OPENCLAW_EVAL_ONLY
+    retirement_condition: RUNTIME_PARITY_PROVIDER_DATA_SECURITY_AND_ROLLBACK_ACCEPTED

@@ -1,8 +1,10 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-08-02 (Asia/Ho_Chi_Minh)
-**Active work item:** `RELEASE-BASELINE-001`
-**Code stage:** `AGENT_SHADOW` blocked externally / `PRODUCTION_HARDENING` active locally
+**Last reconciled:** 2026-08-10 (Asia/Ho_Chi_Minh)
+**Active work item:** none; `RESPONSES-RUNTIME-001` is the next safe local candidate and
+`OPENCLAW-REPACK-001` remains `BLOCKED`
+**Active branch:** `fix/openclaw-immutable-repack` from `36909e7`
+**Code stage:** `PRODUCTION_HARDENING`; Phase B1 workflow preparation verified, Phase B2 not authorized
 **Production authorization:** `NOT_AUTHORIZED` for every capability
 
 This brief is the human-readable entry point for an engineer or coding agent resuming implementation.
@@ -22,13 +24,152 @@ PostgreSQL state remain authoritative in the order defined by `context/CONTINUAT
 `continue execute` authorizes only safe repository engineering. It does not authorize a provider call,
 real-customer data, public ingress, public automation, a credential, a deployment, or a release gate.
 
+## Approved architecture direction — not queue or release authorization
+
+ADR-0003 makes `ConstrainedAgentRuntime` the stable public-agent boundary and selects a bounded custom
+OpenAI Responses adapter as the preferred production target. The current OpenClaw work remains
+immutable `EVAL_ONLY` comparison/rollback evidence; it is not silently complete and must not be deleted
+until custom-runtime parity, provider-data, security and rollback gates pass. Channel adapters and the
+Staff PWA remain independent of either runtime. Telegram Bot API is an engineering-sandbox candidate;
+official Zalo OA is a later provider candidate; DEC-005 remains open and Zalo Personal is prohibited.
+The daily operations dashboard uses versioned deterministic read models, while AI may provide only a
+grounded read-only explanation. This direction creates no provider call, credential, public ingress,
+send, deployment or capability authority and does not replace the current machine-readable queue.
+
+The machine plan now separates three work items: `RESPONSES-RUNTIME-001` builds the minimum adapter
+with scripted transport and can proceed without external authority; `RUNTIME-PARITY-001` waits for the
+custom candidate, comparator and DEC-006/provider evidence; `OPENCLAW-RETIRE-001` is the only item that
+may later remove the public dependency. This separation preserves the immutable blocked history of
+`AGENT-001` and `OPENCLAW-REPACK-001` while allowing independent local progress.
+
+## Current blocked engineering handoff: OPENCLAW-REPACK-001 Phase B1
+
+The local workflow now has the fail-closed dependency graph
+`openclaw-repackage-windows + openclaw-repackage-linux -> openclaw-cross-platform-compare ->
+supply-chain`. Both clean hosted build jobs pin Python `3.12.13`, uv `0.11.32`, Node `24.18.0`, the
+npm lockfile, manifest v2, and the exact source/replacement materials. They emit independently named
+r2 artifacts and schema-valid platform results bound to the same Git commit and full runner identity.
+
+The comparison job downloads both artifacts, validates commit/runner/manifest/source/artifact metadata,
+compares the tarballs byte-for-byte, and publishes only the compared r2 plus its typed comparison
+record. The Linux supply-chain job depends on this comparison, verifies the downloaded record, uses
+`cmp` against the committed r2, then copies those exact compared bytes into the Docker build context.
+Final evidence hash-binds the comparison, sanitized runtime/OpenClaw audit, OCI provenance, normalized
+zero-HIGH/CRITICAL scan, and CycloneDX SBOM. Every workflow/job permission remains `contents: read`.
+
+Local Phase B1 verification passed `23` focused workflow/contract tests, `30` runtime/evidence tests,
+`9` plugin/undici tests, and `543` guarded PostgreSQL tests with no final failures or skips. The r2
+artifact remains byte-identical at SHA-256
+`0c4d5d0dcdccde0290932c9baf17c1e371a12d46660ebba32dfa3b878124edab`; the complete npm audit remains
+zero critical/high with seven visible moderate findings. Ruff, format, mypy, contracts, context drift,
+runtime verification, delivery projection, and diff validation passed.
+
+Phase B2 remains blocked pending independent Security/Supply-chain review, authorization to create the
+exact commit and push the dedicated branch, authorization to run the reviewed hosted workflow, hosted
+Windows/Linux byte identity, and exact r2 OCI SBOM, SLSA provenance, and zero-HIGH/CRITICAL scan
+evidence. Phase B1 granted no commit, push, remote run, credential, provider/customer data, release,
+deployment, or capability authority.
+
+## Phase A r2 engineering record
+
+The dirty working tree contains the local-only `DERIVED`/`EVAL_ONLY` r2 expansion authorized on
+2026-08-06. It starts from immutable disabled r1 and replaces exactly `brace-expansion 5.0.8 ->
+5.0.9`, `fast-uri 3.1.4 -> 3.1.5`, `ip-address 10.2.0 -> 10.3.1`, and `undici 8.5.0 -> 8.9.0`.
+The undici change permits only its exact `package/package.json` dependency value and corresponding
+allowlisted shrinkwrap records.
+
+Two independent canonical builds of
+`runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r2.tgz` were byte-identical: SHA-256
+`0c4d5d0dcdccde0290932c9baf17c1e371a12d46660ebba32dfa3b878124edab`, npm integrity
+`sha512-yFjlTDU5sv+4lPR7kIM+iIsMAqkkfY2Jd07+f0wubCPK6nFl3vYFHcELtln+q3/9x1flCLtxp3G7ukAFougSgA==`,
+size `19,535,080` bytes. Independent verification passed, the complete installed npm tree reported
+zero critical/high findings (seven moderate), focused tests passed `30/30`, plugin tests passed `9/9`,
+and the guarded PostgreSQL suite passed `535/535` with no skips. Ruff, format, mypy, contracts,
+context drift, migrations, runtime verification, and capability-status reporting also passed.
+
+Completion remains blocked on separately authorized hosted Windows/Linux reproducibility, exact r2
+image SBOM, SLSA provenance, and zero-HIGH/CRITICAL scan evidence plus independent Security and
+Supply-chain review. Do not push, open a pull request, trigger a hosted workflow, release, deploy, use
+provider/customer data, or authorize any capability under the Phase A record.
+
+## Historical r1 engineering handoff — superseded by r2
+
+The current branch contains a **dirty, uncommitted implementation that passes every local acceptance
+gate**. Preserve it; do not restart the work item, discard its files, mark it complete, or substitute
+local results for hosted evidence. Delivery recorded the hosted-run blocker and the controller now
+selects no independent ready item. Obtain a fresh generation before any later unblock or completion.
+
+### Proven during this attempt
+
+- The exact upstream `openclaw@2026.7.1-2` tarball remained bound to registry integrity
+  `sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==`, SHA-256
+  `5bb525f36f471a41239615d321c441778c7e1c007018ed6d84b795be77803276`, and size
+  `19,728,152` bytes.
+- Exact registry tarballs were reviewed for `brace-expansion` `5.0.7 -> 5.0.8` and `fast-uri`
+  `3.1.2 -> 3.1.4`. Both replacements satisfy the upstream caret ranges (`^5.0.5`, `^3.0.1`).
+- Two independent repackage builds were byte-identical. The candidate output is
+  `runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r1.tgz`, SHA-256
+  `8478f9110425449a7162a8fefd0ca866594e91a584dc681f9a382b8cd0454dcc`, integrity
+  `sha512-8Mx+tv9tYy53lIhvZM9aMGF8OATg/kovktAJkkWlYFnZAJ5DClmXsflBl3moPZjMMiNAfbXdnQColWuasg+Rlw==`, size `19,728,669` bytes.
+- After binding the plugin lock to the local repackage and reconciling npm's two stale same-version
+  nested lock entries, a clean `npm ci --ignore-scripts` installed 304 packages. A complete-tree
+  `npm audit --audit-level=high --json` then reported `critical=0`, `high=0`, `moderate=7` and exited
+  successfully. No omission, waiver, or severity reclassification was used.
+- The plugin candidate tarball was regenerated successfully. The tracked rollback-safe candidate now
+  hashes to `sha256:617dcbdede123cb76cb845fb1cdb823fdf9375f6e629320347461d76c0306eb1`.
+- Docker Buildx resolved the pinned Node base index
+  `node:24.15.0-alpine3.23@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f`.
+- A local Linux OCI build produced BuildKit SLSA v1 provenance. The OCI verifier binds the root image
+  index, platform manifest, config, and attestation digests. Pinned Trivy `0.72.0` produced a CycloneDX
+  SBOM and zero critical/high SARIF results after the final stage pinned `libcrypto3`/`libssl3`
+  `3.5.7-r0` and removed the unused global npm tree.
+- The final repository gates passed: 521 PostgreSQL tests, 16 focused runtime tests, 3 plugin tests,
+  Ruff, format, mypy, migrations, contracts, context drift, delivery status, reproducible packaging,
+  independent verification, complete-tree npm audit, and runtime verification.
+
+### Implemented and locally verified
+
+- A strict repackage manifest schema, deterministic builder, independent registry/tar/lock verifier,
+  OCI SLSA-provenance verifier, non-root EVAL_ONLY Dockerfile, rollback README, and negative tests.
+- Plugin package/lock binding to the repacked tarball and runtime-registry/inventory fields separating
+  upstream integrity from repacked integrity.
+- A typed public-cell runtime-image pin which remains `verified: false`; release blocking now includes
+  `PUBLIC_CELL_RUNTIME_IMAGE_NOT_VERIFIED`.
+- Hosted supply-chain workflow steps for reproducible rebuild, full npm/OpenClaw audits, BuildKit
+  provenance, CycloneDX SBOM, Trivy critical/high scan, and digest-bound evidence upload.
+
+### Remaining blocked state
+
+- The reviewed GitHub workflow has not run on an exact commit, so hosted provenance, SBOM, normalized
+  zero-high scan evidence, and the hosted evidence bundle are absent.
+- Creating/pushing a remote branch, opening a pull request, or triggering the workflow requires
+  explicit external authorization. Local OCI results are engineering diagnostics only.
+- Delivery correctly records `OPENCLAW-REPACK-001` as `BLOCKED`; no schema-valid completion evidence
+  exists, the runtime image pin remains `verified: false`, and every capability remains
+  `NOT_AUTHORIZED`.
+- Downloaded source materials, OCI archives, SBOMs, scans, and Trivy caches remain outside tracked
+  repository content. The reviewed package artifact is the named tarball under `repack/dist`.
+
+### Exact next sequence
+
+1. Obtain explicit authorization to create/push the exact branch/commit and run the reviewed GitHub
+   supply-chain workflow; do not use a moving or unrelated commit.
+2. Retain and validate the workflow's exact OCI provenance, CycloneDX SBOM, normalized zero-high scan,
+   complete npm/OpenClaw audits, and evidence bundle. A workflow definition alone is not evidence.
+3. If hosted checks pass, create schema-valid delivery evidence, obtain a fresh controller generation,
+   unblock the item, and complete it through `record_delivery_evidence.py`.
+4. Reconcile `RUNTIME-SECURITY-001` through a new controller-selected corrective path; never rewrite its
+   immutable blocked history or treat this EVAL_ONLY correction as release authority.
+
 ## Architecture that must remain true
 
 ```text
-untrusted language
-      |
-      v
-Public OpenClaw (reasoning/draft only; EVAL_ONLY)
+untrusted language -> authenticated adapter -> durable inbox
+                                            |
+                                            v
+                         ConstrainedAgentRuntime (reasoning/draft only)
+                           custom Responses target
+                           OpenClaw EVAL_ONLY comparator
       |
       v
 typed Tool Facade -> deterministic domain + policy -> approval
@@ -51,9 +192,10 @@ typed Tool Facade -> deterministic domain + policy -> approval
   closed to `REQUIRE_HUMAN`, `DENY`, or `NOT_SUPPORTED`.
 - Never record secrets, raw PII fixtures, raw provider payloads, or chain-of-thought.
 
-## Reconciled implementation state
+## Historical reconciled implementation state through 2026-08-02
 
-The following is local engineering evidence only, not release evidence:
+The following predates the active repackage slice and is local engineering evidence only, not release
+evidence. Current branch verification must be rerun before relying on these baselines:
 
 - Full verification on 2026-07-29: **313 tests passed** with local PostgreSQL; Ruff, formatting,
   strict mypy, contract validation, and context-drift checks passed.
@@ -113,31 +255,37 @@ The following is local engineering evidence only, not release evidence:
 ## Next implementation sequence
 
 Work in this order unless a higher-authority contract changes it. After each slice, update its task
-packet, this brief, the relevant machine status, and tests. Do not mark `AGENT-001` complete from local
-hardening evidence.
+packet, this brief, the relevant machine status, and tests.
 
-1. **Local production readiness.** Complete `RELEASE-BASELINE-001`, then implement the dependency-safe
-   `WORKER-HOST-001`, `STAFF-OPS-001`, `HTTP-SECURITY-001`, `TELEMETRY-001`, `STAGING-001`, and
-   `BACKUP-RESTORE-001` chain. CI, observability, policy, container, and supply-chain hardening are
-   already complete. This engineering work may proceed while `AGENT-001` is externally blocked, but
-   it does not authorize real data, public ingress, provider use, or release.
+1. **`RESPONSES-RUNTIME-001` — safe local implementation.** Let `run_delivery_loop.py` select/start it
+   with a fresh generation. Implement only the bounded state machine in its task packet with scripted
+   provider transport and negative/failure tests. It must not call a provider, use a credential, alter
+   a release gate or rewrite existing OpenClaw evidence.
 
-2. **Integrated runtime evaluation.** The provider-independent fixture/assertion backlog is complete.
-   After the external prerequisites are resolved, run a separately
-   controlled non-production integration harness for PRIMARY, fallback, and deterministic-degraded
-   paths. It must pin the runtime/model/prompt/tool/config artifacts, validate result schema, and retain
-   only permitted hash-safe evidence. No synthetic result may be relabeled as PRIMARY or release-ready.
+2. **OpenClaw evidence track remains independently blocked.** Resolve `OPENCLAW-REPACK-001` only through
+   the exact authorized sequence in its blocked handoff. Do not advance it with stale pins, an unrun
+   workflow, skipped PostgreSQL integration or a high/critical result. Afterwards reconcile
+   `RUNTIME-SECURITY-001` through a controller-selected path without rewriting immutable history.
 
-3. **External/provider prerequisites — blocked, not improvable by code alone.**
+3. **`RUNTIME-PARITY-001` — integrated same-envelope selection.** After both candidate dependencies and
+   external prerequisites exist, compare the exact same model/prompt/context/tools/budgets/datasets and
+   safety denominator. Retain only permitted hash-safe evidence; no synthetic result may be relabeled
+   as PRIMARY/provider-backed or release-ready.
+
+4. **External/provider prerequisites — still blocked, not improvable by code alone.**
    - `DEC-006`: obtain Security/Privacy decisions for training, retention, region, deletion,
      subprocessors, incident terms, and dedicated credential use.
-   - Prove a supported OpenClaw Responses `store:false` route with a non-production dedicated API
-     credential, then capture/assert the effective request without PII or secrets.
+   - Capture/assert the effective `store:false` request for each compared runtime route using a
+     non-production dedicated API credential and no PII/secrets.
    - Pin an immutable model release ID. Moving aliases remain EVAL_ONLY.
-   - Supply an immutable sandbox image digest with schema-valid vulnerability scan evidence and a
-     hash-pinned SBOM; the checked-in placeholder cannot be used for release.
+   - Supply immutable candidate deployment inventories/image digests with schema-valid scan/SBOM
+     evidence; checked-in placeholders cannot be used for release.
 
-4. **`SECURITY-001` only after both tracks are complete.** It depends on declared `AGENT-001`
+5. **`OPENCLAW-RETIRE-001` only after accepted parity.** Remove OpenClaw from public routing/deployment
+   first, rehearse rollback, then remove mutable build inputs while retaining immutable evidence and
+   Private Owner OpenClaw. Do not combine cleanup with launch or capability authorization.
+
+6. **`SECURITY-001` only after both tracks are complete.** It depends on declared `AGENT-001`
    acceptance plus observability, policy, and supply-chain hardening. It requires real security, OIDC,
    PITR/restore, incident, and kill-switch drills and is not authorized by passing unit tests.
    `SHADOW-001`, `CHANNEL-001`, and customer-facing automation remain downstream.
@@ -156,17 +304,19 @@ uv run mypy apps packages
 uv run python scripts/verify_contracts.py
 uv run python scripts/check_context_drift.py
 uv run python scripts/report_delivery_status.py
+npm --prefix runtime/openclaw/public-cell/plugin test
 ```
 
-`AGENT-001` is complete only when its queue-declared evidence exists: P0 evaluated across required
-runtime paths, tool-escape evidence, immutable runtime pin, provider-storage verification, rollback
-assessment, and the declared acceptance commands. A signed release manifest and gate evidence are still
-separate requirements.
+For `OPENCLAW-REPACK-001`, also run the acceptance commands declared in `delivery/WORK_QUEUE.yaml`,
+including the reproducible builder, independent verifier, complete-tree npm audit, runtime verifier,
+and `pytest --require-postgres-integration`. The hosted image/SBOM/provenance/scan result is separately
+required. A signed release manifest and capability gate evidence remain distinct and absent.
 
 ## Known blockers and decisions
 
 | ID / blocker | Effect | Required owner/external action |
 |---|---|---|
+| hosted OpenClaw image evidence absent | `OPENCLAW-REPACK-001` cannot complete | Run the reviewed GitHub workflow and retain digest-bound provenance/SBOM/zero-high scan evidence |
 | `DEC-006` provider data governance | No real-customer model use, public ingress, or automated send | Security/Privacy approval and verified provider configuration |
 | immutable model release unset | Cannot identify a release candidate | Provider/runtime release selection and verification |
 | OpenClaw `store:false` unproven | Cannot satisfy data policy | Supported route plus effective-request integration evidence |

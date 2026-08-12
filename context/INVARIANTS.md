@@ -18,7 +18,19 @@ checklist; the approved specifications provide the complete detail.
     capability.
 13. Never log secrets, raw unnecessary PII, or chain-of-thought.
 14. No public agent has direct channel credentials, shell, browser, filesystem, or database access.
-15. Public OpenClaw is the constrained agent runtime; Python policy/domain code remains the business
-    and security authority, and its Gateway/control UI is never Internet-exposed.
-16. The exact model, OpenClaw runtime route, prompt, provider-data behavior and public-cell config are
-    versioned release evidence; implicit runtime selection or an unreviewed storage mode fails closed.
+15. The public agent runtime is replaceable behind `ConstrainedAgentRuntime`; Python policy/domain code
+    remains the business and security authority, and no runtime control plane is Internet-exposed.
+16. The exact model, runtime implementation/route, prompt, provider-data behavior and public-cell config
+    are versioned release evidence; implicit runtime selection or an unreviewed storage mode fails closed.
+17. Official channel adapters persist and deduplicate before AI; they never share credentials with the
+    public runtime, and Zalo Personal automation is prohibited.
+18. Dashboard numbers, SLA flags, and operational priorities are computed by versioned deterministic
+    queries/rules; AI may explain them but cannot originate or mutate them.
+19. The custom public runtime is a bounded finite state machine behind `ConstrainedAgentRuntime`; it
+    cannot acquire channel routing, plugins, generic tools/memory, business workflow or multi-agent
+    responsibilities.
+20. Runtime parity compares the same exact model, prompt, context, tools, budgets, datasets, graders,
+    isolation and P0 denominator; synthetic evidence is never relabeled as provider-backed evidence.
+21. OpenClaw public-path retirement is a separate reversible work item after accepted parity,
+    provider-data, security and rollback evidence; immutable historical evidence and Private Owner
+    OpenClaw are preserved.

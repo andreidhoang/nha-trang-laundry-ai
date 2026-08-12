@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-03'
+last_updated: '2026-08-11'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -1006,4 +1006,167 @@ items:
   - hosted_supply_chain_run
   - postgres_integration_suite
   - rollback_assessment
+  blocked_by_decisions: []
+- id: OPENCLAW-REPACK-001
+  phase: PRODUCTION_HARDENING
+  title: Immutable EVAL_ONLY OpenClaw transitive-security repackage
+  status: BLOCKED
+  priority: 100
+  depends_on:
+  - RUNTIME-EVIDENCE-PORTABILITY-001
+  - SUPPLYCHAIN-CI-PORTABILITY-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  contracts:
+  - specs/contracts/container-scan-evidence-v1.schema.json
+  - specs/contracts/supply-chain-evidence-v1.schema.json
+  - specs/contracts/openclaw-repackage-manifest-v1.schema.json
+  task_packet: context/tasks/TASK-openclaw-repack-001.md
+  acceptance_checks:
+  - uv run python scripts/build_openclaw_repackage.py --verify-reproducible
+  - uv run python scripts/verify_openclaw_repackage.py
+  - npm --prefix runtime/openclaw/public-cell/plugin audit --audit-level=high
+  - uv run python scripts/verify_agent_runtime.py
+  - uv run pytest packages/evals/tests/test_runtime_repackage.py packages/evals/tests/test_runtime_verifier.py
+    packages/evals/tests/test_local_agent_evidence.py packages/evals/tests/test_synthetic_tool_escape.py
+  - uv run pytest --require-postgres-integration
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  - npm --prefix runtime/openclaw/public-cell/plugin test
+  required_evidence:
+  - upstream_source_integrity
+  - compatible_transitive_replacements
+  - reproducible_repacked_artifact
+  - complete_dependency_and_security_audits
+  - immutable_runtime_image_scan_sbom_provenance
+  - regression_suite
+  - disabled_authority_and_rollback
+  blocked_by_decisions: []
+  blocking_condition: Phase B1 local-only least-privilege Windows/Linux r2 build,
+    typed metadata, byte-comparison, compared-byte OCI binding, and final evidence
+    workflow preparation passed all local checks with no required skips. Completion
+    remains blocked pending independent Security/Supply-chain review; authorization
+    to create the exact commit and push the dedicated branch; authorization to run
+    the reviewed hosted workflow; hosted Windows/Linux byte-identity evidence; and
+    exact r2 OCI CycloneDX SBOM, SLSA v1 provenance, and zero-HIGH/CRITICAL scan evidence.
+    No commit, push, hosted run, credential, provider/customer data, release, deployment,
+    or capability authorization occurred.
+- id: RESPONSES-RUNTIME-001
+  phase: AGENT_SHADOW
+  title: Minimum bounded custom Responses adapter behind ConstrainedAgentRuntime
+  status: COMPLETE
+  priority: 110
+  depends_on:
+  - OPERATIONS-001
+  context_domains:
+  - runtime_architecture
+  - agent_tools
+  - evaluation_release
+  - privacy_consent
+  normative_sources:
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  contracts:
+  - specs/contracts/agent-tools-v1.openapi.yaml
+  - specs/evals/eval-manifest-v1.yaml
+  - specs/contracts/provider-data-evidence-v1.schema.json
+  task_packet: context/tasks/TASK-responses-runtime-001.md
+  acceptance_checks:
+  - uv run pytest apps/worker/tests packages/evals/tests
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - scripted_transport_state_machine_tests
+  - tool_and_identity_negative_tests
+  - timeout_cancellation_and_late_call_tests
+  - budget_cost_and_provider_ambiguity_tests
+  - redaction_and_structured_trace_review
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: RUNTIME-PARITY-001
+  phase: AGENT_SHADOW
+  title: Same-envelope custom Responses versus OpenClaw parity and selection evidence
+  status: PENDING
+  priority: 111
+  depends_on:
+  - RESPONSES-RUNTIME-001
+  - AGENT-001
+  context_domains:
+  - runtime_architecture
+  - agent_tools
+  - evaluation_release
+  - privacy_consent
+  normative_sources:
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  contracts:
+  - specs/contracts/agent-tools-v1.openapi.yaml
+  - specs/evals/eval-manifest-v1.yaml
+  - specs/contracts/provider-data-evidence-v1.schema.json
+  - specs/contracts/release-gate-manifest-v1.schema.json
+  task_packet: context/tasks/TASK-runtime-parity-001.md
+  acceptance_checks:
+  - uv run pytest
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - same_envelope_runtime_comparison
+  - p0_quality_tool_handoff_latency_and_cost_results
+  - provider_effective_request_and_data_review
+  - deployed_surface_and_supply_chain_comparison
+  - signed_runtime_selection
+  - rollback_rehearsal
+  blocked_by_decisions:
+  - DEC-006
+- id: OPENCLAW-RETIRE-001
+  phase: AGENT_SHADOW
+  title: Reversible retirement of OpenClaw from the public runtime path
+  status: PENDING
+  priority: 112
+  depends_on:
+  - RUNTIME-PARITY-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - BUILD_ENGINEERING_SPEC.md
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/release-gate-manifest-v1.schema.json
+  - specs/contracts/supply-chain-evidence-v1.schema.json
+  - specs/contracts/openclaw-repackage-manifest-v2.schema.json
+  task_packet: context/tasks/TASK-openclaw-retire-001.md
+  acceptance_checks:
+  - uv run pytest
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - accepted_runtime_selection
+  - public_dependency_and_deployment_removal
+  - historical_evidence_preservation
+  - startup_fail_closed_tests
+  - rollback_rehearsal
   blocked_by_decisions: []

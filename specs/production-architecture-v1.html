@@ -78,7 +78,7 @@
     <title id="diagram-title">Kiến trúc production agent v1 cho Giặt Là Sạch Cộng</title>
     <desc id="diagram-desc">
       Channel adapter persists every inbound event before dispatch. An authenticated agent runner
-      invokes an isolated public OpenClaw runtime with no channel credentials. The public agent can
+      invokes an isolated replaceable public runtime with no channel credentials. The public agent can
       reach only the external model provider and a private policy-enforced tool facade. Deterministic
       business services own state, approvals and side effects. Only the outbox worker can send.
     </desc>
@@ -90,7 +90,7 @@
 
     <text x="34" y="34" class="title">Giặt Là Sạch Cộng — production agent architecture v1</text>
     <text x="34" y="58" class="subtitle">
-      Durable inbound first · deterministic control plane owns facts and side effects · OpenClaw produces constrained drafts only
+      Durable inbound first · deterministic control plane owns facts and side effects · replaceable runtime produces drafts only
     </text>
 
     <rect x="20" y="82" width="1460" height="150" class="zone"></rect>
@@ -163,7 +163,7 @@
     <!-- TZ-0 -->
     <rect x="70" y="120" width="230" height="84" class="node external"></rect>
     <text x="185" y="147" text-anchor="middle" class="label">Customer channels</text>
-    <text x="185" y="171" text-anchor="middle" class="small">Official Zalo OA · Facebook · Web</text>
+    <text x="185" y="171" text-anchor="middle" class="small">Telegram Bot API · Official Zalo OA · Web</text>
     <text x="185" y="190" text-anchor="middle" class="tiny">untrusted messages and media</text>
 
     <rect x="1160" y="120" width="255" height="84" class="node external"></rect>
@@ -182,7 +182,7 @@
 
     <!-- TZ-2 -->
     <rect x="115" y="472" width="285" height="150" class="node agent-node"></rect>
-    <text x="257" y="502" text-anchor="middle" class="label">Public OpenClaw executor</text>
+    <text x="257" y="502" text-anchor="middle" class="label">Public Agent Runtime</text>
     <text x="257" y="527" text-anchor="middle" class="small">Gateway invoked over loopback</text>
     <text x="257" y="550" text-anchor="middle" class="small">concierge reasoning + draft only</text>
     <text x="257" y="578" text-anchor="middle" class="tiny">NO channel credentials · DB · browser · exec</text>

@@ -13,6 +13,11 @@ artifacts/supply-chain/
 # Node/browser app (added later)
 node_modules/
 dist/
+!runtime/openclaw/repack/dist/
+!runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r1.tgz
+runtime/openclaw/repack/brace-expansion-*.tgz
+runtime/openclaw/repack/fast-uri-*.tgz
+releases/candidates/giatlasachcong-openclaw-nha-trang-laundry-tools-0.1.0.tgz
 
 # Local configuration and secrets
 .env

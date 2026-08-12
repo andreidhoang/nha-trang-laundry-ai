@@ -155,7 +155,7 @@ giờ cam kết     -> staff/capacity/policy quyết định
 │ AGENT RUNNER                                                      │
 │ - lấy inbox item đã claim                                         │
 │ - bind contact/conversation/order_request                         │
-│ - gọi Public OpenClaw                                             │
+│ - gọi Public Agent Runtime đã pin                                 │
 │ - lưu draft/tool result                                           │
 └───────────────────────────────┬──────────────────────────────────┘
                                 │ constrained job
@@ -342,7 +342,7 @@ TZ-0  Internet / customer content
 TZ-1  Edge / channel adapter
       Xác thực, dedupe, normalize, persist inbox
 
-TZ-2  Public OpenClaw cell
+TZ-2  Public Agent Runtime cell
       AI reasoning client, không có quyền gửi/DB/shell
 
 TZ-3  Business control plane
@@ -1653,7 +1653,212 @@ Thứ tự đọc để hiểu nhanh:
 
 ---
 
-## 26. Tóm tắt một dòng
+## 26. Runtime, channel và dashboard sau ADR-0003
+
+### 26.1 Câu hỏi đúng không phải là “framework nào mạnh hơn?”
+
+Một frontier agent framework có thể có hàng trăm capability nhưng sản phẩm không tự nhiên tốt hơn.
+Từ first principles, ta giải bài toán sau:
+
+```text
+Trong tất cả kiến trúc thỏa invariant an toàn và nghiệp vụ,
+chọn kiến trúc nhỏ nhất có tổng chi phí vòng đời thấp nhất.
+
+Tổng chi phí vòng đời
+= attack surface
++ failure/recovery paths
++ dependency và supply-chain
++ context/state ambiguity
++ build/test/audit/upgrade/rollback effort
++ phần code đội dự án phải sở hữu lâu dài
+```
+
+Capability cần cho public Laundry Concierge hiện tại:
+
+- một agent, không phải swarm;
+- mười typed business tools cố định;
+- tối đa ba model calls, sáu tool calls và 20 giây;
+- kết quả chỉ là draft hoặc `REQUIRE_HUMAN`;
+- mọi tiền, policy, quyền, SLA và order state do deterministic code quyết định;
+- không browser, shell, filesystem, generic web, dynamic plugin, channel send hoặc multi-agent.
+
+Vì thế Responses function-calling loop là cơ chế nhỏ nhất đủ dùng. OpenClaw vẫn hữu ích cho trợ lý cá
+nhân của owner, thử nghiệm nhiều channel, browser/host tools, plugin và orchestration rộng; chính những
+điểm mạnh đó lại là capability dư hoặc bị cấm trong public customer path.
+
+Kết luận này là **architectural hypothesis có thể bị bác bỏ**, không phải niềm tin “custom luôn tốt
+hơn framework”. Custom runtime khiến đội dự án tự chịu trách nhiệm cho loop correctness, timeout,
+cancellation, budget, idempotency, evidence và upgrade. Nếu code bắt đầu có plugin loader, generic
+tools, business memory, channel router hoặc multi-agent scheduler thì thiết kế đã đi sai: phải dừng và
+đánh giá lại framework qua ADR mới.
+
+### 26.2 Ba trục độc lập
+
+```text
+KÊNH (tai/miệng)
+  Telegram Bot API hoặc official Zalo OA adapter
+  -> authenticate, normalize, durable inbox
+  -> outbox sender duy nhất được gửi
+
+AI RUNTIME (suy luận)
+  ConstrainedAgentRuntime
+  -> custom Responses adapter là target
+  -> OpenClaw chỉ là EVAL_ONLY comparator/rollback
+  -> không có channel credential, DB, SQL hay direct send
+
+DASHBOARD (buồng điều khiển)
+  Staff PWA -> typed API -> PostgreSQL read models
+  -> AI chỉ giải thích metric đã được code tính
+  -> không tự tạo revenue, SLA, priority hoặc action
+```
+
+Thay runtime không thay channel. Thêm Telegram/Zalo không trao quyền cho AI. Thêm dashboard không tạo
+quyền gửi tin. Mỗi trục có contract, credential, threat model và rollback riêng.
+
+### 26.3 Custom Responses runtime thực sự làm gì?
+
+Nó không phải một “AI platform” mới. Nó chỉ là finite state machine:
+
+```text
+1. VALIDATE
+   job do server tạo + context hash + model/runtime pin + deadline
+
+2. RESERVE
+   giữ trước worst-case cost trong turn/day/month budget
+
+3. MODEL REQUEST
+   store=false
+   strict fixed function tools
+   provider built-in tools=false
+   parallel public tool calls=false
+
+4. TOOL CALL?
+   unknown/malformed/over-budget -> REQUIRE_HUMAN
+   valid -> AgentToolBridgeSession -> deterministic API/domain/policy
+
+5. CONTINUE
+   append typed tool result, giữ nguyên absolute deadline/call budget
+
+6. TERMINATE
+   validated draft hoặc REQUIRE_HUMAN
+   persist structured evidence, revoke bridge, settle/release budget
+```
+
+Provider response/session ID chỉ giúp transport tiếp tục một turn. Nó không phải order state, customer
+identity, approval hay durable memory. Nếu provider/runtime mất state, PostgreSQL và context compiler
+có thể dựng lại công việc từ source of truth.
+
+### 26.4 Context engineering là compiler, không phải “nhét nhiều prompt”
+
+Context engineering là bước biên dịch state thành packet nhỏ và có provenance:
+
+```text
+signed stage/capability
++ contact/conversation binding do server sở hữu
++ verified facts và version/hash
++ các lượt hội thoại liên quan
++ sanitized summary
++ approved public knowledge
++ exact tool schemas và budgets
++ handoff rules
+= context packet có schema/version/hash
+```
+
+Không đưa raw webhook, full CRM, full dashboard export, secret, owner memory, risk review hoặc dữ liệu
+khách khác vào context. Runtime có thể thay đổi, nhưng packet contract, tool boundary, policy và durable
+state không đổi.
+
+Compiler cần fail closed cho các tình huống:
+
+- fact thiếu provenance/version/hash;
+- contact hoặc conversation binding không khớp job;
+- policy/config hết hạn hoặc chưa publish;
+- tổng token vượt budget;
+- context chứa loại dữ liệu bị cấm;
+- tool schema/prompt/runtime pin khác release candidate;
+- summary mâu thuẫn với structured fact mới hơn.
+
+Ưu tiên khi thiếu chỗ luôn là: invariant và authority metadata, verified facts, tool contract, recent
+turn liên quan, rồi mới đến public knowledge. Không cắt mất security/policy instructions để giữ thêm
+lịch sử hội thoại.
+
+### 26.5 Production flow không phụ thuộc runtime
+
+Luồng production độc lập runtime:
+
+```text
+Telegram/Zalo OA
+  -> provider adapter
+  -> canonical inbound envelope
+  -> durable inbox
+  -> human hoặc Agent Runner
+  -> custom Responses/OpenClaw comparator
+  -> typed tools
+  -> deterministic domain/policy
+  -> draft + approval
+  -> transactional outbox
+  -> provider sender
+
+Staff PWA
+  -> cùng Business Control Plane/PostgreSQL
+  -> vẫn vận hành khi model/runtime down
+```
+
+### 26.6 Làm sao chứng minh custom runtime thực sự tốt hơn OpenClaw?
+
+Không so demo đẹp với production system. Hai candidate phải dùng đúng cùng:
+
+- exact model release và reasoning settings;
+- prompt bundle và context packet hashes;
+- tool schemas, bridge, budgets và deadline;
+- frozen, rotating và adversarial datasets;
+- graders, P0 denominator và provider-data policy;
+- deployment isolation, telemetry và rollback assumptions.
+
+Runtime-selection record phải chứa ít nhất:
+
+| Nhóm bằng chứng | Câu hỏi phải trả lời |
+|---|---|
+| P0 safety | Có sai tiền, unauthorized action, disclosure, suppression miss hoặc direct send không? |
+| Tool correctness | Chọn đúng tool, đúng schema, đúng server-bound identity và handoff khi không chắc không? |
+| Reliability | Timeout/cancel/late call/provider ambiguity có fail closed và recover được không? |
+| Quality | Grounding, Vietnamese answer quality và high-risk handoff recall có đạt contract không? |
+| Performance | p50/p95 latency, tokens và cost có nằm trong registered budget không? |
+| Data | Effective request và storage/retention có đúng DEC-006 không? |
+| Operations | Deploy, patch, audit, incident và rollback candidate nào thực sự đơn giản hơn? |
+
+Custom chỉ thắng khi mọi zero-tolerance gate pass, không có critical regression, đạt budget và bề mặt
+deployment/control thực sự nhỏ hơn. Nếu không, giữ OpenClaw ở `EVAL_ONLY`, sửa candidate hoặc ra ADR
+mới. Tài liệu kiến trúc không được tự coi là parity evidence.
+
+### 26.7 “Remove OpenClaw” nghĩa là gì?
+
+Không `delete` ngay. Thứ tự đúng:
+
+```text
+RESPONSES-RUNTIME-001
+  implement minimum adapter + local negative/failure tests
+        |
+        v
+RUNTIME-PARITY-001
+  same inputs, same model, same tools, same evals
+  + provider data + security + ops + rollback evidence
+        |
+        v
+OPENCLAW-RETIRE-001
+  remove public routing/deployment dependency
+  -> rehearse rollback
+  -> remove mutable runtime/build inputs
+  -> preserve immutable manifests, hashes, evals and audit
+```
+
+Private Owner OpenClaw thuộc trust cell khác nên không bị xóa bởi quyết định public runtime. Nếu owner
+cần research, coding, broad plugins hoặc personal productivity, đó vẫn có thể là nơi OpenClaw phù hợp
+nhất.
+
+---
+
+## 27. Tóm tắt một dòng
 
 ```text
 Nha Trang Laundry AI là một deterministic business operations system,

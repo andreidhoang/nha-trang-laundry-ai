@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-03'
+last_updated: '2026-08-11'
 purpose: Stable phase vocabulary for planning; work item identity never depends on
   milestone numbering.
 work_queue: delivery/WORK_QUEUE.yaml
@@ -32,12 +32,15 @@ phases:
   - DOMAIN_CORE
   outcome: Staff PWA, approval, inbox/outbox, idempotency, audit, and pilot instrumentation.
 - id: AGENT_SHADOW
-  name: Constrained OpenClaw Shadow integration
-  status: BLOCKED
+  name: Provider-neutral constrained Shadow integration
+  status: IN_PROGRESS
   depends_on:
   - OPERATIONS_CONTROL
-  outcome: Isolated draft-only Concierge, typed Tool Facade, model registry, traces,
-    and evals.
+  outcome: Isolated draft-only Concierge behind ConstrainedAgentRuntime, custom Responses
+    target, temporary OpenClaw comparator, typed Tool Facade, deterministic context
+    packets, model registry, traces, same-envelope parity evidence, and reversible
+    OpenClaw public-path retirement. Local custom-runtime implementation proceeds
+    independently of blocked provider/OpenClaw evidence.
 - id: PRODUCTION_HARDENING
   name: CI, policy, observability, containers, and supply-chain hardening
   status: IN_PROGRESS
@@ -59,8 +62,10 @@ phases:
   status: PENDING
   depends_on:
   - REAL_SHADOW_READINESS
-  outcome: Separate public cell and capability-specific public entry, beginning with
-    LIST_PRICE_INFO.
+  outcome: Separate public runtime cell, canonical provider envelope, official Telegram
+    Bot API and/or Zalo OA adapters selected by DEC-005, provider-specific webhook/sender
+    evidence, and capability-specific public entry beginning with LIST_PRICE_INFO.
+    Zalo Personal remains prohibited.
 - id: BOUNDED_AUTONOMY
   name: Evidence-gated bounded capabilities
   status: PENDING

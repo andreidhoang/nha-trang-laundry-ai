@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://giatlasachcong.vn/contracts/openclaw-repackage-manifest-v1.schema.json",
+  "title": "Immutable EVAL_ONLY OpenClaw repackage manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_status",
+    "source",
+    "replacements",
+    "output",
+    "image",
+    "activation"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifact_status": { "const": "EVAL_ONLY" },
+    "source": { "$ref": "#/$defs/Material" },
+    "replacements": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "required_by_path",
+          "required_range",
+          "source",
+          "replacement"
+        ],
+        "properties": {
+          "path": { "type": "string", "pattern": "^node_modules/[a-z0-9._-]+$" },
+          "required_by_path": {
+            "type": "string",
+            "pattern": "^node_modules/[a-z0-9._/-]+$"
+          },
+          "required_range": { "type": "string", "pattern": "^\\^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+          "source": { "$ref": "#/$defs/Material" },
+          "replacement": { "$ref": "#/$defs/Material" }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filename", "sha256", "integrity", "size"],
+      "properties": {
+        "filename": { "const": "openclaw-2026.7.1-2-nha-trang-r1.tgz" },
+        "sha256": { "$ref": "#/$defs/Sha256" },
+        "integrity": { "$ref": "#/$defs/Integrity" },
+        "size": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "dockerfile",
+        "base_image",
+        "target_platform",
+        "provenance_predicate_type",
+        "hosted_evidence_required"
+      ],
+      "properties": {
+        "repository": { "const": "nha-trang-laundry-openclaw" },
+        "dockerfile": { "const": "runtime/openclaw/repack/Dockerfile" },
+        "base_image": {
+          "type": "string",
+          "pattern": "^node:24\\.15\\.0-alpine3\\.23@sha256:[0-9a-f]{64}$"
+        },
+        "target_platform": { "const": "linux/amd64" },
+        "provenance_predicate_type": { "const": "https://slsa.dev/provenance/v1" },
+        "hosted_evidence_required": { "const": true }
+      }
+    },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "real_customer_data_allowed",
+        "public_ingress_enabled",
+        "provider_calls_enabled",
+        "automatic_send_enabled",
+        "direct_send_enabled"
+      ],
+      "properties": {
+        "real_customer_data_allowed": { "const": false },
+        "public_ingress_enabled": { "const": false },
+        "provider_calls_enabled": { "const": false },
+        "automatic_send_enabled": { "const": false },
+        "direct_send_enabled": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "Sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "Integrity": {
+      "type": "string",
+      "pattern": "^sha512-[A-Za-z0-9+/]+={0,2}$"
+    },
+    "Material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "url", "integrity", "sha256", "size"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9@._/-]+$" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9]+)?$" },
+        "url": {
+          "type": "string",
+          "pattern": "^https://registry\\.npmjs\\.org/[a-z0-9@._/-]+\\.tgz$"
+        },
+        "integrity": { "$ref": "#/$defs/Integrity" },
+        "sha256": { "$ref": "#/$defs/Sha256" },
+        "size": { "type": "integer", "minimum": 1 },
+        "dependencies": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^\\^[0-9]+\\.[0-9]+\\.[0-9]+$"
+          }
+        }
+      }
+    }
+  }
+}

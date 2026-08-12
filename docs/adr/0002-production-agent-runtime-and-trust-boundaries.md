@@ -1,7 +1,12 @@
 # ADR-0002: OpenClaw public agent runtime with a deterministic Python authority
 
-**Status:** accepted  
+**Status:** accepted in part; mandatory OpenClaw selection superseded by ADR-0003
 **Date:** 2026-07-28
+
+ADR-0003 makes `ConstrainedAgentRuntime` authoritative and selects a custom Responses adapter as the
+preferred production target. The isolation, Python/PostgreSQL authority, provider-data, no-direct-send,
+and release-evidence requirements in this ADR remain binding. OpenClaw is retained only as the current
+`EVAL_ONLY` comparison/rollback implementation until retirement gates pass.
 
 ## Context
 
@@ -109,4 +114,3 @@ VM/VPS and OS identity.
 - Public-agent compromise has a bounded blast radius and an independent credential-revocation path.
 - Some convenient OpenClaw built-ins are intentionally unavailable in the public cell; owner-only
   workflows may use a broader reviewed profile in the separate private environment.
-

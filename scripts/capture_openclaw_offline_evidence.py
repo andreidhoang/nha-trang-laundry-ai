@@ -12,7 +12,10 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from nha_trang_laundry_contracts import load_public_runtime_registry
+from nha_trang_laundry_contracts import (
+    load_public_runtime_registry,
+    verify_public_runtime_artifacts,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/openclaw-offline-verification-v1.json"
@@ -21,11 +24,20 @@ PINNED_ARTIFACTS = (
     "runtime/openclaw/public-cell/openclaw.json5",
     "runtime/openclaw/public-cell/plugin-inventory-v1.json",
     "runtime/openclaw/public-cell/plugin/package-lock.json",
+    "runtime/openclaw/repack/manifest-v1.json",
+    "runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r1.tgz",
+    "runtime/openclaw/repack/manifest-v2.json",
+    "runtime/openclaw/repack/dist/openclaw-2026.7.1-2-nha-trang-r2.tgz",
     "evidence/provider/openai-data-controls-review-v1.yaml",
     "specs/contracts/capability-status-v1.schema.json",
     "specs/contracts/container-scan-evidence-v1.schema.json",
+    "specs/contracts/openclaw-cross-platform-result-v1.schema.json",
     "specs/contracts/provider-data-evidence-v1.schema.json",
+    ".github/workflows/release-supply-chain.yml",
     "scripts/verify_agent_runtime.py",
+    "scripts/build_openclaw_repackage.py",
+    "scripts/verify_openclaw_repackage.py",
+    "scripts/verify_openclaw_cross_platform.py",
     "scripts/capture_openclaw_offline_evidence.py",
 )
 
@@ -40,13 +52,14 @@ def _validated_result(value: Any, *, returncode: int) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("OpenClaw verification output must be an object")
     registry = load_public_runtime_registry(ROOT / "runtime/model-registry-v1.yaml")
+    expected_artifact_count = len(verify_public_runtime_artifacts(ROOT, registry))
     base_blockers = list(registry.release_blockers())
     common_invalid = (
         value.get("openclaw_version") != registry.openclaw.version
         or not isinstance(value.get("openclaw_build_revision"), str)
         or re.fullmatch(r"[0-9a-f]{7,40}", value["openclaw_build_revision"]) is None
         or value.get("tool_count") != 10
-        or value.get("artifact_count") != 12
+        or value.get("artifact_count") != expected_artifact_count
         or value.get("security_audit_critical") != 0
         or value.get("real_customer_data_allowed") is not False
         or not isinstance(value.get("dependency_audit_critical"), int)

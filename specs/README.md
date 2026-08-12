@@ -31,7 +31,16 @@
    Kết quả review đa chuyên môn, P0 resolution matrix và quyết định go/no-go theo từng stage.
 
 8. [`../docs/adr/0002-production-agent-runtime-and-trust-boundaries.md`](../docs/adr/0002-production-agent-runtime-and-trust-boundaries.md)  
-   Quyết định cuối cho Public OpenClaw runtime, Python authority, model route và provider-data gate.
+   Trust boundary, Python authority, model route và provider-data gate ban đầu.
+
+9. [`../docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md`](../docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md)
+   Supersede việc bắt buộc OpenClaw; ghi decision function từ first principles, bounded Responses
+   state machine, same-envelope parity/retirement gates, channel adapter độc lập và AI operations
+   dashboard.
+
+10. [`../docs/PROJECT_ENGINEERING_FIRST_PRINCIPLES_VI.md`](../docs/PROJECT_ENGINEERING_FIRST_PRINCIPLES_VI.md)
+    Giải thích tiếng Việt từ big picture xuống runtime/context/harness, bao gồm lý do chọn custom
+    Responses cho workload hiện tại và cách chứng minh trước khi retire OpenClaw.
 
 ## Contracts có thể chạy bằng máy
 
@@ -43,6 +52,9 @@
   để sinh tool schema/validator/SDK cho public agent.
 - [`contracts/release-gate-manifest-v1.schema.json`](./contracts/release-gate-manifest-v1.schema.json)
   — schema ký duyệt release theo stage/capability và evidence hash.
+- [`contracts/openclaw-repackage-manifest-v2.schema.json`](./contracts/openclaw-repackage-manifest-v2.schema.json)
+  — contract EVAL_ONLY bất biến cho artifact OpenClaw derived r2, bốn dependency replacements và
+  rollback r1 được pin đầy đủ.
 - [`evals/eval-manifest-v1.yaml`](./evals/eval-manifest-v1.yaml) — release gates, P0 cases,
   deterministic cases và adversarial evaluation.
 - [`../delivery/PROGRAM_PLAN.yaml`](../delivery/PROGRAM_PLAN.yaml) — stable phases và dependency order.
@@ -66,13 +78,13 @@ Khi có xung đột, dùng thứ tự ưu tiên sau:
 
 ## Nguyên tắc khóa
 
-- PostgreSQL là system of record; OpenClaw không phải database nghiệp vụ.
+- PostgreSQL là system of record; mọi agent runtime đều không phải database nghiệp vụ.
 - LLM không tính tiền, không tự chọn giá trong khoảng, không xác nhận capacity và không phát hành refund/credit.
 - Mọi phép tính giá, ưu đãi, phí giao nhận, SLA và trạng thái đơn phải do deterministic domain code thực hiện.
 - Shadow Mode yêu cầu con người duyệt mọi outbound message và mọi cam kết thương mại.
-- Public OpenClaw phải ở VM/VPS riêng trước mọi public/untrusted inbound; Gateway control UI/protocol
-  chỉ bind loopback và không được reverse-proxy.
-- Public OpenClaw không có channel credential; chỉ transactional outbox worker được gửi.
+- Public agent runtime phải ở security cell riêng trước mọi public/untrusted inbound; control endpoint
+  không được public/reverse-proxy.
+- Public agent runtime không có channel credential; chỉ transactional outbox worker được gửi.
 - Mọi thay đổi trạng thái hoặc gửi tin phải có idempotency key và audit event.
 - Không kết nối Zalo cá nhân không chính thức vào production customer service.
 

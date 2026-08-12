@@ -3,13 +3,15 @@
 **Document owner:** Product/Engineering  
 **Business owner:** Giặt Là Sạch Cộng  
 **Legal entity:** CÔNG TY TNHH A & T CARE — MST 4202059758  
-**Version:** 1.1-runtime-and-delivery-alignment  
-**Date:** 2026-07-27  
+**Version:** 1.3-first-principles-runtime-execution
+**Date:** 2026-08-10
 **Status:** `READY_FOR_IMPLEMENTATION_WITH_GATES`
 
 ## 1. Executive decision
 
-Xây một **modular monolith** cho nghiệp vụ báo giá, đơn hàng, SLA, giao nhận, approval và audit; dùng OpenClaw như lớp agent/channel orchestration bị giới hạn quyền.
+Xây một **modular monolith** cho nghiệp vụ báo giá, đơn hàng, SLA, giao nhận, approval và audit; dùng
+runtime agent thay thế được qua `ConstrainedAgentRuntime`. Custom OpenAI Responses adapter là target
+production ưu tiên; channel adapters và dashboard không phụ thuộc runtime agent.
 
 Không xây một “AI tự vận hành tiệm”. V1 là một hệ thống:
 
@@ -17,7 +19,19 @@ Không xây một “AI tự vận hành tiệm”. V1 là một hệ thống:
 2. nhân viên ra quyết định thương mại;
 3. AI trích xuất yêu cầu, soạn nháp, giải thích và chuyển giao;
 4. mọi hành động đều truy vết được;
-5. hệ thống vẫn vận hành thủ công khi model hoặc OpenClaw lỗi.
+5. hệ thống vẫn vận hành thủ công khi model hoặc mọi agent runtime lỗi.
+
+### 1.1 First-principles runtime decision
+
+Mọi runtime candidate trước hết phải thỏa toàn bộ invariant về business authority, isolation, data,
+egress và release. Trong các candidate hợp lệ, chọn hệ thống nhỏ nhất giảm tổng attack surface,
+failure/recovery path, dependency/supply-chain, context ambiguity và chi phí build/test/audit/upgrade.
+
+Workload public hiện chỉ cần một Concierge, mười tool cố định, tối đa ba model calls và sáu tool calls,
+không cần browser/shell/filesystem/generic plugin/channel send/multi-agent. Vì vậy một bounded Responses
+adapter sau `ConstrainedAgentRuntime` là target ưu tiên. Đây là giả thuyết phải được chứng minh bằng
+runtime parity; custom code không mặc nhiên an toàn hơn. Không được mở rộng adapter thành generic agent
+framework. Capability requirement thay đổi đáng kể phải tạo ADR mới.
 
 ## 2. Problem statement
 
@@ -361,6 +375,12 @@ R1 có thể gán một người nhiều role nhưng permission vẫn phải tá
 - `FR-AI-006` Prompt injection hoặc unsupported request phải handoff/fail closed.
 - `FR-AI-007` Agent context chỉ lấy approved structured policy.
 - `FR-AI-008` Agent response phải phân biệt estimate, final price và human-confirmed promise.
+- `FR-AI-009` Runtime implementation phải thay thế được mà không thay domain, policy, inbox/outbox,
+  channel adapter hoặc Staff PWA contract.
+- `FR-AI-010` Context packet phải có schema/version/hash, fact provenance, server-owned binding và
+  budgets; raw webhook, unscoped history, dashboard export, secret và internal risk material bị loại.
+- `FR-AI-011` Public model request chỉ có strict allowlisted functions; provider built-in tools và
+  parallel public tool execution bị tắt.
 
 ### 8.12 Reporting and export
 
@@ -369,6 +389,10 @@ R1 có thể gán một người nhiều role nhưng permission vẫn phải tá
 - `FR-RPT-003` Export CSV phải chống spreadsheet formula injection.
 - `FR-RPT-004` Cycle log và delivery cost log phải export tương thích template pilot.
 - `FR-RPT-005` KPI có numerator, denominator, time window và data quality status.
+- `FR-RPT-006` Staff PWA có unified inbox, approval queue, order/exception board, channel health,
+  queue recovery, audit timeline và timestamp freshness.
+- `FR-RPT-007` AI chỉ tóm tắt/giải thích metric do versioned SQL/domain projection tính; AI không tự
+  tính revenue, SLA, priority, denominator hoặc thực thi action từ dashboard.
 
 ## 9. System architecture
 
@@ -394,16 +418,23 @@ R1 có thể gán một người nhiều role nhưng permission vẫn phải tá
    - exports;
    - retry/DLQ.
 
-5. **Public OpenClaw Cell**
-   - separate profile/state/workspace; separate VM/VPS là bắt buộc trước mọi public/untrusted inbound;
+5. **Public Agent Runtime Cell**
+   - implementation thay thế được qua `ConstrainedAgentRuntime`;
+   - custom Responses adapter là preferred production target; OpenClaw chỉ là `EVAL_ONLY`
+     comparison/rollback cho đến khi parity và retirement gates pass;
+   - separate identity/state/secrets; separate VM/VPS là bắt buộc trước mọi public/untrusted inbound;
    - sandboxed;
    - không expose filesystem mutation tool; runtime chỉ ghi vào dedicated state/log directories trên cell riêng;
    - no host exec/browser/nodes, owner workspace hoặc Docker socket;
    - không giữ channel credential và không gọi channel provider;
    - narrow service credential.
-   - selected customer-agent runtime from the agent-integration phase onward;
-   - exact provider/model and explicit OpenClaw runtime route pinned by release evidence;
+   - exact provider/model/runtime implementation và route pinned by release evidence;
    - provider request storage/retention behavior verified before real customer data.
+   - adapter chỉ sở hữu finite provider/tool loop: validate job/context, reserve budget, call exact
+     model, validate serial tool call, invoke contact-bound bridge, validate draft/handoff, persist
+     structured evidence, revoke bridge và settle/release budget;
+   - provider session/response state không phải durable state hoặc authority;
+   - không thêm plugin loader, channel router, generic memory, workflow engine hoặc multi-agent scheduler.
 
 6. **Agent Tool Facade**
    - scoped endpoints;
@@ -414,9 +445,11 @@ R1 có thể gán một người nhiều role nhưng permission vẫn phải tá
 
 7. **Channel Adapters**
    - official channels only;
-   - normalize inbound;
-   - deduplicate;
-   - enqueue outbound.
+   - provider-specific webhook authentication, payload limits và fast acknowledgement;
+   - normalize về canonical inbound envelope, map contact server-side, deduplicate và persist trước AI;
+   - deterministic STOP/suppression ở ingress;
+   - không gọi model và không chứa business pricing logic;
+   - outbound chỉ qua provider-specific `OUTBOX_WORKER` sender.
 
 8. **Observability**
    - structured logs;
@@ -430,6 +463,12 @@ R1 có thể gán một người nhiều role nhưng permission vẫn phải tá
    - may read approved analytics through a scoped API/export;
    - never receives untrusted public channel traffic directly.
 
+10. **Daily Operations Dashboard**
+   - Staff PWA đọc role-scoped typed projections từ Business Control Plane;
+   - unified inbox, approvals, orders, exceptions, SLA risk, deterministic metrics, channel/queue
+     health, AI quality và audit;
+   - AI summary dùng narrow read-only tools và không có SQL, arbitrary ID hoặc mutation authority.
+
 ### 9.2 Deployment decision
 
 R1 production target:
@@ -438,7 +477,7 @@ R1 production target:
 - containerized app, worker, PostgreSQL and reverse proxy;
 - admin UI reachable only by private network/VPN or strongly authenticated HTTPS;
 - same-host profile/OS-user isolation chỉ dùng cho development/internal pre-channel Shadow;
-- public OpenClaw cell bắt buộc chạy trên VM/VPS riêng với OS identity, state, secrets, model key và network policy riêng;
+- public agent runtime cell bắt buộc chạy trên VM/VPS riêng với OS identity, state, secrets, model key và network policy riêng;
 - database not exposed publicly;
 - backups outside primary host.
 
@@ -594,12 +633,14 @@ Các mục sau giữ `HUMAN_ONLY` cho đến khi phê duyệt:
 - `ADR-001`: Modular monolith, không microservices.
 - `ADR-002`: PostgreSQL là canonical source.
 - `ADR-003`: Deterministic pricing/policy; LLM không tính tiền.
-- `ADR-004`: Public OpenClaw cell tách private owner Gateway.
+- `ADR-004`: Public agent runtime cell tách private owner Gateway/workspace.
 - `ADR-005`: Transactional inbox/outbox + idempotency.
 - `ADR-006`: All outbound human-approved trong Shadow Mode.
 - `ADR-007`: Structured approved knowledge, không broad RAG.
 - `ADR-008`: Official customer channels only.
 - `ADR-009`: Append-only business/audit events.
 - `ADR-010`: Unknown business rule fails closed to human.
-- `ADR-011`: Public OpenClaw is the constrained agent runtime; Python remains business/security
-  authority and provider-data behavior is a release gate.
+- `ADR-011`: `ConstrainedAgentRuntime` là boundary; custom Responses adapter là preferred target;
+  Python vẫn là business/security authority và provider-data behavior là release gate.
+- `ADR-012`: Official channel adapters và daily operations dashboard độc lập runtime; AI chỉ giải thích
+  deterministic read models và không có direct-send/SQL authority.

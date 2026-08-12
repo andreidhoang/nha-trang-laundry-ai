@@ -1,5 +1,17 @@
 # Engineering Team Review Report v1
 
+**2026-08-10 architecture amendment:** ADR-0003 supersedes only the mandatory OpenClaw runtime
+selection. Every isolation, deterministic-authority, provider-data, no-direct-send, channel and release
+gate below applies to the selected public runtime. OpenClaw remains historical/current `EVAL_ONLY`
+comparison evidence until the custom Responses runtime passes parity and retirement gates.
+
+The first-principles basis is workload fit, not feature preference: one bounded Concierge, ten fixed
+tools and no public browser/shell/channel-send/multi-agent requirement. The target is a finite-state
+adapter, not a new generic framework. `RESPONSES-RUNTIME-001` may proceed locally with scripted
+transport; `RUNTIME-PARITY-001` must falsifiably compare the same safety envelope; only
+`OPENCLAW-RETIRE-001` may later remove the public dependency while preserving evidence and owner-only
+OpenClaw.
+
 **Review date:** 2026-07-27  
 **System:** Giặt Là Sạch Cộng internal operations and constrained customer-service agent  
 **Review status:** `SPEC_APPROVED_WITH_EXECUTION_GATES`  
@@ -41,8 +53,8 @@ Each pass used P0/P1 severity:
 
 | Area | Review finding | Resolution in v1 | Execution evidence still required |
 |---|---|---|---|
-| Public isolation | Same-host wording could expose the owner's OpenClaw environment | Separate public VM/VPS is mandatory before public/untrusted inbound | Host/network/credential isolation test |
-| Channel authority | Public agent could appear able to send directly | Public OpenClaw has no channel credentials; only outbox worker sends | Image/config scan and egress test |
+| Public isolation | Same-host wording could expose the owner's private environment | Separate public runtime VM/VPS is mandatory before public/untrusted inbound | Host/network/credential isolation test |
+| Channel authority | Public agent could appear able to send directly | Public runtime has no channel credentials; only outbox worker sends | Image/config scan and egress test |
 | Inbound durability | Agent could process before event persistence | Adapter → durable inbox → authenticated runner contract | Crash/replay integration test |
 | Authorization | Tool/PDP boundary was drawn inside public cell | Tool Facade + PDP moved to private control plane | Network deny tests |
 | Commercial calculation | LLM could be treated as calculator | All price/promo/delivery/SLA results are deterministic domain code | Golden vectors and migration parity |
@@ -110,7 +122,7 @@ Until:
 
 - official provider channel is selected and approved; Zalo Personal remains prohibited;
 - separate hardened public host is deployed;
-- public OpenClaw has no channel credential, owner mount, mutation tool or control-plane exposure;
+- public agent runtime has no channel credential, owner mount, mutation tool or control-plane exposure;
 - MFA is enforced for all roles with PII/approval/export/policy/finance/address access;
 - model-provider data retention/training terms are approved;
 - public customer-policy corpus is published and tested;

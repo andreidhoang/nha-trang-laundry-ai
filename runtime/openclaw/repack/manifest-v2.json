@@ -1,0 +1,163 @@
+{
+  "schema_version": 2,
+  "artifact_origin": "DERIVED",
+  "artifact_status": "EVAL_ONLY",
+  "upstream": {
+    "name": "openclaw",
+    "version": "2026.7.1-2",
+    "url": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1-2.tgz",
+    "integrity": "sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==",
+    "sha256": "sha256:5bb525f36f471a41239615d321c441778c7e1c007018ed6d84b795be77803276",
+    "size": 19728152,
+    "package_json_sha256": "sha256:695b6ee36df7fc69606dc390cf97bb2ca809114337b18c573707637cd2a4e3db"
+  },
+  "base": {
+    "filename": "openclaw-2026.7.1-2-nha-trang-r1.tgz",
+    "sha256": "sha256:8478f9110425449a7162a8fefd0ca866594e91a584dc681f9a382b8cd0454dcc",
+    "integrity": "sha512-8Mx+tv9tYy53lIhvZM9aMGF8OATg/kovktAJkkWlYFnZAJ5DClmXsflBl3moPZjMMiNAfbXdnQColWuasg+Rlw==",
+    "size": 19728669,
+    "manifest_path": "runtime/openclaw/repack/manifest-v1.json",
+    "manifest_sha256": "sha256:421986c177315e026bfb0344ed7826d3a437c5276c5c605d1f76fdc792fb3ae0"
+  },
+  "allowed_file_mutations": [
+    "package/package.json",
+    "package/npm-shrinkwrap.json"
+  ],
+  "replacements": [
+    {
+      "path": "node_modules/brace-expansion",
+      "plugin_lock_path": "node_modules/openclaw/node_modules/brace-expansion",
+      "required_by_path": "node_modules/minimatch",
+      "required_range": "^5.0.5",
+      "range_policy": "SATISFIES_DECLARED_RANGE",
+      "source": {
+        "name": "brace-expansion",
+        "version": "5.0.8",
+        "url": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz",
+        "integrity": "sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==",
+        "sha256": "sha256:a03b06e66d862d0278b1ff45b66427f245f99c665800dc9bd790c0c13d2247fe",
+        "size": 10242,
+        "package_json_sha256": "sha256:4d079b0aafed063861201a3ea955b3e1d08b93f0876860d4f8028efac496b57a",
+        "dependencies": { "balanced-match": "^4.0.2" }
+      },
+      "replacement": {
+        "name": "brace-expansion",
+        "version": "5.0.9",
+        "url": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz",
+        "integrity": "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
+        "sha256": "sha256:5d06001fddd25cbee90c96db4dc5b7b57711b984c3141e28d10f143deb52dbaf",
+        "size": 10834,
+        "package_json_sha256": "sha256:f8a0e0d0a6cbb58106ce6832205e0939a00b9583637011bf8ef4167f4a52fbda",
+        "dependencies": { "balanced-match": "^4.0.2" }
+      }
+    },
+    {
+      "path": "node_modules/fast-uri",
+      "plugin_lock_path": "node_modules/openclaw/node_modules/fast-uri",
+      "required_by_path": "node_modules/ajv",
+      "required_range": "^3.0.1",
+      "range_policy": "SATISFIES_DECLARED_RANGE",
+      "source": {
+        "name": "fast-uri",
+        "version": "3.1.4",
+        "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz",
+        "integrity": "sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==",
+        "sha256": "sha256:9950db3e5239f5c113314344836e9eb5e8d760a13b177687a08cabc25b64d390",
+        "size": 30556,
+        "package_json_sha256": "sha256:a9fff7e32f1e48fd1f9eee683ff19ab75ac068f6cb62c2261a40d7b5bccbf86a",
+        "dependencies": {}
+      },
+      "replacement": {
+        "name": "fast-uri",
+        "version": "3.1.5",
+        "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz",
+        "integrity": "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==",
+        "sha256": "sha256:82a71e7e3716dc8c392cac0762bce80614cf539ef22000415e26eaf5c453ce2f",
+        "size": 32112,
+        "package_json_sha256": "sha256:3b01e17f5de289a0905ad894187235c8a8bb284a1fd285b40227b1d862f86b4d",
+        "dependencies": {}
+      }
+    },
+    {
+      "path": "node_modules/ip-address",
+      "plugin_lock_path": "node_modules/openclaw/node_modules/ip-address",
+      "required_by_path": "node_modules/express-rate-limit",
+      "required_range": "^10.2.0",
+      "range_policy": "SATISFIES_DECLARED_RANGE",
+      "source": {
+        "name": "ip-address",
+        "version": "10.2.0",
+        "url": "https://registry.npmjs.org/ip-address/-/ip-address-10.2.0.tgz",
+        "integrity": "sha512-/+S6j4E9AHvW9SWMSEY9Xfy66O5PWvVEJ08O0y5JGyEKQpojb0K0GKpz/v5HJ/G0vi3D2sjGK78119oXZeE0qA==",
+        "sha256": "sha256:37e0ddc03f4d1576c11b4405b022c41cdbcdcf1347f07fa96ea03d75f9a7c0ba",
+        "size": 59066,
+        "package_json_sha256": "sha256:efb3d32c0c7996237f78af8fd820e3d58e66fa76593fb329fab6b3ccb260afd6",
+        "dependencies": {}
+      },
+      "replacement": {
+        "name": "ip-address",
+        "version": "10.3.1",
+        "url": "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz",
+        "integrity": "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==",
+        "sha256": "sha256:ad1790063beea11a312c801df30d58e147de762f4f77787552376eb7424623e5",
+        "size": 65455,
+        "package_json_sha256": "sha256:4a0a3acff34188079b379a63f5752659c83185004febca496c388d1d5ca2ed7c",
+        "dependencies": {}
+      }
+    },
+    {
+      "path": "node_modules/undici",
+      "plugin_lock_path": "node_modules/undici",
+      "required_by_path": "",
+      "required_range": "8.5.0",
+      "range_policy": "REVIEWED_EXACT_METADATA_CHANGE",
+      "source": {
+        "name": "undici",
+        "version": "8.5.0",
+        "url": "https://registry.npmjs.org/undici/-/undici-8.5.0.tgz",
+        "integrity": "sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==",
+        "sha256": "sha256:164b59cd288030078e5ebc4f33bae472009ec3d974b1dd78c2ec5045fc7d0111",
+        "size": 409095,
+        "package_json_sha256": "sha256:4eed584bdf6a1545381c24674dfe8938421f7c66313c8960fb40f28f3a55c306",
+        "dependencies": {}
+      },
+      "replacement": {
+        "name": "undici",
+        "version": "8.9.0",
+        "url": "https://registry.npmjs.org/undici/-/undici-8.9.0.tgz",
+        "integrity": "sha512-aWZpUj7XoGonMClx4gdDRfgBjqeA+F473aDmROQQbM9n6PRfK/u1q/a0X4wMTgcHfT8H6fpbt98PFuDUwFg2YA==",
+        "sha256": "sha256:f554abb3e9352e04bc325208066a25c229163d8408bb1d5161db3d793445d69c",
+        "size": 453440,
+        "package_json_sha256": "sha256:7f3ceff33b99699c2c63574d9368f84035b1a11fa33a7d14e8184498eb19dd5b",
+        "dependencies": {}
+      },
+      "package_dependency_mutation": {
+        "file": "package/package.json",
+        "json_pointer": "/dependencies/undici",
+        "source_value": "8.5.0",
+        "replacement_value": "8.9.0"
+      }
+    }
+  ],
+  "output": {
+    "filename": "openclaw-2026.7.1-2-nha-trang-r2.tgz",
+    "sha256": "sha256:0c4d5d0dcdccde0290932c9baf17c1e371a12d46660ebba32dfa3b878124edab",
+    "integrity": "sha512-yFjlTDU5sv+4lPR7kIM+iIsMAqkkfY2Jd07+f0wubCPK6nFl3vYFHcELtln+q3/9x1flCLtxp3G7ukAFougSgA==",
+    "size": 19535080
+  },
+  "image": {
+    "repository": "nha-trang-laundry-openclaw",
+    "dockerfile": "runtime/openclaw/repack/Dockerfile",
+    "base_image": "node:24.15.0-alpine3.23@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f",
+    "target_platform": "linux/amd64",
+    "provenance_predicate_type": "https://slsa.dev/provenance/v1",
+    "hosted_evidence_required": true
+  },
+  "activation": {
+    "real_customer_data_allowed": false,
+    "public_ingress_enabled": false,
+    "provider_calls_enabled": false,
+    "automatic_send_enabled": false,
+    "direct_send_enabled": false
+  }
+}

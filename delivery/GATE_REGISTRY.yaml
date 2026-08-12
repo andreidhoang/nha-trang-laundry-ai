@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: 2026-07-28
+last_updated: 2026-08-10
 release_contract: specs/contracts/release-gate-manifest-v1.schema.json
 default_authorization: NOT_AUTHORIZED
 gates:
@@ -13,6 +13,7 @@ gates:
       - typed tools and deterministic PDP
       - owner MFA and server-enforced RBAC
       - atomic mutation event audit and required outbox
+      - exact runtime model prompt tool context and public-cell configuration pins
       - provider data-use and retention approval
       - PITR or WAL restore drill at or below the RPO
       - P0 primary fallback and degraded-path eval pass
@@ -25,7 +26,9 @@ gates:
     summary: Official public-channel entry; only LIST_PRICE_INFO is initially auto-send eligible.
     required_evidence:
       - official supported channel and authenticated webhook
-      - isolated Public OpenClaw VM with loopback-only Gateway
+      - isolated public agent-runtime VM with private or loopback-only control endpoint
+      - signed same-envelope runtime selection covering P0 tool handoff latency cost failure recovery and rollback
+      - explicit runtime implementation and route with accepted custom-runtime parity evidence
       - no channel credential generic tool owner mount or direct send in public cell
       - published public corpus and applicable customer policy
       - at least 14 Shadow days 100 representative interactions and 30 real orders

@@ -13,14 +13,14 @@
     "plugin:build": "npm run build && openclaw plugins build --root . --entry ./dist/index.js",
     "plugin:check": "npm run build && openclaw plugins build --root . --entry ./dist/index.js --check",
     "plugin:validate": "npm run build && openclaw plugins validate --root . --entry ./dist/index.js",
-    "test": "npm run build && node --test dist/index.test.js"
+    "test": "npm run build && node --test dist/index.test.js dist/undici-compat.test.js"
   },
   "dependencies": {
     "typebox": "1.1.39"
   },
   "devDependencies": {
     "@types/node": "24.1.0",
-    "openclaw": "2026.7.1-2",
+    "openclaw": "file:../../repack/dist/openclaw-2026.7.1-2-nha-trang-r2.tgz",
     "typescript": "5.9.2"
   },
   "peerDependencies": {

@@ -216,6 +216,7 @@ def test_openclaw_scan_is_bound_to_the_attested_image_config() -> None:
     assert sarif_digest in command
     assert exact_binding in command
     assert immutable_ref in command
+    assert 'provenance/v1") \\' not in command
     assert command.index(provenance_digest) < command.rindex(sarif_digest)
     assert command.rindex(sarif_digest) < command.index(exact_binding)
     assert command.index(exact_binding) < command.rindex(normalize)

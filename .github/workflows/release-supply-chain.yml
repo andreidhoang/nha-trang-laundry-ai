@@ -297,8 +297,7 @@ jobs:
           mkdir -p "$openclaw_oci_dir"
           tar -xf "$openclaw_archive" -C "$openclaw_oci_dir"
           openclaw_config_digest="$(jq -er \
-            'select(.predicate_type == "https://slsa.dev/provenance/v1") \
-              | .config_digest | select(test("^sha256:[0-9a-f]{64}$"))' \
+            'select(.predicate_type == "https://slsa.dev/provenance/v1") | .config_digest | select(test("^sha256:[0-9a-f]{64}$"))' \
             artifacts/supply-chain/openclaw-provenance.json)"
           docker run --rm \
             --volume "$RUNNER_TEMP:/work:ro" \

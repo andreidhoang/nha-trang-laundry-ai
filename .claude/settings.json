@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv sync:*)",
+      "Bash(uv run ruff:*)",
+      "Bash(uv run mypy:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(uv run python scripts/verify_contracts.py)",
+      "Bash(uv run python scripts/check_context_drift.py)",
+      "Bash(uv run python scripts/report_delivery_status.py)",
+      "Bash(uv run python scripts/run_delivery_loop.py:*)",
+      "Bash(uv run python scripts/assemble_context.py:*)",
+      "Bash(uv run python scripts/apply_migrations.py)",
+      "Bash(.venv/bin/python -m ruff:*)",
+      "Bash(.venv/bin/python -m mypy:*)",
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(.venv/bin/python scripts/verify_contracts.py)",
+      "Bash(.venv/bin/python scripts/check_context_drift.py)",
+      "Bash(.venv/bin/python scripts/report_delivery_status.py)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh workflow run:*)",
+      "Bash(docker compose up:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/secrets/**)"
+    ]
+  }
+}

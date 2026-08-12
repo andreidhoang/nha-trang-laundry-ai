@@ -296,10 +296,9 @@ jobs:
           openclaw_oci_dir="$RUNNER_TEMP/openclaw-oci"
           mkdir -p "$openclaw_oci_dir"
           tar -xf "$openclaw_archive" -C "$openclaw_oci_dir"
-          openclaw_digest="$(jq -er \
-            'select(.predicate_type == "https://slsa.dev/provenance/v1") | .image_digest' \
+          openclaw_platform_digest="$(jq -er \
+            'select(.predicate_type == "https://slsa.dev/provenance/v1") | .platform_manifest_digest' \
             artifacts/supply-chain/openclaw-provenance.json)"
-          openclaw_ref="nha-trang-laundry-openclaw@${openclaw_digest}"
           docker run --rm \
             --volume "$RUNNER_TEMP:/work:ro" \
             --volume "$PWD/artifacts/supply-chain:/out" \
@@ -313,6 +312,11 @@ jobs:
             "$trivy_image" image --input /work/openclaw-oci --scanners vuln \
             --format sarif --severity CRITICAL,HIGH --exit-code 1 \
             --output /out/openclaw.sarif
+          openclaw_scan_digest="$(jq -er \
+            '.runs[0].properties.imageID | select(test("^sha256:[0-9a-f]{64}$"))' \
+            artifacts/supply-chain/openclaw.sarif)"
+          test "$openclaw_scan_digest" = "$openclaw_platform_digest"
+          openclaw_ref="nha-trang-laundry-openclaw@${openclaw_platform_digest}"
           uv run python scripts/normalize_container_scan.py \
             --sarif artifacts/supply-chain/openclaw.sarif \
             --sbom artifacts/supply-chain/openclaw.cdx.json \

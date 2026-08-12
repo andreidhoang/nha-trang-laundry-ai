@@ -203,6 +203,24 @@ def test_supply_chain_uses_attestation_capable_buildx_driver() -> None:
     assert command.index(driver_check) < command.index(build)
 
 
+def test_openclaw_scan_is_bound_to_the_attested_platform_manifest() -> None:
+    supply_chain = _job("supply-chain")
+    command = _run_text(supply_chain)
+    provenance_digest = ".platform_manifest_digest"
+    sarif_digest = ".runs[0].properties.imageID"
+    exact_binding = 'test "$openclaw_scan_digest" = "$openclaw_platform_digest"'
+    immutable_ref = 'openclaw_ref="nha-trang-laundry-openclaw@${openclaw_platform_digest}"'
+    normalize = "scripts/normalize_container_scan.py"
+
+    assert provenance_digest in command
+    assert sarif_digest in command
+    assert exact_binding in command
+    assert immutable_ref in command
+    assert command.index(provenance_digest) < command.rindex(sarif_digest)
+    assert command.rindex(sarif_digest) < command.index(exact_binding)
+    assert command.index(exact_binding) < command.rindex(normalize)
+
+
 def test_workflow_is_fail_closed_and_least_privilege() -> None:
     workflow = _workflow()
     assert workflow["permissions"] == {"contents": "read"}

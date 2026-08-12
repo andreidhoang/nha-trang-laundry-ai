@@ -191,6 +191,18 @@ def test_supply_chain_builds_plugin_before_runtime_verification() -> None:
     assert command.index(install) < command.index(build) < command.index(verify)
 
 
+def test_supply_chain_uses_attestation_capable_buildx_driver() -> None:
+    supply_chain = _job("supply-chain")
+    command = _run_text(supply_chain)
+    create = "docker buildx create --driver docker-container"
+    bootstrap = "docker buildx inspect --bootstrap"
+    driver_check = "grep -Eq '^Driver:[[:space:]]+docker-container$'"
+    build = "docker buildx build --pull=false"
+
+    assert command.index(create) < command.index(bootstrap) < command.index(build)
+    assert command.index(driver_check) < command.index(build)
+
+
 def test_workflow_is_fail_closed_and_least_privilege() -> None:
     workflow = _workflow()
     assert workflow["permissions"] == {"contents": "read"}

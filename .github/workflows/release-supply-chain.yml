@@ -281,6 +281,11 @@ jobs:
               >> artifacts/supply-chain/image-bindings.txt
           done
           openclaw_archive="$RUNNER_TEMP/openclaw.oci.tar"
+          docker buildx create --driver docker-container \
+            --name "supply-chain-${GITHUB_RUN_ID}" --use
+          docker buildx inspect --bootstrap | tee "$RUNNER_TEMP/supply-chain-buildx.txt"
+          grep -Eq '^Driver:[[:space:]]+docker-container$' \
+            "$RUNNER_TEMP/supply-chain-buildx.txt"
           docker buildx build --pull=false --platform linux/amd64 \
             --file runtime/openclaw/repack/Dockerfile \
             --provenance=mode=max --sbom=true \

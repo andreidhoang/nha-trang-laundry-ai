@@ -176,6 +176,21 @@ def test_oci_and_final_evidence_are_gated_on_and_bound_to_compared_r2() -> None:
     assert "--severity CRITICAL,HIGH --exit-code 1" in command
 
 
+def test_supply_chain_builds_plugin_before_runtime_verification() -> None:
+    supply_chain = _job("supply-chain")
+    bind_step = next(
+        step
+        for step in _steps(supply_chain)
+        if step.get("name") == "Bind compared r2 to the OCI build context"
+    )
+    command = str(bind_step["run"])
+    install = "npm ci --prefix runtime/openclaw/public-cell/plugin --ignore-scripts"
+    build = "npm --prefix runtime/openclaw/public-cell/plugin run build"
+    verify = "uv run python scripts/verify_agent_runtime.py"
+
+    assert command.index(install) < command.index(build) < command.index(verify)
+
+
 def test_workflow_is_fail_closed_and_least_privilege() -> None:
     workflow = _workflow()
     assert workflow["permissions"] == {"contents": "read"}

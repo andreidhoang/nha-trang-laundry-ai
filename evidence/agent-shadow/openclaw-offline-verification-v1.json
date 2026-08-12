@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "evidence_type": "OPENCLAW_OFFLINE_NON_RELEASE",
-  "captured_at": "2026-08-09T03:57:17.591886Z",
+  "captured_at": "2026-08-12T06:00:58.253512Z",
   "command": "uv run python scripts/verify_agent_runtime.py",
   "release_effect": "NONE",
   "provider_request_executed": false,
@@ -20,7 +20,7 @@
     "specs/contracts/container-scan-evidence-v1.schema.json": "sha256:385717e92dd1c024e811fa28f719f835884ffb92ab7b0df9122324ff0f2f1a44",
     "specs/contracts/openclaw-cross-platform-result-v1.schema.json": "sha256:d204023162ee2d21e4e4ca483d4dbfac4aa030fb0ae80e253000303da6549d92",
     "specs/contracts/provider-data-evidence-v1.schema.json": "sha256:d05413194bd1508681b790a5d0e41f65c44367c5631a480384ff84e1c326fd99",
-    ".github/workflows/release-supply-chain.yml": "sha256:0c35d337105e63ae43b2c7ddcfb6a2c3257be2d513ec6b6174df14b49eea5255",
+    ".github/workflows/release-supply-chain.yml": "sha256:58963960c1c9d9fced7a79caf03bf0e7b823c5981c55afd089174b20284b991f",
     "scripts/verify_agent_runtime.py": "sha256:82e40831cc70aeb1dd77d19df30975a8453363a482ccb8706d6341488f276e3b",
     "scripts/build_openclaw_repackage.py": "sha256:066dd0dc5610c58795300d1fd38c47a77a0d109cf110d8aa552d21e2a8b30f11",
     "scripts/verify_openclaw_repackage.py": "sha256:e5b1caec3b529839cc49d2dd5afc411dca83fea4ced52df1f36bb4c0ff17fa64",

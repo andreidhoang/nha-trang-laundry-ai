@@ -214,6 +214,7 @@ jobs:
           cp "$comparison" artifacts/supply-chain/openclaw-cross-platform-comparison.json
           uv run python scripts/verify_openclaw_repackage.py
           npm ci --prefix runtime/openclaw/public-cell/plugin --ignore-scripts
+          npm --prefix runtime/openclaw/public-cell/plugin run build
           uv run python scripts/verify_agent_runtime.py \
             > artifacts/supply-chain/openclaw-runtime-audit.json
       - name: Scan committed content locally with gitleaks

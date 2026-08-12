@@ -1,7 +1,8 @@
 # ADR-0003: Provider-neutral agent runtime and channel-independent operations
 
-**Status:** accepted  
-**Date:** 2026-08-10  
+**Status:** accepted
+
+**Date:** 2026-08-10
 **Supersedes:** the mandatory OpenClaw runtime selection in ADR-0002; ADR-0002 trust-boundary,
 business-authority, provider-data, and egress constraints remain binding.
 

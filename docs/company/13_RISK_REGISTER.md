@@ -1,7 +1,8 @@
 # Company and Platform Risk Register
 
-**Status:** Strategic risk baseline; not a substitute for workflow threat models or legal assessments  
-**Proposed owner:** Executive Risk Owner  
+**Status:** Strategic risk baseline; not a substitute for workflow threat models or legal assessments
+
+**Proposed owner:** Executive Risk Owner
 **Last reviewed:** 2026-08-10
 
 ## Method

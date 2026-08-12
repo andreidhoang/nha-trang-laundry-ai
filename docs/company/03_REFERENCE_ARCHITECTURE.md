@@ -1,7 +1,8 @@
 # Reference Architecture
 
-**Status:** Strategic architecture; repository contracts remain normative  
-**Proposed owner:** Principal Engineering  
+**Status:** Strategic architecture; repository contracts remain normative
+
+**Proposed owner:** Principal Engineering
 **Architecture horizon:** Reference vertical through enterprise platform
 
 ## Architectural objective

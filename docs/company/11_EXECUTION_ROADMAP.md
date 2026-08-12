@@ -1,7 +1,8 @@
 # Execution Roadmap
 
-**Status:** Strategic sequencing; `delivery/` is authoritative for implementation status  
-**Planning horizon:** 0–18 months from strategy approval  
+**Status:** Strategic sequencing; `delivery/` is authoritative for implementation status
+
+**Planning horizon:** 0–18 months from strategy approval
 **Proposed owner:** Company Leadership
 
 ## Roadmap rule

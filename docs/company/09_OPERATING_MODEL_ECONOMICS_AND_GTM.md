@@ -1,6 +1,6 @@
 # Operating Model, Economics, and Go-to-Market
 
-**Status:** Strategic hypotheses; no pricing, hiring, spending, or sales authorization  
+**Status:** Strategic hypotheses; no pricing, hiring, spending, or sales authorization
 **Proposed owners:** CEO, Finance, Product, and Go-to-Market
 
 ## Operating thesis

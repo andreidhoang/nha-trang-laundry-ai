@@ -1,6 +1,6 @@
 # Reliability, SRE, and Delivery
 
-**Status:** Strategic operating model; normative SLOs and release gates control  
+**Status:** Strategic operating model; normative SLOs and release gates control
 **Proposed owners:** Engineering and SRE
 
 ## Reliability objective

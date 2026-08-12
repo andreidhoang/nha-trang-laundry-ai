@@ -3,11 +3,12 @@
 **Goal:** remove OpenClaw from the public production dependency and deployment path only after the
 runtime-selection, provider-data, security and rollback gates prove the custom adapter.
 
-**Domains:** `runtime_architecture`, `evaluation_release`, `platform`  
-**Stable work item:** `OPENCLAW-RETIRE-001`  
-**Stage:** M4C  
-**Risk:** HIGH
+**Domains:** `runtime_architecture`, `evaluation_release`, `platform`
 
+**Stable work item:** `OPENCLAW-RETIRE-001`
+
+**Stage:** M4C
+**Risk:** HIGH
 ## Preconditions
 
 - `RUNTIME-PARITY-001` is complete with accepted hash-bound evidence;
@@ -40,4 +41,3 @@ runtime-selection, provider-data, security and rollback gates prove the custom a
 - historical evidence remains verifiable and rollback drill evidence is attached;
 - all runtime, security, supply-chain, contract, context and repository quality gates pass;
 - documentation clearly distinguishes retired public runtime code from retained owner-only OpenClaw.
-

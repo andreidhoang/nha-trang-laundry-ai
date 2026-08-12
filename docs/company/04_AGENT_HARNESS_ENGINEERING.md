@@ -1,6 +1,6 @@
 # Agent Harness Engineering
 
-**Status:** Strategic engineering direction; runtime contracts and release gates remain normative  
+**Status:** Strategic engineering direction; runtime contracts and release gates remain normative
 **Proposed owner:** AI Platform
 
 ## Why the harness is the product boundary

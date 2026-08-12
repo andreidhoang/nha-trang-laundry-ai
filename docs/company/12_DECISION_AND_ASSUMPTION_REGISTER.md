@@ -1,7 +1,8 @@
 # Strategic Decision and Assumption Register
 
-**Status:** Strategic record; existing repository decision registries remain normative  
-**Proposed owner:** Architecture and Product Council  
+**Status:** Strategic record; existing repository decision registries remain normative
+
+**Proposed owner:** Architecture and Product Council
 **Last updated:** 2026-08-10
 
 ## Use of this register

@@ -1,6 +1,6 @@
 # Metrics and Experimentation
 
-**Status:** Strategic metric contract; numeric gates require owner approval and machine-readable publication  
+**Status:** Strategic metric contract; numeric gates require owner approval and machine-readable publication
 **Proposed owners:** Product, Data, AI Quality, Finance, and SRE
 
 ## Measurement principle

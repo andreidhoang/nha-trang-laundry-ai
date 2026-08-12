@@ -1,6 +1,6 @@
 # Platform, Tenancy, Vertical Packs, and Integrations
 
-**Status:** Strategic product-platform design; not an implemented-capability claim  
+**Status:** Strategic product-platform design; not an implemented-capability claim
 **Proposed owners:** Platform Engineering and Product
 
 ## Platform thesis

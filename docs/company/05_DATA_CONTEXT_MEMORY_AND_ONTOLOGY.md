@@ -1,6 +1,6 @@
 # Data, Context, Memory, and Ontology
 
-**Status:** Strategic data architecture; normative schemas and policy remain authoritative  
+**Status:** Strategic data architecture; normative schemas and policy remain authoritative
 **Proposed owners:** Data Platform and Security
 
 ## Objective

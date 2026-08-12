@@ -1,8 +1,10 @@
 # Company Strategy and Agentic Engineering System
 
-**Version:** 0.1  
-**As of:** 2026-08-10  
-**Status:** Strategic, non-normative, and not a release authorization  
+**Version:** 0.1
+
+**As of:** 2026-08-10
+
+**Status:** Strategic, non-normative, and not a release authorization
 **Proposed owners:** CEO/Product and Principal Engineering
 
 ## Purpose

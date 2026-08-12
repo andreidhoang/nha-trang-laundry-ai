@@ -1,6 +1,6 @@
 # Security, Privacy, and AI Governance
 
-**Status:** Strategic control framework; not legal advice or a certification claim  
+**Status:** Strategic control framework; not legal advice or a certification claim
 **Proposed owners:** Security, Privacy/Legal, and Executive Risk Owner
 
 ## Governance objective

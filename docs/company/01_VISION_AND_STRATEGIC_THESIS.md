@@ -1,7 +1,8 @@
 # Vision and Strategic Thesis
 
-**Status:** Strategic, non-normative, and not a release authorization  
-**Decision horizon:** 2026–2030  
+**Status:** Strategic, non-normative, and not a release authorization
+
+**Decision horizon:** 2026–2030
 **Proposed owner:** CEO/Product
 
 ## Vision

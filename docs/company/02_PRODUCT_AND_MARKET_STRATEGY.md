@@ -1,7 +1,8 @@
 # Product and Market Strategy
 
-**Status:** Strategic, non-normative, and not a release authorization  
-**As of:** 2026-08-10  
+**Status:** Strategic, non-normative, and not a release authorization
+
+**As of:** 2026-08-10
 **Proposed owners:** Product and Go-to-Market
 
 ## Market conclusion

@@ -1,7 +1,8 @@
 # Research Evidence Register
 
-**Status:** Research record supporting strategy; not normative product or legal authority  
-**Research cutoff:** 2026-08-10  
+**Status:** Research record supporting strategy; not normative product or legal authority
+
+**Research cutoff:** 2026-08-10
 **Proposed owner:** Research/Product
 
 ## Evidence standard

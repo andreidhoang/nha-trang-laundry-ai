@@ -3,11 +3,12 @@
 **Goal:** implement the smallest provider adapter satisfying `ConstrainedAgentRuntime` without
 changing business authority, channel delivery or release authorization.
 
-**Domains:** `runtime_architecture`, `agent_tools`, `evaluation_release`, `privacy_consent`  
-**Stable work item:** `RESPONSES-RUNTIME-001`  
-**Stage:** M4A  
-**Risk:** HIGH
+**Domains:** `runtime_architecture`, `agent_tools`, `evaluation_release`, `privacy_consent`
 
+**Stable work item:** `RESPONSES-RUNTIME-001`
+
+**Stage:** M4A
+**Risk:** HIGH
 ## Required design
 
 Implement a finite state machine behind the existing runtime protocol:
@@ -61,4 +62,3 @@ work item requires no network access, provider credential, real PII or public ch
 - full repository quality, contract and context-drift gates pass;
 - rollback is removal/disablement of the new adapter route while the stable protocol and comparator stay
   available.
-

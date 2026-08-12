@@ -1,6 +1,6 @@
 # Evaluation, Observability, and Improvement
 
-**Status:** Strategic quality system; `specs/evals/` and release manifests remain normative  
+**Status:** Strategic quality system; `specs/evals/` and release manifests remain normative
 **Proposed owner:** AI Quality
 
 ## Principle

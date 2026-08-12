@@ -3,11 +3,12 @@
 **Goal:** determine whether the bounded custom Responses adapter is genuinely better for the public
 Laundry Concierge than the retained OpenClaw comparator.
 
-**Domains:** `runtime_architecture`, `agent_tools`, `evaluation_release`, `privacy_consent`  
-**Stable work item:** `RUNTIME-PARITY-001`  
-**Stage:** M4B  
-**Risk:** HIGH
+**Domains:** `runtime_architecture`, `agent_tools`, `evaluation_release`, `privacy_consent`
 
+**Stable work item:** `RUNTIME-PARITY-001`
+
+**Stage:** M4B
+**Risk:** HIGH
 ## Comparison contract
 
 Both candidates must use the same exact model release/reasoning settings, prompt and context packet
@@ -37,4 +38,3 @@ request/storage behavior, deployed packages/images/endpoints/credentials and rol
 - Security/Privacy and Product/Runtime owners approve the conclusion without granting an unrelated
   capability release;
 - repository contract, eval and context-drift gates pass.
-

@@ -296,8 +296,9 @@ jobs:
           openclaw_oci_dir="$RUNNER_TEMP/openclaw-oci"
           mkdir -p "$openclaw_oci_dir"
           tar -xf "$openclaw_archive" -C "$openclaw_oci_dir"
-          openclaw_platform_digest="$(jq -er \
-            'select(.predicate_type == "https://slsa.dev/provenance/v1") | .platform_manifest_digest' \
+          openclaw_config_digest="$(jq -er \
+            'select(.predicate_type == "https://slsa.dev/provenance/v1") \
+              | .config_digest | select(test("^sha256:[0-9a-f]{64}$"))' \
             artifacts/supply-chain/openclaw-provenance.json)"
           docker run --rm \
             --volume "$RUNNER_TEMP:/work:ro" \
@@ -315,8 +316,10 @@ jobs:
           openclaw_scan_digest="$(jq -er \
             '.runs[0].properties.imageID | select(test("^sha256:[0-9a-f]{64}$"))' \
             artifacts/supply-chain/openclaw.sarif)"
-          test "$openclaw_scan_digest" = "$openclaw_platform_digest"
-          openclaw_ref="nha-trang-laundry-openclaw@${openclaw_platform_digest}"
+          # Trivy's OCI archive imageID is the config digest. The provenance verifier above
+          # proves that exact config is referenced by the attested linux/amd64 manifest.
+          test "$openclaw_scan_digest" = "$openclaw_config_digest"
+          openclaw_ref="nha-trang-laundry-openclaw@${openclaw_config_digest}"
           uv run python scripts/normalize_container_scan.py \
             --sarif artifacts/supply-chain/openclaw.sarif \
             --sbom artifacts/supply-chain/openclaw.cdx.json \

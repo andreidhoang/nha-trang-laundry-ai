@@ -203,13 +203,13 @@ def test_supply_chain_uses_attestation_capable_buildx_driver() -> None:
     assert command.index(driver_check) < command.index(build)
 
 
-def test_openclaw_scan_is_bound_to_the_attested_platform_manifest() -> None:
+def test_openclaw_scan_is_bound_to_the_attested_image_config() -> None:
     supply_chain = _job("supply-chain")
     command = _run_text(supply_chain)
-    provenance_digest = ".platform_manifest_digest"
+    provenance_digest = ".config_digest"
     sarif_digest = ".runs[0].properties.imageID"
-    exact_binding = 'test "$openclaw_scan_digest" = "$openclaw_platform_digest"'
-    immutable_ref = 'openclaw_ref="nha-trang-laundry-openclaw@${openclaw_platform_digest}"'
+    exact_binding = 'test "$openclaw_scan_digest" = "$openclaw_config_digest"'
+    immutable_ref = 'openclaw_ref="nha-trang-laundry-openclaw@${openclaw_config_digest}"'
     normalize = "scripts/normalize_container_scan.py"
 
     assert provenance_digest in command

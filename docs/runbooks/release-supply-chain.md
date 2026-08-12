@@ -1,10 +1,16 @@
 # Release supply-chain gate
 
 The release workflow scans repository content locally, audits both lockfiles and dependency licenses,
-builds all three production images, and emits an SPDX SBOM plus strict scan evidence for each exact
-image ID. It uploads only SBOMs, normalized zero-high/zero-critical scan records, the license summary,
-and the hash-bound bundle. Raw repository content, environment variables, credentials, and raw scanner
-logs are not artifacts.
+builds the three application candidate images plus the isolated OpenClaw candidate, and emits a
+CycloneDX SBOM plus strict scan evidence for each exact image ID. It uploads only SBOMs, normalized
+zero-high/zero-critical scan records, the license summary, and the hash-bound bundle. Raw repository
+content, environment variables, credentials, and raw scanner logs are not artifacts.
+
+For Docker archives, Trivy binds SARIF and CycloneDX to the image config digest. For the attested
+OpenClaw OCI layout, `verify_openclaw_oci_attestations.py` first verifies the complete chain from the
+OCI index to the linux/amd64 manifest, its config, and the BuildKit SLSA provenance. The workflow then
+requires the verifier's config digest, Trivy SARIF `imageID`, and CycloneDX `ImageID` to match exactly.
+An index, manifest, config, SARIF, or SBOM mismatch fails closed.
 
 The checked-in gitleaks configuration extends the maintained default rules. Its global allowlist has
 only two exact source-line patterns for deterministic test identifiers previously verified as false

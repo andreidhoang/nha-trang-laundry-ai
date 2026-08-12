@@ -36,6 +36,23 @@ Nineteen work items were added across four phases. The longest lead times are ca
 without which `SHADOW-001` has no valid denominator), `CHANNEL-ZALO-APPLY-001` (2–8 weeks of external
 OA verification) and `PROVIDER-ACCESS-001` (resolves `DEC-006`).
 
+## Readiness assessment — read before estimating anything
+
+[`docs/PRODUCTION_READINESS_ASSESSMENT.md`](../docs/PRODUCTION_READINESS_ASSESSMENT.md) measures the
+codebase rather than the documentation. Three findings change how the queue should be read:
+
+1. **The agent runtime is an orphan.** `AgentCycle` is a `Callable` alias defaulting to `None`;
+   nothing constructs or injects a runtime. Added `AGENT-PIPELINE-001`, and `AGENT-002` now depends
+   on it. This is safe local work available immediately.
+2. **The staff console has no Shadow surface** — no draft review, no `UNKNOWN` exception queue.
+   Added `SHADOW-CONSOLE-001`, and `SHADOW-001` now depends on it.
+3. **The evidence base is at zero.** All 33 recorded eval results are `SKIP` on
+   `DETERMINISTIC_DEGRADED`; the frozen regression corpus holds 0 of its 200-case minimum. The model
+   has never been invoked.
+
+The realistic distance to `G2_PUBLIC_ASSISTED_ENTRY` is **20–26 weeks**, not the 14–16 first
+estimated. Re-run the assessment after `AGENT-002`, not before.
+
 This brief is the human-readable entry point for an engineer or coding agent resuming implementation.
 It is navigation only; machine-readable contracts, the work queue, capability status, and immutable
 PostgreSQL state remain authoritative in the order defined by `context/CONTINUATION_PROTOCOL.md`.

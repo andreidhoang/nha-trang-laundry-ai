@@ -742,6 +742,7 @@ items:
   priority: 130
   depends_on:
   - SECURITY-001
+  - SHADOW-CONSOLE-001
   - SHOP-INSTRUMENT-001
   - SIGNER-REGISTRY-001
   context_domains:
@@ -1595,10 +1596,11 @@ items:
   status: PENDING
   priority: 216
   depends_on:
-  - RUNTIME-FREEZE-001
-  - PROVIDER-TRANSPORT-001
-  - MODEL-PIN-001
+  - AGENT-PIPELINE-001
   - EVAL-CORPUS-001
+  - MODEL-PIN-001
+  - PROVIDER-TRANSPORT-001
+  - RUNTIME-FREEZE-001
   context_domains:
   - runtime_architecture
   - agent_tools
@@ -1685,5 +1687,72 @@ items:
   - deterministic_dry_run_rejects_wrong_price
   - correction_drill_executed
   - expired_bundle_degrades_to_require_human
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: AGENT-PIPELINE-001
+  phase: AGENT_SHADOW
+  title: Assemble the constrained runtime into a running worker pipeline
+  status: PENDING
+  priority: 219
+  depends_on:
+  - RESPONSES-RUNTIME-001
+  context_domains:
+  - runtime_architecture
+  - agent_tools
+  - orders_audit
+  normative_sources:
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/agent-tools-v1.openapi.yaml
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-agent-pipeline-001.md
+  acceptance_checks: &id003
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - agent_cycle_constructed_and_injected
+  - context_loader_bound_to_run
+  - bridge_lifecycle_and_revocation
+  - queue_claim_and_lease_recovery
+  - flags_remain_closed_by_default
+  - end_to_end_with_deterministic_transport
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHADOW-CONSOLE-001
+  phase: PRODUCTION_HARDENING
+  title: 'Staff Shadow console: draft review, exception queue, audit timeline'
+  status: PENDING
+  priority: 220
+  depends_on:
+  - STAFF-OPS-001
+  - CHANNEL-ENVELOPE-001
+  context_domains:
+  - orders_audit
+  - channel_operations
+  - privacy_consent
+  normative_sources:
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - specs/CHANNEL_ADAPTER_SPEC_V1.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  - specs/contracts/channel-outbound-receipt-v1.schema.json
+  task_packet: context/tasks/TASK-shadow-console-001.md
+  acceptance_checks: *id003
+  required_evidence:
+  - conversation_and_draft_review_surface
+  - approve_edit_reject_with_attribution
+  - unknown_reconciliation_exception_queue
+  - sla_risk_and_audit_timeline
+  - rbac_and_idor_negative_tests
+  - no_customer_pii_in_client_logs
   - rollback_assessment
   blocked_by_decisions: []

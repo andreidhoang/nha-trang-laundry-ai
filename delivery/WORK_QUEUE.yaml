@@ -2104,7 +2104,7 @@ items:
 - id: EVIDENCE-REPIN-001
   phase: AGENT_SHADOW
   title: Re-establish the local synthetic evidence pin so the core can change
-  status: PENDING
+  status: BLOCKED
   priority: 206
   depends_on: []
   context_domains:
@@ -2132,6 +2132,15 @@ items:
   - skips_and_blockers_unchanged
   - rollback_assessment
   blocked_by_decisions: []
+  blocking_condition: 'Requires an owner decision between two options, both written
+    up in the task packet. Re-derive the local synthetic evidence bundle through scripts/capture_local_agent_evidence.py
+    while retaining the superseded file, or wait for AGENT-002 to supersede it and
+    accept that six items queue behind a provider credential and DEC-006. Re-deriving
+    a frozen AGENT-001 artifact is not a call an engineer makes alone, and hand-editing
+    its hashes to match the tree would be a fabricated attestation. Until it is decided,
+    the bundle hash-pins 21 core files and blocks SIGNER-REGISTRY-001, all four corpus
+    items and MODEL-PIN-001, two of them on the G1 critical path. This is the cheapest
+    unblock in the project: a decision and a re-derivation, not weeks.'
 - id: RETENTION-STORE-001
   phase: PRODUCTION_HARDENING
   title: Separate disposable payload from the append-only ledger
@@ -2169,7 +2178,7 @@ items:
 - id: STORE-SCOPING-001
   phase: PRODUCTION_HARDENING
   title: Enforce staff store membership on the pre-existing console routes
-  status: PENDING
+  status: COMPLETE
   priority: 211
   depends_on:
   - SHADOW-CONSOLE-001

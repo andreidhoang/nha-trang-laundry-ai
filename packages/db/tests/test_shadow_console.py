@@ -215,9 +215,9 @@ def test_the_agent_draft_row_cannot_be_rewritten(
     agent_run_id = _draft(postgres_connection, store_id)
 
     with (
+        pytest.raises(psycopg.errors.RaiseException),
         postgres_connection.transaction(),
         postgres_connection.cursor() as cursor,
-        pytest.raises(psycopg.errors.RaiseException),
     ):
         cursor.execute(
             "UPDATE agent_drafts SET draft_text = 'tampered' WHERE agent_run_id = %s",

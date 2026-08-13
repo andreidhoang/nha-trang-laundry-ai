@@ -276,9 +276,9 @@ def test_verified_state_requires_its_evidence_at_the_database(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
     with (
+        pytest.raises(psycopg.errors.CheckViolation),
         postgres_connection.transaction(),
         postgres_connection.cursor() as cursor,
-        pytest.raises(psycopg.errors.CheckViolation),
     ):
         cursor.execute(
             """
@@ -461,9 +461,9 @@ def test_a_receipt_row_cannot_be_hard_deleted(
     repository.record_attempt(postgres_connection, receipt, correlation_id=uuid4())
 
     with (
+        pytest.raises(psycopg.errors.RaiseException),
         postgres_connection.transaction(),
         postgres_connection.cursor() as cursor,
-        pytest.raises(psycopg.errors.RaiseException),
     ):
         cursor.execute(
             "DELETE FROM channel_send_receipts WHERE receipt_id = %s", (receipt.receipt_id,)

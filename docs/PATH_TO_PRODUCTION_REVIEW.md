@@ -250,6 +250,22 @@ plane, both built and gated but blocked from completion (below). Final: **711 pa
 The integration database was unblocked without Docker: PostgreSQL 17 was already installed, so a
 private cluster runs on port 5434 from the session scratchpad.
 
+### Verified from zero
+
+Every run during the session used a database that had accumulated hours of state, so the final
+verification was repeated against a pristine one:
+
+```
+createdb nha_trang_clean; apply_migrations   -> 0001..0023 applied forward-only from empty
+pytest --require-postgres-integration        -> 711 passed  (first run, clean database)
+pytest --require-postgres-integration        -> 711 passed  (second run, same database)
+```
+
+That establishes two things the accumulated runs could not. The migration chain is valid from zero,
+not merely from whatever this developer machine happened to hold. And the suite passes both on an
+empty database and on a used one, so the isolation debt in `TEST-ISOLATION-001` is a fragility in
+individual tests rather than a dependency of the suite as a whole on a particular starting state.
+
 ### Six findings the execution produced
 
 Each was measured while building something else, and each is now a tracked item rather than prose.

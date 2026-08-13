@@ -2207,3 +2207,34 @@ items:
   - existing_staff_retain_their_own_store
   - rollback_assessment
   blocked_by_decisions: []
+- id: TEST-ISOLATION-001
+  phase: PRODUCTION_HARDENING
+  title: Isolate database integration tests from each other
+  status: PENDING
+  priority: 212
+  depends_on:
+  - ENV-INTEGRITY-001
+  context_domains:
+  - platform
+  normative_sources:
+  - AGENTS.md
+  - context/CONTINUATION_PROTOCOL.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  - docs/runbooks/local-development.md
+  contracts: []
+  task_packet: context/tasks/TASK-test-isolation-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - no_test_depends_on_another_tests_state
+  - workaround_loops_removed
+  - reset_fails_loudly_rather_than_hanging
+  - concurrency_tests_remain_concurrent
+  - suite_passes_in_reverse_module_order
+  - rollback_assessment
+  blocked_by_decisions: []

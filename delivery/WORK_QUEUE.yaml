@@ -1480,7 +1480,7 @@ items:
 - id: CHANNEL-TELEGRAM-001
   phase: PRODUCTION_HARDENING
   title: Telegram sandbox adapter proving the channel contract end to end
-  status: PENDING
+  status: BLOCKED
   priority: 209
   depends_on:
   - CHANNEL-ENVELOPE-001
@@ -1502,6 +1502,13 @@ items:
   - rollback_assessment
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-channel-telegram-001.md
+  blocking_condition: Requires a Telegram Bot API token and a reachable sandbox endpoint.
+    The item's completion condition is the full inbound and outbound path running
+    against the real Bot API; a scripted-transport substitute would not satisfy it
+    and recording one as if it did would be the substitution AGENTS.md forbids. An
+    agent may not create a bot identity, hold a channel credential, or expose a public
+    webhook endpoint. The canonical contract this adapter maps into is complete and
+    tested, so the work is unblocked the moment a sandbox token and endpoint exist.
 - id: CONSENT-STOP-001
   phase: PRODUCTION_HARDENING
   title: Consent capture, STOP suppression, and opt-out versus in-flight send race

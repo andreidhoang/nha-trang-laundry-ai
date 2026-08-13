@@ -228,6 +228,47 @@ what unblocks when it lands:
 No capability moved. No decision was resolved. Nothing under `evidence/` was modified other than the
 new `RUNTIME-FREEZE-001` record. No commit was pushed, no branch created, no provider called.
 
+## 6a. Second execution pass — 2026-08-13
+
+Three items completed through the controller with the guarded PostgreSQL suite genuinely running for
+the first time in this repository's history.
+
+| Item | Outcome |
+|---|---|
+| `ENV-INTEGRITY-001` | COMPLETE. All six declared commands verbatim; 583 passed, 1 platform-gated skip, zero PostgreSQL skips |
+| `CHANNEL-ENVELOPE-001` | COMPLETE. Canonical envelope and receipt, server-owned binding, migration 0020; 609 passed |
+| `AGENT-PIPELINE-001` | COMPLETE. The orphaned runtime is wired; a job flows from queue claim to persisted redacted evidence; 623 passed |
+
+The integration database was unblocked without Docker: PostgreSQL 17 is installed locally, so a
+private cluster runs on port 5434 from the session scratchpad. The user's other project's container
+was never touched.
+
+Six further items were recorded `BLOCKED` on precise owner actions: `PROVIDER-ACCESS-001`,
+`SHOP-INSTRUMENT-001`, `DECISION-BUSINESS-001`, `CHANNEL-ZALO-APPLY-001`, `CORPUS-CONSENT-001` and
+`CHANNEL-TELEGRAM-001` (a bot token; its contract is complete and tested, so it unblocks the moment
+one exists). `AGENT-PIPELINE-001` was moved from priority 219 to 208 ahead of two items needing
+external access — a plan edit the owner may reverse.
+
+### A sequencing defect in the plan
+
+`CONSENT-STOP-001` requires the egress suppression re-check to happen **inside the send
+transaction**. The only send transaction in the plan is built by `CHANNEL-ZALO-001` — which depends
+on `CONSENT-STOP-001`. The declared graph stays acyclic only because that dependency is not written
+down, so the controller will happily offer `CONSENT-STOP-001` for work that cannot be finished.
+
+The resolution is scope, not ordering: `CONSENT-STOP-001` should build the **reusable egress guard
+that a sender calls**, plus the whole ingress half, and `CHANNEL-ZALO-001` should be the item that
+proves the guard actually runs inside a real send transaction. Written that way both are buildable in
+the current order. This needs an owner or engineer decision before the item is started; it was left
+`PENDING` rather than started half-open.
+
+### Known test-hygiene debt
+
+`apps/worker/tests/test_agent_pipeline.py` and the other agent-run tests accumulate `PENDING` rows in
+the shared test database, because `agent_tool_calls` is append-only and cannot be truncated. The race
+test asserts *no double-claim* rather than *exactly one claimant* for that reason, which is the
+stronger invariant anyway. It will bite whoever adds an ordering-sensitive test.
+
 ## 7. Revised distance
 
 | Layer | 2026-08-12 | Now | Why |

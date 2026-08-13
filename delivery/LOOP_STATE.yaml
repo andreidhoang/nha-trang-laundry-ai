@@ -1,8 +1,14 @@
 schema_version: 1
-last_updated: '2026-08-13T03:18:56.999530+00:00'
+last_updated: '2026-08-13T03:20:12.949287+00:00'
 current_work_item: null
-last_result: COMPLETE
-blocker: null
+last_result: BLOCKED
+blocker: Requires a Telegram Bot API token and a reachable sandbox endpoint. The item's
+  completion condition is the full inbound and outbound path running against the real
+  Bot API; a scripted-transport substitute would not satisfy it and recording one
+  as if it did would be the substitution AGENTS.md forbids. An agent may not create
+  a bot identity, hold a channel credential, or expose a public webhook endpoint.
+  The canonical contract this adapter maps into is complete and tested, so the work
+  is unblocked the moment a sandbox token and endpoint exist.
 evidence_records:
 - work_item: IDENTITY-001
   path: evidence/delivery-loop/IDENTITY-001.yaml
@@ -198,6 +204,15 @@ blocked_records:
     decide that a substitution is adequate for real people's messages. Blocks EVAL-LANGUAGE-CORPUS-001,
     which carries 300 of the manifest's 1,300 required cases.
   recorded_at: '2026-08-13T03:07:08.418598+00:00'
+- work_item: CHANNEL-TELEGRAM-001
+  reason: Requires a Telegram Bot API token and a reachable sandbox endpoint. The
+    item's completion condition is the full inbound and outbound path running against
+    the real Bot API; a scripted-transport substitute would not satisfy it and recording
+    one as if it did would be the substitution AGENTS.md forbids. An agent may not
+    create a bot identity, hold a channel credential, or expose a public webhook endpoint.
+    The canonical contract this adapter maps into is complete and tested, so the work
+    is unblocked the moment a sandbox token and endpoint exist.
+  recorded_at: '2026-08-13T03:20:12.949287+00:00'
 unblocked_records:
 - work_item: OPENCLAW-REPACK-001
   reason: The exact-commit hosted GitHub workflow was authorized and executed; reevaluating

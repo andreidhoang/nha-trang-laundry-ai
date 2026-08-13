@@ -1,8 +1,15 @@
 # Production continuation brief
 
 **Last reconciled:** 2026-08-13 (Asia/Ho_Chi_Minh)
-**Active work item:** `ENV-INTEGRITY-001` is `IN_PROGRESS` — implemented and verified, awaiting the
-guarded PostgreSQL integration run that its declared acceptance requires
+**Active work item:** none. `ENV-INTEGRITY-001`, `CHANNEL-ENVELOPE-001` and `AGENT-PIPELINE-001`
+completed on 2026-08-13 with the guarded PostgreSQL suite genuinely running. The controller next
+offers `CONSENT-STOP-001`, which should not be started before the scope defect in
+[`docs/PATH_TO_PRODUCTION_REVIEW.md`](../docs/PATH_TO_PRODUCTION_REVIEW.md) §6a is resolved. The
+other local items are `SIGNER-REGISTRY-001`, `SHADOW-CONSOLE-001` (the last spine segment) and
+`EVAL-SYNTHETIC-COMBINATORIAL-001` (500 cases, no external dependency).
+
+**Engineering is no longer the binding constraint on the spine.** Eleven items are blocked, and every
+week of the remaining schedule belongs to the owner actions in §5 of that review.
 **Active branch:** `delivery/runtime-freeze-and-gate-coverage`, unpushed, branched from `main` on
 `andreidhoang/nha-trang-laundry-ai` (the working repository). It carries the completed
 `RUNTIME-FREEZE-001` slice, the 2026-08-13 gate-coverage spec pack and `ENV-INTEGRITY-001`; fast

@@ -6,11 +6,12 @@ from hashlib import sha256
 from pathlib import Path
 from secrets import token_urlsafe
 from time import perf_counter
-from typing import Annotated, NoReturn
+from typing import Annotated, Literal, NoReturn
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.staticfiles import StaticFiles
+from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
 from nha_trang_laundry_db.approvals import (
     ApprovalAuthorizationError,
     ApprovalDecision,
@@ -28,6 +29,7 @@ from nha_trang_laundry_db.orders import (
     OrderStateError,
     StoredOrder,
 )
+from nha_trang_laundry_db.shadow_console import ShadowAuthorizationError, ShadowStateError
 from nha_trang_laundry_domain.approvals import ApprovalEnvelopeError
 from nha_trang_laundry_domain.catalog import (
     ApprovalAction,
@@ -928,6 +930,215 @@ def _queue_recovery_response(summary: QueueRecoverySummary) -> QueueRecoveryResp
         expired_agent=summary.expired_agent,
         failed_agent=summary.failed_agent,
     )
+
+
+# --- SHADOW-CONSOLE-001: the surfaces the Shadow pilot needs ---------------------------------
+
+
+class PendingDraftResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_run_id: UUID
+    conversation_binding_id: UUID
+    draft_text: str
+    terminal_outcome: str
+    terminal_code: str
+    tool_call_count: int
+    produced_at: datetime
+
+
+class DraftDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["APPROVE", "EDIT", "REJECT"]
+    reason_code: str | None = Field(default=None, max_length=64)
+    edited_text: str | None = Field(default=None, max_length=4000)
+
+
+class DraftDecisionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_id: UUID
+    agent_run_id: UUID
+    decision: str
+    decided_by_staff_id: UUID
+    decided_at: datetime
+
+
+class UnknownSendResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_id: UUID
+    outbox_id: UUID
+    provider: str
+    message_kind: str
+    attempt_number: int
+    reconciliation_state: str
+    recorded_at: datetime
+
+
+class ReconcileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resolution: Literal["CONFIRMED_SENT", "CONFIRMED_NOT_SENT"]
+    note: str | None = Field(default=None, max_length=500)
+
+
+class AuditEntryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    occurred_at: datetime
+    action: str
+    actor_type: str
+    actor_id: UUID | None
+    aggregate_type: str
+    aggregate_id: UUID
+
+
+@app.get("/internal/v1/stores/{store_id}/shadow/drafts", response_model=list[PendingDraftResponse])
+def list_shadow_drafts(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+    limit: int = 50,
+) -> list[PendingDraftResponse]:
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        drafts = service.shadow_pending_drafts(store_id=store_id, principal=principal, limit=limit)
+    except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
+        _raise_shadow_error(error)
+    return [
+        PendingDraftResponse(
+            agent_run_id=item.agent_run_id,
+            conversation_binding_id=item.conversation_binding_id,
+            draft_text=item.draft_text,
+            terminal_outcome=item.terminal_outcome,
+            terminal_code=item.terminal_code,
+            tool_call_count=item.tool_call_count,
+            produced_at=item.produced_at,
+        )
+        for item in drafts
+    ]
+
+
+@app.post(
+    "/internal/v1/shadow/drafts/{agent_run_id}/decision", response_model=DraftDecisionResponse
+)
+def decide_shadow_draft(
+    agent_run_id: UUID,
+    request: DraftDecisionRequest,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> DraftDecisionResponse:
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        decided = service.shadow_decide_draft(
+            agent_run_id=agent_run_id,
+            decision=request.decision,
+            principal=principal,
+            reason_code=request.reason_code,
+            edited_text=request.edited_text,
+        )
+    except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
+        _raise_shadow_error(error)
+    return DraftDecisionResponse(
+        review_id=decided.review_id,
+        agent_run_id=decided.agent_run_id,
+        decision=decided.decision,
+        decided_by_staff_id=decided.decided_by_staff_id,
+        decided_at=decided.decided_at,
+    )
+
+
+@app.get("/internal/v1/shadow/unknown-sends", response_model=list[UnknownSendResponse])
+def list_unknown_sends(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+    limit: int = 50,
+) -> list[UnknownSendResponse]:
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        items = service.shadow_unknown_sends(principal=principal, limit=limit)
+    except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
+        _raise_shadow_error(error)
+    return [
+        UnknownSendResponse(
+            receipt_id=item.receipt_id,
+            outbox_id=item.outbox_id,
+            provider=item.provider,
+            message_kind=item.message_kind,
+            attempt_number=item.attempt_number,
+            reconciliation_state=item.reconciliation_state,
+            recorded_at=item.recorded_at,
+        )
+        for item in items
+    ]
+
+
+@app.post(
+    "/internal/v1/shadow/unknown-sends/{receipt_id}/reconcile",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def reconcile_unknown_send(
+    receipt_id: UUID,
+    request: ReconcileRequest,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> None:
+    """Only a human leaves UNKNOWN. There is no automatic caller for this route."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        service.shadow_resolve_unknown_send(
+            receipt_id=receipt_id,
+            resolution=ReconciliationState(request.resolution),
+            principal=principal,
+            note=request.note,
+        )
+    except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
+        _raise_shadow_error(error)
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/shadow/audit/{aggregate_id}",
+    response_model=list[AuditEntryResponse],
+)
+def shadow_audit_timeline(
+    store_id: UUID,
+    aggregate_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> list[AuditEntryResponse]:
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        entries = service.shadow_audit_timeline(
+            store_id=store_id, aggregate_id=aggregate_id, principal=principal
+        )
+    except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
+        _raise_shadow_error(error)
+    return [
+        AuditEntryResponse(
+            occurred_at=entry.occurred_at,
+            action=entry.action,
+            actor_type=entry.actor_type,
+            actor_id=entry.actor_id,
+            aggregate_type=entry.aggregate_type,
+            aggregate_id=entry.aggregate_id,
+        )
+        for entry in entries
+    ]
+
+
+def _raise_shadow_error(error: Exception) -> NoReturn:
+    if isinstance(error, ShadowAuthorizationError):
+        # Same response for an unauthorized role and an unassigned store: probing identifiers
+        # teaches a caller nothing about which stores exist.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="shadow access denied") from error
+    raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
 
 
 if WEB_DIRECTORY.is_dir():

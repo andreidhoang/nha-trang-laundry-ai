@@ -9,7 +9,7 @@ from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -456,3 +456,92 @@ def test_the_pipeline_exposes_the_parts_it_composed() -> None:
 
     assert isinstance(assembled, AgentPipeline)
     assert assembled.runtime.provider_backed is False
+
+
+def test_the_full_shadow_loop_reaches_a_human_review_queue(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """Queue to draft to attributed approval to audit chain, with no manual step in between.
+
+    This is the loop `SHADOW-001` needs: without the draft reaching a review queue there is nothing
+    for a human to approve, and the fourteen-day pilot has nowhere to happen.
+    """
+    from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+    from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
+
+    enqueue(postgres_connection)
+    result = pipeline().run_cycle(postgres_connection, lambda: True)
+    assert result.agent_run_id is not None
+
+    with postgres_connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT store_id, draft_text FROM agent_drafts WHERE agent_run_id = %s",
+            (result.agent_run_id,),
+        )
+        store_id, draft_text = _row(cursor)
+    assert draft_text  # the agent's proposal is now reviewable rather than only counted
+
+    owner_id = uuid4()
+    approver_id = uuid4()
+    with postgres_connection.transaction(), postgres_connection.cursor() as cursor:
+        for staff_id in (owner_id, approver_id):
+            cursor.execute(
+                """
+                INSERT INTO staff_users (id, oidc_subject, display_name, status, created_at)
+                VALUES (%s, %s, 'Nhân viên', 'ACTIVE', %s)
+                """,
+                (staff_id, f"oidc-{staff_id}", NOW),
+            )
+    owner = StaffPrincipal(
+        staff_user_id=owner_id,
+        oidc_subject=f"oidc-{owner_id}",
+        roles=frozenset({StaffRole.OWNER_ADMIN}),
+        mfa_verified=True,
+        session_id=uuid4(),
+    )
+    approver = StaffPrincipal(
+        staff_user_id=approver_id,
+        oidc_subject=f"oidc-{approver_id}",
+        roles=frozenset({StaffRole.OPS_APPROVER}),
+        mfa_verified=True,
+        session_id=uuid4(),
+    )
+    repository = ShadowConsoleRepository()
+    repository.assign_store(
+        postgres_connection,
+        staff_user_id=approver_id,
+        store_id=store_id,
+        principal=owner,
+        correlation_id=uuid4(),
+    )
+
+    pending = repository.list_pending_drafts(
+        postgres_connection, store_id=store_id, principal=approver
+    )
+    assert UUID(str(result.agent_run_id)) in {item.agent_run_id for item in pending}
+
+    repository.decide_draft(
+        postgres_connection,
+        agent_run_id=UUID(str(result.agent_run_id)),
+        decision="APPROVE",
+        principal=approver,
+        correlation_id=uuid4(),
+    )
+
+    timeline = repository.audit_timeline(
+        postgres_connection,
+        store_id=store_id,
+        aggregate_id=UUID(str(result.agent_run_id)),
+        principal=approver,
+    )
+    # The timeline is the whole chain for this run, not only the review: enqueue and completion are
+    # part of what an auditor needs to see.
+    actions = [entry.action for entry in timeline]
+    assert "AGENT_RUN_ENQUEUE" in actions
+    assert actions.index("AGENT_DRAFT_RECORD") < actions.index("AGENT_DRAFT_APPROVE")
+    assert actions[-1] == "AGENT_DRAFT_APPROVE"
+    assert timeline[-1].actor_id == approver_id
+    assert (
+        repository.list_pending_drafts(postgres_connection, store_id=store_id, principal=approver)
+        == ()
+    )

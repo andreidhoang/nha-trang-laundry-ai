@@ -15,6 +15,10 @@ const incidentCount = document.querySelector("#incident-count");
 const incidentForm = document.querySelector("#incident-form");
 const manualPrepareForm = document.querySelector("#manual-prepare-form");
 const manualAttestForm = document.querySelector("#manual-attest-form");
+const shadowDrafts = document.querySelector("#shadow-drafts");
+const unknownSends = document.querySelector("#unknown-sends");
+const draftCount = document.querySelector("#draft-count");
+const unknownCount = document.querySelector("#unknown-count");
 const mutationKeys = new Map();
 
 const cookieValue = (name) => {
@@ -281,18 +285,135 @@ manualAttestForm.addEventListener("submit", async (event) => {
   } catch (error) { showResult(output, error.message, true); }
 });
 
+
+// --- SHADOW-CONSOLE-001 ---------------------------------------------------------------------
+// Read-only rendering plus three attributed decisions. Nothing here computes money, ranks work or
+// sends anything: every value shown was computed by the server.
+
+const renderDrafts = (items) => {
+  draftCount.textContent = String(items.length);
+  if (!items.length) {
+    shadowDrafts.replaceChildren(Object.assign(document.createElement("p"),
+      { className: "empty", textContent: "Không có bản nháp nào chờ duyệt." }));
+    return;
+  }
+  shadowDrafts.replaceChildren(...items.map((item) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    const heading = document.createElement("p");
+    heading.className = "eyebrow";
+    heading.textContent = `${shortId(item.agent_run_id)} · ${item.terminal_code} · ${item.tool_call_count} tool`;
+    const body = document.createElement("p");
+    body.textContent = item.draft_text;
+    const edit = document.createElement("textarea");
+    edit.rows = 3;
+    edit.value = item.draft_text;
+    edit.setAttribute("aria-label", "Sửa bản nháp");
+    const reason = document.createElement("input");
+    reason.placeholder = "REASON_CODE khi từ chối";
+    reason.setAttribute("aria-label", "Mã lý do từ chối");
+    const output = document.createElement("p");
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const decide = async (decision) => {
+      try {
+        await api(`/internal/v1/shadow/drafts/${item.agent_run_id}/decision`, {
+          method: "POST",
+          body: JSON.stringify({
+            decision,
+            reason_code: decision === "REJECT" ? reason.value.trim() || null : null,
+            edited_text: decision === "EDIT" ? edit.value : null,
+          }),
+        });
+        showResult(output, `Đã ghi nhận ${decision}.`);
+        await loadShadowDrafts(storeInput.value.trim());
+      } catch (error) {
+        showResult(output, error.message, true);
+      }
+    };
+    for (const [label, decision] of [["Duyệt", "APPROVE"], ["Sửa & duyệt", "EDIT"], ["Từ chối", "REJECT"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.addEventListener("click", () => decide(decision));
+      actions.append(button);
+    }
+    card.append(heading, body, edit, reason, actions, output);
+    return card;
+  }));
+};
+
+const renderUnknownSends = (items) => {
+  unknownCount.textContent = String(items.length);
+  if (!items.length) {
+    unknownSends.replaceChildren(Object.assign(document.createElement("p"),
+      { className: "empty", textContent: "Không có lần gửi nào chưa rõ kết quả." }));
+    return;
+  }
+  unknownSends.replaceChildren(...items.map((item) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    const heading = document.createElement("p");
+    heading.className = "eyebrow";
+    heading.textContent = `${shortId(item.receipt_id)} · ${item.provider} · lần ${item.attempt_number}`;
+    const state = document.createElement("p");
+    state.textContent = `${item.message_kind} · ${item.reconciliation_state}`;
+    const output = document.createElement("p");
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const resolve = async (resolution) => {
+      try {
+        await api(`/internal/v1/shadow/unknown-sends/${item.receipt_id}/reconcile`, {
+          method: "POST",
+          body: JSON.stringify({ resolution, note: null }),
+        });
+        showResult(output, "Đã đối soát.");
+        await loadUnknownSends();
+      } catch (error) {
+        showResult(output, error.message, true);
+      }
+    };
+    for (const [label, resolution] of [["Đã gửi", "CONFIRMED_SENT"], ["Chưa gửi", "CONFIRMED_NOT_SENT"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.addEventListener("click", () => resolve(resolution));
+      actions.append(button);
+    }
+    card.append(heading, state, actions, output);
+    return card;
+  }));
+};
+
+const loadShadowDrafts = async (storeId) => {
+  if (!storeId) return;
+  try {
+    renderDrafts(await api(`/internal/v1/stores/${storeId}/shadow/drafts`));
+  } catch (error) {
+    showError(shadowDrafts, error.message);
+  }
+};
+
+const loadUnknownSends = async () => {
+  try {
+    renderUnknownSends(await api("/internal/v1/shadow/unknown-sends"));
+  } catch (error) {
+    showError(unknownSends, error.message);
+  }
+};
+
 const start = async () => {
   setMutationAvailability();
   try {
     const session = await api("/internal/v1/session");
     sessionStatus.textContent = `${session.roles.join(" · ")} · MFA ${session.mfa_verified ? "OK" : "NO"}`;
     const savedStore = localStorage.getItem("staff_store_id");
-    if (savedStore) { storeInput.value = savedStore; await loadStore(savedStore); }
-    await Promise.all([loadApprovals(), loadQueue()]);
+    if (savedStore) { storeInput.value = savedStore; await loadStore(savedStore); await loadShadowDrafts(savedStore); }
+    await Promise.all([loadApprovals(), loadQueue(), loadUnknownSends()]);
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/staff/sw.js");
   } catch (error) {
     sessionStatus.textContent = "Chưa xác thực";
-    [orders, approvals, quotes, incidents, queueRecovery].forEach((node) => showError(node, error.message));
+    [orders, approvals, quotes, incidents, queueRecovery, shadowDrafts, unknownSends].forEach((node) => showError(node, error.message));
   }
 };
 

@@ -1,0 +1,107 @@
+schema_version: 1
+work_item: SHADOW-CONSOLE-001
+recorded_at: '2026-08-13T14:10:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-shadow-console-001.md requires four surfaces - conversation and draft review,
+  the UNKNOWN exception queue, an SLA risk board and an audit timeline - so that SHADOW-001's
+  requirement that a human approve every outbound action across fourteen days has somewhere to
+  happen. specs/CHANNEL_ADAPTER_SPEC_V1.md section 4.2 makes provider confirmation or a human
+  decision the only exits from UNKNOWN. docs/adr/0003 section 4 requires every number, freshness
+  timestamp, SLA flag and priority to come from SQL and domain code, with AI permitted only to
+  explain an already-computed fact. specs/SECURITY_RELIABILITY_SPEC_V1.md and
+  specs/DOMAIN_DATA_API_SPEC_V1.md remain authoritative for RBAC and atomic mutation semantics.
+rollback_impact: >-
+  Rollback is disabling the five new routes; the existing operational console keeps working, because
+  nothing in the previous surface was modified. Reverting the commit additionally removes
+  packages/db/src/nha_trang_laundry_db/shadow_console.py, the Shadow methods on OperationsService,
+  the two panels in apps/web, and the optional draft_recorder parameter on DurableAgentRunWorker,
+  whose default None restores the previous behaviour exactly. Migration 0021 is forward-only and
+  creates three new tables - staff_store_assignments, agent_drafts and agent_draft_reviews - and
+  alters none, so leaving it applied under a code rollback is safe and the tables become unused. No
+  capability, decision or release state moved.
+unresolved_assumptions: >-
+  This item introduces staff-to-store membership because the packet's IDOR test could not otherwise
+  pass: the existing console authorizes by role alone, so any operator can read any store by changing
+  an identifier. Membership is enforced on the Shadow surfaces only. The pre-existing order, quote,
+  approval and incident routes remain role-scoped and carry the same weakness; retrofitting them is
+  out of scope here and should be its own item, but it is a real finding and is recorded as one
+  rather than silently fixed on one surface and left open on five. The SLA board takes its policy as
+  a required argument rather than defaulting to one, because selecting a policy per order is a
+  business decision and DEC-001 through DEC-004 remain open; a caller that has no approved policy
+  cannot get a number out of this surface, which is the intended fail-closed behaviour. There is no
+  stored promised-at column, so the board reports exactly what evaluate_production_sla computes,
+  including its reason codes. The full loop is proven from queue claim through human approval to
+  audit chain, but it begins at an enqueued agent run rather than at an inbound customer message,
+  because no channel ingress exists yet; that arrives with CHANNEL-ZALO-001. The console never sends.
+  Every capability remains NOT_AUTHORIZED and verify_contracts still reports ten release blockers.
+evidence:
+  conversation_and_draft_review_surface: >-
+    The agent's proposal was previously never persisted at all - the run summary kept only a
+    character count - so there was literally nothing for a human to review. agent_drafts now holds
+    the draft text, its terminal outcome and terminal code, the tool-call count and the conversation
+    and contact bindings, written through commit_material_change so the row, its domain event, its
+    audit entry and its outbox event commit together. The pipeline records it automatically, and
+    re-recording is skipped for a retried run so the original proposal stands rather than being
+    replaced under a reviewer. list_pending_drafts returns only drafts with no decision yet, and
+    apps/web gains a review panel showing the draft, the terminal code and the tool count.
+  approve_edit_reject_with_attribution: >-
+    Each of the three decisions is exercised by a parametrized test that asserts the returned record
+    names the deciding staff member and that a matching AGENT_DRAFT_APPROVE, AGENT_DRAFT_EDIT or
+    AGENT_DRAFT_REJECT audit row exists carrying that actor id. An edit writes its replacement into
+    the review row while agent_drafts keeps the agent's original: a test asserts both, and a second
+    test proves the original cannot be rewritten at all because the table rejects UPDATE. Rejection
+    must state a reason code, enforced by a database CHECK and proven by test, because rejection data
+    is eval corpus input. A run cannot be decided twice: the unique constraint rejects the second
+    attempt rather than the UI hiding the button.
+  unknown_reconciliation_exception_queue: >-
+    list_unknown_sends surfaces every receipt in UNKNOWN or UNKNOWN_REQUIRES_HUMAN, and
+    resolve_unknown_send is the only path out. It writes HUMAN_DECISION with the acting staff id and
+    a timestamp, and the database constraint added in migration 0020 refuses a resolved state without
+    that evidence. Tests prove a human resolves it and the resolution is attributed, that resolving
+    to a non-terminal state is refused, that a role without decide rights cannot resolve, that an
+    already-resolved receipt cannot be resolved again, and that the queue stops listing a receipt
+    once resolved. No automatic caller exists anywhere in the module: there is no retry, no worker
+    path and no model path to this method.
+  sla_risk_and_audit_timeline: >-
+    sla_risk_board selects in-production, non-cancelled orders by SQL and then calls the domain's
+    evaluate_production_sla for each, reporting its internal_risk_due_at, overall outcome and reason
+    codes verbatim. A test asserts equivalence with a direct call to the engine, so the surface
+    cannot drift into computing risk itself; a second test runs the real query against PostgreSQL.
+    audit_timeline returns the ordered decision chain for an aggregate, and the end-to-end test
+    asserts it contains the run's enqueue, then the draft record, then the approval, with the
+    approval last and attributed to the approver.
+  rbac_and_idor_negative_tests: >-
+    Both are proven at the repository, so the block holds for any caller rather than only for the
+    console. RBAC: an AUDITOR can read the queue but cannot decide a draft or resolve an unknown
+    send, and only OWNER_ADMIN may grant store access. IDOR: a staff member assigned to one store is
+    refused when passing another store's identifier to the draft queue, the SLA board and the audit
+    timeline, and is refused when deciding a draft belonging to a store they do not belong to. The
+    unauthorized-role and unassigned-store failures raise the same error and the API maps both to one
+    403, so probing identifiers teaches a caller nothing about which stores exist.
+  no_customer_pii_in_client_logs: >-
+    The service worker pre-caches exactly four static shell assets and nothing else, contains no
+    cache.put or caches.put anywhere, and declines every request outside /staff/, so no API response
+    and no customer data is ever written to device storage. Three tests pin those properties against
+    the file, so a later change that starts caching responses fails the suite. The new client code
+    logs nothing: errors are rendered into the page from the server's own message and no console
+    logging was added.
+  rollback_assessment: >-
+    Additive throughout. Three new tables, five new routes, two new panels and one optional worker
+    parameter; no existing table, route, screen or behaviour changed. The console authorizes and
+    never sends, so disabling the routes cannot strand an in-flight message. The one genuinely new
+    security primitive, store membership, is additive too: absent an assignment the Shadow surfaces
+    refuse, which is fail-closed. Rolling back destroys no evidence, no audit record and no customer
+    data.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

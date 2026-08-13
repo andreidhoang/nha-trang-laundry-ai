@@ -26,13 +26,18 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from nha_trang_laundry_db.agent_runs import AgentRunRepository
+from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_observability import EventSeverity, SafeStructuredLogger
 
 from .agent_runner import AgentRunner, AgentRuntimeInvocation, AgentToolTransport
-from .durable_agent_worker import DurableAgentRunWorker, DurableAgentRunWorkerResult
+from .durable_agent_worker import (
+    DraftRecorder,
+    DurableAgentRunWorker,
+    DurableAgentRunWorkerResult,
+)
 from .responses_runtime import (
     BoundedResponsesRuntime,
     ResponsesContextLoader,
@@ -154,6 +159,7 @@ def build_agent_pipeline(
     logger: SafeStructuredLogger | None = None,
     context_loader: ResponsesContextLoader | None = None,
     evidence_sink: CapturingEvidenceSink | None = None,
+    draft_recorder: DraftRecorder | None = None,
     now: Callable[[], datetime] | None = None,
 ) -> AgentPipeline:
     """Compose existing parts into a runnable pipeline. This function creates no new authority."""
@@ -182,6 +188,7 @@ def build_agent_pipeline(
         repository=repository,
         logger=logger,
         terminal_evidence=lambda: _safe_evidence(sink.take()),
+        draft_recorder=draft_recorder if draft_recorder is not None else _record_draft_for_review,
     )
     return AgentPipeline(
         runtime=runtime, worker=worker, transport=tool_transport, evidence_sink=sink
@@ -247,6 +254,41 @@ def _safe_evidence(evidence: ResponsesRuntimeEvidence | None) -> Mapping[str, An
         "provider_response_id_persisted",
     )
     return {key: document[key] for key in allowed if key in document}
+
+
+def _record_draft_for_review(
+    connection: Any,
+    claimed: Any,
+    result: Any,
+    correlation_id: UUID,
+    timestamp: datetime,
+) -> None:
+    """Persist the proposal so the Shadow console has something for a human to approve.
+
+    A run that is retried after a failure keeps its original proposal: the first draft stands and a
+    second recording is skipped. Re-recording would either crash the worker on the primary key or
+    silently replace what a human may already have reviewed.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT 1 FROM agent_drafts WHERE agent_run_id = %s", (claimed.agent_run_id,)
+        )
+        if cursor.fetchone() is not None:
+            return
+    ShadowConsoleRepository.record_draft(
+        connection,
+        agent_run_id=claimed.agent_run_id,
+        store_id=claimed.store_id,
+        conversation_binding_id=claimed.conversation_binding_id,
+        contact_binding_id=claimed.contact_binding_id,
+        draft_text=result.draft_text,
+        terminal_outcome="DRAFT",
+        terminal_code="DRAFT_REQUIRES_HUMAN",
+        tool_call_count=result.tool_call_count,
+        correlation_id=correlation_id,
+        now=timestamp,
+    )
 
 
 def utc_now() -> datetime:

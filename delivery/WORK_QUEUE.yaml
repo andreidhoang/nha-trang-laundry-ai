@@ -1802,8 +1802,8 @@ items:
 - id: SHADOW-CONSOLE-001
   phase: PRODUCTION_HARDENING
   title: 'Staff Shadow console: draft review, exception queue, audit timeline'
-  status: PENDING
-  priority: 220
+  status: COMPLETE
+  priority: 209
   depends_on:
   - STAFF-OPS-001
   - CHANNEL-ENVELOPE-001

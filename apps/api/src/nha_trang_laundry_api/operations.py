@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import psycopg
 from nha_trang_laundry_contracts import AgentDeploymentStage
+from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
 from nha_trang_laundry_db.approvals import (
     ApprovalDecision,
     ApprovalDecisionCommand,
@@ -38,6 +39,13 @@ from nha_trang_laundry_db.orders import (
     StoredOrder,
 )
 from nha_trang_laundry_db.quotes import QuoteRepository, QuoteSummary
+from nha_trang_laundry_db.shadow_console import (
+    AuditEntry,
+    DraftDecision,
+    PendingDraft,
+    ShadowConsoleRepository,
+    UnknownSend,
+)
 from nha_trang_laundry_domain.catalog import (
     ActorRole,
     ApprovalAction,
@@ -159,6 +167,73 @@ class OperationsService:
         ):
             return self._orders.list_for_store(
                 cursor, store_id=store_id, principal=principal, limit=limit
+            )
+
+    # --- SHADOW-CONSOLE-001 -----------------------------------------------------------------
+    #
+    # Thin pass-through. Every authorization decision lives in ShadowConsoleRepository, because a
+    # route is a place a check can be forgotten and the repository is the only path to the data.
+
+    def shadow_pending_drafts(
+        self, *, store_id: UUID, principal: StaffPrincipal, limit: int = 50
+    ) -> tuple[PendingDraft, ...]:
+        with self._connection_factory(self._database_url) as connection:
+            return ShadowConsoleRepository().list_pending_drafts(
+                connection, store_id=store_id, principal=principal, limit=limit
+            )
+
+    def shadow_decide_draft(
+        self,
+        *,
+        agent_run_id: UUID,
+        decision: str,
+        principal: StaffPrincipal,
+        reason_code: str | None,
+        edited_text: str | None,
+    ) -> DraftDecision:
+        with self._connection_factory(self._database_url) as connection:
+            return ShadowConsoleRepository().decide_draft(
+                connection,
+                agent_run_id=agent_run_id,
+                decision=decision,
+                principal=principal,
+                correlation_id=uuid4(),
+                reason_code=reason_code,
+                edited_text=edited_text,
+            )
+
+    def shadow_unknown_sends(
+        self, *, principal: StaffPrincipal, limit: int = 50
+    ) -> tuple[UnknownSend, ...]:
+        with self._connection_factory(self._database_url) as connection:
+            return ShadowConsoleRepository.list_unknown_sends(
+                connection, principal=principal, limit=limit
+            )
+
+    def shadow_resolve_unknown_send(
+        self,
+        *,
+        receipt_id: UUID,
+        resolution: ReconciliationState,
+        principal: StaffPrincipal,
+        note: str | None,
+    ) -> None:
+        with self._connection_factory(self._database_url) as connection:
+            ShadowConsoleRepository().resolve_unknown_send(
+                connection,
+                receipt_id=receipt_id,
+                resolution=resolution,
+                principal=principal,
+                correlation_id=uuid4(),
+                note=note,
+            )
+
+    def shadow_audit_timeline(
+        self, *, store_id: UUID, aggregate_id: UUID, principal: StaffPrincipal
+    ) -> tuple[AuditEntry, ...]:
+        with self._connection_factory(self._database_url) as connection:
+            return ShadowConsoleRepository().audit_timeline(
+                connection, store_id=store_id, aggregate_id=aggregate_id, principal=principal
             )
 
     def request_approval(

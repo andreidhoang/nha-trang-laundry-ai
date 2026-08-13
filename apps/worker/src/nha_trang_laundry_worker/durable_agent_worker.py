@@ -27,11 +27,15 @@ from .agent_runner import (
     AgentRunJob,
     AgentRunner,
     AgentRunnerError,
+    AgentRunResult,
     AgentToolBridgeResult,
     AgentToolCallObserver,
     AgentToolTransport,
     ConstrainedAgentRuntime,
 )
+
+#: Persists the agent's proposal for human review; see `ShadowConsoleRepository.record_draft`.
+DraftRecorder = Callable[[Any, ClaimedAgentRun, AgentRunResult, UUID, datetime], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +101,7 @@ class DurableAgentRunWorker:
         repository: AgentRunRepository | None = None,
         logger: SafeStructuredLogger | None = None,
         terminal_evidence: Callable[[], Mapping[str, Any] | None] | None = None,
+        draft_recorder: DraftRecorder | None = None,
     ) -> None:
         self._runner = runner
         self._repository = repository or AgentRunRepository()
@@ -104,6 +109,9 @@ class DurableAgentRunWorker:
         # Supplied by the assembled pipeline so the run's redacted runtime evidence lands in the
         # same summary as its disposition. Absent, the worker behaves exactly as before.
         self._terminal_evidence = terminal_evidence
+        # Supplied by the assembled pipeline. Without it the agent's proposal is never persisted and
+        # the Shadow review queue has nothing to show, which is how SHADOW-CONSOLE-001 found this.
+        self._draft_recorder = draft_recorder
 
     def run_once(
         self,
@@ -159,6 +167,8 @@ class DurableAgentRunWorker:
                 "draft_character_count": len(result.draft_text),
                 "tool_call_count": result.tool_call_count,
             }
+            if self._draft_recorder is not None and result.draft_text:
+                self._draft_recorder(connection, claimed, result, correlation_id, timestamp)
             runtime_evidence = self._drain_terminal_evidence()
             if runtime_evidence is not None:
                 safe_summary["runtime_evidence"] = dict(runtime_evidence)
@@ -230,4 +240,4 @@ def _failure_code(error: Exception) -> str:
     return "UNEXPECTED_RUNTIME_FAILURE"
 
 
-__all__ = ["DurableAgentRunWorker", "DurableAgentRunWorkerResult"]
+__all__ = ["DraftRecorder", "DurableAgentRunWorker", "DurableAgentRunWorkerResult"]

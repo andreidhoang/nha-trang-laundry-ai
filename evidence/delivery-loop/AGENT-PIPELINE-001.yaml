@@ -1,0 +1,113 @@
+schema_version: 1
+work_item: AGENT-PIPELINE-001
+recorded_at: '2026-08-13T12:30:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-agent-pipeline-001.md requires the bounded Responses runtime to be assembled
+  into a running worker pipeline by composition, writing no new authority: DurableAgentRunWorker
+  claims a job under lease, a context loader loads the pinned packet, the bridge opens scoped to the
+  run's binding, BoundedResponsesRuntime executes the finite state machine, the terminal outcome is
+  persisted as structured redacted evidence, and the bridge is revoked with the budget settled and
+  the lease released. docs/adr/0003 and docs/adr/0004 make ConstrainedAgentRuntime the stable public
+  boundary; specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md and specs/SECURITY_RELIABILITY_SPEC_V1.md remain
+  authoritative for budgets, redaction and the tool boundary. The concrete deliverable is an
+  AgentCycle implementation injectable into WorkerSupervisor plus the construction that builds it.
+rollback_impact: >-
+  Rollback is setting the queue flag false, exactly as the packet specifies: the supervisor returns
+  to accepting a None cycle and the system to deterministic degraded mode. Reverting the commit
+  additionally removes apps/worker/src/nha_trang_laundry_worker/pipeline.py, its test file, and the
+  optional terminal_evidence parameter on DurableAgentRunWorker, whose default None restores the
+  previous behaviour exactly. No migration, no schema change, no contract change, no new tool, no new
+  budget and no change to the finite state machine, the bridge or the ledger. The runtime, runner,
+  bridge and durable worker all keep their previous public shapes; the only signature change is
+  AgentPipeline.run_cycle returning the worker result rather than a bare status, and that type is
+  new in this commit.
+unresolved_assumptions: >-
+  This item assembles the deterministic path only. The transport is ScriptedResponsesTransport with
+  provider_backed false, and build_agent_pipeline raises PipelineConfigurationError if handed a
+  provider-backed transport, so no provider call can be made through this assembly and no credential
+  is needed; the real transport is PROVIDER-TRANSPORT-001. Nothing constructs the pipeline at process
+  start: apps/worker/main.py still builds WorkerSupervisor with no cycle, because doing otherwise
+  would mean choosing a production config, prompt bundle and price table that do not yet exist.
+  build_agent_pipeline is therefore the seam AGENT-002 will call, and the supervisor test proves the
+  seam fits. The context loader derives the turn deadline from the clock rather than from the job,
+  because AgentRuntimeInvocation carries no deadline; the runner's own hard deadline still bounds the
+  run and revokes the bridge, so the loader's value can only ever be shorter, never longer. Lease
+  recovery after a crashed cycle is the pre-existing AgentRunRepository.recover_expired path driven
+  by WorkerSupervisor._recover_expired_if_due; this item proves claim exclusivity under a real
+  two-thread race but adds no new crash-injection test, and none of the existing recovery behaviour
+  was modified. The guarded suite ran against a local synthetic PostgreSQL 17.4 cluster containing no
+  customer data. Every capability remains NOT_AUTHORIZED, both feature flags remain false, and
+  verify_contracts continues to report ten release blockers.
+evidence:
+  agent_cycle_constructed_and_injected: >-
+    build_agent_cycle returns a Callable[[Any, AuthorityCheck], str] that matches the AgentCycle
+    alias in host.py, and a test injects it into a real WorkerSupervisor with
+    worker_agent_queue_enabled true and asserts the supervisor no longer reports
+    AGENT_RUNTIME_UNAVAILABLE. The complementary test proves the fail-closed path is intact: a
+    supervisor constructed without a cycle and with the queue enabled still reports
+    AGENT_RUNTIME_UNAVAILABLE. The hole the readiness assessment identified is now fillable, and
+    filling it did not remove the guard that made leaving it empty safe.
+  context_loader_bound_to_run: >-
+    RunScopedContextLoader assembles a packet for exactly the invocation it is given rather than
+    matching one from a fixed sequence. It uses the bridge's own session key, which matters because
+    BoundedResponsesRuntime._validate_context re-hashes invocation.session_key and rejects a context
+    whose session_key_hash disagrees; a test asserts two different sessions produce different
+    session hashes and that run id and capability come from the invocation. Every other pin -
+    runtime, model, immutable release, registry hash, prompt version and hash, instruction hash and
+    tool contract hash - is validated against the configured values by the runtime itself, and the
+    end-to-end test passes only because the enqueued job's pins and the config agree.
+  bridge_lifecycle_and_revocation: >-
+    The terminal evidence of every completed run records bridge_revoked, and the model types it as
+    Literal[True], so a record can only exist for a revoked bridge. Two independent terminal paths
+    are exercised and both assert it: a clean DRAFT, and a provider timeout that settles the
+    reservation and returns the deterministic handoff. The runner's existing outer deadline guard,
+    which closes the bridge before returning on a stuck runtime, is unchanged by this item.
+  queue_claim_and_lease_recovery: >-
+    Claim exclusivity is proven under a real race rather than asserted: two independently assembled
+    pipelines on separate connections meet at a barrier and run a cycle; both may find work, but the
+    claimed run ids are always distinct, so the lease never hands one job to two workers. A revoked
+    authority claims nothing and returns STOPPED, verified by the run staying PENDING. Lease recovery
+    for an interrupted cycle remains the existing AgentRunRepository.recover_expired path invoked by
+    WorkerSupervisor._recover_expired_if_due; this item neither changes nor re-proves it, and the
+    evidence for it is the pre-existing worker-host coverage.
+  flags_remain_closed_by_default: >-
+    WorkerSettings still defaults worker_agent_queue_enabled and feature_agent_runtime_enabled to
+    false, and its validator still refuses to construct with feature_agent_runtime_enabled true;
+    both are asserted by test. build_agent_cycle takes enabled explicitly and returns DISABLED
+    without touching the database when it is false, proven by a test that enqueues a job, runs the
+    disabled cycle and asserts the job is still PENDING. Assembling the pipeline is therefore not
+    enabling it. scripts/report_delivery_status.py reports all thirteen capabilities NOT_AUTHORIZED.
+  end_to_end_with_deterministic_transport: >-
+    A job enqueued through AgentRunRepository is claimed, executed through the full composition and
+    persisted without manual intervention: the run reaches DRAFT_REQUIRES_HUMAN and its
+    result_safe_summary carries runtime_evidence with terminal_outcome DRAFT, provider_backed false,
+    retry_count zero, bridge_revoked true, and a settled cost. This is the first time a job has
+    traversed queue to persisted runtime evidence in this repository. The redaction claim is tested
+    rather than assumed: a run whose draft is a distinctive sentinel string is executed, and the
+    persisted summary is asserted not to contain the draft, the instructions, any input text or any
+    reasoning; the projection also carries chain_of_thought_persisted and
+    provider_response_id_persisted, both false. A provider timeout produces terminal_code
+    PROVIDER_TIMEOUT with retry_count zero, and a second run's evidence never inherits the first
+    run's terminal code, because the sink is drained on both the success and the failure path.
+  rollback_assessment: >-
+    Additive composition behind unchanged interfaces. The new module is referenced by no process
+    entry point, so removing it cannot break a running behaviour; the single modified file,
+    durable_agent_worker.py, gains one optional parameter whose default reproduces the previous code
+    path exactly. Because the assembled transport declares provider_backed false and the builder
+    rejects a provider-backed one, this item cannot make a provider call even if enabled by mistake,
+    and the queue flag remains the outer switch. Rolling back destroys no evidence, no schema and no
+    customer data, and returns the system to the deterministic degraded mode that ADR-0004 names as
+    the real fallback.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

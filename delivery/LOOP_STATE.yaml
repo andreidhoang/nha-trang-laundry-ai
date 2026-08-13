@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-13T03:06:17.627352+00:00'
+last_updated: '2026-08-13T03:18:56.999530+00:00'
 current_work_item: null
 last_result: COMPLETE
 blocker: null
@@ -82,6 +82,9 @@ evidence_records:
 - work_item: CHANNEL-ENVELOPE-001
   path: evidence/delivery-loop/CHANNEL-ENVELOPE-001.yaml
   recorded_at: '2026-08-13T03:06:17.627352+00:00'
+- work_item: AGENT-PIPELINE-001
+  path: evidence/delivery-loop/AGENT-PIPELINE-001.yaml
+  recorded_at: '2026-08-13T03:18:56.999530+00:00'
 blocked_records:
 - work_item: AGENT-001
   reason: Local fixture/assertion registry is complete and 289 tests pass, but PRIMARY/fallback
@@ -186,6 +189,15 @@ blocked_records:
     An agent may not register a business identity, accept provider terms or hold the
     resulting credential.
   recorded_at: '2026-08-13T02:48:47.713926+00:00'
+- work_item: CORPUS-CONSENT-001
+  reason: Requires a lawful basis or consent for using existing customer message history
+    as evaluation material, a reviewed identifier-substitution method that preserves
+    linguistic shape, a mapping table stored outside the repository with a named custodian,
+    and human review of free text. Establishing a lawful basis and reviewing personal
+    data are owner and legal responsibilities; an agent may not assert a basis, nor
+    decide that a substitution is adequate for real people's messages. Blocks EVAL-LANGUAGE-CORPUS-001,
+    which carries 300 of the manifest's 1,300 required cases.
+  recorded_at: '2026-08-13T03:07:08.418598+00:00'
 unblocked_records:
 - work_item: OPENCLAW-REPACK-001
   reason: The exact-commit hosted GitHub workflow was authorized and executed; reevaluating

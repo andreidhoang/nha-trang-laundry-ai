@@ -1443,7 +1443,7 @@ items:
 - id: CORPUS-CONSENT-001
   phase: AGENT_SHADOW
   title: Consent basis and reviewed anonymization of real customer message history
-  status: PENDING
+  status: BLOCKED
   priority: 208
   depends_on: []
   context_domains:
@@ -1469,6 +1469,14 @@ items:
   - no_raw_pii_fixture
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-corpus-consent-001.md
+  blocking_condition: Requires a lawful basis or consent for using existing customer
+    message history as evaluation material, a reviewed identifier-substitution method
+    that preserves linguistic shape, a mapping table stored outside the repository
+    with a named custodian, and human review of free text. Establishing a lawful basis
+    and reviewing personal data are owner and legal responsibilities; an agent may
+    not assert a basis, nor decide that a substitution is adequate for real people's
+    messages. Blocks EVAL-LANGUAGE-CORPUS-001, which carries 300 of the manifest's
+    1,300 required cases.
 - id: CHANNEL-TELEGRAM-001
   phase: PRODUCTION_HARDENING
   title: Telegram sandbox adapter proving the channel contract end to end
@@ -1751,8 +1759,8 @@ items:
 - id: AGENT-PIPELINE-001
   phase: AGENT_SHADOW
   title: Assemble the constrained runtime into a running worker pipeline
-  status: PENDING
-  priority: 219
+  status: COMPLETE
+  priority: 208
   depends_on:
   - RESPONSES-RUNTIME-001
   context_domains:

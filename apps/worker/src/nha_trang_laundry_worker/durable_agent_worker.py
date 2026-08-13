@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -96,10 +96,14 @@ class DurableAgentRunWorker:
         runner: AgentRunner,
         repository: AgentRunRepository | None = None,
         logger: SafeStructuredLogger | None = None,
+        terminal_evidence: Callable[[], Mapping[str, Any] | None] | None = None,
     ) -> None:
         self._runner = runner
         self._repository = repository or AgentRunRepository()
         self._logger = logger or SafeStructuredLogger()
+        # Supplied by the assembled pipeline so the run's redacted runtime evidence lands in the
+        # same summary as its disposition. Absent, the worker behaves exactly as before.
+        self._terminal_evidence = terminal_evidence
 
     def run_once(
         self,
@@ -129,6 +133,9 @@ class DurableAgentRunWorker:
                     now=timestamp,
                 )
             except Exception as error:
+                # Drain the sink even on failure, so a terminal record from the previous run can
+                # never be attributed to the next one.
+                self._drain_terminal_evidence()
                 failure_code = _failure_code(error)
                 self._repository.fail(
                     connection,
@@ -147,15 +154,19 @@ class DurableAgentRunWorker:
                     fields={"agent_run_id": claimed.agent_run_id, "failure_code": failure_code},
                 )
                 return DurableAgentRunWorkerResult(str(claimed.agent_run_id), "FAILED")
+            safe_summary: dict[str, Any] = {
+                "disposition": "REQUIRE_HUMAN",
+                "draft_character_count": len(result.draft_text),
+                "tool_call_count": result.tool_call_count,
+            }
+            runtime_evidence = self._drain_terminal_evidence()
+            if runtime_evidence is not None:
+                safe_summary["runtime_evidence"] = dict(runtime_evidence)
             self._repository.complete_draft(
                 connection,
                 agent_run_id=claimed.agent_run_id,
                 claim_token=claimed.claim_token,
-                safe_summary={
-                    "disposition": "REQUIRE_HUMAN",
-                    "draft_character_count": len(result.draft_text),
-                    "tool_call_count": result.tool_call_count,
-                },
+                safe_summary=safe_summary,
                 correlation_id=correlation_id,
                 completed_at=timestamp,
             )
@@ -170,6 +181,11 @@ class DurableAgentRunWorker:
                 },
             )
             return DurableAgentRunWorkerResult(str(claimed.agent_run_id), result.status)
+
+    def _drain_terminal_evidence(self) -> Mapping[str, Any] | None:
+        if self._terminal_evidence is None:
+            return None
+        return self._terminal_evidence()
 
 
 def _job_from_claim(

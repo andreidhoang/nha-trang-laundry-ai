@@ -11,8 +11,8 @@ selects it; its only dependency `ENV-INTEGRITY-001` is complete and it carries n
 Earlier revisions of this brief said no item was buildable, which was wrong — the controller, not
 this prose, is the authority. The other 20 pending items each trace to an owner decision or an
 external party; the full graph is in
-[`docs/PATH_TO_PRODUCTION_REVIEW.md`](../docs/PATH_TO_PRODUCTION_REVIEW.md) §5 and §6a. The two cheapest unblocks are `EVIDENCE-REPIN-001`, which frees eight items including two
-on the G1 critical path, and `DEC-008`, which frees retention. Both cost minutes. Everything else is
+[`docs/PATH_TO_PRODUCTION_REVIEW.md`](../docs/PATH_TO_PRODUCTION_REVIEW.md) §5 and §6a. The two cheapest unblocks are `EVIDENCE-REPIN-001`, which frees six items including two on
+the G1 critical path and opens the path to two more, and `DEC-008`, which frees retention. Both cost minutes. Everything else is
 calendar-bound: shop instrumentation, Zalo OA verification, the provider credential.
 
 **Tiered inference and multimodal, assessed 2026-08-13.** A proposal to adopt a tiered NVIDIA stack

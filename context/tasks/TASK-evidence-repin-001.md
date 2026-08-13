@@ -51,6 +51,15 @@ project: it costs a decision and a re-derivation, not weeks.
 2. **Wait for `AGENT-002`.** It supersedes the 32-case bundle by design. **Cost:** all six items
    queue behind a provider credential and `DEC-006`, which is the longest pole in the project.
 
+The 2026-08-13 tiered-inference assessment
+([ADR-0008](../../docs/adr/0008-inference-topology-and-multimodal-scope.md)) added a reason to
+prefer option 1 that did not exist when this packet was written. The bundle pins
+`runtime/model-registry-v1.yaml` **and** `evidence/provider/openai-data-controls-review-v1.yaml`, so
+the provider posture itself is frozen: **any** provider-candidate change — NVIDIA, a different
+OpenAI release, anything — terminates at this decision. Option 2's cost is therefore no longer six
+items. It is six items plus every future provider question, held behind the one item whose fix is a
+decision and a script run.
+
 Option 1 is recommended. Option 2 is defensible only if someone believes the current bundle carries
 release weight — and it does not; it declares five of its own release blockers.
 

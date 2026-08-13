@@ -2226,8 +2226,14 @@ items:
     a frozen AGENT-001 artifact is not a call an engineer makes alone, and hand-editing
     its hashes to match the tree would be a fabricated attestation. Until it is decided,
     the bundle hash-pins 21 core files and blocks SIGNER-REGISTRY-001, all four corpus
-    items and MODEL-PIN-001, two of them on the G1 critical path. This is the cheapest
-    unblock in the project: a decision and a re-derivation, not weeks.'
+    items and MODEL-PIN-001, two of them on the G1 critical path. The 2026-08-13 tiered-inference
+    assessment raised the value of deciding it: because the bundle also pins runtime/model-registry-v1.yaml
+    and evidence/provider/openai-data-controls-review-v1.yaml, the provider posture
+    itself is frozen, so any provider-candidate change terminates here. Deciding this
+    frees those six existing items and opens the path to MODEL-ROUTE-001, which is
+    otherwise unstartable, and transitively to MULTIMODAL-PERCEPTION-001, which stays
+    blocked on DEC-009, DEC-006 and DEC-008 regardless. This is the cheapest unblock
+    in the project: a decision and a re-derivation, not weeks.'
 - id: RETENTION-STORE-001
   phase: PRODUCTION_HARDENING
   title: Separate disposable payload from the append-only ledger

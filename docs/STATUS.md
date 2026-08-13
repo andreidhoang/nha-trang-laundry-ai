@@ -1,7 +1,9 @@
 # Project status
 
-**Last updated:** 2026-08-02
+**Last updated:** 2026-08-13
 **Authoritative machine status:** [`delivery/CAPABILITY_STATUS.yaml`](../delivery/CAPABILITY_STATUS.yaml)
+**Measured distance to production:** [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
+then [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md)
 
 ## Current decision
 
@@ -16,8 +18,8 @@ public channel, automated send, autonomous quote, booking, delivery decision, or
 | `IDENTITY_CONTROL` | Complete locally | named staff, DB-authoritative RBAC, MFA/session boundaries, audit/outbox, and negative authorization evidence |
 | `DOMAIN_CORE` | Complete locally | canonical registry, exact pricebook import, pricing, promotion/delivery/SLA boundaries, immutable quote snapshots and calculation traces |
 | `OPERATIONS_CONTROL` | Complete locally | Staff PWA slice, approvals, inbox/outbox, idempotency, audit and operational workflows |
-| `AGENT_SHADOW` | Blocked externally | isolated EVAL_ONLY OpenClaw cell, fixed Tool Facade, short-lived Runner bridge and durable run/tool ledger exist; P0 integrated eval and provider-data evidence require external prerequisites |
-| `PRODUCTION_HARDENING` | In progress | CI, observability, policy, container and supply-chain controls are complete; worker hosting, staff workflows, HTTP security, telemetry, and private staging are now explicit local readiness work |
+| `AGENT_SHADOW` | In progress | bounded Responses runtime, fixed Tool Facade, short-lived Runner bridge and durable run/tool ledger exist. The OpenClaw evidence track is frozen by ADR-0004; `AGENT-002` now carries G1 agent evidence and is blocked on `DEC-006`. The runtime is not yet wired into the worker — `AGENT-PIPELINE-001` |
+| `PRODUCTION_HARDENING` | In progress | CI, observability, policy, container, supply-chain, worker hosting, staff workflows, HTTP security, telemetry and private staging are complete. Remaining: the channel envelope, the Shadow console, retention, runbooks, SLO verification, and everything behind the hosting decision |
 | `REAL_SHADOW_READINESS` | Not authorized | `G1_INTERNAL_SHADOW_READY` evidence absent |
 | `PUBLIC_ASSISTED` | Not authorized | G1/G2 and capability-specific evidence absent |
 | `BOUNDED_AUTONOMY` | Not authorized | cumulative G1–G4 evidence absent |
@@ -38,24 +40,29 @@ release decision is driven by evidence and a signed gate manifest, never by this
 
 ## Next controlled task
 
-`RELEASE-BASELINE-001` is the active dependency-ready task. It reconciles the completed CI,
-observability, policy, container, and supply-chain implementation into a fully verified immutable
-engineering baseline. `WORKER-HOST-001` follows it, then the independent staff/security/telemetry and
-private-staging readiness chain. These tasks do not authorize provider use, public ingress, or send.
+`ENV-INTEGRITY-001` is `IN_PROGRESS`. Its implementation is complete and verified; its declared
+acceptance still includes `uv run pytest --require-postgres-integration`, which has not run because
+no PostgreSQL service is available in the current environment. That check is not recorded as passing.
 
-In parallel, `AGENT-001` remains blocked externally. Its local seed fixtures and assertions are
-complete; external prerequisites are required before PRIMARY/fallback/degraded integration evidence.
-Local boundary preflights
-cover all 32 manifest cases in a hash-pinned synthetic `SKIP` bundle. Runtime enforcement now also
-requires a schema-valid, JCS-bound, artifact-verified, unexpired three-party release authorization
-before any provider-backed call. Capability status and reporting also revalidate that exact signed
-deployment envelope before displaying `AUTHORIZED`. Checksum-pinned public-key trust-root loading and the sanitized
-candidate verifier are available. The current incomplete provider review is schema-valid and
-hash-pinned, and the version-bound offline OpenClaw audit passes with zero critical findings. No
-approved signer registry, effective-request proof, or authorization exists. The structurally parsed
-OpenClaw configuration still names a placeholder sandbox image; the typed scan gate therefore reports
-a ninth release blocker until an immutable digest, passing scan evidence, and hash-pinned SBOM exist.
-Context drift validation also guarantees that each work item's declared normative inputs and any
-atomic task packet are present. Read
-the [engineering continuation brief](../context/PROJECT_CONTINUATION.md) before resuming and run
+Once it closes, the controller offers, in order: `CHANNEL-ENVELOPE-001` (the fan-out node for four
+downstream channel items), `SIGNER-REGISTRY-001`, `AGENT-PIPELINE-001` (the highest single-item
+value — it wires the bounded Responses runtime into the worker for the first time),
+`SHADOW-CONSOLE-001` and `EVAL-SYNTHETIC-COMBINATORIAL-001`. None authorizes provider use, public
+ingress or send.
+
+## What is actually holding the project
+
+Engineering is not the binding constraint. Six of the ten highest-priority ready items need an owner
+action, and three of those are calendar-bound and independent of each other:
+
+- `SHOP-INSTRUMENT-001` — 4–6 weeks of real shop measurement. Without it `SHADOW-001` has no
+  denominator and G1 cannot be evaluated at all.
+- `CHANNEL-ZALO-APPLY-001` — 2–8 weeks of external OA verification that no code shortens.
+- `PROVIDER-ACCESS-001` / `DEC-006` — days once decided, and until then the model has never been
+  invoked and the evidence base stays at zero.
+
+Each has a task packet under `context/tasks/` written to be actionable without an engineer present.
+[`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 is the full owner action table.
+
+Read the [engineering continuation brief](../context/PROJECT_CONTINUATION.md) before resuming and run
 `uv run python scripts/run_delivery_loop.py` for the authoritative work brief.

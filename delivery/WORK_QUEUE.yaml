@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-12'
+last_updated: '2026-08-13'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -735,6 +735,7 @@ items:
   - provider_data_review
   blocked_by_decisions:
   - DEC-006
+  task_packet: context/tasks/TASK-security-001.md
 - id: SHADOW-001
   phase: REAL_SHADOW_READINESS
   title: Internal real-order Shadow pilot and G1 evidence
@@ -745,6 +746,9 @@ items:
   - SHADOW-CONSOLE-001
   - SHOP-INSTRUMENT-001
   - SIGNER-REGISTRY-001
+  - OPS-RUNBOOK-001
+  - SLO-VERIFY-001
+  - RETENTION-001
   context_domains:
   - evaluation_release
   - orders_audit
@@ -765,6 +769,7 @@ items:
   - zero_tolerance_results
   - signed_gate_manifest
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-shadow-001.md
 - id: CHANNEL-001
   phase: PUBLIC_ASSISTED
   title: Official channel and isolated public-cell Assisted entry
@@ -775,6 +780,7 @@ items:
   - CONSENT-STOP-001
   - PUBLIC-POLICY-001
   - SHADOW-001
+  - EVAL-PUBLIC-CORPUS-001
   context_domains:
   - runtime_architecture
   - agent_tools
@@ -800,6 +806,7 @@ items:
   blocked_by_decisions:
   - DEC-005
   - DEC-006
+  task_packet: context/tasks/TASK-channel-001.md
 - id: AUTONOMY-001
   phase: BOUNDED_AUTONOMY
   title: Capability-specific bounded automation canary
@@ -834,6 +841,7 @@ items:
   - DEC-002
   - DEC-003
   - DEC-004
+  task_packet: context/tasks/TASK-autonomy-001.md
 - id: HARDEN-PORTABILITY-001
   phase: PRODUCTION_HARDENING
   title: Cross-platform type-safe delivery and automation mutexes
@@ -1190,7 +1198,7 @@ items:
 - id: RUNTIME-FREEZE-001
   phase: AGENT_SHADOW
   title: Freeze the OpenClaw evidence track and re-point the dependency graph
-  status: PENDING
+  status: COMPLETE
   priority: 200
   depends_on: []
   context_domains:
@@ -1218,7 +1226,7 @@ items:
 - id: DECISION-HOSTING-001
   phase: PRODUCTION_HARDENING
   title: Hosting decision packet and admissibility verdict for ADR-0007
-  status: PENDING
+  status: BLOCKED
   priority: 201
   depends_on: []
   context_domains:
@@ -1237,6 +1245,15 @@ items:
   - restore_feasibility_assessment
   - owner_written_approval
   blocked_by_decisions: []
+  blocking_condition: Completion requires owner_written_approval selecting a hosting
+    provider for the ADR-0007 three-zone two-host topology, plus verified commercial
+    cost and data-residency terms and a provider-specific restore-feasibility assessment.
+    A coding agent may not select a vendor, accept commercial terms, assert residency,
+    or sign the owner approval; DEC-HOSTING authority sits with the business owner.
+    The admissibility criteria and the shape of the required verdict are specified
+    in docs/adr/0007-production-deployment-topology.md and specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+    sections 1 and 3; no infrastructure was provisioned and no capability was authorized.
+  task_packet: context/tasks/TASK-decision-hosting-001.md
 - id: PROVIDER-ACCESS-001
   phase: AGENT_SHADOW
   title: Dedicated provider organization, credential, and data-control posture
@@ -1258,6 +1275,7 @@ items:
   - subprocessor_and_incident_terms
   - dec_006_decision_record
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-provider-access-001.md
 - id: SHOP-INSTRUMENT-001
   phase: REAL_SHADOW_READINESS
   title: 'Physical shop instrumentation: cycle, capacity, and delivery cost baselines'
@@ -1282,6 +1300,7 @@ items:
   - owner_confirmed_safe_capacity
   - item_count_handoff_checklist
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-shop-instrument-001.md
 - id: DECISION-BUSINESS-001
   phase: REAL_SHADOW_READINESS
   title: Owner decision session closing DEC-001 through DEC-004
@@ -1307,6 +1326,7 @@ items:
   - rewash_loss_damage_policy
   - versioned_configuration_publication
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-decision-business-001.md
 - id: CHANNEL-ZALO-APPLY-001
   phase: PUBLIC_ASSISTED
   title: Official Zalo OA registration and business verification
@@ -1328,6 +1348,7 @@ items:
   - separation_from_personal_account
   - dec_005_decision_record
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-channel-zalo-apply-001.md
 - id: CHANNEL-ENVELOPE-001
   phase: PRODUCTION_HARDENING
   title: Canonical inbound envelope and outbound receipt wired to inbox/outbox
@@ -1420,6 +1441,7 @@ items:
   - human_review_of_free_text
   - no_raw_pii_fixture
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-corpus-consent-001.md
 - id: CHANNEL-TELEGRAM-001
   phase: PRODUCTION_HARDENING
   title: Telegram sandbox adapter proving the channel contract end to end
@@ -1444,6 +1466,7 @@ items:
   - sandbox_only_no_real_pii
   - rollback_assessment
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-channel-telegram-001.md
 - id: CONSENT-STOP-001
   phase: PRODUCTION_HARDENING
   title: Consent capture, STOP suppression, and opt-out versus in-flight send race
@@ -1470,6 +1493,7 @@ items:
   - forged_consent_denied
   - rollback_assessment
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-consent-stop-001.md
 - id: MODEL-PIN-001
   phase: AGENT_SHADOW
   title: Immutable model release pin and registry artifact verification
@@ -1493,6 +1517,7 @@ items:
   - registry_artifact_verification
   - rollback_assessment
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-model-pin-001.md
 - id: EVAL-CORPUS-001
   phase: AGENT_SHADOW
   title: Frozen Vietnamese regression corpus raised toward the manifest minimum
@@ -1517,6 +1542,7 @@ items:
   - no_raw_pii_fixture
   - rollback_assessment
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-eval-corpus-001.md
 - id: DEPLOY-TARGET-001
   phase: PRODUCTION_HARDENING
   title: Production topology, isolated agent cell host, and closed capability flags
@@ -1541,6 +1567,7 @@ items:
   - credential_rotation_drill
   - rollback_assessment
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-deploy-target-001.md
 - id: MONITORING-001
   phase: PRODUCTION_HARDENING
   title: Telemetry collector, retention, and paging alert contracts
@@ -1564,6 +1591,7 @@ items:
   - archive_gap_alert
   - rollback_assessment
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-monitoring-001.md
 - id: SIGNER-REGISTRY-001
   phase: PRODUCTION_HARDENING
   title: Two-party release schema, verifier enforcement, and signer key ceremony
@@ -1601,6 +1629,8 @@ items:
   - MODEL-PIN-001
   - PROVIDER-TRANSPORT-001
   - RUNTIME-FREEZE-001
+  - EVAL-SYNTHETIC-COMBINATORIAL-001
+  - EVAL-LANGUAGE-CORPUS-001
   context_domains:
   - runtime_architecture
   - agent_tools
@@ -1660,6 +1690,7 @@ items:
   - rollback_assessment
   blocked_by_decisions:
   - DEC-005
+  task_packet: context/tasks/TASK-channel-zalo-001.md
 - id: PUBLIC-POLICY-001
   phase: PUBLIC_ASSISTED
   title: Published PUBLIC_CUSTOMER bundle and tested correction workflow
@@ -1689,6 +1720,7 @@ items:
   - expired_bundle_degrades_to_require_human
   - rollback_assessment
   blocked_by_decisions: []
+  task_packet: context/tasks/TASK-public-policy-001.md
 - id: AGENT-PIPELINE-001
   phase: AGENT_SHADOW
   title: Assemble the constrained runtime into a running worker pipeline
@@ -1754,5 +1786,244 @@ items:
   - sla_risk_and_audit_timeline
   - rbac_and_idor_negative_tests
   - no_customer_pii_in_client_logs
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: ENV-INTEGRITY-001
+  phase: PRODUCTION_HARDENING
+  title: Workspace import integrity independent of host file attributes
+  status: IN_PROGRESS
+  priority: 199
+  depends_on: []
+  context_domains:
+  - platform
+  normative_sources:
+  - AGENTS.md
+  - context/CONTINUATION_PROTOCOL.md
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  - docs/runbooks/local-development.md
+  contracts: []
+  task_packet: context/tasks/TASK-env-integrity-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - root_cause_documented
+  - workspace_imports_independent_of_file_attributes
+  - hidden_pth_detection_check
+  - phantom_failure_reproduced_then_absent
+  - gate_invocation_documented
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: EVAL-SYNTHETIC-COMBINATORIAL-001
+  phase: AGENT_SHADOW
+  title: Synthetic combinatorial suite generated from the deterministic domain
+  status: PENDING
+  priority: 221
+  depends_on:
+  - DOMAIN-005
+  - RESPONSES-RUNTIME-001
+  context_domains:
+  - evaluation_release
+  - agent_tools
+  - pricing
+  - promotion_delivery_sla
+  normative_sources:
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  contracts:
+  - specs/evals/eval-manifest-v1.yaml
+  - specs/contracts/canonical-enums-v1.json
+  - specs/contracts/agent-tools-v1.openapi.yaml
+  task_packet: context/tasks/TASK-eval-synthetic-combinatorial-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - synthetic_combinatorial_minimum_cases
+  - expected_values_from_deterministic_domain_only
+  - boundary_coverage_proof
+  - zero_wrong_monetary_values
+  - no_raw_pii_fixture
+  - manifest_inventory_updated
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: EVAL-LANGUAGE-CORPUS-001
+  phase: AGENT_SHADOW
+  title: Normal-language Vietnamese suite at the manifest distribution
+  status: PENDING
+  priority: 222
+  depends_on:
+  - CORPUS-CONSENT-001
+  context_domains:
+  - evaluation_release
+  - agent_tools
+  - privacy_consent
+  normative_sources:
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - CUSTOMER_SERVICE_POLICY_DRAFT.md
+  contracts:
+  - specs/evals/eval-manifest-v1.yaml
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-eval-language-corpus-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - normal_language_minimum_cases
+  - declared_distribution_satisfied
+  - ambiguous_case_abstention_labels
+  - grader_calibration
+  - no_raw_pii_fixture
+  - manifest_inventory_updated
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: EVAL-PUBLIC-CORPUS-001
+  phase: PUBLIC_ASSISTED
+  title: Public corpus suite with exact fact-citation grading
+  status: PENDING
+  priority: 223
+  depends_on:
+  - PUBLIC-POLICY-001
+  context_domains:
+  - evaluation_release
+  - channel_operations
+  - business_truth
+  normative_sources:
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/PUBLIC_CUSTOMER_POLICY_SPEC_V1.md
+  - BUSINESS_TRUTH_INTAKE.md
+  contracts:
+  - specs/evals/eval-manifest-v1.yaml
+  - specs/contracts/public-policy-bundle-v1.schema.json
+  task_packet: context/tasks/TASK-eval-public-corpus-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - public_corpus_minimum_cases
+  - citation_accuracy_grading
+  - internal_risk_material_excluded
+  - expired_bundle_case_requires_human
+  - manifest_inventory_updated
+  - rollback_assessment
+  blocked_by_decisions:
+  - DEC-005
+- id: RETENTION-001
+  phase: PRODUCTION_HARDENING
+  title: Customer data retention, redaction, and deletion jobs
+  status: PENDING
+  priority: 224
+  depends_on:
+  - DB-001
+  - OBSERVABILITY-001
+  context_domains:
+  - privacy_consent
+  - orders_audit
+  normative_sources:
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/ENGINEERING_SPEC_V1.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - CUSTOMER_SERVICE_POLICY_DRAFT.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-retention-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - retention_class_configuration_versioned
+  - purge_and_redaction_jobs_are_transactional
+  - legal_hold_suspends_purge
+  - purge_is_audited_and_reversible_only_through_backup
+  - unset_schedule_fails_closed
+  - rollback_assessment
+  blocked_by_decisions:
+  - DEC-008
+- id: OPS-RUNBOOK-001
+  phase: PRODUCTION_HARDENING
+  title: The five G1 runbooks, each executed once by its operator
+  status: PENDING
+  priority: 225
+  depends_on:
+  - DEPLOY-TARGET-001
+  context_domains:
+  - platform
+  - channel_operations
+  normative_sources:
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  - docs/adr/0007-production-deployment-topology.md
+  - specs/CHANNEL_ADAPTER_SPEC_V1.md
+  - docs/runbooks/container-deployment.md
+  contracts:
+  - specs/contracts/channel-outbound-receipt-v1.schema.json
+  task_packet: context/tasks/TASK-ops-runbook-001.md
+  acceptance_checks:
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  - uv run python scripts/report_delivery_status.py
+  required_evidence:
+  - production_deployment_runbook
+  - restore_drill_runbook
+  - incident_response_runbook
+  - credential_rotation_runbook
+  - channel_reconciliation_runbook
+  - each_runbook_executed_by_its_operator
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SLO-VERIFY-001
+  phase: PRODUCTION_HARDENING
+  title: Measured verification of the declared Shadow-stage SLOs
+  status: PENDING
+  priority: 226
+  depends_on:
+  - DEPLOY-TARGET-001
+  - MONITORING-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  normative_sources:
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/ENGINEERING_SPEC_V1.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-slo-verify-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - deterministic_quote_p95_measured
+  - agent_draft_p95_and_hard_timeout_measured
+  - ready_queue_dispatch_p95_measured
+  - staff_console_pagination_at_scale_measured
+  - measurement_method_is_reproducible
+  - breach_alerting_bound_to_monitoring
   - rollback_assessment
   blocked_by_decisions: []

@@ -1,0 +1,94 @@
+schema_version: 1
+work_item: RUNTIME-FREEZE-001
+recorded_at: '2026-08-13T09:40:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-runtime-freeze-001.md and docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
+  require ADR-0004 to be applied to the machine-readable delivery state only: record the freeze in the
+  blocking_condition of AGENT-001, OPENCLAW-REPACK-001 and RUNTIME-SECURITY-001 while their status stays
+  BLOCKED; add AGENT-002 as the G1_INTERNAL_SHADOW_READY agent-evidence carrier with no inherited
+  evidence; re-point SECURITY-001.depends_on and RUNTIME-PARITY-001.depends_on from AGENT-001 to
+  AGENT-002; and rescope RUNTIME-PARITY-001 from a two-runtime comparison to an absolute P0 bar with a
+  degraded-mode rollback rehearsal. delivery/GATE_REGISTRY.yaml and
+  specs/contracts/release-gate-manifest-v1.schema.json remain authoritative for gate and release
+  semantics. The packet's execution note states that the four mechanical edits ship with the spec-pack
+  change that authored ADR-0004, so this item's controller job is to verify that state and record
+  evidence, applying a corrective edit only if a check fails. No check failed, so no corrective edit was
+  required.
+rollback_impact: >-
+  Reverting this item reverts only the delivery-state transition of RUNTIME-FREEZE-001 itself
+  (delivery/WORK_QUEUE.yaml, delivery/LOOP_STATE.yaml, delivery/PROGRAM_PLAN.yaml) and this evidence
+  record. The underlying ADR-0004 graph edits were authored in commit 8f070f7 and roll back with that
+  commit, at which point the graph returns to routing SECURITY-001 and RUNTIME-PARITY-001 through
+  AGENT-001. Nothing under evidence/ was created, modified or destroyed to make this change, so no
+  historical record is lost by either rollback. There is no schema migration, database content,
+  provider credential, network call, public ingress, outbound send, deployment, real-customer data or
+  capability authorization to roll back. Freezing is a scheduling decision and is recorded as one; no
+  frozen item was marked COMPLETE, PENDING or READY.
+unresolved_assumptions: >-
+  Freezing AGENT-001, OPENCLAW-REPACK-001 and RUNTIME-SECURITY-001 does not complete them, resolve
+  their blockers or authorize anything. G1 agent evidence is now carried by AGENT-002, which is PENDING,
+  blocked by DEC-006, and depends on AGENT-PIPELINE-001, EVAL-CORPUS-001, MODEL-PIN-001,
+  PROVIDER-TRANSPORT-001 and this item; none of those has evidence. runtime/openclaw/, the plugin, the
+  repack manifests and the OpenClaw jobs in release-supply-chain.yml were deliberately left in place;
+  their removal belongs to OPENCLAW-RETIRE-001 and only after RUNTIME-PARITY-001 passes. The separately
+  isolated Private Owner OpenClaw trust cell is out of scope. verify_contracts.py continues to report
+  ten release blockers and every capability remains NOT_AUTHORIZED. The declared acceptance commands
+  were executed with PYTHONPATH set to the nine workspace src directories, because on this macOS host
+  the iCloud file provider re-applies the UF_HIDDEN flag to files inside .venv/ within seconds and
+  CPython 3.12.11 silently skips any .pth file carrying that flag; without the override the workspace
+  packages intermittently vanish from sys.path. The override changes no interpreter, script or
+  repository content and is being carried as a separate work item so that gate results stop depending
+  on file-flag timing.
+evidence:
+  frozen_history_unmodified: >-
+    git status --porcelain evidence/ returned zero lines before and after the transition, so no
+    evidence file, timestamp, hash or status string was modified. AGENT-001, OPENCLAW-REPACK-001 and
+    RUNTIME-SECURITY-001 all still read status BLOCKED in delivery/WORK_QUEUE.yaml. Each carries the
+    ADR-0004 freeze sentence appended to its blocking_condition and nothing else changed: "FROZEN by
+    ADR-0004 on 2026-08-12: this item is immutable blocked history. It is not completed, rewritten,
+    unblocked or deleted, and no further engineering effort is spent on it. G1 agent evidence is
+    carried by AGENT-002 instead." delivery/LOOP_STATE.yaml retains all seven historical
+    blocked_records and three unblocked_records for these items unchanged. No frozen item was marked
+    COMPLETE, PENDING or READY.
+  dependency_repoint: >-
+    SECURITY-001.depends_on is [AGENT-002, OBSERVABILITY-001, POLICY-001, SUPPLYCHAIN-001,
+    HTTP-SECURITY-001, TELEMETRY-001, STAGING-001, BACKUP-RESTORE-001, DEPLOY-TARGET-001,
+    MONITORING-001] and RUNTIME-PARITY-001.depends_on is [AGENT-002]; neither routes through AGENT-001.
+    AGENT-002 exists as PENDING with depends_on [AGENT-PIPELINE-001, EVAL-CORPUS-001, MODEL-PIN-001,
+    PROVIDER-TRANSPORT-001, RUNTIME-FREEZE-001], blocked_by_decisions [DEC-006], and required_evidence
+    [primary_path_eval_pass, fallback_path_eval_pass, degraded_path_eval_pass,
+    effective_provider_request_verified, exact_runtime_prompt_tool_context_pins,
+    structured_redacted_run_evidence, rollback_assessment]. It inherits no evidence:
+    delivery/LOOP_STATE.yaml contains no evidence_records entry for AGENT-002 and no file
+    evidence/delivery-loop/AGENT-002.yaml exists. RUNTIME-PARITY-001 is rescoped to "Custom Responses
+    runtime absolute P0, latency, cost, and rollback bar" with required_evidence
+    [p0_quality_tool_handoff_latency_and_cost_results, provider_effective_request_and_data_review,
+    degraded_mode_rollback_rehearsal, signed_runtime_selection, rollback_rehearsal]; the former
+    same_envelope_runtime_comparison and deployed_surface_and_supply_chain_comparison entries are
+    absent. scripts/check_context_drift.py passed over 57 work items, proving the graph is acyclic and
+    every declared source and contract is reachable from each item's context domains.
+  capability_status_unchanged: >-
+    git status --porcelain delivery/CAPABILITY_STATUS.yaml returned zero lines; the file was not
+    touched. scripts/report_delivery_status.py printed thirteen capability lines, all reading
+    authorization=NOT_AUTHORIZED, with zero lines reading authorization=AUTHORIZED. INTERNAL_SHADOW
+    reports evidence=0/10 and LIST_PRICE_INFO reports evidence=0/18; kill_switch reads NOT_RUN for
+    every capability. scripts/verify_contracts.py validated 19 JSON and 2 YAML contracts and 16 pinned
+    public-runtime artifacts and continues to report ten release blockers. No decision in
+    context/DECISION_REGISTRY.yaml changed status; DEC-001 through DEC-006 remain OPEN and DEC-007
+    remains RESOLVED with validation_status EVIDENCE_PENDING.
+  rollback_assessment: >-
+    The only durable effect of this item is the delivery-state transition of RUNTIME-FREEZE-001 to
+    COMPLETE plus this evidence record. Reverting it restores the previous generation of the three
+    delivery YAML files; reverting commit 8f070f7 additionally restores the pre-ADR-0004 dependency
+    graph. Because nothing under evidence/ was written or deleted, and because no frozen item's status
+    was altered, neither rollback destroys the record of what was attempted on the OpenClaw track or
+    why it stopped. The rollback target for the custom runtime remains deterministic degraded mode plus
+    human handling, which is already built and tested; this item does not create, remove or authorize a
+    second agent runtime.
+checks:
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+- command: uv run python scripts/report_delivery_status.py
+  status: PASSED

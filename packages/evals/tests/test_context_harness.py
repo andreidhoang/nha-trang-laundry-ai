@@ -41,8 +41,10 @@ def test_context_drift_check_passes() -> None:
     assert "4 gates" in result.stdout
     assert "9 phases" in result.stdout
     # 36 baseline items, plus 19 production-path items from ADR-0004 through ADR-0007, plus
-    # AGENT-PIPELINE-001 and SHADOW-CONSOLE-001 from the 2026-08-12 readiness assessment.
-    assert "57 work items" in result.stdout
+    # AGENT-PIPELINE-001 and SHADOW-CONSOLE-001 from the 2026-08-12 readiness assessment, plus the
+    # seven items the 2026-08-13 gate-coverage audit found unowned: ENV-INTEGRITY-001, the three
+    # eval-suite minima, RETENTION-001, OPS-RUNBOOK-001 and SLO-VERIFY-001.
+    assert "64 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

@@ -35,6 +35,7 @@ domains:
       - docs/runbooks/container-deployment.md
       - docs/runbooks/private-staging.md
       - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+      - specs/ENGINEERING_SPEC_V1.md
     contracts: []
     prohibitions:
       - Do not introduce public channels or external automation in M0-M3.

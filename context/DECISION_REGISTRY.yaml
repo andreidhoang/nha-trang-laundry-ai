@@ -43,6 +43,13 @@ decisions:
     affected_capabilities: [INTERNAL_SHADOW, PUBLIC_FAQ, LIST_PRICE_INFO]
     fail_closed_behavior: NOT_SUPPORTED
     source: specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - id: DEC-008
+    title: Customer data retention, redaction, and deletion schedule
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, PUBLIC_FAQ, LIST_PRICE_INFO, ORDER_STATUS]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: specs/SECURITY_RELIABILITY_SPEC_V1.md
   - id: DEC-007
     title: Provider-neutral public runtime with custom Responses target
     status: RESOLVED

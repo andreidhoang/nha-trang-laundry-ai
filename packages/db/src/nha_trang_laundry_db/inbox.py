@@ -15,6 +15,8 @@ from nha_trang_laundry_domain.consent import OptOutDisposition, SuppressionState
 
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
+from .consent_egress import suppression_lock
+
 RAW_HASH_PATTERN = re.compile(r"^RAW-SHA256-V1:[0-9a-f]{64}$")
 
 
@@ -247,6 +249,10 @@ def _insert_suppression(
 ) -> None:
     if command.contact_binding_id is None:
         raise InboxStateError("suppression contact binding is missing")
+    # Same advisory key the egress guard takes, so a STOP arriving while a send is in flight either
+    # commits before that send reads suppression, or waits until the send transaction ends. A row
+    # lock alone would not close this: on a contact's first STOP there is no row to lock.
+    suppression_lock(cursor, contact_binding_id=command.contact_binding_id, channel=command.channel)
     event_type = (
         "WITHDRAW"
         if command.opt_out_disposition is OptOutDisposition.WITHDRAW

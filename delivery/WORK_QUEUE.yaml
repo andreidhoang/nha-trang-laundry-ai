@@ -1512,7 +1512,7 @@ items:
 - id: CONSENT-STOP-001
   phase: PRODUCTION_HARDENING
   title: Consent capture, STOP suppression, and opt-out versus in-flight send race
-  status: PENDING
+  status: COMPLETE
   priority: 210
   depends_on:
   - CHANNEL-ENVELOPE-001

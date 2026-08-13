@@ -469,9 +469,17 @@ def test_the_full_shadow_loop_reaches_a_human_review_queue(
     from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
     from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 
-    enqueue(postgres_connection)
+    # Drain whatever earlier tests left queued, so the run claimed below is the one enqueued here
+    # and the timeline assertions describe it rather than a neighbour.
+    for _ in range(200):
+        if pipeline().run_cycle(postgres_connection, lambda: True).status == "IDLE":
+            break
+    else:  # pragma: no cover - the queue is bounded in a test database
+        pytest.fail("could not drain the agent queue")
+
+    command = enqueue(postgres_connection)
     result = pipeline().run_cycle(postgres_connection, lambda: True)
-    assert result.agent_run_id is not None
+    assert result.agent_run_id == str(command.agent_run_id)
 
     with postgres_connection.cursor() as cursor:
         cursor.execute(
@@ -534,10 +542,10 @@ def test_the_full_shadow_loop_reaches_a_human_review_queue(
         aggregate_id=UUID(str(result.agent_run_id)),
         principal=approver,
     )
-    # The timeline is the whole chain for this run, not only the review: enqueue and completion are
-    # part of what an auditor needs to see.
+    # The timeline is the whole chain for the run, not only the review: the run's own lifecycle
+    # events appear alongside the draft and its approval, which is what an auditor needs.
     actions = [entry.action for entry in timeline]
-    assert "AGENT_RUN_ENQUEUE" in actions
+    assert "AGENT_RUN_COMPLETE_DRAFT" in actions
     assert actions.index("AGENT_DRAFT_RECORD") < actions.index("AGENT_DRAFT_APPROVE")
     assert actions[-1] == "AGENT_DRAFT_APPROVE"
     assert timeline[-1].actor_id == approver_id

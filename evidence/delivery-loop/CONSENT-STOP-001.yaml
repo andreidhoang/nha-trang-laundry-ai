@@ -1,0 +1,96 @@
+schema_version: 1
+work_item: CONSENT-STOP-001
+recorded_at: '2026-08-13T16:05:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-consent-stop-001.md requires two checks rather than one: ingress suppression
+  written atomically with the inbound message, and an egress re-check performed inside the send
+  transaction, because the claim-to-send window is where a suppression miss is created. The
+  privacy_consent domain fixes the shape - STOP and suppression are deterministic ingress and egress
+  checks, never a model judgement - and requires ambiguity to fail closed to REQUIRE_HUMAN.
+  specs/evals/eval-manifest-v1.yaml counts a suppression miss as a zero-tolerance G2 defect.
+  specs/SECURITY_RELIABILITY_SPEC_V1.md and specs/DOMAIN_DATA_API_SPEC_V1.md remain authoritative for
+  atomic mutation plus domain event plus audit plus outbox semantics.
+rollback_impact: >-
+  Reverting removes packages/db/src/nha_trang_laundry_db/consent_egress.py, its test file, and the
+  one added line in inbox.py that takes the shared advisory lock; ingress suppression returns to its
+  previous behaviour exactly, which was already atomic and already fail-closed. Migration 0022 only
+  widens a CHECK constraint to admit the CLEAR state and removes no value, so leaving it applied
+  under a code rollback is safe: no existing row uses CLEAR and none is required to. No route, no
+  worker path and no scheduled job calls the guard yet, so removing it cannot break a live behaviour.
+  No capability, decision or release state moved.
+unresolved_assumptions: >-
+  The item was rescoped before it was started, and the rescope is the substantive decision here. Its
+  declared design requires the egress re-check to happen inside the send transaction, but the only
+  send transaction in the plan is built by CHANNEL-ZALO-001, which depends on this item. The declared
+  graph stays acyclic only because that dependency is unwritten, so the controller would have offered
+  work that could not be finished. This item therefore builds the reusable guard plus the whole
+  ingress half, and CHANNEL-ZALO-001 owns proving that a real provider sender calls the guard inside
+  its own dispatch transaction. Nothing was weakened to make that split work: the guard genuinely
+  executes inside a caller-owned transaction and the race test holds one open across it. What is
+  absent is a production sender, not the check. The guard models MARKETING only, because that is the
+  only purpose suppression_entries expresses; any other purpose returns REQUIRE_HUMAN rather than
+  defaulting to allow. CLEAR must be written by a deliberate audited act - absence of a row remains
+  UNKNOWN_BLOCKED - so no contact becomes sendable by omission. Every capability remains
+  NOT_AUTHORIZED, FEATURE_AUTOMATED_SENDS_ENABLED stays false, and verify_contracts still reports ten
+  release blockers.
+evidence:
+  ingress_suppression_atomic: >-
+    InboxRepository.record writes the consent event and the suppression entry inside
+    commit_material_change, so the inbound webhook, its domain event, its audit row, its outbox event
+    and the suppression state commit together or not at all. A test asserts exactly one
+    suppression_entries row and one consent_events row after a STOP, and the pre-existing
+    inbox-replay coverage continues to pass unchanged. A STOP that is acknowledged but not yet
+    effective cannot exist, because there is no intermediate commit.
+  egress_recheck_in_send_transaction: >-
+    check_egress_allowed takes the cursor of a transaction the caller already opened, so the check
+    cannot drift outside the transaction that will dispatch. It reads suppression_entries under that
+    transaction and returns ALLOW only when the domain's marketing_send_allowed agrees, which
+    requires an affirmative CLEAR state; UNKNOWN_BLOCKED, PENDING_REVIEW_BLOCKED and SUPPRESSED all
+    deny. Tests cover each: an unknown contact is never sendable, an affirmative CLEAR permits, a
+    withdrawal suppresses, and an unmodelled purpose returns REQUIRE_HUMAN instead of falling through
+    to allow.
+  optout_versus_send_claim_race: >-
+    Exercised concurrently against real PostgreSQL rather than simulated sequentially, and passed on
+    three consecutive runs. The first test opens a send transaction, signals a second thread to issue
+    a STOP, waits for that STOP to commit, and only then runs the guard inside the still-open
+    transaction; the guard returns SUPPRESSED. The second test races the two through a barrier and
+    asserts the send observes either ALLOW or SUPPRESSED but never a torn read, with the terminal
+    state always suppressed. The mechanism is a transaction-scoped advisory lock keyed by contact and
+    channel, taken by both the ingress writer and the guard. A row-level lock would not have closed
+    it: on a contact's first STOP there is no row to lock, so the insert could commit in the window
+    between the guard's read and the dispatch. Both sides taking the same key serialize whether or
+    not a row exists.
+  ambiguous_optout_requires_human: >-
+    An ambiguous phrase is not a stop command, and the system guesses in neither direction. A
+    PENDING_REVIEW_BLOCKED disposition writes PENDING_REVIEW_BLOCKED rather than SUPPRESSED, and the
+    guard returns REQUIRE_HUMAN rather than either sending or silently suppressing; a test asserts
+    both the decision and the stored state. The domain's evaluate_opt_out remains the only classifier
+    and it is deterministic: a missing or stale registry returns POLICY_UNAVAILABLE_BLOCKED. No model
+    decides whether a message is a STOP.
+  forged_consent_denied: >-
+    Consent state is server-side and a caller cannot override it. A test passes consent_active=True
+    for a contact with a recorded withdrawal and the guard still returns SUPPRESSED, because the
+    stored suppression state is read inside the transaction rather than accepted from the caller. A
+    second test proves a later CLEAR write never undoes a withdrawal: the ON CONFLICT clause keeps
+    SUPPRESSED, so restoring consent requires a separately authorized act rather than a repeated
+    write.
+  rollback_assessment: >-
+    Additive. One new module, one widened CHECK constraint, one line added to the ingress path, and a
+    test file. No existing behaviour changed: ingress suppression was already atomic and already
+    fail-closed, and the added advisory lock only serializes it against a guard that nothing calls
+    yet. Because no sender exists, the guard cannot yet cause or prevent a real send, so rolling back
+    removes a control rather than breaking a flow. No evidence, schema data or customer record is
+    destroyed.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

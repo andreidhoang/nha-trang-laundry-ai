@@ -27,6 +27,7 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0017", "worker_claim_lease_invariants"),
         ("0018", "human_approval_decision_evidence"),
         ("0019", "outbox_trace_context"),
+        ("0020", "channel_envelope"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

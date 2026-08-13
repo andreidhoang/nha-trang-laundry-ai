@@ -1,0 +1,118 @@
+schema_version: 1
+work_item: CHANNEL-ENVELOPE-001
+recorded_at: '2026-08-13T11:20:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-channel-envelope-001.md and specs/CHANNEL_ADAPTER_SPEC_V1.md sections 2 to 4
+  require a provider-neutral ingress and egress contract that every channel adapter maps into, wired
+  to the existing inbox, outbox and audit semantics.
+  specs/contracts/channel-inbound-envelope-v1.schema.json and
+  specs/contracts/channel-outbound-receipt-v1.schema.json are normative for the two shapes, and
+  specs/contracts/canonical-enums-v1.json is normative for MessageKind and MessageDeliveryStatus.
+  specs/SECURITY_RELIABILITY_SPEC_V1.md and specs/DOMAIN_DATA_API_SPEC_V1.md remain authoritative for
+  atomic mutation plus domain event plus audit plus outbox semantics. The channel_operations domain
+  prohibitions apply: adapters persist and deduplicate before any model call, public agent runtimes
+  never receive channel credentials or direct-send capability, and an unknown send outcome is never
+  retried automatically.
+rollback_impact: >-
+  Reverting removes packages/contracts/src/nha_trang_laundry_contracts/channel_envelope.py, its
+  package exports, packages/db/src/nha_trang_laundry_db/channel.py and
+  packages/db/tests/test_channel_envelope.py, and restores the pinned migration list in
+  test_migrations.py. Migration 0020_channel_envelope.sql is forward-only and creates two new tables,
+  contact_channel_bindings and channel_send_receipts; it alters no existing table, so a rollback that
+  leaves the migration applied is safe and the tables are simply unused. No existing inbox, outbox,
+  approval, order or staff-console path changes behaviour, and the inbox, outbox and staff console
+  keep working with the code removed. No route was added, so there is no ingress to disable. No
+  capability, decision, feature flag or release state moved; FEATURE_PUBLIC_CHANNELS_ENABLED remains
+  false.
+unresolved_assumptions: >-
+  This item delivers the provider-neutral half of the pipeline: the canonical envelope and receipt
+  types, server-owned contact binding, and per-attempt receipt persistence with reconciliation
+  states. The provider-specific half - webhook authentication, rate limiting and normalization of a
+  particular provider's payload into the envelope - belongs to CHANNEL-TELEGRAM-001 and
+  CHANNEL-ZALO-001, which is why the envelope's authentication block is a typed input this layer
+  refuses to accept as unverified rather than something it performs. No HTTP ingress route exists
+  and none was added; the customer-facing path is still closed. The egress suppression re-check is
+  represented in the receipt as PASSED_IN_SEND_TRANSACTION and is enforced by the sender worker in
+  CONSENT-STOP-001, which owns the send transaction; recording a receipt does not perform the check.
+  Attachment handling stores references only and no attachment storage backend is selected. The
+  guarded suite ran against a local synthetic PostgreSQL 17.4 cluster on port 5434 created for this
+  session; no real customer data exists anywhere in it. Every capability remains NOT_AUTHORIZED and
+  verify_contracts continues to report ten release blockers.
+evidence:
+  envelope_schema_conformance: >-
+    ChannelInboundEnvelope and ChannelOutboundReceipt are pydantic models with extra="forbid" and
+    frozen=True, and each exposes canonical_document(), which serializes to the exact shape the
+    normative JSON Schema accepts. Two tests validate that output with jsonschema's
+    Draft202012Validator against the committed schema files rather than against a copy, so the model
+    and the contract cannot drift apart silently. Building canonical_document() surfaced three real
+    mismatches that a hand-written model would have shipped: content.text is a string rather than a
+    nullable string, the attachment field is declared_media_type rather than media_type, and the text
+    limit is 4000 rather than 8000. Negative tests prove the boundary rejects an unverified
+    authentication block, an unknown field such as a raw provider payload, a contact binding claiming
+    any resolver other than SERVER_BINDING_TABLE, and TEXT content with no normalized text.
+    UNSUPPORTED content is normalized and still schema-valid rather than dropped.
+  dedupe_uniqueness: >-
+    Proven by a concurrent replay test, not asserted. Two threads meet at a barrier and then race the
+    same (provider, channel_account_id, provider_event_id) through InboxRepository.record on separate
+    connections. Exactly one observes InboxOutcome.CREATED; any loser fails with
+    psycopg.errors.UniqueViolation, never with an application-level check, and the table holds
+    exactly one row afterwards. The test passed on three consecutive runs. The same discipline covers
+    egress: channel_send_receipts carries UNIQUE (outbox_id, attempt_number), domain_events carries
+    UNIQUE (aggregate_type, aggregate_id, aggregate_version, event_type) with the outbox row as the
+    aggregate and the attempt number as the version, and outbox_events.idempotency_key is unique on
+    "channel-receipt:{outbox_id}:{attempt_number}". A second recording of the same attempt raises
+    UniqueViolation, and a two-thread race over one attempt produces exactly one receipt with exactly
+    one loser.
+  server_side_contact_binding: >-
+    ContactChannelBindingRepository.resolve_or_create is the only path to a binding, and
+    ContactBindingRef.resolved_by is a Literal["SERVER_BINDING_TABLE"], so neither a provider payload
+    nor a model output can supply or override one. An unknown provider identity creates an
+    UNVERIFIED binding through commit_material_change, so the creation carries its domain event,
+    audit row and outbox event atomically; a test asserts exactly one
+    CONTACT_CHANNEL_BINDING_CREATE audit row across two resolutions of the same identity and that the
+    second returns the same contact id with created=False. The insert uses ON CONFLICT DO NOTHING and
+    then re-reads, so a concurrent creator's row is authoritative rather than overwritten. The
+    database refuses to record VERIFIED without its evidence: a CHECK constraint requires
+    verified_by_staff_id and verified_at together with that state, proven by a CheckViolation test.
+  receipt_per_attempt: >-
+    ChannelSendReceiptRepository.record_attempt writes exactly one channel_send_receipts row per
+    attempt, and a parametrized test covers all four declared outcomes - ACCEPTED, REJECTED, TIMEOUT
+    and TRANSPORT_ERROR - asserting one row each, so failures and timeouts produce receipts rather
+    than silence. The write goes through commit_material_change, so the receipt, its domain event,
+    its audit row and its outbox event commit together or not at all; a test asserts the tuple
+    (1, 1, 1, 1) across those four tables for one attempt. Receipts cannot be hard deleted: a trigger
+    raises, proven by test. Authorization must carry its own evidence at both layers - the model
+    rejects HUMAN_APPROVAL without approval_ref and CAPABILITY_AUTHORIZED without capability, and a
+    database CHECK enforces the same pairing.
+  unknown_outcome_never_auto_retried: >-
+    Enforced in three independent places so that no single omission can produce a duplicate send.
+    The model rejects any receipt whose attempt outcome is TIMEOUT or TRANSPORT_ERROR while its
+    reconciliation_state is NOT_REQUIRED, tested for both ambiguous outcomes. The repository refuses
+    the same shape and additionally refuses an ACCEPTED attempt marked UNKNOWN_REQUIRES_HUMAN. The
+    database enforces both that an ambiguous outcome cannot be settled and that leaving UNKNOWN
+    requires a resolution record naming PROVIDER_CONFIRMATION or HUMAN_DECISION with a timestamp, and
+    that a HUMAN_DECISION names its actor. No retry path exists anywhere in this module: the only
+    transitions out of UNKNOWN are a provider confirmation or a human decision, and
+    unresolved_unknown_outcomes() lists what is waiting so the staff exception queue can show it. The
+    recorded outbox event carries requires_human, verified by test to be true for an unknown outcome.
+  rollback_assessment: >-
+    The change is additive. Migration 0020 creates two new tables and alters none, so existing data
+    and every existing query are unaffected. The new module is imported by nothing in the running
+    system yet - no route, no worker path and no scheduled job calls it - so removing it cannot break
+    a live behaviour; it is a contract and its persistence, waiting for the adapters that will use
+    it. FEATURE_PUBLIC_CHANNELS_ENABLED stays false and no capability moved, so there is no ingress
+    to close and no send to stop. Rolling back destroys no evidence and no customer data, because
+    none exists.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

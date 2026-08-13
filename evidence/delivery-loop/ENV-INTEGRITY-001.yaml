@@ -1,0 +1,102 @@
+schema_version: 1
+work_item: ENV-INTEGRITY-001
+recorded_at: '2026-08-13T10:05:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-env-integrity-001.md requires that workspace imports stop depending on `.pth`
+  processing, so that a gate result means what it says. AGENTS.md holds that a green test run is not
+  completion evidence; the live defect here was the inverse, a red run that was not a defect, which
+  is equally corrosive to an evidence discipline. context/CONTINUATION_PROTOCOL.md requires declared
+  checks to genuinely pass with no silently accepted skips, and docs/runbooks/local-development.md
+  plus specs/IMPLEMENTATION_ROADMAP_V1.md define the local verification path this item repairs.
+rollback_impact: >-
+  Reverting the commit removes scripts/workspace_env.py, the bootstrap import from seven scripts, the
+  conftest.py hook, packages/evals/tests/test_workspace_env.py, and the corrected guidance in
+  CLAUDE.md and AGENTS.md. The repository returns to depending on `.pth` processing and to the
+  previous phantom-failure behaviour on this host. No contract, schema, migration, delivery state,
+  capability, evidence record or product code path is touched, so there is nothing else to unwind.
+  The seven hash-pinned scripts were deliberately left unmodified, so no recorded evidence is
+  invalidated by this change or by its rollback.
+unresolved_assumptions: >-
+  The root cause is a host behaviour, not a repository defect: the iCloud file provider applies
+  UF_HIDDEN to files inside .venv/ under ~/Desktop, and CPython 3.12.11 skips any `.pth` carrying
+  that flag. Moving the repository off an iCloud-managed directory, or a future uv or CPython change,
+  would make the bootstrap redundant but not harmful. Upgrading uv past 0.7.17 was considered and
+  rejected as out of scope: uv was measured not to be the cause, its cache copies are unflagged, and
+  a toolchain upgrade carries lock-resolution consequences that belong to the owner. The guarded
+  suite was executed against a local PostgreSQL 17.4 cluster created for this run on port 5434,
+  because the repository's compose service could not bind 5432 on this host; the database is
+  synthetic, contains no customer data, and is not production infrastructure. Every capability
+  remains NOT_AUTHORIZED and verify_contracts continues to report ten release blockers.
+evidence:
+  root_cause_documented: >-
+    Three composing facts, each measured rather than inferred. First, every file inside
+    .venv/lib/python3.12/site-packages carries the BSD UF_HIDDEN flag within about ten seconds of
+    creation; a plain zz_probe.txt written into that directory was flagged identically, proving the
+    behaviour is directory-level and neither `.pth`-specific nor caused by uv, whose own cache copies
+    under ~/.cache/uv/archive-v0 remain unflagged. The repository sits under ~/Desktop and the iCloud
+    file provider is the managing process. Second, CPython 3.12.11's site.addpackage lstats each
+    `.pth` and returns early when st_flags & stat.UF_HIDDEN is set, emitting only the `-v` trace line
+    "Skipping hidden .pth file"; `python -v -c pass` printed that line for all twelve `.pth` files.
+    Third, every workspace package is an editable whose only route onto sys.path is a
+    _editable_impl_*.pth, so the nine packages vanish while their dist-info directories remain. The
+    analysis is recorded in scripts/workspace_env.py, context/tasks/TASK-env-integrity-001.md and
+    docs/PATH_TO_PRODUCTION_REVIEW.md section 2.2.
+  workspace_imports_independent_of_file_attributes: >-
+    scripts/workspace_env.py resolves the nine declared uv workspace members' src directories from
+    pyproject.toml, inserts them into sys.path and exports PYTHONPATH so child processes inherit
+    them. Seven gate entry points import it before any workspace import (apply_migrations,
+    bootstrap_owner, check_context_drift, generate_agent_tool_plugin, validate_restore_drill,
+    verify_contracts, verify_supply_chain_evidence), and the root conftest.py loads it by explicit
+    file path before collection. With every `.pth` deliberately flagged hidden and PYTHONPATH removed
+    from the environment, verify_contracts.py, check_context_drift.py and report_delivery_status.py
+    all ran successfully. Ordering is enforced and was verified programmatically: in every script the
+    bootstrap import precedes the first nha_trang_laundry import. capture_local_agent_evidence.py,
+    capture_openclaw_offline_evidence.py, verify_agent_runtime.py, verify_release_candidate.py,
+    build_openclaw_repackage.py, verify_openclaw_repackage.py and verify_openclaw_cross_platform.py
+    are deliberately excluded because recorded evidence hash-pins them.
+  hidden_pth_detection_check: >-
+    workspace_env.py --check reports the condition as itself instead of allowing it to surface as an
+    unrelated ModuleNotFoundError, and exits non-zero when any `.pth` is being skipped; it exited 1
+    with all twelve files flagged. HIDDEN_FLAG is read with getattr(stat, "UF_HIDDEN", 0) and
+    clear_hidden_flags resolves os.chflags with getattr, so both helpers are inert on platforms
+    without the BSD flag and CI behaviour is unchanged. test_workspace_env.py covers both branches:
+    the Darwin test creates a flagged file in a temporary site-packages, asserts it is reported and
+    cleared, and the non-Darwin test asserts both helpers return empty. AGENTS.md now lists the check
+    in its command sequence.
+  phantom_failure_reproduced_then_absent: >-
+    Reproduced and then eliminated on the same commit. With the `.pth` files flagged hidden and no
+    PYTHONPATH, a full run reported 37 failed and 482 passed; every failure was in
+    packages/evals/tests and every one was a test that executes a scripts/ entry point through
+    subprocess, because the parent interpreter had started while the flag was momentarily clear and
+    the children had not. With the bootstrap in place and the flag still set, the same suite reported
+    0 failed. The guarded acceptance run against PostgreSQL reported 583 passed and 1 skipped, and
+    the single skip is test_workspace_env.py's non-Darwin branch, which is correctly inapplicable on
+    this host. No PostgreSQL test skipped: the --require-postgres-integration guard converts the
+    repository's missing-database skip into a failure, and no such failure occurred.
+  gate_invocation_documented: >-
+    CLAUDE.md's "known environment defect" paragraph is replaced with the root cause and the
+    correction that deleting .venv between suite runs does not help, because the flag returns in
+    under ten seconds; the previous guidance was wrong in both its diagnosis and its remedy. The
+    documented commands are unchanged and need no wrapper, because the bootstrap is inside the entry
+    points. AGENTS.md adds the --check command and points at this item's task packet. All six
+    declared acceptance commands were executed verbatim through `uv run` for this record.
+  rollback_assessment: >-
+    The change is additive and confined to import-path setup, one test file and two guidance
+    documents. It creates no authority, touches no contract, schema, migration or delivery state, and
+    alters no product code path. The seven hash-pinned scripts were reverted rather than adapted when
+    modifying them invalidated the evidence they had produced, so recorded evidence is unaffected by
+    this item and by its rollback. Reverting restores the previous behaviour exactly, including the
+    phantom failures, and destroys nothing.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

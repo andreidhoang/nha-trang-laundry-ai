@@ -1257,7 +1257,7 @@ items:
 - id: PROVIDER-ACCESS-001
   phase: AGENT_SHADOW
   title: Dedicated provider organization, credential, and data-control posture
-  status: PENDING
+  status: BLOCKED
   priority: 202
   depends_on: []
   context_domains:
@@ -1276,10 +1276,16 @@ items:
   - dec_006_decision_record
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-provider-access-001.md
+  blocking_condition: Requires a dedicated non-personal provider service credential
+    and the Security/Privacy owner's DEC-006 decision covering training, retention,
+    region, deletion, subprocessors and incident terms. A coding agent may not create
+    a provider organization, accept provider terms, hold or verify a credential, or
+    resolve DEC-006. No provider call was made and no credential exists in this repository.
+    Unblocks PROVIDER-TRANSPORT-001, then MODEL-PIN-001 and AGENT-002.
 - id: SHOP-INSTRUMENT-001
   phase: REAL_SHADOW_READINESS
   title: 'Physical shop instrumentation: cycle, capacity, and delivery cost baselines'
-  status: PENDING
+  status: BLOCKED
   priority: 203
   depends_on: []
   context_domains:
@@ -1301,10 +1307,17 @@ items:
   - item_count_handoff_checklist
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-shop-instrument-001.md
+  blocking_condition: 'Requires four to six weeks of measurement in the physical shop:
+    ten timed wash and dry loads, twenty delivery logs with distance and true cost,
+    a measured cost per kilogram, owner-confirmed safe capacity per machine, and an
+    item-count handoff checklist in use by staff. These are observations of real operations
+    that cannot be simulated, estimated or back-filled without violating the business_truth
+    prohibition on committing to CAN DO and CAN CHOT fields. Without the baseline,
+    SHADOW-001 has no valid denominator.'
 - id: DECISION-BUSINESS-001
   phase: REAL_SHADOW_READINESS
   title: Owner decision session closing DEC-001 through DEC-004
-  status: PENDING
+  status: BLOCKED
   priority: 204
   depends_on: []
   context_domains:
@@ -1327,10 +1340,18 @@ items:
   - versioned_configuration_publication
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-decision-business-001.md
+  blocking_condition: Requires the business owner to close DEC-001 weight precision
+    and rounding, DEC-002 the definitive promotion eligibility event, DEC-003 delivery
+    pricing beyond six kilometres and one-leg delivery, and DEC-004 rewash, loss,
+    damage, compensation and credit, and to publish each as versioned configuration.
+    An agent may not resolve a business policy decision or infer one from a draft
+    document; CUSTOMER_SERVICE_POLICY_DRAFT.md and DELIVERY_POLICY_DRAFT.md remain
+    drafts. All four currently fail closed correctly. DEC-003 should follow the twenty
+    delivery logs from SHOP-INSTRUMENT-001.
 - id: CHANNEL-ZALO-APPLY-001
   phase: PUBLIC_ASSISTED
   title: Official Zalo OA registration and business verification
-  status: PENDING
+  status: BLOCKED
   priority: 205
   depends_on: []
   context_domains:
@@ -1349,10 +1370,16 @@ items:
   - dec_005_decision_record
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-channel-zalo-apply-001.md
+  blocking_condition: Requires official Zalo Official Account business verification
+    in the business's own name, a provisioned API tier with its messaging-window rules
+    recorded, separation from any personal Zalo account, and the owner's DEC-005 decision
+    record. Verification is an external process taking two to eight weeks that no
+    engineering work shortens. An agent may not register a business identity, accept
+    provider terms or hold the resulting credential.
 - id: CHANNEL-ENVELOPE-001
   phase: PRODUCTION_HARDENING
   title: Canonical inbound envelope and outbound receipt wired to inbox/outbox
-  status: PENDING
+  status: COMPLETE
   priority: 206
   depends_on: []
   context_domains:
@@ -1791,7 +1818,7 @@ items:
 - id: ENV-INTEGRITY-001
   phase: PRODUCTION_HARDENING
   title: Workspace import integrity independent of host file attributes
-  status: IN_PROGRESS
+  status: COMPLETE
   priority: 199
   depends_on: []
   context_domains:

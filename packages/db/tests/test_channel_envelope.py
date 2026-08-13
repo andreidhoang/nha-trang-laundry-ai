@@ -404,6 +404,9 @@ def test_two_workers_racing_one_attempt_record_it_exactly_once(
         worker.start()
     for worker in workers:
         worker.join(timeout=30)
+        # A worker still running here holds its own connection, and its locks block the next
+        # test's reset with no clue where they came from. TEST-ISOLATION-001.
+        assert not worker.is_alive(), "a concurrency worker outlived its join"
 
     assert len(failures) == 1
     with psycopg.connect(database_url) as connection, connection.cursor() as cursor:
@@ -517,6 +520,9 @@ def test_two_workers_racing_a_replayed_update_lose_at_the_database_constraint(
         worker.start()
     for worker in workers:
         worker.join(timeout=30)
+        # A worker still running here holds its own connection, and its locks block the next
+        # test's reset with no clue where they came from. TEST-ISOLATION-001.
+        assert not worker.is_alive(), "a concurrency worker outlived its join"
 
     assert len(outcomes) + len(failures) == 2
     # Exactly one writer may create the row. The loser either observes DUPLICATE because the row

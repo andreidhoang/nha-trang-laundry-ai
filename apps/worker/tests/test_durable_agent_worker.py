@@ -30,7 +30,18 @@ from nha_trang_laundry_worker.agent_runner import (
 )
 from nha_trang_laundry_worker.durable_agent_worker import DurableAgentRunWorker
 
-NOW = datetime.now(UTC)
+
+@pytest.fixture
+def now() -> datetime:
+    """One live timestamp per test, never a constant captured at import.
+
+    Leases are built from the value passed in here, but they are checked against the database clock:
+    `complete_internal` requires `lease_expires_at >= CURRENT_TIMESTAMP`. A module-level
+    `NOW = datetime.now(UTC)` therefore made these tests pass only while they happened to run
+    within the lease window of collection - about 30 seconds. Reverse module order turns that
+    latent failure into an immediate one. `TEST-ISOLATION-001`.
+    """
+    return datetime.now(UTC)
 
 
 @pytest.fixture
@@ -104,12 +115,13 @@ def enqueue_command(*, created_at: datetime | None = None) -> AgentRunEnqueueCom
         prompt_bundle_hash=f"sha256:{'b' * 64}",
         tool_contract_hash=f"sha256:{'c' * 64}",
         correlation_id=uuid4(),
-        created_at=created_at or NOW,
+        created_at=created_at or datetime.now(UTC),
     )
 
 
 def test_durable_worker_claims_runs_persists_safe_tool_ledger_and_requires_human(
     postgres_connection: psycopg.Connection[Any],
+    now: datetime,
 ) -> None:
     repository = AgentRunRepository()
     command = enqueue_command(created_at=_before_pending_agent_run(postgres_connection))
@@ -131,7 +143,7 @@ def test_durable_worker_claims_runs_persists_safe_tool_ledger_and_requires_human
         ),
         transport=transport,
         correlation_id=command.correlation_id,
-        now=NOW,
+        now=now,
     )
 
     assert result.agent_run_id == str(command.agent_run_id)
@@ -171,6 +183,7 @@ def test_durable_worker_claims_runs_persists_safe_tool_ledger_and_requires_human
 
 def test_durable_worker_records_fail_closed_provider_rejection(
     postgres_connection: psycopg.Connection[Any],
+    now: datetime,
 ) -> None:
     repository = AgentRunRepository()
     command = enqueue_command(created_at=_before_pending_agent_run(postgres_connection))
@@ -182,7 +195,7 @@ def test_durable_worker_records_fail_closed_provider_rejection(
         runtime=DisabledOpenClawProviderRuntime(),
         transport=CatalogTransport(),
         correlation_id=command.correlation_id,
-        now=NOW,
+        now=now,
     )
 
     assert result.status == "FAILED"
@@ -197,6 +210,7 @@ def test_durable_worker_records_fail_closed_provider_rejection(
 
 def test_durable_worker_preserves_timeout_run_for_human_recovery(
     postgres_connection: psycopg.Connection[Any],
+    now: datetime,
 ) -> None:
     class TimedOutRuntime:
         provider_backed = False
@@ -215,7 +229,7 @@ def test_durable_worker_preserves_timeout_run_for_human_recovery(
         runtime=TimedOutRuntime(),
         transport=CatalogTransport(),
         correlation_id=command.correlation_id,
-        now=NOW,
+        now=now,
     )
 
     assert result == type(result)(str(command.agent_run_id), "FAILED")
@@ -230,7 +244,7 @@ def test_durable_worker_preserves_timeout_run_for_human_recovery(
         row = cursor.fetchone()
     assert row is not None
     assert row[0:3] == ("FAILED", "MODEL_TIMEOUT", False)
-    assert row[3] == NOW
+    assert row[3] == now
 
 
 def _before_pending_agent_run(connection: psycopg.Connection[Any]) -> datetime:

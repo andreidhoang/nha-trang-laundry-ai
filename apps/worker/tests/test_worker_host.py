@@ -201,16 +201,14 @@ def test_shutdown_deadline_revokes_inflight_handler_claim(
 
     repository = OutboxRepository()
     recovery_time = datetime.now(UTC) + timedelta(minutes=1)
-    recovered: UUID | None = None
-    for _ in range(100):
-        recovered = repository.recover_expired_internal(
+    assert (
+        repository.recover_expired_internal(
             postgres_connection,
             worker_role=ActorRole.OUTBOX_WORKER,
             now=recovery_time,
         )
-        if recovered in (None, event_id):
-            break
-    assert recovered == event_id
+        == event_id
+    )
     with postgres_connection.cursor() as cursor:
         cursor.execute("SELECT status FROM outbox_events WHERE id = %s", (event_id,))
         assert cursor.fetchone() == ("DEAD",)

@@ -416,6 +416,9 @@ def test_two_pipelines_racing_the_queue_never_claim_the_same_job(
         worker.start()
     for worker in workers:
         worker.join(timeout=60)
+        # A worker still running here holds its own connection, and its locks block the next
+        # test's reset with no clue where they came from. TEST-ISOLATION-001.
+        assert not worker.is_alive(), "a concurrency worker outlived its join"
 
     assert len(claimed) == 2
     identified = [run_id for run_id in claimed if run_id is not None]
@@ -469,13 +472,10 @@ def test_the_full_shadow_loop_reaches_a_human_review_queue(
     from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
     from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 
-    # Drain whatever earlier tests left queued, so the run claimed below is the one enqueued here
-    # and the timeline assertions describe it rather than a neighbour.
-    for _ in range(200):
-        if pipeline().run_cycle(postgres_connection, lambda: True).status == "IDLE":
-            break
-    else:  # pragma: no cover - the queue is bounded in a test database
-        pytest.fail("could not drain the agent queue")
+    # The queue starts empty, so the run claimed below is unambiguously the one enqueued here and
+    # the timeline assertions describe it rather than a neighbour. Asserting that rather than
+    # draining for it is the point of `TEST-ISOLATION-001`.
+    assert pipeline().run_cycle(postgres_connection, lambda: True).status == "IDLE"
 
     command = enqueue(postgres_connection)
     result = pipeline().run_cycle(postgres_connection, lambda: True)

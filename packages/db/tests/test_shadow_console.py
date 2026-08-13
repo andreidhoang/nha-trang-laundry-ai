@@ -473,27 +473,20 @@ def test_an_already_resolved_send_cannot_be_resolved_again(
 def test_the_exception_queue_lists_only_unresolved_unknown_sends(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    """The queue is oldest-first, so drain it before asserting on a freshly created receipt.
-
-    Draining is the real operation rather than a fixture shortcut: it is exactly what a staff member
-    does at the start of a shift, and it keeps the assertion independent of what earlier tests left
-    behind in the shared database.
-    """
+    """An unresolved receipt appears; a resolved one does not."""
     principal = _staff(postgres_connection, roles=frozenset({StaffRole.OPS_APPROVER}))
     repository = ShadowConsoleRepository()
-    while True:
-        outstanding = repository.list_unknown_sends(postgres_connection, principal=principal)
-        if not outstanding:
-            break
-        for item in outstanding:
-            repository.resolve_unknown_send(
-                postgres_connection,
-                receipt_id=item.receipt_id,
-                resolution=ReconciliationState.CONFIRMED_NOT_SENT,
-                principal=principal,
-                correlation_id=uuid4(),
-                note="Dọn hàng chờ trước ca.",
-            )
+    assert repository.list_unknown_sends(postgres_connection, principal=principal) == ()
+
+    resolved = _unknown_receipt(postgres_connection)
+    repository.resolve_unknown_send(
+        postgres_connection,
+        receipt_id=resolved.receipt_id,
+        resolution=ReconciliationState.CONFIRMED_NOT_SENT,
+        principal=principal,
+        correlation_id=uuid4(),
+        note="Dọn hàng chờ trước ca.",
+    )
 
     receipt = _unknown_receipt(postgres_connection)
 

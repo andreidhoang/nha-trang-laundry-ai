@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Generator
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Any, cast
 from uuid import uuid4
 
@@ -417,13 +418,40 @@ def test_the_supported_purge_set_is_empty_until_a_store_is_implemented() -> None
 def test_the_append_only_trigger_really_does_refuse_a_purge(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    """Proves the refusal above describes reality rather than a cautious guess."""
+    """Proves the refusal above describes reality rather than a cautious guess.
+
+    The row inserted here is the whole test. `reject_ledger_mutation` is a `BEFORE DELETE ... FOR
+    EACH ROW` trigger, so a `DELETE` matching nothing fires nothing and succeeds. Before
+    `TEST-ISOLATION-001` this test passed only because earlier tests had left rows in
+    `webhook_events`; against a clean database it asserted that deleting no rows raises no error.
+    """
+    with postgres_connection.transaction(), postgres_connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO webhook_events (
+                id, provider, channel_account_id, provider_event_id, payload_hash,
+                encrypted_payload, event_type, channel, opt_out_disposition,
+                processing_status, received_at
+            )
+            VALUES (%s, 'TEST_PROVIDER', %s, %s, %s, %s, 'MESSAGE', 'TEST_CHANNEL',
+                    'NONE', 'DISPATCH_PENDING', %s)
+            """,
+            (
+                uuid4(),
+                f"account-{uuid4().hex}",
+                f"event-{uuid4().hex}",
+                f"RAW-SHA256-V1:{sha256(b'ciphertext').hexdigest()}",
+                b"ciphertext",
+                NOW,
+            ),
+        )
+
     with (
         pytest.raises(psycopg.errors.RaiseException),
         postgres_connection.transaction(),
         postgres_connection.cursor() as cursor,
     ):
-        cursor.execute("DELETE FROM webhook_events WHERE received_at < now()")
+        cursor.execute("DELETE FROM webhook_events WHERE received_at <= now()")
 
 
 # --- every run leaves a record ------------------------------------------------------------------

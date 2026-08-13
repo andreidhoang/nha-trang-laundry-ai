@@ -348,6 +348,9 @@ def test_two_agent_workers_cannot_claim_the_same_run(
         worker.start()
     for worker in workers:
         worker.join(timeout=3)
+        # A worker still running here holds its own connection, and its locks block the next
+        # test's reset with no clue where they came from. TEST-ISOLATION-001.
+        assert not worker.is_alive(), "a concurrency worker outlived its join"
 
     assert errors == []
     matching_claims = [

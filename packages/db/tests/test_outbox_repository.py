@@ -17,7 +17,18 @@ from nha_trang_laundry_db.outbox import (
 )
 from nha_trang_laundry_domain.catalog import ActorRole
 
-NOW = datetime.now(UTC)
+
+@pytest.fixture
+def now() -> datetime:
+    """One live timestamp per test, never a constant captured at import.
+
+    Leases are built from the value passed in here, but they are checked against the database clock:
+    `complete_internal` requires `lease_expires_at >= CURRENT_TIMESTAMP`. A module-level
+    `NOW = datetime.now(UTC)` therefore made these tests pass only while they happened to run
+    within the lease window of collection - about 30 seconds. Reverse module order turns that
+    latent failure into an immediate one. `TEST-ISOLATION-001`.
+    """
+    return datetime.now(UTC)
 
 
 @pytest.fixture
@@ -32,6 +43,7 @@ def postgres_connection() -> Generator[psycopg.Connection[Any], None, None]:
 
 def test_only_outbox_worker_claims_allowlisted_internal_events_not_provider_send(
     postgres_connection: psycopg.Connection[Any],
+    now: datetime,
 ) -> None:
     repository = OutboxRepository()
     message_id = _insert_outbox(
@@ -48,10 +60,10 @@ def test_only_outbox_worker_claims_allowlisted_internal_events_not_provider_send
 
     with pytest.raises(OutboxAuthorizationError, match="OUTBOX_WORKER"):
         repository.claim_next_internal(
-            postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=NOW
+            postgres_connection, worker_role=ActorRole.AGENT_RUNNER, now=now
         )
     claimed = repository.claim_next_internal(
-        postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=NOW
+        postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=now
     )
     assert claimed is not None and claimed.event_id == internal_id
     repository.complete_internal(
@@ -59,7 +71,7 @@ def test_only_outbox_worker_claims_allowlisted_internal_events_not_provider_send
         event_id=internal_id,
         claim_token=claimed.claim_token,
         worker_role=ActorRole.OUTBOX_WORKER,
-        completed_at=NOW,
+        completed_at=now,
     )
     with postgres_connection.cursor() as cursor:
         cursor.execute("SELECT status FROM outbox_events WHERE id = %s", (internal_id,))
@@ -72,6 +84,7 @@ def test_only_outbox_worker_claims_allowlisted_internal_events_not_provider_send
 
 def test_internal_outbox_retry_schedule_and_dead_letter_are_durable(
     postgres_connection: psycopg.Connection[Any],
+    now: datetime,
 ) -> None:
     repository = OutboxRepository()
     retry_id = _insert_outbox(
@@ -80,7 +93,7 @@ def test_internal_outbox_retry_schedule_and_dead_letter_are_durable(
         available_at=_before_pending_outbox(postgres_connection),
     )
     claimed = repository.claim_next_internal(
-        postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=NOW
+        postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=now
     )
     assert claimed is not None and claimed.event_id == retry_id
     assert (
@@ -91,7 +104,7 @@ def test_internal_outbox_retry_schedule_and_dead_letter_are_durable(
             worker_role=ActorRole.OUTBOX_WORKER,
             error_class="DEPENDENCY_TIMEOUT",
             retryable=True,
-            now=NOW,
+            now=now,
         )
         == "PENDING"
     )
@@ -100,7 +113,7 @@ def test_internal_outbox_retry_schedule_and_dead_letter_are_durable(
             "SELECT status, available_at, attempt_count FROM outbox_events WHERE id = %s",
             (retry_id,),
         )
-        assert cursor.fetchone() == ("PENDING", NOW + timedelta(seconds=30), 1)
+        assert cursor.fetchone() == ("PENDING", now + timedelta(seconds=30), 1)
 
     dead_id = _insert_outbox(
         postgres_connection,
@@ -108,7 +121,7 @@ def test_internal_outbox_retry_schedule_and_dead_letter_are_durable(
         available_at=_before_pending_outbox(postgres_connection),
     )
     claimed_dead = repository.claim_next_internal(
-        postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=NOW
+        postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=now
     )
     assert claimed_dead is not None and claimed_dead.event_id == dead_id
     assert (
@@ -119,7 +132,7 @@ def test_internal_outbox_retry_schedule_and_dead_letter_are_durable(
             worker_role=ActorRole.OUTBOX_WORKER,
             error_class="INVALID_PAYLOAD",
             retryable=False,
-            now=NOW,
+            now=now,
         )
         == "DEAD"
     )
@@ -138,6 +151,7 @@ def test_internal_outbox_retry_schedule_and_dead_letter_are_durable(
 
 def test_internal_outbox_claim_is_fenced_and_expiry_requires_dlq_recovery(
     postgres_connection: psycopg.Connection[Any],
+    now: datetime,
 ) -> None:
     repository = OutboxRepository()
     event_id = _insert_outbox(
@@ -146,10 +160,10 @@ def test_internal_outbox_claim_is_fenced_and_expiry_requires_dlq_recovery(
         available_at=_before_pending_outbox(postgres_connection),
     )
     claimed = repository.claim_next_internal(
-        postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=NOW
+        postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=now
     )
     assert claimed is not None and claimed.event_id == event_id
-    assert claimed.lease_expires_at == NOW + timedelta(seconds=30)
+    assert claimed.lease_expires_at == now + timedelta(seconds=30)
     with postgres_connection.cursor() as cursor:
         cursor.execute(
             "SELECT status, claim_token FROM outbox_events WHERE id = %s",
@@ -162,22 +176,25 @@ def test_internal_outbox_claim_is_fenced_and_expiry_requires_dlq_recovery(
             event_id=event_id,
             claim_token=uuid4(),
             worker_role=ActorRole.OUTBOX_WORKER,
-            completed_at=NOW,
+            completed_at=now,
         )
 
-    recovered_ids: list[UUID] = []
-    for _ in range(100):
-        recovered = repository.recover_expired_internal(
+    assert (
+        repository.recover_expired_internal(
             postgres_connection,
             worker_role=ActorRole.OUTBOX_WORKER,
-            now=NOW + timedelta(seconds=31),
+            now=now + timedelta(seconds=31),
         )
-        if recovered is None:
-            break
-        recovered_ids.append(recovered)
-        if recovered == event_id:
-            break
-    assert event_id in recovered_ids
+        == event_id
+    )
+    assert (
+        repository.recover_expired_internal(
+            postgres_connection,
+            worker_role=ActorRole.OUTBOX_WORKER,
+            now=now + timedelta(seconds=31),
+        )
+        is None
+    )
     with postgres_connection.cursor() as cursor:
         cursor.execute(
             """
@@ -208,6 +225,7 @@ def test_internal_outbox_claim_is_fenced_and_expiry_requires_dlq_recovery(
 
 def test_internal_outbox_claim_carries_only_constrained_w3c_trace_context(
     postgres_connection: psycopg.Connection[Any],
+    now: datetime,
 ) -> None:
     traceparent = "00-00000000000000000000000000000901-0000000000000902-01"
     event_id = _insert_outbox(
@@ -219,7 +237,7 @@ def test_internal_outbox_claim_carries_only_constrained_w3c_trace_context(
     )
 
     claimed = OutboxRepository().claim_next_internal(
-        postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=NOW
+        postgres_connection, worker_role=ActorRole.OUTBOX_WORKER, now=now
     )
 
     assert claimed is not None and claimed.event_id == event_id
@@ -268,6 +286,9 @@ def test_two_workers_cannot_claim_the_same_internal_event(
         worker.start()
     for worker in workers:
         worker.join(timeout=3)
+        # A worker still running here holds its own connection, and its locks block the next
+        # test's reset with no clue where they came from. TEST-ISOLATION-001.
+        assert not worker.is_alive(), "a concurrency worker outlived its join"
 
     assert errors == []
     matching_claims = [item for item in claimed if item is not None and item[0] == event_id]

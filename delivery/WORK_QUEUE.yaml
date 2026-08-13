@@ -749,6 +749,8 @@ items:
   - OPS-RUNBOOK-001
   - SLO-VERIFY-001
   - RETENTION-001
+  - STORE-SCOPING-001
+  - RETENTION-STORE-001
   context_domains:
   - evaluation_release
   - orders_audit
@@ -1543,6 +1545,7 @@ items:
   priority: 211
   depends_on:
   - PROVIDER-TRANSPORT-001
+  - EVIDENCE-REPIN-001
   context_domains:
   - runtime_architecture
   - evaluation_release
@@ -1567,6 +1570,7 @@ items:
   priority: 212
   depends_on:
   - CORPUS-CONSENT-001
+  - EVIDENCE-REPIN-001
   context_domains:
   - evaluation_release
   - agent_tools
@@ -1639,7 +1643,8 @@ items:
   title: Two-party release schema, verifier enforcement, and signer key ceremony
   status: BLOCKED
   priority: 215
-  depends_on: []
+  depends_on:
+  - EVIDENCE-REPIN-001
   context_domains:
   - evaluation_release
   normative_sources:
@@ -1880,6 +1885,7 @@ items:
   depends_on:
   - DOMAIN-005
   - RESPONSES-RUNTIME-001
+  - EVIDENCE-REPIN-001
   context_domains:
   - evaluation_release
   - agent_tools
@@ -1929,6 +1935,7 @@ items:
   priority: 222
   depends_on:
   - CORPUS-CONSENT-001
+  - EVIDENCE-REPIN-001
   context_domains:
   - evaluation_release
   - agent_tools
@@ -1965,6 +1972,7 @@ items:
   priority: 223
   depends_on:
   - PUBLIC-POLICY-001
+  - EVIDENCE-REPIN-001
   context_domains:
   - evaluation_release
   - channel_operations
@@ -2091,5 +2099,102 @@ items:
   - staff_console_pagination_at_scale_measured
   - measurement_method_is_reproducible
   - breach_alerting_bound_to_monitoring
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: EVIDENCE-REPIN-001
+  phase: AGENT_SHADOW
+  title: Re-establish the local synthetic evidence pin so the core can change
+  status: PENDING
+  priority: 206
+  depends_on: []
+  context_domains:
+  - evaluation_release
+  - runtime_architecture
+  normative_sources:
+  - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - specs/TEAM_REVIEW_REPORT_V1.md
+  contracts:
+  - specs/evals/eval-manifest-v1.yaml
+  - specs/contracts/capability-status-v1.schema.json
+  task_packet: context/tasks/TASK-evidence-repin-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - superseded_bundle_retained
+  - new_bundle_derived_not_edited
+  - blocked_items_can_change_their_files
+  - skips_and_blockers_unchanged
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: RETENTION-STORE-001
+  phase: PRODUCTION_HARDENING
+  title: Separate disposable payload from the append-only ledger
+  status: PENDING
+  priority: 225
+  depends_on:
+  - RETENTION-001
+  context_domains:
+  - privacy_consent
+  - orders_audit
+  normative_sources:
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/ENGINEERING_SPEC_V1.md
+  - CUSTOMER_SERVICE_POLICY_DRAFT.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-retention-store-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - ledger_row_survives_payload_purge
+  - audit_chain_reconstructable_after_purge
+  - ledger_triggers_still_reject_direct_mutation
+  - supported_classes_match_tested_purges
+  - payload_migration_loses_nothing
+  - rollback_assessment
+  blocked_by_decisions:
+  - DEC-008
+- id: STORE-SCOPING-001
+  phase: PRODUCTION_HARDENING
+  title: Enforce staff store membership on the pre-existing console routes
+  status: PENDING
+  priority: 211
+  depends_on:
+  - SHADOW-CONSOLE-001
+  context_domains:
+  - orders_audit
+  - privacy_consent
+  normative_sources:
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/ENGINEERING_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-store-scoping-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - membership_enforced_in_every_repository
+  - cross_store_idor_rejected_per_route
+  - same_error_for_role_and_membership_failure
+  - approval_queue_scoped_to_member_stores
+  - existing_staff_retain_their_own_store
   - rollback_assessment
   blocked_by_decisions: []

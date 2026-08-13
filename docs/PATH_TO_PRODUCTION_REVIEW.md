@@ -238,6 +238,18 @@ the first time in this repository's history.
 | `ENV-INTEGRITY-001` | COMPLETE. All six declared commands verbatim; 583 passed, 1 platform-gated skip, zero PostgreSQL skips |
 | `CHANNEL-ENVELOPE-001` | COMPLETE. Canonical envelope and receipt, server-owned binding, migration 0020; 609 passed |
 | `AGENT-PIPELINE-001` | COMPLETE. The orphaned runtime is wired; a job flows from queue claim to persisted redacted evidence; 623 passed |
+| `SHADOW-CONSOLE-001` | COMPLETE. Draft review, exception queue, SLA board, audit timeline, staff-store membership; 647 passed |
+
+**All four local spine segments are now built.** A queued agent run reaches a human review queue,
+the human's approve, edit or reject is attributed and audited, an unknown send is resolvable only by
+a named person, and the audit timeline shows the chain. What the spine still lacks is an inbound
+customer message at one end and a provider send at the other — both owner-gated.
+
+Two defects surfaced while building the console, both recorded rather than quietly patched. The
+agent's proposal was never persisted, so there had been nothing to review. And the existing console
+authorizes by role alone: **any operator can read any store by changing an identifier in a URL.**
+Store membership now closes that on the Shadow surfaces; the pre-existing order, quote, approval and
+incident routes still carry it and need their own item.
 
 The integration database was unblocked without Docker: PostgreSQL 17 is installed locally, so a
 private cluster runs on port 5434 from the session scratchpad. The user's other project's container

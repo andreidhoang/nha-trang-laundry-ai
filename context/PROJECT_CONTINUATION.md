@@ -1,12 +1,13 @@
 # Production continuation brief
 
 **Last reconciled:** 2026-08-13 (Asia/Ho_Chi_Minh)
-**Active work item:** none. `ENV-INTEGRITY-001`, `CHANNEL-ENVELOPE-001` and `AGENT-PIPELINE-001`
-completed on 2026-08-13 with the guarded PostgreSQL suite genuinely running. The controller next
+**Active work item:** none. `ENV-INTEGRITY-001`, `CHANNEL-ENVELOPE-001`, `AGENT-PIPELINE-001` and
+`SHADOW-CONSOLE-001` completed on 2026-08-13 with the guarded PostgreSQL suite genuinely running.
+All four local spine segments are built. The controller next
 offers `CONSENT-STOP-001`, which should not be started before the scope defect in
 [`docs/PATH_TO_PRODUCTION_REVIEW.md`](../docs/PATH_TO_PRODUCTION_REVIEW.md) §6a is resolved. The
-other local items are `SIGNER-REGISTRY-001`, `SHADOW-CONSOLE-001` (the last spine segment) and
-`EVAL-SYNTHETIC-COMBINATORIAL-001` (500 cases, no external dependency).
+other local items are `SIGNER-REGISTRY-001` and `EVAL-SYNTHETIC-COMBINATORIAL-001` (500 cases, no
+external dependency, the fastest way to move the evidence base off zero).
 
 **Engineering is no longer the binding constraint on the spine.** Eleven items are blocked, and every
 week of the remaining schedule belongs to the owner actions in §5 of that review.

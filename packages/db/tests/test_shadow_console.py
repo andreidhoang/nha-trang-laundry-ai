@@ -473,14 +473,34 @@ def test_an_already_resolved_send_cannot_be_resolved_again(
 def test_the_exception_queue_lists_only_unresolved_unknown_sends(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    principal = _staff(postgres_connection, roles=frozenset({StaffRole.OPS_APPROVER}))
-    receipt = _unknown_receipt(postgres_connection)
-    repository = ShadowConsoleRepository()
+    """The queue is oldest-first, so drain it before asserting on a freshly created receipt.
 
-    assert receipt.receipt_id in {
+    Draining is the real operation rather than a fixture shortcut: it is exactly what a staff member
+    does at the start of a shift, and it keeps the assertion independent of what earlier tests left
+    behind in the shared database.
+    """
+    principal = _staff(postgres_connection, roles=frozenset({StaffRole.OPS_APPROVER}))
+    repository = ShadowConsoleRepository()
+    while True:
+        outstanding = repository.list_unknown_sends(postgres_connection, principal=principal)
+        if not outstanding:
+            break
+        for item in outstanding:
+            repository.resolve_unknown_send(
+                postgres_connection,
+                receipt_id=item.receipt_id,
+                resolution=ReconciliationState.CONFIRMED_NOT_SENT,
+                principal=principal,
+                correlation_id=uuid4(),
+                note="Dọn hàng chờ trước ca.",
+            )
+
+    receipt = _unknown_receipt(postgres_connection)
+
+    assert [
         item.receipt_id
         for item in repository.list_unknown_sends(postgres_connection, principal=principal)
-    }
+    ] == [receipt.receipt_id]
 
     repository.resolve_unknown_send(
         postgres_connection,
@@ -490,10 +510,7 @@ def test_the_exception_queue_lists_only_unresolved_unknown_sends(
         correlation_id=uuid4(),
     )
 
-    assert receipt.receipt_id not in {
-        item.receipt_id
-        for item in repository.list_unknown_sends(postgres_connection, principal=principal)
-    }
+    assert repository.list_unknown_sends(postgres_connection, principal=principal) == ()
 
 
 # --- deterministic read models -------------------------------------------------------------

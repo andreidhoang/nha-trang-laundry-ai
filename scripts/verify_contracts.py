@@ -191,6 +191,51 @@ def validate_channel_contracts() -> None:
         raise ValueError("Channel provider enums differ between inbound and outbound contracts")
 
 
+def verify_synthetic_combinatorial_corpus() -> int:
+    """The declared inventory must equal the corpus, and the corpus must equal the domain.
+
+    A count written into the manifest that the corpus does not contain would be a release blocker
+    cleared on paper. Both halves are checked here so the drift is a gate failure, not a surprise.
+    """
+    from nha_trang_laundry_evals.synthetic_combinatorial import (
+        DATASET_LAYER,
+        corpus_hash,
+        wrong_monetary_value_count,
+    )
+
+    corpus_path = ROOT / "specs/evals/synthetic-combinatorial-v1.json"
+    manifest = load_yaml("specs/evals/eval-manifest-v1.yaml")
+    inventory = manifest.get("actual_dataset_inventory", {})
+    declared = inventory.get(DATASET_LAYER)
+    if not corpus_path.is_file():
+        if declared:
+            raise ValueError(f"{DATASET_LAYER} inventory is {declared} but no corpus file exists")
+        return 0
+    document = load_json("specs/evals/synthetic-combinatorial-v1.json")
+    cases = document.get("cases")
+    if not isinstance(cases, list):
+        raise ValueError("synthetic combinatorial corpus requires a cases list")
+    if document.get("case_count") != len(cases):
+        raise ValueError("synthetic combinatorial corpus case_count disagrees with its cases")
+    if document.get("content_hash") != corpus_hash(cases):
+        raise ValueError("synthetic combinatorial corpus content hash is stale")
+    # The inventory may lag the corpus while the count is unpublished, but it may never exceed it:
+    # a number in the manifest that the corpus does not contain would clear a release blocker on
+    # paper. Publishing the count is blocked by the hash-pinned local evidence bundle; see
+    # EVAL-SYNTHETIC-COMBINATORIAL-001.
+    if declared not in (0, len(cases)):
+        raise ValueError(
+            f"{DATASET_LAYER} inventory is {declared} but the corpus holds {len(cases)}"
+        )
+    identifiers = {case.get("id") for case in cases}
+    if len(identifiers) != len(cases):
+        raise ValueError("synthetic combinatorial corpus contains duplicate case identifiers")
+    wrong = wrong_monetary_value_count(document)
+    if wrong:
+        raise ValueError(f"{wrong} synthetic combinatorial cases disagree with the domain engines")
+    return len(cases)
+
+
 def main() -> None:
     for contract in JSON_CONTRACTS:
         load_json(contract)
@@ -200,10 +245,12 @@ def main() -> None:
     validate_pricebook_manifest()
     validate_release_gate_schema()
     validate_channel_contracts()
+    corpus_cases = verify_synthetic_combinatorial_corpus()
     load_agent_tool_registry(ROOT / "specs/contracts/agent-tools-v1.openapi.yaml")
     runtime_registry = load_public_runtime_registry(ROOT / "runtime/model-registry-v1.yaml")
     runtime_artifacts = verify_public_runtime_artifacts(ROOT, runtime_registry)
     print(f"Validated {len(JSON_CONTRACTS)} JSON and {len(YAML_CONTRACTS)} YAML contracts.")
+    print(f"Validated {corpus_cases} synthetic combinatorial cases against the domain engines.")
     print(
         f"Validated {len(runtime_artifacts)} pinned public-runtime artifacts; "
         f"release blockers={len(runtime_registry.release_blockers())}."

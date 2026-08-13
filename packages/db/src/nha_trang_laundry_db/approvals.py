@@ -466,7 +466,19 @@ class ApprovalRepository:
         return stored
 
     @staticmethod
-    def list_pending(cursor: Any, *, limit: int = 100) -> tuple[StoredApproval, ...]:
+    def list_pending(
+        cursor: Any, *, principal: StaffPrincipal, limit: int = 100
+    ) -> tuple[StoredApproval, ...]:
+        """Return only approvals whose resource belongs to a store the principal is assigned to.
+
+        `approval_requests` carries no store column; it points at a resource. The queue therefore
+        resolves each request through `orders` and shows only those the caller may act on. An
+        approval whose resource cannot be resolved to a store is **excluded**, because a queue that
+        shows an item nobody can attribute to a store is how cross-store disclosure happens. If a
+        resource type is later added that is not order-backed, it becomes invisible until it is
+        joined here explicitly, which is the fail-closed direction.
+        """
+
         if not 1 <= limit <= 200:
             raise ValueError("approval queue limit must be between 1 and 200")
         cursor.execute(
@@ -474,11 +486,14 @@ class ApprovalRepository:
             SELECT r.id, s.status, r.envelope_hash, r.required_role, r.expires_at
             FROM approval_requests r
             JOIN approval_request_states s ON s.approval_request_id = r.id
+            JOIN orders o ON o.id = r.resource_id
+            JOIN staff_store_assignments a
+              ON a.store_id = o.store_id AND a.staff_user_id = %s
             WHERE s.status = 'REQUESTED'
             ORDER BY r.expires_at, r.id
             LIMIT %s
             """,
-            (limit,),
+            (principal.staff_user_id, limit),
         )
         return tuple(
             StoredApproval(

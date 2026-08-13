@@ -74,6 +74,64 @@ def principal(role: StaffRole, *, mfa: bool = True, user_id: UUID | None = None)
     )
 
 
+def _assign_store(connection: Any, staff: StaffPrincipal, store_id: UUID) -> None:
+    """Make an existing principal a member of one store, creating its staff row if needed."""
+    owner_id = uuid4()
+    with connection.transaction(), connection.cursor() as cursor:
+        for identifier, subject in (
+            (staff.staff_user_id, staff.oidc_subject),
+            (owner_id, f"oidc-{owner_id}"),
+        ):
+            cursor.execute(
+                """
+                INSERT INTO staff_users (id, oidc_subject, display_name, status, created_at)
+                VALUES (%s, %s, 'Nhân viên', 'ACTIVE', %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (identifier, subject, NOW),
+            )
+        cursor.execute(
+            """
+            INSERT INTO staff_store_assignments (
+                staff_user_id, store_id, assigned_by_staff_id, assigned_at, row_version
+            ) VALUES (%s, %s, %s, %s, 1)
+            ON CONFLICT DO NOTHING
+            """,
+            (staff.staff_user_id, store_id, owner_id, NOW),
+        )
+
+
+def _assigned_staff(connection: Any, store_id: UUID) -> StaffPrincipal:
+    """A staff member who is actually a member of the store, which reads now require."""
+    staff_user_id = uuid4()
+    owner_id = uuid4()
+    with connection.transaction(), connection.cursor() as cursor:
+        for identifier in (staff_user_id, owner_id):
+            cursor.execute(
+                """
+                INSERT INTO staff_users (id, oidc_subject, display_name, status, created_at)
+                VALUES (%s, %s, 'Nhân viên', 'ACTIVE', %s)
+                """,
+                (identifier, f"oidc-{identifier}", NOW),
+            )
+        cursor.execute(
+            """
+            INSERT INTO staff_store_assignments (
+                staff_user_id, store_id, assigned_by_staff_id, assigned_at, row_version
+            ) VALUES (%s, %s, %s, %s, 1)
+            ON CONFLICT DO NOTHING
+            """,
+            (staff_user_id, store_id, owner_id, NOW),
+        )
+    return StaffPrincipal(
+        staff_user_id=staff_user_id,
+        oidc_subject=f"oidc-{staff_user_id}",
+        roles=frozenset({StaffRole.OPERATOR}),
+        mfa_verified=True,
+        session_id=uuid4(),
+    )
+
+
 def test_inbox_replay_and_stop_suppression_are_durable_before_dispatch(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
@@ -313,6 +371,9 @@ def test_order_creation_transition_replay_authorization_and_atomic_audit(
     owner = principal(StaffRole.OWNER_ADMIN)
     driver = principal(StaffRole.DRIVER, mfa=False)
     store_id = uuid4()
+    # Store membership is now required to create or read an order. OWNER_ADMIN is not implicitly a
+    # member of every store, so the owner is assigned explicitly.
+    _assign_store(postgres_connection, owner, store_id)
     quote_id = uuid4()
     quote = _approved_final_quote(quote_id)
     QuoteRepository().create_revision(
@@ -402,8 +463,9 @@ def test_order_creation_transition_replay_authorization_and_atomic_audit(
     with pytest.raises(ValueError, match="order binding"):
         incidents.open(postgres_connection, replace(incident_command, store_id=uuid4()))
     opened = incidents.open(postgres_connection, incident_command)
+    reader = _assigned_staff(postgres_connection, store_id)
     with postgres_connection.cursor() as cursor:
-        listed = incidents.list_for_store(cursor, store_id=store_id, limit=100)
+        listed = incidents.list_for_store(cursor, store_id=store_id, principal=reader, limit=100)
     assert [item.incident_id for item in listed] == [opened.incident_id]
     assert listed[0].fault_decided is False
     assert listed[0].remedy_decided is False

@@ -1,0 +1,90 @@
+schema_version: 1
+work_item: STORE-SCOPING-001
+recorded_at: '2026-08-13T21:15:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-store-scoping-001.md requires every staff surface to enforce store membership
+  rather than role alone, because an operator could otherwise read another store's data by changing
+  an identifier in a URL. delivery/GATE_REGISTRY.yaml sets zero cross-customer disclosure as a
+  zero-tolerance condition at both G1_INTERNAL_SHADOW_READY and G2_PUBLIC_ASSISTED_ENTRY.
+  specs/SECURITY_RELIABILITY_SPEC_V1.md and specs/DOMAIN_DATA_API_SPEC_V1.md remain authoritative
+  for server-enforced authorization, and the packet requires the check to live in the repository
+  rather than the route.
+rollback_impact: >-
+  Reverting removes packages/db/src/nha_trang_laundry_db/store_access.py, the membership calls in
+  the order, quote, incident and approval repositories, the principal threading through
+  OperationsService and two API routes, and the new test file. No migration is involved: this item
+  reuses the staff_store_assignments table created by SHADOW-CONSOLE-001 and introduces no second
+  membership concept. Reverting restores the previous behaviour exactly, which means it restores the
+  cross-store read path. Rollback here is therefore a security regression rather than a neutral
+  undo, and should be recorded as one if it is ever performed.
+unresolved_assumptions: >-
+  Membership is now required, and no staff member has any assignment in a fresh database, so an
+  operator with no assignment can read nothing. That is the intended fail-closed direction but it
+  means assignments must be created before the Shadow pilot: ShadowConsoleRepository.assign_store is
+  the owner-only, audited path for that, and no seeding migration was written because there is no
+  production staff data to seed. OWNER_ADMIN is deliberately not implicitly a member of every store;
+  a test asserts the owner is refused an unassigned store. If the owner should see everything, that
+  is an explicit assignment or a separately reviewed role rule, not an inference. The approval queue
+  is scoped by resolving each request through orders, because approval_requests carries no store
+  column; an approval whose resource does not resolve to a member store is excluded rather than
+  shown. That is fail-closed and it has a consequence worth stating plainly: if a future resource
+  type is not order-backed, its approvals become invisible until the join is extended, which is
+  preferable to showing an item nobody can attribute to a store but will surface as missing work
+  rather than as an error. Every capability remains NOT_AUTHORIZED.
+evidence:
+  membership_enforced_in_every_repository: >-
+    The check lives in packages/db/src/nha_trang_laundry_db/store_access.py and is called by
+    OrderRepository.list_for_store, OrderRepository.create, QuoteRepository.list_for_store,
+    IncidentRepository.list_for_store, IncidentRepository.open and ApprovalRepository.list_pending -
+    all five routes named in the packet. It is enforced next to the data rather than in the route,
+    because a route is a place a check can be forgotten. Two API service methods were discarding the
+    principal with an explicit `del principal`; that single line was the gap for the quote and
+    incident boards, and the principal is now threaded through to the query. In
+    IncidentRepository.open the membership check runs before validation on purpose: a caller with no
+    access to the store should not learn what is wrong with their payload.
+  cross_store_idor_rejected_per_route: >-
+    Proven by API-level negative tests rather than by inspection. A member of store A is refused
+    store A's neighbour on the order board, the incident board and incident creation. The same
+    member succeeds for their own store, so the fix is a scope and not a blanket denial. A staff
+    member with no assignment at all is refused everywhere and member_store_ids returns an empty
+    set. An OWNER_ADMIN with no assignment is refused, proving the role grants no implicit
+    membership. The approval queue excludes an approval whose resource resolves to no member store,
+    asserted for both an assigned and an unassigned principal.
+  same_error_for_role_and_membership_failure: >-
+    require_store_membership takes the exception type its caller already raises, so the order
+    repository raises OrderAuthorizationError for a membership failure exactly as it does for a role
+    failure, and the API maps both to the same 403 without any change to its error handling. A test
+    asserts both the caller-supplied type and the default StoreAccessError. A caller probing
+    identifiers therefore learns nothing about which stores exist.
+  approval_queue_scoped_to_member_stores: >-
+    ApprovalRepository.list_pending now joins approval_requests to orders on resource_id and to
+    staff_store_assignments on the resulting store, so the queue returns only approvals the caller
+    may act on. No client-supplied store parameter was added, because such a parameter would itself
+    be forgeable. An approval that cannot be resolved to a member store is excluded; a test inserts
+    exactly that case and asserts it is invisible to an assigned and an unassigned principal alike.
+  existing_staff_retain_their_own_store: >-
+    No production staff data exists, so nothing was seeded; the assignment path is
+    ShadowConsoleRepository.assign_store, which is owner-only and audited. Two existing tests relied
+    on cross-store access, and per the packet the reliance was the finding rather than the check: a
+    quote-board test now supplies a principal and answers the membership probe, and an operations
+    test now assigns its owner to the store it operates on. Both assert the legitimate path still
+    works. The whole suite passes at 711, so no other surface depended on unscoped access.
+  rollback_assessment: >-
+    Additive to authorization only: one new module, membership calls in four repositories, principal
+    threading, and one test file. No schema change, no new table, no behavioural change to any
+    business rule, status transition or response shape beyond the authorization failure. The one
+    consequence to hold in mind is that this item makes the system stricter, so a rollback reopens a
+    cross-store read path. It should be treated as a security regression rather than a neutral undo.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

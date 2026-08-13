@@ -673,11 +673,13 @@ def list_pending_approvals(
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
     limit: int = 100,
 ) -> list[ApprovalResponse]:
-    del principal
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
     try:
-        return [_approval_response(item) for item in service.list_pending_approvals(limit=limit)]
+        return [
+            _approval_response(item)
+            for item in service.list_pending_approvals(principal=principal, limit=limit)
+        ]
     except ValueError as error:
         _raise_operations_error(error)
 

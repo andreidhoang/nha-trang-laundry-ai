@@ -9,6 +9,8 @@ from uuid import UUID, uuid4
 
 from nha_trang_laundry_domain.catalog import ActorRole
 
+from .identity import StaffPrincipal
+from .store_access import StoreAccessError, require_store_membership
 from .transactions import MaterialChange, OutboxEvent, commit_material_change
 
 
@@ -62,7 +64,23 @@ class IncidentSummary:
 
 
 class IncidentRepository:
-    def open(self, connection: Any, command: IncidentOpenCommand) -> StoredIncident:
+    def open(
+        self,
+        connection: Any,
+        command: IncidentOpenCommand,
+        *,
+        principal: StaffPrincipal | None = None,
+    ) -> StoredIncident:
+        # Authorization precedes validation on purpose: a caller with no access to this store
+        # should not learn what is wrong with their payload.
+        if principal is not None:
+            with connection.cursor() as membership_cursor:
+                require_store_membership(
+                    membership_cursor,
+                    staff_user_id=principal.staff_user_id,
+                    store_id=command.store_id,
+                    error=StoreAccessError,
+                )
         _validate_incident(command)
         incident_id = uuid4()
 
@@ -95,7 +113,15 @@ class IncidentRepository:
         return StoredIncident(incident_id, "OPEN", False, False)
 
     @staticmethod
-    def list_for_store(cursor: Any, *, store_id: UUID, limit: int) -> tuple[IncidentSummary, ...]:
+    def list_for_store(
+        cursor: Any, *, store_id: UUID, principal: StaffPrincipal, limit: int
+    ) -> tuple[IncidentSummary, ...]:
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=StoreAccessError,
+        )
         if not 1 <= limit <= 200:
             raise ValueError("incident list limit must be between 1 and 200")
         cursor.execute(

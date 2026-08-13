@@ -25,6 +25,7 @@ from nha_trang_laundry_domain.orders import (
 
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
 
@@ -85,6 +86,13 @@ class OrderRepository:
 
     def create(self, connection: Any, command: CreateOrderCommand) -> StoredOrder:
         _require_order_mutation(command.principal)
+        with connection.cursor() as membership_cursor:
+            require_store_membership(
+                membership_cursor,
+                staff_user_id=command.principal.staff_user_id,
+                store_id=command.store_id,
+                error=OrderAuthorizationError,
+            )
         if (
             command.accepted_quote_revision < 1
             or command.customer_final_quote_accepted_at.tzinfo is None
@@ -367,6 +375,12 @@ class OrderRepository:
         limit: int = 100,
     ) -> tuple[StoredOrder, ...]:
         _require_order_read(principal)
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=OrderAuthorizationError,
+        )
         if not 1 <= limit <= 200:
             raise ValueError("order board limit must be between 1 and 200")
         cursor.execute(

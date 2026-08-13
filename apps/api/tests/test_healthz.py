@@ -73,7 +73,9 @@ class StubOperationsService:
             ),
         )
 
-    def list_pending_approvals(self, *, limit: int) -> tuple[StoredApproval, ...]:
+    def list_pending_approvals(
+        self, *, principal: object, limit: int
+    ) -> tuple[StoredApproval, ...]:
         assert limit == 100
         return (
             StoredApproval(

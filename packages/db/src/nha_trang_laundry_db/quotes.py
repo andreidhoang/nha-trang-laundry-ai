@@ -12,6 +12,8 @@ from uuid import UUID
 from nha_trang_laundry_domain.canonical import CanonicalDocument, canonical_document
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, verify_quote_snapshot
 
+from nha_trang_laundry_db.identity import StaffPrincipal
+from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
 
@@ -206,7 +208,15 @@ class QuoteRepository:
         return StoredQuoteRevision(quote_id, revision, str(row[0]), str(row[1]), rebuilt)
 
     @staticmethod
-    def list_for_store(cursor: Any, *, store_id: UUID, limit: int) -> tuple[QuoteSummary, ...]:
+    def list_for_store(
+        cursor: Any, *, store_id: UUID, principal: StaffPrincipal, limit: int
+    ) -> tuple[QuoteSummary, ...]:
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=StoreAccessError,
+        )
         if not 1 <= limit <= 200:
             raise ValueError("quote list limit must be between 1 and 200")
         cursor.execute(

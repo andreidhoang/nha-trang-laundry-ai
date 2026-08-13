@@ -4,9 +4,10 @@ import json
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
+from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.quotes import (
     QuoteIntegrityError,
     QuoteRepository,
@@ -143,10 +144,25 @@ def test_quote_board_returns_only_server_scoped_current_revisions() -> None:
         ]
     )
 
-    listed = QuoteRepository.list_for_store(cursor, store_id=STORE_ID, limit=100)
+    # The first row answers the store-membership probe the repository now performs before it
+    # reads anything: authorization is part of the query path, not a layer above it.
+    cursor.rows.insert(0, (1,))
+    principal = StaffPrincipal(
+        staff_user_id=uuid4(),
+        oidc_subject="oidc-quote-reader",
+        roles=frozenset({StaffRole.OPERATOR}),
+        mfa_verified=True,
+        session_id=uuid4(),
+    )
+
+    listed = QuoteRepository.list_for_store(
+        cursor, store_id=STORE_ID, principal=principal, limit=100
+    )
 
     assert len(listed) == 1
     assert listed[0].quote_id == QUOTE_ID
     assert listed[0].row_version == 3
     assert listed[0].valid_until == valid_until
-    assert "WHERE quote.store_id = %s" in cursor.executed[0]
+    assert any("WHERE quote.store_id = %s" in statement for statement in cursor.executed)
+    # Membership is checked before anything is read, not alongside it.
+    assert "staff_store_assignments" in cursor.executed[0]

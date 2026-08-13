@@ -318,22 +318,25 @@ class OperationsService:
             raise ApprovalStateError("approval expired")
         return stored
 
-    def list_pending_approvals(self, *, limit: int) -> tuple[StoredApproval, ...]:
+    def list_pending_approvals(
+        self, *, principal: StaffPrincipal, limit: int
+    ) -> tuple[StoredApproval, ...]:
         with (
             self._connection_factory(self._database_url) as connection,
             connection.cursor() as cursor,
         ):
-            return self._approvals.list_pending(cursor, limit=limit)
+            return self._approvals.list_pending(cursor, principal=principal, limit=limit)
 
     def list_quotes(
         self, *, store_id: UUID, principal: StaffPrincipal, limit: int
     ) -> tuple[QuoteSummary, ...]:
-        del principal
         with (
             self._connection_factory(self._database_url) as connection,
             connection.cursor() as cursor,
         ):
-            return QuoteRepository.list_for_store(cursor, store_id=store_id, limit=limit)
+            return QuoteRepository.list_for_store(
+                cursor, store_id=store_id, principal=principal, limit=limit
+            )
 
     def prepare_manual_send(
         self,
@@ -467,6 +470,7 @@ class OperationsService:
                             opened_at=opened_at,
                             actor_type="STAFF",
                         ),
+                        principal=principal,
                     )
                 ),
             )
@@ -475,12 +479,13 @@ class OperationsService:
     def list_incidents(
         self, *, store_id: UUID, principal: StaffPrincipal, limit: int
     ) -> tuple[IncidentSummary, ...]:
-        del principal
         with (
             self._connection_factory(self._database_url) as connection,
             connection.cursor() as cursor,
         ):
-            return self._incidents.list_for_store(cursor, store_id=store_id, limit=limit)
+            return self._incidents.list_for_store(
+                cursor, store_id=store_id, principal=principal, limit=limit
+            )
 
     def queue_recovery_summary(self, *, principal: StaffPrincipal) -> QueueRecoverySummary:
         del principal

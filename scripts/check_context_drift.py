@@ -9,6 +9,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 import yaml
 from nha_trang_laundry_contracts import (
     ReleaseCapability,

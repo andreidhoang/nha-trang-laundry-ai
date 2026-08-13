@@ -18,7 +18,13 @@ uv run python scripts/check_context_drift.py
 uv run python scripts/report_delivery_status.py
 docker compose up -d postgres
 uv run python scripts/apply_migrations.py
+uv run python scripts/workspace_env.py --check
 ```
+
+`workspace_env.py` reports whether the interpreter is skipping the virtual environment's `.pth`
+files. Every `scripts/` entry point and the root `conftest.py` already bootstrap the workspace source
+roots, so a warning there is diagnostic rather than blocking; see
+`context/tasks/TASK-env-integrity-001.md`.
 
 ## Non-negotiables
 

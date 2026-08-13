@@ -7,6 +7,7 @@ import os
 from uuid import uuid4
 
 import psycopg
+import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 from nha_trang_laundry_db.identity import IdentityRepository
 
 

@@ -2,12 +2,35 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from collections.abc import Generator
+from pathlib import Path
 from typing import Any
 
 import pytest
 from pluggy import Result
+
+
+def _bootstrap_workspace_imports() -> None:
+    """Put the workspace source roots on `sys.path` and `PYTHONPATH` before collection.
+
+    Editable workspace packages reach `sys.path` only through `.pth` files, and CPython skips any
+    `.pth` carrying the macOS `UF_HIDDEN` flag. Tests in `packages/evals/tests` also execute
+    `scripts/` entry points through `subprocess`, so the roots must be exported, not merely
+    inserted. See `scripts/workspace_env.py` and `context/tasks/TASK-env-integrity-001.md`.
+    """
+    module_path = Path(__file__).resolve().parent / "scripts" / "workspace_env.py"
+    if not module_path.is_file():
+        return
+    specification = importlib.util.spec_from_file_location("workspace_env", module_path)
+    if specification is None or specification.loader is None:
+        return
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+
+
+_bootstrap_workspace_imports()
 
 POSTGRES_SKIP_REASON = "DATABASE_URL is required for PostgreSQL integration tests"
 POSTGRES_SKIP_FAILURE = (

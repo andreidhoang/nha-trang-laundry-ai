@@ -8,6 +8,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 import yaml
 from jsonschema import Draft202012Validator
 from nha_trang_laundry_contracts import (

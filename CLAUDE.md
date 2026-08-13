@@ -39,11 +39,20 @@ uv run python scripts/run_delivery_loop.py        # selects the next legal item
 uv run python scripts/report_delivery_status.py
 ```
 
-**Known environment defect:** a freshly synced `.venv` survives exactly one full pytest run. After
-that the editable `.pth` files stay on disk but stop being applied and every workspace package
-vanishes from `sys.path`, producing phantom failures (observed: 15 and 28 "failures" where the true
-count was 0). Run static gates *before* pytest, and `rm -rf .venv && uv sync --all-packages
---all-groups` between suite runs. Not yet root-caused.
+**Environment note (root-caused 2026-08-13, `ENV-INTEGRITY-001`):** on a macOS host where this
+repository sits under an iCloud-managed directory, the file provider sets the BSD `UF_HIDDEN` flag on
+everything inside `.venv/` within seconds. CPython 3.12.11 silently skips any `.pth` file carrying
+that flag, so the editable workspace packages vanish from `sys.path` mid-run and produce phantom
+failures (observed: 37 "failures" where the true count was 0). Deleting `.venv` does not help — the
+flag returns in under ten seconds.
+
+`scripts/workspace_env.py` removes the dependency: every `scripts/` entry point imports it first, and
+the root `conftest.py` calls it before collection and exports `PYTHONPATH` so subprocesses inherit
+it. No wrapper is needed; run the commands above as written. To inspect the condition directly:
+
+```bash
+uv run python scripts/workspace_env.py --check   # non-zero when .pth files are being skipped
+```
 
 ## Delivery protocol
 

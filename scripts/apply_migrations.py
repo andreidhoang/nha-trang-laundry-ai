@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 import psycopg
+import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 from nha_trang_laundry_db.migrations import apply_migrations
 
 

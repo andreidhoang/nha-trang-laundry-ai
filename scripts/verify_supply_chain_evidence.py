@@ -7,6 +7,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 from nha_trang_laundry_contracts import verify_supply_chain_evidence
 
 ROOT = Path(__file__).resolve().parents[1]

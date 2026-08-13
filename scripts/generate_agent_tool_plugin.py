@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 from nha_trang_laundry_contracts import load_agent_tool_registry
 
 ROOT = Path(__file__).resolve().parents[1]

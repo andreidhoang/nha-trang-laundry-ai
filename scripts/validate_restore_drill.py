@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import psycopg
+import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 from nha_trang_laundry_db.recovery import (
     load_backup_policy,
     parse_restore_drill,

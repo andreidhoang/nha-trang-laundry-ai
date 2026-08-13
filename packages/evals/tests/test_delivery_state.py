@@ -83,6 +83,22 @@ def _ready_workspace(tmp_path: Path) -> Path:
             # Isolate this historical queue scenario from later dependency-complete
             # corrective hardening items with a higher controller priority.
             item["status"] = "COMPLETE"
+    # A hardening item forced COMPLETE above may still depend on a BLOCKED or reset item, which
+    # the drift checker rejects. Demote transitively until every COMPLETE item is satisfiable.
+    while True:
+        status_by_id = {item["id"]: item["status"] for item in queue["items"]}
+        demoted = False
+        for item in queue["items"]:
+            if item["status"] != "COMPLETE":
+                continue
+            if any(
+                status_by_id.get(dependency) != "COMPLETE"
+                for dependency in item.get("depends_on", [])
+            ):
+                item["status"] = "PENDING"
+                demoted = True
+        if not demoted:
+            break
     state.update(current_work_item=None, last_result="COMPLETE", blocker=None)
     state["evidence_records"] = [
         record for record in state["evidence_records"] if record["work_item"] not in reset_items

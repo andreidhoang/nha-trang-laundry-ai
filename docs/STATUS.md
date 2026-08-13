@@ -40,15 +40,10 @@ release decision is driven by evidence and a signed gate manifest, never by this
 
 ## Next controlled task
 
-`ENV-INTEGRITY-001` is `IN_PROGRESS`. Its implementation is complete and verified; its declared
-acceptance still includes `uv run pytest --require-postgres-integration`, which has not run because
-no PostgreSQL service is available in the current environment. That check is not recorded as passing.
-
-Once it closes, the controller offers, in order: `CHANNEL-ENVELOPE-001` (the fan-out node for four
-downstream channel items), `SIGNER-REGISTRY-001`, `AGENT-PIPELINE-001` (the highest single-item
-value — it wires the bounded Responses runtime into the worker for the first time),
-`SHADOW-CONSOLE-001` and `EVAL-SYNTHETIC-COMBINATORIAL-001`. None authorizes provider use, public
-ingress or send.
+None is buildable. Seven items completed on 2026-08-13 and the queue is now fully
+dependency-blocked: every one of the 21 pending items traces to an owner decision or an external
+party. The controller refuses to start the two that are dependency-ready, correctly — one is
+policy-blocked by `DEC-008`, the other is the owner's decision itself.
 
 ## What is actually holding the project
 
@@ -60,6 +55,10 @@ action, and three of those are calendar-bound and independent of each other:
 - `CHANNEL-ZALO-APPLY-001` — 2–8 weeks of external OA verification that no code shortens.
 - `PROVIDER-ACCESS-001` / `DEC-006` — days once decided, and until then the model has never been
   invoked and the evidence base stays at zero.
+
+Two further decisions cost minutes each and unblock seven items between them: `EVIDENCE-REPIN-001`
+(re-derive the frozen local evidence bundle, or wait for `AGENT-002`) and `DEC-008` (the retention
+schedule).
 
 Each has a task packet under `context/tasks/` written to be actionable without an engineer present.
 [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 is the full owner action table.

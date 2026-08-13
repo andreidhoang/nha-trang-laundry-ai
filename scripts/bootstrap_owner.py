@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+# Put this directory on sys.path before importing the workspace bootstrap, so the script
+# behaves identically whether it is run as __main__ or loaded by file path from a test.
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+
 import argparse
 import os
 from uuid import uuid4

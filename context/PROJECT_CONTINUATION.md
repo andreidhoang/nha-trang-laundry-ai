@@ -1,21 +1,23 @@
 # Production continuation brief
 
 **Last reconciled:** 2026-08-13 (Asia/Ho_Chi_Minh)
-**Active work item:** none. `ENV-INTEGRITY-001`, `CHANNEL-ENVELOPE-001`, `AGENT-PIPELINE-001` and
-`SHADOW-CONSOLE-001` completed on 2026-08-13 with the guarded PostgreSQL suite genuinely running.
-All four local spine segments are built. The controller next
-offers `CONSENT-STOP-001`, which should not be started before the scope defect in
-[`docs/PATH_TO_PRODUCTION_REVIEW.md`](../docs/PATH_TO_PRODUCTION_REVIEW.md) §6a is resolved. The
-other local items are `SIGNER-REGISTRY-001` and `EVAL-SYNTHETIC-COMBINATORIAL-001` (500 cases, no
-external dependency, the fastest way to move the evidence base off zero).
+**Active work item:** none. Seven items completed on 2026-08-13 with the guarded PostgreSQL suite
+genuinely running: `RUNTIME-FREEZE-001`, `ENV-INTEGRITY-001`, `CHANNEL-ENVELOPE-001`,
+`AGENT-PIPELINE-001`, `SHADOW-CONSOLE-001`, `CONSENT-STOP-001` and `STORE-SCOPING-001`. The spine is
+built and tested end to end at 711 passing.
 
-**The frozen local evidence bundle is now the binding constraint on six items.** It hash-pins 21
-core files, so `SIGNER-REGISTRY-001`, all four corpus items and `MODEL-PIN-001` cannot land without
-either regenerating it or waiting for `AGENT-002` to supersede it. See §6a of the review; this needs
-an owner decision and nothing else will unstick it.
+**No pending item is currently buildable.** All 21 trace to an owner decision or an external party;
+the full graph is in [`docs/PATH_TO_PRODUCTION_REVIEW.md`](../docs/PATH_TO_PRODUCTION_REVIEW.md) §5
+and §6a. The two cheapest unblocks are `EVIDENCE-REPIN-001`, which frees six items including two on
+the G1 critical path, and `DEC-008`, which frees retention. Both cost minutes. Everything else is
+calendar-bound: shop instrumentation, Zalo OA verification, the provider credential.
 
-**Engineering is no longer the binding constraint on the spine.** Eleven items are blocked, and every
-week of the remaining schedule belongs to the owner actions in §5 of that review.
+Two items are built but cannot be recorded complete. `EVAL-SYNTHETIC-COMBINATORIAL-001` has 669
+domain-generated cases, gated by `verify_contracts.py`, blocked from publishing its count by the
+evidence pin. `RETENTION-001` has its whole control plane, blocked by `DEC-008`. A completed
+two-party release verifier waits on branch `spike/signer-registry-v2-verifier`, blocked by the same
+pin.
+
 **Active branch:** `delivery/runtime-freeze-and-gate-coverage`, unpushed, branched from `main` on
 `andreidhoang/nha-trang-laundry-ai` (the working repository). It carries the completed
 `RUNTIME-FREEZE-001` slice, the 2026-08-13 gate-coverage spec pack and `ENV-INTEGRITY-001`; fast

@@ -6,11 +6,26 @@ genuinely running: `RUNTIME-FREEZE-001`, `ENV-INTEGRITY-001`, `CHANNEL-ENVELOPE-
 `AGENT-PIPELINE-001`, `SHADOW-CONSOLE-001`, `CONSENT-STOP-001` and `STORE-SCOPING-001`. The spine is
 built and tested end to end at 711 passing.
 
-**No pending item is currently buildable.** All 21 trace to an owner decision or an external party;
-the full graph is in [`docs/PATH_TO_PRODUCTION_REVIEW.md`](../docs/PATH_TO_PRODUCTION_REVIEW.md) §5
-and §6a. The two cheapest unblocks are `EVIDENCE-REPIN-001`, which frees six items including two on
-the G1 critical path, and `DEC-008`, which frees retention. Both cost minutes. Everything else is
+**Exactly one pending item is buildable: `TEST-ISOLATION-001`.** `scripts/run_delivery_loop.py`
+selects it; its only dependency `ENV-INTEGRITY-001` is complete and it carries no decision blocker.
+Earlier revisions of this brief said no item was buildable, which was wrong — the controller, not
+this prose, is the authority. The other 20 pending items each trace to an owner decision or an
+external party; the full graph is in
+[`docs/PATH_TO_PRODUCTION_REVIEW.md`](../docs/PATH_TO_PRODUCTION_REVIEW.md) §5 and §6a. The two cheapest unblocks are `EVIDENCE-REPIN-001`, which frees eight items including two
+on the G1 critical path, and `DEC-008`, which frees retention. Both cost minutes. Everything else is
 calendar-bound: shop instrumentation, Zalo OA verification, the provider credential.
+
+**Tiered inference and multimodal, assessed 2026-08-13.** A proposal to adopt a tiered NVIDIA stack
+(perception / execution / escalation) was assessed against the frozen runtime in
+[`docs/TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md`](../docs/TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md)
+and specified in [ADR-0008](../docs/adr/0008-inference-topology-and-multimodal-scope.md), status
+**proposed**. Conclusion: the direction is sound and none of it is executable now. It adds `DEC-009`
+(may customer media reach a model at all — `OPEN`, fail-closed `NOT_SUPPORTED`, owner
+`SECURITY_PRIVACY_OWNER`) and two `BLOCKED` items, `MODEL-ROUTE-001` and `MULTIMODAL-PERCEPTION-001`.
+It adds no new critical-path blocker: because `runtime/model-registry-v1.yaml` and the OpenAI
+provider-posture evidence are both hash-pinned, any provider-candidate change terminates at
+`EVIDENCE-REPIN-001`, which was already the cheapest unblock in the project. **Nine owner decisions
+now stand between here and production, not eight.**
 
 Two items are built but cannot be recorded complete. `EVAL-SYNTHETIC-COMBINATORIAL-001` has 669
 domain-generated cases, gated by `verify_contracts.py`, blocked from publishing its count by the
@@ -424,6 +439,7 @@ required. A signed release manifest and capability gate evidence remain distinct
 | dedicated service credential unverified | No production provider integration | Create and verify dedicated non-personal credential |
 | scanned sandbox image digest absent | Public-cell container cannot be released | Supply immutable digest, passing scan evidence, and hash-pinned SBOM |
 | `DEC-005` official channel | No public channel/manual real channel | Business owner selects supported official channel and policy |
+| `DEC-009` customer media exposure | No media byte may be fetched or sent to any inference endpoint; `MULTIMODAL-PERCEPTION-001` stays blocked | Security/Privacy owner decides whether customer-supplied media may reach a model, and for which document classes — see ADR-0008 |
 | PRIMARY/fallback provider datasets incomplete | No G1 P0 pass | Execute integrated provider paths and calibrated grading |
 | PITR, incident, kill-switch drills | No G1 readiness | `SECURITY-001` controlled operations work |
 

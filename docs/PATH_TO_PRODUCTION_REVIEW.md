@@ -247,6 +247,12 @@ Plus `EVAL-SYNTHETIC-COMBINATORIAL-001`'s 669 domain-generated cases and `RETENT
 plane, both built and gated but blocked from completion (below). Final: **711 passing, 68 items,
 33 complete, 14 blocked, 21 pending, all 13 capabilities `NOT_AUTHORIZED`.**
 
+Those counts describe this execution pass and are not current state. Later the same day, the
+tiered-inference assessment ([ADR-0008](adr/0008-inference-topology-and-multimodal-scope.md),
+[`TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md`](TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md))
+added `DEC-009` and two `BLOCKED` items, taking the queue to **70 items, 33 complete, 16 blocked,
+21 pending**. It changed no capability and moved no gate. `delivery/WORK_QUEUE.yaml` is the truth.
+
 The integration database was unblocked without Docker: PostgreSQL 17 was already installed, so a
 private cluster runs on port 5434 from the session scratchpad.
 

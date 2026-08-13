@@ -10,11 +10,21 @@ machine-readable capability status.
 [`delivery/CAPABILITY_STATUS.yaml`](../delivery/CAPABILITY_STATUS.yaml) is the production-
 authorization source. A code status never authorizes a release.
 
-**68 items: 33 complete, 14 blocked, 21 pending.**
+**70 items: 33 complete, 16 blocked, 21 pending.**
 Every capability reads `NOT_AUTHORIZED`.
 
-**No pending item is currently buildable.** Every one traces to an owner decision or an external
-party; see [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 and §6a.
+**Exactly one pending item is buildable: `TEST-ISOLATION-001`**, which the controller selects. Its
+only dependency, `ENV-INTEGRITY-001`, is complete and it carries no decision blocker. The other 20
+pending items each trace to an owner decision or an external party; see
+[`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 and §6a. Earlier revisions of this
+board said no item was buildable; that was wrong, and `uv run python scripts/run_delivery_loop.py`
+is the authority.
+
+The two newest items, `MODEL-ROUTE-001` and `MULTIMODAL-PERCEPTION-001`, enter `Blocked` by
+construction: they specify the tiered-inference and perception direction assessed in
+[`TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md`](TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md)
+and proposed in [ADR-0008](adr/0008-inference-topology-and-multimodal-scope.md), and neither can
+start before `EVIDENCE-REPIN-001` — which was already the critical path.
 
 ### FOUNDATION
 
@@ -62,6 +72,8 @@ party; see [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 an
 | `CORPUS-CONSENT-001` | Consent basis and reviewed anonymization of real customer message history | — | Blocked | — |
 | `AGENT-PIPELINE-001` | Assemble the constrained runtime into a running worker pipeline | `RESPONSES-RUNTIME-001` | Complete | — |
 | `MODEL-PIN-001` | Immutable model release pin and registry artifact verification | `PROVIDER-TRANSPORT-001`, `EVIDENCE-REPIN-001` | Pending | — |
+| `MODEL-ROUTE-001` | Per-role model pinning so a route is as pinned as its loosest member | `EVIDENCE-REPIN-001`, `PROVIDER-TRANSPORT-001`, `MODEL-PIN-001` | Blocked | — |
+| `MULTIMODAL-PERCEPTION-001` | Perception tier that emits observations and never conclusions | `MODEL-ROUTE-001`, `CONSENT-STOP-001` | Blocked | DEC-009, DEC-006, DEC-008 |
 | `EVAL-CORPUS-001` | Frozen Vietnamese regression corpus raised toward the manifest minimum | `CORPUS-CONSENT-001`, `EVIDENCE-REPIN-001` | Pending | — |
 | `AGENT-002` | Custom-runtime Shadow evidence and P0 provider-backed evaluation | `AGENT-PIPELINE-001`, `EVAL-CORPUS-001`, `MODEL-PIN-001`, `PROVIDER-TRANSPORT-001`, `RUNTIME-FREEZE-001`, `EVAL-SYNTHETIC-COMBINATORIAL-001`, `EVAL-LANGUAGE-CORPUS-001` | Pending | DEC-006 |
 | `EVAL-LANGUAGE-CORPUS-001` | Normal-language Vietnamese suite at the manifest distribution | `CORPUS-CONSENT-001`, `EVIDENCE-REPIN-001` | Pending | — |

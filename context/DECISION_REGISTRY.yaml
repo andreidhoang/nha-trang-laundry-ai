@@ -50,6 +50,13 @@ decisions:
     affected_capabilities: [INTERNAL_SHADOW, PUBLIC_FAQ, LIST_PRICE_INFO, ORDER_STATUS]
     fail_closed_behavior: REQUIRE_HUMAN
     source: specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - id: DEC-009
+    title: Customer-supplied media exposure to an inference endpoint
+    status: OPEN
+    owner: SECURITY_PRIVACY_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, INTAKE_QUESTION, INTAKE_FACT_CAPTURE, INCIDENT_RECEIPT]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/adr/0008-inference-topology-and-multimodal-scope.md
   - id: DEC-007
     title: Provider-neutral public runtime with custom Responses target
     status: RESOLVED

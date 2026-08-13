@@ -50,6 +50,7 @@ domains:
       - docs/adr/0002-production-agent-runtime-and-trust-boundaries.md
       - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
       - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
+      - docs/adr/0008-inference-topology-and-multimodal-scope.md
       - delivery/PROGRAM_PLAN.yaml
     contracts:
       - specs/contracts/agent-tools-v1.openapi.yaml

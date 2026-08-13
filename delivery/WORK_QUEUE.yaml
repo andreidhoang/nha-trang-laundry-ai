@@ -1563,6 +1563,93 @@ items:
   - rollback_assessment
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-model-pin-001.md
+- id: MODEL-ROUTE-001
+  phase: AGENT_SHADOW
+  title: Per-role model pinning so a route is as pinned as its loosest member
+  status: BLOCKED
+  priority: 213
+  depends_on:
+  - EVIDENCE-REPIN-001
+  - PROVIDER-TRANSPORT-001
+  - MODEL-PIN-001
+  context_domains:
+  - runtime_architecture
+  - evaluation_release
+  normative_sources:
+  - docs/adr/0008-inference-topology-and-multimodal-scope.md
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  contracts:
+  - specs/contracts/provider-data-evidence-v1.schema.json
+  - specs/contracts/capability-status-v1.schema.json
+  - specs/evals/eval-manifest-v1.yaml
+  acceptance_checks: *id002
+  required_evidence:
+  - single_role_route_behaviour_unchanged
+  - per_role_immutable_release_pinned
+  - alias_rejected_in_any_role
+  - per_call_model_attribution_in_evidence
+  - route_scoped_eval_comparability
+  - rollback_assessment
+  blocked_by_decisions: []
+  task_packet: context/tasks/TASK-model-route-001.md
+  blocking_condition: 'Two blockers, neither of them engineering. First, runtime/model-registry-v1.yaml
+    is one of the 21 files hash-pinned by evidence/agent-shadow/local-synthetic-suite-v1.json,
+    so the registry cannot change until EVIDENCE-REPIN-001 is decided; hand-editing
+    the bundle to match would be a fabricated attestation and ADR-0004 freezes that
+    history. Second, docs/adr/0008-inference-topology-and-multimodal-scope.md is proposed
+    rather than accepted, and its model-role decomposition question is owned by PRODUCT_ENGINEERING_OWNER.
+    If that decision is one model per turn, this item closes as not-required rather
+    than being built speculatively. Building a route before either is settled produces
+    a schema nothing may use.'
+- id: MULTIMODAL-PERCEPTION-001
+  phase: AGENT_SHADOW
+  title: Perception tier that emits observations and never conclusions
+  status: BLOCKED
+  priority: 214
+  depends_on:
+  - MODEL-ROUTE-001
+  - CONSENT-STOP-001
+  context_domains:
+  - runtime_architecture
+  - privacy_consent
+  - channel_operations
+  - evaluation_release
+  normative_sources:
+  - docs/adr/0008-inference-topology-and-multimodal-scope.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  - specs/contracts/channel-inbound-envelope-v1.schema.json
+  - specs/contracts/agent-tools-v1.openapi.yaml
+  - specs/evals/eval-manifest-v1.yaml
+  acceptance_checks: *id002
+  required_evidence:
+  - versioned_multimodal_input_contract
+  - fetch_path_inert_while_decision_open
+  - perception_emits_no_monetary_field
+  - pricing_boundary_band_requires_human
+  - unreadable_and_partial_legibility_propagate
+  - no_media_byte_in_evidence_logs_or_spans
+  - perception_call_counted_against_budget
+  - rollback_assessment
+  blocked_by_decisions:
+  - DEC-009
+  - DEC-006
+  - DEC-008
+  task_packet: context/tasks/TASK-multimodal-perception-001.md
+  blocking_condition: 'Three open decisions and one absent corpus. DEC-009 asks whether
+    customer-supplied media may be fetched from a channel provider and submitted to
+    an inference endpoint at all; its fail-closed default is NOT_SUPPORTED and no
+    byte may be fetched while it is OPEN. DEC-006 keeps every model path NOT_SUPPORTED.
+    DEC-008 has no retention schedule, and RETENTION-001 already established that
+    5 of 9 existing classes cannot be purged at all, so a media class landing in a
+    ledger-backed table would be undeletable by construction. Separately, the task-completion
+    eval this item requires needs real intake slips in real handwriting under a consent
+    basis, which is CORPUS-CONSENT-001; synthetic handwriting would measure the fixture
+    author rather than the workload, and no public benchmark covers Vietnamese diacritics
+    on paper.'
 - id: EVAL-CORPUS-001
   phase: AGENT_SHADOW
   title: Frozen Vietnamese regression corpus raised toward the manifest minimum

@@ -1,8 +1,19 @@
 schema_version: 1
-last_updated: '2026-08-13T04:02:52.384373+00:00'
+last_updated: '2026-08-13T04:15:26.991564+00:00'
 current_work_item: null
-last_result: COMPLETE
-blocker: null
+last_result: BLOCKED
+blocker: 'The v2 verifier is written and passing in isolation: schema selection by
+  version, OWNER actor distinctness decided independently of signoff order, cooling-off
+  computed from timestamps with the declared value cross-checked, external review
+  required and hash-verified, eleven rejection paths, v1 behaviour and error messages
+  unchanged. It is parked on branch spike/signer-registry-v2-verifier because landing
+  it turns the guarded suite red: evidence/agent-shadow/local-synthetic-suite-v1.json
+  hash-pins release_manifest.py, so editing the verifier invalidates recorded evidence.
+  That bundle pins 21 files including agent_runner.py, graders.py, runner.py, the
+  eval manifest, the agent tool OpenAPI and five contract schemas, making it a de
+  facto change freeze on the core. Regenerating a frozen AGENT-001 artifact is not
+  an engineer''s call. Also still required: the owner key ceremony, which no agent
+  can perform.'
 evidence_records:
 - work_item: IDENTITY-001
   path: evidence/delivery-loop/IDENTITY-001.yaml
@@ -226,6 +237,20 @@ blocked_records:
     32-case bundle. The conflict blocks EVAL-CORPUS-001, EVAL-LANGUAGE-CORPUS-001
     and EVAL-PUBLIC-CORPUS-001 identically and needs a sequencing decision.'
   recorded_at: '2026-08-13T03:53:10.172443+00:00'
+- work_item: SIGNER-REGISTRY-001
+  reason: 'The v2 verifier is written and passing in isolation: schema selection by
+    version, OWNER actor distinctness decided independently of signoff order, cooling-off
+    computed from timestamps with the declared value cross-checked, external review
+    required and hash-verified, eleven rejection paths, v1 behaviour and error messages
+    unchanged. It is parked on branch spike/signer-registry-v2-verifier because landing
+    it turns the guarded suite red: evidence/agent-shadow/local-synthetic-suite-v1.json
+    hash-pins release_manifest.py, so editing the verifier invalidates recorded evidence.
+    That bundle pins 21 files including agent_runner.py, graders.py, runner.py, the
+    eval manifest, the agent tool OpenAPI and five contract schemas, making it a de
+    facto change freeze on the core. Regenerating a frozen AGENT-001 artifact is not
+    an engineer''s call. Also still required: the owner key ceremony, which no agent
+    can perform.'
+  recorded_at: '2026-08-13T04:15:26.991564+00:00'
 unblocked_records:
 - work_item: OPENCLAW-REPACK-001
   reason: The exact-commit hosted GitHub workflow was authorized and executed; reevaluating

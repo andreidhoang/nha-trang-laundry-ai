@@ -261,6 +261,42 @@ Six further items were recorded `BLOCKED` on precise owner actions: `PROVIDER-AC
 one exists). `AGENT-PIPELINE-001` was moved from priority 219 to 208 ahead of two items needing
 external access — a plan edit the owner may reverse.
 
+### The frozen evidence bundle is a change freeze on the core
+
+This is the largest finding of the second pass, and it was discovered twice before its size was
+clear. `evidence/agent-shadow/local-synthetic-suite-v1.json` hash-pins **21 files**:
+
+```
+apps/worker/.../agent_runner.py        packages/contracts/.../release_manifest.py
+packages/evals/.../graders.py          packages/evals/.../runner.py
+specs/evals/eval-manifest-v1.yaml      specs/evals/assertion-registry-v1.json
+specs/evals/fixture-registry-v1.json   specs/contracts/agent-tools-v1.openapi.yaml
+specs/contracts/release-gate-manifest-v1.schema.json   ... and 12 more
+```
+
+Editing any of them invalidates recorded evidence and turns the guarded suite red. That is the
+pinning working exactly as designed — but the set it covers is the core of the system, so in
+practice it is a **change freeze**, and it silently blocks:
+
+| Item | Needs to edit |
+|---|---|
+| `SIGNER-REGISTRY-001` | `release_manifest.py` |
+| `EVAL-SYNTHETIC-COMBINATORIAL-001` | `eval-manifest-v1.yaml` inventory |
+| `EVAL-CORPUS-001` | the same inventory |
+| `EVAL-LANGUAGE-CORPUS-001` | the same inventory |
+| `EVAL-PUBLIC-CORPUS-001` | the same inventory |
+| `MODEL-PIN-001` | the runtime registry and provider-data schema |
+
+Six items, including two on the G1 critical path. **This needs an owner decision and nothing else
+will unstick it.** The options are to regenerate the bundle through
+`scripts/capture_local_agent_evidence.py` (it is a local synthetic bundle, and re-deriving it is
+what the script exists for), or to let `AGENT-002` supersede it first and accept that the six items
+queue behind `AGENT-002` — which itself depends on a provider credential.
+
+Regenerating a frozen `AGENT-001` artifact is not a decision an engineer makes alone, so nothing was
+regenerated. The `SIGNER-REGISTRY-001` verifier is complete and passing on branch
+`spike/signer-registry-v2-verifier`, ready to cherry-pick the moment the question is settled.
+
 ### A sequencing defect in the plan
 
 `CONSENT-STOP-001` requires the egress suppression re-check to happen **inside the send

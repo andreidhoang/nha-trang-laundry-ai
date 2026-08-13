@@ -9,6 +9,11 @@ offers `CONSENT-STOP-001`, which should not be started before the scope defect i
 other local items are `SIGNER-REGISTRY-001` and `EVAL-SYNTHETIC-COMBINATORIAL-001` (500 cases, no
 external dependency, the fastest way to move the evidence base off zero).
 
+**The frozen local evidence bundle is now the binding constraint on six items.** It hash-pins 21
+core files, so `SIGNER-REGISTRY-001`, all four corpus items and `MODEL-PIN-001` cannot land without
+either regenerating it or waiting for `AGENT-002` to supersede it. See §6a of the review; this needs
+an owner decision and nothing else will unstick it.
+
 **Engineering is no longer the binding constraint on the spine.** Eleven items are blocked, and every
 week of the remaining schedule belongs to the owner actions in §5 of that review.
 **Active branch:** `delivery/runtime-freeze-and-gate-coverage`, unpushed, branched from `main` on

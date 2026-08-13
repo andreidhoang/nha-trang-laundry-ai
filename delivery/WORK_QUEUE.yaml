@@ -1637,7 +1637,7 @@ items:
 - id: SIGNER-REGISTRY-001
   phase: PRODUCTION_HARDENING
   title: Two-party release schema, verifier enforcement, and signer key ceremony
-  status: PENDING
+  status: BLOCKED
   priority: 215
   depends_on: []
   context_domains:
@@ -1660,6 +1660,18 @@ items:
   - rotation_and_revocation_exercised
   - rollback_assessment
   blocked_by_decisions: []
+  blocking_condition: 'The v2 verifier is written and passing in isolation: schema
+    selection by version, OWNER actor distinctness decided independently of signoff
+    order, cooling-off computed from timestamps with the declared value cross-checked,
+    external review required and hash-verified, eleven rejection paths, v1 behaviour
+    and error messages unchanged. It is parked on branch spike/signer-registry-v2-verifier
+    because landing it turns the guarded suite red: evidence/agent-shadow/local-synthetic-suite-v1.json
+    hash-pins release_manifest.py, so editing the verifier invalidates recorded evidence.
+    That bundle pins 21 files including agent_runner.py, graders.py, runner.py, the
+    eval manifest, the agent tool OpenAPI and five contract schemas, making it a de
+    facto change freeze on the core. Regenerating a frozen AGENT-001 artifact is not
+    an engineer''s call. Also still required: the owner key ceremony, which no agent
+    can perform.'
 - id: AGENT-002
   phase: AGENT_SHADOW
   title: Custom-runtime Shadow evidence and P0 provider-backed evaluation

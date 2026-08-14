@@ -2,265 +2,60 @@
 <html lang="vi">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#0b3b36">
     <meta name="description" content="Bảng vận hành nội bộ Giặt Là Sạch Cộng">
+    <meta name="referrer" content="no-referrer">
+
+    <!--
+      Where this deployment's staff sign in.
+
+      The console is not an OIDC client and cannot become one: the content security policy is
+      `connect-src 'self'`, so the browser may not fetch an identity provider's discovery document.
+      A session is established by an identity surface that POSTs a bearer token to
+      /internal/v1/auth/session and receives HttpOnly cookies. Set the content below to that
+      surface's same-origin path to turn the signed-out screen's button on. Left empty, the screen
+      explains the flow rather than offering a link that goes nowhere.
+    -->
+    <meta name="console-signin-path" content="">
+
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icon.svg">
     <link rel="manifest" href="manifest.webmanifest">
-    <link rel="stylesheet" href="styles.css">
-    <title>Staff Operations</title>
+    <link rel="stylesheet" href="styles/tokens.css">
+    <link rel="stylesheet" href="styles/base.css">
+    <link rel="stylesheet" href="styles/components.css">
+    <link rel="stylesheet" href="styles/layout.css">
+    <title>Bảng vận hành</title>
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">GIẶT LÀ SẠCH CỘNG · INTERNAL</p>
-        <h1>Bảng vận hành</h1>
-      </div>
-      <output id="session-status" class="status" aria-live="polite">Đang xác thực…</output>
-    </header>
+    <a class="sr-only" href="#main">Bỏ qua điều hướng</a>
 
-    <main>
-      <section class="control-card" aria-labelledby="store-heading">
-        <div>
-          <p class="eyebrow">PHẠM VI DỮ LIỆU</p>
-          <h2 id="store-heading">Chọn cửa hàng</h2>
+    <div class="app">
+      <header class="appbar">
+        <div class="appbar__identity">
+          <p class="appbar__eyebrow">GIẶT LÀ SẠCH CỘNG · NỘI BỘ</p>
+          <p class="appbar__title" id="screen-title">Bảng vận hành</p>
         </div>
-        <form id="store-form">
-          <label for="store-id">Store UUID</label>
-          <div class="field-row">
-            <input id="store-id" name="store-id" type="text" inputmode="text" required
-              autocomplete="off" placeholder="00000000-0000-0000-0000-000000000000">
-            <button type="submit">Tải bảng</button>
-          </div>
-        </form>
-      </section>
+        <div class="row" id="appbar-actions"></div>
+      </header>
 
-      <section class="grid" aria-label="Operational views">
-        <article class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">IMMUTABLE SNAPSHOT</p>
-              <h2>Báo giá</h2>
-            </div>
-            <span id="quote-count" class="count">0</span>
-          </div>
-          <p class="guardrail">Giá do bộ tính toán quyết định. Màn hình chỉ hiển thị; không làm tròn, không suy đoán khối lượng.</p>
-          <div id="quotes" class="cards" aria-live="polite">
-            <p class="empty">Nhập Store UUID để tải dữ liệu.</p>
-          </div>
-          <form id="quote-form" class="action-form mutation-form">
-            <label for="quote-request-id">Order request UUID</label>
-            <input id="quote-request-id" name="bound_order_request_id" required autocomplete="off">
-            <label for="quote-service-code">Mã dịch vụ</label>
-            <input id="quote-service-code" name="service_code" required autocomplete="off"
-              value="STANDARD_WASH_DRY" placeholder="STANDARD_WASH_DRY">
-            <label for="quote-quantity">Khối lượng / số lượng</label>
-            <input id="quote-quantity" name="quantity" required autocomplete="off"
-              inputmode="decimal" placeholder="6">
-            <label for="quote-unit">Đơn vị</label>
-            <select id="quote-unit" name="unit">
-              <option value="KG">KG</option>
-              <option value="ITEM">ITEM</option>
-              <option value="PAIR">PAIR</option>
-              <option value="SET">SET</option>
-              <option value="M2">M2</option>
-              <option value="ANIMAL_PLUSH_ITEM">ANIMAL_PLUSH_ITEM</option>
-              <option value="CASE">CASE</option>
-            </select>
-            <label for="quote-basis">Cơ sở khối lượng</label>
-            <select id="quote-basis" name="quantity_basis">
-              <option value="STAFF_MEASUREMENT">STAFF_MEASUREMENT · nhân viên đã cân</option>
-              <option value="CUSTOMER_ESTIMATE">CUSTOMER_ESTIMATE · khách tự ước</option>
-            </select>
-            <button type="submit">Tính giá</button>
-            <output id="quote-result" class="form-result" aria-live="polite"></output>
-          </form>
-        </article>
+      <div class="banners" id="banners"></div>
 
-        <article class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">ORTHOGONAL STATE</p>
-              <h2>Đơn hàng</h2>
-            </div>
-            <span id="order-count" class="count">0</span>
-          </div>
-          <div id="orders" class="cards" aria-live="polite">
-            <p class="empty">Nhập Store UUID để tải dữ liệu.</p>
-          </div>
-        </article>
+      <main class="main" id="main" tabindex="-1"></main>
 
+      <nav class="nav" aria-label="Điều hướng chính">
+        <ul class="nav__list" id="nav-list"></ul>
+      </nav>
+    </div>
 
-        <article class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">SHADOW · MỌI TIN NHẮN CẦN NGƯỜI DUYỆT</p>
-              <h2>Bản nháp chờ duyệt</h2>
-            </div>
-            <span id="draft-count" class="count">0</span>
-          </div>
-          <p class="guardrail">Sửa tạo bản mới có ghi tên người sửa; bản gốc của agent không bao giờ bị thay đổi.</p>
-          <div id="shadow-drafts" class="cards" aria-live="polite">
-            <p class="empty">Đang chờ phiên staff hợp lệ.</p>
-          </div>
-        </article>
+    <noscript>
+      <p class="notice" data-state="danger">
+        Bảng vận hành cần JavaScript. Không có bản dự phòng tĩnh, vì mọi số liệu trên màn hình này
+        đều do máy chủ tính tại thời điểm hỏi.
+      </p>
+    </noscript>
 
-        <article class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">KHÔNG BAO GIỜ TỰ GỬI LẠI</p>
-              <h2>Gửi chưa rõ kết quả</h2>
-            </div>
-            <span id="unknown-count" class="count">0</span>
-          </div>
-          <p class="guardrail">Chỉ xác nhận từ nhà cung cấp hoặc quyết định của người mới đóng được trạng thái này.</p>
-          <div id="unknown-sends" class="cards" aria-live="polite">
-            <p class="empty">Đang chờ phiên staff hợp lệ.</p>
-          </div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">EXACT HASH + TTL</p>
-              <h2>Hàng chờ duyệt</h2>
-            </div>
-            <span id="approval-count" class="count">0</span>
-          </div>
-          <p class="guardrail">Chỉ hiển thị envelope. Không cho duyệt mù khi chưa có resource preview.</p>
-          <div id="approvals" class="cards" aria-live="polite">
-            <p class="empty">Đang chờ phiên staff hợp lệ.</p>
-          </div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">HUMAN INTAKE ONLY</p>
-              <h2>Sự cố khách hàng</h2>
-            </div>
-            <span id="incident-count" class="count">0</span>
-          </div>
-          <p class="guardrail">Ghi nhận sự cố không quyết định lỗi hoặc phương án bồi hoàn.</p>
-          <div id="incidents" class="cards" aria-live="polite">
-            <p class="empty">Nhập Store UUID để tải dữ liệu.</p>
-          </div>
-          <form id="incident-form" class="action-form mutation-form">
-            <label for="incident-order-id">Order UUID</label>
-            <input id="incident-order-id" name="order_id" required autocomplete="off">
-            <label for="contact-scope-hash">Contact scope hash</label>
-            <input id="contact-scope-hash" name="contact_scope_hash" required autocomplete="off"
-              placeholder="sha256:…">
-            <label for="incident-evidence-hash">Evidence summary hash</label>
-            <input id="incident-evidence-hash" name="evidence_summary_hash" required
-              autocomplete="off" placeholder="sha256:…">
-            <button type="submit">Mở sự cố</button>
-            <output id="incident-result" class="form-result" aria-live="polite"></output>
-          </form>
-        </article>
-
-        <article class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">SHADOW · MANUAL ONLY</p>
-              <h2>Gửi thủ công</h2>
-            </div>
-          </div>
-          <p class="guardrail">Chỉ khóa envelope đã duyệt. Hệ thống không gửi tin; staff phải xác nhận đúng hash sau khi gửi thủ công.</p>
-          <form id="manual-prepare-form" class="action-form mutation-form">
-            <label for="manual-approval-id">Approval UUID</label>
-            <input id="manual-approval-id" name="approval_id" required autocomplete="off">
-            <label for="manual-resource-version">Resource version</label>
-            <input id="manual-resource-version" name="resource_version" type="number" min="1" required>
-            <label for="manual-snapshot-hash">Snapshot hash</label>
-            <input id="manual-snapshot-hash" name="snapshot_hash" required autocomplete="off"
-              placeholder="JCS-SHA256-V1:…">
-            <label for="manual-rendered-hash">Rendered hash</label>
-            <input id="manual-rendered-hash" name="rendered_hash" required autocomplete="off"
-              placeholder="JCS-SHA256-V1:…">
-            <label for="manual-recipient-id">Recipient binding UUID</label>
-            <input id="manual-recipient-id" name="recipient_id" required autocomplete="off">
-            <button type="submit">Khóa envelope Shadow</button>
-            <output id="manual-prepare-result" class="form-result" aria-live="polite"></output>
-          </form>
-          <form id="manual-attest-form" class="action-form mutation-form">
-            <label for="manual-envelope-id">Envelope UUID</label>
-            <input id="manual-envelope-id" name="envelope_id" required autocomplete="off">
-            <label for="manual-attest-version">Envelope row version</label>
-            <input id="manual-attest-version" name="envelope_version" type="number" min="1" value="1" required>
-            <label for="manual-attest-resource-version">Resource version</label>
-            <input id="manual-attest-resource-version" name="resource_version" type="number" min="1" required>
-            <label for="manual-exact-hash">Exact rendered hash</label>
-            <input id="manual-exact-hash" name="exact_rendered_hash" required autocomplete="off"
-              placeholder="JCS-SHA256-V1:…">
-            <label for="manual-sent-at">Sent at</label>
-            <input id="manual-sent-at" name="sent_at" type="datetime-local" required>
-            <button type="submit">Ghi nhận đã gửi</button>
-            <output id="manual-attest-result" class="form-result" aria-live="polite"></output>
-          </form>
-        </article>
-
-        <article class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">OBSERVE · NO REPLAY</p>
-              <h2>Khôi phục hàng đợi</h2>
-            </div>
-          </div>
-          <p class="guardrail">Màn hình chỉ quan sát. Không có thao tác replay hoặc gửi lại.</p>
-          <div id="queue-recovery" class="cards" aria-live="polite">
-            <p class="empty">Đang chờ phiên approver hợp lệ.</p>
-          </div>
-        </article>
-      </section>
-    </main>
-
-    <template id="order-template">
-      <article class="item-card">
-        <div class="item-title"><strong data-field="order"></strong><span data-field="version"></span></div>
-        <dl>
-          <div><dt>Commercial</dt><dd data-field="commercial"></dd></div>
-          <div><dt>Intake</dt><dd data-field="intake"></dd></div>
-          <div><dt>Production</dt><dd data-field="production"></dd></div>
-          <div><dt>Balance</dt><dd data-field="balance"></dd></div>
-        </dl>
-      </article>
-    </template>
-
-    <template id="approval-template">
-      <article class="item-card warning">
-        <div class="item-title"><strong data-field="approval"></strong><span data-field="status"></span></div>
-        <dl>
-          <div><dt>Role</dt><dd data-field="role"></dd></div>
-          <div><dt>Hết hạn</dt><dd data-field="expiry"></dd></div>
-          <div class="hash-row"><dt>Envelope hash</dt><dd data-field="hash"></dd></div>
-        </dl>
-      </article>
-    </template>
-
-    <template id="quote-template">
-      <article class="item-card">
-        <div class="item-title"><strong data-field="quote"></strong><span data-field="status"></span></div>
-        <dl>
-          <div><dt>Revision</dt><dd data-field="revision"></dd></div>
-          <div><dt>Finality</dt><dd data-field="finality"></dd></div>
-          <div><dt>Total</dt><dd data-field="total"></dd></div>
-          <div class="hash-row"><dt>Snapshot hash</dt><dd data-field="hash"></dd></div>
-        </dl>
-      </article>
-    </template>
-
-    <template id="incident-template">
-      <article class="item-card warning">
-        <div class="item-title"><strong data-field="incident"></strong><span data-field="status"></span></div>
-        <dl>
-          <div><dt>Order</dt><dd data-field="order"></dd></div>
-          <div><dt>Category</dt><dd data-field="category"></dd></div>
-          <div><dt>Fault decided</dt><dd data-field="fault"></dd></div>
-          <div><dt>Remedy decided</dt><dd data-field="remedy"></dd></div>
-        </dl>
-      </article>
-    </template>
-
-    <script src="app.js" defer></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>

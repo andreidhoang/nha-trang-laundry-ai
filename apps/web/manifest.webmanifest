@@ -1,10 +1,27 @@
 {
-  "name": "Giặt Là Sạch Cộng Staff Operations",
-  "short_name": "Sạch Cộng Ops",
+  "name": "Giặt Là Sạch Cộng — Bảng vận hành",
+  "short_name": "Bảng vận hành",
+  "description": "Bảng vận hành nội bộ cho nhân viên. Không có bề mặt nào dành cho khách hàng.",
+  "lang": "vi",
+  "dir": "ltr",
   "start_url": "/staff/",
   "scope": "/staff/",
   "display": "standalone",
-  "background_color": "#f3f5ef",
+  "orientation": "portrait-primary",
+  "background_color": "#f4f7f6",
   "theme_color": "#0b3b36",
-  "icons": []
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
 }

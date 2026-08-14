@@ -1,0 +1,210 @@
+/* Design tokens for the staff operations console.
+ *
+ * Two constraints shaped this palette, and both come from where the console is used rather than
+ * from taste. It is read on a phone held in a laundry with the door open, so every text pair here
+ * clears WCAG AA against its own background rather than against white. And state — not hierarchy —
+ * is the thing staff scan for, so the state colours are first-class tokens with a fixed meaning
+ * that no screen is allowed to reinterpret:
+ *
+ *   ok       a thing the server confirmed        (approved, sent, paid)
+ *   warn     a thing waiting on a named human    (HUMAN REQUIRED, provisional, unverified)
+ *   danger   a thing the server refused          (rejected, failed, conflict)
+ *   info     a thing that is true but not final  (estimate, range, draft)
+ *   neutral  a thing with no decision yet
+ *
+ * There is deliberately no "success green" separate from the brand green. A staff member should
+ * never have to ask whether a green badge means "brand" or "confirmed".
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Brand ---------------------------------------------------------------------------------- */
+  --brand-900: #072a26;
+  --brand-800: #0b3b36;
+  --brand-700: #0b6759;
+  --brand-400: #7bc7af;
+  --brand-200: #c6e6da;
+  --brand-050: #eef7f3;
+
+  /* Surfaces ------------------------------------------------------------------------------- */
+  --canvas: #f4f7f6;
+  --surface: #ffffff;
+  --surface-sunken: #eef1f0;
+  --surface-raised: #ffffff;
+  --border: #dbe3e0;
+  --border-strong: #b9c6c1;
+
+  /* Text ----------------------------------------------------------------------------------- */
+  --text: #0f1c1a;
+  --text-secondary: #44544f;
+  --text-muted: #63736e;
+  --text-on-brand: #ffffff;
+
+  /* State: foreground / background / border, always used as a set ---------------------------- */
+  --ok-fg: #0a5c4e;
+  --ok-bg: #e4f4ee;
+  --ok-border: #9ed4c1;
+
+  --warn-fg: #8a5606;
+  --warn-bg: #fff6e6;
+  --warn-border: #e6bd77;
+
+  --danger-fg: #9b2226;
+  --danger-bg: #fdecec;
+  --danger-border: #eba9a9;
+
+  --info-fg: #1a5680;
+  --info-bg: #e9f2f9;
+  --info-border: #a8c9e0;
+
+  --neutral-fg: #44544f;
+  --neutral-bg: #eef1f0;
+  --neutral-border: #cfd8d5;
+
+  /* Focus — never removed, only restyled ----------------------------------------------------- */
+  --focus-ring: #1a73c9;
+  --focus-ring-offset: var(--surface);
+
+  /* Typography ------------------------------------------------------------------------------- */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 1rem;
+  --text-md: 1.0625rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+  --text-2xl: clamp(1.6rem, 4.5vw, 2.1rem);
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+
+  --weight-normal: 400;
+  --weight-medium: 550;
+  --weight-bold: 700;
+  --weight-heavy: 800;
+
+  /* Space — a 4px base, because tap targets and text baselines both land on it ---------------- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* The minimum interactive size. Nothing clickable may be smaller, on any screen. */
+  --tap-min: 2.75rem;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgb(9 30 26 / 0.06), 0 1px 3px rgb(9 30 26 / 0.08);
+  --shadow-md: 0 2px 6px rgb(9 30 26 / 0.08), 0 8px 20px rgb(9 30 26 / 0.08);
+  --shadow-lg: 0 10px 34px rgb(9 30 26 / 0.18);
+
+  --layer-content: 1;
+  --layer-sticky: 10;
+  --layer-overlay: 100;
+  --layer-toast: 200;
+
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --easing: cubic-bezier(0.2, 0, 0.13, 1);
+
+  --measure: 68ch;
+}
+
+/* Dark mode is for the evening shift, not for decoration. The state hues keep their meaning and
+ * only their luminance moves, so a badge learned in daylight still reads the same after dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: #0b1412;
+    --surface: #13201d;
+    --surface-sunken: #0f1a18;
+    --surface-raised: #182825;
+    --border: #263833;
+    --border-strong: #3a514a;
+
+    --text: #e8f1ee;
+    --text-secondary: #adc0ba;
+    --text-muted: #8ba099;
+
+    --ok-fg: #7fd8bd;
+    --ok-bg: #0d2b25;
+    --ok-border: #1f5a4c;
+
+    --warn-fg: #f0c076;
+    --warn-bg: #2e2312;
+    --warn-border: #6d5322;
+
+    --danger-fg: #f3a5a5;
+    --danger-bg: #331616;
+    --danger-border: #6e2e2e;
+
+    --info-fg: #8fc4ea;
+    --info-bg: #12262f;
+    --info-border: #2b5570;
+
+    --neutral-fg: #adc0ba;
+    --neutral-bg: #1a2724;
+    --neutral-border: #2f423d;
+
+    --focus-ring: #6db2f2;
+    --focus-ring-offset: var(--surface);
+
+    --brand-050: #10231f;
+    --brand-200: #1d4a40;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 2px 6px rgb(0 0 0 / 0.4), 0 8px 20px rgb(0 0 0 / 0.35);
+    --shadow-lg: 0 10px 34px rgb(0 0 0 / 0.55);
+  }
+}
+
+[data-theme="dark"] {
+  --canvas: #0b1412;
+  --surface: #13201d;
+  --surface-sunken: #0f1a18;
+  --surface-raised: #182825;
+  --border: #263833;
+  --border-strong: #3a514a;
+
+  --text: #e8f1ee;
+  --text-secondary: #adc0ba;
+  --text-muted: #8ba099;
+
+  --ok-fg: #7fd8bd;
+  --ok-bg: #0d2b25;
+  --ok-border: #1f5a4c;
+
+  --warn-fg: #f0c076;
+  --warn-bg: #2e2312;
+  --warn-border: #6d5322;
+
+  --danger-fg: #f3a5a5;
+  --danger-bg: #331616;
+  --danger-border: #6e2e2e;
+
+  --info-fg: #8fc4ea;
+  --info-bg: #12262f;
+  --info-border: #2b5570;
+
+  --neutral-fg: #adc0ba;
+  --neutral-bg: #1a2724;
+  --neutral-border: #2f423d;
+
+  --focus-ring: #6db2f2;
+  --brand-050: #10231f;
+  --brand-200: #1d4a40;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 2px 6px rgb(0 0 0 / 0.4), 0 8px 20px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 10px 34px rgb(0 0 0 / 0.55);
+}

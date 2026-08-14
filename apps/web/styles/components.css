@@ -1,0 +1,302 @@
+/* Components.
+ *
+ * The badge is the most important thing in this file. Almost every mistake this console could
+ * cause is a staff member acting on a value whose status they misread — treating an estimate as a
+ * price, a draft as sent, a provisional promotion as applied. So state is never conveyed by colour
+ * alone and never by position: a badge always carries a word, and the word is the server's own
+ * enum or the spec's mandated Vietnamese phrase, never a paraphrase invented here.
+ */
+
+/* Cards ---------------------------------------------------------------------------------------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-4);
+}
+
+.card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+.card__header {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.card__title {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.eyebrow {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-heavy);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Badges --------------------------------------------------------------------------------------- */
+
+.badge {
+  align-items: center;
+  background: var(--neutral-bg);
+  border: 1px solid var(--neutral-border);
+  border-radius: var(--radius-pill);
+  color: var(--neutral-fg);
+  display: inline-flex;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-heavy);
+  gap: var(--space-1);
+  letter-spacing: 0.04em;
+  padding: 0.2rem var(--space-2);
+  white-space: nowrap;
+}
+
+.badge[data-state="ok"] {
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+  color: var(--ok-fg);
+}
+
+.badge[data-state="warn"] {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+  color: var(--warn-fg);
+}
+
+.badge[data-state="danger"] {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-fg);
+}
+
+.badge[data-state="info"] {
+  background: var(--info-bg);
+  border-color: var(--info-border);
+  color: var(--info-fg);
+}
+
+/* A count next to a panel heading. Reads as data, not as a badge with meaning. */
+.count {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-heavy);
+  padding: 0.15rem var(--space-2);
+}
+
+/* Notices -------------------------------------------------------------------------------------- */
+
+.notice {
+  background: var(--neutral-bg);
+  border: 1px solid var(--neutral-border);
+  border-left-width: 4px;
+  border-radius: var(--radius-md);
+  color: var(--neutral-fg);
+  font-size: var(--text-base);
+  padding: var(--space-3);
+}
+
+.notice[data-state="warn"] {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+  color: var(--warn-fg);
+}
+
+.notice[data-state="danger"] {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-fg);
+}
+
+.notice[data-state="info"] {
+  background: var(--info-bg);
+  border-color: var(--info-border);
+  color: var(--info-fg);
+}
+
+.notice[data-state="ok"] {
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+  color: var(--ok-fg);
+}
+
+.notice__title {
+  font-weight: var(--weight-heavy);
+  margin-bottom: var(--space-1);
+}
+
+.notice ul {
+  list-style: disc;
+  margin-top: var(--space-2);
+  padding-left: var(--space-5);
+}
+
+/* Definition grids ------------------------------------------------------------------------------ */
+
+.fields {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.field {
+  align-items: baseline;
+  column-gap: var(--space-3);
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 34%) 1fr;
+}
+
+.field--span {
+  grid-template-columns: 1fr;
+  row-gap: var(--space-1);
+}
+
+.field dt {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.field dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Lists ------------------------------------------------------------------------------------------ */
+
+.stack {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.stack--tight {
+  gap: var(--space-2);
+}
+
+.row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.row--end {
+  justify-content: flex-end;
+}
+
+.spread {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.empty {
+  color: var(--text-muted);
+  padding: var(--space-4);
+  text-align: center;
+}
+
+/* Forms ------------------------------------------------------------------------------------------ */
+
+.form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* The result line under a form. `role="status"` in markup, so it is announced when it changes. */
+.form__result {
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+  padding: var(--space-2) var(--space-3);
+}
+
+.form__result:empty {
+  display: none;
+}
+
+.form__result[data-state="ok"] {
+  background: var(--ok-bg);
+  color: var(--ok-fg);
+}
+
+.form__result[data-state="danger"] {
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+
+.form__result[data-state="warn"] {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+/* Skeleton loading. A spinner says "wait"; a skeleton says "wait, and here is the shape of what is
+ * coming", which stops staff re-tapping a slow list. */
+.skeleton {
+  animation: pulse 1.4s ease-in-out infinite;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  height: 4.5rem;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* Tables — used only where staff genuinely compare rows, never as a layout device. */
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+th {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-heavy);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+td.numeric,
+th.numeric {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}

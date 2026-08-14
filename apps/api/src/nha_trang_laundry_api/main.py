@@ -241,6 +241,10 @@ class IncidentOpenRequest(StrictRequest):
     evidence_summary_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
+class MemberStoresResponse(BaseModel):
+    store_ids: list[UUID]
+
+
 class OrderResponse(BaseModel):
     order_id: UUID
     store_id: UUID
@@ -646,9 +650,32 @@ def create_order(
             idempotency_key=idempotency_key,
             principal=principal,
         )
-    except ValueError as error:
+    # `OrderRepository.create` refuses a non-member with `OrderAuthorizationError`, which descends
+    # from `PermissionError` and therefore from `OSError` — not from `ValueError`. Catching only
+    # `ValueError` here turned the single most common condition in the system (a staff user who
+    # holds the right role but has no `staff_store_assignments` row yet) into a 500, and a 500 is
+    # what tells a client to retry. `_raise_operations_error` was always written to map this to 403.
+    except (OrderAuthorizationError, ValueError) as error:
         _raise_operations_error(error)
     return _order_response(stored)
+
+
+@app.get("/internal/v1/stores", response_model=MemberStoresResponse)
+def list_member_stores(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> MemberStoresResponse:
+    """List the stores the caller is assigned to.
+
+    Membership, not role, is what every store-scoped route enforces, and there was no way to ask
+    what one's own membership is. An empty list is a legitimate and common answer — it is the state
+    of every staff user the API can create, because assigning a store has no route — so the client
+    must render it as "you have no store yet, ask an owner", never as an error.
+    """
+
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    return MemberStoresResponse(store_ids=list(service.list_member_stores(principal=principal)))
 
 
 @app.get("/internal/v1/stores/{store_id}/orders", response_model=list[OrderResponse])
@@ -855,7 +882,10 @@ def list_quotes(
             QuoteSummaryResponse.model_validate(item, from_attributes=True)
             for item in service.list_quotes(store_id=store_id, principal=principal, limit=limit)
         ]
-    except ValueError as error:
+    # `StoreAccessError` is a `PermissionError`; see the note on `create_order`. The write path for
+    # quotes already catches it (`main.py` `create_quote`), so before this line a staff member could
+    # be told 403 when creating a quote and 500 when listing the same store's quotes.
+    except (StoreAccessError, ValueError) as error:
         _raise_operations_error(error)
 
 
@@ -943,7 +973,7 @@ def open_incident(
                 principal=principal,
             )
         )
-    except (ValueError, IdempotencyConflictError) as error:
+    except (StoreAccessError, ValueError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
 
 
@@ -964,7 +994,7 @@ def list_incidents(
             IncidentSummaryResponse.model_validate(item, from_attributes=True)
             for item in service.list_incidents(store_id=store_id, principal=principal, limit=limit)
         ]
-    except ValueError as error:
+    except (StoreAccessError, ValueError) as error:
         _raise_operations_error(error)
 
 

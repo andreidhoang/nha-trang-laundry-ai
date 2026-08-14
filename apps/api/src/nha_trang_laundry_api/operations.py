@@ -53,7 +53,11 @@ from nha_trang_laundry_db.shadow_console import (
     ShadowConsoleRepository,
     UnknownSend,
 )
-from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
+from nha_trang_laundry_db.store_access import (
+    StoreAccessError,
+    member_store_ids,
+    require_store_membership,
+)
 from nha_trang_laundry_domain.catalog import (
     ActorRole,
     ApprovalAction,
@@ -652,6 +656,22 @@ class OperationsService:
                 ),
             )
         return _stored_incident_result(result.response, replayed=result.replayed)
+
+    def list_member_stores(self, *, principal: StaffPrincipal) -> tuple[UUID, ...]:
+        """Return the stores this principal is assigned to, in a stable order.
+
+        Every store-scoped route refuses a principal who is not an assigned member, and until this
+        existed the console had no way to learn which stores those are — the runbook told staff to
+        paste a UUID by hand. It reads `staff_store_assignments` directly and returns nothing else:
+        there is no `stores` table yet, so a name would have to be invented, and an invented name
+        next to a real identifier is worse than the identifier alone.
+        """
+
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return tuple(sorted(member_store_ids(cursor, staff_user_id=principal.staff_user_id)))
 
     def list_incidents(
         self, *, store_id: UUID, principal: StaffPrincipal, limit: int

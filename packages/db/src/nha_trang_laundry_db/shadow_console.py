@@ -384,6 +384,11 @@ class ShadowConsoleRepository:
     ) -> tuple[UnknownSend, ...]:
         if not principal.roles & SHADOW_READ_ROLES:
             raise ShadowAuthorizationError("exception queue access is not authorized")
+        # The same bound every other list in this repository applies. Without it a negative limit
+        # reaches `LIMIT %s` and PostgreSQL raises, which surfaces as a 500 on a read that a client
+        # is allowed to make, and an unbounded limit returns the whole table in one page.
+        if not 1 <= limit <= 200:
+            raise ShadowStateError("exception queue limit must be between 1 and 200")
         with connection.cursor() as cursor:
             cursor.execute(
                 """

@@ -1,0 +1,283 @@
+/* Reset, document defaults and form primitives.
+ *
+ * The rules that are not conventional are the ones about numbers. Money, weights, hashes and row
+ * versions all use tabular figures, because a staff member comparing two quotes reads them as
+ * columns whether or not we drew a table. And no input in this application is ever a spinner or a
+ * stepper: a quantity typed as "6" and a quantity nudged to "6.0" are different strings, the server
+ * cares about the difference, and a browser widget must not be the thing that decides it.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body,
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+blockquote,
+dl,
+dd,
+ol,
+ul {
+  margin: 0;
+}
+
+ol,
+ul {
+  list-style: none;
+  padding: 0;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  line-height: var(--leading-tight);
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-heavy);
+  letter-spacing: -0.03em;
+}
+
+h2 {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.015em;
+}
+
+h3 {
+  font-size: var(--text-base);
+  font-weight: var(--weight-bold);
+}
+
+p {
+  text-wrap: pretty;
+}
+
+a {
+  color: var(--brand-700);
+  text-underline-offset: 0.15em;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+/* Focus is never removed. Pointer users do not see it; keyboard users always do. */
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Containers focused programmatically — the route outlet on every navigation, the skip-link target
+ * — are announcement and scroll targets, not controls. Chrome treats a scripted `.focus()` as
+ * keyboard-initiated and paints the ring, which reads as "you are on a button" when nothing is
+ * focusable. Interactive elements keep their ring; these do not have one to lose. */
+[tabindex="-1"]:focus,
+[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Numbers ------------------------------------------------------------------------------------ */
+
+.tabular,
+.money,
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+
+.money {
+  font-weight: var(--weight-bold);
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+/* Screen-reader-only text, used for the things sighted staff read from colour and position. */
+.sr-only {
+  border: 0;
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+/* Forms ---------------------------------------------------------------------------------------
+ * Every control is at least --tap-min tall. Labels are always visible: a placeholder is a hint,
+ * never a label, because the hint disappears exactly when the staff member needs to check it.
+ */
+
+label,
+.label {
+  color: var(--text-secondary);
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.01em;
+  margin-bottom: var(--space-1);
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin-top: var(--space-1);
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="search"],
+input[type="datetime-local"],
+input:not([type]),
+select,
+textarea {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  min-height: var(--tap-min);
+  padding: var(--space-2) var(--space-3);
+  width: 100%;
+}
+
+textarea {
+  line-height: var(--leading-normal);
+  min-height: calc(var(--tap-min) * 2);
+  resize: vertical;
+}
+
+input[aria-invalid="true"],
+select[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled,
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* A UUID or a hash is not prose. Showing it in mono stops staff mis-reading 0 for O when they are
+ * comparing an envelope hash against a provider console by eye. */
+input[data-format="id"],
+input[data-format="hash"] {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+}
+
+/* Buttons ------------------------------------------------------------------------------------ */
+
+button,
+.button {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: var(--weight-bold);
+  gap: var(--space-2);
+  justify-content: center;
+  min-height: var(--tap-min);
+  padding: var(--space-2) var(--space-4);
+  text-decoration: none;
+  transition: background var(--motion-fast) var(--easing),
+    border-color var(--motion-fast) var(--easing);
+}
+
+button:hover:not(:disabled),
+.button:hover {
+  background: var(--surface-sunken);
+}
+
+button[data-variant="primary"] {
+  background: var(--brand-800);
+  border-color: var(--brand-800);
+  color: var(--text-on-brand);
+}
+
+button[data-variant="primary"]:hover:not(:disabled) {
+  background: var(--brand-900);
+}
+
+/* Reserved for actions that commit money, close an incident, or attest that a message left the
+ * building. Visually separated from safe actions so the two are never adjacent by accident. */
+button[data-variant="danger"] {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-fg);
+}
+
+button[data-variant="danger"]:hover:not(:disabled) {
+  background: var(--danger-border);
+}
+
+button[data-variant="quiet"] {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+button[data-variant="quiet"]:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}

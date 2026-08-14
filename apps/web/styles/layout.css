@@ -1,0 +1,329 @@
+/* Application shell.
+ *
+ * Mobile is the real target: this is used one-handed, standing at a counter, often with a phone in
+ * the other hand showing the customer's message. So navigation is a bottom bar within thumb reach
+ * on small screens and a sidebar on a desk machine, and the primary action of a screen is pinned
+ * where the thumb already is rather than at the end of a scroll.
+ */
+
+.app {
+  display: grid;
+  grid-template-areas:
+    "header"
+    "banner"
+    "main"
+    "nav";
+  grid-template-rows: auto auto 1fr auto;
+  min-height: 100dvh;
+}
+
+/* The banner slot needs a named area even when it is empty. Without one it is auto-placed into the
+ * implicit grid, which on a wide screen pushed the sidebar up into the header's row and left the
+ * app bar covering only the content column. */
+.banners {
+  grid-area: banner;
+}
+
+/* Header -------------------------------------------------------------------------------------- */
+
+.appbar {
+  align-items: center;
+  background: var(--brand-800);
+  color: var(--text-on-brand);
+  display: flex;
+  gap: var(--space-3);
+  grid-area: header;
+  justify-content: space-between;
+  padding: max(var(--space-3), env(safe-area-inset-top)) var(--space-4) var(--space-3);
+  position: sticky;
+  top: 0;
+  z-index: var(--layer-sticky);
+}
+
+.appbar__identity {
+  min-width: 0;
+}
+
+.appbar__title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-heavy);
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appbar__eyebrow {
+  color: var(--brand-400);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-heavy);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.appbar__session {
+  align-items: center;
+  background: rgb(255 255 255 / 0.14);
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: var(--radius-pill);
+  color: var(--text-on-brand);
+  display: inline-flex;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  gap: var(--space-2);
+  min-height: var(--tap-min);
+  padding: var(--space-1) var(--space-3);
+}
+
+/* A single unmissable strip for conditions that change what the console may do at all: no session,
+ * offline, no store selected, degraded backend. Never used for per-screen messages. */
+.banner {
+  font-size: var(--text-base);
+  font-weight: var(--weight-bold);
+  padding: var(--space-2) var(--space-4);
+  text-align: center;
+}
+
+.banner[data-state="warn"] {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+.banner[data-state="danger"] {
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+
+/* Main ----------------------------------------------------------------------------------------- */
+
+.main {
+  grid-area: main;
+  padding: var(--space-4);
+  padding-bottom: var(--space-6);
+}
+
+.screen {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0 auto;
+  max-width: 72rem;
+}
+
+.screen:focus {
+  outline: none;
+}
+
+.screen__header {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.screen__lede {
+  color: var(--text-secondary);
+  max-width: var(--measure);
+}
+
+/* Two-column split for list + detail on wide screens; stacks on a phone. */
+.split {
+  display: grid;
+  gap: var(--space-4);
+}
+
+@media (min-width: 60rem) {
+  .split {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .split--wide-detail {
+    grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
+  }
+}
+
+.panels {
+  display: grid;
+  gap: var(--space-4);
+}
+
+@media (min-width: 48rem) {
+  .panels {
+    grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  }
+}
+
+/* Navigation ------------------------------------------------------------------------------------
+ * Bottom bar on a phone. Horizontal scroll rather than a hamburger, because a hidden nav on an
+ * operations console costs a tap on every single task. */
+
+.nav {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  bottom: 0;
+  grid-area: nav;
+  overflow-x: auto;
+  padding-bottom: env(safe-area-inset-bottom);
+  position: sticky;
+  scrollbar-width: none;
+  z-index: var(--layer-sticky);
+}
+
+.nav::-webkit-scrollbar {
+  display: none;
+}
+
+.nav__list {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+}
+
+.nav__link {
+  align-items: center;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  gap: 2px;
+  justify-content: center;
+  min-height: var(--tap-min);
+  min-width: 4.5rem;
+  padding: var(--space-1) var(--space-2);
+  text-align: center;
+  text-decoration: none;
+}
+
+.nav__link:hover {
+  background: var(--surface-sunken);
+}
+
+.nav__link[aria-current="page"] {
+  background: var(--brand-050);
+  color: var(--brand-700);
+}
+
+/* A nav entry the current role may not use is shown and disabled, never hidden. Hiding it teaches
+ * staff the capability does not exist; disabling it with a reason teaches them who to ask. */
+.nav__link[aria-disabled="true"] {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.nav__badge {
+  background: var(--danger-bg);
+  border-radius: var(--radius-pill);
+  color: var(--danger-fg);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-heavy);
+  min-width: 1.25rem;
+  padding: 0 0.3rem;
+}
+
+@media (min-width: 64rem) {
+  /* A real app shell: the frame is exactly one viewport tall and does not scroll, while the
+   * sidebar and the content pane scroll independently. The previous arrangement kept both the app
+   * bar and the sidebar `position: sticky; top: 0` in the same stacking layer, so the sidebar —
+   * later in document order — painted over the left end of the app bar and the header only
+   * appeared to span the content column. Two things competing for the same sticky position is a
+   * z-index argument waiting to happen; not needing sticky at all settles it. */
+  .app {
+    grid-template-areas:
+      "header header"
+      "banner banner"
+      "nav    main";
+    grid-template-columns: 15rem 1fr;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .nav {
+    border-right: 1px solid var(--border);
+    border-top: none;
+    min-height: 0;
+    overflow-x: visible;
+    overflow-y: auto;
+    padding: var(--space-3);
+    position: static;
+  }
+
+  .main {
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-5);
+  }
+
+  .nav__list {
+    display: grid;
+    gap: var(--space-1);
+    padding: 0;
+  }
+
+  .nav__link {
+    align-items: center;
+    flex-direction: row;
+    font-size: var(--text-base);
+    gap: var(--space-2);
+    justify-content: flex-start;
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    text-align: left;
+  }
+
+  .nav__badge {
+    margin-left: auto;
+  }
+}
+
+/* The primary action of a screen, pinned above the bottom nav on small screens. */
+.action-bar {
+  background: linear-gradient(to top, var(--canvas) 65%, transparent);
+  bottom: 0;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  padding: var(--space-4) 0 var(--space-2);
+  position: sticky;
+}
+
+.action-bar button {
+  flex: 1 1 auto;
+}
+
+@media (min-width: 48rem) {
+  .action-bar button {
+    flex: 0 0 auto;
+  }
+}
+
+/* Dialogs --------------------------------------------------------------------------------------- */
+
+dialog {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  max-height: 85dvh;
+  max-width: min(38rem, calc(100vw - var(--space-4) * 2));
+  padding: var(--space-5);
+  width: 100%;
+}
+
+dialog::backdrop {
+  background: rgb(7 42 38 / 0.55);
+}
+
+.dialog__title {
+  margin-bottom: var(--space-3);
+}
+
+.dialog__actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  margin-top: var(--space-5);
+}

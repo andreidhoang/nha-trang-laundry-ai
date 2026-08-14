@@ -192,20 +192,39 @@ def test_api_preserves_canonical_correlation_and_replaces_malformed_input() -> N
 
 
 def test_staff_pwa_shell_is_served_without_public_customer_controls() -> None:
-    response = TestClient(app).get("/staff/")
+    client = TestClient(app)
+    response = client.get("/staff/")
 
     assert response.status_code == 200
     assert "Bảng vận hành" in response.text
-    assert "Không cho duyệt mù" in response.text
-    assert "Gửi thủ công" in response.text
-    assert "Khôi phục hàng đợi" in response.text
+    # The shell is markup only; every screen is a module, so the guardrail copy this test used to
+    # find in `index.html` now lives in the modules and is asserted against what is actually served.
+    assert "console-signin-path" in response.text
 
-    script = TestClient(app).get("/staff/app.js").text
-    worker = TestClient(app).get("/staff/sw.js").text
+    script = client.get("/staff/app.js").text
+    worker = client.get("/staff/sw.js").text
     assert "navigator.onLine" in script
-    assert "indexedDB" not in script
-    assert "sync.register" not in script
     assert 'method !== "GET"' in worker
+
+    served = script
+    for module in (
+        "/staff/src/screens/approvals.js",
+        "/staff/src/screens/exceptions.js",
+        "/staff/src/screens/system.js",
+        "/staff/src/screens/gaps.js",
+    ):
+        page = client.get(module)
+        assert page.status_code == 200, module
+        served += page.text
+
+    # The three guardrails a staff console must never lose, wherever they are rendered from.
+    assert "duyệt mù" in served
+    assert "Gửi thủ công" in served
+    assert "hàng đợi" in served
+
+    # No device persistence anywhere in what the browser is handed.
+    assert "indexedDB" not in served
+    assert "sync.register" not in served
 
 
 def test_staff_session_fails_closed_without_identity_configuration() -> None:

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Giặt Là Sạch Cộng — bảng vận hành nội bộ">
+  <!--
+    Internal mark, not a customer-facing logo. A single glyph has to survive being 40 px on a home
+    screen next to a dozen other apps, so it is one shape with one accent: a drop for washing, and
+    the fold line of a stacked garment beneath it.
+
+    Drawn as flat paths with no gradients, no text and no external font, because the console is
+    served under `img-src 'self' data:` with no font-src, and because a mark that depends on a
+    typeface renders differently on every device that lacks it.
+  -->
+  <rect width="512" height="512" rx="112" fill="#0b3b36"/>
+  <path d="M256 118c0 0 86 92 86 148a86 86 0 0 1-172 0c0-56 86-148 86-148z" fill="#7bc7af"/>
+  <path d="M214 268c0 30 19 52 42 58" fill="none" stroke="#0b3b36" stroke-width="18" stroke-linecap="round" opacity=".45"/>
+  <rect x="140" y="372" width="232" height="26" rx="13" fill="#c6e6da"/>
+  <rect x="176" y="418" width="160" height="26" rx="13" fill="#c6e6da" opacity=".62"/>
+</svg>

@@ -590,6 +590,70 @@ def assign_staff_role(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="staff user unavailable") from error
 
 
+@app.post(
+    "/internal/v1/staff/{staff_user_id}/stores/{store_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def assign_staff_store(
+    staff_user_id: UUID,
+    store_id: UUID,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    principal: Annotated[StaffPrincipal, Depends(require_owner)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> None:
+    """Grant a staff member access to one store.
+
+    The first route here that hands out an authorization rather than checking one. `require_owner`
+    is a convenience that fails fast; the repository re-checks against the database, because a
+    session minted while its holder was an owner keeps claiming so after the role is revoked.
+
+    `OWNER_ADMIN` is not implicitly a member of every store, and this route does not change that.
+    An owner who wants to see a store assigns themselves, and that assignment is audited like any
+    other — including who granted it.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        service.assign_store(
+            staff_user_id=staff_user_id,
+            store_id=store_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+        )
+    except (ShadowAuthorizationError, ShadowStateError, IdempotencyConflictError) as error:
+        _raise_shadow_error(error)
+
+
+@app.delete(
+    "/internal/v1/staff/{staff_user_id}/stores/{store_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_staff_store(
+    staff_user_id: UUID,
+    store_id: UUID,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    principal: Annotated[StaffPrincipal, Depends(require_owner)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> None:
+    """End a staff member's access to one store.
+
+    A grant with no revoke leaves disabling the whole account as the only way to remove access,
+    which is blunter than the situation usually needs and loses the person's history. The
+    assignment row is kept and marked revoked, so who granted it, who ended it and when all survive.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        service.revoke_store(
+            staff_user_id=staff_user_id,
+            store_id=store_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+        )
+    except (ShadowAuthorizationError, ShadowStateError, IdempotencyConflictError) as error:
+        _raise_shadow_error(error)
+
+
 @app.post("/internal/v1/staff/{staff_user_id}/disable", status_code=status.HTTP_204_NO_CONTENT)
 def disable_staff(
     staff_user_id: UUID,

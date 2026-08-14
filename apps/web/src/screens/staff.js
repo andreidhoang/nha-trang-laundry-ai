@@ -635,18 +635,189 @@ function disableStaffPanel(spec) {
 }
 
 /**
+ * Gán và thu hồi cửa hàng.
+ *
+ * STORE-ASSIGNMENT-001. This was the screen's own documented gap: a staff member created here, with
+ * the right role, was refused by every store-scoped route until somebody inserted a row into
+ * `staff_store_assignments` by hand. Both commands answer `204` with no body, so the confirmation
+ * says what was asked and nothing more — the console cannot read an assignment back, and asserting
+ * a state it has not been shown is how a console starts lying.
+ *
+ * Revoke is a separate, deliberate action rather than a toggle: granting and removing access to a
+ * store's customers should not be one control that a mis-click reverses.
+ *
+ * @param {object} spec
+ * @param {import("../core/rbac.js").Verdict} spec.verdict
+ * @returns {{node: HTMLElement, setStaffId: (value: string) => void}}
+ */
+function assignStorePanel(spec) {
+  const submission = new Submission("staff-store");
+  const draft = { staffUserId: "", storeId: "" };
+
+  const body = h("div");
+  const resultHost = h("div", { class: "stack" });
+  const result = resultLine();
+
+  const redraw = () => {
+    submission.reset();
+    render(body, form());
+  };
+
+  /**
+   * @param {"grant"|"revoke"} intent
+   */
+  async function send(intent) {
+    const staffUserId = draft.staffUserId.trim();
+    const storeId = draft.storeId.trim();
+    if (!UUID.test(staffUserId) || !UUID.test(storeId)) {
+      result.dataset.state = "danger";
+      result.textContent = "Mã nhân viên và mã cửa hàng đều phải là UUID.";
+      return;
+    }
+
+    result.dataset.state = "warn";
+    result.textContent = intent === "grant" ? "Đang gán cửa hàng…" : "Đang thu hồi…";
+    render(resultHost);
+
+    try {
+      await request(
+        `/internal/v1/staff/${encodeURIComponent(staffUserId)}/stores/${encodeURIComponent(storeId)}`,
+        { method: intent === "grant" ? "POST" : "DELETE", idempotencyKey: submission.key() },
+      );
+      submission.reset();
+      result.dataset.state = "ok";
+      result.textContent =
+        intent === "grant"
+          ? `Đã gán ${shortId(storeId)} cho ${shortId(staffUserId)}.`
+          : `Đã thu hồi ${shortId(storeId)} khỏi ${shortId(staffUserId)}.`;
+      render(
+        resultHost,
+        h(
+          "div",
+          { class: "notice", dataState: "info" },
+          h("p", { class: "notice__title" }, "Máy chủ trả về 204, không có nội dung"),
+          h(
+            "p",
+            null,
+            "Không có route nào đọc lại danh sách cửa hàng của người khác, nên bảng vận hành " +
+              "không xác nhận được trạng thái hiện tại của họ. Người đó đăng nhập rồi xem thanh " +
+              "trên cùng là cách kiểm tra chắc chắn.",
+          ),
+        ),
+      );
+    } catch (error) {
+      result.dataset.state = error.kind === "DENIED" ? "warn" : "danger";
+      result.textContent =
+        error.kind === "DENIED"
+          ? "Chỉ chủ cửa hàng đang hoạt động mới gán hoặc thu hồi được."
+          : "Không thực hiện được lệnh.";
+      render(resultHost, errorNotice(error));
+    }
+  }
+
+  /**
+   * @returns {HTMLElement}
+   */
+  function form() {
+    const staffInput = uuidInput({
+      value: draft.staffUserId,
+      onInput: (value) => {
+        draft.staffUserId = value;
+        submission.reset();
+      },
+    });
+    const storeInput = uuidInput({
+      value: draft.storeId,
+      onInput: (value) => {
+        draft.storeId = value;
+        submission.reset();
+      },
+    });
+
+    const grantButton = h(
+      "button",
+      { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
+      "Gán cửa hàng",
+    );
+    const revokeButton = h(
+      "button",
+      {
+        type: "button",
+        dataVariant: "quiet",
+        dataRequiresNetwork: "true",
+        onClick: () => void send("revoke"),
+      },
+      "Thu hồi",
+    );
+
+    return h(
+      "form",
+      {
+        class: "form",
+        onSubmit: (event) => {
+          event.preventDefault();
+          void send("grant");
+        },
+      },
+      labelled({
+        id: "staff-store-staff",
+        label: "Mã nhân viên",
+        hint: "UUID của người đã được tạo và đã có vai trò.",
+        control: staffInput,
+      }),
+      labelled({
+        id: "staff-store-store",
+        label: "Mã cửa hàng",
+        hint:
+          "UUID của cửa hàng. Chưa có bảng stores nên không có danh sách để chọn, và chủ cũng " +
+          "không cần thuộc cửa hàng đó mới gán được — nhưng muốn tự xem dữ liệu thì phải tự gán " +
+          "mình vào.",
+        control: storeInput,
+      }),
+      h(
+        "div",
+        { class: "action-bar" },
+        gated(grantButton, spec.verdict),
+        gated(revokeButton, spec.verdict),
+      ),
+      result,
+    );
+  }
+
+  render(body, form());
+
+  return {
+    node: panel({
+      eyebrow: "LỆNH · POST/DELETE /internal/v1/staff/{id}/stores/{store}",
+      title: "Gán cửa hàng",
+      guardrail:
+        "Không có dòng gán thì mọi màn hình theo cửa hàng đều từ chối người đó, kể cả khi vai trò " +
+        "đã đúng. Thu hồi có hiệu lực ngay ở yêu cầu kế tiếp; dòng gán vẫn được giữ lại để biết " +
+        "ai đã cấp và ai đã thu hồi.",
+      children: h("div", { class: "stack" }, body, resultHost),
+    }),
+    setStaffId: (value) => {
+      draft.staffUserId = value;
+      redraw();
+    },
+  };
+}
+
+/**
  * @returns {HTMLElement}
  */
 export function render_() {
   const verdict = can(principal(), "STAFF_ADMIN");
 
   const roles = assignRolePanel({ verdict });
+  const stores = assignStorePanel({ verdict });
   const disable = disableStaffPanel({ verdict });
 
   const create = createStaffPanel({
     verdict,
     onCreated: (staffUserId) => {
       roles.setStaffId(staffUserId);
+      stores.setStaffId(staffUserId);
       disable.setStaffId(staffUserId);
       roles.node.scrollIntoView({ block: "start", behavior: "smooth" });
     },
@@ -681,25 +852,8 @@ export function render_() {
     ),
     create,
     roles.node,
+    stores.node,
     disable.node,
-    unsupported({
-      title: "Gán cửa hàng cho nhân sự",
-      what:
-        "Cấp cho một nhân viên quyền làm việc tại một cửa hàng cụ thể, để họ dùng được các màn " +
-        "hình có phạm vi cửa hàng: báo giá, đơn hàng, sự cố, bản nháp AI.",
-      missing:
-        "Không có route HTTP nào tạo một dòng staff_store_assignments. Mọi route có phạm vi cửa " +
-        "hàng đều từ chối một phiên không có dòng đó, nên một nhân sự vừa tạo ở trên — dù đã có " +
-        "đúng vai trò — không làm được gì cả cho tới khi ai đó chèn dòng ấy thẳng vào cơ sở dữ " +
-        "liệu. Đây là khoảng trống vận hành lớn nhất trong việc cấp quyền nhân sự hiện nay.",
-      blockedBy:
-        "Không có route cho staff_store_assignments (ShadowConsoleRepository.assign_store chưa được nối)",
-      today:
-        "Chủ tạo nhân sự và gán vai trò ở màn hình này, rồi nhờ người vận hành cơ sở dữ liệu chèn " +
-        "dòng gán cửa hàng. Sau đó người mới đăng nhập lại và kiểm tra rằng thanh trên cùng đã " +
-        "hiện đúng cửa hàng — nếu danh sách cửa hàng còn trống thì dòng gán chưa có.",
-      specRef: "packages/db/src/nha_trang_laundry_db/shadow_console.py:111",
-    }),
   );
 }
 

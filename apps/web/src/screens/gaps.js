@@ -107,8 +107,13 @@ const GROUPS = [
         missing:
           "Không có charges, payments hay payment_allocations; balance_status không có đường " +
           "chuyển trạng thái nào, nên không đơn nào đi tới được COMPLETED.",
+        // DEC-010 is registered and OPEN, and its title is "Settlement shapes beyond exact payment
+        // in full at handover" — so the ordinary case is *not* waiting on it. Saying "đề xuất
+        // DEC-010" told operators a live decision was merely proposed, and implied the whole screen
+        // was decision-blocked when only the unusual shapes are.
         blockedBy:
-          "SETTLEMENT-001 và một quyết định chủ về trả một phần / trả thừa / ghi nợ (đề xuất DEC-010)",
+          "SETTLEMENT-001 (đã trong hàng đợi). Trả đủ đúng số khi giao là trường hợp không cần " +
+          "quyết định nào; DEC-010 (đang mở) chỉ chặn trả một phần, trả thừa và ghi nợ.",
       },
       {
         ref: "M3",
@@ -256,19 +261,6 @@ const GROUPS = [
         today:
           "Nút Thoát chỉ kết thúc phiên đang dùng. Muốn cắt mọi phiên của một người thì vô hiệu " +
           "hoá người đó ở màn hình Nhân sự — lệnh ấy thu hồi tất cả phiên của họ.",
-      },
-      {
-        ref: "CONSOLE",
-        title: "Gán cửa hàng",
-        what: "Cho một nhân sự quyền làm việc tại một cửa hàng cụ thể.",
-        missing:
-          "Không có route nào tạo một dòng staff_store_assignments, trong khi mọi route có phạm vi " +
-          "cửa hàng đều từ chối một phiên không có dòng đó.",
-        blockedBy:
-          "Không có route cho staff_store_assignments (ShadowConsoleRepository.assign_store chưa được nối)",
-        today:
-          "Khối cuối màn hình Nhân sự mô tả đầy đủ khoảng trống này và quy trình tạm thời đang dùng.",
-        link: { href: "#/staff", label: "Mở màn hình Nhân sự" },
       },
       {
         ref: "CONSOLE",

@@ -492,13 +492,23 @@ def test_the_full_shadow_loop_reaches_a_human_review_queue(
     owner_id = uuid4()
     approver_id = uuid4()
     with postgres_connection.transaction(), postgres_connection.cursor() as cursor:
-        for staff_id in (owner_id, approver_id):
+        for staff_id, role in ((owner_id, "OWNER_ADMIN"), (approver_id, "OPS_APPROVER")):
             cursor.execute(
                 """
                 INSERT INTO staff_users (id, oidc_subject, display_name, status, created_at)
                 VALUES (%s, %s, 'Nhân viên', 'ACTIVE', %s)
                 """,
                 (staff_id, f"oidc-{staff_id}", NOW),
+            )
+            # The role row is written as well as carried on the principal: STORE-ASSIGNMENT-001
+            # made assign_store check the database rather than trust the session object, so an
+            # OWNER_ADMIN that existed only in memory was claiming a grant nobody had made.
+            cursor.execute(
+                """
+                INSERT INTO staff_role_assignments (id, staff_user_id, role, assigned_at)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (uuid4(), staff_id, role, NOW),
             )
     owner = StaffPrincipal(
         staff_user_id=owner_id,

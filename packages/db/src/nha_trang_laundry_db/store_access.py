@@ -26,7 +26,10 @@ def member_store_ids(cursor: Any, *, staff_user_id: UUID) -> frozenset[UUID]:
     """Return every store this staff member belongs to. Empty means no access anywhere."""
 
     cursor.execute(
-        "SELECT store_id FROM staff_store_assignments WHERE staff_user_id = %s",
+        """
+        SELECT store_id FROM staff_store_assignments
+        WHERE staff_user_id = %s AND revoked_at IS NULL
+        """,
         (staff_user_id,),
     )
     return frozenset(
@@ -39,7 +42,7 @@ def is_store_member(cursor: Any, *, staff_user_id: UUID, store_id: UUID) -> bool
     cursor.execute(
         """
         SELECT 1 FROM staff_store_assignments
-        WHERE staff_user_id = %s AND store_id = %s
+        WHERE staff_user_id = %s AND store_id = %s AND revoked_at IS NULL
         """,
         (staff_user_id, store_id),
     )

@@ -32,8 +32,11 @@ from typing import Literal
 import pytest
 from nha_trang_laundry_api.main import app
 
-DB_SOURCE = Path(__file__).resolve().parents[3] / "packages/db/src/nha_trang_laundry_db"
+ROOT = Path(__file__).resolve().parents[3]
+DB_SOURCE = ROOT / "packages/db/src/nha_trang_laundry_db"
 MEMBERSHIP_CALL = "require_store_membership"
+# Everywhere application SQL lives. Scripts are included because the demo seed writes assignments.
+SOURCE_ROOTS_WITH_SQL = (DB_SOURCE, ROOT / "apps", ROOT / "scripts")
 
 Classification = Literal["STORE_SCOPED", "GLOBAL_BY_DESIGN", "NOT_STORE_DATA", "KNOWN_GAP"]
 
@@ -139,6 +142,22 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ),
     ("POST", "/internal/v1/staff/{staff_user_id}/disable"): RouteScope(
         "NOT_STORE_DATA", None, "staff administration, OWNER_ADMIN only"
+    ),
+    ("POST", "/internal/v1/staff/{staff_user_id}/stores/{store_id}"): RouteScope(
+        "NOT_STORE_DATA",
+        None,
+        "STORE-ASSIGNMENT-001. Grants membership rather than consuming it, so requiring the "
+        "grantor to already be a member would make the first assignment in a new deployment "
+        "impossible and force the hand-written INSERT this item removed. Owner-gated at the route "
+        "and re-checked against the database in the repository; the answer to 'may an owner assign "
+        "into a store they are not a member of' is yes, and it is asserted in "
+        "packages/db/tests/test_store_assignment.py so a later change to it fails a test.",
+    ),
+    ("DELETE", "/internal/v1/staff/{staff_user_id}/stores/{store_id}"): RouteScope(
+        "NOT_STORE_DATA",
+        None,
+        "STORE-ASSIGNMENT-001. The revoke side of the grant above, owner-gated the same way and "
+        "audited the same way; membership is the thing being removed, not a precondition.",
     ),
     ("POST", "/internal/v1/approvals"): RouteScope(
         "NOT_STORE_DATA",
@@ -305,6 +324,55 @@ def test_the_enumeration_fails_when_a_membership_check_is_removed() -> None:
         "the detector reported a membership call in source it had just been removed from, so it "
         "would not fail if someone deleted the real one"
     )
+
+
+def test_every_read_of_the_assignment_table_excludes_revoked_rows() -> None:
+    """`STORE-ASSIGNMENT-001` made revocation soft, which is only correct if every reader filters.
+
+    A revoked assignment is still a row. If one query anywhere forgets `revoked_at IS NULL`, a
+    revoked staff member keeps access on exactly that path and nowhere else — the quietest possible
+    security failure, and the same shape as the defect `STORE-SCOPING-002` closed: a check present
+    in most places and missing in one.
+
+    So the constraint is mechanical rather than remembered. Every SQL statement in the source that
+    reads `staff_store_assignments` must also mention `revoked_at`, whether to filter it (reads) or
+    to set it (the revoke itself). Adding a query without one fails here.
+    """
+    offenders: list[str] = []
+    for root in SOURCE_ROOTS_WITH_SQL:
+        for module in sorted(root.rglob("*.py")):
+            # Application source only. A test may legitimately count every row including revoked
+            # ones — proving a replay wrote no duplicate needs exactly that — and a test is not an
+            # access path. What must never forget the filter is code that answers a request.
+            if "tests" in module.parts:
+                continue
+            for statement in _assignment_reads(module.read_text(encoding="utf-8")):
+                if "revoked_at" not in statement:
+                    offenders.append(f"{module.name}: {' '.join(statement.split())[:110]}")
+    assert not offenders, (
+        "these statements read staff_store_assignments without filtering revoked_at, so a revoked "
+        "assignment would still count as membership there:\n  " + "\n  ".join(offenders)
+    )
+
+
+def _assignment_reads(source: str) -> list[str]:
+    """String literals that *read* the assignment table.
+
+    Reads are the risk, so only `FROM` and `JOIN` count. An `INSERT` legitimately omits the column —
+    a new assignment is active, and `revoked_at` defaults to NULL — and prose that happens to name
+    the table is not a query. Both were false positives on the first version of this check.
+    """
+    reads: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        text = node.value
+        collapsed = " ".join(text.split()).lower()
+        if "from staff_store_assignments" in collapsed or "join staff_store_assignments" in (
+            collapsed
+        ):
+            reads.append(text)
+    return reads
 
 
 def test_known_gaps_and_global_routes_each_carry_a_reason() -> None:

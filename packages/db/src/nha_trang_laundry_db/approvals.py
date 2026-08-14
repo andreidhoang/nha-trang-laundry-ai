@@ -489,6 +489,7 @@ class ApprovalRepository:
             JOIN orders o ON o.id = r.resource_id
             JOIN staff_store_assignments a
               ON a.store_id = o.store_id AND a.staff_user_id = %s
+             AND a.revoked_at IS NULL
             WHERE s.status = 'REQUESTED'
             ORDER BY r.expires_at, r.id
             LIMIT %s

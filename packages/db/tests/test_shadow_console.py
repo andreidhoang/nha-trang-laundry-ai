@@ -55,6 +55,17 @@ def _staff(connection: psycopg.Connection[Any], *, roles: frozenset[StaffRole]) 
             """,
             (staff_user_id, f"oidc-{staff_user_id}", "Nhân viên thử nghiệm", NOW),
         )
+        # The role rows are written too, not just carried on the principal. STORE-ASSIGNMENT-001
+        # made `assign_store` verify against the database rather than trust the session object, so
+        # a fixture whose OWNER_ADMIN existed only in memory was claiming a role nobody had granted.
+        for role in roles:
+            cursor.execute(
+                """
+                INSERT INTO staff_role_assignments (id, staff_user_id, role, assigned_at)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (uuid4(), staff_user_id, role.value, NOW),
+            )
     return StaffPrincipal(
         staff_user_id=staff_user_id,
         oidc_subject=f"oidc-{staff_user_id}",

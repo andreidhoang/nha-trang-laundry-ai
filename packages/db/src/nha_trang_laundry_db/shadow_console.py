@@ -118,11 +118,26 @@ class ShadowConsoleRepository:
         correlation_id: UUID,
         now: datetime | None = None,
     ) -> None:
-        """Grant a staff member access to one store. Owner-only, attributed and audited."""
+        """Grant a staff member access to one store. Owner-only, attributed and audited.
 
-        if StaffRole.OWNER_ADMIN not in principal.roles:
-            raise ShadowAuthorizationError("store assignment requires OWNER_ADMIN")
+        `STORE-ASSIGNMENT-001` changed two things here without changing what the method is for.
+
+        The owner check now reads the database rather than the principal object. A `StaffPrincipal`
+        carries the roles a session was minted with; whether the actor is *still* an active owner is
+        a fact only the database holds, and this is the route that grants authorization, so it is
+        the last place to take the caller's word for anything.
+
+        The aggregate version is now derived rather than hardcoded to 1. `domain_events` is unique
+        on (aggregate_type, aggregate_id, aggregate_version, event_type), so a fixed 1 meant a staff
+        member could be assigned to exactly one store, ever — the second grant raised a unique
+        violation from deep inside the transaction. The demo seed hit this and worked around it by
+        checking membership first; the defect was here.
+        """
+
         timestamp = now or datetime.now(UTC)
+        with connection.cursor() as cursor:
+            _require_active_owner(cursor, principal)
+            version = _next_assignment_version(cursor, staff_user_id)
 
         def mutation(cursor: Any) -> None:
             cursor.execute(
@@ -130,7 +145,13 @@ class ShadowConsoleRepository:
                 INSERT INTO staff_store_assignments (
                     staff_user_id, store_id, assigned_by_staff_id, assigned_at, row_version
                 ) VALUES (%s, %s, %s, %s, 1)
-                ON CONFLICT (staff_user_id, store_id) DO NOTHING
+                ON CONFLICT (staff_user_id, store_id) DO UPDATE
+                SET revoked_at = NULL,
+                    revoked_by_staff_id = NULL,
+                    assigned_by_staff_id = EXCLUDED.assigned_by_staff_id,
+                    assigned_at = EXCLUDED.assigned_at,
+                    row_version = staff_store_assignments.row_version + 1
+                WHERE staff_store_assignments.revoked_at IS NOT NULL
                 """,
                 (staff_user_id, store_id, principal.staff_user_id, timestamp),
             )
@@ -140,7 +161,7 @@ class ShadowConsoleRepository:
             MaterialChange(
                 aggregate_type="STAFF_STORE_ASSIGNMENT",
                 aggregate_id=staff_user_id,
-                aggregate_version=1,
+                aggregate_version=version,
                 event_type="STAFF_STORE_ASSIGNED",
                 event_payload={"store_id": str(store_id)},
                 audit_action="STAFF_STORE_ASSIGN",
@@ -151,7 +172,70 @@ class ShadowConsoleRepository:
                     OutboxEvent(
                         "staff.store_assigned.v1",
                         {"staff_user_id": str(staff_user_id), "store_id": str(store_id)},
-                        f"staff-store:{staff_user_id}:{store_id}",
+                        f"staff-store:{staff_user_id}:{store_id}:granted:{version}",
+                    ),
+                ),
+                occurred_at=timestamp,
+            ),
+            mutation,
+        )
+
+    @staticmethod
+    def revoke_store(
+        connection: Any,
+        *,
+        staff_user_id: UUID,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        correlation_id: UUID,
+        now: datetime | None = None,
+    ) -> None:
+        """End a staff member's access to one store. Owner-only, attributed and audited.
+
+        Soft, following `staff_role_assignments`: the row keeps who granted it and when, and gains
+        who ended it and when. Deleting would erase the record an authorization table exists to
+        hold, and `staff_store_assignments_no_hard_delete` refuses it anyway.
+
+        Revoking an assignment that is already revoked, or was never granted, is not an error. The
+        caller asked for this staff member to have no access to this store, and afterwards they do
+        not; reporting a failure would invite a retry that changes nothing. The audit event is still
+        written, because "an owner asked to remove access at this time" is worth recording whether
+        or not it changed a row.
+        """
+
+        timestamp = now or datetime.now(UTC)
+        with connection.cursor() as cursor:
+            _require_active_owner(cursor, principal)
+            version = _next_assignment_version(cursor, staff_user_id)
+
+        def mutation(cursor: Any) -> None:
+            cursor.execute(
+                """
+                UPDATE staff_store_assignments
+                SET revoked_at = %s, revoked_by_staff_id = %s,
+                    row_version = row_version + 1
+                WHERE staff_user_id = %s AND store_id = %s AND revoked_at IS NULL
+                """,
+                (timestamp, principal.staff_user_id, staff_user_id, store_id),
+            )
+
+        commit_material_change(
+            connection,
+            MaterialChange(
+                aggregate_type="STAFF_STORE_ASSIGNMENT",
+                aggregate_id=staff_user_id,
+                aggregate_version=version,
+                event_type="STAFF_STORE_REVOKED",
+                event_payload={"store_id": str(store_id)},
+                audit_action="STAFF_STORE_REVOKE",
+                actor_type="STAFF",
+                actor_id=principal.staff_user_id,
+                correlation_id=correlation_id,
+                outbox_events=(
+                    OutboxEvent(
+                        "staff.store_revoked.v1",
+                        {"staff_user_id": str(staff_user_id), "store_id": str(store_id)},
+                        f"staff-store:{staff_user_id}:{store_id}:revoked:{version}",
                     ),
                 ),
                 occurred_at=timestamp,
@@ -586,6 +670,54 @@ class ShadowConsoleRepository:
 
 def _uuid(value: object) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))
+
+
+def _require_active_owner(cursor: Any, principal: StaffPrincipal) -> None:
+    """Refuse unless the actor is, right now, an active OWNER_ADMIN according to the database.
+
+    The in-memory check comes first only because it is free. The database check is the authority:
+    a session minted while its holder was an owner keeps saying so after the role is revoked or the
+    account disabled, and this is the pair of methods that hands out access to a store's customers.
+    """
+    if StaffRole.OWNER_ADMIN not in principal.roles:
+        raise ShadowAuthorizationError("store assignment requires OWNER_ADMIN")
+    cursor.execute(
+        """
+        SELECT 1
+        FROM staff_users u
+        JOIN staff_role_assignments r ON r.staff_user_id = u.id
+        WHERE u.id = %s AND u.status = 'ACTIVE'
+          AND r.role = 'OWNER_ADMIN' AND r.revoked_at IS NULL
+        """,
+        (principal.staff_user_id,),
+    )
+    if cursor.fetchone() is None:
+        raise ShadowAuthorizationError("store assignment requires an active OWNER_ADMIN")
+
+
+def _next_assignment_version(cursor: Any, staff_user_id: UUID) -> int:
+    """The next event version for this staff member's assignment history.
+
+    `domain_events` is unique on (aggregate_type, aggregate_id, aggregate_version, event_type), so
+    every grant and revoke for one staff member needs a distinct version. Locking the staff row
+    first serialises concurrent grants for that person, which is the same thing
+    `IdentityRepository` does before a role change; without the lock two owners assigning the same
+    person to two stores at once would race for the same version and one would fail on the
+    constraint rather than simply queueing.
+    """
+    cursor.execute("SELECT 1 FROM staff_users WHERE id = %s FOR UPDATE", (staff_user_id,))
+    if cursor.fetchone() is None:
+        raise ShadowStateError("staff user is missing")
+    cursor.execute(
+        """
+        SELECT coalesce(max(aggregate_version), 0)
+        FROM domain_events
+        WHERE aggregate_type = 'STAFF_STORE_ASSIGNMENT' AND aggregate_id = %s
+        """,
+        (staff_user_id,),
+    )
+    row = cursor.fetchone()
+    return int(row[0]) + 1 if row else 1
 
 
 __all__ = [

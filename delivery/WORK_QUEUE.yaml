@@ -2512,7 +2512,7 @@ items:
 - id: STORE-ASSIGNMENT-001
   phase: PRODUCTION_HARDENING
   title: A governed, audited write path for staff store membership
-  status: PENDING
+  status: COMPLETE
   priority: 212
   depends_on:
   - IDENTITY-001

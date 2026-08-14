@@ -657,6 +657,105 @@ class OperationsService:
             )
         return _stored_incident_result(result.response, replayed=result.replayed)
 
+    # --- STORE-ASSIGNMENT-001 ---------------------------------------------------------------
+    #
+    # The first routes in this system that *grant* an authorization rather than check one, so the
+    # failure mode is inverted: not a refused operator, but a granted one who should not have been.
+    # Both wrap the repository, which does the owner check against the database and writes the
+    # assignment, its domain event, its audit entry and its outbox event in one transaction.
+
+    def assign_store(
+        self,
+        *,
+        staff_user_id: UUID,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        idempotency_key: str,
+    ) -> None:
+        occurred_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-store-assign:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={"staff_user_id": str(staff_user_id), "store_id": str(store_id)},
+                    occurred_at=occurred_at,
+                ),
+                lambda: self._assign_store_once(
+                    connection,
+                    staff_user_id=staff_user_id,
+                    store_id=store_id,
+                    principal=principal,
+                    occurred_at=occurred_at,
+                ),
+            )
+
+    def _assign_store_once(
+        self,
+        connection: Any,
+        *,
+        staff_user_id: UUID,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        occurred_at: datetime,
+    ) -> dict[str, object]:
+        ShadowConsoleRepository.assign_store(
+            connection,
+            staff_user_id=staff_user_id,
+            store_id=store_id,
+            principal=principal,
+            correlation_id=uuid4(),
+            now=occurred_at,
+        )
+        return {"staff_user_id": str(staff_user_id), "store_id": str(store_id)}
+
+    def revoke_store(
+        self,
+        *,
+        staff_user_id: UUID,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        idempotency_key: str,
+    ) -> None:
+        occurred_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-store-revoke:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={"staff_user_id": str(staff_user_id), "store_id": str(store_id)},
+                    occurred_at=occurred_at,
+                ),
+                lambda: self._revoke_store_once(
+                    connection,
+                    staff_user_id=staff_user_id,
+                    store_id=store_id,
+                    principal=principal,
+                    occurred_at=occurred_at,
+                ),
+            )
+
+    def _revoke_store_once(
+        self,
+        connection: Any,
+        *,
+        staff_user_id: UUID,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        occurred_at: datetime,
+    ) -> dict[str, object]:
+        ShadowConsoleRepository.revoke_store(
+            connection,
+            staff_user_id=staff_user_id,
+            store_id=store_id,
+            principal=principal,
+            correlation_id=uuid4(),
+            now=occurred_at,
+        )
+        return {"staff_user_id": str(staff_user_id), "store_id": str(store_id)}
+
     def list_member_stores(self, *, principal: StaffPrincipal) -> tuple[UUID, ...]:
         """Return the stores this principal is assigned to, in a stable order.
 

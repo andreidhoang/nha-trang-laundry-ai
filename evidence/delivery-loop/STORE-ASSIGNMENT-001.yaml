@@ -1,0 +1,150 @@
+schema_version: 1
+work_item: STORE-ASSIGNMENT-001
+recorded_at: '2026-08-14T22:40:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-store-assignment-001.md requires a governed write path for store membership,
+  because nothing could create a staff_store_assignments row: ShadowConsoleRepository.assign_store
+  existed with no HTTP route and no caller outside tests, so provisioning a working operator meant an
+  owner inserting into an authorization table by hand - the one authorization change in the system
+  with no actor, no audit entry and no event. It requires one owner-only route re-checked in the
+  repository rather than only at the route, reuse of the existing method and table rather than a
+  second membership concept, atomic mutation plus audit plus outbox so that an audit failure rolls
+  the assignment back, a required Idempotency-Key, and a revoke path as well as a grant. It requires
+  that OWNER_ADMIN not become implicitly a member of every store. It names two questions that must
+  be answered and tested rather than left to fall out of the implementation: whether an owner may
+  assign into a store they are not a member of, and whether revoking the last assignment on a store
+  should be refused.
+rollback_impact: >-
+  Reverting removes the only governed way to grant store access and returns provisioning to a
+  hand-written INSERT against an authorization table, unaudited and unattributed. It also removes
+  revocation entirely, since none existed before: after a revert there is again no supported way to
+  end a staff member's access to a store short of disabling the whole account.
+
+  Migration 0024 is additive and forward-only - two nullable columns and a partial index on
+  staff_store_assignments - so the rollback is code rather than schema. A reverted deployment would
+  read a table that still has revoked_at and would stop filtering it, which means any assignment
+  revoked before the revert would silently become active again. That is the sharpest edge here and
+  the reason the filter is enforced mechanically rather than by review.
+unresolved_assumptions: >-
+  Two decisions the packet required, both asserted by test so a later change is a failure rather
+  than drift.
+
+  An owner may assign a staff member to a store the owner is not a member of. Both readings are
+  defensible, and the deciding argument is that the restrictive one makes the first assignment in a
+  deployment impossible: a fresh owner belongs to no store, so they could never assign themselves or
+  anyone else, and the only way in would be the hand-written INSERT this item exists to remove. It
+  is also consistent with the rest of staff administration here, which is already business-wide
+  rather than store-scoped - assign_role and disable_staff carry no store dimension at all. Granting
+  is not reading: OWNER_ADMIN remains not implicitly a member of any store, and an owner who wants
+  to see a store assigns themselves, audited like any other grant.
+
+  Revoking the last assignment on a store is allowed. disable_staff protects the last active owner
+  because losing it locks everyone out permanently with no way back; this is not that, because an
+  owner can assign anyone to any store at any time, so a store left with no members is recoverable
+  in one command. Refusing would block a legitimate act - winding a store down - to prevent a state
+  that is not a trap.
+
+  Revocation is soft rather than deleting the row, which is a deliberate deviation from the packet's
+  phrase "the assignment row goes". The table carries staff_store_assignments_no_hard_delete, a
+  guard this repository added on purpose, and staff_role_assignments already solved the identical
+  problem in migration 0003 with a nullable revoked_at/revoked_by pair. Following the sibling table
+  keeps who granted what, when, and who ended it, which is the record an authorization table exists
+  to hold.
+
+  The console cannot confirm the resulting state. No route reads another staff member's store list,
+  so both commands answer 204 and the screen says only what was asked, not what is now true. The
+  reliable check remains the assigned person signing in and reading their own store list.
+evidence:
+  grant_and_revoke_both_owner_gated_at_route_and_repository: >-
+    Both routes depend on require_owner, and both repository methods re-check independently. The
+    repository check is not a copy of the route's: it asks the database whether the actor is right
+    now an active OWNER_ADMIN with an unrevoked role row, rather than reading the roles a
+    StaffPrincipal was minted with. A session keeps claiming a role after it is revoked or the
+    account disabled, and these are the two methods that hand out access to a store's customers.
+
+    Proven in both directions. An operator calling either route receives 403 with the same
+    "operation denied" body every other refusal produces, and no row is written; an operator cannot
+    even revoke their own access, because revocation is a record an owner makes. A principal whose
+    object still says OWNER_ADMIN but whose account has been disabled is refused by the repository.
+
+    That check found two fixtures asserting a role nobody had granted: test_shadow_console.py and
+    test_agent_pipeline.py both built an OWNER_ADMIN principal in memory while inserting only a
+    staff_users row. Both now write the staff_role_assignments row too, which is what the principal
+    was claiming all along.
+  assignment_atomic_with_audit_and_outbox_event: >-
+    Reuses ShadowConsoleRepository.assign_store and therefore commit_material_change; no second
+    membership concept and no second table. After a grant the assignment row, the
+    STAFF_STORE_ASSIGNED domain event, the STAFF_STORE_ASSIGN audit entry attributed to the granting
+    owner, and the staff.store_assigned.v1 outbox event all exist. Revocation emits the matching
+    STAFF_STORE_REVOKED, STAFF_STORE_REVOKE and staff.store_revoked.v1.
+
+    One defect had to be fixed before a second grant was possible at all. assign_store wrote its
+    domain event at a hardcoded aggregate_version of 1, and domain_events is unique on
+    (aggregate_type, aggregate_id, aggregate_version, event_type), so assigning a staff member to a
+    second store raised a unique violation from inside the transaction. The demo seed had worked
+    around this by checking membership before calling; the defect was in the repository. The version
+    is now derived from the staff member's existing assignment events, after locking their
+    staff_users row so two concurrent grants queue rather than collide.
+  audit_write_failure_rolls_the_assignment_back: >-
+    Asserted by injecting a BEFORE INSERT trigger on audit_events that raises, then attempting a
+    grant. The call fails and afterwards there is no membership, no domain event and no outbox event
+    for that staff member. An unaudited grant is precisely the defect this item exists to close, so
+    the transaction must not be able to produce one.
+  assignment_idempotent_under_a_repeated_key: >-
+    Both routes require an Idempotency-Key and wrap the repository call in
+    IdempotencyRepository.execute. Granting twice with one key returns 204 twice, leaves exactly one
+    assignment row, and - the assertion that matters - writes exactly one domain event, so a replay
+    does not append to the staff member's authorization history.
+
+    Revoking something never granted, or already revoked, is not an error. The caller asked for this
+    person to have no access to this store and afterwards they do not; reporting a failure would
+    invite a retry that changes nothing. The audit event is still written, because "an owner asked
+    to remove access at this time" is worth recording whether or not a row changed.
+  owner_is_not_implicitly_a_member_of_every_store: >-
+    Asserted directly: after an owner grants an operator access to a store, require_store_membership
+    still refuses that owner for the same store. The owner becomes a member only by assigning
+    themselves, and that assignment is audited like any other. store_access.py says this
+    deliberately and this item does not change it - granting access and having it stay separate.
+  cross_store_grant_authority_question_answered_and_tested: >-
+    Answered yes, with the reasoning recorded in unresolved_assumptions and in the test's own
+    docstring, and asserted by test_an_owner_may_assign_into_a_store_they_are_not_a_member_of: an
+    owner who is not a member of a store grants an operator access to it, the operator becomes a
+    member, and the owner does not. The classification is also recorded in the route registry that
+    STORE-SCOPING-002 introduced, so both new routes are explicitly NOT_STORE_DATA with the reason
+    written down rather than inferred from the absence of a check.
+
+    The second question - revoking the last assignment on a store - is answered "allowed" and
+    asserted by test_revoking_the_last_assignment_on_a_store_is_allowed.
+  console_unsupported_entry_replaced_by_the_real_control: >-
+    The staff screen carried this gap as its own closing block, describing the workaround: an owner
+    creates the user here, then asks a database operator to insert the assignment row. That block is
+    gone, replaced by a Gán cửa hàng panel with grant and revoke as two separate deliberate actions
+    rather than one toggle a mis-click reverses. The matching entry on the unsupported-capabilities
+    screen is removed, because it is no longer unsupported. Creating a staff member now pre-fills
+    the store panel alongside the role and disable panels, so the provisioning sequence is one
+    screen.
+
+    The panel states what it cannot confirm: both commands answer 204, no route reads another staff
+    member's store list, and the reliable check is the assigned person signing in and reading their
+    own.
+  rollback_assessment: >-
+    See rollback_impact. The sharp edge is that a reverted deployment stops filtering revoked_at
+    while the column and its revoked rows remain, which would silently reactivate every assignment
+    revoked before the revert. That is why the filter is enforced by a test that reads source rather
+    than by review: every statement in application code that reads staff_store_assignments must
+    mention revoked_at, and the check is proven to fail when the filter is removed from
+    store_access.py. Test code is exempt and says why - counting every row including revoked ones is
+    how the idempotency test proves no duplicate was written.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

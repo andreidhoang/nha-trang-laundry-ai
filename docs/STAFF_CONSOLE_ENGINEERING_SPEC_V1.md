@@ -262,7 +262,13 @@ light and dark:
 
 - **Zero CSP violations** against the real header
   (`script-src 'self'; style-src 'self'; connect-src 'self'`, no `unsafe-inline`, no nonce).
-- **Zero page errors, zero console errors, zero failed requests** across all eleven screens.
+- **Zero uncaught page errors and zero failed requests** across all eleven screens.
+- Two console entries, both on the phone context and neither from a console screen: the expected
+  `401` from the signed-out session probe, which is the correct behaviour that renders the
+  signed-out screen; and one `404` that persisted after `icon.svg` was added, so it is **not** the
+  console's favicon. It is most likely the demo issuer's own sign-in page, which has no icon and
+  was navigated in the same context — but the failing URL was not captured and the stack has been
+  torn down, so that attribution is **unverified** and is recorded here as unverified.
 - The whole module graph loads and **all eleven screens render** under a DOM stub in Node.
 - The mandated labels verified in a genuinely priced quote: `ƯỚC TÍNH`, `TAX UNVERIFIED`, and the
   reason codes shown verbatim.

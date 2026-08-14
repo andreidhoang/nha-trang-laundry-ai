@@ -84,6 +84,9 @@ as the missing `stores` table in `docs/PRODUCTION_READINESS_ASSESSMENT.md`, not 
   engine. The seed publishes the owner-confirmed pricebook as configuration version 1; without it
   the route answers 503 rather than guessing a price.
 
+  The form also asks for an **Order request UUID**. There is no intake screen yet, so paste any
+  UUID — one order request gets one quote container, and pricing it again is a new revision.
+
   Worth trying, because the refusals are the interesting part:
 
   | Enter | What happens |

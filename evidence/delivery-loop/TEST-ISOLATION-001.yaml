@@ -1,0 +1,106 @@
+schema_version: 1
+work_item: TEST-ISOLATION-001
+recorded_at: '2026-08-14T00:35:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-test-isolation-001.md requires every database integration test to start from a
+  known state, so that a failure means a defect rather than an inheritance from whatever ran before
+  it. The packet names the mechanism and its trap: TRUNCATE is correct because most tables carry
+  reject_ledger_mutation as a BEFORE DELETE FOR EACH ROW trigger and TRUNCATE does not fire
+  row-level triggers, but a previous attempt hung because TRUNCATE takes ACCESS EXCLUSIVE on every
+  table it names and the concurrency tests leave connections open. The packet therefore requires a
+  bounded lock_timeout and statement_timeout so a stuck reset fails loudly, deterministic teardown
+  of every extra connection a concurrency test opens, and the reset running once per test rather
+  than once per connection. ENV-INTEGRITY-001 established the standard this item serves: a harness
+  that produces false results is an evidence-integrity defect, because every completion claim in
+  this repository rests on a gate result meaning what it says.
+rollback_impact: >-
+  Reverting removes the autouse fixture and the session-scoped reset connection from conftest.py and
+  restores the shared-state fixtures, which returns the suite to its previous behaviour rather than
+  breaking it. It would also revert two test corrections that are independently valid and should be
+  kept even if the isolation mechanism is abandoned: the append-only trigger test would go back to
+  asserting that deleting zero rows raises no error, and the outbox and durable-worker tests would
+  go back to building leases from a clock frozen at import. Reverting the thread-liveness assertions
+  restores silent connection leaks. No migration, no schema change, no production code path is
+  involved: every file changed is a test or the repository conftest.
+unresolved_assumptions: >-
+  The reset truncates every table in the public schema except schema_migrations, discovered fresh
+  each test from pg_tables rather than from a hard-coded list, so a future migration needs no change
+  here. That breadth is deliberate but it does mean any future migration that seeds reference data
+  outside schema_migrations would have that data removed between tests; no migration seeds anything
+  today, verified by inspection of migrations 0001-0023. The emptiness probe treats a table with any
+  row as dirty, so a test that legitimately expects seeded data would need its own fixture. The
+  lock_timeout is 2000 ms and is deliberately short: it is a diagnosis budget, not a tolerance, and
+  raising it would convert a named failure back into the hang this item exists to remove. The
+  TRUNCATE runs before each test rather than after, so the final test of a run leaves its rows in
+  place for inspection; a run therefore ends with a dirty database by design. Every capability
+  remains NOT_AUTHORIZED; this item changes no product behaviour.
+evidence:
+  no_test_depends_on_another_tests_state: >-
+    An autouse fixture in the repository conftest.py truncates every table but schema_migrations
+    before each test, using one session-scoped autocommit connection so the reset costs no handshake
+    and itself holds no lock that would block the next one. It runs before the test rather than
+    after for two reasons stated in the code: a failing test leaves its rows to be inspected, and a
+    test that opens a second connection cannot truncate under its own feet. Proven by two defects it
+    immediately exposed, both of which had been passing for the wrong reason. First,
+    test_the_append_only_trigger_really_does_refuse_a_purge asserted that a DELETE against
+    webhook_events is refused, but reject_ledger_mutation is FOR EACH ROW, so a DELETE matching zero
+    rows fires nothing and succeeds; the test passed only because earlier tests had left rows
+    behind, and against a clean database it asserted that deleting nothing raises no error. It now
+    inserts the row it tries to delete. Second, test_outbox_repository and test_durable_agent_worker
+    built leases from a module-level NOW captured at import and then let PostgreSQL check them
+    against CURRENT_TIMESTAMP, so they passed only while they ran within the lease window of
+    collection - thirty and twenty seconds respectively. NOW is now a per-test fixture on a live
+    clock in both modules.
+  workaround_loops_removed: >-
+    All four accumulation workarounds are gone and each is now a direct assertion. The exception
+    queue test in test_shadow_console.py drained the whole queue before asserting; it now asserts
+    the queue starts empty, creates and resolves one receipt, and asserts only the unresolved one is
+    listed, which is a stronger claim than the loop made. The 200-iteration drain in
+    test_agent_pipeline.py is replaced by asserting the first cycle is IDLE. The two 100-iteration
+    recovery loops in test_outbox_repository.py and test_worker_host.py are replaced by asserting
+    recover_expired_internal returns exactly the event under test, and in the outbox case that a
+    second call returns None because nothing else is expired.
+  reset_fails_loudly_rather_than_hanging: >-
+    The reset connection sets lock_timeout to 2000 ms and statement_timeout to 30000 ms before any
+    statement runs. LockNotAvailable and QueryCanceled are caught and re-raised as a RuntimeError
+    whose message names the likely cause, says explicitly not to raise the timeout, points at the
+    task packet, and appends every other backend on the database read from pg_stat_activity with its
+    pid, state and truncated query. That diagnostic was not decoration: it is what identified a
+    concurrent session sharing the database as the source of intermittent failures during this item,
+    rather than the fixture being blamed for them.
+  concurrency_tests_remain_concurrent: >-
+    No concurrency test was serialised, weakened or removed. The five thread-join sites in
+    test_outbox_repository.py, test_agent_run_repository.py, test_channel_envelope.py (two) and
+    test_agent_pipeline.py keep their real threads, barriers and separate connections, and each now
+    asserts the worker is no longer alive after the join. That is the packet's deterministic
+    teardown requirement: a thread joined with a timeout that kept running holds a connection whose
+    locks block the next reset, which is precisely the hang that stopped the earlier attempt. The
+    claim-lease, dedupe-constraint and suppression-race proofs are unchanged.
+  suite_passes_in_reverse_module_order: >-
+    The full suite passes in reverse module order: all 83 test modules collected, reversed, and
+    passed to pytest in that order, giving 722 passed and 1 skipped. The same suite in normal order
+    gives the same 722 passed and 1 skipped. Every database-touching module also passes alone, all
+    26 checked individually. The single skip is the BSD hidden-flag test from ENV-INTEGRITY-001,
+    which is platform-conditional and not a database test. Reverse order is what proved the frozen
+    clock defect: before the fix it produced five failures that normal order never showed, because
+    the affected modules happened to run early enough to stay inside their lease windows.
+  rollback_assessment: >-
+    Test-only and conftest-only. One autouse fixture and one session fixture added to conftest.py,
+    membership of no production module changed, no migration, no schema change, no contract change,
+    no response shape and no business rule touched. The one consequence worth stating is that this
+    item makes the suite stricter about its own claims, so reverting it does not restore a working
+    state - it restores a suite that reports green for reasons its readers cannot check, which is
+    what ENV-INTEGRITY-001 established as an evidence-integrity defect rather than an inconvenience.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

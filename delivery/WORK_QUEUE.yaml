@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-13'
+last_updated: '2026-08-14'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -2314,7 +2314,7 @@ items:
 - id: TEST-ISOLATION-001
   phase: PRODUCTION_HARDENING
   title: Isolate database integration tests from each other
-  status: PENDING
+  status: COMPLETE
   priority: 212
   depends_on:
   - ENV-INTEGRITY-001

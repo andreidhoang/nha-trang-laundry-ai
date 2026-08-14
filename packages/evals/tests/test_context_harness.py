@@ -46,8 +46,12 @@ def test_context_drift_check_passes() -> None:
     # eval-suite minima, RETENTION-001, OPS-RUNBOOK-001 and SLO-VERIFY-001, plus the three the
     # execution pass surfaced: EVIDENCE-REPIN-001, RETENTION-STORE-001, STORE-SCOPING-001
     # and TEST-ISOLATION-001, plus MODEL-ROUTE-001 and MULTIMODAL-PERCEPTION-001 from the
-    # 2026-08-13 tiered-inference assessment (ADR-0008).
-    assert "74 work items" in result.stdout
+    # 2026-08-13 tiered-inference assessment (ADR-0008), plus the two authorization gaps the
+    # 2026-08-14 staff-console work found by reading the route table against the repositories:
+    # STORE-SCOPING-002, the order-transition route that STORE-SCOPING-001's URL-shape enumeration
+    # could not see because it is keyed by order_id, and STORE-ASSIGNMENT-001, membership having no
+    # write path at all.
+    assert "76 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

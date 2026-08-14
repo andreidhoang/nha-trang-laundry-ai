@@ -2476,3 +2476,71 @@ items:
   - redaction_holds_for_recorded_tool_calls
   - rollback_assessment
   blocked_by_decisions: []
+- id: STORE-SCOPING-002
+  phase: PRODUCTION_HARDENING
+  title: Enforce store membership on the order transition route the first pass missed
+  status: IN_PROGRESS
+  priority: 211
+  depends_on:
+  - STORE-SCOPING-001
+  context_domains:
+  - orders_audit
+  - privacy_consent
+  normative_sources:
+  - AGENTS.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-store-scoping-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - transition_enforces_membership_in_the_repository
+  - cross_store_transition_refused_with_the_role_refusal_body
+  - same_store_transition_still_succeeds
+  - refused_transition_leaves_no_idempotency_claim
+  - route_enumeration_test_fails_when_a_check_is_removed
+  - audit_timeline_and_unknown_sends_scope_explicitly_classified
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: STORE-ASSIGNMENT-001
+  phase: PRODUCTION_HARDENING
+  title: A governed, audited write path for staff store membership
+  status: PENDING
+  priority: 212
+  depends_on:
+  - IDENTITY-001
+  - STORE-SCOPING-001
+  context_domains:
+  - orders_audit
+  - privacy_consent
+  normative_sources:
+  - AGENTS.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/ENGINEERING_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-store-assignment-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - grant_and_revoke_both_owner_gated_at_route_and_repository
+  - assignment_atomic_with_audit_and_outbox_event
+  - audit_write_failure_rolls_the_assignment_back
+  - assignment_idempotent_under_a_repeated_key
+  - owner_is_not_implicitly_a_member_of_every_store
+  - cross_store_grant_authority_question_answered_and_tested
+  - console_unsupported_entry_replaced_by_the_real_control
+  - rollback_assessment
+  blocked_by_decisions: []

@@ -13,8 +13,12 @@ Two of the six findings in the 2026-08-12 assessment are now false, and measurin
 exposed a larger one that the previous pass missed entirely.
 
 **The authority layer is production-grade and almost nothing in the running system can reach it.**
-The deterministic pricing engine — 3,365 lines and the single most valuable asset here — has no
-caller outside tests and synthetic harnesses. The ten-operation Tool Facade is wired in production to
+~~The deterministic pricing engine — 3,365 lines and the single most valuable asset here — has no
+caller outside tests and synthetic harnesses.~~ **Pricing is reachable as of 2026-08-14**
+(`QUOTE-COMMAND-001`): a staff member prices a garment through the engine and the result is committed
+as an immutable revision, priced against a pricebook published through `CONFIG-001` rather than read
+from a file. The verdict above still holds for everything else, and the pricing sentence is left
+struck through rather than deleted so the distance travelled stays visible. The ten-operation Tool Facade is wired in production to
 a backend that returns `TOOL_UNAVAILABLE` for every operation. The three facts that make a laundry
 order finished in the physical world — money received, goods handed back, delivery run completed —
 are insert-time constants with no write path, with the provable consequence that **no order this
@@ -217,7 +221,7 @@ movement visible — and to show where the earlier number was measuring the wron
 | Layer | 08-12 | 08-14 | Why it moved, or why it did not |
 |---|---|---|---|
 | Deterministic engines (pricing, promotion, delivery, SLA) | ~90% | ~90% | Unchanged and genuinely strong. |
-| **Domain persistence and command surface** | *(not separated)* | **~25%** | The row that was missing. 14/63 aggregates; no quote write path. |
+| **Domain persistence and command surface** | *(not separated)* | **~30%** | The row that was missing. 14/63 aggregates. The quote write path exists as of 2026-08-14 (`QUOTE-COMMAND-001`), and is the first command in the system that produces a monetary artefact; settlement is next. |
 | Control plane / internal API | ~75% | ~80% | Store scoping and the Shadow surface landed; still no create-quote, payment or fulfilment command. |
 | Agent product path | ~25% | ~45% | Pipeline wired end to end; facade backend still `Unavailable`; no channel adapter. |
 | Evidence base | ~2% | ~5% | 669 combinatorial cases exist unpublished; still 0 provider runs, and all five gated layers at 0/1,300. |

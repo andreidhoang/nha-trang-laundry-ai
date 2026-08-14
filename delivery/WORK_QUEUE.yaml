@@ -2414,7 +2414,7 @@ items:
 - id: SETTLEMENT-001
   phase: OPERATIONS_CONTROL
   title: Exact-payment and self-collection attestation so an order can reach COMPLETED
-  status: PENDING
+  status: COMPLETE
   priority: 232
   depends_on:
   - QUOTE-COMMAND-001

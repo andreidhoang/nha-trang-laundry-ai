@@ -67,6 +67,9 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/orders/{order_id}/transition"): store_scoped(
         "orders", "OrderRepository.transition"
     ),
+    ("POST", "/internal/v1/orders/{order_id}/settlement"): store_scoped(
+        "settlement", "SettlementRepository.record"
+    ),
     ("POST", "/internal/v1/stores/{store_id}/quotes"): RouteScope(
         "STORE_SCOPED",
         None,

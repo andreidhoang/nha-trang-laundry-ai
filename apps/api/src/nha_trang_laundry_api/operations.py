@@ -46,6 +46,11 @@ from nha_trang_laundry_db.quotes import (
     QuoteStateError,
     QuoteSummary,
 )
+from nha_trang_laundry_db.settlement import (
+    SettlementCommand,
+    SettlementRepository,
+    StoredSettlement,
+)
 from nha_trang_laundry_db.shadow_console import (
     AuditEntry,
     DraftDecision,
@@ -113,6 +118,19 @@ class UnresolvedQuoteResult:
     """Policy the engine could not resolve, carried verbatim. No row was written."""
 
     reason_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StoredSettlementResult:
+    settlement_id: UUID
+    order_id: UUID
+    expected_total_vnd: int
+    paid_amount_vnd: int
+    settlement_shape: str
+    balance_status: str
+    self_collection_recorded: bool
+    row_version: int
+    replayed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -657,6 +675,48 @@ class OperationsService:
             )
         return _stored_incident_result(result.response, replayed=result.replayed)
 
+    # --- SETTLEMENT-001 ----------------------------------------------------------------------
+
+    def record_settlement(
+        self,
+        *,
+        order_id: UUID,
+        paid_amount_vnd: int,
+        collected_by_customer: bool,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> StoredSettlementResult:
+        """Attest that the customer paid the quoted total and collected their goods."""
+        attested_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-settlement:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={
+                        "order_id": str(order_id),
+                        "paid_amount_vnd": paid_amount_vnd,
+                        "collected_by_customer": collected_by_customer,
+                    },
+                    occurred_at=attested_at,
+                ),
+                lambda: _settlement_mapping(
+                    SettlementRepository().record(
+                        connection,
+                        SettlementCommand(
+                            order_id=order_id,
+                            paid_amount_vnd=paid_amount_vnd,
+                            collected_by_customer=collected_by_customer,
+                            principal=principal,
+                            correlation_id=uuid4(),
+                            attested_at=attested_at,
+                        ),
+                    )
+                ),
+            )
+        return _stored_settlement_result(result.response, replayed=result.replayed)
+
     # --- STORE-ASSIGNMENT-001 ---------------------------------------------------------------
     #
     # The first routes in this system that *grant* an authorization rather than check one, so the
@@ -860,6 +920,35 @@ def _stored_incident_result(value: dict[str, object], *, replayed: bool) -> Stor
         bool(value["fault_decided"]),
         bool(value["remedy_decided"]),
         replayed,
+    )
+
+
+def _settlement_mapping(value: StoredSettlement) -> dict[str, object]:
+    return {
+        "settlement_id": str(value.settlement_id),
+        "order_id": str(value.order_id),
+        "expected_total_vnd": value.expected_total_vnd,
+        "paid_amount_vnd": value.paid_amount_vnd,
+        "settlement_shape": value.settlement_shape,
+        "balance_status": value.balance_status,
+        "self_collection_recorded": value.self_collection_recorded,
+        "row_version": value.row_version,
+    }
+
+
+def _stored_settlement_result(
+    value: dict[str, object], *, replayed: bool
+) -> StoredSettlementResult:
+    return StoredSettlementResult(
+        settlement_id=UUID(str(value["settlement_id"])),
+        order_id=UUID(str(value["order_id"])),
+        expected_total_vnd=int(str(value["expected_total_vnd"])),
+        paid_amount_vnd=int(str(value["paid_amount_vnd"])),
+        settlement_shape=str(value["settlement_shape"]),
+        balance_status=str(value["balance_status"]),
+        self_collection_recorded=bool(value["self_collection_recorded"]),
+        row_version=int(str(value["row_version"])),
+        replayed=replayed,
     )
 
 

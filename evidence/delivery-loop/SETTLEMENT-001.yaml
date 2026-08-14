@@ -1,0 +1,132 @@
+schema_version: 1
+work_item: SETTLEMENT-001
+recorded_at: '2026-08-15T01:20:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-settlement-001.md requires that a staff member can record that the customer paid
+  the quoted total and collected the goods, and that the order then reaches COMPLETED - for the
+  exact-payment self-collection case only. It states the risk as scope creep into policy that belongs
+  to the business owner, and draws the boundary explicitly: partial payment, overpayment, deposits,
+  instalments, ON_ACCOUNT credit terms, refunds and delivery legs are all out of scope and must each
+  stay NOT_SUPPORTED, naming their open decision. The comparison must be deterministic against the
+  quote revision the order references, with no recomputation, no re-pricing and no tolerance. The
+  write must go through commit_material_change, the record must be append-only and idempotent, and
+  the completion guard must not be widened - if a test needs the guard relaxed, the test is wrong.
+  The model never touches this: settlement is not added to the hash-pinned agent tool contract, and
+  no agent-reachable path may write a balance, asserted rather than assumed.
+rollback_impact: >-
+  Removing this item returns the order lifecycle to the state it was measured in: no order this
+  system creates can reach COMPLETED. That is the status quo rather than a break, which is what makes
+  the rollback clean - nothing depends on settlement because nothing could settle before it.
+
+  Migration 0025 is additive and forward-only: one new table, one index, one append-only trigger. No
+  existing table, column, constraint, guard, route or behaviour is modified. `orders` is written by a
+  new statement rather than a changed one; `transition_commercial` and the COMPLETED table CHECK are
+  untouched. Reverting the code leaves an empty table behind, and any settlement recorded before the
+  revert would leave its order marked PAID with no reachable record of who attested it - which is why
+  the settlement row and the balance move in one transaction and never separately.
+unresolved_assumptions: >-
+  The supported shape is narrow on purpose, and the narrowness is the deliverable. Four refusals are
+  first-class outcomes rather than errors, and each names the decision that owns it:
+  AMOUNT_IS_NOT_THE_EXACT_TOTAL is DEC-010, TOTAL_IS_A_RANGE is DEC-001, and both
+  NO_PRESENTABLE_TOTAL and COLLECTION_WAS_NOT_BY_THE_CUSTOMER are DEC-003. Part payment, deposit,
+  overpayment and instalment deliberately collapse into one refusal rather than four behaviours,
+  because distinguishing them would mean deciding what each *is*, and that is exactly what DEC-010
+  holds open.
+
+  A consequence worth stating plainly: no quote produced by QUOTE-COMMAND-001 can be settled today.
+  Those quotes are ESTIMATE with no delivery fee and therefore no display total, so they refuse with
+  NO_PRESENTABLE_TOTAL. Settlement operates on orders, and OrderRepository.create already requires an
+  APPROVED_EXACT, ACCEPTED_FINAL quote carrying an approval - which the quote command path does not
+  yet produce, because an approved-exact quote needs a resolved delivery fee (DEC-003) and an
+  approval flow. The two command paths are each complete and not yet joined; joining them is
+  DEC-003 plus a quote-approval item, not this one.
+
+  Settlement requires the order to be ACTIVE and its balance UNPAID. Re-settling is refused with
+  ALREADY_SETTLED rather than replayed, and the UNIQUE constraint on order_id says the same thing at
+  the database. An idempotency key is still required and still replays a *successful* settlement, so
+  a retried request after a lost response returns the original rather than a conflict.
+
+  There is no payment method, no change given, no receipt number and no partial allocation, because
+  a column invites a value and a value would be a policy nobody chose.
+evidence:
+  order_reaches_completed_through_normal_path: >-
+    Proven end to end against a live PostgreSQL, through every intermediate transition rather than by
+    setting state directly: an order is created from an approved final quote, intake advances to
+    RECEIVED_PENDING_INSPECTION and then ACCEPTED with all six intake blockers cleared, commercial
+    advances through STORE_CONFIRMATION_PENDING and CONFIRMED to ACTIVE, production advances through
+    QUEUED, IN_PROCESS, QUALITY_CHECK and READY_AT_STORE to RELEASED. At that point the order is
+    still ACTIVE/UNPAID/uncollected, which is the state every order in this system has been stuck in.
+
+    Recording the settlement moves balance_status to PAID and self_collection_recorded to TRUE in the
+    same transaction as the attestation, and the order then transitions to COMPLETED with closed_at
+    set. This is the first time an order in this repository has reached COMPLETED.
+  every_other_settlement_shape_not_supported: >-
+    Fifteen domain cases and six live cases. One đồng under and one đồng over are both refused, as
+    are zero, half the total, and double it - all AMOUNT_IS_NOT_THE_EXACT_TOTAL naming DEC-010. A
+    range quote refuses with TOTAL_IS_A_RANGE naming DEC-001. A quote with no display total refuses
+    with NO_PRESENTABLE_TOTAL naming DEC-003, which is the state every quote from the new pricing
+    command is in. Goods that did not leave with the customer refuse with
+    COLLECTION_WAS_NOT_BY_THE_CUSTOMER naming DEC-003, because the other branch of the guard is a
+    delivery leg and delivery is not built.
+
+    Each refusal leaves the order UNPAID and writes no settlement row. Two properties are asserted
+    that a hand-written check would miss: `True` is rejected as an amount, because it is an `int` in
+    Python and this is the money path; and every member of the refusal enum has an entry in the
+    decision map, so a refusal with no escalation route cannot be added.
+
+    The route surfaces the refusal as 422 with the reason code and the decision, rather than a bare
+    "not supported" that would send a staff member looking for a workaround.
+  no_agent_reachable_path_writes_a_balance: >-
+    Asserted mechanically in packages/evals/tests/test_settlement_is_unreachable_by_agents.py rather
+    than assumed. The agent tool contract still declares exactly the ten hash-pinned operations, and
+    a separate assertion fails if any declared operation ever names a money-moving act, so growing
+    the set cannot smuggle one in. The agent-facing Tool Facade application imports nothing from the
+    settlement modules, and neither does the worker that runs the agent cycle - both directions of
+    the same boundary. The settlement route is read from the built FastAPI app and required to be a
+    single POST under /internal/ carrying require_operations_staff, so a decorator change cannot
+    quietly relax it.
+
+    These read the contract and the source because the claim is about what does not exist; a
+    behavioural test can only show that the paths somebody thought of are refused.
+  completion_guard_not_widened: >-
+    transition_commercial and the COMPLETED table CHECK in migration 0007 are untouched. Asserted by
+    a test that settles an order whose production reached only QUEUED: the balance moves to PAID and
+    collection is recorded, and COMPLETED is still refused with "production is not released". This
+    item makes the guard's conditions satisfiable; it does not make them weaker.
+  settlement_record_append_only_and_idempotent: >-
+    order_settlements carries order_settlements_append_only on BEFORE UPDATE OR DELETE, and both an
+    UPDATE and a DELETE are asserted to raise. A settlement recorded in error is an incident, not an
+    edit.
+
+    Settling twice is refused with ALREADY_SETTLED and leaves exactly one settlement row and one
+    audit entry. The order's balance is checked before any transaction opens and again in the UPDATE
+    predicate, and the UNIQUE constraint on order_id is the third statement of the same rule.
+
+    The record pins the quote it was checked against by id, revision and snapshot hash, and a test
+    asserts the stored hash equals the order's bound hash - so re-pricing later cannot change what
+    the customer was asked for at the counter. The attestation, the ORDER_SETTLEMENT_RECORDED domain
+    event, the ORDER_SETTLEMENT_RECORD audit entry attributed to the attesting staff member, and the
+    order.settlement_recorded.v1 outbox event all commit together through commit_material_change.
+
+    Store scoping matches STORE-SCOPING-002: membership is resolved from the locked order row on the
+    same cursor, so this route - also keyed by order_id - is guarded the same way, and the route is
+    classified STORE_SCOPED in the enumeration registry. A member of another store and a read-only
+    AUDITOR are both refused, and neither leaves the order settled.
+  rollback_assessment: >-
+    See rollback_impact. Additive: one migration, one domain module, one repository, one service
+    method, one route, one console panel, four test modules. No existing table, guard, route or
+    behaviour changed, so reverting returns the order lifecycle to its previous state - one in which
+    no order can finish - rather than breaking anything that works today.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

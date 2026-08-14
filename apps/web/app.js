@@ -156,9 +156,27 @@ function renderBanners() {
     );
   }
 
-  if (state.status === "ended" && state.lastError) {
+  if (state.status === "ended") {
+    // An expiry with no error used to render nothing at all: the operator's next action failed and
+    // the console said why only inside that one form. The banner is the standing condition, and it
+    // states the thing that most needs saying — that nothing they typed was thrown away.
     children.push(
-      h("div", { class: "banner", dataState: "danger", role: "alert" }, state.lastError),
+      h(
+        "div",
+        { class: "banner", dataState: "danger", role: "alert" },
+        state.lastError ||
+          "Phiên đăng nhập đã kết thúc. Những gì bạn đang nhập vẫn còn trên màn hình — " +
+            "đăng nhập lại rồi bấm gửi một lần nữa.",
+        h(
+          "button",
+          {
+            type: "button",
+            dataVariant: "quiet",
+            onClick: () => void session.refresh(),
+          },
+          "Kiểm tra lại phiên",
+        ),
+      ),
     );
   }
 
@@ -331,9 +349,21 @@ function contentKey() {
 async function boot() {
   session.watchConnectivity();
 
-  let renderedKey = contentKey();
+  /** @type {string|null} null until an authenticated screen has been rendered at least once. */
+  let renderedKey = null;
   session.subscribe(() => {
     syncChrome();
+    const state = session.snapshot();
+
+    // A session ending must not rebuild the screen. That is the single worst moment to discard a
+    // half-typed incident, and `session.js` promises it does not happen — the banner says what
+    // occurred, the form stays put, and signing in again in another tab restores the same key so
+    // the operator can simply submit. Sessions idle out at eight hours, so this fires on a shift.
+    //
+    // The `renderedKey !== null` guard keeps the boot case correct: arriving with no session at all
+    // must still render the signed-out screen rather than leave an empty outlet.
+    if (state.status === "ended" && renderedKey !== null) return;
+
     const key = contentKey();
     if (key === renderedKey) return;
     renderedKey = key;

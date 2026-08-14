@@ -285,6 +285,22 @@ group plus a browser download in CI — its own decision with its own gate cost.
 transiently for the verification above, which is the cheap way to get the evidence without paying
 the standing cost. **Ten scripted journeys remain owed.**
 
+## 12.3 Two corrections, from later work
+
+**The approval recommendation in §13.3 below is wrong.** Returning the three binding fields and a
+bound preview does *not* close the supervision loop: `rendered_hash` has no producer anywhere in the
+system, `resource_version` has no defined meaning per `resource_type`, and transactional consent is
+unmodelled so the spec-mandated recheck would refuse to render content every time. See
+[`STAFF_CONSOLE_COMPLETION_PROGRAM_V1.md`](STAFF_CONSOLE_COMPLETION_PROGRAM_V1.md) §2, which
+supersedes it. The projection widening remains worth doing as that document's item P7.
+
+**The browser verification in §12.2 overstated what it proved.** It drove the quote builder with
+Playwright's `page.fill()`, which sets a field's value in one shot. A human types, and typing
+rebuilt the form on every keystroke: `STANDARD_WASH_DRY` entered character by character produced
+`S`. The screen was unusable by an operator and the check could not see it. Fixed, and now covered
+by a browser check that types with `keyboard.type()` and asserts focus survives — the lesson being
+that a UI check which never types has not tested the UI.
+
 ## 13. Open questions for the owner
 
 1. **Store assignment (D8).** Nothing works for a new staff member until this is provisioned. Route

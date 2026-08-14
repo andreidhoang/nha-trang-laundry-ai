@@ -35,7 +35,11 @@ import {
   empty,
   errorNotice,
   facts,
+  gated,
+  labelled,
   panel,
+  resultLine,
+  setResult,
   skeleton,
 } from "../ui/components.js";
 
@@ -120,10 +124,133 @@ function auditTimeline(entries) {
  * @param {import("../core/router.js").RouteContext} context
  * @returns {HTMLElement}
  */
+/**
+ * Tất toán đơn.
+ *
+ * SETTLEMENT-001. Until this existed no order could reach COMPLETED: the balance was hardcoded
+ * UNPAID at insert and nothing could move it, so the completion guard was correct and
+ * unsatisfiable.
+ *
+ * The form asks for the amount rather than offering to fill it in. The server compares what is
+ * typed against the immutable quote the order is bound to, and a pre-filled figure a staff member
+ * confirms without reading is how a wrong amount gets attested — the point of the comparison is
+ * that two independent sources agree.
+ *
+ * Only one shape exists. Anything else is refused with the open decision that owns it, and the
+ * refusal is shown verbatim rather than translated into "try again".
+ *
+ * @param {object} spec
+ * @param {string} spec.orderId
+ * @param {import("../core/rbac.js").Verdict} spec.verdict
+ * @param {() => void} spec.onRecorded
+ * @returns {HTMLElement}
+ */
+function settlementPanel(spec) {
+  const draft = { amount: "", collected: false };
+  const result = resultLine();
+
+  /** @param {SubmitEvent} event */
+  async function submit(event) {
+    event.preventDefault();
+    const amount = Number.parseInt(draft.amount.trim(), 10);
+    if (!Number.isSafeInteger(amount) || amount < 0) {
+      setResult(result, "danger", "Số tiền phải là số nguyên đồng.");
+      return;
+    }
+    setResult(result, "warn", "Đang ghi nhận…");
+    try {
+      const recorded = await request(
+        `/internal/v1/orders/${encodeURIComponent(spec.orderId)}/settlement`,
+        {
+          method: "POST",
+          body: { paid_amount_vnd: amount, collected_by_customer: draft.collected },
+          idempotencyKey: `settlement-${spec.orderId}`,
+        },
+      );
+      setResult(
+        result,
+        "ok",
+        `Đã ghi nhận ${recorded.paid_amount_vnd.toLocaleString("vi-VN")} ₫ đúng bằng tổng đã báo. ` +
+          "Công nợ chuyển sang PAID và đã ghi nhận khách tự lấy đồ.",
+      );
+      spec.onRecorded();
+    } catch (error) {
+      // A NOT_SUPPORTED refusal names the decision that is still open. Showing it is the whole
+      // point: a staff member who is told only "không được" goes and finds a workaround.
+      setResult(
+        result,
+        error.kind === "NOT_SUPPORTED" ? "warn" : "danger",
+        error.detail && error.detail.reason_code
+          ? `Chưa hỗ trợ: ${error.detail.reason_code} — đang chờ quyết định ${error.detail.decision}.`
+          : error.message,
+      );
+    }
+  }
+
+  const amountInput = h("input", {
+    type: "text",
+    inputMode: "numeric",
+    autocomplete: "off",
+    placeholder: "110000",
+    onInput: (event) => {
+      draft.amount = /** @type {HTMLInputElement} */ (event.target).value;
+    },
+  });
+  const collectedInput = h("input", {
+    type: "checkbox",
+    onChange: (event) => {
+      draft.collected = /** @type {HTMLInputElement} */ (event.target).checked;
+    },
+  });
+
+  return panel({
+    eyebrow: "LỆNH · POST /internal/v1/orders/{id}/settlement",
+    title: "Tất toán",
+    guardrail:
+      "Chỉ một trường hợp được hỗ trợ: khách trả đúng tổng đã báo, đủ một lần, tại quầy, và tự " +
+      "lấy đồ về. Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết " +
+      "định đang mở — không làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.",
+    children: h(
+      "form",
+      { class: "form", onSubmit: submit },
+      labelled({
+        id: "settlement-amount",
+        label: "Số tiền khách đã trả (₫)",
+        hint:
+          "Nhập số khách đưa, không phải số hệ thống nghĩ. Máy chủ đối chiếu với ảnh chụp báo giá " +
+          "gắn với đơn; lệch một đồng cũng bị từ chối.",
+        control: amountInput,
+      }),
+      labelled({
+        id: "settlement-collected",
+        label: "Khách đã tự lấy đồ về",
+        hint:
+          "Đánh dấu chỉ khi chính khách nhận đồ tại quầy. Giao bằng chặng giao hàng thuộc DEC-003 " +
+          "và chưa xây.",
+        control: collectedInput,
+      }),
+      h(
+        "div",
+        { class: "action-bar" },
+        gated(
+          h(
+            "button",
+            { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
+            "Ghi nhận tất toán",
+          ),
+          spec.verdict,
+        ),
+      ),
+      result,
+    ),
+  });
+}
+
 export function render_(context) {
   const orderId = String(context?.params?.orderId || "").trim();
   const store = storeId();
   const shadowVerdict = can(principal(), "SHADOW_READ");
+  const settlementVerdict = can(principal(), "ORDERS_WRITE");
   const wellFormed = UUID.test(orderId);
 
   const orderHost = h("div", null, skeleton(1));
@@ -288,6 +415,7 @@ export function render_(context) {
         h("p", null, h("a", { href: "#/gaps" }, "Xem khoảng trống: read model chi tiết đơn")),
       ),
     }),
+    settlementPanel({ orderId, verdict: settlementVerdict, onRecorded: () => void loadOrder() }),
     panel({
       eyebrow: "KIỂM TOÁN",
       title: "Dòng thời gian",

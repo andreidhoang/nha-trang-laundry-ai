@@ -63,17 +63,37 @@ function blankLine() {
 }
 
 /**
+ * The line editor.
+ *
+ * Two kinds of change happen here and they must not be confused, because the first version of this
+ * screen confused them and the result was a form that dropped focus on every keystroke.
+ *
+ *   **Structural** — a line added or removed. The set of cards changes, so the editor is rebuilt.
+ *   **Value** — a character typed, a unit picked. The set of cards is unchanged, so nothing is
+ *   rebuilt: the line's state is updated in place and only the two nodes that actually depend on
+ *   the value are refreshed — the validity flag on the input, and that line's 6 kg notice.
+ *
+ * Typing `STANDARD_WASH_DRY` used to rebuild the whole form seventeen times and move the caret to
+ * the end after each one. A Playwright check does not catch this, because `page.fill()` sets a
+ * value in one shot; only a human typing does.
+ *
  * @param {object} options
- * @param {() => void} options.onChange
  * @param {Line[]} options.lines
+ * @param {() => void} options.onStructuralChange rebuild — the set of lines changed
+ * @param {() => void} options.onValueChange a value changed; invalidates the idempotency key only
  * @returns {HTMLElement}
  */
-function lineEditor({ lines, onChange }) {
+function lineEditor({ lines, onStructuralChange, onValueChange }) {
   return h(
     "div",
     { class: "stack" },
     lines.map((line, index) => {
       const prefix = `quote-line-${index}`;
+      // Owned by this card and refreshed in place, so the notice can follow the typed weight across
+      // the 6 kg boundary without the input losing focus.
+      const cliffHost = h("div");
+      const refreshCliff = () => render(cliffHost, pricingCliffNotice(line.quantity, line.unit));
+
       const codeInput = h("input", {
         type: "text",
         value: line.serviceCode,
@@ -81,11 +101,25 @@ function lineEditor({ lines, onChange }) {
         spellcheck: "false",
         placeholder: "STANDARD_WASH_DRY",
         dataFormat: "id",
-        "aria-invalid": line.serviceCode && !SERVICE_CODE.test(line.serviceCode) ? "true" : null,
+        "aria-invalid": line.serviceCode && !SERVICE_CODE.test(line.serviceCode) ? "true" : "false",
         onInput: (event) => {
-          line.serviceCode = event.target.value.trim().toUpperCase();
-          event.target.value = line.serviceCode;
-          onChange();
+          const input = event.target;
+          // Uppercasing is a convenience — the server's pattern demands it — but rewriting the
+          // value unconditionally sends the caret to the end, so an operator correcting a character
+          // in the middle of a code cannot. Rewrite only when the text actually changed, and put
+          // the caret back where it was.
+          const caret = input.selectionStart;
+          const normalized = input.value.toUpperCase().replace(/\s+/g, "");
+          if (normalized !== input.value) {
+            input.value = normalized;
+            input.setSelectionRange(caret, caret);
+          }
+          line.serviceCode = normalized;
+          input.setAttribute(
+            "aria-invalid",
+            normalized && !SERVICE_CODE.test(normalized) ? "true" : "false",
+          );
+          onValueChange();
         },
       });
 
@@ -100,21 +134,25 @@ function lineEditor({ lines, onChange }) {
         placeholder: "6",
         onInput: (event) => {
           line.quantity = event.target.value;
-          onChange();
+          refreshCliff();
+          onValueChange();
         },
       });
 
       const unitSelect = enumSelect("unit", UNITS, line.unit);
       unitSelect.addEventListener("change", (event) => {
         line.unit = /** @type {HTMLSelectElement} */ (event.target).value;
-        onChange();
+        refreshCliff();
+        onValueChange();
       });
 
       const basisSelect = enumSelect("quantity_basis", BASES, line.basis);
       basisSelect.addEventListener("change", (event) => {
         line.basis = /** @type {HTMLSelectElement} */ (event.target).value;
-        onChange();
+        onValueChange();
       });
+
+      refreshCliff();
 
       return h(
         "div",
@@ -131,7 +169,7 @@ function lineEditor({ lines, onChange }) {
                   dataVariant: "quiet",
                   onClick: () => {
                     lines.splice(index, 1);
-                    onChange();
+                    onStructuralChange();
                   },
                 },
                 "Xoá dòng",
@@ -156,7 +194,7 @@ function lineEditor({ lines, onChange }) {
             control: basisSelect,
           }),
         ),
-        pricingCliffNotice(line.quantity, line.unit),
+        cliffHost,
       );
     }),
   );
@@ -302,10 +340,15 @@ export function render_() {
   const listCount = h("span", { class: "count" }, "…");
   const truncation = h("p", { class: "hint" });
 
+  // Any edit invalidates the idempotency key: the server hashes the payload alongside it, so
+  // replaying the old key with changed content is a 409 rather than a replay. This is the whole
+  // response to a typed character — no rebuild.
+  const invalidateKey = () => submission.reset();
+
+  // Reserved for changes to the *set* of lines, or to which quote is being revised. Anything that
+  // only changes a value must call `invalidateKey` instead, or the caret moves as the operator types.
   const redrawBuilder = () => {
-    // Any edit invalidates the idempotency key: the server hashes the payload alongside it, so
-    // replaying the old key with changed content is a 409 rather than a replay.
-    submission.reset();
+    invalidateKey();
     render(builderBody, buildForm());
   };
 
@@ -458,7 +501,11 @@ export function render_() {
         hint: "Mỗi order request chỉ có đúng một báo giá. Lần thứ hai máy chủ báo trùng và yêu cầu thêm bản sửa đổi.",
         control: orderRequestInput,
       }),
-      lineEditor({ lines: draft.lines, onChange: redrawBuilder }),
+      lineEditor({
+        lines: draft.lines,
+        onStructuralChange: redrawBuilder,
+        onValueChange: invalidateKey,
+      }),
       h(
         "div",
         { class: "form__actions" },

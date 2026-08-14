@@ -30,6 +30,10 @@ from nha_trang_laundry_db.orders import (
     StoredOrder,
 )
 from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
+from nha_trang_laundry_db.settlement import (
+    SettlementAuthorizationError,
+    SettlementStateError,
+)
 from nha_trang_laundry_db.shadow_console import ShadowAuthorizationError, ShadowStateError
 from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_domain.approvals import ApprovalEnvelopeError
@@ -271,6 +275,27 @@ class ManualSendResponse(BaseModel):
     status: str
     recipient_binding_id: UUID
     rendered_hash: str
+    row_version: int
+    replayed: bool
+
+
+class SettlementRequest(StrictRequest):
+    # An integer of đồng. VND has no minor unit, and a float would introduce a representation the
+    # currency does not have on the one field that decides whether a customer paid.
+    paid_amount_vnd: int = Field(ge=0)
+    # Explicit rather than defaulted. "The customer took their goods" is the fact being attested,
+    # and a default true would let a staff member attest to it by not mentioning it.
+    collected_by_customer: bool
+
+
+class SettlementResponse(BaseModel):
+    settlement_id: UUID
+    order_id: UUID
+    expected_total_vnd: int
+    paid_amount_vnd: int
+    settlement_shape: str
+    balance_status: str
+    self_collection_recorded: bool
     row_version: int
     replayed: bool
 
@@ -783,6 +808,65 @@ def transition_order(
     except (OrderStateError, OrderAuthorizationError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
     return _order_response(stored)
+
+
+@app.post(
+    "/internal/v1/orders/{order_id}/settlement",
+    response_model=SettlementResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_settlement(
+    order_id: UUID,
+    request: SettlementRequest,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> SettlementResponse:
+    """Attest that the customer paid the quoted total and collected their goods.
+
+    The staff member records what they witnessed at the counter; the amount is checked against the
+    immutable quote revision the order is bound to. Nothing here computes or adjusts money.
+
+    Only one settlement shape exists. Anything else — a part payment, a deposit, an overpayment,
+    credit terms, or goods that left by a delivery leg — is refused with the reason and the open
+    decision that owns it, because those are the business owner's to make and `DEC-010` holds them.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        stored = service.record_settlement(
+            order_id=order_id,
+            paid_amount_vnd=request.paid_amount_vnd,
+            collected_by_customer=request.collected_by_customer,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except SettlementAuthorizationError as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    except SettlementStateError as error:
+        # The reason and its decision travel intact. "Not supported" with no way to learn which
+        # question is unanswered would send a staff member to find a workaround.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "outcome": "NOT_SUPPORTED",
+                "reason_code": error.reason_code,
+                "decision": error.decision,
+            },
+        ) from error
+    except IdempotencyConflictError as error:
+        _raise_operations_error(error)
+    return SettlementResponse(
+        settlement_id=stored.settlement_id,
+        order_id=stored.order_id,
+        expected_total_vnd=stored.expected_total_vnd,
+        paid_amount_vnd=stored.paid_amount_vnd,
+        settlement_shape=stored.settlement_shape,
+        balance_status=stored.balance_status,
+        self_collection_recorded=stored.self_collection_recorded,
+        row_version=stored.row_version,
+        replayed=stored.replayed,
+    )
 
 
 @app.post(

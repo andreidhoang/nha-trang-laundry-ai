@@ -14,7 +14,7 @@
  * @module core/session
  */
 
-import { request } from "./api.js";
+import { request, whenSessionEnds } from "./api.js";
 
 const STORE_KEY = "staff_store_id";
 
@@ -185,3 +185,8 @@ export function watchConnectivity() {
   window.addEventListener("online", update);
   window.addEventListener("offline", update);
 }
+
+// Registered at module load rather than from a caller, so that importing the session module is
+// enough for a 401 anywhere to reach `end()`. A registration a caller can forget is one that will
+// eventually be forgotten, and the symptom — a console that still looks signed in — is silent.
+whenSessionEnds(end);

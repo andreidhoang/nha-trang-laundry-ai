@@ -25,6 +25,25 @@ const WRITE_TIMEOUT_MS = 30_000;
 /** The server bounds every list at 200 and answers a larger value with a 409. Ask for less. */
 export const MAX_LIMIT = 200;
 
+/** @type {() => void} */
+let sessionEndObserver = () => {};
+
+/**
+ * Register the one handler told whenever the server stops accepting this session.
+ *
+ * The dependency runs this way — `core/session` registers with `core/api`, never the reverse —
+ * because `session` already imports `request` and the other direction would be a cycle.
+ *
+ * Without this the console lies. A session idles out after eight hours, the operator's next submit
+ * comes back 401, and that one form shows an error while the app bar still lists their roles and
+ * the navigation still looks live. Nothing else in the application learns anything happened.
+ *
+ * @param {() => void} handler
+ */
+export function whenSessionEnds(handler) {
+  sessionEndObserver = handler;
+}
+
 /**
  * Read a cookie by name. Only `staff_csrf` is readable — the session cookie is `HttpOnly`, which
  * is why this file never sees a token and never puts one anywhere.
@@ -86,7 +105,10 @@ export async function request(path, options = {}) {
     const csrf = cookie("staff_csrf");
     // The double-submit token lives in a readable cookie set at sign-in. Its absence means the
     // session is gone, not that the request is malformed, so it is reported as a session end.
-    if (!csrf) throw apiError("SESSION_ENDED", { correlationId });
+    if (!csrf) {
+      sessionEndObserver();
+      throw apiError("SESSION_ENDED", { correlationId });
+    }
     headers["X-CSRF-Token"] = csrf;
     if (!options.idempotencyKey) {
       throw new Error(`${method} ${path} was issued without an idempotency key`);
@@ -125,10 +147,14 @@ export async function request(path, options = {}) {
 
   if (!response.ok) {
     const retryAfter = Number.parseInt(response.headers.get("Retry-After") || "", 10);
-    throw classify(response.status, body === null ? "" : body?.detail, {
+    const failure = classify(response.status, body === null ? "" : body?.detail, {
       correlationId: response.headers.get("X-Correlation-ID") || correlationId,
       retryAfterSeconds: Number.isFinite(retryAfter) ? retryAfter : null,
     });
+    // One notification, from the one place every response passes through, so no screen has to
+    // remember to handle its own 401.
+    if (failure.kind === "SESSION_ENDED") sessionEndObserver();
+    throw failure;
   }
 
   return body;

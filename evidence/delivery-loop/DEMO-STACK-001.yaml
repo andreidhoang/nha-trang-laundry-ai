@@ -1,0 +1,135 @@
+schema_version: 1
+work_item: DEMO-STACK-001
+recorded_at: '2026-08-14T14:35:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-demo-stack-001.md requires the full container topology to run on one developer
+  machine, with a human able to sign in to the staff console and watch the worker, and states the
+  risk plainly: the danger is not that it fails to run, it is that someone makes it run by
+  disabling a check, after which the local stack stops resembling the thing it is supposed to
+  de-risk. The packet therefore forbids an authentication bypass, permissive origins, disabled
+  CSRF, relaxed trusted hosts, writable roots, added capabilities, a root user, any edit to the
+  WorkerSettings validator, and any secret material in git. It requires a real local OIDC issuer, a
+  TLS generator, three database roles, a synthetic seed that refuses a non-local target, and a
+  runbook that states what the stack is not.
+rollback_impact: >-
+  Every file added by this item is additive and development-only: compose.demo.yaml,
+  deploy/demo/Caddyfile, four scripts, one test module, one runbook and one .gitignore entry.
+  compose.production.yaml, compose.yaml, deploy/staging/, and every application and package source
+  file are unchanged, so deleting the overlay and the generated .demo/ directory returns the
+  repository to its previous state rather than breaking anything. No migration, no schema change,
+  no contract change, no route, no business rule and no capability status is touched. The one
+  consequence of reverting is losing the two defects this item found, both recorded below, and the
+  ability to observe the system running as a system.
+unresolved_assumptions: >-
+  Four deviations from production are recorded in docs/runbooks/demo-stack.md rather than hidden,
+  because someone reading demo output needs to know which properties it does not prove. First, the
+  TLS proxy needs an extra non-internal network here; this is a workaround for a production defect
+  described under no_security_control_weakened_for_local_use, and the production topology is
+  deliberately not changed by this item. Second, Compose outside Swarm ignores the uid, gid and
+  mode fields on secrets and configs and says so on every run, so the demo does not prove that each
+  service can read only its own secret. Third, the table grants are coarser than the runbook's
+  per-repository split: both application roles receive SELECT, INSERT and UPDATE on all migrated
+  tables with DELETE, TRUNCATE, REFERENCES and TRIGGER revoked, so a repository reaching for a
+  table it should not would pass here. Fourth, the identity provider is not an identity platform;
+  it signs correct tokens for four fixed synthetic subjects and has no login, session management,
+  key rotation or revocation. Separately, the packet's prose "done when" list mentioned watching
+  the agent pipeline drain a job. That criterion is NOT met and was not made to pass: see
+  capabilities_remain_not_authorized for why, and for the second defect it exposed.
+evidence:
+  stack_starts_from_clean_machine: >-
+    Proven from an actually clean state rather than an incrementally repaired one. The stack was
+    torn down with `down -v`, the external network removed, and the entire .demo directory deleted;
+    the four documented commands then ran in sequence and `up -d --wait` succeeded. Final state:
+    postgres, api, worker, tls and demo-idp running and healthy, and the three one-shot jobs each
+    exited 0 - migrate applying 23 forward-only migrations as the migration identity, demo-grants
+    applying 6 grant statements across 2 roles, demo-seed creating four synthetic staff and one
+    store. All three images build on arm64 without a platform pin. Re-running `up --wait` re-runs
+    all three jobs, which is why they had to become idempotent: seeding first failed on a second
+    run with a UniqueViolation on staff_users.oidc_subject, and then again on
+    domain_events(aggregate_type, aggregate_id, aggregate_version, event_type) because
+    ShadowConsoleRepository.assign_store writes its event at a hardcoded aggregate_version of 1.
+    Both are properties of existing repositories rather than defects introduced here, so the seed
+    asks before writing instead of the repositories being changed to suit it.
+  authentication_is_real_and_unmodified: >-
+    apps/api/src/nha_trang_laundry_api/auth.py is untouched by this item. The demo issuer generates
+    an RSA key, serves a standards-shaped JWKS document that PyJWKClient fetches over the network,
+    and mints RS256 tokens carrying iss, aud, sub, iat, exp and the configured MFA claim. A full
+    sign-in was performed against the running stack through TLS: token minted, exchanged at POST
+    /internal/v1/auth/session with an allowed Origin, returning OWNER_ADMIN with mfa_verified true,
+    and the resulting session then read six store-scoped endpoints successfully. The negative cases
+    are what make that worth anything, and all of them are exercised. In-process against the real
+    IdentityPlatformVerifier: a token for another audience is refused, a token from another issuer
+    is refused, and a token without the MFA claim authenticates but reports mfa_verified false,
+    which matters because OWNER_ADMIN sits in SENSITIVE_MFA_ROLES and every mutating route requires
+    it. Against the running stack: an exchange with no Origin header is refused with 403, a
+    malformed token with 401, a store the principal is not assigned to with 403, a mutation missing
+    the CSRF header with 403, and the AUDITOR role attempting to open an incident with 403 -
+    indistinguishable from the membership refusal, so probing identifiers teaches a caller nothing.
+    scripts/verify_demo_stack.py runs all seventeen checks and reports 17/17.
+  no_security_control_weakened_for_local_use: >-
+    Asserted by test rather than by inspection, in packages/evals/tests/test_demo_stack.py: the
+    overlay declares no externally managed secret, sets no FEATURE_ or WORKER_ flag to anything but
+    false, keeps read_only true and cap_drop ALL and no-new-privileges wherever it sets them,
+    starts no service as root, publishes no database port, places only the TLS proxy on the
+    non-internal network, and defines demo-idp, demo-seed and demo-grants nowhere in
+    compose.production.yaml. The WorkerSettings validator that refuses feature_agent_runtime_enabled
+    is unmodified.
+
+    This item found a real defect in the production topology and worked around it visibly rather
+    than silently. compose.production.yaml attaches the tls service only to ingress-private, which
+    is internal true. Docker accepts the 127.0.0.1:8443 port declaration and then discards it: the
+    container's HostConfig.PortBindings holds the request while NetworkSettings.Ports comes back
+    empty and the network has no gateway. The single host listener that
+    docs/runbooks/private-staging.md promises therefore does not exist, and nothing reports an
+    error. The demo adds a non-internal ingress-edge network carrying the proxy alone; every other
+    service stays internal and unreachable from the host, verified by the database being
+    unpublished. The production fix is not made here - changing a deployed topology belongs to its
+    own reviewed item, and STAGING-001's evidence should be re-read against this finding.
+  no_secret_material_committed: >-
+    The generator is committed and its output never is. scripts/generate_demo_material.py writes a
+    fresh certificate authority, a leaf certificate for staging.internal, an RSA signing key for the
+    issuer, three random per-run database passwords and ten secret files into .demo/, which is
+    gitignored with a comment saying why. Private material is written at mode 0600 and asserted
+    unreadable beyond its owner. Two tests hold the line: one fails if .demo stops being ignored,
+    the other fails if `git ls-files .demo` ever returns anything. No password, key or certificate
+    appears in any committed file, and the same rule was applied to synthetic material as to real,
+    because a reader cannot tell the difference by looking.
+  capabilities_remain_not_authorized: >-
+    report_delivery_status.py reports all thirteen capabilities NOT_AUTHORIZED after the stack has
+    been running, and the three FEATURE_ flags stay false in the composed environment. No channel
+    exists, no provider is configured, and nothing is sent.
+
+    This is also where the packet's prose expectation of watching the agent pipeline drain a job is
+    answered honestly: it is not met, and it was not made to pass. Enabling
+    WORKER_AGENT_QUEUE_ENABLED would not produce a running pipeline - it would produce
+    AGENT_RUNTIME_UNAVAILABLE, because WorkerSupervisor requires an injected agent cycle and
+    apps/worker/src/nha_trang_laundry_worker/main.py constructs the supervisor without one.
+    build_agent_cycle has no caller anywhere outside tests. AGENT-PIPELINE-001 built and proved that
+    composition, including claim exclusivity under a real two-worker race, and its own evidence
+    states that the module is referenced by no process entry point - which it framed as a rollback
+    property. The consequence is worth stating plainly: the agent pipeline is assembled and
+    testable, but the deployed worker process still cannot run it, so
+    docs/PRODUCTION_READINESS_ASSESSMENT.md is too generous in recording finding F1 as simply
+    fixed. That correction is recorded in the assessment as part of this change.
+  rollback_assessment: >-
+    Additive and development-only. Six new files, one new runbook, one test module and one
+    .gitignore entry; no existing application source, migration, contract, route, screen or
+    capability record is modified. The demo cannot affect production behaviour because nothing in
+    production references it: compose.production.yaml does not name the demo services, and the
+    identity provider exists only in the overlay. Rolling back destroys no evidence, no schema and
+    no customer data - there is no customer data, and every record the stack creates is synthetic.
+    The one thing rollback costs is the ability to run the system and see it, which is what
+    surfaced both defects recorded above.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

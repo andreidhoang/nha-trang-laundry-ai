@@ -1,0 +1,182 @@
+# Local demo overlay. Development only — never a deployment or rollback path.
+#
+# This file exists so the private staging topology can be brought up on one machine without
+# weakening anything it proves. It changes exactly four things:
+#
+#   1. secrets become files under .demo/secrets instead of externally managed Swarm secrets,
+#      the same substitution deploy/staging/compose.smoke.yaml already makes;
+#   2. the local PostgreSQL service is enabled and given a role-initialisation script;
+#   3. a development identity provider is added, so a human can obtain a session in a browser
+#      against the unmodified verifier;
+#   4. two one-shot jobs complete the role grants and seed synthetic staff.
+#
+# It does not relax a single hardening key: no capability is added, no root user, no writable
+# root filesystem, no permissive origin, no disabled CSRF, and every feature flag stays false.
+# Local image tags are not release evidence — see docs/runbooks/private-staging.md.
+
+name: nha-trang-laundry-private-staging
+
+x-demo-job: &demo-job
+  image: ${STAGING_API_IMAGE:-nha-trang-laundry-api:local}
+  init: true
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+  pids_limit: 32
+  restart: "no"
+  networks: [database-private]
+
+services:
+  postgres:
+    profiles: !override []
+    # compose.yaml publishes 5432 for host-side development. Here the database must stay
+    # unreachable from the host, the same as production; `ports: []` in the production overlay
+    # appends rather than replaces, so the reset has to be explicit.
+    ports: !reset []
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./.demo/postgres-init:/docker-entrypoint-initdb.d:ro
+
+  # Production reaches an externally managed database that is already up, so the migration job
+  # declares no dependency on the local convenience service. Locally that races: the first attempt
+  # is refused before PostgreSQL finishes initialising. Waiting for the healthcheck makes the demo
+  # deterministic without changing what the job does.
+  migrate:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Grants the application roles their table privileges once the schema exists. Runs as the
+  # superuser because only a superuser may grant on tables the migration role owns.
+  demo-grants:
+    <<: *demo-job
+    user: "10001:10001"
+    entrypoint: ["python", "/app/scripts/apply_demo_grants.py"]
+    environment:
+      SUPERUSER_DATABASE_URL: postgresql://app:app@postgres:5432/nha_trang_laundry
+    volumes:
+      - ./scripts:/app/scripts:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Synthetic staff and one store id. Runs as the migration identity because it writes
+  # application rows through the same repositories the API uses.
+  demo-seed:
+    <<: *demo-job
+    user: "10001:10001"
+    entrypoint: ["python", "/app/scripts/seed_demo_data.py"]
+    secrets:
+      - source: staging_migration_database_url
+        target: database_url
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+    command: []
+    volumes:
+      - ./scripts:/app/scripts:ro
+    depends_on:
+      demo-grants:
+        condition: service_completed_successfully
+
+  # A real RS256 issuer for synthetic subjects. The API's verifier is unchanged and still
+  # rejects a wrong audience, a wrong issuer, or a token with no MFA claim.
+  demo-idp:
+    <<: *demo-job
+    restart: unless-stopped
+    user: "10001:10001"
+    entrypoint: ["python", "/app/scripts/demo_identity_provider.py", "--port", "9000"]
+    environment:
+      DEMO_IDP_PRIVATE_KEY: /run/demo-idp/private_key.pem
+      DEMO_IDP_JWKS: /run/demo-idp/jwks.json
+      DEMO_IDP_ISSUER_FILE: /run/demo-secrets/oidc_issuer
+      DEMO_IDP_AUDIENCE_FILE: /run/demo-secrets/oidc_audience
+      DEMO_IDP_MFA_CLAIM_FILE: /run/demo-secrets/oidc_mfa_claim
+      DEMO_IDP_MFA_VALUE_FILE: /run/demo-secrets/oidc_mfa_value
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./.demo/idp:/run/demo-idp:ro
+      # The issuer must agree with the API on issuer, audience and MFA claim; it reads the same
+      # files rather than being handed matching literals, so the two cannot drift apart.
+      - ./.demo/secrets:/run/demo-secrets:ro
+    # The API image's healthcheck probes port 8000; this service is the issuer, not the API.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request;urllib.request.urlopen('http://127.0.0.1:9000/.well-known/jwks.json',timeout=2)",
+        ]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    networks: [ingress-private]
+
+  api:
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      demo-seed:
+        condition: service_completed_successfully
+
+  tls:
+    # DEFECT FOUND BY THIS ITEM, worked around here rather than hidden.
+    #
+    # compose.production.yaml attaches `tls` only to `ingress-private`, which is `internal: true`.
+    # Docker accepts the port declaration and then silently discards it: the container's
+    # HostConfig.PortBindings asks for 127.0.0.1:8443 while NetworkSettings.Ports comes back empty
+    # and the network has no gateway. The result is that the one host listener
+    # docs/runbooks/private-staging.md promises — "The only host listener is TLS on
+    # 127.0.0.1:8443" — does not exist, and nothing reports an error.
+    #
+    # The demo attaches an additional non-internal edge network so the proxy is reachable. The
+    # equivalent production fix is not made here: changing the deployed topology belongs to its
+    # own reviewed item, and STAGING-001's evidence needs re-reading in light of this.
+    networks: [ingress-private, ingress-edge]
+    configs: !override
+      - source: demo_caddyfile
+        target: /etc/caddy/Caddyfile
+        uid: "10004"
+        gid: "10004"
+        mode: 0440
+    depends_on:
+      - api
+      - demo-idp
+
+networks:
+  # Reaches only the TLS proxy. The API, worker, database and identity provider stay on the two
+  # internal networks and remain unreachable from the host, exactly as in production.
+  ingress-edge:
+    internal: false
+    driver: bridge
+
+configs:
+  staging_caddyfile: !reset null
+  demo_caddyfile:
+    file: deploy/demo/Caddyfile
+
+secrets:
+  staging_migration_database_url: !override
+    file: ./.demo/secrets/migration_database_url
+  staging_api_database_url: !override
+    file: ./.demo/secrets/api_database_url
+  staging_worker_database_url: !override
+    file: ./.demo/secrets/worker_database_url
+  staging_oidc_issuer: !override
+    file: ./.demo/secrets/oidc_issuer
+  staging_oidc_audience: !override
+    file: ./.demo/secrets/oidc_audience
+  staging_oidc_jwks_url: !override
+    file: ./.demo/secrets/oidc_jwks_url
+  staging_oidc_mfa_claim: !override
+    file: ./.demo/secrets/oidc_mfa_claim
+  staging_oidc_mfa_value: !override
+    file: ./.demo/secrets/oidc_mfa_value
+  staging_tls_certificate: !override
+    file: ./.demo/secrets/tls_certificate
+  staging_tls_private_key: !override
+    file: ./.demo/secrets/tls_private_key

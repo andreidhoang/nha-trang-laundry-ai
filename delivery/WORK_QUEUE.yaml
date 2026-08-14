@@ -2345,7 +2345,7 @@ items:
 - id: DEMO-STACK-001
   phase: PRODUCTION_HARDENING
   title: Runnable local demo topology with a real OIDC issuer and synthetic seeds
-  status: PENDING
+  status: COMPLETE
   priority: 230
   depends_on:
   - STAGING-001

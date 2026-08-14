@@ -1,0 +1,31 @@
+# Local demo only. This file adds one route the production Caddyfile does not have:
+# /demo-idp/* reaches the development identity provider, so a human can obtain a session in a
+# browser. The service behind it exists only in compose.demo.yaml.
+#
+# Everything else is deployed/staging/Caddyfile unchanged, including the host check: a request
+# that does not name staging.internal is still refused with 421.
+{
+	admin off
+	auto_https off
+}
+
+:8443 {
+	tls /run/secrets/tls_certificate /run/secrets/tls_private_key
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	@private_operator host staging.internal
+	handle @private_operator {
+		handle_path /demo-idp/* {
+			reverse_proxy demo-idp:9000
+		}
+		redir /demo-idp /demo-idp/ 308
+		reverse_proxy api:8000
+	}
+
+	handle {
+		respond "unrecognized private host" 421
+	}
+}

@@ -45,3 +45,7 @@ delivery/.PROGRAM_PLAN.yaml.*.tmp
 Thumbs.db
 .idea/
 .vscode/
+
+# Local demo material: generated keys, certificates, passwords and secret files.
+# Generators are committed (scripts/generate_demo_material.py); their output never is.
+.demo/

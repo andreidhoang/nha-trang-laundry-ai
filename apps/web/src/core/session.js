@@ -104,9 +104,10 @@ export async function refresh() {
 /**
  * Load the stores this principal is assigned to and settle the current scope.
  *
- * An empty list is the default state of every staff user the API can create, because assigning a
- * store has no HTTP route at all — it is provisioned out of band. That is a real operational gap
- * rather than an error, so it is recorded as an empty list and surfaced by the shell.
+ * An empty list is the default state of a newly created staff user: store assignment is a separate
+ * owner-only command (STORE-ASSIGNMENT-001, exercised from the Nhân sự screen), so a new account
+ * starts scoped to nothing. That is a real operational state rather than an error, so it is
+ * recorded as an empty list and surfaced by the shell.
  *
  * @returns {Promise<void>}
  */

@@ -2445,7 +2445,7 @@ items:
 - id: TOOL-BACKEND-001
   phase: AGENT_SHADOW
   title: Deterministic backend for the ten fixed Tool Facade operations
-  status: PENDING
+  status: IN_PROGRESS
   priority: 233
   depends_on:
   - QUOTE-COMMAND-001

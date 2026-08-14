@@ -1,5 +1,5 @@
 /**
- * Nhân sự: the three identity commands an owner actually has, and the one the system is missing.
+ * Nhân sự: the four identity commands an owner actually has.
  *
  * This screen is small and its shape is dictated almost entirely by what the API refuses to offer,
  * so the reasoning is written down rather than left to be rediscovered:
@@ -19,10 +19,10 @@
  *     user holds, which lands on someone mid-shift with no warning. The confirm state is therefore
  *     cleared the instant the UUID field changes, on any failure, and after a success — an armed
  *     button carried across an edited identifier would fire at the wrong person.
- *   - **The store-assignment gap is the point of the screen, not a footnote.** A staff user created
- *     here, with a correct role, is refused by every store-scoped route until a
- *     `staff_store_assignments` row exists, and no HTTP route creates one. It is disclosed with the
- *     shared `unsupported()` surface at the foot of the screen.
+ *   - **Store assignment is a live panel, not a footnote.** STORE-ASSIGNMENT-001 added the
+ *     owner-only grant/revoke routes, so the fourth form on this screen manages
+ *     `staff_store_assignments` directly. A staff user created here, with a correct role, is still
+ *     refused by every store-scoped route until a grant lands — the panel is what lands it.
  *
  * @module screens/staff
  */
@@ -40,7 +40,6 @@ import {
   labelled,
   panel,
   resultLine,
-  unsupported,
 } from "../ui/components.js";
 
 /** `StaffRole`, in the order the database `CHECK` constraint lists them. */
@@ -829,7 +828,7 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "CHỈ CHỦ · BA LỆNH, KHÔNG CÓ DANH SÁCH"),
+      h("p", { class: "eyebrow" }, "CHỈ CHỦ · BỐN LỆNH, KHÔNG CÓ DANH SÁCH"),
       h("h1", null, "Nhân sự"),
       h(
         "p",
@@ -846,8 +845,8 @@ export function render_() {
       h(
         "p",
         null,
-        "1) Tạo nhân sự — 2) Gán vai trò — 3) Gán cửa hàng. Bước ba chưa có API và phải làm trực " +
-          "tiếp trong cơ sở dữ liệu; xem khối cuối màn hình.",
+        "1) Tạo nhân sự — 2) Gán vai trò — 3) Gán cửa hàng. Cả ba bước đều làm trên màn hình " +
+          "này; một tài khoản mới bị mọi route theo cửa hàng từ chối cho tới khi bước ba xong.",
       ),
     ),
     create,

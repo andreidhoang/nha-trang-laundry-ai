@@ -28,7 +28,7 @@
 
 .appbar {
   align-items: center;
-  background: var(--brand-800);
+  background: var(--appbar-bg);
   color: var(--text-on-brand);
   display: flex;
   gap: var(--space-3);
@@ -192,6 +192,20 @@
   padding: var(--space-1) var(--space-2);
   text-align: center;
   text-decoration: none;
+  transition: background var(--motion-fast) var(--easing),
+    color var(--motion-fast) var(--easing);
+}
+
+/* Group labels divide the desktop sidebar into the three kinds of work (operations, AI
+ * supervision, administration). On the phone's bottom bar they would be noise, so they hide. */
+.nav__group {
+  color: var(--text-muted);
+  display: none;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-heavy);
+  letter-spacing: 0.1em;
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  text-transform: uppercase;
 }
 
 .nav__link:hover {
@@ -273,6 +287,10 @@
     text-align: left;
   }
 
+  .nav__group {
+    display: block;
+  }
+
   .nav__badge {
     margin-left: auto;
   }
@@ -280,6 +298,7 @@
 
 /* The primary action of a screen, pinned above the bottom nav on small screens. */
 .action-bar {
+  backdrop-filter: blur(8px);
   background: linear-gradient(to top, var(--canvas) 65%, transparent);
   bottom: 0;
   display: flex;
@@ -315,6 +334,23 @@ dialog {
 
 dialog::backdrop {
   background: rgb(7 42 38 / 0.55);
+}
+
+/* The entry motion is transform-and-fade only, and the global reduced-motion rule in base.css
+ * collapses it to nothing for people who ask for that. */
+dialog[open] {
+  animation: dialog-in var(--motion-base) var(--easing);
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .dialog__title {

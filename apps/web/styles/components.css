@@ -63,6 +63,17 @@
   white-space: nowrap;
 }
 
+/* A small state dot alongside the word. The word remains the carrier of meaning — the dot only
+ * speeds up scanning down a column of badges, and never appears without the word beside it. */
+.badge::before {
+  background: currentColor;
+  border-radius: var(--radius-pill);
+  content: "";
+  display: inline-block;
+  height: 0.45rem;
+  width: 0.45rem;
+}
+
 .badge[data-state="ok"] {
   background: var(--ok-bg);
   border-color: var(--ok-border);
@@ -206,8 +217,11 @@
 }
 
 .empty {
+  background: var(--surface-sunken);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
   color: var(--text-muted);
-  padding: var(--space-4);
+  padding: var(--space-5) var(--space-4);
   text-align: center;
 }
 
@@ -254,19 +268,24 @@
 /* Skeleton loading. A spinner says "wait"; a skeleton says "wait, and here is the shape of what is
  * coming", which stops staff re-tapping a slow list. */
 .skeleton {
-  animation: pulse 1.4s ease-in-out infinite;
-  background: var(--surface-sunken);
+  animation: shimmer 1.6s linear infinite;
+  background: linear-gradient(
+    100deg,
+    var(--surface-sunken) 40%,
+    var(--surface-raised) 50%,
+    var(--surface-sunken) 60%
+  );
+  background-size: 200% 100%;
   border-radius: var(--radius-md);
   height: 4.5rem;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
+@keyframes shimmer {
+  0% {
+    background-position: 120% 0;
   }
-  50% {
-    opacity: 0.55;
+  100% {
+    background-position: -80% 0;
   }
 }
 
@@ -288,15 +307,78 @@ td {
 }
 
 th {
+  background: var(--surface);
   color: var(--text-muted);
   font-size: var(--text-sm);
   font-weight: var(--weight-heavy);
   letter-spacing: 0.04em;
+  position: sticky;
   text-transform: uppercase;
+  top: 0;
+  z-index: var(--layer-content);
+}
+
+tbody tr {
+  transition: background var(--motion-fast) var(--easing);
+}
+
+tbody tr:hover {
+  background: var(--brand-050);
 }
 
 td.numeric,
 th.numeric {
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+/* Toolbar: the filter + freshness row that tops every list panel ------------------------------- */
+
+.toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.toolbar__search {
+  flex: 1 1 14rem;
+  max-width: 26rem;
+}
+
+.toolbar__meta {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* The fetch-time stamp. Always visible next to a reload control, so "the list looks old" is a
+ * fact staff can read rather than a feeling they act on. */
+.updated {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.updated:empty {
+  display: none;
+}
+
+/* Inline SVG icons. Decorative only: every control that shows one also shows its word. */
+.icon {
+  flex: none;
+  height: var(--icon-size);
+  width: var(--icon-size);
+}
+
+/* A filter that is narrowing a list must say so, with both counts — a silently shortened list
+ * reads as lost data. */
+.filter-status {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
 }

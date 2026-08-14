@@ -120,7 +120,7 @@ function storeBanner() {
       "div",
       { class: "banner", dataState: "warn", role: "status" },
       "Tài khoản này chưa được gán cửa hàng nào, nên mọi màn hình theo cửa hàng sẽ bị từ chối. " +
-        "Việc gán cửa hàng chưa có API — chủ phải gán trực tiếp trong cơ sở dữ liệu.",
+        "Chủ cửa hàng gán tại màn hình Nhân sự (khối Gán cửa hàng).",
     );
   }
 

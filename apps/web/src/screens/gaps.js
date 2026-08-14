@@ -105,15 +105,15 @@ const GROUPS = [
         title: "Thanh toán / tất toán",
         what: "Ghi khoản phải thu, ghi khoản đã thu, phân bổ tiền thu vào từng khoản, và tất toán đơn.",
         missing:
-          "Không có charges, payments hay payment_allocations; balance_status không có đường " +
-          "chuyển trạng thái nào, nên không đơn nào đi tới được COMPLETED.",
+          "Trả đủ đúng số khi khách tự lấy đã có: khối tất toán trong màn hình chi tiết đơn " +
+          "(SETTLEMENT-001, đã hoàn thành). Còn thiếu charges, payments và payment_allocations " +
+          "tổng quát, nên trả một phần, trả thừa và ghi nợ vẫn không biểu diễn được.",
         // DEC-010 is registered and OPEN, and its title is "Settlement shapes beyond exact payment
-        // in full at handover" — so the ordinary case is *not* waiting on it. Saying "đề xuất
-        // DEC-010" told operators a live decision was merely proposed, and implied the whole screen
-        // was decision-blocked when only the unusual shapes are.
+        // in full at handover". The ordinary case shipped with SETTLEMENT-001; what this entry
+        // still discloses is exactly the shapes that decision gates.
         blockedBy:
-          "SETTLEMENT-001 (đã trong hàng đợi). Trả đủ đúng số khi giao là trường hợp không cần " +
-          "quyết định nào; DEC-010 (đang mở) chỉ chặn trả một phần, trả thừa và ghi nợ.",
+          "DEC-010 (đang mở) — chỉ chặn trả một phần, trả thừa và ghi nợ. Trả đủ đúng số không " +
+          "còn bị chặn.",
       },
       {
         ref: "M3",

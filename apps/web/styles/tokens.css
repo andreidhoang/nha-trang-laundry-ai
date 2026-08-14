@@ -119,6 +119,11 @@
   --easing: cubic-bezier(0.2, 0, 0.13, 1);
 
   --measure: 68ch;
+
+  /* App bar and iconography ---------------------------------------------------------------- */
+  --appbar-bg: linear-gradient(120deg, var(--brand-900) 0%, var(--brand-800) 55%, #0d5049 100%);
+  --icon-size: 1.25rem;
+  --selection-bg: var(--brand-200);
 }
 
 /* Dark mode is for the evening shift, not for decoration. The state hues keep their meaning and

@@ -27,7 +27,7 @@ phases:
     rules.
 - id: OPERATIONS_CONTROL
   name: Operational control plane
-  status: COMPLETE
+  status: IN_PROGRESS
   depends_on:
   - DOMAIN_CORE
   outcome: Staff PWA, approval, inbox/outbox, idempotency, audit, and pilot instrumentation.

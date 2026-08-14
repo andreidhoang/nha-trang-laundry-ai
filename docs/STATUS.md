@@ -17,8 +17,8 @@ public channel, automated send, autonomous quote, booking, delivery decision, or
 | `FOUNDATION` | Complete locally | workspace, contracts, context/delivery harness, PostgreSQL transaction and configuration primitives |
 | `IDENTITY_CONTROL` | Complete locally | named staff, DB-authoritative RBAC, MFA/session boundaries, audit/outbox, and negative authorization evidence |
 | `DOMAIN_CORE` | Complete locally | canonical registry, exact pricebook import, pricing, promotion/delivery/SLA boundaries, immutable quote snapshots and calculation traces |
-| `OPERATIONS_CONTROL` | Complete locally | Staff PWA slice, approvals, inbox/outbox, idempotency, audit and operational workflows |
-| `AGENT_SHADOW` | In progress | bounded Responses runtime, fixed Tool Facade, short-lived Runner bridge and durable run/tool ledger exist. The OpenClaw evidence track is frozen by ADR-0004; `AGENT-002` now carries G1 agent evidence and is blocked on `DEC-006`. The runtime is not yet wired into the worker — `AGENT-PIPELINE-001` |
+| `OPERATIONS_CONTROL` | In progress | Staff PWA slice, approvals, inbox/outbox, idempotency, audit and operational workflows are built. The command surface is not: no route creates a quote, and no path records payment or collection, so no order can reach `COMPLETED` — `QUOTE-COMMAND-001`, `SETTLEMENT-001` |
+| `AGENT_SHADOW` | In progress | bounded Responses runtime, fixed Tool Facade, short-lived Runner bridge and durable run/tool ledger exist, and `AGENT-PIPELINE-001` wired the runtime into the worker — a job now travels queue to persisted evidence. The Facade's production backend is still `UnavailableAgentToolBackend` (`TOOL-BACKEND-001`). The OpenClaw evidence track is frozen by ADR-0004; `AGENT-002` carries G1 agent evidence and is blocked on `DEC-006` |
 | `PRODUCTION_HARDENING` | In progress | CI, observability, policy, container, supply-chain, worker hosting, staff workflows, HTTP security, telemetry and private staging are complete. Remaining: the channel envelope, the Shadow console, retention, runbooks, SLO verification, and everything behind the hosting decision |
 | `REAL_SHADOW_READINESS` | Not authorized | `G1_INTERNAL_SHADOW_READY` evidence absent |
 | `PUBLIC_ASSISTED` | Not authorized | G1/G2 and capability-specific evidence absent |
@@ -40,15 +40,20 @@ release decision is driven by evidence and a signed gate manifest, never by this
 
 ## Next controlled task
 
-None is buildable. Seven items completed on 2026-08-13 and the queue is now fully
-dependency-blocked: every one of the 21 pending items traces to an owner decision or an external
-party. The controller refuses to start the two that are dependency-ready, correctly — one is
-policy-blocked by `DEC-008`, the other is the owner's decision itself.
+`DEMO-STACK-001`, selected by the controller. On 2026-08-14 the owner authorized four build items
+that the 2026-08-14 readiness re-measurement identified as buildable without any open decision:
+`DEMO-STACK-001`, `QUOTE-COMMAND-001`, `SETTLEMENT-001` and `TOOL-BACKEND-001`. Before they were
+enqueued the controller selected nothing, and the queue read as fully decision-bound — which was
+true of the items in it and false of the work the specification still requires.
 
-## What is actually holding the project
+`OPERATIONS_CONTROL` returned to `IN_PROGRESS` as a consequence. It had been marked `COMPLETE` while
+no route in the system could create a quote.
 
-Engineering is not the binding constraint. Six of the ten highest-priority ready items need an owner
-action, and three of those are calendar-bound and independent of each other:
+## What is actually holding the customer-facing path
+
+Engineering is not the binding constraint on any *customer-facing* milestone. Six of the ten
+highest-priority externally-gated items need an owner action, and three of those are calendar-bound
+and independent of each other:
 
 - `SHOP-INSTRUMENT-001` — 4–6 weeks of real shop measurement. Without it `SHADOW-001` has no
   denominator and G1 cannot be evaluated at all.

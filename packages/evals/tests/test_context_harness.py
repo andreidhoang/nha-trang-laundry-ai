@@ -47,7 +47,7 @@ def test_context_drift_check_passes() -> None:
     # execution pass surfaced: EVIDENCE-REPIN-001, RETENTION-STORE-001, STORE-SCOPING-001
     # and TEST-ISOLATION-001, plus MODEL-ROUTE-001 and MULTIMODAL-PERCEPTION-001 from the
     # 2026-08-13 tiered-inference assessment (ADR-0008).
-    assert "70 work items" in result.stdout
+    assert "74 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

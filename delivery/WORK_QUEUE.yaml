@@ -2342,3 +2342,137 @@ items:
   - suite_passes_in_reverse_module_order
   - rollback_assessment
   blocked_by_decisions: []
+- id: DEMO-STACK-001
+  phase: PRODUCTION_HARDENING
+  title: Runnable local demo topology with a real OIDC issuer and synthetic seeds
+  status: PENDING
+  priority: 230
+  depends_on:
+  - STAGING-001
+  - CONTAINER-001
+  - HTTP-SECURITY-001
+  context_domains:
+  - platform
+  - runtime_architecture
+  normative_sources:
+  - AGENTS.md
+  - docs/runbooks/private-staging.md
+  - docs/runbooks/local-development.md
+  - docs/adr/0007-production-deployment-topology.md
+  contracts: []
+  task_packet: context/tasks/TASK-demo-stack-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - stack_starts_from_clean_machine
+  - authentication_is_real_and_unmodified
+  - no_security_control_weakened_for_local_use
+  - no_secret_material_committed
+  - capabilities_remain_not_authorized
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: QUOTE-COMMAND-001
+  phase: OPERATIONS_CONTROL
+  title: Create-quote command path from staff request to immutable quote revision
+  status: PENDING
+  priority: 231
+  depends_on:
+  - DOMAIN-005
+  - OPERATIONS-001
+  - STORE-SCOPING-001
+  context_domains:
+  - pricing
+  - orders_audit
+  normative_sources:
+  - AGENTS.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/ENGINEERING_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-quote-command-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - route_result_equals_direct_engine_call
+  - unresolved_policy_propagates_and_writes_nothing
+  - snapshot_hash_recomputes_from_stored_payload
+  - append_only_revisions_under_concurrency
+  - store_scoping_and_rbac_indistinguishable_refusal
+  - atomic_row_event_audit_outbox
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SETTLEMENT-001
+  phase: OPERATIONS_CONTROL
+  title: Exact-payment and self-collection attestation so an order can reach COMPLETED
+  status: PENDING
+  priority: 232
+  depends_on:
+  - QUOTE-COMMAND-001
+  context_domains:
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - AGENTS.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-settlement-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - order_reaches_completed_through_normal_path
+  - every_other_settlement_shape_not_supported
+  - no_agent_reachable_path_writes_a_balance
+  - completion_guard_not_widened
+  - settlement_record_append_only_and_idempotent
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: TOOL-BACKEND-001
+  phase: AGENT_SHADOW
+  title: Deterministic backend for the ten fixed Tool Facade operations
+  status: PENDING
+  priority: 233
+  depends_on:
+  - QUOTE-COMMAND-001
+  - AGENT-PIPELINE-001
+  context_domains:
+  - agent_tools
+  - runtime_architecture
+  normative_sources:
+  - AGENTS.md
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
+  contracts:
+  - specs/contracts/agent-tools-v1.openapi.yaml
+  task_packet: context/tasks/TASK-tool-backend-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - ten_operations_only_and_contract_unchanged
+  - backend_delegates_and_computes_nothing
+  - default_wiring_remains_unavailable
+  - nine_validation_gates_intact
+  - no_settlement_or_balance_reachable_by_an_agent
+  - redaction_holds_for_recorded_tool_calls
+  - rollback_assessment
+  blocked_by_decisions: []

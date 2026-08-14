@@ -1,0 +1,143 @@
+schema_version: 1
+work_item: STORE-SCOPING-002
+recorded_at: '2026-08-14T20:15:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-store-scoping-002.md requires POST /internal/v1/orders/{order_id}/transition to
+  enforce store membership in the repository rather than the route, resolving the store from the
+  order row the method already reads rather than from a client-supplied parameter, inside the same
+  transaction that locks the row, raising OrderAuthorizationError so the refusal is indistinguishable
+  from a role refusal. It requires that no status transition, response shape or business behaviour
+  change beyond the authorization failure, and that _require_order_mutation is not widened. It states
+  that the second half matters more than the fix: a test that enumerates the route table and fails on
+  any store-scoped route whose repository method does not call require_store_membership, because hand
+  enumeration by URL shape is what let this route through. Two named cases - the shadow audit
+  timeline and the global unknown-sends queue - must be classified deliberately rather than by
+  accident.
+rollback_impact: >-
+  Reverting this item restores a cross-store write path, and that is the honest way to describe it:
+  it is a security regression, not a feature removal, exactly as STORE-SCOPING-001 recorded for the
+  five routes it closed. With the check removed, any principal holding OWNER_ADMIN, OPS_APPROVER or
+  OPERATOR with MFA can drive any order's commercial state in any store by supplying its identifier -
+  confirming, cancelling or completing another store's order. The zero-tolerance line at G1 and G2 is
+  zero cross-customer disclosure, and this is a write rather than a disclosure.
+
+  Mechanically the change is small: one require_store_membership call in
+  OrderRepository.transition, one delegation in ShadowConsoleRepository._require_store_access, three
+  test modules. No migration, no schema change, no contract change, no route signature, no status
+  transition and no response shape is altered. The enumeration test would fail on the revert, which
+  is the intended behaviour rather than an inconvenience.
+unresolved_assumptions: >-
+  Three limits are recorded rather than worked around.
+
+  First, a missing order and an order in another store are still distinguishable: a missing or stale
+  order raises OrderStateError and maps to 409, while a foreign order now raises
+  OrderAuthorizationError and maps to 403. Closing that would mean changing the response for a
+  missing order, which the packet forbids under "do not change any status transition, response shape
+  or business behaviour beyond adding the authorization failure". The residual signal is that a
+  caller who already guessed a valid order UUID learns it exists somewhere they cannot reach; order
+  identifiers are version-4 UUIDs, so guessing one is not a practical attack, and the far larger
+  problem - that a guessed identifier granted a *write* - is what this item closes.
+
+  Second, a store assignment cannot be revoked. staff_store_assignments has no revoked_at column and
+  carries staff_store_assignments_no_hard_delete, so once a staff member is assigned to a store there
+  is no supported way to un-assign them: not a route, not a repository method, not even a direct
+  DELETE. This was found while trying to write the packet's race test - "resolve membership inside
+  the same transaction that reads the row, so a revoked assignment cannot be raced" - which cannot be
+  demonstrated in the revoking direction because revocation does not exist. The lock ordering the
+  packet asks for is implemented and the test proves the check reads the database at call time
+  rather than trusting the in-memory principal, which is the same property in the direction that is
+  available. Revocation needs a schema change and a command of its own.
+
+  Third, the enumeration reads source rather than behaviour. It proves that every method claiming a
+  membership guard still contains one, and that every route is classified; it does not prove the
+  guard is reached on every code path within a method. The behavioural proof for the transition route
+  is in packages/db/tests/test_order_transition_scoping.py against a live database.
+evidence:
+  transition_enforces_membership_in_the_repository: >-
+    OrderRepository.transition now calls require_store_membership on the same cursor that executed
+    SELECT ... FOR UPDATE, while that lock is held, using the store_id from the locked row. The
+    method already selected store_id and discarded it; nothing is added to the command, so no route
+    gains a client-supplied identifier treated as authority. The refusal is OrderAuthorizationError,
+    which transition_order already caught and _raise_operations_error already mapped to a 403
+    "operation denied" - the mapping did not need to change because it was always written for this.
+
+    _require_order_mutation is untouched: the role set was correct and membership was the missing
+    axis, not a stricter role.
+  cross_store_transition_refused_with_the_role_refusal_body: >-
+    Proven at both layers. Against a live PostgreSQL, a member of store B attempting to transition an
+    order belonging to store A raises OrderAuthorizationError and the order row is unchanged -
+    still REQUESTED at row_version 1, so a refused transition writes nothing. A staff member with no
+    assignment anywhere is refused the same way.
+
+    Over HTTP, the refusal is 403 with the body {"detail": "operation denied"}, byte-identical to the
+    body a role refusal produces - the existing
+    test_the_refusal_is_the_same_string_the_role_gate_uses asserts that equality for the same
+    principal shape. Probing order identifiers therefore teaches a caller nothing about which orders
+    or stores exist.
+  same_store_transition_still_succeeds: >-
+    A member of the owning store transitions the order to STORE_CONFIRMATION_PENDING and row_version
+    advances to 2. This is the test that keeps the fix from being a blanket denial, which is the
+    easiest way to pass every negative case. The full suite - 830 tests, up 18 - passes with no
+    modification to any existing test, which is itself evidence: the packet warned that a test
+    relying on a cross-store transition would be the finding, and none did.
+  refused_transition_leaves_no_idempotency_claim: >-
+    The membership check runs before IdempotencyRepository.execute is reached, so a refused attempt
+    never claims the key. Asserted directly: after a refused cross-store transition using key K,
+    command_idempotency_records contains no row for K, and the same key then succeeds for a principal
+    entitled to use it. Without that ordering a refusal would poison the key and a later legitimate
+    attempt would replay the refusal.
+  route_enumeration_test_fails_when_a_check_is_removed: >-
+    packages/evals/tests/test_store_scope_enumeration.py enumerates every /internal/ route from the
+    built FastAPI app and requires each to appear in a ROUTE_SCOPE registry classified STORE_SCOPED,
+    GLOBAL_BY_DESIGN, NOT_STORE_DATA or KNOWN_GAP. A new route fails the module until someone states
+    its store scope, which is the check that would have caught this item's defect when the transition
+    route was added. A stale entry fails too, so the registry cannot drift into fiction.
+
+    Every STORE_SCOPED route names the repository method that must guard it, and the module parses
+    that method's source to confirm it calls require_store_membership. Guard resolution is transitive
+    within a module, which was not a convenience: written as a direct-call check, it reported
+    ShadowConsoleRepository.list_pending_drafts and decide_draft as unguarded when both were in fact
+    guarded, through a private _require_store_access helper that re-implemented the same SELECT.
+    That duplicate is now a delegation to require_store_membership - store_access.py describes itself
+    as the single membership check every store-scoped repository calls, and a second implementation
+    contradicted that while being invisible to any mechanical check. Behaviour is unchanged: the
+    refusal is still ShadowAuthorizationError and the route's 403 body is untouched.
+
+    The teeth are proven rather than asserted. test_the_enumeration_fails_when_a_membership_check_is
+    _removed takes the real transition source, strips the require_store_membership call from a copy
+    of its AST, and requires the detector to report the copy as unguarded - so a checker that had
+    silently stopped working would fail this test rather than pass everything.
+  audit_timeline_and_unknown_sends_scope_explicitly_classified: >-
+    Both are recorded in ROUTE_SCOPE with a reason, and a test requires each to keep one.
+
+    GET /internal/v1/stores/{store_id}/shadow/audit/{aggregate_id} is classified KNOWN_GAP. It
+    requires membership of the path store and then filters only on aggregate_id, so a member of store
+    A can read store B's audit trail by supplying its aggregate identifier. The packet names it as
+    out of scope for this item; classifying it KNOWN_GAP means the enumeration does not report it as
+    compliant, so it cannot be mistaken for solved.
+
+    GET /internal/v1/shadow/unknown-sends and its reconcile counterpart are classified
+    GLOBAL_BY_DESIGN. A send whose outcome is unknown has no confirmed recipient and therefore no
+    reliable store to scope to, and leaving one unreconciled is precisely the failure the queue
+    exists to prevent - so scoping it by membership would hide work rather than protect data. The
+    rows expose provider, message kind, attempt number and reconciliation state, and no customer
+    content. The queue stays role-gated, and this is recorded as a decision rather than ratified by
+    absence.
+  rollback_assessment: >-
+    See rollback_impact. Reverting restores a cross-store write and is a security regression, which
+    is why the enumeration test names the transition route explicitly - a revert produces a failing
+    test rather than a silent hole. No migration, schema, contract, route signature, status
+    transition or response shape changed, so nothing else regresses with it.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

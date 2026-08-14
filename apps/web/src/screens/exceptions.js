@@ -260,7 +260,7 @@ function unknownSendCard(spec) {
     "button",
     {
       type: "button",
-      disabled: !navigator.onLine,
+      dataRequiresNetwork: "true",
       onClick: () => void resolve("CONFIRMED_NOT_SENT"),
     },
     "Chưa gửi · CONFIRMED_NOT_SENT",
@@ -272,7 +272,7 @@ function unknownSendCard(spec) {
     {
       type: "button",
       dataVariant: "danger",
-      disabled: !navigator.onLine,
+      dataRequiresNetwork: "true",
       onClick: () => void resolve("CONFIRMED_SENT"),
     },
     "Đã gửi · CONFIRMED_SENT",
@@ -835,7 +835,7 @@ export function render_() {
         gated(
           h(
             "button",
-            { type: "submit", dataVariant: "primary", disabled: !navigator.onLine },
+            { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
             "Khoá envelope cho người gửi tay",
           ),
           sendVerdict,
@@ -959,7 +959,7 @@ export function render_() {
         gated(
           h(
             "button",
-            { type: "submit", dataVariant: "danger", disabled: !navigator.onLine },
+            { type: "submit", dataVariant: "danger", dataRequiresNetwork: "true" },
             "Chứng thực rằng tôi đã gửi tin này",
           ),
           sendVerdict,

@@ -418,7 +418,7 @@ export function render_(_context) {
 
     const submit = h(
       "button",
-      { type: "submit", dataVariant: "primary", disabled: !navigator.onLine },
+      { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
       "Tạo đơn",
     );
 
@@ -614,7 +614,7 @@ export function render_(_context) {
 
     const submit = h(
       "button",
-      { type: "submit", dataVariant: "primary", disabled: !navigator.onLine },
+      { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
       "Chuyển trạng thái",
     );
 

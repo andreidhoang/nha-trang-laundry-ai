@@ -2479,7 +2479,7 @@ items:
 - id: STORE-SCOPING-002
   phase: PRODUCTION_HARDENING
   title: Enforce store membership on the order transition route the first pass missed
-  status: IN_PROGRESS
+  status: COMPLETE
   priority: 211
   depends_on:
   - STORE-SCOPING-001

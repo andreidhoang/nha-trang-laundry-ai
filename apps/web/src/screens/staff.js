@@ -211,7 +211,7 @@ function createStaffPanel(spec) {
 
     const submitButton = h(
       "button",
-      { type: "submit", dataVariant: "primary", disabled: !navigator.onLine },
+      { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
       "Tạo nhân sự",
     );
 
@@ -382,7 +382,7 @@ function assignRolePanel(spec) {
 
     const submitButton = h(
       "button",
-      { type: "submit", dataVariant: "primary", disabled: !navigator.onLine },
+      { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
       "Gán vai trò",
     );
 
@@ -592,7 +592,7 @@ function disableStaffPanel(spec) {
         {
           type: "submit",
           dataVariant: "danger",
-          disabled: !navigator.onLine,
+          dataRequiresNetwork: "true",
           "aria-live": "polite",
         },
         armed ? "Xác nhận vô hiệu hoá" : "Vô hiệu hoá nhân sự",

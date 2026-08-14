@@ -481,7 +481,7 @@ export function render_() {
         { class: "action-bar" },
         h(
           "button",
-          { type: "submit", dataVariant: "primary", disabled: !navigator.onLine },
+          { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
           "Tính giá",
         ),
       ),

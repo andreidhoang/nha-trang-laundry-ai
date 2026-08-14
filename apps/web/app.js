@@ -290,19 +290,53 @@ function guard(_context, route) {
   return null;
 }
 
+/**
+ * Enable or disable every control that cannot work without the network.
+ *
+ * Applied live rather than baked in at render time, and re-applied after each render. A control
+ * that read `navigator.onLine` once when its screen was built would keep whatever value it saw for
+ * as long as the operator stayed on that screen.
+ */
+function syncNetworkAffordance() {
+  const offline = !navigator.onLine;
+  for (const control of document.querySelectorAll("[data-requires-network]")) {
+    control.toggleAttribute("disabled", offline);
+    control.setAttribute("aria-disabled", offline ? "true" : "false");
+  }
+}
+
 function syncChrome() {
   renderAppbar();
   renderBanners();
   renderNav();
+  syncNetworkAffordance();
   const active = router.registered().find((route) => route.path === currentPath());
   screenTitle.textContent = active?.title || "Bảng vận hành";
   document.title = active?.title ? `${active.title} · Bảng vận hành` : "Bảng vận hành";
 }
 
+/**
+ * What the current screen's content depends on.
+ *
+ * A screen is rebuilt only when one of these changes. Connectivity is deliberately not among them:
+ * losing signal used to notify the session, which re-rendered the screen, which discarded every
+ * unsaved field an operator had typed. A shop counter loses signal several times a day, and a
+ * half-entered incident is not something the console may throw away because the wifi blinked.
+ */
+function contentKey() {
+  const state = session.snapshot();
+  return `${state.status}|${state.principal?.staffUserId || ""}|${state.storeId || ""}`;
+}
+
 async function boot() {
   session.watchConnectivity();
+
+  let renderedKey = contentKey();
   session.subscribe(() => {
     syncChrome();
+    const key = contentKey();
+    if (key === renderedKey) return;
+    renderedKey = key;
     void router.render();
   });
 

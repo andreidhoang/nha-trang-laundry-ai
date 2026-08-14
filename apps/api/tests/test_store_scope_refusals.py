@@ -63,6 +63,11 @@ class RefusingOperationsService:
     def list_member_stores(self, **_: Any) -> tuple[UUID, ...]:
         return ()
 
+    def transition_commercial(self, **_: Any) -> None:
+        # STORE-SCOPING-002. `OrderRepository.transition` now resolves the order's store from the
+        # row it locks and requires membership, raising the same error `create` does.
+        raise OrderAuthorizationError("store access is not authorized")
+
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
@@ -130,6 +135,24 @@ def test_listing_incidents_in_an_unassigned_store_is_refused_not_crashed(
     client: TestClient,
 ) -> None:
     response = client.get(f"/internal/v1/stores/{STORE_ID}/incidents")
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "operation denied"}
+
+
+def test_transitioning_an_order_in_an_unassigned_store_is_refused(client: TestClient) -> None:
+    """The cross-store *write* `STORE-SCOPING-002` closed.
+
+    This route is keyed by `order_id`, so it never appeared in the URL-shape enumeration that
+    `STORE-SCOPING-001` used, and it changes state rather than merely disclosing it. The refusal
+    must be the same opaque 403 every other store refusal produces, so probing order identifiers
+    teaches a caller nothing about which orders or stores exist.
+    """
+    response = client.post(
+        f"/internal/v1/orders/{ORDER_ID}/transition",
+        headers=_write_headers({"If-Match": '"1"'}),
+        json={"target": "STORE_CONFIRMATION_PENDING"},
+    )
 
     assert response.status_code == 403
     assert response.json() == {"detail": "operation denied"}

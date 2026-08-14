@@ -257,6 +257,23 @@ class OrderRepository:
                     (command.order_id,),
                 )
                 row = cursor.fetchone()
+                if row is not None:
+                    # STORE-SCOPING-002. `STORE-SCOPING-001` enumerated store-scoped routes by URL
+                    # shape — every path containing `/stores/{store_id}/` — and this route is keyed
+                    # by `order_id`, so it was never in that list. The effect was a cross-store
+                    # *write*: any principal with an operations role and MFA could confirm, cancel
+                    # or complete any order in any store by supplying its identifier.
+                    #
+                    # The store comes from the row this method already locked, never from the
+                    # request: a client-supplied identifier is not authority. The check runs on the
+                    # same cursor while `FOR UPDATE` is held, so a concurrently revoked assignment
+                    # cannot be raced past it.
+                    require_store_membership(
+                        cursor,
+                        staff_user_id=command.principal.staff_user_id,
+                        store_id=_uuid(row[0]),
+                        error=OrderAuthorizationError,
+                    )
             if row is None or int(row[10]) != command.expected_row_version:
                 raise OrderStateError("STALE_VERSION: order is missing or stale")
             current = _order_state(row)

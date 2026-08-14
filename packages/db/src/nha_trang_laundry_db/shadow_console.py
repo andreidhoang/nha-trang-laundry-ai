@@ -28,6 +28,7 @@ from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
 from nha_trang_laundry_domain.sla import ProductionSlaPolicy, evaluate_production_sla
 
 from .identity import StaffPrincipal, StaffRole
+from .store_access import require_store_membership
 from .transactions import MaterialChange, OutboxEvent, commit_material_change
 
 #: Roles allowed to read a Shadow surface at all. Membership is checked separately and always.
@@ -164,17 +165,22 @@ class ShadowConsoleRepository:
     ) -> None:
         if not principal.roles & roles:
             raise ShadowAuthorizationError("shadow console access is not authorized for this role")
-        cursor.execute(
-            """
-            SELECT 1 FROM staff_store_assignments
-            WHERE staff_user_id = %s AND store_id = %s
-            """,
-            (principal.staff_user_id, store_id),
+        # Delegated rather than re-queried. `store_access.py` describes itself as the single
+        # membership check every store-scoped repository calls, and this method was a second
+        # implementation of the same SELECT — behaviourally identical, and invisible to anything
+        # looking for the shared call. `STORE-SCOPING-002`'s enumeration test reads source to prove
+        # every store-scoped repository method is guarded, and a private duplicate defeats that:
+        # the two shadow methods were reported as unguarded when in fact they were guarded twice
+        # over. One implementation means one place to audit and one place to get right.
+        #
+        # The refusal stays a ShadowAuthorizationError, so the route's 403 body is unchanged and a
+        # caller still cannot tell a role failure from a membership failure.
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=ShadowAuthorizationError,
         )
-        if cursor.fetchone() is None:
-            # Deliberately the same error as a role failure: a caller probing identifiers learns
-            # nothing about which stores exist.
-            raise ShadowAuthorizationError("shadow console access is not authorized for this store")
 
     # --- draft review ----------------------------------------------------------------------
 

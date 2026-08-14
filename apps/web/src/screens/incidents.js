@@ -432,7 +432,7 @@ export function render_() {
 
   const submitButton = h(
     "button",
-    { type: "submit", dataVariant: "primary", disabled: !navigator.onLine },
+    { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
     "Ghi sự cố",
   );
 

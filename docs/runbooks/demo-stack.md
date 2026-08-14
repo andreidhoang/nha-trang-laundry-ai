@@ -63,14 +63,11 @@ in the browser's jar.
 | `demo-approver` | `OPS_APPROVER` | approval queue, queue recovery |
 | `demo-auditor` | `AUDITOR` | read only — every write must be refused |
 
-You are redirected to the console at `/staff/`. Paste the store UUID the seed printed:
-
-```text
-11111111-2222-4333-8444-555555555555
-```
-
-There is no store list endpoint, so the console requires this by hand. That is a real gap, recorded
-as the missing `stores` table in `docs/PRODUCTION_READINESS_ASSESSMENT.md`, not a demo shortcut.
+You are redirected to the console at `/staff/`. The store scope resolves itself: the console asks
+`GET /internal/v1/stores` which stores you belong to, and the seed assigns all four demo accounts to
+the one store it creates (`11111111-2222-4333-8444-555555555555`). Assigning a store still has no
+route — a staff user created through the API belongs to nothing until someone writes the row — which
+is why the console renders an empty membership as "ask an owner" rather than as an error.
 
 ## What to look at
 
@@ -80,12 +77,13 @@ as the missing `stores` table in `docs/PRODUCTION_READINESS_ASSESSMENT.md`, not 
 - **Audit** — every mutation writes a row, a domain event, an audit entry and an outbox event in
   one transaction.
 
-- **Pricing** (`QUOTE-COMMAND-001`) — the "Báo giá" panel prices a garment through the deterministic
-  engine. The seed publishes the owner-confirmed pricebook as configuration version 1; without it
-  the route answers 503 rather than guessing a price.
+- **Pricing** (`QUOTE-COMMAND-001`) — the **Báo giá** screen prices a garment through the
+  deterministic engine. The seed publishes the owner-confirmed pricebook as configuration version 1;
+  without it the route answers 503 rather than guessing a price.
 
   The form also asks for an **Order request UUID**. There is no intake screen yet, so paste any
-  UUID — one order request gets one quote container, and pricing it again is a new revision.
+  UUID — one order request gets one quote container, and pricing it again is a new revision, which
+  the screen supports by sending `quote_id`, `expected_current_revision` and `If-Match`.
 
   Worth trying, because the refusals are the interesting part:
 

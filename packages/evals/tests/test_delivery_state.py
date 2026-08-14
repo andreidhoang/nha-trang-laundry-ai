@@ -289,7 +289,14 @@ def test_recorder_can_block_the_next_unstarted_item_with_cas(tmp_path: Path) -> 
     assert state["current_work_item"] is None
 
 
-def test_recorder_rejects_sensitive_reason_without_echoing_it(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "Bearer synthetic-sensitive-value",
+        "nvapi-SYNTHETICONLYKEYMATERIAL0000000000000000",
+    ],
+)
+def test_recorder_rejects_sensitive_reason_without_echoing_it(tmp_path: Path, secret: str) -> None:
     workspace = _ready_workspace(tmp_path)
     started = _start_process(
         workspace,
@@ -299,7 +306,6 @@ def test_recorder_rejects_sensitive_reason_without_echoing_it(tmp_path: Path) ->
     )
     assert started.communicate(timeout=30)
     assert started.returncode == 0
-    secret = "Bearer synthetic-sensitive-value"
     blocked = _start_process(
         workspace,
         "--work-item",

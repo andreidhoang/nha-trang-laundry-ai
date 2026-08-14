@@ -32,6 +32,7 @@ SENSITIVE_REASON_PATTERNS = (
     re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{4,}"),
     re.compile(r"(?i)\b(?:api[_-]?key|key|password|secret|token)\s*[:=]\s*\S+"),
     re.compile(r"(?i)(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{4,}"),
+    re.compile(r"(?i)(?<![A-Za-z0-9])nv(?:api|cf)-[A-Za-z0-9_-]{4,}"),
     re.compile(
         r"(?<![A-Za-z0-9_-])"
         r"[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"

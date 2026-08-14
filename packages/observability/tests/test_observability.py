@@ -99,6 +99,23 @@ def test_complete_serialized_event_redacts_nested_secret_and_pii_values() -> Non
     }
 
 
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "sk-synthetic-only-key-material-000000",
+        "nvapi-SYNTHETICONLYKEYMATERIAL0000000000000000",
+        "nvcf-SYNTHETICONLYKEYMATERIAL0000000000000000",
+    ],
+)
+def test_vendor_prefixed_provider_credentials_are_redacted(credential: str) -> None:
+    """A provider key must not survive a log line whatever vendor prefix it carries."""
+    sanitized = sanitize({"note": f"call failed using {credential}", "nested": [credential]})
+    serialized = json.dumps(sanitized, sort_keys=True)
+
+    assert credential not in serialized
+    assert REDACTED in serialized
+
+
 def test_attacker_field_names_and_oversized_values_are_bounded_without_repr() -> None:
     secret_in_key = "Bearer synthetic-field-secret-000000"
     oversized = "safe-prefix-" + "x" * 1000

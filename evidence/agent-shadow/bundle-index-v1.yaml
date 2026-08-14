@@ -1,0 +1,31 @@
+schema_version: 1
+purpose: >-
+  Name which local synthetic evidence bundle is current and which are superseded, so that
+  re-derivation never leaves the question to convention. Written by EVIDENCE-REPIN-001 after the
+  owner chose option 1 of context/tasks/TASK-evidence-repin-001.md on 2026-08-13.
+rules:
+  - A superseded bundle is retained forever and its bytes never change; it is the historical record
+    of what it attested.
+  - A new bundle is derived by scripts/capture_local_agent_evidence.py against the tree, never by
+    editing hashes. A hand-adjusted bundle is a fabricated attestation.
+  - Exactly one bundle is current. Changing which one is current means editing this file and the
+    guarded suite together, in the same change.
+  - This index is deliberately not hash-pinned by any bundle. A pointer inside the thing it points
+    at cannot be updated without invalidating itself.
+current:
+  path: evidence/agent-shadow/local-synthetic-suite-v2.json
+  derived_by: scripts/capture_local_agent_evidence.py
+  release_effect: NONE
+superseded:
+  - path: evidence/agent-shadow/local-synthetic-suite-v1.json
+    sha256: sha256:2a52cfaac55ec4fa8b9d6e93a5987d3b619e33d33aafd8c5eb5d50d3572aefec
+    superseded_on: '2026-08-13'
+    superseded_by: evidence/agent-shadow/local-synthetic-suite-v2.json
+    work_item: EVIDENCE-REPIN-001
+    reason: >-
+      Frozen by ADR-0004 as AGENT-001's artifact, it hash-pinned 21 core files and so acted as a
+      change freeze on the core, blocking six items — two on the G1 critical path — and every
+      provider-candidate question. Re-derivation moved exactly one pin,
+      scripts/capture_local_agent_evidence.py, whose default output now names the current bundle so
+      a bare re-run cannot overwrite this record. Every case status, the release-blocker list and the
+      DETERMINISTIC_DEGRADED runtime path are unchanged between the two bundles.

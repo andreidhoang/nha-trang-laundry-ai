@@ -70,7 +70,16 @@ and the 2026-08 strategic memo independently placed "own model" on its not-now l
 
 ---
 
-## 3. Five collisions with the frozen runtime
+**Amendment, 2026-08-13.** An NVIDIA *hosted* build-platform credential became available to the owner
+on the same day. It does not deliver the argument above. The argument is about self-hosted inference on
+owner hardware; a hosted endpoint is a **second third-party provider**, so the six counterparty
+questions are duplicated rather than collapsed, and one further artifact — an NVIDIA provider
+data-controls review — becomes owed. §3.6 records why that artifact cannot yet be written. The
+questions the owner must answer are set out in `docs/DECISION_REQUEST_TIERED_INFERENCE_2026-08.md`.
+
+---
+
+## 3. Six collisions with the frozen runtime
 
 Each is a file, not an opinion.
 
@@ -105,6 +114,11 @@ Consequence worth stating plainly: any provider-candidate change, NVIDIA or othe
 the critical path — the item described in its own packet as "the cheapest unblock in the project: a
 decision and a re-derivation, not weeks."
 
+**Resolved 2026-08-13.** The owner decided it, and `EVIDENCE-REPIN-001` is complete. The current
+bundle is `local-synthetic-suite-v2.json`; the superseded `v1` is retained and asserted byte-for-byte;
+the pin now moves by re-deriving in the same change. This collision is therefore closed — a pinned
+file, including the registry and the provider-posture record, can change.
+
 **3.4 Three model calls is the whole budget.**
 
 `limits.max_model_calls: 3`. Perception, execution and one escalation is exactly three, leaving zero
@@ -121,6 +135,31 @@ acceptance item: **any transport must preserve `store: false`, strict schema-con
 stateless continuation at the `ResponsesProviderTransport` seam, or it is not admissible.** Verifying
 that mapping against a live endpoint belongs to `PROVIDER-TRANSPORT-001` and cannot be done from
 documentation.
+
+**3.6 The provider-evidence contract admits one vendor, by `const`.**
+
+```json
+"provider": { "const": "openai" },
+"api": { "const": "Responses" }
+```
+
+`specs/contracts/provider-data-evidence-v1.schema.json`. A provider data-controls review for any other
+vendor is not merely unwritten — it is **unrepresentable**. `DEC-006`'s approval has nowhere to be
+recorded for a second provider:
+`packages/contracts/src/nha_trang_laundry_contracts/runtime_registry.py:436` validates the record the
+registry points at against this schema and additionally asserts
+`scope["provider"] == registry.model.provider`, so a non-OpenAI record fails twice over.
+
+This is the tightest of the six, because it also makes the paperwork route unavailable. The schema is
+itself one of the 21 files hash-pinned by `evidence/agent-shadow/local-synthetic-suite-v1.json`, so
+a `v2` that admits another vendor is an `EVIDENCE-REPIN-001` change. Sequence forced by this: repin
+first, then schema v2, then a provider review, then a registry candidate — not the reverse, and not in
+parallel.
+
+**Partly resolved 2026-08-13.** The repin is done, so the first step of that sequence is spent and the
+remaining three stand: a `provider-data-evidence` v2 schema that admits a second vendor, then a
+provider review for it, then a registry candidate. The `const: "openai"` constraint itself is
+unchanged and is still the reason a second provider's posture cannot be recorded today.
 
 ---
 
@@ -220,7 +259,7 @@ runtime was frozen narrow.
 What blocks it is not difficulty. It is that four things must be true first, none of which an
 engineer can make true:
 
-1. `EVIDENCE-REPIN-001` decided, so the pinned core can change at all;
+1. ~~`EVIDENCE-REPIN-001` decided, so the pinned core can change at all~~ — **done 2026-08-13**;
 2. `DEC-006` resolved, so any model can be invoked;
 3. `DEC-009` answered, so customer media may — or may not — be fetched;
 4. real intake slips under a consent basis, so a perception eval can exist.
@@ -234,3 +273,9 @@ Building perception before (4) produces a model that reads the fixture author's 
 **The one recommendation:** resolve `EVIDENCE-REPIN-001`. It was the highest-leverage item before
 this proposal and this proposal raises its value — it now unblocks six existing items *and* both new
 ones, and it costs a decision plus a re-derivation, not weeks.
+
+**Recommendation taken, 2026-08-13.** The owner chose option 1 and the item is complete. Of the four
+conditions in this section, (1) is spent; (2) `DEC-006`, (3) `DEC-009` and (4) a consented corpus
+remain, and all three are owner decisions rather than engineering. The next legal step for this
+direction is signature, not code:
+`docs/DECISION_REQUEST_TIERED_INFERENCE_2026-08.md`.

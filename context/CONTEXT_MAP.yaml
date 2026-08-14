@@ -51,6 +51,8 @@ domains:
       - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
       - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
       - docs/adr/0008-inference-topology-and-multimodal-scope.md
+      - docs/runbooks/provider-credentials.md
+      - docs/DECISION_REQUEST_TIERED_INFERENCE_2026-08.md
       - delivery/PROGRAM_PLAN.yaml
     contracts:
       - specs/contracts/agent-tools-v1.openapi.yaml
@@ -67,6 +69,8 @@ domains:
       - Every public agent runtime is a reasoning client, never the business or security authority.
       - Pin the evaluated model and explicit runtime implementation/route; never authorize a moving alias.
       - Real-customer model use is disabled until provider storage and retention behavior is verified.
+      - A provider credential lives only in the environment or /run/secrets, never in a repository file;
+        possessing one authorizes no model call. See docs/runbooks/provider-credentials.md.
       - OpenClaw remains EVAL_ONLY until custom-runtime parity and retirement evidence pass.
       - The custom adapter remains a bounded finite state machine; do not build a generic agent framework.
       - Runtime comparisons use identical model, prompt, context, tools, budgets, datasets and safety denominator.

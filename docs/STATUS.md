@@ -56,9 +56,9 @@ action, and three of those are calendar-bound and independent of each other:
 - `PROVIDER-ACCESS-001` / `DEC-006` — days once decided, and until then the model has never been
   invoked and the evidence base stays at zero.
 
-Two further decisions cost minutes each and unblock seven items between them: `EVIDENCE-REPIN-001`
-(re-derive the frozen local evidence bundle, or wait for `AGENT-002`) and `DEC-008` (the retention
-schedule).
+One further decision costs minutes and unblocks retention: `DEC-008` (the retention schedule).
+`EVIDENCE-REPIN-001` was the other; the owner chose re-derivation on 2026-08-13 and it is complete,
+so the six items behind the pin no longer wait on it, each retaining its own remaining blocker.
 
 Each has a task packet under `context/tasks/` written to be actionable without an engineer present.
 [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 is the full owner action table.

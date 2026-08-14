@@ -11,9 +11,13 @@ selects it; its only dependency `ENV-INTEGRITY-001` is complete and it carries n
 Earlier revisions of this brief said no item was buildable, which was wrong — the controller, not
 this prose, is the authority. The other 20 pending items each trace to an owner decision or an
 external party; the full graph is in
-[`docs/PATH_TO_PRODUCTION_REVIEW.md`](../docs/PATH_TO_PRODUCTION_REVIEW.md) §5 and §6a. The two cheapest unblocks are `EVIDENCE-REPIN-001`, which frees six items including two on
-the G1 critical path and opens the path to two more, and `DEC-008`, which frees retention. Both cost minutes. Everything else is
-calendar-bound: shop instrumentation, Zalo OA verification, the provider credential.
+[`docs/PATH_TO_PRODUCTION_REVIEW.md`](../docs/PATH_TO_PRODUCTION_REVIEW.md) §5 and §6a.
+`EVIDENCE-REPIN-001` was the cheapest unblock and is **complete as of 2026-08-13**: the owner chose
+re-derivation, the current bundle is `evidence/agent-shadow/local-synthetic-suite-v2.json`, and the
+superseded one is retained and asserted byte-for-byte. The six items it held no longer wait on the
+pin — each still carries its own remaining blocker. The cheapest unblock left is `DEC-008`, which
+frees retention and costs minutes. Everything else is calendar-bound: shop instrumentation, Zalo OA
+verification, the provider credential.
 
 **Tiered inference and multimodal, assessed 2026-08-13.** A proposal to adopt a tiered NVIDIA stack
 (perception / execution / escalation) was assessed against the frozen runtime in
@@ -23,9 +27,21 @@ and specified in [ADR-0008](../docs/adr/0008-inference-topology-and-multimodal-s
 (may customer media reach a model at all — `OPEN`, fail-closed `NOT_SUPPORTED`, owner
 `SECURITY_PRIVACY_OWNER`) and two `BLOCKED` items, `MODEL-ROUTE-001` and `MULTIMODAL-PERCEPTION-001`.
 It adds no new critical-path blocker: because `runtime/model-registry-v1.yaml` and the OpenAI
-provider-posture evidence are both hash-pinned, any provider-candidate change terminates at
+provider-posture evidence are both hash-pinned, any provider-candidate change terminated at
 `EVIDENCE-REPIN-001`, which was already the cheapest unblock in the project. **Nine owner decisions
 now stand between here and production, not eight.**
+
+**Repin decided and delivered, 2026-08-13.** The owner chose option 1 and `EVIDENCE-REPIN-001` is
+complete, so the sentence above is now historical: a provider-candidate change no longer terminates
+at the pin. What a provider change still needs is a `provider-data-evidence` schema that admits a
+second vendor — the v1 schema pins `provider` to `const: "openai"` — plus `DEC-006` answered for that
+vendor. An NVIDIA hosted build credential became available the same day and collapses none of
+`DEC-006`'s six counterparty questions, because a hosted endpoint is a third party like any other;
+only self-hosted inference would, and ADR-0008 priced that at 2.5–6× the staff member it replaces.
+The questions are written up for signature in
+[`docs/DECISION_REQUEST_TIERED_INFERENCE_2026-08.md`](../docs/DECISION_REQUEST_TIERED_INFERENCE_2026-08.md),
+and credential handling is in
+[`docs/runbooks/provider-credentials.md`](../docs/runbooks/provider-credentials.md).
 
 Two items are built but cannot be recorded complete. `EVAL-SYNTHETIC-COMBINATORIAL-001` has 669
 domain-generated cases, gated by `verify_contracts.py`, blocked from publishing its count by the

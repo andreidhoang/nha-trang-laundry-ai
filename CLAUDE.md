@@ -21,6 +21,8 @@ Full list in `AGENTS.md`. The four that get violated under time pressure:
   to smooth.
 - **Unknown means stop.** Missing config, stale flag, ambiguous policy → `REQUIRE_HUMAN` /
   `NOT_SUPPORTED`. Never guess to make a flow complete.
+- **A provider key is not permission.** It lives in the environment or `/run/secrets`, never in a repo
+  file. Rules: `docs/runbooks/provider-credentials.md`.
 - **A green test run is not completion evidence.** Never relabel a synthetic `SKIP` as provider-backed,
   never weaken a check to pass a gate, never mark a capability authorized without a signed manifest.
 - **Never rewrite immutable blocked history.** Frozen items (`AGENT-001`, `OPENCLAW-REPACK-001`,

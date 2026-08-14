@@ -772,6 +772,8 @@ def test_undeclared_result_values_are_rejected_for_new_and_persisted_state(
         "token: synthetic-value",
         "api_key=synthetic-value",
         "sk-synthetic-value",
+        "nvapi-synthetic-value",
+        "nvcf-synthetic-value",
         "aaaaaaaa.bbbbbbbb.cccccccc",
     ],
 )

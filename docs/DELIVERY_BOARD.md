@@ -23,8 +23,9 @@ is the authority.
 The two newest items, `MODEL-ROUTE-001` and `MULTIMODAL-PERCEPTION-001`, enter `Blocked` by
 construction: they specify the tiered-inference and perception direction assessed in
 [`TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md`](TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md)
-and proposed in [ADR-0008](adr/0008-inference-topology-and-multimodal-scope.md), and neither can
-start before `EVIDENCE-REPIN-001` — which was already the critical path.
+and proposed in [ADR-0008](adr/0008-inference-topology-and-multimodal-scope.md). `EVIDENCE-REPIN-001`
+stood in front of both and was completed 2026-08-13, so what remains for them is decisions: ADR-0008
+acceptance and `DEC-009`.
 
 ### FOUNDATION
 
@@ -66,7 +67,7 @@ start before `EVIDENCE-REPIN-001` — which was already the critical path.
 | `OPENCLAW-RETIRE-001` | Reversible retirement of OpenClaw from the public runtime path | `RUNTIME-PARITY-001` | Pending | — |
 | `RUNTIME-FREEZE-001` | Freeze the OpenClaw evidence track and re-point the dependency graph | — | Complete | — |
 | `PROVIDER-ACCESS-001` | Dedicated provider organization, credential, and data-control posture | — | Blocked | — |
-| `EVIDENCE-REPIN-001` | Re-establish the local synthetic evidence pin so the core can change | — | Blocked | — |
+| `EVIDENCE-REPIN-001` | Re-establish the local synthetic evidence pin so the core can change | — | Complete | — |
 | `PROVIDER-TRANSPORT-001` | Real Responses provider transport behind the existing injectable boundary | `PROVIDER-ACCESS-001` | Pending | — |
 | `EVAL-SYNTHETIC-COMBINATORIAL-001` | Synthetic combinatorial suite generated from the deterministic domain | `DOMAIN-005`, `RESPONSES-RUNTIME-001`, `EVIDENCE-REPIN-001` | Blocked | — |
 | `CORPUS-CONSENT-001` | Consent basis and reviewed anonymization of real customer message history | — | Blocked | — |
@@ -148,9 +149,10 @@ frozen by [ADR-0004](adr/0004-runtime-consolidation-and-frozen-openclaw-evidence
 blocked history. They are not resumed, rewritten or deleted. G1 agent evidence is carried by
 `AGENT-002`.
 
-The rest are blocked on named external actions. The two cheapest are `EVIDENCE-REPIN-001`, which
-unblocks six items including two on the G1 critical path, and `DEC-008`, which unblocks retention.
-Both cost minutes. Everything else is calendar-bound.
+The rest are blocked on named external actions. `EVIDENCE-REPIN-001` was the cheapest and was
+completed 2026-08-13; the six items it held no longer wait on the pin, though each keeps its own
+remaining blocker. The cheapest left is `DEC-008`, which unblocks retention and costs minutes.
+Everything else is calendar-bound.
 
 Every actionable item has a task packet under `context/tasks/` except the frozen `AGENT-001`, and
 must attach its declared checks, rollback impact and unresolved assumptions before completion.

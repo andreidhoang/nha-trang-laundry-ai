@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v1.json"
+SUPERSEDED_OUTPUTS = ("evidence/agent-shadow/local-synthetic-suite-v1.json",)
+DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v2.json"
 PINNED_ARTIFACTS = (
     "specs/evals/eval-manifest-v1.yaml",
     "specs/evals/fixture-registry-v1.json",
@@ -77,6 +78,11 @@ def main() -> None:
     output_path = Path(args.output).resolve()
     if ROOT not in output_path.parents:
         raise SystemExit("output must remain inside the repository")
+    if output_path.relative_to(ROOT).as_posix() in SUPERSEDED_OUTPUTS:
+        raise SystemExit(
+            "refusing to overwrite a superseded evidence bundle: a superseded bundle is the "
+            "historical record of what it attested, and EVIDENCE-REPIN-001 requires it be retained"
+        )
     if not os.environ.get("DATABASE_URL"):
         raise SystemExit("DATABASE_URL is required for PostgreSQL-backed local evidence")
     command = [

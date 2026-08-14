@@ -1593,7 +1593,7 @@ items:
   - rollback_assessment
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-model-route-001.md
-  blocking_condition: 'Two blockers, neither of them engineering. First, runtime/model-registry-v1.yaml
+  blocking_condition: Two blockers, neither of them engineering. First, runtime/model-registry-v1.yaml
     is one of the 21 files hash-pinned by evidence/agent-shadow/local-synthetic-suite-v1.json,
     so the registry cannot change until EVIDENCE-REPIN-001 is decided; hand-editing
     the bundle to match would be a fabricated attestation and ADR-0004 freezes that
@@ -1601,7 +1601,12 @@ items:
     rather than accepted, and its model-role decomposition question is owned by PRODUCT_ENGINEERING_OWNER.
     If that decision is one model per turn, this item closes as not-required rather
     than being built speculatively. Building a route before either is settled produces
-    a schema nothing may use.'
+    a schema nothing may use. Update 2026-08-13 — the first blocker is lifted. EVIDENCE-REPIN-001
+    re-derived the bundle, the current one is evidence/agent-shadow/local-synthetic-suite-v2.json,
+    and a pinned file now changes by re-deriving it while retaining the superseded
+    bundle — see evidence/agent-shadow/bundle-index-v1.yaml. The registry may therefore
+    change. Only the second blocker remains, and it is the one that decides whether
+    this item exists at all.
 - id: MULTIMODAL-PERCEPTION-001
   phase: AGENT_SHADOW
   title: Perception tier that emits observations and never conclusions
@@ -1639,7 +1644,7 @@ items:
   - DEC-006
   - DEC-008
   task_packet: context/tasks/TASK-multimodal-perception-001.md
-  blocking_condition: 'Three open decisions and one absent corpus. DEC-009 asks whether
+  blocking_condition: Three open decisions and one absent corpus. DEC-009 asks whether
     customer-supplied media may be fetched from a channel provider and submitted to
     an inference endpoint at all; its fail-closed default is NOT_SUPPORTED and no
     byte may be fetched while it is OPEN. DEC-006 keeps every model path NOT_SUPPORTED.
@@ -1649,7 +1654,7 @@ items:
     eval this item requires needs real intake slips in real handwriting under a consent
     basis, which is CORPUS-CONSENT-001; synthetic handwriting would measure the fixture
     author rather than the workload, and no public benchmark covers Vietnamese diacritics
-    on paper.'
+    on paper.
 - id: EVAL-CORPUS-001
   phase: AGENT_SHADOW
   title: Frozen Vietnamese regression corpus raised toward the manifest minimum
@@ -1763,7 +1768,11 @@ items:
     eval manifest, the agent tool OpenAPI and five contract schemas, making it a de
     facto change freeze on the core. Regenerating a frozen AGENT-001 artifact is not
     an engineer''s call. Also still required: the owner key ceremony, which no agent
-    can perform.'
+    can perform. Update 2026-08-13: the change-freeze half is lifted. The owner decided
+    EVIDENCE-REPIN-001, so editing release_manifest.py is now landed by re-deriving
+    the bundle in the same change and retaining the superseded one; the parked verifier
+    on spike/signer-registry-v2-verifier can land. The owner key ceremony is still
+    required and is still not an agent''s to perform.'
 - id: AGENT-002
   phase: AGENT_SHADOW
   title: Custom-runtime Shadow evidence and P0 provider-backed evaluation
@@ -2014,7 +2023,13 @@ items:
     a frozen bundle. The inventory reads 0 and the gate accepts only 0 or the true
     count. Publication belongs to AGENT-002, which supersedes the 32-case bundle.
     The conflict blocks EVAL-CORPUS-001, EVAL-LANGUAGE-CORPUS-001 and EVAL-PUBLIC-CORPUS-001
-    identically and needs a sequencing decision.'
+    identically and needs a sequencing decision. Update 2026-08-13: the sequencing
+    decision is made and the conflict is resolved for all four items. EVIDENCE-REPIN-001
+    establishes that a change to eval-manifest-v1.yaml lands together with a re-derived
+    bundle while the superseded one is retained, so manifest_inventory_updated can
+    now be satisfied truthfully without waiting for AGENT-002 and without regenerating
+    a frozen artifact behind anyone''s back. Reverting the change was the correct
+    call at the time; it no longer is.'
 - id: EVAL-LANGUAGE-CORPUS-001
   phase: AGENT_SHADOW
   title: Normal-language Vietnamese suite at the manifest distribution
@@ -2191,7 +2206,7 @@ items:
 - id: EVIDENCE-REPIN-001
   phase: AGENT_SHADOW
   title: Re-establish the local synthetic evidence pin so the core can change
-  status: BLOCKED
+  status: COMPLETE
   priority: 206
   depends_on: []
   context_domains:
@@ -2219,21 +2234,17 @@ items:
   - skips_and_blockers_unchanged
   - rollback_assessment
   blocked_by_decisions: []
-  blocking_condition: 'Requires an owner decision between two options, both written
-    up in the task packet. Re-derive the local synthetic evidence bundle through scripts/capture_local_agent_evidence.py
-    while retaining the superseded file, or wait for AGENT-002 to supersede it and
-    accept that six items queue behind a provider credential and DEC-006. Re-deriving
-    a frozen AGENT-001 artifact is not a call an engineer makes alone, and hand-editing
-    its hashes to match the tree would be a fabricated attestation. Until it is decided,
-    the bundle hash-pins 21 core files and blocks SIGNER-REGISTRY-001, all four corpus
-    items and MODEL-PIN-001, two of them on the G1 critical path. The 2026-08-13 tiered-inference
-    assessment raised the value of deciding it: because the bundle also pins runtime/model-registry-v1.yaml
-    and evidence/provider/openai-data-controls-review-v1.yaml, the provider posture
-    itself is frozen, so any provider-candidate change terminates here. Deciding this
-    frees those six existing items and opens the path to MODEL-ROUTE-001, which is
-    otherwise unstartable, and transitively to MULTIMODAL-PERCEPTION-001, which stays
-    blocked on DEC-009, DEC-006 and DEC-008 regardless. This is the cheapest unblock
-    in the project: a decision and a re-derivation, not weeks.'
+  decision_record: 'Unblocked 2026-08-13 by the owner, who chose option 1 of the two
+    written up in context/tasks/TASK-evidence-repin-001.md: re-derive the local synthetic
+    evidence bundle through scripts/capture_local_agent_evidence.py while retaining
+    the superseded file, rather than waiting for AGENT-002 to supersede it. The decision
+    was the whole blocker; re-deriving a frozen AGENT-001 artifact is not a call an
+    engineer makes alone, which is why this item sat BLOCKED with depends_on: [] and
+    no engineering dependency. ADR-0004 still stands: re-deriving this evidence artifact
+    is not resuming AGENT-001, no capability, decision or release state moves, hand-editing
+    hashes remains a fabricated attestation, and every SKIP stays a SKIP. Rollback
+    is restoring the superseded bundle as current, which re-freezes the core and loses
+    nothing.'
 - id: RETENTION-STORE-001
   phase: PRODUCTION_HARDENING
   title: Separate disposable payload from the append-only ledger

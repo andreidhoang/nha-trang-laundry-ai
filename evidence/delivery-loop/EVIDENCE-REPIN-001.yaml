@@ -1,0 +1,125 @@
+schema_version: 1
+work_item: EVIDENCE-REPIN-001
+recorded_at: '2026-08-13T16:20:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-evidence-repin-001.md requires that the twenty-one files hash-pinned by
+  evidence/agent-shadow/local-synthetic-suite-v1.json become changeable without destroying the record
+  of what that bundle attested. The packet offers two options and states that choosing between them is
+  an owner decision, not an engineer's: re-derive the bundle while retaining the superseded file, or
+  wait for AGENT-002 to supersede it and accept that six items queue behind a provider credential and
+  DEC-006. The owner chose option 1 on 2026-08-13. The packet's constraints bind the execution: retain
+  the superseded bundle with its own content unchanged; re-derive rather than hand-edit, because a
+  bundle whose hashes were adjusted to match the tree is a fabricated attestation; do not relabel any
+  SKIP as a pass and do not touch any declared release blocker; ADR-0004 continues to freeze AGENT-001,
+  so re-deriving its evidence artifact is not resuming that item; and no capability, decision or
+  release state moves. The four required tests in the packet are the acceptance surface for this item.
+rollback_impact: >-
+  Rollback is restoring evidence/agent-shadow/local-synthetic-suite-v1.json as current, which
+  re-freezes the core and loses nothing, because v1 was never modified or moved. Concretely a rollback
+  reverts four things: the DEFAULT_OUTPUT and superseded-path guard in
+  scripts/capture_local_agent_evidence.py, the current-bundle pointer and five added tests in
+  packages/evals/tests/test_local_agent_evidence.py, the new files
+  evidence/agent-shadow/local-synthetic-suite-v2.json and evidence/agent-shadow/bundle-index-v1.yaml,
+  and the delivery-state transition plus this record. Deleting the v2 bundle destroys no history: it
+  attests the same 32 cases, the same five release blockers and the same DETERMINISTIC_DEGRADED runtime
+  path as v1, and differs in exactly one pinned hash. There is no schema migration, database content,
+  provider credential, network call, provider request, public ingress, outbound send, deployment,
+  real-customer data or capability authorization to roll back. The re-derivation executed no model call
+  and no provider request; the bundle it produced is explicitly non-release and every one of its 32
+  cases is a SKIP.
+unresolved_assumptions: >-
+  Re-deriving this artifact does not resume AGENT-001, which stays BLOCKED and frozen under ADR-0004,
+  nor does it complete or unblock any of the six items the pin was holding. Each of those keeps its own
+  remaining blocker and none had its status changed by this item: SIGNER-REGISTRY-001 still requires the
+  owner key ceremony, which no agent can perform; MODEL-ROUTE-001 still requires ADR-0008 to be
+  accepted, and if that decision is one model per turn the item closes as not-required;
+  EVAL-SYNTHETIC-COMBINATORIAL-001 and the three corpus items can now satisfy manifest_inventory_updated
+  truthfully but must still do so; MODEL-PIN-001 still sits behind PROVIDER-TRANSPORT-001 and
+  PROVIDER-ACCESS-001. Their blocking_condition prose was amended to say which half is lifted rather
+  than being silently left false. What this item delivers is a sanctioned re-derivation procedure, not
+  hash-freedom: editing a pinned file still turns the guarded suite red unless the bundle is re-derived
+  in the same change, which is now the documented and tested way to land such a change. DEC-006 and
+  DEC-009 remain OPEN, provider_data_gate remains NOT_APPROVED on both approvals, and all thirteen
+  capabilities remain NOT_AUTHORIZED. The declared acceptance commands and the capture were executed
+  with PYTHONPATH set to the nine workspace src directories, per the documented procedure in
+  scripts/workspace_env.py, because on this macOS host the iCloud file provider re-applies UF_HIDDEN to
+  files inside .venv/ and CPython 3.12.11 silently skips any .pth file carrying that flag; the capture
+  script is deliberately not self-bootstrapping precisely because recorded evidence pins it, and that
+  property was preserved rather than worked around. This item was executed on a working tree that also
+  carries unrecorded TEST-ISOLATION-001 changes and the 2026-08-13 credential and decision documents;
+  none of the twenty-one pinned artifacts was among the dirty paths, which was verified mechanically
+  before the re-derivation rather than assumed.
+evidence:
+  superseded_bundle_retained: >-
+    evidence/agent-shadow/local-synthetic-suite-v1.json is present and its bytes are unchanged at
+    sha256:2a52cfaac55ec4fa8b9d6e93a5987d3b619e33d33aafd8c5eb5d50d3572aefec. That hash is recorded in
+    evidence/agent-shadow/bundle-index-v1.yaml and asserted by
+    test_superseded_bundle_is_retained_byte_for_byte, so a later change to the retained record fails the
+    suite rather than passing quietly. The file was neither renamed nor moved, because ADR-0004, three
+    blocking_condition strings in delivery/WORK_QUEUE.yaml and two blocked_records in
+    delivery/LOOP_STATE.yaml refer to it by path as prose, and renaming it would break the historical
+    record this item exists to preserve. scripts/capture_local_agent_evidence.py now refuses to write to
+    any path in SUPERSEDED_OUTPUTS, so a bare or misdirected re-run cannot destroy it; that refusal is
+    asserted by test_capture_refuses_to_overwrite_a_superseded_bundle, which fires before the
+    DATABASE_URL check and therefore needs no database.
+  new_bundle_derived_not_edited: >-
+    evidence/agent-shadow/local-synthetic-suite-v2.json was produced by running
+    scripts/capture_local_agent_evidence.py against the tree, which executes
+    python -m nha_trang_laundry_evals.runner --mode synthetic-local-suite and computes every artifact
+    hash itself. No hash in it was authored by hand. Its own freshness is asserted by
+    test_local_suite_evidence_is_complete_current_and_explicitly_non_release via _stale_pins, which
+    recomputes all twenty-one hashes from the tree and requires zero mismatches. That the check has real
+    force rather than being a tautology is proved by
+    test_hand_edited_bundle_is_rejected_rather_than_accepted_as_derived, which mutates the
+    runtime/model-registry-v1.yaml entry of an in-memory copy to sixty-four zeroes and asserts
+    _stale_pins reports exactly that path. Exactly one pinned hash differs between v1 and v2 —
+    scripts/capture_local_agent_evidence.py, whose DEFAULT_OUTPUT and superseded-path guard this item
+    changed — and v1 is consequently stale in exactly that one entry, which is what makes the question
+    of which bundle is current mechanically decidable rather than a matter of convention.
+  blocked_items_can_change_their_files: >-
+    Demonstrated by doing it, not by asserting it. scripts/capture_local_agent_evidence.py is one of the
+    twenty-one pinned files; this item edited it and the guarded suite is green, because the bundle was
+    re-derived in the same change and the superseded one retained. Stated precisely, and deliberately
+    not overclaimed: this is not hash-freedom. Editing a pinned file still turns the suite red until the
+    bundle is re-derived; what changed is that re-deriving is now a sanctioned, documented and tested
+    procedure rather than a fabricated attestation waiting to happen. The procedure and its four rules
+    are written in evidence/agent-shadow/bundle-index-v1.yaml, which is deliberately not itself
+    hash-pinned by any bundle, since a pointer stored inside the artifact it points at cannot be updated
+    without invalidating itself. test_bundle_index_names_exactly_one_current_bundle asserts that the
+    index names exactly one current bundle, that it is the one the guarded suite reads, and that it is
+    not also listed as superseded.
+  skips_and_blockers_unchanged: >-
+    test_re_derivation_changed_no_skip_and_no_release_blocker compares v1 against v2 on semantic fields
+    only, because a whole-file comparison fails on captured_at by construction. All 32 case ids are
+    identical, every case status in v2 is SKIP with no other status present, the five-entry
+    release_blockers list is byte-identical, runtime_path is DETERMINISTIC_DEGRADED in both, and
+    release_effect NONE and primary_provider_evidence false are unchanged. The guarded suite
+    independently re-derives the release-blocker list from validate_eval_manifest and requires the
+    bundle to match it. No SKIP was relabelled and no declared blocker was touched.
+    scripts/verify_contracts.py continues to validate 19 JSON and 2 YAML contracts, 669 synthetic
+    combinatorial cases and 16 pinned public-runtime artifacts, and still reports ten release blockers.
+    scripts/report_delivery_status.py prints thirteen capability lines, every one reading
+    authorization=NOT_AUTHORIZED, with none reading AUTHORIZED. No decision in
+    context/DECISION_REGISTRY.yaml changed status.
+  rollback_assessment: >-
+    The durable effects are the v2 bundle, the index, the two edits to the capture script, the repointed
+    and extended guarded suite, the amended blocking_condition prose on three other items, the status
+    documents brought into line, and this record. Restoring v1 as current reverses all of it and loses
+    nothing, because v1 is byte-identical to its frozen state and v2 attests the same outcome about the
+    same cases. The re-freeze is the rollback: it restores exactly the condition that six items were
+    waiting on, which is a scheduling regression and not a data loss. Nothing under evidence/ was
+    deleted or modified — only added. No frozen item was marked COMPLETE, PENDING or READY, no gate
+    advanced, no capability was authorized, and no provider was contacted.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

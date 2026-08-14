@@ -15,7 +15,7 @@ _MAX_ITEMS = 50
 _MAX_TEXT = 512
 _SAFE_FIELD = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 _BEARER = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}")
-_API_KEY = re.compile(r"(?i)\b(?:sk|api)[-_][A-Za-z0-9_-]{8,}")
+_API_KEY = re.compile(r"(?i)\b(?:sk|api|nvapi|nvcf)[-_][A-Za-z0-9_-]{8,}")
 _VIETNAMESE_PHONE = re.compile(r"(?<!\d)(?:\+?84|0)[\s.-]?[0-9]{2,3}(?:[\s.-]?[0-9]){6,8}(?!\d)")
 
 _SENSITIVE_FIELDS = {

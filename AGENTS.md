@@ -32,7 +32,9 @@ roots, so a warning there is diagnostic rather than blocking; see
 - Public/customer-facing automation remains disabled unless a signed release gate authorizes it.
 - Preserve atomic mutation + domain-event + audit + outbox semantics.
 - Never add generic agent tools, direct-send capability, secrets, raw PII fixtures, or chain-of-thought
-  storage.
+  storage. A provider credential lives only in the environment or `/run/secrets`, never in a
+  repository file, and holding one authorizes no model call —
+  `docs/runbooks/provider-credentials.md`.
 - Use typed schemas at every boundary and add negative/authorization tests for sensitive changes.
 - Treat unknown business policy as fail-closed (`REQUIRE_HUMAN` or `NOT_SUPPORTED`).
 - Assemble a context packet from `context/CONTEXT_MAP.yaml` for any multi-file or sensitive task.

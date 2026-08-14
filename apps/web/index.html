@@ -43,9 +43,37 @@
             </div>
             <span id="quote-count" class="count">0</span>
           </div>
+          <p class="guardrail">Giá do bộ tính toán quyết định. Màn hình chỉ hiển thị; không làm tròn, không suy đoán khối lượng.</p>
           <div id="quotes" class="cards" aria-live="polite">
             <p class="empty">Nhập Store UUID để tải dữ liệu.</p>
           </div>
+          <form id="quote-form" class="action-form mutation-form">
+            <label for="quote-request-id">Order request UUID</label>
+            <input id="quote-request-id" name="bound_order_request_id" required autocomplete="off">
+            <label for="quote-service-code">Mã dịch vụ</label>
+            <input id="quote-service-code" name="service_code" required autocomplete="off"
+              value="STANDARD_WASH_DRY" placeholder="STANDARD_WASH_DRY">
+            <label for="quote-quantity">Khối lượng / số lượng</label>
+            <input id="quote-quantity" name="quantity" required autocomplete="off"
+              inputmode="decimal" placeholder="6">
+            <label for="quote-unit">Đơn vị</label>
+            <select id="quote-unit" name="unit">
+              <option value="KG">KG</option>
+              <option value="ITEM">ITEM</option>
+              <option value="PAIR">PAIR</option>
+              <option value="SET">SET</option>
+              <option value="M2">M2</option>
+              <option value="ANIMAL_PLUSH_ITEM">ANIMAL_PLUSH_ITEM</option>
+              <option value="CASE">CASE</option>
+            </select>
+            <label for="quote-basis">Cơ sở khối lượng</label>
+            <select id="quote-basis" name="quantity_basis">
+              <option value="STAFF_MEASUREMENT">STAFF_MEASUREMENT · nhân viên đã cân</option>
+              <option value="CUSTOMER_ESTIMATE">CUSTOMER_ESTIMATE · khách tự ước</option>
+            </select>
+            <button type="submit">Tính giá</button>
+            <output id="quote-result" class="form-result" aria-live="polite"></output>
+          </form>
         </article>
 
         <article class="panel">

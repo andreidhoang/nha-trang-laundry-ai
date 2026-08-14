@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from hashlib import sha256
@@ -100,10 +101,99 @@ class CanonicalPricebook:
     manifest: PricebookImportManifest
 
 
+def canonical_pricebook_payload(pricebook: CanonicalPricebook) -> dict[str, Any]:
+    """Return the exact document whose digest is `manifest.canonical_snapshot_hash`.
+
+    A quote revision references a published pricebook by version and hash, so something has to
+    publish one. Exposing the hashed document itself — rather than a second, similar document
+    assembled at publication time — is what makes that reference verifiable: a publisher can assert
+    that what it stored hashes to what the importer computed, and a reader can re-run the check.
+    """
+    return _snapshot(pricebook.services, pricebook.rules, pricebook.tiers)
+
+
+def published_price_rules(payload: Mapping[str, Any]) -> dict[str, PriceRule]:
+    """Rebuild runtime price rules from a published pricebook document.
+
+    This is how a running process gets prices. It deliberately does not read the CSV: the CSV is
+    source evidence for an import that a human ran and approved, and a service that re-reads it at
+    request time would be pricing against a file rather than against the thing that was published.
+    The API image does not even ship `templates/`, which is the correct shape rather than an
+    oversight — there is one runtime source of truth and it lives in the database.
+
+    The reconstruction is checked rather than trusted. After parsing, the typed records are
+    re-serialized through the same `_snapshot` the importer hashed, and the bytes must match the
+    payload exactly. A field this parser silently dropped, reordered or coerced would change those
+    bytes, so a lossless round trip is the evidence that the rules in memory are the rules that were
+    approved. Anything else raises, and an unresolved pricebook means no quote.
+    """
+    try:
+        services = tuple(
+            ServiceDefinition(
+                code=str(item["code"]),
+                display_name=str(item["display_name"]),
+                category=str(item["category"]),
+                unit=Unit(str(item["unit"])),
+            )
+            for item in _sequence(payload, "services")
+        )
+        rules = tuple(
+            ImportedPriceRule(
+                service_code=str(item["service_code"]),
+                unit=Unit(str(item["unit"])),
+                rule_type=PriceRuleType(str(item["rule_type"])),
+                resolution=PriceResolution(str(item["resolution"])),
+                min_unit_price_vnd=_optional_int(item["min_unit_price_vnd"]),
+                max_unit_price_vnd=_optional_int(item["max_unit_price_vnd"]),
+                source_rows=tuple(int(row) for row in item["source_rows"]),
+            )
+            for item in _sequence(payload, "rules")
+        )
+        tiers = tuple(
+            ImportedPriceTier(
+                service_code=str(item["service_code"]),
+                minimum_quantity=str(item["minimum_quantity"]),
+                maximum_quantity_exclusive=_optional_text(item["maximum_quantity_exclusive"]),
+                unit_price_vnd=int(item["unit_price_vnd"]),
+                minimum_billable_quantity=_optional_text(item["minimum_billable_quantity"]),
+            )
+            for item in _sequence(payload, "tiers")
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise PricebookImportError(
+            "published pricebook payload is not a canonical pricebook"
+        ) from (error)
+    _require_counts(services, rules, tiers)
+    if rfc8785.dumps(_snapshot(services, rules, tiers)) != rfc8785.dumps(dict(payload)):
+        raise PricebookImportError("published pricebook did not survive a lossless round trip")
+    return _rules_from_records(rules, tiers)
+
+
+def _sequence(payload: Mapping[str, Any], key: str) -> list[Mapping[str, Any]]:
+    value = payload.get(key)
+    if not isinstance(value, list) or not all(isinstance(item, Mapping) for item in value):
+        raise PricebookImportError(f"published pricebook {key} is not a list of objects")
+    return list(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
+def _optional_text(value: Any) -> str | None:
+    return None if value is None else str(value)
+
+
 def runtime_price_rules(pricebook: CanonicalPricebook) -> dict[str, PriceRule]:
     """Build immutable-runtime rule inputs from a previously validated canonical snapshot."""
+    return _rules_from_records(pricebook.rules, pricebook.tiers)
+
+
+def _rules_from_records(
+    imported_rules: tuple[ImportedPriceRule, ...], imported_tiers: tuple[ImportedPriceTier, ...]
+) -> dict[str, PriceRule]:
     tiers_by_service: dict[str, list[PriceTier]] = {}
-    for tier in pricebook.tiers:
+    for tier in imported_tiers:
         tiers_by_service.setdefault(tier.service_code, []).append(
             PriceTier(
                 Decimal(tier.minimum_quantity),
@@ -117,7 +207,7 @@ def runtime_price_rules(pricebook: CanonicalPricebook) -> dict[str, PriceRule]:
             )
         )
     runtime: dict[str, PriceRule] = {}
-    for rule in pricebook.rules:
+    for rule in imported_rules:
         runtime[rule.service_code] = PriceRule(
             service_code=rule.service_code,
             rule_type=rule.rule_type,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ from nha_trang_laundry_db.approvals import (
     ApprovalStateError,
     StoredApproval,
 )
+from nha_trang_laundry_db.configurations import ConfigurationRepository, snapshot_hash
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal
 from nha_trang_laundry_db.incidents import (
@@ -38,7 +40,12 @@ from nha_trang_laundry_db.orders import (
     OrderTransitionCommand,
     StoredOrder,
 )
-from nha_trang_laundry_db.quotes import QuoteRepository, QuoteSummary
+from nha_trang_laundry_db.quotes import (
+    QuoteRepository,
+    QuoteRevisionCommand,
+    QuoteStateError,
+    QuoteSummary,
+)
 from nha_trang_laundry_db.shadow_console import (
     AuditEntry,
     DraftDecision,
@@ -46,18 +53,62 @@ from nha_trang_laundry_db.shadow_console import (
     ShadowConsoleRepository,
     UnknownSend,
 )
+from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
 from nha_trang_laundry_domain.catalog import (
     ActorRole,
     ApprovalAction,
     CommercialOrderStatus,
     FulfillmentMode,
 )
+from nha_trang_laundry_domain.pricebook_import import PricebookImportError, published_price_rules
+from nha_trang_laundry_domain.quote_composition import (
+    PricebookProvenance,
+    RequestedLine,
+    UnresolvedQuote,
+    compose_quote_revision,
+)
+from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot
 
 from nha_trang_laundry_api.auth import AuthSettings
 
 
 class OperationsUnavailable(RuntimeError):
     """Raised when the internal operational database is not configured."""
+
+
+class QuotePricingUnavailable(RuntimeError):
+    """Raised when this deployment has no published pricebook to price against.
+
+    Deliberately not a fallback. A running system with no published pricebook has no approved
+    prices, and inventing one — from a file on disk, from a previous version, from a default — would
+    produce a monetary artefact nobody authorized. Unknown means stop.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class QuoteRevisionResult:
+    """A committed quote revision, described by what the domain computed rather than re-derived."""
+
+    quote_id: UUID
+    revision: int
+    row_version: int
+    finality: str
+    status: str
+    snapshot_hash: str
+    list_service_subtotal_vnd: int
+    net_service_subtotal_vnd: int
+    display_total_min_vnd: int | None
+    display_total_max_vnd: int | None
+    reason_codes: tuple[str, ...]
+    required_approvals: tuple[str, ...]
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class UnresolvedQuoteResult:
+    """Policy the engine could not resolve, carried verbatim. No row was written."""
+
+    reason_codes: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,6 +378,132 @@ class OperationsService:
         ):
             return self._approvals.list_pending(cursor, principal=principal, limit=limit)
 
+    # --- QUOTE-COMMAND-001 ------------------------------------------------------------------
+    #
+    # The first command path in this system that produces a monetary artefact. Every number below
+    # arrives from `packages/domain`; this method's job is to establish who is asking, which
+    # pricebook answers, and to persist exactly what came back.
+
+    def create_quote(
+        self,
+        *,
+        store_id: UUID,
+        bound_order_request_id: UUID,
+        lines: tuple[RequestedLine, ...],
+        idempotency_key: str,
+        principal: StaffPrincipal,
+        quote_id: UUID | None = None,
+        expected_current_revision: int = 0,
+        expected_row_version: int = 0,
+    ) -> QuoteRevisionResult | UnresolvedQuoteResult:
+        """Price through the deterministic engine and commit one immutable revision."""
+        priced_at = datetime.now(UTC)
+        target_id = quote_id or uuid4()
+        revision = expected_current_revision + 1
+        with self._connection_factory(self._database_url) as connection:
+            with connection.cursor() as cursor:
+                # Membership first, and outside the idempotency wrapper: a staff member who has
+                # lost access to this store must not be able to replay a key into a fresh write.
+                require_store_membership(
+                    cursor,
+                    staff_user_id=principal.staff_user_id,
+                    store_id=store_id,
+                    error=StoreAccessError,
+                )
+                pricebook = self._published_pricebook(cursor)
+            composition = compose_quote_revision(
+                quote_id=target_id,
+                revision=revision,
+                rules=pricebook[0],
+                requested=lines,
+                pricebook=pricebook[1],
+                priced_at=priced_at,
+            )
+            if isinstance(composition, UnresolvedQuote):
+                # Nothing is written and no idempotency record is claimed: an unresolved quote is
+                # not an outcome a caller should be able to replay into existence later.
+                return UnresolvedQuoteResult(composition.reason_codes)
+            snapshot = composition.snapshot
+
+            def commit() -> dict[str, object]:
+                QuoteRepository().create_revision(
+                    connection,
+                    QuoteRevisionCommand(
+                        store_id=store_id,
+                        bound_order_request_id=bound_order_request_id,
+                        snapshot=snapshot,
+                        expected_current_revision=expected_current_revision,
+                        expected_row_version=expected_row_version,
+                        created_by=principal.staff_user_id,
+                        correlation_id=uuid4(),
+                        occurred_at=priced_at,
+                    ),
+                )
+                return _quote_mapping(snapshot, row_version=revision)
+
+            try:
+                result = self._idempotency.execute(
+                    connection,
+                    IdempotentCommand(
+                        scope=f"staff-quote-create:{principal.staff_user_id}",
+                        key=idempotency_key,
+                        payload={
+                            "store_id": str(store_id),
+                            "bound_order_request_id": str(bound_order_request_id),
+                            "quote_id": str(quote_id) if quote_id else None,
+                            "expected_current_revision": expected_current_revision,
+                            "expected_row_version": expected_row_version,
+                            "lines": [
+                                {
+                                    "service_code": line.service_code,
+                                    "quantity": line.quantity,
+                                    "unit": line.unit.value,
+                                    "quantity_basis": line.quantity_basis.value,
+                                }
+                                for line in lines
+                            ],
+                        },
+                        occurred_at=priced_at,
+                    ),
+                    commit,
+                )
+            except psycopg.errors.UniqueViolation as error:
+                # `quotes` is UNIQUE (store_id, bound_order_request_id): one order request has one
+                # quote container, and further pricing is a new revision of it. Asking to open a
+                # second container is a business conflict a caller can act on, so it must not
+                # escape as a driver error and become a 500 — found live in the demo stack, where
+                # the second run of the verifier priced the same request again.
+                raise QuoteStateError(
+                    "this order request already has a quote; add a revision instead"
+                ) from error
+        return _quote_revision_result(result.response, replayed=result.replayed)
+
+    def _published_pricebook(self, cursor: Any) -> tuple[dict[str, Any], PricebookProvenance]:
+        """Resolve the one pricebook this deployment prices against, or refuse.
+
+        Three things have to hold before a price is computed, and each failure is a refusal rather
+        than a degraded answer: a pricebook must be published, its stored payload must still hash to
+        the digest recorded when it was published, and that payload must rebuild into rules without
+        losing a field.
+        """
+        published = ConfigurationRepository.latest_published(cursor, "PRICEBOOK")
+        if published is None:
+            raise QuotePricingUnavailable("no published pricebook")
+        payload = ConfigurationRepository.get_published(cursor, published.version_id)
+        if payload is None:
+            raise QuotePricingUnavailable("published pricebook payload is missing")
+        if not hmac.compare_digest(snapshot_hash(payload), published.snapshot_hash):
+            raise QuotePricingUnavailable("published pricebook payload does not match its digest")
+        try:
+            rules = published_price_rules(payload)
+        except PricebookImportError as error:
+            raise QuotePricingUnavailable("published pricebook is not usable") from error
+        return rules, PricebookProvenance(
+            version_id=published.version_id,
+            version=published.version,
+            snapshot_hash=f"JCS-SHA256-V1:{published.snapshot_hash}",
+        )
+
     def list_quotes(
         self, *, store_id: UUID, principal: StaffPrincipal, limit: int
     ) -> tuple[QuoteSummary, ...]:
@@ -565,6 +742,58 @@ def _stored_incident_result(value: dict[str, object], *, replayed: bool) -> Stor
         bool(value["remedy_decided"]),
         replayed,
     )
+
+
+def _quote_mapping(snapshot: ImmutableQuoteSnapshot, *, row_version: int) -> dict[str, object]:
+    """Project a committed revision into the JSON the idempotency ledger replays.
+
+    Everything here is read off the immutable snapshot the domain built. A replayed response has to
+    be indistinguishable from the original, so nothing may be recomputed at read time.
+    """
+    data = snapshot.data
+    totals = data.totals
+    return {
+        "quote_id": str(data.quote_id),
+        "revision": data.revision,
+        "row_version": row_version,
+        "finality": data.finality.value,
+        "status": data.status.value,
+        "snapshot_hash": snapshot.document.snapshot_hash,
+        "list_service_subtotal_vnd": totals.list_service_subtotal_max_vnd,
+        "net_service_subtotal_vnd": totals.net_service_subtotal_max_vnd,
+        "display_total_min_vnd": totals.display_total_min_vnd,
+        "display_total_max_vnd": totals.display_total_max_vnd,
+        "reason_codes": list(data.reason_codes),
+        "required_approvals": list(data.required_approvals),
+    }
+
+
+def _quote_revision_result(value: dict[str, object], *, replayed: bool) -> QuoteRevisionResult:
+    return QuoteRevisionResult(
+        quote_id=UUID(str(value["quote_id"])),
+        revision=int(str(value["revision"])),
+        row_version=int(str(value["row_version"])),
+        finality=str(value["finality"]),
+        status=str(value["status"]),
+        snapshot_hash=str(value["snapshot_hash"]),
+        list_service_subtotal_vnd=int(str(value["list_service_subtotal_vnd"])),
+        net_service_subtotal_vnd=int(str(value["net_service_subtotal_vnd"])),
+        display_total_min_vnd=_optional_vnd(value["display_total_min_vnd"]),
+        display_total_max_vnd=_optional_vnd(value["display_total_max_vnd"]),
+        reason_codes=tuple(str(code) for code in _string_list(value["reason_codes"])),
+        required_approvals=tuple(str(code) for code in _string_list(value["required_approvals"])),
+        replayed=replayed,
+    )
+
+
+def _optional_vnd(value: object) -> int | None:
+    return None if value is None else int(str(value))
+
+
+def _string_list(value: object) -> list[object]:
+    if not isinstance(value, list):
+        raise OperationsUnavailable("stored quote response is malformed")
+    return value
 
 
 def _approval_mapping(value: StoredApproval) -> dict[str, object]:

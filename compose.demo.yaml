@@ -77,6 +77,10 @@ services:
     command: []
     volumes:
       - ./scripts:/app/scripts:ro
+      # The seed publishes the pricebook, so it needs the approved CSV. The API image deliberately
+      # does not ship `templates/` — it prices from the published configuration, never from a file —
+      # and mounting it read-only into this one-shot job keeps that true of the running services.
+      - ./templates:/app/templates:ro
     depends_on:
       demo-grants:
         condition: service_completed_successfully

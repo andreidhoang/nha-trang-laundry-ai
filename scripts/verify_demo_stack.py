@@ -230,6 +230,97 @@ def run(base_url: str, ca_file: _Path) -> list[Result]:
     )
     check("a mutation without the CSRF header is refused", status == 403, f"http {status}")
 
+    # --- QUOTE-COMMAND-001: the first command path that produces money -------------------------
+    #
+    # A demo that can price a garment is the point of the item; a demo that prices a garment it
+    # should have refused is worse than one that cannot price at all. Both are checked here.
+
+    csrf_owner = client.cookies.get("staff_csrf", "")
+
+    def price(
+        quantity: str, code: str = "STANDARD_WASH_DRY", unit: str = "KG", key: str = ""
+    ) -> Any:
+        # One order request gets one quote container, so each distinct call needs its own request
+        # id — derived from the same seed as the idempotency key so that a re-run of the verifier
+        # replays rather than collides. Deriving the two independently was this script's own bug.
+        seed = key or f"{code}-{quantity}"
+        return client.request(
+            f"/internal/v1/stores/{DEMO_STORE_ID}/quotes",
+            method="POST",
+            headers={
+                "Origin": base_url,
+                "Content-Type": "application/json",
+                "X-CSRF-Token": csrf_owner,
+                # Hashed, not interpolated: one of these quantities is Vietnamese text, and HTTP
+                # header values are latin-1. The key still has to be stable across runs.
+                "Idempotency-Key": f"verify-demo-quote-{_digest(seed)}",
+            },
+            body=json.dumps(
+                {
+                    "bound_order_request_id": _stable_uuid(seed),
+                    "lines": [
+                        {
+                            "service_code": code,
+                            "quantity": quantity,
+                            "unit": unit,
+                            "quantity_basis": "STAFF_MEASUREMENT",
+                        }
+                    ],
+                }
+            ).encode(),
+        )
+
+    status, body, _ = price("6")
+    priced = json.loads(body) if status == 201 else {}
+    check(
+        "a 6 kg garment prices at the tier rate",
+        status == 201 and priced.get("net_service_subtotal_vnd") == 120_000,
+        f"http {status} {body[:120]!r}",
+    )
+    check(
+        "no display total is shown while the delivery fee is unresolved",
+        priced.get("display_total_min_vnd") is None
+        and "DELIVERY_FEE_UNRESOLVED" in priced.get("reason_codes", []),
+        json.dumps(priced.get("reason_codes", [])),
+    )
+
+    # The 6 kg cliff is a confirmed rule: more weight, lower unit price, lower total.
+    status, body, _ = price("5.999")
+    below = json.loads(body) if status == 201 else {}
+    check(
+        "the 6 kg cliff is preserved end to end",
+        below.get("net_service_subtotal_vnd") == 149_975,
+        f"http {status} {below.get('net_service_subtotal_vnd')}",
+    )
+
+    status, body, _ = price("6", key="verify-demo-quote-replay")
+    first_hash = json.loads(body).get("snapshot_hash") if status == 201 else None
+    status, body, _ = price("6", key="verify-demo-quote-replay")
+    replay = json.loads(body) if status == 201 else {}
+    check(
+        "replaying an idempotency key returns the original quote",
+        replay.get("replayed") is True and replay.get("snapshot_hash") == first_hash,
+        f"http {status} replayed={replay.get('replayed')}",
+    )
+
+    # A quantity nobody measured must not become a price. This is the exact shape a language model
+    # produced against this schema on 2026-08-14: "1 bao tải to" is a sack, not a weight.
+    status, body, _ = price("1 bao tải to")
+    detail = json.loads(body).get("detail", {}) if status == 422 else {}
+    check(
+        "an unmeasured quantity is refused rather than priced",
+        status == 422 and detail.get("reason_codes") == ["MISSING_REQUIRED_FACT"],
+        f"http {status} {body[:120]!r}",
+    )
+
+    status, body, _ = price("1", code="BED_PILLOW", unit="ITEM")
+    detail = json.loads(body).get("detail", {}) if status == 422 else {}
+    check(
+        "a range-priced service asks for a human instead of guessing",
+        status == 422 and detail.get("reason_codes") == ["RANGE_PRICE_REQUIRES_HUMAN"],
+        f"http {status} {body[:120]!r}",
+    )
+
     # The read-only role must be refused on every write.
     auditor = DemoClient(base_url, ca_file)
     auditor_token = auditor.token("demo-auditor")
@@ -261,7 +352,48 @@ def run(base_url: str, ca_file: _Path) -> list[Result]:
     )
     check("auditor cannot open an incident", status == 403, f"http {status}")
 
+    status, auditor_body, _ = auditor.request(
+        f"/internal/v1/stores/{DEMO_STORE_ID}/quotes",
+        method="POST",
+        headers={
+            "Origin": base_url,
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrf,
+            "Idempotency-Key": "verify-demo-quote-auditor",
+        },
+        body=json.dumps(
+            {
+                "bound_order_request_id": _stable_uuid("auditor"),
+                "lines": [
+                    {
+                        "service_code": "STANDARD_WASH_DRY",
+                        "quantity": "6",
+                        "unit": "KG",
+                        "quantity_basis": "STAFF_MEASUREMENT",
+                    }
+                ],
+            }
+        ).encode(),
+    )
+    check(
+        "auditor cannot price a garment, and is told nothing about why",
+        status == 403 and json.loads(auditor_body).get("detail") == "operation denied",
+        f"http {status} {auditor_body[:80]!r}",
+    )
+
     return results
+
+
+def _digest(seed: str) -> str:
+    from hashlib import sha256
+
+    return sha256(f"verify-demo-stack:{seed}".encode()).hexdigest()
+
+
+def _stable_uuid(seed: str) -> str:
+    """A deterministic request identifier, so re-running the verifier reuses the same quote."""
+    digest = _digest(seed)
+    return f"{digest[:8]}-{digest[8:12]}-4{digest[13:16]}-8{digest[17:20]}-{digest[20:32]}"
 
 
 def main() -> int:

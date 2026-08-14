@@ -80,16 +80,32 @@ as the missing `stores` table in `docs/PRODUCTION_READINESS_ASSESSMENT.md`, not 
 - **Audit** — every mutation writes a row, a domain event, an audit entry and an outbox event in
   one transaction.
 
-Two things are visibly missing, and both are the point of the current work queue: no screen creates
-a quote (`QUOTE-COMMAND-001`), and no order can reach `COMPLETED` because nothing records payment
-or collection (`SETTLEMENT-001`).
+- **Pricing** (`QUOTE-COMMAND-001`) — the "Báo giá" panel prices a garment through the deterministic
+  engine. The seed publishes the owner-confirmed pricebook as configuration version 1; without it
+  the route answers 503 rather than guessing a price.
+
+  Worth trying, because the refusals are the interesting part:
+
+  | Enter | What happens |
+  | --- | --- |
+  | `STANDARD_WASH_DRY`, `6`, KG | 120,000 ₫ of service — and **no total**, because the delivery fee is unresolved |
+  | `STANDARD_WASH_DRY`, `5.999`, KG | 149,975 ₫. Less weight costs *more*: the 6 kg tier is a real rule |
+  | `STANDARD_WASH_DRY`, `1 bao tải to` | Refused, `MISSING_REQUIRED_FACT`. A sack is not a weight |
+  | `BED_PILLOW`, `1`, ITEM | Refused, `RANGE_PRICE_REQUIRES_HUMAN`. Range prices need a person |
+  | Sign in as `demo-auditor` and price | 403, worded identically to a store-membership refusal |
+
+One thing is still visibly missing, and it is the next item in the queue: no order can reach
+`COMPLETED`, because nothing records payment or collection (`SETTLEMENT-001`).
 
 ## Verify
 
 ```text
 uv run python scripts/staging_smoke.py --base-url https://staging.internal:8443 --ca-file .demo/ca.crt
+uv run python scripts/verify_demo_stack.py
 uv run pytest packages/evals/tests/test_demo_stack.py
 ```
+
+`verify_demo_stack.py` runs 24 live checks, including every refusal above. It is safe to re-run.
 
 ## Tear down
 

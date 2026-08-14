@@ -2379,7 +2379,7 @@ items:
 - id: QUOTE-COMMAND-001
   phase: OPERATIONS_CONTROL
   title: Create-quote command path from staff request to immutable quote revision
-  status: IN_PROGRESS
+  status: COMPLETE
   priority: 231
   depends_on:
   - DOMAIN-005

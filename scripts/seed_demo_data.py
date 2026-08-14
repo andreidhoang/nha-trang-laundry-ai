@@ -33,6 +33,7 @@ from nha_trang_laundry_db.identity import (
     StaffPrincipal,
     StaffRole,
 )
+from nha_trang_laundry_db.pricebook import publish_pricebook
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_db.store_access import is_store_member
 
@@ -50,6 +51,11 @@ DEMO_STAFF: tuple[tuple[str, str, tuple[StaffRole, ...]], ...] = (
 
 OWNER_SUBJECT = "demo-owner"
 OWNER_NAME = "Demo Chủ cửa hàng"
+
+# The one thing this script publishes that is not invented. Mounted read-only into the seed job;
+# the API image does not ship it, because the running service prices from the published
+# configuration rather than from a file.
+PRICEBOOK_SOURCE = "templates/services-pricebook.csv"
 
 
 class UnsafeTarget(SystemExit):
@@ -167,11 +173,23 @@ def main() -> int:
 
     with psycopg.connect(database_url) as connection:
         store_id, staff = seed(connection)
+        # QUOTE-COMMAND-001 made the runtime price against a published pricebook rather than a
+        # file, so a demo without one cannot quote at all — it answers 503 and looks broken. The
+        # pricebook itself is the real owner-confirmed PRICEBOOK_V1, not synthetic data; it is the
+        # staff and the store around it that are invented. Publishing is attributed to the demo
+        # owner, and re-running does not create a second version.
+        digest, published = publish_pricebook(
+            connection,
+            actor_id=staff[OWNER_SUBJECT],
+            source=(_Path(__file__).resolve().parents[1] / PRICEBOOK_SOURCE).read_bytes(),
+        )
 
     print("Seeded synthetic demo data. Nothing here describes a real person.")
     print(f"  Store UUID (paste into the console): {store_id}")
     for subject, staff_id in sorted(staff.items()):
         print(f"  {subject:<18} {staff_id}")
+    state = "published" if published else "already published"
+    print(f"  Pricebook {state}: JCS-SHA256-V1:{digest}")
     return 0
 
 

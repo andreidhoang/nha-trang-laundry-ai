@@ -13,6 +13,7 @@ const approvalCount = document.querySelector("#approval-count");
 const quoteCount = document.querySelector("#quote-count");
 const incidentCount = document.querySelector("#incident-count");
 const incidentForm = document.querySelector("#incident-form");
+const quoteForm = document.querySelector("#quote-form");
 const manualPrepareForm = document.querySelector("#manual-prepare-form");
 const manualAttestForm = document.querySelector("#manual-attest-form");
 const shadowDrafts = document.querySelector("#shadow-drafts");
@@ -127,9 +128,14 @@ const renderQuotes = (items) => {
     setText(card, '[data-field="status"]', item.status);
     setText(card, '[data-field="revision"]', `r${item.revision} · row v${item.row_version}`);
     setText(card, '[data-field="finality"]', item.finality);
-    const total = item.display_total_min_vnd === item.display_total_max_vnd
-      ? vnd.format(item.display_total_min_vnd)
-      : `${vnd.format(item.display_total_min_vnd)} – ${vnd.format(item.display_total_max_vnd)}`;
+    // A quote with an unresolved delivery fee has no display total, and the schema requires that.
+    // Showing a placeholder rather than a number is the point: staff must not read a service
+    // subtotal as the amount a customer pays.
+    const total = item.display_total_min_vnd === null
+      ? "Chưa có tổng · phí giao hàng chưa chốt"
+      : item.display_total_min_vnd === item.display_total_max_vnd
+        ? vnd.format(item.display_total_min_vnd)
+        : `${vnd.format(item.display_total_min_vnd)} – ${vnd.format(item.display_total_max_vnd)}`;
     setText(card, '[data-field="total"]', total);
     setText(card, '[data-field="hash"]', item.snapshot_hash);
     quotes.append(card);
@@ -234,6 +240,41 @@ incidentForm.addEventListener("submit", async (event) => {
     showResult(output, `Đã mở ${result.incident_id}; fault/remedy vẫn chưa quyết định.`);
     await loadStore(storeId);
   } catch (error) { showResult(output, error.message, true); }
+});
+
+// QUOTE-COMMAND-001. The form collects facts and renders what the server computed. It does not
+// total, round, convert or default anything — the quantity is sent as the staff member typed it,
+// because normalising "4.0" or "6" in the browser would put a second opinion about money in the
+// one place nobody reviews.
+quoteForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const storeId = storeInput.value.trim();
+  const output = document.querySelector("#quote-result");
+  if (!storeId) return showResult(output, "Chọn cửa hàng trước.", true);
+  const data = new FormData(quoteForm);
+  const payload = {
+    bound_order_request_id: data.get("bound_order_request_id"),
+    lines: [{
+      service_code: data.get("service_code"),
+      quantity: String(data.get("quantity")).trim(),
+      unit: data.get("unit"),
+      quantity_basis: data.get("quantity_basis"),
+    }],
+  };
+  try {
+    const result = await api(`/internal/v1/stores/${encodeURIComponent(storeId)}/quotes`, {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey("quote", payload) },
+      body: JSON.stringify(payload),
+    });
+    const codes = result.reason_codes.join(" · ");
+    showResult(output,
+      `Bản ${result.revision}: ${vnd.format(result.net_service_subtotal_vnd)} tiền dịch vụ. `
+      + `Chưa có tổng cuối vì ${codes}.`);
+    await loadStore(storeId);
+  } catch (error) {
+    showResult(output, error.message, true);
+  }
 });
 
 manualPrepareForm.addEventListener("submit", async (event) => {

@@ -48,15 +48,26 @@ class StoredQuoteRevision:
 
 @dataclass(frozen=True, slots=True)
 class QuoteSummary:
+    """A listed revision. The optional fields are optional in the schema, and were not here.
+
+    `QUOTE-COMMAND-001` found this by creating the first quote any application had ever created.
+    Migration 0005 declares `display_total_min_vnd`, `display_total_max_vnd` and `valid_until`
+    NULL-able, and ties the display totals to `delivery_fee_vnd` with a CHECK — a quote whose
+    delivery fee is unresolved is *required* to have no display total. This dataclass and its reader
+    assumed otherwise, so the first such quote made `GET /internal/v1/stores/{id}/quotes` raise
+    `TypeError: int() argument must be ... not 'NoneType'` and return 500. Nothing caught it earlier
+    because no code path could produce a quote to list.
+    """
+
     quote_id: UUID
     revision: int
     row_version: int
     finality: str
     status: str
     snapshot_hash: str
-    display_total_min_vnd: int
-    display_total_max_vnd: int
-    valid_until: datetime
+    display_total_min_vnd: int | None
+    display_total_max_vnd: int | None
+    valid_until: datetime | None
 
 
 class QuoteRepository:
@@ -243,15 +254,22 @@ class QuoteRepository:
                 str(row[3]),
                 str(row[4]),
                 str(row[5]),
-                int(row[6]),
-                int(row[7]),
-                _timestamp(row[8]),
+                _optional_amount(row[6]),
+                _optional_amount(row[7]),
+                _optional_timestamp(row[8]),
             )
             for row in cursor.fetchall()
         )
 
 
-def _timestamp(value: object) -> datetime:
+def _optional_amount(value: object) -> int | None:
+    """An absent display total is a fact about the quote, not a corrupt row."""
+    return None if value is None else int(value)  # type: ignore[call-overload]
+
+
+def _optional_timestamp(value: object) -> datetime | None:
+    if value is None:
+        return None
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise QuoteIntegrityError("stored quote timestamp is invalid")
     return value

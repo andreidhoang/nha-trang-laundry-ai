@@ -29,13 +29,18 @@ from nha_trang_laundry_db.orders import (
     OrderStateError,
     StoredOrder,
 )
+from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
 from nha_trang_laundry_db.shadow_console import ShadowAuthorizationError, ShadowStateError
+from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_domain.approvals import ApprovalEnvelopeError
 from nha_trang_laundry_domain.catalog import (
     ApprovalAction,
     CommercialOrderStatus,
     FulfillmentMode,
+    QuantityBasis,
+    Unit,
 )
+from nha_trang_laundry_domain.quote_composition import RequestedLine
 from nha_trang_laundry_observability import (
     CORRELATION_HEADER,
     CorrelationContext,
@@ -59,8 +64,10 @@ from nha_trang_laundry_api.operations import (
     OperationsService,
     OperationsUnavailable,
     QueueRecoverySummary,
+    QuotePricingUnavailable,
     StoredIncidentResult,
     StoredManualSendResult,
+    UnresolvedQuoteResult,
 )
 from nha_trang_laundry_api.security import BrowserSecurityMiddleware, RequestSizeLimitMiddleware
 
@@ -264,6 +271,43 @@ class ManualSendResponse(BaseModel):
     replayed: bool
 
 
+class QuoteLineRequest(StrictRequest):
+    service_code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,62}$")
+    # A string, and deliberately not a float or a Decimal. Pydantic coercion would rewrite what the
+    # customer or the scale actually said — "4" becomes 4.0 becomes "4.0" — and DEC-001 (weight
+    # precision and rounding) is open, so the quantity travels verbatim and the domain engine is the
+    # only thing allowed to have an opinion about its form.
+    quantity: str = Field(min_length=1, max_length=16)
+    unit: Unit
+    quantity_basis: QuantityBasis
+
+
+class QuoteCreateRequest(StrictRequest):
+    bound_order_request_id: UUID
+    lines: list[QuoteLineRequest] = Field(min_length=1, max_length=20)
+    # Absent means "open a new quote". Present means "add a revision to this one", and then
+    # expected_current_revision plus If-Match carry the compare-and-swap: a correction is always a
+    # new revision, never an update to an existing one.
+    quote_id: UUID | None = None
+    expected_current_revision: int = Field(default=0, ge=0)
+
+
+class QuoteRevisionResponse(BaseModel):
+    quote_id: UUID
+    revision: int
+    row_version: int
+    finality: str
+    status: str
+    snapshot_hash: str
+    list_service_subtotal_vnd: int
+    net_service_subtotal_vnd: int
+    display_total_min_vnd: int | None
+    display_total_max_vnd: int | None
+    reason_codes: list[str]
+    required_approvals: list[str]
+    replayed: bool
+
+
 class QuoteSummaryResponse(BaseModel):
     quote_id: UUID
     revision: int
@@ -271,9 +315,11 @@ class QuoteSummaryResponse(BaseModel):
     finality: str
     status: str
     snapshot_hash: str
-    display_total_min_vnd: int
-    display_total_max_vnd: int
-    valid_until: datetime
+    # Null when the delivery fee is unresolved, which the schema requires and the console shows as
+    # "chưa có tổng" rather than as a number. See QuoteSummary for how this was found.
+    display_total_min_vnd: int | None
+    display_total_max_vnd: int | None
+    valid_until: datetime | None
 
 
 class IncidentResponse(BaseModel):
@@ -455,12 +501,23 @@ def _record_authorization_denial(reason_code: str) -> None:
     )
 
 
+# One refusal body for every authorization failure, whatever caused it.
+#
+# QUOTE-COMMAND-001 required a membership refusal to be indistinguishable from a role refusal, and
+# found that it was not: the role gates named the missing role while `require_store_membership`
+# produced "operation denied". Both are 403, but a caller comparing bodies could tell "your role is
+# wrong" from "you are not in this store" — and the second is a fact about our data, not about them.
+# The specific reason is still recorded, in the structured log, where the operator can read it and
+# the caller cannot.
+AUTHORIZATION_DENIED = "operation denied"
+
+
 def require_owner(
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
 ) -> StaffPrincipal:
     if StaffRole.OWNER_ADMIN not in principal.roles:
         _record_authorization_denial("OWNER_ROLE_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="owner role required")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
     return principal
 
 
@@ -470,7 +527,7 @@ def require_operations_staff(
     allowed = {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.OPERATOR}
     if not principal.roles & allowed or not principal.mfa_verified:
         _record_authorization_denial("OPERATIONS_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="operations role with MFA required")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
     return principal
 
 
@@ -480,7 +537,7 @@ def require_approval_staff(
     allowed = {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER}
     if not principal.roles & allowed or not principal.mfa_verified:
         _record_authorization_denial("APPROVAL_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="approval role with MFA required")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
     return principal
 
 
@@ -711,6 +768,79 @@ def decide_approval(
     return _approval_response(stored)
 
 
+@app.post(
+    "/internal/v1/stores/{store_id}/quotes",
+    response_model=QuoteRevisionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_quote(
+    store_id: UUID,
+    request: QuoteCreateRequest,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> QuoteRevisionResponse:
+    """Price a garment through the deterministic engine and commit an immutable revision.
+
+    There is no arithmetic in this function, and there must never be. It reads what the caller
+    asked for, hands it to `OperationsService.create_quote`, and translates the domain's answer into
+    a status code. Every number in the response was computed inside `packages/domain`.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    if request.quote_id is None and request.expected_current_revision != 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="a new quote starts at revision 0")
+    try:
+        result = service.create_quote(
+            store_id=store_id,
+            bound_order_request_id=request.bound_order_request_id,
+            lines=tuple(
+                RequestedLine(
+                    service_code=line.service_code,
+                    quantity=line.quantity,
+                    unit=line.unit,
+                    quantity_basis=line.quantity_basis,
+                )
+                for line in request.lines
+            ),
+            idempotency_key=idempotency_key,
+            principal=principal,
+            quote_id=request.quote_id,
+            expected_current_revision=request.expected_current_revision,
+            expected_row_version=0 if request.quote_id is None else _parse_if_match(if_match),
+        )
+    except QuotePricingUnavailable as error:
+        # No approved price list means no price. This is a refusal, not an outage of convenience.
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="pricebook unavailable"
+        ) from error
+    except (StoreAccessError, QuoteStateError, QuoteIntegrityError, ValueError) as error:
+        _raise_operations_error(error)
+    if isinstance(result, UnresolvedQuoteResult):
+        # Unresolved policy travels intact: the reason codes are the engine's, and no price, no
+        # default and no partial row was produced alongside them.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "REQUIRE_HUMAN", "reason_codes": list(result.reason_codes)},
+        )
+    return QuoteRevisionResponse(
+        quote_id=result.quote_id,
+        revision=result.revision,
+        row_version=result.row_version,
+        finality=result.finality,
+        status=result.status,
+        snapshot_hash=result.snapshot_hash,
+        list_service_subtotal_vnd=result.list_service_subtotal_vnd,
+        net_service_subtotal_vnd=result.net_service_subtotal_vnd,
+        display_total_min_vnd=result.display_total_min_vnd,
+        display_total_max_vnd=result.display_total_max_vnd,
+        reason_codes=list(result.reason_codes),
+        required_approvals=list(result.required_approvals),
+        replayed=result.replayed,
+    )
+
+
 @app.get("/internal/v1/stores/{store_id}/quotes", response_model=list[QuoteSummaryResponse])
 def list_quotes(
     store_id: UUID,
@@ -865,7 +995,17 @@ def _parse_if_match(value: str | None) -> int:
 def _raise_operations_error(error: Exception) -> NoReturn:
     if isinstance(
         error,
-        (OrderAuthorizationError, ApprovalAuthorizationError, ManualSendAuthorizationError),
+        (
+            OrderAuthorizationError,
+            ApprovalAuthorizationError,
+            ManualSendAuthorizationError,
+            # QUOTE-COMMAND-001 found this missing. `require_store_membership` raises
+            # StoreAccessError by default, and without this arm it fell through to the 409 below —
+            # so a caller could tell "you are not a member of this store" apart from "your role
+            # cannot do this", which is exactly the distinction the membership check exists to
+            # hide. Both are now the same opaque 403, as on the Shadow surfaces.
+            StoreAccessError,
+        ),
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="operation denied") from error
     if isinstance(error, ApprovalEnvelopeError):

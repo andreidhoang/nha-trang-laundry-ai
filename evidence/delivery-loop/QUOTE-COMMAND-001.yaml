@@ -1,0 +1,170 @@
+schema_version: 1
+work_item: QUOTE-COMMAND-001
+recorded_at: '2026-08-14T18:05:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-quote-command-001.md requires a command path from an authenticated staff
+  request to a committed quote_revisions row, and states the risk as convenience creeping into the
+  money path. The route must not compute money: no rounding, minimum, tier boundary or fee may be
+  recomputed, adjusted or defaulted outside packages/domain, and the packet says plainly that if a
+  reviewer can find arithmetic in the route layer the item is not done. Unresolved policy must
+  propagate with the engine's reason codes rather than becoming a price, a default or a silent
+  omission, with DEC-001, DEC-002 and DEC-003 open. The snapshot hash must come from the existing
+  canonicalisation function, the write must go through commit_material_change, revisions must be
+  append-only under the existing expected_revision compare-and-swap, and a staff member from
+  another store must be refused indistinguishably from a role refusal. It is a staff console
+  command and not a new agent tool.
+rollback_impact: >-
+  One new domain module (quote_composition.py), one new db module (pricebook.py), one service
+  method, one route, one console form, one publication script, and two test modules. Reverting them
+  removes the ability to create a quote and returns the system to the state this item found: an
+  unreachable pricing engine. It does not break anything that exists, because nothing existed to
+  break - QuoteRepository.create_revision had no application caller at all.
+
+  Three changes are not additive and would survive a revert of the rest, each recorded below:
+  QuoteSummary's display_total and valid_until fields became optional to match the schema, the three
+  role gates now share one refusal body, and OperationsService translates a quotes unique-constraint
+  violation into QuoteStateError. All three are corrections to existing defects rather than new
+  behaviour; reverting them restores the defects.
+
+  No migration, no schema change, no contract change, no capability status and no existing route
+  behaviour is otherwise touched. The pricebook is published as data through the existing
+  CONFIG-001 primitive, so a rollback leaves a published configuration version that nothing reads.
+unresolved_assumptions: >-
+  Scope is deliberately narrower than "a quote". This item composes exact estimates only. A
+  range-priced service - 20 of the 43 in the pricebook, marked RANGE_ONLY_HUMAN_FINAL - returns
+  RANGE_PRICE_REQUIRES_HUMAN and writes nothing, because persisting a range revision means deciding
+  how a range interacts with totals, orders and settlement, and that is not this item's decision to
+  make. No promotion is evaluated (DEC-002 open) and no delivery fee is resolved (DEC-003 open), so
+  every revision carries PROMOTION_NOT_EVALUATED and DELIVERY_FEE_UNRESOLVED and has no display
+  total at all. That last point is a deliberate refusal rather than a gap: a staff member must not
+  read a service subtotal as the amount a customer will pay.
+
+  The quantity is carried as a string from the browser to the engine and is never coerced, because
+  DEC-001 (weight precision and rounding) is open and a float would silently rewrite it. The engine
+  normalises to canonical decimal form without changing value; nothing else may touch it.
+
+  A quote priced from two different measurement bases for one service is refused with
+  MEASUREMENT_POLICY_UNRESOLVED. That rule is this item's, not the specification's, and it is the
+  conservative reading: nobody can say whether the customer or the scale produced a mixed total.
+
+  The pricebook is published by a human running a script. It is not published on startup, not
+  imported at request time, and not read from disk by any running service - the API image does not
+  ship templates/ at all.
+evidence:
+  route_result_equals_direct_engine_call: >-
+    Asserted rather than asserted-about. packages/domain/tests/test_quote_composition.py prices six
+    quantities through compose_quote_revision and compares every line amount, unit price and
+    subtotal against a direct price_lines call on the same input; apps/api/tests/test_quote_command.py
+    repeats the comparison through the full service path against a live PostgreSQL for five
+    quantities. The 6 kg cliff is asserted explicitly at three layers - composition, command path,
+    and the running container - because it is the case a well-meaning change is most likely to
+    "fix": 5.999 kg costs 149,975 VND at 25,000/kg and 6 kg costs 120,000 VND at 20,000/kg, so more
+    weight costs less. Two 3 kg lines aggregate to 6 kg and select the same cheaper tier, so
+    splitting an order cannot change its price. Below one kilogram the tier's billable minimum
+    applies and the trace records billable_quantity "1" while the line still records the 0.5 kg the
+    customer actually brought.
+
+    The structural guarantee behind those numbers is that no arithmetic on money exists outside
+    packages/domain. The route builds RequestedLine values and translates a result into a status
+    code; the service establishes identity and provenance; every amount, subtotal and reason code is
+    produced by compose_quote_revision, and build_quote_snapshot independently recomputes the same
+    subtotal from the line snapshots and refuses the revision if the two disagree.
+  unresolved_policy_propagates_and_writes_nothing: >-
+    Six refusal paths are exercised, and each is checked for having written nothing. An unusable
+    quantity (empty, non-numeric, zero, negative, or more than three decimal places) returns
+    MISSING_REQUIRED_FACT; an unknown service returns PRICE_RULE_UNRESOLVED; a range-priced service
+    returns RANGE_PRICE_REQUIRES_HUMAN; mixed measurement bases return
+    MEASUREMENT_POLICY_UNRESOLVED. After a refusal the quotes, quote_revisions and QUOTE-scoped
+    outbox tables are all empty, and so is command_idempotency_records - an unresolved outcome does
+    not consume the caller's key, so a staff member can correct the weight and retry with it.
+
+    The reason codes are the engine's own ErrorCode values passed through untouched, and reach the
+    caller as HTTP 422 with {"outcome": "REQUIRE_HUMAN", "reason_codes": [...]}.
+
+    Pricing itself is fail-closed in three further ways, each a refusal rather than a degraded
+    answer: no published pricebook raises QuotePricingUnavailable (503) instead of falling back to
+    the CSV; a stored payload that no longer hashes to the digest recorded when it was published is
+    refused; and a payload that does not survive a lossless round trip through the parser is
+    refused, so a field this code would silently drop stops the quote instead of changing it.
+  snapshot_hash_recomputes_from_stored_payload: >-
+    The hash is computed by the existing canonical_document function through build_quote_snapshot;
+    nothing here reimplements JCS canonicalisation or the JCS-SHA256-V1 prefix. A live test reads
+    the stored JSONB back and recomputes the digest from that payload alone, with nothing carried
+    over from the process that wrote it, and compares it to both the stored snapshot_hash column and
+    the value returned to the caller. QuoteRepository.get_revision - the reader the rest of the
+    system uses, which has its own hmac.compare_digest check - agrees. Composition is deterministic:
+    the same facts, clock and pricebook produce the same hash on a second call, so the digest is a
+    function of the facts rather than of the run.
+
+    Provenance is what makes that reproducible later. Each revision cites the published pricebook by
+    version_id, version and hash, and each line's service_version_id is derived by UUID5 from that
+    pricebook version, so a line cannot silently point at a pricebook the quote was not priced
+    against. Two different pricebook versions produce different service identities for the same
+    service code, which is asserted.
+  append_only_revisions_under_concurrency: >-
+    A correction is a new revision and never an edit. Revision 2 is written with the existing
+    expected_revision plus row_version compare-and-swap; a third writer holding revision 1 is
+    refused with QuoteStateError, revision 1 is left byte-identical, and the container's
+    current_revision advances to 2. Replaying an idempotency key returns the original response with
+    replayed true and leaves exactly one revision row.
+
+    Opening a second quote for an order request that already has one is a conflict rather than a
+    crash. That distinction was not free: the demo stack answered 500 for it, because
+    quotes UNIQUE (store_id, bound_order_request_id) surfaced as an untranslated psycopg
+    UniqueViolation. It is now translated to QuoteStateError and answered as 409, with a regression
+    test at both the service and HTTP layers.
+  store_scoping_and_rbac_indistinguishable_refusal: >-
+    Membership is checked by require_store_membership - the same function the Shadow surfaces use -
+    before any pricing work and deliberately outside the idempotency wrapper, so a staff member who
+    has lost access to a store cannot replay a key into a fresh write. A non-member is refused and
+    writes nothing.
+
+    Making that refusal indistinguishable required fixing two things this item found. First,
+    _raise_operations_error had no arm for StoreAccessError, so a membership refusal fell through to
+    a 409 while a role refusal was a 403 - visibly different outcomes. Second, once both were 403,
+    the bodies still differed: the role gates named the missing role ("operations role with MFA
+    required") while membership said "operation denied". All three role gates now share one
+    AUTHORIZATION_DENIED body, and a live test asserts that an outsider's refusal and an auditor's
+    refusal are byte-identical in status and body. The specific reason is still recorded in the
+    structured log, where an operator can read it and a caller cannot.
+
+    Against the running stack, demo-auditor signing in with a valid MFA-carrying token is refused on
+    pricing with exactly {"detail":"operation denied"}.
+  atomic_row_event_audit_outbox: >-
+    The write goes through the existing QuoteRepository.create_revision and therefore through
+    commit_material_change; no second transaction shape was invented. After a successful call the
+    quote_revisions row, the QUOTE_REVISION_CREATED domain event, the QUOTE_CALCULATE audit entry
+    attributed to the acting staff member, and the quote.revision_created.v1 outbox event all exist,
+    counted as exactly (1, 1, 1, 1) for the aggregate. After a refused compare-and-swap the counts
+    are unchanged from before the attempt - no orphan event, no audit row, no outbox entry.
+
+    Verified live as well: the whole topology was torn down with `down -v`, the volume destroyed, and
+    brought back up from the four documented commands. scripts/verify_demo_stack.py reports 24/24,
+    including the five pricing checks and the two refusals, and is safe to re-run. The demo seed
+    publishes the owner-confirmed pricebook to the same digest
+    (JCS-SHA256-V1:e9580d747725bf91da07fafbb8cacbdd107b087e26ed61df22dd4d22bfec72a6) that the local
+    import produces, which is the reproducibility claim made concrete.
+
+    All thirteen capabilities remain NOT_AUTHORIZED. This item adds no agent tool - the tool contract
+    is hash-pinned and already contains quoteEstimate - configures no provider, enables no feature
+    flag, and sends nothing.
+  rollback_assessment: >-
+    See rollback_impact. Additive except for three corrections to existing defects, all recorded
+    above and each of which a revert would reintroduce: QuoteSummary's optional columns, the uniform
+    authorization refusal body, and the unique-violation translation. The first of those was a live
+    500 waiting to happen - GET /internal/v1/stores/{id}/quotes raised TypeError on the first quote
+    with an unresolved delivery fee, which nothing had caught because no code path could create a
+    quote to list.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

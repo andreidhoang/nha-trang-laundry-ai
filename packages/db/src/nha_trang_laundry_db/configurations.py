@@ -30,6 +30,15 @@ class ConfigurationStateError(ValueError):
 
 
 @dataclass(frozen=True)
+class PublishedConfiguration:
+    """Identity of one published configuration version, for snapshots that cite their source."""
+
+    version_id: UUID
+    version: int
+    snapshot_hash: str
+
+
+@dataclass(frozen=True)
 class ConfigurationDraft:
     """Validated draft input; the caller supplies a typed validator for its config type."""
 
@@ -178,6 +187,31 @@ class ConfigurationRepository:
             ),
             publish_mutation,
         )
+
+    @staticmethod
+    def latest_published(cursor: Any, config_type: str) -> PublishedConfiguration | None:
+        """Return the highest published version of a config type, or None if none is published.
+
+        Callers use this to bind a snapshot to real provenance. `None` is a legitimate and expected
+        answer: a system with no published pricebook has no prices, and the correct behaviour is to
+        refuse rather than to fall back to a file on disk that nobody approved.
+        """
+        if not CONFIG_TYPE_PATTERN.fullmatch(config_type):
+            raise ConfigurationValidationError("invalid configuration type")
+        cursor.execute(
+            """
+            SELECT id, version, snapshot_hash FROM configuration_versions
+            WHERE config_type = %s AND lifecycle = 'PUBLISHED'
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            (config_type,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        identifier = row[0] if isinstance(row[0], UUID) else UUID(str(row[0]))
+        return PublishedConfiguration(identifier, int(row[1]), str(row[2]))
 
     @staticmethod
     def get_published(cursor: Any, config_id: UUID) -> JsonObject | None:

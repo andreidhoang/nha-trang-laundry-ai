@@ -297,8 +297,8 @@ figures** and remains case-by-case negotiated with no ceiling stated — do not 
 ### Decision state as of `1d5be44`
 
 > **Superseded as a count.** This block is accurate for `1d5be44` and is kept as history. The
-> acquisition session that followed opened `DEC-015`, `DEC-016` and `DEC-017`, so the current
-> registry holds **17 decisions, 6 `OPEN`** — see the acquisition section above. The per-decision
+> acquisition session that followed opened `DEC-015`–`DEC-017` and the retention-execution session
+> opened `DEC-018`–`DEC-020`, so the current registry holds **20 decisions, 9 `OPEN`**. The per-decision
 > reasoning below is unchanged and still correct.
 
 14 registered in `context/DECISION_REGISTRY.yaml`. **11 `RESOLVED`:** DEC-001, DEC-002, DEC-003,

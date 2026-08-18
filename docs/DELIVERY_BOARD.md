@@ -29,7 +29,7 @@ console rebuild opened two new ones, `DEC-013` (walk-in customer identification)
 (which staff roles see the day's takings), and a later client-acquisition session opened three more —
 `DEC-015` (the customer record; the CRM decision previously recommended as `DEC-011`), `DEC-016`
 (inbound channel custody and staffing) and `DEC-017` (market identity and the franchise
-relationship). **17 registered, 6 `OPEN`.** See "Reading this board" below. No queue item's *status*
+relationship). **17 registered, 6 `OPEN` at that point; 20 registered, 9 `OPEN` now** — `DEC-018`–`DEC-020` were opened by the retention-execution work later the same day. See "Reading this board" below. No queue item's *status*
 moved as a result — only the "Open decisions" column changed, plus `RETENTION-001` becoming
 selectable — because only the controller flips a status, and it has run once since (selecting
 `RETENTION-001`), not enqueued anything new.

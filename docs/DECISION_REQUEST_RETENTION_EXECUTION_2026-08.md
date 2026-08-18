@@ -9,7 +9,9 @@ resolved the retention *schedule* — how long each class lives. It did not reso
 *means* when the same bytes are simultaneously scheduled for deletion and required as evidence, and
 that turns out to be the binding constraint on executing any purge at all.
 
-Read `context/tasks/TASK-retention-store-001.md` first for what the item was trying to build.
+Read `context/tasks/TASK-retention-store-001.md` first for what the item was trying to build, and
+`docs/RETENTION_STORE_001_DESIGN_REVIEW_2026-08.md` for the design that was produced, the three
+adversarial reviews that refuted it, and the 23 must-fix items an implementation would start from.
 
 ---
 

@@ -17,8 +17,8 @@ document deliberately does not repeat any of them. It answers the one question t
 
 ## 0. The answer, before the argument
 
-This repository does not have a velocity problem. It has 972 passing tests, 27 migrations, 37 routes,
-a bounded FSM runtime, a typed 10-operation facade, a decision registry with 17 entries, and a
+This repository does not have a velocity problem. It has 972 passing tests, 27 migrations, 38 routes,
+a bounded FSM runtime, a typed 10-operation facade, a decision registry with 20 entries, and a
 delivery controller with lease-and-generation compare-and-swap. Most production systems have less
 governance than this at Series B.
 

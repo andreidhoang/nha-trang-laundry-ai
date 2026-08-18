@@ -87,7 +87,7 @@ staffs the inbound channel and whose account it is), `DEC-017` (which name the s
 given that the brand is a 500+ store national franchise whose directory lists no Khánh Hòa store).
 See [`docs/DECISION_REQUEST_ACQUISITION_2026-08.md`](DECISION_REQUEST_ACQUISITION_2026-08.md) and
 the plan at [`docs/CLIENT_ACQUISITION_EXECUTION_2026-08.md`](CLIENT_ACQUISITION_EXECUTION_2026-08.md).
-**The registry now holds 17 decisions, 6 `OPEN`.** `DEC-013` is no longer only a console gap: it is
+**The registry now holds 20 decisions, 9 `OPEN`** (17/6 after the acquisition session; `DEC-018`–`DEC-020` followed from the retention-execution work below). `DEC-013` is no longer only a console gap: it is
 the binding constraint on acquiring a `bound_contact_id` from any source, so the system can record
 no customer at all today.
 

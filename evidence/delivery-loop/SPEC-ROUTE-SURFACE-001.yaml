@@ -1,0 +1,112 @@
+schema_version: 1
+work_item: SPEC-ROUTE-SURFACE-001
+recorded_at: '2026-08-18T23:05:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-spec-route-surface-001.md requires the internal HTTP surface to have a
+  machine-readable contract generated from or validated against the built application rather than
+  hand-transcribed, plus a check that fails when a route exists without a contract entry - the check
+  being the deliverable and the document the by-product. AGENTS.md makes the machine-readable
+  contracts normative and CLAUDE.md states contracts win over prose, which is the authority this
+  closes: measured before the item, 38 operations were served under the app and exactly one was
+  named anywhere in specs/. The packet also forbids editing specs/DOMAIN_DATA_API_SPEC_V1.md to
+  match the code, because amending an approved specification to describe what was built instead of
+  what was decided inverts the authority relationship.
+rollback_impact: >-
+  Additive. Two new files (scripts/generate_internal_api_contract.py,
+  apps/api/tests/test_internal_api_contract.py), one new generated contract
+  (specs/contracts/internal-api-v1.openapi.yaml), and strictly additive edits to
+  scripts/verify_contracts.py, context/CONTEXT_MAP.yaml and the pinned work-item count in
+  packages/evals/tests/test_context_harness.py. No route, response shape or authorization rule
+  changed; apps/api source is byte-identical to baseline. Rollback is deleting the three new files
+  and reverting the three edits, which removes a control rather than breaking a flow. No migration,
+  database content, credential, deployment or capability state is involved, and all 13 capabilities
+  remain NOT_AUTHORIZED.
+unresolved_assumptions: >-
+  The contract describes the surface, not the payloads. Each operation carries its operationId,
+  summary, path parameters, response status and - the security-relevant part - its authorization
+  dependency chain by function name, so a route that loses require_operations_staff appears as a
+  contract diff. Request and response bodies are deliberately out of scope: schematizing them from
+  the app would inline every Pydantic model and make the diff unreadable for the property this item
+  is protecting.
+
+  Scope beyond apps/api is untouched and named here rather than left implicit. apps/worker serves
+  /healthz, /livez and /readyz with no contract and no check, and apps/public-agent-tools serves a
+  /healthz absent from agent-tools-v1.openapi.yaml, which covers its ten /agent/v1 operations. The
+  packet scopes this item to the routes served by apps/api and the packet outranks the item title,
+  so those two surfaces stay ungoverned and are a candidate for a follow-up item.
+
+  What an adversarial review changed, because the first implementation was wrong in a way that
+  mattered. build_document originally skipped every app.routes entry that was not an APIRoute. Two
+  lenses proved empirically that this made "every served route has a contract entry" false: a real
+  @app.websocket route landed completely uncontracted with every check still green, and the
+  application already serves one Mount - the /staff static PWA, unauthenticated, answering 200 -
+  that the contract never mentioned. A silently discarded route is precisely the ungoverned surface
+  this item exists to close. An unrecognized route type is now a hard generation failure against an
+  explicit named allowlist, and the mount is disclosed with its justification under x-served-mounts.
+
+  Two further corrections from the same review. The generator's docstring claimed FastAPI derives
+  HEAD from GET; measured, no APIRoute on this application carries HEAD and a HEAD request returns
+  405, so the comment now describes the guard honestly. And the named negative test was documented
+  as "what makes the check real"; it proves the generator notices a new route, not that the check
+  fails, so its docstring now says so and a direct test invokes validate_internal_api_surface() and
+  requires it to raise.
+
+  A scope error was reverted rather than argued for. The first version of this slice invented a
+  staff_console context domain to satisfy the drift check for the other enqueued item, which neither
+  committed packet asks for, which is unreachable from this item's own context_domains, and which
+  had me authoring normative prohibition text that paraphrased its cited source more broadly than
+  the source states. The domain was removed; the minimal in-scope fix was adding three console
+  sources the platform domain already needed, and the DISCLOSURE-CONTRACT-001 queue row was set back
+  to the platform, privacy_consent domains its own packet declares.
+
+  Verification honesty: the adversarial pass ran as three independent agents in fresh contexts, not
+  inline in this session - the stronger form, and the first time in this session it was available.
+  Two of the three refuted the claim as first written. Everything above is the response to what they
+  proved, and the claim is re-asserted only against the corrected implementation.
+evidence:
+  every_served_route_has_a_contract_entry: >-
+    specs/contracts/internal-api-v1.openapi.yaml holds 38 operations across 31 paths, matching the
+    38 APIRoute operations the built application serves. test_every_served_route_has_a_contract_entry
+    enumerates app.routes rather than grepping source, because an included router leaves no decorator
+    to find. The one non-APIRoute entry the app serves, the /staff StaticFiles mount, is disclosed
+    under x-served-mounts with its justification and asserted present by
+    test_the_static_mount_is_disclosed_rather_than_dropped, which also requires the disclosed set to
+    equal the served set exactly. An unrecognized route type raises UngovernedRouteError rather than
+    being skipped, proven by test_an_unrecognized_route_type_is_a_hard_failure against a real
+    websocket route.
+  every_contract_entry_is_a_served_route: >-
+    test_every_contract_entry_is_a_served_route asserts the reverse inclusion, so a contract cannot
+    describe a route that was deleted. Both directions are computed from the same two sets, so a
+    disagreement in either direction fails.
+  undocumented_route_fails_the_check: >-
+    validate_internal_api_surface() in scripts/verify_contracts.py regenerates the document in memory
+    and raises when it differs from the committed bytes. It is called bare in main() with no flag, no
+    environment guard and no try/except. An independent reviewer verified this by mutation rather
+    than by reading: appending a route to main.py produced exit 1 with the specific message, and the
+    pytest layer failed independently; hand-editing the committed contract to remove a
+    require_operations_staff dependency while leaving valid YAML produced exit 1; deleting the
+    /internal/v1/auth/session block produced exit 1. Restoration after each mutation was proven by
+    md5 and by git status matching the opening snapshot. test_the_check_itself_rejects_a_diverged_
+    surface invokes the check directly and requires it to raise.
+  approved_specification_unedited: >-
+    specs/DOMAIN_DATA_API_SPEC_V1.md is byte-identical to baseline, verified by an empty git diff and
+    independently by a reviewer. Its section 13.4 lists 20 POST endpoints of which 2 are implemented;
+    that is left standing because those 18 are the command surface for the eight bounded contexts the
+    readiness assessment measures as empty, and a route cannot precede the aggregate it mutates.
+    Amending it would be a specification change and the owner's.
+  rollback_assessment: >-
+    See rollback_impact. Additive throughout, no behaviour change in apps/api, and the deliverable is
+    a control whose removal removes the control rather than breaking a flow.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

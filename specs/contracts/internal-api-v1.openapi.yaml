@@ -1,0 +1,610 @@
+openapi: 3.1.0
+info:
+  title: Nha Trang Laundry internal API
+  version: v1
+  description: 'Generated from the built FastAPI application by scripts/generate_internal_api_contract.py.
+    It covers EVERY served operation, including those FastAPI excludes from its own schema via include_in_schema=False
+    - on this application that is four operations, three of them the authentication surface. Do not hand-edit:
+    scripts/verify_contracts.py regenerates this document and fails on any difference, which is what keeps
+    a new route from landing without a contract entry. Non-operation entries the application serves -
+    today only the /staff static mount - are listed under x-served-mounts rather than omitted; an unrecognized
+    route type is a hard generation failure, not a silent skip.'
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Return only process health; dependency health is added with real infrastructure.
+      x-authorization-dependencies: []
+      x-documented-by-fastapi: false
+      responses:
+        '200':
+          description: Success response.
+  /internal/v1/approvals:
+    get:
+      operationId: list_pending_approvals
+      summary: list_pending_approvals
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+    post:
+      operationId: request_approval
+      summary: request_approval
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+  /internal/v1/approvals/{approval_id}/decisions:
+    post:
+      operationId: decide_approval
+      summary: decide_approval
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: approval_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/approvals/{approval_id}/manual-send:
+    post:
+      operationId: prepare_manual_send
+      summary: prepare_manual_send
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: approval_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: logout
+      x-authorization-dependencies:
+      - current_principal
+      - get_identity_service
+      x-documented-by-fastapi: false
+      responses:
+        '204':
+          description: Success response.
+  /internal/v1/auth/session:
+    post:
+      operationId: exchange_identity_token
+      summary: exchange_identity_token
+      x-authorization-dependencies:
+      - get_identity_service
+      x-documented-by-fastapi: false
+      responses:
+        '200':
+          description: Success response.
+  /internal/v1/manual-sends/{manual_send_id}/attest:
+    post:
+      operationId: attest_manual_send
+      summary: attest_manual_send
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: manual_send_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/orders/{order_id}/settlement:
+    post:
+      operationId: record_settlement
+      summary: Attest that the customer paid the quoted total and collected their goods.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/orders/{order_id}/transition:
+    post:
+      operationId: transition_order
+      summary: transition_order
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/pricebook/services:
+    get:
+      operationId: list_pricebook_services
+      summary: 'Names for the picker, in published order. No store scope: the catalog is not store data.'
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+  /internal/v1/queue-recovery:
+    get:
+      operationId: queue_recovery
+      summary: queue_recovery
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+  /internal/v1/session:
+    get:
+      operationId: get_session
+      summary: get_session
+      x-authorization-dependencies:
+      - current_principal
+      x-documented-by-fastapi: false
+      responses:
+        '200':
+          description: Success response.
+  /internal/v1/sessions/{session_id}/revoke:
+    post:
+      operationId: revoke_session
+      summary: revoke_session
+      x-authorization-dependencies:
+      - current_principal
+      - get_identity_service
+      x-documented-by-fastapi: true
+      responses:
+        '204':
+          description: Success response.
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/shadow/drafts/{agent_run_id}/decision:
+    post:
+      operationId: decide_shadow_draft
+      summary: decide_shadow_draft
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: agent_run_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/shadow/unknown-sends:
+    get:
+      operationId: list_unknown_sends
+      summary: list_unknown_sends
+      x-authorization-dependencies:
+      - current_principal
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+  /internal/v1/shadow/unknown-sends/{receipt_id}/reconcile:
+    post:
+      operationId: reconcile_unknown_send
+      summary: Only a human leaves UNKNOWN. There is no automatic caller for this route.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '204':
+          description: Success response.
+      parameters:
+      - name: receipt_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/staff:
+    post:
+      operationId: create_staff
+      summary: create_staff
+      x-authorization-dependencies:
+      - require_owner
+      - get_identity_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+  /internal/v1/staff/{staff_user_id}/disable:
+    post:
+      operationId: disable_staff
+      summary: disable_staff
+      x-authorization-dependencies:
+      - require_owner
+      - get_identity_service
+      x-documented-by-fastapi: true
+      responses:
+        '204':
+          description: Success response.
+      parameters:
+      - name: staff_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/staff/{staff_user_id}/roles:
+    post:
+      operationId: assign_staff_role
+      summary: assign_staff_role
+      x-authorization-dependencies:
+      - require_owner
+      - get_identity_service
+      x-documented-by-fastapi: true
+      responses:
+        '204':
+          description: Success response.
+      parameters:
+      - name: staff_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/staff/{staff_user_id}/stores/{store_id}:
+    delete:
+      operationId: revoke_staff_store
+      summary: End a staff member's access to one store.
+      x-authorization-dependencies:
+      - require_owner
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '204':
+          description: Success response.
+      parameters:
+      - name: staff_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: assign_staff_store
+      summary: Grant a staff member access to one store.
+      x-authorization-dependencies:
+      - require_owner
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '204':
+          description: Success response.
+      parameters:
+      - name: staff_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores:
+    get:
+      operationId: list_member_stores
+      summary: List the stores the caller is assigned to.
+      x-authorization-dependencies:
+      - current_principal
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+  /internal/v1/stores/{store_id}/assistant/turns:
+    get:
+      operationId: list_assistant_turns
+      summary: Newest first. An owner sees the store's turns; anyone else sees only their own.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_assistant_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: post_assistant_turn
+      summary: Ask the deterministic assistant one question and record the answered turn.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_assistant_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/assistant/turns/{turn_id}/stream:
+    get:
+      operationId: stream_assistant_turn
+      summary: Replay one already-persisted turn's answer as server-sent events.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_assistant_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: turn_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/incidents:
+    get:
+      operationId: list_incidents
+      summary: list_incidents
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: open_incident
+      summary: open_incident
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/order-requests:
+    get:
+      operationId: list_order_requests
+      summary: Newest first, capped at 100 server-side. No customer text exists on this aggregate.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: create_order_request
+      summary: Record that a customer is at the counter, bound to a contact the server already knows.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/order-requests/{order_request_id}:
+    get:
+      operationId: get_order_request
+      summary: One intake draft for the quote prefill. Another store's id is this store's 404.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_request_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/orders:
+    get:
+      operationId: list_orders
+      summary: list_orders
+      x-authorization-dependencies:
+      - current_principal
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: create_order
+      summary: create_order
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/quotes:
+    get:
+      operationId: list_quotes
+      summary: list_quotes
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: create_quote
+      summary: Price a garment through the deterministic engine and commit an immutable revision.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/settlements/today:
+    get:
+      operationId: collected_today
+      summary: Money attested as collected at this store's counter, on today's local business day.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/shadow/audit/{aggregate_id}:
+    get:
+      operationId: shadow_audit_timeline
+      summary: shadow_audit_timeline
+      x-authorization-dependencies:
+      - current_principal
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: aggregate_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/shadow/drafts:
+    get:
+      operationId: list_shadow_drafts
+      summary: list_shadow_drafts
+      x-authorization-dependencies:
+      - current_principal
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+x-served-mounts:
+  /staff: 'Static staff PWA assets served by StaticFiles (name=staff-pwa). Not an API operation and deliberately
+    unauthenticated: it serves the console shell, and every datum the console shows comes from an authorized
+    /internal/v1 call made after it loads.'

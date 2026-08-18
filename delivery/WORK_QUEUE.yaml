@@ -2576,3 +2576,62 @@ items:
   - interaction_and_live_demo_verification
   - rollback_assessment
   blocked_by_decisions: []
+- id: SPEC-ROUTE-SURFACE-001
+  phase: PRODUCTION_HARDENING
+  title: Machine-readable contract for the internal route surface, enforced by a check
+  status: COMPLETE
+  priority: 235
+  depends_on:
+  - OPERATIONS-001
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/ENGINEERING_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-spec-route-surface-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_served_route_has_a_contract_entry
+  - every_contract_entry_is_a_served_route
+  - undocumented_route_fails_the_check
+  - approved_specification_unedited
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: DISCLOSURE-CONTRACT-001
+  phase: PRODUCTION_HARDENING
+  title: Bind the staff console's honesty chrome to the code facts that make it true
+  status: PENDING
+  priority: 236
+  depends_on:
+  - OPERATIONS-001
+  - SHADOW-CONSOLE-001
+  context_domains:
+  - platform
+  - privacy_consent
+  normative_sources:
+  - docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-disclosure-contract-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_disclosure_slot_is_registered
+  - bindable_entry_fails_when_its_code_fact_changes
+  - unregistered_slot_fails_the_check
+  - no_disclosure_deleted_or_weakened
+  - rollback_assessment
+  blocked_by_decisions: []

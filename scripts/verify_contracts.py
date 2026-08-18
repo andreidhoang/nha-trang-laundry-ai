@@ -48,6 +48,7 @@ JSON_CONTRACTS = (
 )
 YAML_CONTRACTS = (
     "specs/contracts/agent-tools-v1.openapi.yaml",
+    "specs/contracts/internal-api-v1.openapi.yaml",
     "specs/evals/eval-manifest-v1.yaml",
 )
 
@@ -244,6 +245,31 @@ def verify_synthetic_combinatorial_corpus() -> int:
     return len(cases)
 
 
+def validate_internal_api_surface() -> int:
+    """Fail when the committed internal-API contract disagrees with what the app actually serves.
+
+    Regenerating in memory and comparing is what makes the contract un-driftable: a new route, a
+    changed authorization dependency, or a hand-edit of the contract all surface here as a failure
+    rather than as a surface nobody governs. Returns the operation count for the summary line.
+    """
+    from generate_internal_api_contract import CONTRACT_PATH, generate
+
+    expected = generate()
+    if not CONTRACT_PATH.is_file():
+        raise ValueError(
+            "specs/contracts/internal-api-v1.openapi.yaml is missing; "
+            "run uv run python scripts/generate_internal_api_contract.py"
+        )
+    committed = CONTRACT_PATH.read_text(encoding="utf-8")
+    if committed != expected:
+        raise ValueError(
+            "the internal API contract does not match the served route surface; "
+            "run uv run python scripts/generate_internal_api_contract.py and review the diff"
+        )
+    document = yaml.safe_load(expected)
+    return sum(len(operations) for operations in document["paths"].values())
+
+
 def main() -> None:
     for contract in JSON_CONTRACTS:
         load_json(contract)
@@ -254,11 +280,13 @@ def main() -> None:
     validate_release_gate_schema()
     validate_channel_contracts()
     corpus_cases = verify_synthetic_combinatorial_corpus()
+    served_operations = validate_internal_api_surface()
     load_agent_tool_registry(ROOT / "specs/contracts/agent-tools-v1.openapi.yaml")
     runtime_registry = load_public_runtime_registry(ROOT / "runtime/model-registry-v1.yaml")
     runtime_artifacts = verify_public_runtime_artifacts(ROOT, runtime_registry)
     print(f"Validated {len(JSON_CONTRACTS)} JSON and {len(YAML_CONTRACTS)} YAML contracts.")
     print(f"Validated {corpus_cases} synthetic combinatorial cases against the domain engines.")
+    print(f"Validated {served_operations} served internal API operations against their contract.")
     print(
         f"Validated {len(runtime_artifacts)} pinned public-runtime artifacts; "
         f"release blockers={len(runtime_registry.release_blockers())}."

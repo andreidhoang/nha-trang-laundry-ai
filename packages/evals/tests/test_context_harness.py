@@ -51,8 +51,11 @@ def test_context_drift_check_passes() -> None:
     # STORE-SCOPING-002, the order-transition route that STORE-SCOPING-001's URL-shape enumeration
     # could not see because it is keyed by order_id, and STORE-ASSIGNMENT-001, membership having no
     # write path at all, plus ASSISTANT-001, the owner-directed internal assistant registered after
-    # the fact on 2026-08-16.
-    assert "77 work items" in result.stdout
+    # the fact on 2026-08-16, plus the two the 2026-08-18 harness session enqueued after measuring
+    # the gaps they close: SPEC-ROUTE-SURFACE-001, because 38 operations were served and exactly one
+    # was named anywhere in specs/, and DISCLOSURE-CONTRACT-001, because 58 disclosure slots in
+    # apps/web make factual claims about system behaviour and none appears in any test.
+    assert "79 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

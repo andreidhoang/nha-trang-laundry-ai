@@ -37,7 +37,11 @@ domains:
       - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
       - specs/ENGINEERING_SPEC_V1.md
       - docs/DECISION_REQUEST_HOSTING_2026-08.md
-    contracts: []
+      - docs/STAFF_CONSOLE_ENGINEERING_SPEC_V1.md
+      - docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md
+      - apps/web/README.md
+    contracts:
+      - specs/contracts/internal-api-v1.openapi.yaml
     prohibitions:
       - Do not introduce public channels or external automation in M0-M3.
       - The public agent runtime cell runs on a separate host and may reach only the approved model endpoint and Tool Facade.

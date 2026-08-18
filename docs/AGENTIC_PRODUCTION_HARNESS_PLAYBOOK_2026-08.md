@@ -40,7 +40,7 @@ Four numbers set the entire schedule. All four are measured, none is a judgement
 
 | The line | Now | What moves it | Who can move it |
 |---|---:|---|---|
-| Eval cases in the five gated suites | **0 / 1,300** | `EVAL-PUBLISH-001` publishes the 669 combinatorial cases that are already built, priced by the deterministic engine and content-hashed at `specs/evals/synthetic-combinatorial-v1.json` | **An agent, today**, once the owner enqueues it |
+| Eval cases in the five gated suites | ~~**0 / 1,300**~~ **669 / 1,300** | ~~`EVAL-PUBLISH-001`~~ **`EVAL-SYNTHETIC-COMBINATORIAL-001`** published the 669 cases. **Done 2026-08-18 — see the correction below.** | **An agent**, and it needed an *unblock*, not an enqueue |
 | Provider-backed model runs | **0** | `DEC-006` + a dedicated credential in the environment | **Owner only** — `docs/runbooks/provider-credentials.md` |
 | Agent processes reachable in a running system | **0** | `apps/worker/.../main.py:19` constructs `WorkerSupervisor(effective_settings)` and passes no `agent_cycle=`; `host.py` has accepted one since before 08-14 | **An agent**, behind a closed flag |
 | Customers the system can record | **0** | `CreateOrderCommand.bound_contact_id` (`packages/db/.../orders.py:43`) is required, and the only writer of `contact_channel_bindings` is keyed on a provider identity from a channel that is not connected | **Owner** signs `DEC-013` / `DEC-015`, then an agent builds |
@@ -303,8 +303,11 @@ Establish, with file:line evidence, before changing anything:
    specs/evals/eval-manifest-v1.yaml release_policy — and whether satisfying one of five minima
    changes any gate's computed state.
 
-Report those three before you write. If (2) is yes, stop — re-pinning a frozen hash is a separate
-decision and not yours.
+Report those three before you write. If (2) is yes, do not edit and do not stop yet: check whether a
+**sanctioned re-derivation procedure** exists for that pin. Hand-adjusting a pinned hash is always
+forbidden and is a fabricated attestation. Re-deriving through the procedure the owner authorized may
+be exactly the right move — see the correction below, where the first version of this rule was too
+blunt and would have stopped legitimate work.
 ```
 
 ```text
@@ -620,7 +623,7 @@ the owner's. The `Actor` column is the point of the table.
 
 | # | Move | Actor | What it changes | Blocked by |
 |---:|---|---|---|---|
-| 1 | Enqueue `EVAL-PUBLISH-001`, then publish the 669 cases | **Owner enqueues → agent builds** | 0/1,300 → 669/1,300; first of five suite minima satisfied | nothing |
+| 1 | ~~Enqueue `EVAL-PUBLISH-001`~~ — **done 2026-08-18 as `EVAL-SYNTHETIC-COMBINATORIAL-001`** | **Agent, via controller unblock** | 0/1,300 → 669/1,300; first of five suite minima satisfied. No release blocker removed. | ~~nothing~~ done |
 | 2 | Contract the two undocumented routes (§6) | **Owner enqueues → agent builds** | Closes the ungoverned surface the console depends on | nothing |
 | 3 | Wire `build_agent_cycle` into the worker behind a closed flag | **Owner enqueues → agent builds** | The pipeline becomes reachable in a running process for the first time | nothing |
 | 4 | Contract-test the assistant's disclosure copy (§5.5) | **Owner enqueues → agent builds** | Makes a live compliance claim un-breakable in silence | nothing |
@@ -633,6 +636,49 @@ the owner's. The `Actor` column is the point of the table.
 
 Rows 1–4 are available today and none of them needs a decision, a credential, or a deployment. Rows
 5–9 cannot be moved by any agent, by any prompt, in any amount of time. That division is the schedule.
+
+---
+
+## 8a. Correction — 2026-08-18, the same day
+
+Row 1 of the table above was wrong in both its name and its mechanism, and the prompt in §3 P4a is
+what caught it. Recording it here rather than quietly editing it, because how it was wrong is more
+useful than the corrected row.
+
+**There is no `EVAL-PUBLISH-001`.** That name came from
+`docs/PRODUCTION_READINESS_ASSESSMENT.md` §5.1, which lists it as a *proposed* item under "buildable
+now, no decision required". The work was already owned by `EVAL-SYNTHETIC-COMBINATORIAL-001`, which
+existed in the queue — as `BLOCKED`. So the prescribed action, "the owner enqueues it", was not
+available: there was nothing to enqueue and something to *unblock*, which is a different operation
+with a different authority.
+
+**And it was not "available today, needs no decision."** Publishing the count edits
+`specs/evals/eval-manifest-v1.yaml`, which is one of 21 artifacts hash-pinned by the current local
+evidence bundle. Editing it turns the guarded suite red. That is exactly the stop condition P4a's
+fact (2) was written to catch, and it caught it.
+
+**What the first stop rule got wrong.** "If (2) is yes, stop" would have ended the work there — and
+would have been wrong, because `EVIDENCE-REPIN-001` is `COMPLETE` and the owner chose its option 1 on
+2026-08-13, establishing a sanctioned procedure: a pinned file changes by **re-deriving** the current
+bundle through `scripts/capture_local_agent_evidence.py` while the superseded bundle is retained
+byte-for-byte. `evidence/agent-shadow/bundle-index-v1.yaml` names which bundle is current, and
+deliberately records a `sha256` only for superseded entries — the current bundle is left unpinned
+*so that it can be re-derived*. The rule is therefore not "stop at a pin"; it is **"hand-editing a
+pinned hash is always forbidden; changing a pinned file is legal only through a sanctioned
+re-derivation, if one exists."** §3 P4a is amended above.
+
+**The item's own text already said so.** `EVAL-SYNTHETIC-COMBINATORIAL-001`'s `blocking_condition`
+ends: *"Update 2026-08-13: the sequencing decision is made and the conflict is resolved for all four
+items … Reverting the change was the correct call at the time; it no longer is."* This is the
+`PRODUCTION_READINESS_ASSESSMENT.md` §G5 pattern — an item marked `BLOCKED` by a condition its own
+text says has lifted — and it is worth treating as a standing check: **when the controller offers a
+`BLOCKED` item, read its `blocking_condition` to the end before believing the status.**
+
+Two further corrections that follow from this one, for anyone reading the assessment alongside this
+document: `PRODUCTION_READINESS_ASSESSMENT.md` §5.1's row for `EVAL-PUBLISH-001` describes work that
+is now done under a different item's name, and its §8 first bullet ("the gated corpus goes 0 → 669 in
+one change") has happened. Neither is edited here — that document is another author's analysis and
+carries its own corrections convention.
 
 ---
 

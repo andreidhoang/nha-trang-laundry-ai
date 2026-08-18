@@ -33,10 +33,14 @@ def test_the_corpus_meets_the_declared_minimum() -> None:
 
 
 def test_the_manifest_inventory_never_claims_more_than_the_corpus_holds() -> None:
-    """Publishing the count is blocked: `local-synthetic-suite-v1.json` hash-pins the manifest.
+    """The inventory may lag the corpus; it may never exceed it.
 
-    Until that pin is re-established by AGENT-002, the inventory stays at zero. It may lag the
-    corpus, but a number the corpus does not contain would clear a release blocker on paper.
+    A number the corpus does not contain would clear a release blocker on paper. Publishing was
+    once blocked outright because `local-synthetic-suite-v1.json` hash-pinned the manifest; that
+    ended with `EVIDENCE-REPIN-001`, which retains v1 byte-for-byte and makes a pinned file
+    changeable by re-deriving the current bundle. The count is published as of
+    `EVAL-SYNTHETIC-COMBINATORIAL-001`, so this assertion now guards the ceiling rather than a
+    freeze.
     """
     import yaml
 

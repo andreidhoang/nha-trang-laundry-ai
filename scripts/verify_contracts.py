@@ -226,10 +226,11 @@ def verify_synthetic_combinatorial_corpus() -> int:
         raise ValueError("synthetic combinatorial corpus case_count disagrees with its cases")
     if document.get("content_hash") != corpus_hash(cases):
         raise ValueError("synthetic combinatorial corpus content hash is stale")
-    # The inventory may lag the corpus while the count is unpublished, but it may never exceed it:
-    # a number in the manifest that the corpus does not contain would clear a release blocker on
-    # paper. Publishing the count is blocked by the hash-pinned local evidence bundle; see
-    # EVAL-SYNTHETIC-COMBINATORIAL-001.
+    # The inventory may lag the corpus, but it may never exceed it: a number in the manifest that
+    # the corpus does not contain would clear a release blocker on paper. Publishing was once
+    # blocked outright by the hash-pinned local evidence bundle; EVIDENCE-REPIN-001 ended that by
+    # making the current bundle re-derivable while retaining the superseded one, and
+    # EVAL-SYNTHETIC-COMBINATORIAL-001 published the count.
     if declared not in (0, len(cases)):
         raise ValueError(
             f"{DATASET_LAYER} inventory is {declared} but the corpus holds {len(cases)}"

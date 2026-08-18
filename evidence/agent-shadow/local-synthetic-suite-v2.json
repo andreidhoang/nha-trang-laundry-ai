@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "evidence_type": "LOCAL_SYNTHETIC_NON_RELEASE",
-  "captured_at": "2026-08-13T06:46:17.958675Z",
+  "captured_at": "2026-08-18T13:53:49.246242Z",
   "command": "uv run python -m nha_trang_laundry_evals.runner --mode synthetic-local-suite",
   "release_effect": "NONE",
   "primary_provider_evidence": false,
   "artifact_hashes": {
-    "specs/evals/eval-manifest-v1.yaml": "sha256:aed5c12800e034b122702ef56b5780eb2074449268e64e60dd4ad2ce57d34a78",
+    "specs/evals/eval-manifest-v1.yaml": "sha256:c80af670f4faf5d5c14d75813e2bf7009f4255a99c451b97abc1c2eb16c2d4a3",
     "specs/evals/fixture-registry-v1.json": "sha256:9999176b5bc71fbbafab60ed4c519dccc15b926aa16f0d5b63c7f8152bc3f47e",
     "specs/evals/assertion-registry-v1.json": "sha256:010bf47851988a4d3cc3a778add92a1f8866daeb204c5c206c830bea6e7d7937",
     "specs/contracts/agent-tools-v1.openapi.yaml": "sha256:17c13317d809c07ad29fb6c85bb0f3654435a073a8b8fd3a39a92d8803984af3",

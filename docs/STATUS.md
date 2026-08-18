@@ -115,5 +115,14 @@ The same session added `.claude/agents/console-engineer.md`, `.claude/agents/eva
 skills under `.claude/skills/`, and one `PostToolUse` hook that regenerates `sw.js` on `apps/web`
 writes. Nothing was enqueued; no capability, gate or decision changed.
 
+Executing against the queue in the same session completed **`RETENTION-001`** (its `DEC-008` blocker
+had resolved four days after the work was built and parked) and **`EVAL-SYNTHETIC-COMBINATORIAL-001`**,
+which moves the eval corpus from **0 to 669 of 1,300** and meets the first of five suite minima. The
+second was `BLOCKED` by a condition its own text said had lifted; it was unblocked on the verified
+changed condition that `EVIDENCE-REPIN-001` is `COMPLETE`, and the hash-pinned manifest changed through
+that item's sanctioned re-derivation rather than by hand. **No release blocker was removed** —
+`REQUIRED_DATASET_MINIMA_NOT_MET` stays while four suites sit at zero — and all 13 capabilities remain
+`NOT_AUTHORIZED`. Queue: 42 → 44 `COMPLETE`.
+
 Read the [engineering continuation brief](../context/PROJECT_CONTINUATION.md) before resuming and run
 `uv run python scripts/run_delivery_loop.py` for the authoritative work brief.

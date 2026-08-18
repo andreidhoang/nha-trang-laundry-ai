@@ -64,6 +64,32 @@ against a `PATH` holding just `bash`, `cat` and `printf`. A test that does not e
 indistinguishable from an untested claim — the same defect class this repository's evidence rules
 exist to catch, and worth remembering when a check "passes" suspiciously easily.
 
+### Executed the same session: two queue items completed
+
+**`RETENTION-001` → COMPLETE.** Built 2026-08-13 and deliberately parked with draft evidence; both
+blockers it named have since cleared without code. `DEC-008` resolved 2026-08-18 and its resolution
+routes the ledger conflict to `RETENTION-STORE-001`. Three statements asserting `DEC-008` was open
+were reconciled; migration `0023` carries the same stale sentence and was **not** edited, because a
+deployed migration is immutable history.
+
+**`EVAL-SYNTHETIC-COMBINATORIAL-001` → COMPLETE.** The corpus goes **0 → 669 of 1,300**, the first
+of five suite minima met. It was `BLOCKED` by a condition its own text said had lifted — the
+`PRODUCTION_READINESS_ASSESSMENT.md` §G5 pattern — so it was unblocked on the verified changed
+condition that `EVIDENCE-REPIN-001` is `COMPLETE`. Publishing the count edits a hash-pinned file;
+that landed through the sanctioned re-derivation `EVIDENCE-REPIN-001` established and the owner
+authorized on 2026-08-13, never by hand-editing a hash. The re-derived bundle differs from its
+predecessor in exactly two fields: the manifest hash and `captured_at`. `v1` is untouched.
+
+**No release blocker was removed.** `REQUIRED_DATASET_MINIMA_NOT_MET` stays — frozen regression,
+adversarial, normal language and public corpus are all still at zero. All 13 capabilities remain
+`NOT_AUTHORIZED`. Queue: 42 → 44 `COMPLETE`.
+
+**Correction to the playbook, recorded in its §8a.** There is no `EVAL-PUBLISH-001` — that was the
+readiness assessment's proposed name for work the queue already owned, and it needed an *unblock*,
+not an *enqueue*. The playbook's P4a stop rule ("if it touches a pinned hash, stop") was too blunt
+and is amended: hand-editing a pinned hash is always forbidden; changing a pinned file is legal only
+through a sanctioned re-derivation, if one exists.
+
 ### What was deliberately not done
 
 Nothing was enqueued. `delivery/WORK_QUEUE.yaml`, `LOOP_STATE.yaml`, `CAPABILITY_STATUS.yaml` and

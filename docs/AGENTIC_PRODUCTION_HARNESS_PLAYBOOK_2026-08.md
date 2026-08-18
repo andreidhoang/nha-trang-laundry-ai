@@ -500,11 +500,22 @@ nothing in the repository will catch it.** The string appears in no test: not
 system behaviour, rendered in the UI, with zero coverage — the same class of defect the whole
 governance layer exists to prevent, sitting in the one layer the governance layer does not reach.
 
-Two things follow, and both are cheap. **Contract-test the disclosure copy against the brain
-implementation**, so that swapping the brain fails a test until the sentence changes. And more
-generally: **UI disclosure strings are compliance surface in this system, and should be governed like
-contracts, not like copy.** There are others — the assistant screen alone renders four factual claims
-about what the system does not do.
+**And it is not one string — that framing was under-measured too.** Counting the values of
+`guardrail:`, `missing:`, `why:`, `screen__lede` and `notice` across `apps/web/src` gives **58
+disclosure slots**, concentrated in `gaps.js` (19) and `rbac.js` (15). **None appears in
+`test_staff_console_contract.py` or `verify_console_interaction.py`** — the console's entire safety
+net, since `apps/web` has no unit tests at 12,830 lines. Coverage is zero across the set.
+
+The UX spec already says what these are: *"The honesty chrome … is spec-mandated and
+contract-adjacent."* So the repository has classified them correctly and then tested none of them.
+
+The fix is not a test for the sentence someone happened to notice. It is a **disclosure registry**
+that binds each rendered claim to the code fact making it true — `assistant.js:487` binds to
+`AssistantService` defaulting to `DeterministicAssistantBrain` — plus a check that fails when the
+fact changes and the string does not. Packet: `context/tasks/TASK-disclosure-contract-001.md`.
+
+The general rule, which is the part worth carrying to any agentic product: **UI disclosure strings
+are compliance surface, and should be governed like contracts, not like copy.**
 
 ---
 
@@ -515,20 +526,44 @@ before they were needed. `AssistantBrain` is a one-method protocol. `Constrained
 replaceable implementation behind a bounded FSM. The Tool Facade is ten typed operations with a real
 backend and a safe default. All three are the shape you want.
 
-The measured gap is contract coverage, and it is small enough to fix in one item:
+The measured gap is contract coverage, and **it is not small** — the first version of this section
+said it was, and that was wrong by a factor of eighteen.
 
-**Two routes the console calls in production appear nowhere under `specs/`.**
+**Corrected by measurement, 2026-08-18.** Parsing the route decorators out of `apps/api/` and the
+fenced block under `specs/DOMAIN_DATA_API_SPEC_V1.md` §13.4, with path parameters normalised:
 
-| Route | Defined | Called | In `specs/` |
-|---|---|---|---|
-| `GET /internal/v1/stores/{id}/settlements/today` | `apps/api/.../main.py:1074` | `today.js:234` | **no** |
-| `GET /internal/v1/pricebook/services` | `apps/api/.../main.py:1118` | `quotes.js:535` | **no** |
+| Direction | Measured |
+|---|---:|
+| Routes served under `/internal/v1` | **38** (17 `GET`, 21 write) |
+| …named anywhere in the specification | **1** |
+| Endpoints the specification names in §13.4 | **20** |
+| …actually implemented | **2** |
+
+The two halves mean different things. The **18 specified-but-unbuilt** endpoints are expected: they
+are the command surface for the eight bounded contexts the readiness assessment measures as empty —
+payments, remedies, credits, custody, delivery legs, invoicing. A route cannot precede the aggregate
+it mutates.
+
+The **37 built-but-unspecified** routes are the gap, and they include routes that move money and
+identity: `POST .../quotes`, `POST .../settlement`, `POST .../staff/{id}/roles`,
+`POST /internal/v1/auth/session`.
+
+**What the first version of this section got wrong.** It named two routes —
+`GET .../settlements/today` (`main.py:1074`, called at `today.js:234`) and
+`GET /internal/v1/pricebook/services` (`main.py:1118`, called at `quotes.js:535`) — and called the
+gap "small enough to fix in one item." Both facts were true; the framing was not. Those two are not
+anomalies, they are two members of a set of 37, and §13.4 documents **no `GET` route at all** because
+it is deliberately a *command* specification: "Use narrow commands, not generic CRUD for material
+state." Reading two absences as a documentation slip, rather than counting the set, would have
+produced a fix that left 35 ungoverned surfaces in place and a check mark next to the row.
 
 This matters more here than in a normal codebase, because `AGENTS.md` makes the machine-readable
 contracts normative and `CLAUDE.md` says contracts win over prose. A route with no contract is a route
-with no authority — nothing can validate it, no eval case can be generated against it, and the console
-depends on it. It is also the cleanest available example of the discipline: **when the contract is the
-authority, an undocumented route is not a documentation debt, it is an ungoverned surface.**
+with no authority — nothing validates it, no eval case can be generated against it, and the console
+depends on it. **When the contract is the authority, an undocumented route is not documentation debt;
+it is an ungoverned surface.** The packet is `context/tasks/TASK-spec-route-surface-001.md`, and its
+real deliverable is the check that fails when a route has no contract entry — the document is the
+by-product.
 
 The general rule for anything new on this boundary: the contract lands first, the route implements the
 contract, `verify_contracts.py` proves the pair, and only then does a screen call it.
@@ -624,9 +659,9 @@ the owner's. The `Actor` column is the point of the table.
 | # | Move | Actor | What it changes | Blocked by |
 |---:|---|---|---|---|
 | 1 | ~~Enqueue `EVAL-PUBLISH-001`~~ — **done 2026-08-18 as `EVAL-SYNTHETIC-COMBINATORIAL-001`** | **Agent, via controller unblock** | 0/1,300 → 669/1,300; first of five suite minima satisfied. No release blocker removed. | ~~nothing~~ done |
-| 2 | Contract the two undocumented routes (§6) | **Owner enqueues → agent builds** | Closes the ungoverned surface the console depends on | nothing |
+| 2 | `SPEC-ROUTE-SURFACE-001` — contract **all 38** internal routes, not the two §6 first named | **Owner enqueues → agent builds** | Closes 37 ungoverned surfaces, incl. money and identity routes | nothing |
 | 3 | Reconcile `AGENT-PIPELINE-001` with `main.py` — see the note below | **Owner decides: corrective item or narrowed evidence** | The pipeline becomes reachable in a running process for the first time | owner's call |
-| 4 | Contract-test the assistant's disclosure copy (§5.5) | **Owner enqueues → agent builds** | Makes a live compliance claim un-breakable in silence | nothing |
+| 4 | `DISCLOSURE-CONTRACT-001` — bind and test **all 58** disclosure slots, not the one §5.5 first named | **Owner enqueues → agent builds** | Makes live compliance claims un-breakable in silence | nothing |
 | 5 | Sign `DEC-013` (walk-in identity) | **Owner only** | The system can record its first customer | owner's answer |
 | 6 | Sign `DEC-015` (what a customer record is) | **Owner only** | Sets the boundary the acquisition work runs into on success | owner's answer |
 | 7 | Supply a Telegram bot token | **Owner only** | Proves inbound → envelope → runtime → draft → approval → outbound → receipt against a real provider | owner's account |

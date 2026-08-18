@@ -2,11 +2,10 @@
 # (DEC-001, DEC-002, DEC-003, DEC-004, DEC-010)
 
 **Date:** 2026-08-18
-**Status:** Decisions A, B, C, E ratified 2026-08-18 by the business owner against the
-recommendations in §§2, 3, 4, 6 — see `context/DECISION_REGISTRY.yaml` (DEC-001, DEC-002, DEC-003,
-DEC-010). **Decision D (DEC-004) remains OPEN** — the 24h report/response windows are accepted, but
-no compensation ceiling or staff-approval tier has been supplied; see §5. Signing does not itself
-publish configuration — see §0.
+**Status:** all five decisions (A, B, C, D, E) ratified 2026-08-18 by the business owner — see
+`context/DECISION_REGISTRY.yaml` (DEC-001, DEC-002, DEC-003, DEC-004, DEC-010). Decision D's three
+owner-supplied figures (§5) were supplied after this document's initial draft, which had deliberately
+left them blank. Signing does not itself publish configuration — see §0.
 **Trigger:** `DECISION-BUSINESS-001` (`delivery/WORK_QUEUE.yaml:1319-1352`), the queue item that bundles
 DEC-001–004, plus `DEC-010` (`context/tasks/TASK-settlement-001.md`), which SETTLEMENT-001 opened and
 explicitly left out of its own scope.
@@ -99,36 +98,34 @@ once the delivery-cost log exists.
 
 `CUSTOMER_SERVICE_POLICY_DRAFT.md` §7 marks this explicitly `CẦN CHỐT` (still to be finalized): the
 report window, rewash conditions, and — the part with real money attached — a compensation matrix.
-This is the one decision in this packet I am **not** comfortable reducing to a single recommended
-number, because a wrong ceiling is a real liability exposure, not a UX preference. What follows is the
-narrowest possible framing plus industry-typical reference points, not a number to rubber-stamp.
+This was the one decision in this packet not reduced to a single recommended number in the original
+draft, because a wrong ceiling is a real liability exposure, not a UX preference. The owner has since
+supplied the three figures directly (2026-08-18); they are recorded below and in the registry, not
+inferred from industry reference points.
 
-**Already effectively confirmed and low-risk to ratify as-is:**
+**Already confirmed, ratified as-is:**
 - Report window for visible defects: **24 hours** after receiving goods (already in the draft).
 - Store reviews and proposes an initial resolution within **24 hours** of a report (already in the
   draft).
 - Late-delivery credit: **>2 hours late by store fault → 10% credit on the next bill** (already
-  confirmed, already implemented per `specs/TEAM_REVIEW_REPORT_V1.md` P0 matrix row "Consent/STOP" —
-  actually see the same report's row "Post-approval edit" area; the 10% figure itself traces to
-  `CUSTOMER_SERVICE_POLICY_DRAFT.md` §5, worth a one-line reconfirmation, not a new decision).
+  confirmed in `CUSTOMER_SERVICE_POLICY_DRAFT.md` §5; reconfirmed here, not a new decision).
 
-**Genuinely open — needs the owner's number, not mine:**
-- **Rewash condition and window:** e.g., "free rewash offered when staff determines store fault,
-  requested within N days of pickup." N is not stated anywhere in the drafts.
-- **Compensation ceiling and approval tiers:** e.g., "staff may approve compensation up to X VND
-  without escalation; above X requires owner sign-off," and a basis for the amount itself — capped at
-  a multiple of the service price (common in-market practice is 5–10× the cleaning fee, since laundries
-  rarely insure for full replacement value) versus capped at a customer-declared item value (only
-  workable if declared-value intake is also adopted, which is currently `HUMAN`-gated per
-  `PRICEBOOK_V1.md` §1 for high-value items).
-- **Loss policy:** same shape as damage — the drafts say "hai bên thỏa thuận" (negotiated) with no
-  ceiling or method stated.
+**Owner-supplied 2026-08-18:**
+- **Rewash window:** free rewash may be requested within **7 days** of pickup, when staff determines
+  the store was at fault.
+- **Compensation ceiling:** capped at **5× the item's cleaning fee** — proportional to what the store
+  charged for that item, not its retail or replacement value.
+- **Staff-approval ceiling:** staff may approve compensation up to **100,000đ** without escalation;
+  above that, the owner must approve.
+- **Loss policy:** not covered by the figures above — the drafts still say "hai bên thỏa thuận"
+  (negotiated) with no ceiling or method stated. Treat loss as **not yet resolved** even though damage
+  now is; if a loss case reaches the 5×/100,000đ figures above by analogy, confirm that reading with
+  the owner before relying on it, since it was not explicitly asked.
 
-Recommendation on record: **do not sign a specific VND figure from this document alone.** Confirm the
-24-hour windows as written (low risk, already the working assumption), and separately decide the
-compensation ceiling and staff-approval tier with real numbers — this is worth five minutes of owner
-judgment rather than an inherited default, because it sets the shop's actual liability exposure per
-incident.
+Resolved 2026-08-18 with the owner's own figures above, not an inherited industry default — the
+distinction matters because this sets the shop's actual liability exposure per incident. Loss policy
+(as opposed to damage) is explicitly carried forward as unresolved; do not assume it inherits the
+same numbers without asking.
 
 ## 6. Decision E — DEC-010, settlement shapes beyond exact payment in full at handover
 
@@ -182,11 +179,12 @@ decision_c_dec_003_delivery_over_6km:
   decided_at: '2026-08-18'
 decision_d_dec_004_rewash_damage_compensation:
   report_window_confirmed: 24H_AS_DRAFTED
-  rewash_window_days:             # STILL OPEN — owner's number, no default
-  compensation_ceiling_vnd:       # STILL OPEN — owner's number, no default
-  staff_approval_ceiling_vnd:     # STILL OPEN — owner's number, no default
+  rewash_window_days: 7
+  compensation_ceiling_basis: 5X_ITEM_CLEANING_FEE
+  staff_approval_ceiling_vnd: 100000
+  loss_policy: NOT_RESOLVED   # negotiated case-by-case, no ceiling stated — distinct from damage above
   owner: BUSINESS_OWNER
-  decided_at:                     # not decided — DEC-004 stays OPEN in the registry
+  decided_at: '2026-08-18'
 decision_e_dec_010_settlement_shapes:
   answer: DEFER
   owner: BUSINESS_OWNER

@@ -48,11 +48,21 @@ decisions:
       exists.
   - id: DEC-004
     title: Rewash, loss, damage, compensation, and credit policy
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INCIDENT_RECEIPT]
     fail_closed_behavior: HUMAN_APPROVAL_REQUIRED
     source: specs/TEAM_REVIEW_REPORT_V1.md
+    resolved_at: '2026-08-18'
+    decision_record: docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md
+    resolution: >-
+      Owner ratified the 24h report/response windows already in the draft, plus three owner-supplied
+      figures the packet deliberately left blank: free rewash may be requested within 7 days of
+      pickup when staff determines store fault; loss/damage compensation is capped at 5x the item's
+      cleaning fee; staff may approve compensation up to 100,000đ without escalation, above which the
+      owner must approve. Loss policy (as opposed to damage) still defaults to case-by-case
+      negotiation with no separate ceiling stated; B2B contract pricing and credit limits remain out
+      of scope for this decision.
   - id: DEC-005
     title: Official production customer channel and supported provider path
     status: RESOLVED

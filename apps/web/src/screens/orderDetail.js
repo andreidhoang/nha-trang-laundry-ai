@@ -24,14 +24,17 @@
  * @module screens/orderDetail
  */
 
-import { isTruncated, request } from "../core/api.js";
+import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UNKNOWN, count, dateTime, shortId } from "../core/format.js";
+import { UNKNOWN, UUID, count, dateTime, money, shortId } from "../core/format.js";
 import { enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
+import { navigate } from "../core/router.js";
 import {
   badge,
+  copyable,
+  dimensionBadge,
   empty,
   errorNotice,
   facts,
@@ -42,6 +45,9 @@ import {
   setResult,
   skeleton,
 } from "../ui/components.js";
+// A screen importing a screen, deliberately: this is the WS6 order-detail-to-incidents
+// carry-over channel (in-memory module state, cleared on consumption), not a shared helper.
+import { setIncidentOrderPrefill } from "./incidents.js";
 
 const BOARD_LIMIT = 100;
 
@@ -53,22 +59,6 @@ const BOARD_LIMIT = 100;
  * only disclose.
  */
 const AUDIT_LIMIT = 100;
-
-/** Loose UUID shape — the route parameter is user-controlled text until proven otherwise. */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * One state dimension, as a neutral badge.
- *
- * Uncoloured for the same reason as on the board: ranking the severity of a domain state is a
- * domain judgement, and this console does not hold one. The enum value carries the meaning.
- *
- * @param {string|null|undefined} value
- * @returns {HTMLElement}
- */
-function dimensionBadge(value) {
-  return badge({ token: enumLabel(value), gloss: "", state: "neutral" });
-}
 
 /**
  * One audit row.
@@ -82,7 +72,7 @@ function auditRow(entry) {
     { class: "card" },
     facts([
       ["Thời điểm", dateTime(entry.occurred_at)],
-      ["Hành động", entry.action || UNKNOWN, { mono: true }],
+      ["Hành động", enumLabel(entry.action), { mono: true }],
       [
         "Tác nhân",
         h(
@@ -148,6 +138,11 @@ function auditTimeline(entries) {
 function settlementPanel(spec) {
   const draft = { amount: "", collected: false };
   const result = resultLine();
+  const errorHost = h("div");
+  // Minted on first use, retired on any edit and after a commit: a corrected amount is a new
+  // intent, and replaying the old key with new content is a 409, not a replay. A fixed key would
+  // leave an operator whose first attempt the server recorded with no way forward at all.
+  const submission = new Submission("settlement");
 
   /** @param {SubmitEvent} event */
   async function submit(event) {
@@ -158,48 +153,49 @@ function settlementPanel(spec) {
       return;
     }
     setResult(result, "warn", "Đang ghi nhận…");
+    render(errorHost);
     try {
       const recorded = await request(
         `/internal/v1/orders/${encodeURIComponent(spec.orderId)}/settlement`,
         {
           method: "POST",
           body: { paid_amount_vnd: amount, collected_by_customer: draft.collected },
-          idempotencyKey: `settlement-${spec.orderId}`,
+          idempotencyKey: submission.key(),
         },
       );
+      submission.reset();
       setResult(
         result,
         "ok",
-        `Đã ghi nhận ${recorded.paid_amount_vnd.toLocaleString("vi-VN")} ₫ đúng bằng tổng đã báo. ` +
+        `Đã ghi nhận ${money(recorded.paid_amount_vnd)} đúng bằng tổng đã báo. ` +
           "Công nợ chuyển sang PAID và đã ghi nhận khách tự lấy đồ.",
       );
       spec.onRecorded();
     } catch (error) {
-      // A NOT_SUPPORTED refusal names the decision that is still open. Showing it is the whole
-      // point: a staff member who is told only "không được" goes and finds a workaround.
-      setResult(
-        result,
-        error.kind === "NOT_SUPPORTED" ? "warn" : "danger",
-        error.detail && error.detail.reason_code
-          ? `Chưa hỗ trợ: ${error.detail.reason_code} — đang chờ quyết định ${error.detail.decision}.`
-          : error.message,
-      );
+      // A refusal names the open decision that owns it and is shown verbatim, never translated
+      // into "thử lại" — a staff member told only "không được" goes and finds a workaround. The
+      // key is kept so an unchanged resend replays; any edit mints a fresh one (see the inputs).
+      setResult(result, "danger", error.message);
+      render(errorHost, errorNotice(error));
     }
   }
 
   const amountInput = h("input", {
     type: "text",
-    inputMode: "numeric",
+    inputmode: "numeric",
     autocomplete: "off",
     placeholder: "110000",
     onInput: (event) => {
       draft.amount = /** @type {HTMLInputElement} */ (event.target).value;
+      // Any edit is a new intent; the old key would be a 409 against the new payload.
+      submission.reset();
     },
   });
   const collectedInput = h("input", {
     type: "checkbox",
     onChange: (event) => {
       draft.collected = /** @type {HTMLInputElement} */ (event.target).checked;
+      submission.reset();
     },
   });
 
@@ -242,6 +238,7 @@ function settlementPanel(spec) {
         ),
       ),
       result,
+      errorHost,
     ),
   });
 }
@@ -251,6 +248,7 @@ export function render_(context) {
   const store = storeId();
   const shadowVerdict = can(principal(), "SHADOW_READ");
   const settlementVerdict = can(principal(), "ORDERS_WRITE");
+  const incidentVerdict = can(principal(), "INCIDENTS_WRITE");
   const wellFormed = UUID.test(orderId);
 
   const orderHost = h("div", null, skeleton(1));
@@ -291,7 +289,7 @@ export function render_(context) {
                   "nên đơn này có thể nằm ngoài phạm vi đọc được. Đây không phải bằng chứng đơn " +
                   "không tồn tại."
                 : "Cửa hàng đang chọn không có đơn nào mang định danh này. Đơn có thể thuộc cửa " +
-                  "hàng khác — API không có route đọc một đơn theo định danh, nên không kiểm tra " +
+                  "hàng khác — máy chủ chưa có cách đọc một đơn theo định danh, nên không kiểm tra " +
                   "được điều đó từ đây.",
             ),
             h("p", { class: "hint mono" }, orderId),
@@ -306,7 +304,7 @@ export function render_(context) {
           "div",
           { class: "stack" },
           facts([
-            ["Mã đơn", orderId, { mono: true, span: true }],
+            ["Mã đơn", copyable({ value: orderId }), { mono: true, span: true }],
             ["Cửa hàng", found.store_id, { mono: true, span: true }],
             ["Thương mại", dimensionBadge(found.commercial)],
             ["Tiếp nhận", dimensionBadge(found.intake)],
@@ -391,7 +389,7 @@ export function render_(context) {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "GHÉP TỪ BẢNG ĐƠN · API KHÔNG CÓ ROUTE ĐỌC MỘT ĐƠN"),
+      h("p", { class: "eyebrow" }, "Ghép từ bảng đơn · máy chủ chưa có cách đọc một đơn riêng lẻ"),
       h("h1", null, "Chi tiết đơn"),
       h(
         "p",
@@ -401,10 +399,10 @@ export function render_(context) {
       h("p", null, h("a", { href: "#/orders" }, "← Về bảng đơn")),
     ),
     panel({
-      eyebrow: "TRẠNG THÁI",
+      eyebrow: "Trạng thái",
       title: "Đơn này",
       guardrail:
-        "API không có route đọc một đơn. Màn hình này gọi lại bảng đơn của cửa hàng và lọc theo " +
+        "Máy chủ chưa có cách đọc một đơn riêng lẻ. Màn hình này gọi lại bảng đơn của cửa hàng và lọc theo " +
         `mã trong địa chỉ, nên chỉ thấy được ${BOARD_LIMIT} đơn mới nhất. Ngoài bốn trạng thái và ` +
         "phiên bản dòng, máy chủ không trả thêm gì về một đơn — không khách hàng, không mốc thời " +
         "gian, không tiền.",
@@ -412,12 +410,38 @@ export function render_(context) {
         "div",
         { class: "stack" },
         orderHost,
-        h("p", null, h("a", { href: "#/gaps" }, "Xem khoảng trống: read model chi tiết đơn")),
+        // WS6 cross-link: hand the order id to the incident form through the incidents
+        // module's in-memory slot and navigate there. Shown whenever the address holds a
+        // well-formed id — an order outside the newest hundred board rows still needs an
+        // incident opened against it — and gated like any other write control, with the
+        // denial reason visible.
+        wellFormed
+          ? h(
+              "div",
+              { class: "row" },
+              gated(
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    dataVariant: "quiet",
+                    onClick: () => {
+                      setIncidentOrderPrefill(orderId);
+                      navigate("/incidents");
+                    },
+                  },
+                  "Mở sự cố cho đơn này",
+                ),
+                incidentVerdict,
+              ),
+            )
+          : null,
+        h("p", null, h("a", { href: "#/gaps" }, "Xem khoảng trống: đọc chi tiết một đơn riêng lẻ")),
       ),
     }),
     settlementPanel({ orderId, verdict: settlementVerdict, onRecorded: () => void loadOrder() }),
     panel({
-      eyebrow: "KIỂM TOÁN",
+      eyebrow: "Kiểm toán",
       title: "Dòng thời gian",
       count: timelineCount,
       guardrail:

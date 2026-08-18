@@ -22,27 +22,33 @@
  *     useful than a greyed-out option that explains nothing.
  *   - **A stale version is not a retry.** Re-sending the same `If-Match` can never succeed, so the
  *     offer is to reload the board, not to try again.
+ *   - **The toolbar's filter narrows, it does not interpret.** Reload is a plain re-read, stamped
+ *     with its fetch time; the text box string-matches the id and the four state enums of rows
+ *     already fetched and computes nothing, so it cannot grow into the second copy of a domain
+ *     rule the transition-table note above warns against.
  *
  * @module screens/orders
  */
 
-import { MAX_LIMIT, Submission, isTruncated, request } from "../core/api.js";
+import { MAX_LIMIT, Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { count, shortId } from "../core/format.js";
+import { UUID, shortId } from "../core/format.js";
 import { enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
-  badge,
-  empty,
+  dimensionBadge,
   enumSelect,
   errorNotice,
+  explain,
   facts,
   gated,
   labelled,
+  listView,
   panel,
   resultLine,
-  skeleton,
+  revealError,
+  setResult,
 } from "../ui/components.js";
 
 const LIST_LIMIT = 100;
@@ -72,26 +78,8 @@ const COMMERCIAL_TARGETS = [
   "COMPLETED",
 ];
 
-/** Loose UUID shape — matched here only to catch a mistyped identifier before a round trip. */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /** `OrderCreateRequest.quote_snapshot_hash`, exactly as the server's pattern spells it. */
 const SNAPSHOT_HASH = /^JCS-SHA256-V1:[0-9a-f]{64}$/;
-
-/**
- * One state dimension, as a neutral badge.
- *
- * Deliberately uncoloured. Colouring `EXCEPTION` red and `PAID` green would be this console
- * ranking the severity of domain states, and nothing in the specification ranks them — the server
- * publishes the value, not an opinion about it. `components.css` already says state is never
- * conveyed by colour alone; here the word is the whole message, so the word is all there is.
- *
- * @param {string|null|undefined} value a server enum value
- * @returns {HTMLElement}
- */
-function dimensionBadge(value) {
-  return badge({ token: enumLabel(value), gloss: "", state: "neutral" });
-}
 
 /**
  * One order on the board.
@@ -144,20 +132,6 @@ function orderCard(item, options = {}) {
 }
 
 /**
- * @param {any[]} items
- * @param {(item: any) => void} onTransition
- * @returns {HTMLElement}
- */
-function orderList(items, onTransition) {
-  if (!items.length) return empty("Chưa có đơn nào trong cửa hàng này.");
-  return h(
-    "div",
-    { class: "stack" },
-    items.map((item) => orderCard(item, { onTransition })),
-  );
-}
-
-/**
  * The standing note about what the order read model does not contain.
  *
  * Kept as a component rather than a sentence in the panel because the same honesty is owed on the
@@ -166,10 +140,8 @@ function orderList(items, onTransition) {
  * @returns {HTMLElement}
  */
 function readModelNotice() {
-  return h(
-    "div",
-    { class: "notice", dataState: "info" },
-    h("p", { class: "notice__title" }, "Bảng đơn chỉ mang trạng thái và phiên bản dòng"),
+  return explain(
+    "Vì sao bảng đơn chỉ có trạng thái và phiên bản dòng?",
     h(
       "p",
       null,
@@ -220,9 +192,41 @@ export function render_(_context) {
   const moveResultHost = h("div", { class: "stack" });
   const moveResult = resultLine();
 
-  const listHost = h("div", null, skeleton(3));
-  const listCount = h("span", { class: "count" }, "…");
-  const truncation = h("p", { class: "hint" });
+  /** @param {any} item an `OrderResponse` picked off the board for a transition */
+  const pickOrder = (item) => {
+    move.orderId = item.order_id;
+    move.rowVersion = String(item.row_version);
+    redrawMove();
+    moveBody.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+
+  /**
+   * The board. The filter narrows the rows exactly as last fetched and never refetches, so the
+   * "M fetched" in the status line and the truncation disclosure stay about the server's answer,
+   * not about what happens to be visible. The match is a case-insensitive substring test over the
+   * values the row already renders — the order id and the four state enums, verbatim.
+   */
+  const board = listView({
+    limit: LIST_LIMIT,
+    fetch: () =>
+      request(`/internal/v1/stores/${encodeURIComponent(store)}/orders?limit=${LIST_LIMIT}`),
+    renderItem: (item) => orderCard(item, { onTransition: pickOrder }),
+    emptyText: "Chưa có đơn nào trong cửa hàng này.",
+    clearMetaOnError: true,
+    truncationText: (limit) =>
+      `Máy chủ trả tối đa ${limit} bản ghi và đã trả đủ; có thể còn nữa. API này không ` +
+      `có phân trang và không có con trỏ; trần cứng phía máy chủ là ${MAX_LIMIT}.`,
+    filter: {
+      placeholder: "Lọc theo mã đơn hoặc trạng thái…",
+      label: "Lọc bảng đơn",
+      noun: "đơn",
+      matches: (item, needle) =>
+        [item.order_id, item.commercial, item.intake, item.production, item.balance].some(
+          (value) => String(value).toLowerCase().includes(needle),
+        ),
+      filteredEmptyText: "Không có đơn nào khớp bộ lọc.",
+    },
+  });
 
   /** Any structural change to the transition form invalidates its key and redraws it. */
   const redrawMove = () => {
@@ -230,41 +234,14 @@ export function render_(_context) {
     render(moveBody, moveForm());
   };
 
-  async function loadList() {
-    render(listHost, skeleton(3));
-    try {
-      const items = await request(
-        `/internal/v1/stores/${encodeURIComponent(store)}/orders?limit=${LIST_LIMIT}`,
-      );
-      listCount.textContent = count(items, LIST_LIMIT);
-      truncation.textContent = isTruncated(items, LIST_LIMIT)
-        ? `Máy chủ trả tối đa ${LIST_LIMIT} bản ghi và đã trả đủ; có thể còn nữa. API này không ` +
-          `có phân trang và không có con trỏ; trần cứng phía máy chủ là ${MAX_LIMIT}.`
-        : "";
-      render(
-        listHost,
-        orderList(items, (item) => {
-          move.orderId = item.order_id;
-          move.rowVersion = String(item.row_version);
-          redrawMove();
-          moveBody.scrollIntoView({ block: "start", behavior: "smooth" });
-        }),
-      );
-    } catch (error) {
-      listCount.textContent = "—";
-      truncation.textContent = "";
-      render(listHost, errorNotice(error, { onRetry: () => void loadList() }));
-    }
-  }
-
   // --- create ---------------------------------------------------------------------------------
 
   /**
    * @returns {string} an empty string when the draft is submittable
    */
   function validateCreate() {
-    if (!UUID.test(draft.contactId.trim())) return "Bound contact id phải là một UUID.";
-    if (!UUID.test(draft.quoteId.trim())) return "Quote id phải là một UUID.";
+    if (!UUID.test(draft.contactId.trim())) return "Mã liên hệ đã ràng buộc phải là một UUID.";
+    if (!UUID.test(draft.quoteId.trim())) return "Mã báo giá phải là một UUID.";
     const revision = Number.parseInt(draft.revision.trim(), 10);
     if (!Number.isInteger(revision) || revision < 1) return "Bản báo giá phải là số nguyên từ 1.";
     if (!SNAPSHOT_HASH.test(draft.hash.trim())) {
@@ -286,15 +263,13 @@ export function render_(_context) {
     event.preventDefault();
 
     if (!writeVerdict.allowed) {
-      createResult.dataset.state = "danger";
-      createResult.textContent = writeVerdict.reason;
+      setResult(createResult, "danger", writeVerdict.reason);
       return;
     }
 
     const problem = validateCreate();
     if (problem) {
-      createResult.dataset.state = "danger";
-      createResult.textContent = problem;
+      setResult(createResult, "danger", problem);
       return;
     }
 
@@ -311,8 +286,7 @@ export function render_(_context) {
       customer_final_quote_accepted_at: new Date(draft.acceptedAt).toISOString(),
     };
 
-    createResult.dataset.state = "warn";
-    createResult.textContent = "Đang gửi lệnh tạo đơn…";
+    setResult(createResult, "warn", "Đang gửi lệnh tạo đơn…");
     render(createResultHost);
 
     try {
@@ -323,8 +297,7 @@ export function render_(_context) {
       });
       // Confirmed exactly once, here. The next submission is a new intent and gets a new key.
       createSubmission.reset();
-      createResult.dataset.state = "ok";
-      createResult.textContent = `Đã tạo đơn ${shortId(created.order_id)}.`;
+      setResult(createResult, "ok", `Đã tạo đơn ${shortId(created.order_id)}.`);
       render(createResultHost, orderCard(created));
       // The quote-bound fields are cleared and the form rebuilt, so a second tap on a form that
       // still looks armed cannot mint a second order under a fresh key. An order is not a quote
@@ -333,14 +306,18 @@ export function render_(_context) {
       draft.hash = "";
       draft.acceptedAt = "";
       render(createBody, createForm());
-      await loadList();
+      await board.reload();
     } catch (error) {
-      createResult.dataset.state = error.kind === "REQUIRE_HUMAN" ? "warn" : "danger";
-      createResult.textContent =
+      setResult(
+        createResult,
+        error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
         error.kind === "REQUIRE_HUMAN"
           ? "Cần người quyết định trước khi tạo đơn. Không có đơn nào được tạo."
-          : "Không tạo được đơn. Máy chủ nêu lý do bên dưới, nguyên văn.";
-      render(createResultHost, errorNotice(error));
+          : "Không tạo được đơn. Máy chủ nêu lý do bên dưới, nguyên văn.",
+      );
+      const notice = errorNotice(error);
+      render(createResultHost, notice);
+      revealError(notice);
     }
   }
 
@@ -425,10 +402,8 @@ export function render_(_context) {
     return h(
       "form",
       { class: "form", onSubmit: submitCreate },
-      h(
-        "div",
-        { class: "notice", dataState: "warn" },
-        h("p", { class: "notice__title" }, "Lệnh này sẽ bị từ chối cho tới khi có đường duyệt giá"),
+      explain(
+        "Lệnh tạo đơn sẽ bị từ chối cho tới khi có đường duyệt giá — vì sao?",
         h(
           "p",
           null,
@@ -448,13 +423,13 @@ export function render_(_context) {
       ),
       labelled({
         id: "order-contact",
-        label: "Bound contact id",
-        hint: "UUID của ràng buộc liên hệ đã xác thực. Màn hình này không tra cứu được khách hàng — API không có route đọc liên hệ.",
+        label: "Mã liên hệ đã ràng buộc (contact_id)",
+        hint: "UUID của ràng buộc liên hệ đã xác thực. Màn hình này không tra cứu được khách hàng — hệ thống chưa có đường đọc liên hệ.",
         control: contactInput,
       }),
       labelled({
         id: "order-quote",
-        label: "Quote id",
+        label: "Mã báo giá (quote_id)",
         hint: "UUID của báo giá đã được khách chốt.",
         control: quoteInput,
       }),
@@ -492,7 +467,7 @@ export function render_(_context) {
    * @returns {string} an empty string when the command is submittable
    */
   function validateMove() {
-    if (!UUID.test(move.orderId.trim())) return "Order id phải là một UUID.";
+    if (!UUID.test(move.orderId.trim())) return "Mã đơn phải là một UUID.";
     const version = Number.parseInt(move.rowVersion.trim(), 10);
     if (!Number.isInteger(version) || version < 1) {
       return "Phiên bản dòng phải là số nguyên từ 1. Chọn lại đơn từ bảng để lấy đúng giá trị.";
@@ -507,20 +482,17 @@ export function render_(_context) {
     event.preventDefault();
 
     if (!writeVerdict.allowed) {
-      moveResult.dataset.state = "danger";
-      moveResult.textContent = writeVerdict.reason;
+      setResult(moveResult, "danger", writeVerdict.reason);
       return;
     }
 
     const problem = validateMove();
     if (problem) {
-      moveResult.dataset.state = "danger";
-      moveResult.textContent = problem;
+      setResult(moveResult, "danger", problem);
       return;
     }
 
-    moveResult.dataset.state = "warn";
-    moveResult.textContent = "Đang gửi lệnh chuyển trạng thái…";
+    setResult(moveResult, "warn", "Đang gửi lệnh chuyển trạng thái…");
     render(moveResultHost);
 
     try {
@@ -538,20 +510,26 @@ export function render_(_context) {
       // server just returned rather than leaving a value that would produce a STALE on the next
       // command for no reason the operator could see.
       move.rowVersion = String(moved.row_version);
-      moveResult.dataset.state = "ok";
-      moveResult.textContent = `Đã chuyển sang ${moved.commercial}, phiên bản dòng v${moved.row_version}.`;
+      setResult(
+        moveResult,
+        "ok",
+        `Đã chuyển sang ${enumLabel(moved.commercial)}, phiên bản dòng v${moved.row_version}.`,
+      );
       render(moveResultHost, orderCard(moved));
       render(moveBody, moveForm());
-      await loadList();
+      await board.reload();
     } catch (error) {
-      moveResult.dataset.state = error.kind === "REQUIRE_HUMAN" ? "warn" : "danger";
-      moveResult.textContent =
+      setResult(
+        moveResult,
+        error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
         error.kind === "REQUIRE_HUMAN"
           ? "Cần người duyệt trước khi chuyển. Trạng thái đơn không đổi."
-          : "Máy chủ từ chối chuyển trạng thái. Trạng thái đơn không đổi.";
+          : "Máy chủ từ chối chuyển trạng thái. Trạng thái đơn không đổi.",
+      );
+      const notice = errorNotice(error);
       render(
         moveResultHost,
-        errorNotice(error),
+        notice,
         // A stale version can never be fixed by repeating the same command: the `If-Match` in hand
         // is already wrong. The only useful offer is a fresh board.
         error.kind === "STALE" || error.kind === "PRECONDITION_REQUIRED"
@@ -565,7 +543,7 @@ export function render_(_context) {
                   onClick: () => {
                     move.rowVersion = "";
                     redrawMove();
-                    void loadList();
+                    void board.reload();
                   },
                 },
                 "Tải lại bảng",
@@ -573,6 +551,7 @@ export function render_(_context) {
             )
           : null,
       );
+      revealError(notice);
     }
   }
 
@@ -623,7 +602,7 @@ export function render_(_context) {
       { class: "form", onSubmit: submitMove },
       labelled({
         id: "move-order",
-        label: "Order id",
+        label: "Mã đơn hàng (order_id)",
         hint: "Bấm “Chọn để chuyển trạng thái” trên một đơn ở bảng bên dưới để điền sẵn ô này và phiên bản dòng.",
         control: orderInput,
       }),
@@ -646,7 +625,7 @@ export function render_(_context) {
 
   render(createBody, createForm());
   render(moveBody, moveForm());
-  void loadList();
+  void board.reload();
 
   return h(
     "section",
@@ -654,7 +633,7 @@ export function render_(_context) {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "BỐN TRỤC TRẠNG THÁI · MÁY CHỦ QUYẾT CHUYỂN ĐỔI"),
+      h("p", { class: "eyebrow" }, "Bốn trục trạng thái"),
       h("h1", null, "Đơn hàng"),
       h(
         "p",
@@ -664,7 +643,25 @@ export function render_(_context) {
       ),
     ),
     panel({
-      eyebrow: "LỆNH",
+      eyebrow: "Đã ghi",
+      title: "Bảng đơn của cửa hàng",
+      count: board.count,
+      guardrail:
+        "Bốn trục — thương mại, tiếp nhận, sản xuất, công nợ — chuyển động độc lập với nhau. Một " +
+        "đơn CONFIRMED vẫn có thể đang NOT_STARTED và UNPAID cùng lúc. Đừng đọc bốn nhãn như một " +
+        "chuỗi tuần tự.",
+      children: h(
+        "div",
+        { class: "stack" },
+        board.bar.node,
+        board.filterStatus,
+        readModelNotice(),
+        board.truncation,
+        board.host,
+      ),
+    }),
+    panel({
+      eyebrow: "Lệnh",
       title: "Chuyển trạng thái thương mại",
       guardrail:
         "Màn hình này không biết chuyển đổi nào hợp lệ và cố ý không biết. Bảng chuyển trạng thái " +
@@ -673,22 +670,12 @@ export function render_(_context) {
       children: h("div", { class: "stack" }, moveBody, moveResultHost),
     }),
     panel({
-      eyebrow: "LỆNH",
+      eyebrow: "Lệnh",
       title: "Tạo đơn từ báo giá đã chốt",
       guardrail:
         "Đơn chỉ được tạo từ một báo giá đã chốt tuyệt đối. Máy chủ kiểm lại toàn bộ điều kiện; " +
         "màn hình này chỉ kiểm dạng dữ liệu để bắt lỗi gõ trước khi gửi.",
       children: h("div", { class: "stack" }, createBody, createResultHost),
-    }),
-    panel({
-      eyebrow: "ĐÃ GHI",
-      title: "Bảng đơn của cửa hàng",
-      count: listCount,
-      guardrail:
-        "Bốn trục — thương mại, tiếp nhận, sản xuất, công nợ — chuyển động độc lập với nhau. Một " +
-        "đơn CONFIRMED vẫn có thể đang NOT_STARTED và UNPAID cùng lúc. Đừng đọc bốn nhãn như một " +
-        "chuỗi tuần tự.",
-      children: h("div", { class: "stack" }, readModelNotice(), truncation, listHost),
     }),
   );
 }

@@ -102,11 +102,13 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/stores",
         "/internal/v1/stores/{}/orders",
         "/internal/v1/stores/{}/quotes",
+        "/internal/v1/stores/{}/order-requests",
         "/internal/v1/stores/{}/incidents",
         "/internal/v1/approvals",
         "/internal/v1/queue-recovery",
         "/internal/v1/stores/{}/shadow/drafts",
         "/internal/v1/shadow/unknown-sends",
+        "/internal/v1/stores/{}/assistant/turns",
     }
     missing = sorted(required - referenced)
     assert not missing, f"no screen calls these routes any more: {missing}"

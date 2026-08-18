@@ -16,26 +16,37 @@
  *     number here would show the top of a range as a settled price.
  *   - **A refusal is a result, not an error.** A 422 carrying `REQUIRE_HUMAN` means the engine
  *     declined to guess. It is rendered as an outcome with its reason codes intact.
+ *   - **The order request is picked or prefilled, not pasted.** The common path is the Tiếp nhận
+ *     screen's "Báo giá ngay" link (`#/quotes?request=<id>`, resolved against the server before
+ *     the form binds it) or a pick from the recent-intake list below the form. A bare UUID field
+ *     remains as a collapsed fallback for recovery, because a copied id from another system is how
+ *     a quote lands on the wrong customer.
  *
  * @module screens/quotes
  */
 
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { count, dateTime, shortHash, shortId } from "../core/format.js";
+import { UUID, dateTime, shortHash, shortId } from "../core/format.js";
+import { enumLabel } from "../core/i18n.js";
 import { storeId } from "../core/session.js";
 import {
   amount,
-  empty,
+  badge,
+  copyable,
   enumSelect,
   errorNotice,
   facts,
+  icon,
   labelled,
+  listView,
   panel,
   priceStateBadge,
   pricingCliffNotice,
   reasonCodeList,
   resultLine,
+  revealError,
+  setResult,
   skeleton,
   warningBadges,
 } from "../ui/components.js";
@@ -47,6 +58,12 @@ const MAX_LINES = 20;
 
 /** `QuoteLineRequest.service_code` — matched here only to catch a typo before a round trip. */
 const SERVICE_CODE = /^[A-Z][A-Z0-9_]{1,62}$/;
+
+/**
+ * How many recent intakes the picker asks for. The endpoint caps at 100, so a full picker is a
+ * truncation the screen discloses rather than a total it poses as.
+ */
+const PICKER_LIMIT = 100;
 
 /**
  * One editable line. Kept as plain state rather than read from the DOM at submit time, so that the
@@ -81,9 +98,10 @@ function blankLine() {
  * @param {Line[]} options.lines
  * @param {() => void} options.onStructuralChange rebuild — the set of lines changed
  * @param {() => void} options.onValueChange a value changed; invalidates the idempotency key only
+ * @param {() => void} options.onAddLine Enter in a quantity field — same path as "Thêm dòng"
  * @returns {HTMLElement}
  */
-function lineEditor({ lines, onStructuralChange, onValueChange }) {
+function lineEditor({ lines, onStructuralChange, onValueChange, onAddLine }) {
   return h(
     "div",
     { class: "stack" },
@@ -137,6 +155,15 @@ function lineEditor({ lines, onStructuralChange, onValueChange }) {
           refreshCliff();
           onValueChange();
         },
+        // A keydown, not an input event: it never touches the value channel above, it only takes
+        // the structural path the "Thêm dòng" button takes. `preventDefault` keeps Enter inside a
+        // form from submitting the quote when the operator meant another line.
+        onKeydown: (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            onAddLine();
+          }
+        },
       });
 
       const unitSelect = enumSelect("unit", UNITS, line.unit);
@@ -179,7 +206,7 @@ function lineEditor({ lines, onStructuralChange, onValueChange }) {
         h(
           "div",
           { class: "stack stack--tight" },
-          labelled({ id: `${prefix}-code`, label: "Mã dịch vụ", control: codeInput }),
+          labelled({ id: `${prefix}-code`, label: "Mã dịch vụ", hint: "Mã trong bảng giá chủ tiệm đã chốt (PRICEBOOK_V1, 43 mã): STANDARD_WASH_DRY, DRY_WET_CLOTHES, DRY_BEDDING, BED_BLANKET, BED_TOPPER, BED_PILLOW, IRON_KNIT, IRON_TROUSERS_SHIRT…", control: codeInput }),
           labelled({
             id: `${prefix}-qty`,
             label: "Khối lượng / số lượng",
@@ -227,7 +254,7 @@ function revisionResult(result) {
     warningBadges([...(result.reason_codes || []), ...(result.required_approvals || [])]),
     facts([
       ["Mã báo giá", shortId(result.quote_id), { mono: true }],
-      ["Trạng thái", result.status, { mono: true }],
+      ["Trạng thái", enumLabel(result.status)],
       ["Phiên bản dòng", `v${result.row_version}`],
       [
         "Tổng hiển thị cho khách",
@@ -253,7 +280,18 @@ function revisionResult(result) {
         max: result.list_service_subtotal_vnd,
         finality: result.finality,
       }), { span: true }],
-      ["Mã băm ảnh chụp", shortHash(result.snapshot_hash), { mono: true, span: true }],
+      [
+        "Mã băm ảnh chụp",
+        // The order form needs this hash verbatim; the row shortens it for reading and the
+        // copy button carries the full string.
+        result.snapshot_hash
+          ? copyable({
+              value: String(result.snapshot_hash),
+              display: shortHash(result.snapshot_hash),
+            })
+          : shortHash(result.snapshot_hash),
+        { mono: true, span: true },
+      ],
     ]),
     reasonCodeList(result.reason_codes || []),
     result.required_approvals?.length
@@ -268,77 +306,85 @@ function revisionResult(result) {
 }
 
 /**
- * @param {any[]} items
+ * One quote on the list.
+ *
+ * @param {any} item
  * @param {(item: any) => void} onPickRevision
  * @returns {HTMLElement}
  */
-function quoteList(items, onPickRevision) {
-  if (!items.length) return empty("Chưa có báo giá nào trong cửa hàng này.");
+function quoteCard(item, onPickRevision) {
   return h(
-    "div",
-    { class: "stack" },
-    items.map((item) =>
+    "article",
+    { class: "card" },
+    h(
+      "div",
+      { class: "spread" },
+      h("strong", { class: "mono", title: item.quote_id }, shortId(item.quote_id)),
+      priceStateBadge(item.finality),
+    ),
+    facts([
+      ["Bản", `r${item.revision} · dòng v${item.row_version}`],
+      ["Trạng thái", enumLabel(item.status)],
+      [
+        "Tổng hiển thị",
+        amount({
+          min: item.display_total_min_vnd,
+          max: item.display_total_max_vnd,
+          finality: item.finality,
+          unknownLabel: "chưa có tổng",
+        }),
+        { span: true },
+      ],
+      ["Hiệu lực đến", dateTime(item.valid_until)],
+      [
+        "Ảnh chụp",
+        item.snapshot_hash
+          ? copyable({
+              value: String(item.snapshot_hash),
+              display: shortHash(item.snapshot_hash),
+            })
+          : shortHash(item.snapshot_hash),
+        { mono: true, span: true },
+      ],
+    ]),
+    h(
+      "div",
+      { class: "form__actions" },
       h(
-        "article",
-        { class: "card" },
-        h(
-          "div",
-          { class: "spread" },
-          h("strong", { class: "mono", title: item.quote_id }, shortId(item.quote_id)),
-          priceStateBadge(item.finality),
-        ),
-        facts([
-          ["Bản", `r${item.revision} · dòng v${item.row_version}`],
-          ["Trạng thái", item.status, { mono: true }],
-          [
-            "Tổng hiển thị",
-            amount({
-              min: item.display_total_min_vnd,
-              max: item.display_total_max_vnd,
-              finality: item.finality,
-              unknownLabel: "chưa có tổng",
-            }),
-            { span: true },
-          ],
-          ["Hiệu lực đến", dateTime(item.valid_until)],
-          ["Ảnh chụp", shortHash(item.snapshot_hash), { mono: true, span: true }],
-        ]),
-        h(
-          "div",
-          { class: "form__actions" },
-          h(
-            "button",
-            { type: "button", onClick: () => onPickRevision(item) },
-            "Thêm bản sửa đổi cho báo giá này",
-          ),
-        ),
+        "button",
+        { type: "button", onClick: () => onPickRevision(item) },
+        "Thêm bản sửa đổi cho báo giá này",
       ),
     ),
   );
 }
 
 /**
+ * @param {import("../core/router.js").RouteContext} [context]
  * @returns {HTMLElement}
  */
-export function render_() {
+export function render_(context) {
   const store = storeId();
   const submission = new Submission("quote-create");
+  // The Tiếp nhận screen's "Báo giá ngay" lands here. The id is a claim until the server confirms
+  // it — `prefill` below resolves it before the form is allowed to rely on it.
+  const prefillId = String(context?.query?.get("request") || "").trim();
 
-  /** @type {{lines: Line[], orderRequestId: string, quoteId: string, expectedRevision: string, rowVersion: string}} */
+  /** @type {{lines: Line[], orderRequestId: string, quoteId: string, expectedRevision: string, rowVersion: string, requestSummary: any|null}} */
   const draft = {
     lines: [blankLine()],
     orderRequestId: "",
     quoteId: "",
     expectedRevision: "0",
     rowVersion: "",
+    requestSummary: null,
   };
 
   const builderBody = h("div");
   const resultHost = h("div", { class: "stack" });
   const result = resultLine();
-  const listHost = h("div", null, skeleton(2));
-  const listCount = h("span", { class: "count" }, "…");
-  const truncation = h("p", { class: "hint" });
+  const summaryHost = h("div");
+  const pickerHost = h("div", null, skeleton(2));
 
   // Any edit invalidates the idempotency key: the server hashes the payload alongside it, so
   // replaying the old key with changed content is a 409 rather than a replay. This is the whole
@@ -352,33 +398,224 @@ export function render_() {
     render(builderBody, buildForm());
   };
 
-  async function loadList() {
-    render(listHost, skeleton(2));
+  // The one structural path for adding a line — the button below and Enter in a quantity field
+  // both come through here.
+  const addLine = () => {
+    if (draft.lines.length >= MAX_LINES) return;
+    draft.lines.push(blankLine());
+    redrawBuilder();
+  };
+
+  const pickRevision = (item) => {
+    draft.quoteId = item.quote_id;
+    draft.expectedRevision = String(item.revision);
+    draft.rowVersion = String(item.row_version);
+    redrawBuilder();
+    builderBody.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+
+  // The recorded-quotes list. The filter narrows the rows already fetched and computes nothing —
+  // string matching over raw field values only (id, revision, finality); money fields are never
+  // read by it. While it narrows, the status line keeps both counts so a shortened list never
+  // reads as lost data.
+  const list = listView({
+    limit: LIST_LIMIT,
+    fetch: () =>
+      request(`/internal/v1/stores/${encodeURIComponent(store)}/quotes?limit=${LIST_LIMIT}`),
+    renderItem: (item) => quoteCard(item, pickRevision),
+    emptyText: "Chưa có báo giá nào trong cửa hàng này.",
+    skeletonRows: 2,
+    filterStatusHiddenWhenInactive: true,
+    filter: {
+      placeholder: "Lọc theo mã, bản, trạng thái…",
+      noun: "báo giá",
+      matches: (item, needle) =>
+        [item.quote_id, String(item.revision), item.finality].some(
+          (value) => value && String(value).toLowerCase().includes(needle),
+        ),
+    },
+  });
+
+  /**
+   * The intake the form is bound to, re-rendered in place rather than through `redrawBuilder` —
+   * a typed character in a line editor must never rebuild the form, and picking an intake is not
+   * a structural change to the lines.
+   */
+  function refreshSummary() {
+    const item = draft.requestSummary;
+    render(
+      summaryHost,
+      item
+        ? h(
+            "div",
+            { class: "notice", dataState: "info", id: "quote-request-summary" },
+            h(
+              "p",
+              { class: "notice__title" },
+              `Đang báo giá cho yêu cầu ${shortId(item.order_request_id)}`,
+            ),
+            h(
+              "p",
+              null,
+              `${enumLabel(item.status)} · tiếp nhận lúc ${dateTime(item.created_at)} · ` +
+                `liên hệ ${shortId(item.contact_binding_id)}`,
+            ),
+            h(
+              "div",
+              { class: "form__actions" },
+              h(
+                "button",
+                {
+                  type: "button",
+                  dataVariant: "quiet",
+                  onClick: () => {
+                    draft.orderRequestId = "";
+                    draft.requestSummary = null;
+                    invalidateKey();
+                    refreshSummary();
+                  },
+                },
+                "Bỏ chọn yêu cầu này",
+              ),
+            ),
+          )
+        : null,
+    );
+  }
+
+  /** Bind the form to an intake the server already returned. No fetch needed — the row is real. */
+  const pickRequest = (item) => {
+    draft.orderRequestId = item.order_request_id;
+    draft.requestSummary = item;
+    invalidateKey();
+    refreshSummary();
+    summaryHost.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+
+  /**
+   * The recent-intake picker. Its rows come from the same list endpoint the Tiếp nhận screen
+   * shows, so a row here is never a guess at an identifier.
+   */
+  function pickerList(items) {
+    if (!items.length) {
+      return h(
+        "div",
+        { class: "notice", dataState: "info" },
+        h(
+          "p",
+          null,
+          "Chưa có lượt tiếp nhận nào trong cửa hàng này. Tạo một lượt ở màn hình ",
+          h("a", { href: "#/order-requests" }, "Tiếp nhận"),
+          " rồi quay lại đây.",
+        ),
+      );
+    }
+    return h(
+      "div",
+      { class: "stack stack--tight" },
+      items.map((item) =>
+        h(
+          "div",
+          { class: "spread" },
+          h(
+            "span",
+            null,
+            h(
+              "strong",
+              { class: "mono", title: item.order_request_id },
+              shortId(item.order_request_id),
+            ),
+            ` · ${enumLabel(item.status)} · ${dateTime(item.created_at)}`,
+          ),
+          h(
+            "button",
+            { type: "button", dataVariant: "quiet", onClick: () => pickRequest(item) },
+            "Dùng yêu cầu này",
+          ),
+        ),
+      ),
+    );
+  }
+
+  async function loadPicker() {
+    render(pickerHost, skeleton(2));
     try {
       const items = await request(
-        `/internal/v1/stores/${encodeURIComponent(store)}/quotes?limit=${LIST_LIMIT}`,
+        `/internal/v1/stores/${encodeURIComponent(store)}/order-requests?limit=${PICKER_LIMIT}`,
       );
-      listCount.textContent = count(items, LIST_LIMIT);
-      truncation.textContent = isTruncated(items, LIST_LIMIT)
-        ? `Máy chủ trả tối đa ${LIST_LIMIT} bản ghi và đã trả đủ; có thể còn nữa. API này không có phân trang.`
-        : "";
       render(
-        listHost,
-        quoteList(items, (item) => {
-          draft.quoteId = item.quote_id;
-          draft.expectedRevision = String(item.revision);
-          draft.rowVersion = String(item.row_version);
-          redrawBuilder();
-          builderBody.scrollIntoView({ block: "start", behavior: "smooth" });
-        }),
+        pickerHost,
+        h(
+          "div",
+          { class: "stack stack--tight" },
+          pickerList(items),
+          isTruncated(items, PICKER_LIMIT)
+            ? h(
+                "p",
+                { class: "hint" },
+                `Chỉ ${PICKER_LIMIT} lượt tiếp nhận gần nhất hiện ở đây; máy chủ có thể còn nữa.`,
+              )
+            : null,
+        ),
       );
     } catch (error) {
-      render(listHost, errorNotice(error, { onRetry: () => void loadList() }));
+      render(pickerHost, errorNotice(error, { onRetry: () => void loadPicker() }));
+    }
+  }
+
+  /**
+   * Resolve a `?request=` claim against the server before binding the form to it. A 404 here is
+   * honest: the id may belong to another store or may have been mistyped, and the console cannot
+   * tell which — so it says exactly that and fills nothing in.
+   */
+  async function prefill(id) {
+    if (!UUID.test(id)) {
+      render(
+        summaryHost,
+        h(
+          "div",
+          { class: "notice", dataState: "warn", id: "quote-request-summary" },
+          h("p", { class: "notice__title" }, "Mã yêu cầu trong đường dẫn không hợp lệ"),
+          h("p", null, "Không có dữ kiện nào được điền sẵn; hãy chọn từ danh sách bên dưới."),
+        ),
+      );
+      return;
+    }
+    try {
+      const item = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/order-requests/${encodeURIComponent(id)}`,
+      );
+      draft.orderRequestId = item.order_request_id;
+      draft.requestSummary = item;
+      invalidateKey();
+      refreshSummary();
+    } catch (error) {
+      if (/** @type {any} */ (error).kind === "MISSING") {
+        render(
+          summaryHost,
+          h(
+            "div",
+            { class: "notice", dataState: "warn", id: "quote-request-summary" },
+            h("p", { class: "notice__title" }, "Không tìm thấy yêu cầu này trong cửa hàng đang chọn"),
+            h(
+              "p",
+              null,
+              "Mã có thể thuộc cửa hàng khác hoặc đã bị gõ sai — máy chủ trả lờ cùng một cách cho " +
+                "cả hai, nên màn hình này cũng không đoán. Không có dữ kiện nào được điền sẵn; " +
+                "hãy chọn từ danh sách bên dưới.",
+            ),
+          ),
+        );
+      } else {
+        render(summaryHost, errorNotice(/** @type {any} */ (error)));
+      }
     }
   }
 
   function validate() {
-    if (!draft.orderRequestId.trim()) return "Nhập Order request UUID.";
+    if (!draft.orderRequestId.trim()) {
+      return "Chọn một yêu cầu từ danh sách tiếp nhận, hoặc mở mục nâng cao để nhập mã.";
+    }
     if (draft.lines.length === 0) return "Cần ít nhất một dòng.";
     for (const [index, line] of draft.lines.entries()) {
       if (!SERVICE_CODE.test(line.serviceCode)) {
@@ -397,8 +634,7 @@ export function render_() {
     event.preventDefault();
     const problem = validate();
     if (problem) {
-      result.dataset.state = "danger";
-      result.textContent = problem;
+      setResult(result, "danger", problem);
       return;
     }
 
@@ -420,8 +656,7 @@ export function render_() {
         : {}),
     };
 
-    result.dataset.state = "warn";
-    result.textContent = "Đang gửi cho bộ tính giá…";
+    setResult(result, "warn", "Đang gửi cho bộ tính giá…");
     render(resultHost);
 
     try {
@@ -433,17 +668,19 @@ export function render_() {
       });
       // Confirmed exactly once, in one place. The next submission is a new intent.
       submission.reset();
-      result.dataset.state = "ok";
-      result.textContent = `Đã ghi bản sửa đổi ${created.revision}.`;
+      setResult(result, "ok", `Đã ghi bản sửa đổi ${created.revision}.`);
       render(resultHost, revisionResult(created));
-      await loadList();
+      await list.reload();
     } catch (error) {
-      result.dataset.state = error.kind === "REQUIRE_HUMAN" ? "warn" : "danger";
-      result.textContent =
+      setResult(
+        result,
+        error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
         error.kind === "REQUIRE_HUMAN"
           ? "Bộ tính giá từ chối đoán. Không có bản ghi nào được tạo."
-          : "Không tạo được bản sửa đổi.";
+          : "Không tạo được bản sửa đổi.",
+      );
       render(resultHost, errorNotice(error));
+      revealError(resultHost);
     }
   }
 
@@ -457,6 +694,8 @@ export function render_() {
       placeholder: "00000000-0000-0000-0000-000000000000",
       onInput: (event) => {
         draft.orderRequestId = event.target.value;
+        draft.requestSummary = null;
+        refreshSummary();
         submission.reset();
       },
     });
@@ -495,16 +734,34 @@ export function render_() {
             ),
           )
         : null,
-      labelled({
-        id: "quote-order-request",
-        label: "Order request UUID",
-        hint: "Mỗi order request chỉ có đúng một báo giá. Lần thứ hai máy chủ báo trùng và yêu cầu thêm bản sửa đổi.",
-        control: orderRequestInput,
-      }),
+      // The bare-UUID path survives as a collapsed recovery hatch, not the default: picking from
+      // Tiếp nhận or arriving with `?request=` binds a row the server returned, while a typed id
+      // is a claim nobody checked. Typing here clears any resolved summary, because the claim and
+      // the summary would no longer be about the same request.
+      h(
+        "details",
+        null,
+        h(
+          "summary",
+          { id: "quote-manual-toggle" },
+          "Nhập mã yêu cầu thủ công (nâng cao — thường không cần)",
+        ),
+        h(
+          "div",
+          { class: "stack stack--tight" },
+          labelled({
+            id: "quote-order-request",
+            label: "Mã yêu cầu đơn hàng (UUID)",
+            hint: "Mỗi yêu cầu đơn hàng chỉ có đúng một báo giá. Lần thứ hai máy chủ báo trùng và yêu cầu thêm bản sửa đổi.",
+            control: orderRequestInput,
+          }),
+        ),
+      ),
       lineEditor({
         lines: draft.lines,
         onStructuralChange: redrawBuilder,
         onValueChange: invalidateKey,
+        onAddLine: addLine,
       }),
       h(
         "div",
@@ -514,10 +771,7 @@ export function render_() {
               "button",
               {
                 type: "button",
-                onClick: () => {
-                  draft.lines.push(blankLine());
-                  redrawBuilder();
-                },
+                onClick: addLine,
               },
               "Thêm dòng",
             )
@@ -537,7 +791,9 @@ export function render_() {
   }
 
   render(builderBody, buildForm());
-  void loadList();
+  void loadPicker();
+  void list.reload();
+  if (prefillId) void prefill(prefillId);
 
   return h(
     "section",
@@ -545,7 +801,7 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "ẢNH CHỤP BẤT BIẾN · GIÁ DO MÁY CHỦ QUYẾT"),
+      h("p", { class: "eyebrow" }, "Ảnh chụp bất biến · Giá do máy chủ quyết"),
       h("h1", null, "Báo giá"),
       h(
         "p",
@@ -554,18 +810,47 @@ export function render_() {
       ),
     ),
     panel({
-      eyebrow: "LỆNH",
+      eyebrow: "Lệnh",
       title: "Tính giá cho một yêu cầu",
       guardrail:
         "Mọi con số bên dưới do bộ tính giá xác định. Nếu thiếu dữ kiện, máy chủ trả REQUIRE_HUMAN " +
         "thay vì đoán, và không có dòng nào được ghi.",
-      children: h("div", { class: "stack" }, builderBody, resultHost),
+      children: h(
+        "div",
+        { class: "stack" },
+        summaryHost,
+        h(
+          "div",
+          { class: "card" },
+          h(
+            "div",
+            { class: "spread" },
+            h("p", { class: "eyebrow" }, "Chọn từ tiếp nhận gần đây"),
+            h(
+              "button",
+              { type: "button", dataVariant: "quiet", onClick: () => void loadPicker() },
+              icon("refresh"),
+              "Tải lại",
+            ),
+          ),
+          pickerHost,
+        ),
+        builderBody,
+        resultHost,
+      ),
     }),
     panel({
-      eyebrow: "ĐÃ GHI",
+      eyebrow: "Đã ghi",
       title: "Báo giá của cửa hàng",
-      count: listCount,
-      children: h("div", { class: "stack" }, truncation, listHost),
+      count: list.count,
+      children: h(
+        "div",
+        { class: "stack" },
+        list.bar.node,
+        list.filterStatus,
+        list.truncation,
+        list.host,
+      ),
     }),
   );
 }

@@ -29,17 +29,21 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { shortId } from "../core/format.js";
+import { UUID, shortId } from "../core/format.js";
+import { enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal } from "../core/session.js";
 import {
+  copyable,
   enumSelect,
   errorNotice,
+  explain,
   facts,
   gated,
   labelled,
   panel,
   resultLine,
+  setResult,
 } from "../ui/components.js";
 
 /** `StaffRole`, in the order the database `CHECK` constraint lists them. */
@@ -50,9 +54,6 @@ const MAX_SUBJECT = 255;
 
 /** `staff_users.display_name CHECK (length BETWEEN 1 AND 200)`. */
 const MAX_DISPLAY_NAME = 200;
-
-/** Both command routes type the path parameter as `UUID`; anything else is a FastAPI 422. */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * A UUID input. Used by both of the forms that address an existing staff user.
@@ -120,8 +121,7 @@ function createStaffPanel(spec) {
     event.preventDefault();
     const problem = validate();
     if (problem) {
-      result.dataset.state = "danger";
-      result.textContent = problem;
+      setResult(result, "danger", problem);
       return;
     }
 
@@ -134,8 +134,7 @@ function createStaffPanel(spec) {
       email: email || null,
     };
 
-    result.dataset.state = "warn";
-    result.textContent = "Đang tạo nhân sự…";
+    setResult(result, "warn", "Đang tạo nhân sự…");
     render(resultHost);
 
     try {
@@ -146,8 +145,7 @@ function createStaffPanel(spec) {
       });
       // Confirmed exactly once, here. The next submission is a different person and a new intent.
       submission.reset();
-      result.dataset.state = "ok";
-      result.textContent = `Đã tạo nhân sự ${shortId(created.staff_user_id)}.`;
+      setResult(result, "ok", `Đã tạo nhân sự ${shortId(created.staff_user_id)}.`);
       render(resultHost, createdCard(created.staff_user_id, spec.onCreated));
       // The subject is what makes this person unique, so it is cleared: a second tap on a form that
       // still looks armed would hit the unique index and come back as a server fault, not a refusal.
@@ -155,11 +153,13 @@ function createStaffPanel(spec) {
       draft.email = "";
       render(body, form());
     } catch (error) {
-      result.dataset.state = "danger";
-      result.textContent =
+      setResult(
+        result,
+        "danger",
         error.kind === "FAULT"
           ? "Máy chủ lỗi khi tạo. Rất có thể OIDC subject này đã tồn tại — kiểm tra trước khi thử lại."
-          : "Không tạo được nhân sự.";
+          : "Không tạo được nhân sự.",
+      );
       render(resultHost, errorNotice(error));
     }
   }
@@ -219,7 +219,7 @@ function createStaffPanel(spec) {
       { class: "form", onSubmit: submit },
       labelled({
         id: "staff-create-subject",
-        label: "OIDC subject",
+        label: "Định danh OIDC (subject)",
         hint:
           "Định danh của người này ở nhà cung cấp đăng nhập. Phải là duy nhất trong toàn hệ thống. " +
           "Lưu ý vận hành: nếu subject đã có người dùng, máy chủ trả về lỗi máy chủ chứ không phải " +
@@ -248,11 +248,12 @@ function createStaffPanel(spec) {
   render(body, form());
 
   return panel({
-    eyebrow: "LỆNH · POST /internal/v1/staff",
+    eyebrow: "Lệnh · POST /internal/v1/staff",
     title: "Tạo nhân sự",
     guardrail:
       "Tạo xong là có danh tính, chưa có vai trò và chưa có cửa hàng. Người này chưa làm được gì " +
-      "cho tới khi được gán vai trò và được gán cửa hàng — và việc gán cửa hàng hiện chưa có API.",
+      "cho tới khi được gán vai trò và được gán cửa hàng — cả hai việc đó làm ngay trên màn hình " +
+      "này, ở các bảng Gán vai trò và Gán cửa hàng bên dưới, và chỉ chủ mới thực hiện được.",
     children: h("div", { class: "stack" }, body, resultHost),
   });
 }
@@ -269,11 +270,13 @@ function createdCard(staffUserId, onCarry) {
     "div",
     { class: "card stack" },
     h("h3", null, "Nhân sự mới"),
-    facts([["Mã nhân viên", String(staffUserId), { mono: true, span: true }]]),
+    facts([
+      ["Mã nhân viên", copyable({ value: String(staffUserId) }), { mono: true, span: true }],
+    ]),
     h(
       "p",
       { class: "hint" },
-      "Chép lại mã này. API không có route nào liệt kê hay tra cứu nhân sự, nên nếu mất mã thì hai " +
+      "Chép lại mã này. Máy chủ chưa có cách liệt kê hay tra cứu nhân sự, nên nếu mất mã thì hai " +
         "lệnh bên dưới không dùng được cho người này nữa.",
     ),
     h(
@@ -319,13 +322,11 @@ function assignRolePanel(spec) {
     event.preventDefault();
     const staffUserId = draft.staffUserId.trim();
     if (!UUID.test(staffUserId)) {
-      result.dataset.state = "danger";
-      result.textContent = "Mã nhân viên phải là UUID.";
+      setResult(result, "danger", "Mã nhân viên phải là UUID.");
       return;
     }
 
-    result.dataset.state = "warn";
-    result.textContent = "Đang gán vai trò…";
+    setResult(result, "warn", "Đang gán vai trò…");
     render(resultHost);
 
     try {
@@ -335,8 +336,7 @@ function assignRolePanel(spec) {
         idempotencyKey: submission.key(),
       });
       submission.reset();
-      result.dataset.state = "ok";
-      result.textContent = `Đã gán ${draft.role} cho ${shortId(staffUserId)}.`;
+      setResult(result, "ok", `Đã gán ${enumLabel(draft.role)} cho ${shortId(staffUserId)}.`);
       render(
         resultHost,
         h(
@@ -346,17 +346,19 @@ function assignRolePanel(spec) {
           h(
             "p",
             null,
-            "Không có route nào đọc lại vai trò của một nhân viên, nên bảng vận hành không thể xác " +
+            "Máy chủ chưa có cách đọc lại vai trò của một nhân viên, nên bảng vận hành không thể xác " +
               "nhận danh sách vai trò hiện tại của người này. Chỉ biết lệnh vừa rồi đã được nhận.",
           ),
         ),
       );
     } catch (error) {
-      result.dataset.state = error.kind === "DENIED" ? "warn" : "danger";
-      result.textContent =
+      setResult(
+        result,
+        error.kind === "DENIED" ? "warn" : "danger",
         error.kind === "MISSING"
           ? "Không có nhân viên đang hoạt động với mã này."
-          : "Không gán được vai trò.";
+          : "Không gán được vai trò.",
+      );
       render(resultHost, errorNotice(error));
     }
   }
@@ -391,15 +393,15 @@ function assignRolePanel(spec) {
       labelled({
         id: "staff-role-id",
         label: "Mã nhân viên",
-        hint: "UUID của người đã được tạo. Không có danh sách để chọn — API không có route đọc nhân sự.",
+        hint: "UUID của người đã được tạo. Không có danh sách để chọn — máy chủ chưa có cách đọc nhân sự.",
         control: idInput,
       }),
       labelled({
         id: "staff-role-role",
         label: "Vai trò",
         hint:
-          "Vai trò quyết định máy chủ cho phép những gì. OPERATOR và DRIVER không được bảo đảm có " +
-          "MFA, nên hai vai trò này vẫn bị từ chối ở các thao tác đòi MFA. Gán lại một vai trò " +
+          "Vai trò quyết định máy chủ cho phép những gì. OPERATOR và DRIVER không được bảo đảm đã " +
+          "xác thực hai bước, nên hai vai trò này vẫn bị từ chối ở các thao tác đòi xác thực hai bước. Gán lại một vai trò " +
           "người này đã có là an toàn — máy chủ ghi đè dòng cũ, và việc đó cũng khôi phục một vai " +
           "trò từng bị thu hồi.",
         control: roleSelect,
@@ -413,11 +415,11 @@ function assignRolePanel(spec) {
 
   return {
     node: panel({
-      eyebrow: "LỆNH · POST /internal/v1/staff/{id}/roles",
+      eyebrow: "Lệnh · POST /internal/v1/staff/{id}/roles",
       title: "Gán vai trò",
       guardrail:
         "Gán vai trò là cộng thêm, không phải thay thế: lệnh này không gỡ vai trò nào đang có. " +
-        "Bảng vận hành không đọc được vai trò hiện có và API không có route thu hồi vai trò, nên " +
+        "Bảng vận hành không đọc được vai trò hiện có và máy chủ chưa có cách thu hồi vai trò, nên " +
         "hãy chắc chắn trước khi gửi.",
       children: h("div", { class: "stack" }, body, resultHost),
     }),
@@ -482,8 +484,7 @@ function disableStaffPanel(spec) {
   function disarm() {
     if (!armed) return;
     setArmed(false);
-    result.removeAttribute("data-state");
-    result.textContent = "";
+    setResult(result, null, null);
   }
 
   /**
@@ -495,20 +496,21 @@ function disableStaffPanel(spec) {
     if (!UUID.test(staffUserId)) {
       // Disarm first: it clears the result line, and the message below has to survive that.
       disarm();
-      result.dataset.state = "danger";
-      result.textContent = "Mã nhân viên phải là UUID.";
+      setResult(result, "danger", "Mã nhân viên phải là UUID.");
       return;
     }
 
     if (!armed) {
       setArmed(true);
-      result.dataset.state = "warn";
-      result.textContent = `Bấm lần nữa để vô hiệu hoá ${shortId(staffUserId)}. Mọi phiên của người này sẽ bị thu hồi ngay.`;
+      setResult(
+        result,
+        "warn",
+        `Bấm lần nữa để vô hiệu hoá ${shortId(staffUserId)}. Mọi phiên của người này sẽ bị thu hồi ngay.`,
+      );
       return;
     }
 
-    result.dataset.state = "warn";
-    result.textContent = "Đang vô hiệu hoá…";
+    setResult(result, "warn", "Đang vô hiệu hoá…");
     render(resultHost);
 
     try {
@@ -520,8 +522,11 @@ function disableStaffPanel(spec) {
       draft.staffUserId = "";
       disarm();
       redraw();
-      result.dataset.state = "ok";
-      result.textContent = `Đã vô hiệu hoá ${shortId(staffUserId)} và thu hồi mọi phiên của người này.`;
+      setResult(
+        result,
+        "ok",
+        `Đã vô hiệu hoá ${shortId(staffUserId)} và thu hồi mọi phiên của người này.`,
+      );
       render(
         resultHost,
         h(
@@ -531,7 +536,7 @@ function disableStaffPanel(spec) {
           h(
             "p",
             null,
-            "Không có route nào bật lại một nhân viên đã vô hiệu hoá. Nếu cần người này làm việc " +
+            "Máy chủ chưa có cách bật lại một nhân viên đã vô hiệu hoá. Nếu cần người này làm việc " +
               "lại, phải xử lý trực tiếp ở cơ sở dữ liệu.",
           ),
         ),
@@ -540,11 +545,13 @@ function disableStaffPanel(spec) {
       // Disarm on every failure. A 404 that the operator misreads as "try again" must not find a
       // button still holding a confirm state from thirty seconds ago.
       disarm();
-      result.dataset.state = "danger";
-      result.textContent =
+      setResult(
+        result,
+        "danger",
         error.kind === "MISSING"
           ? "Máy chủ từ chối: không tìm thấy nhân viên đang hoạt động, hoặc đây là chủ đang hoạt động cuối cùng."
-          : "Không vô hiệu hoá được.";
+          : "Không vô hiệu hoá được.",
+      );
       render(resultHost, errorNotice(error));
     }
   }
@@ -604,7 +611,7 @@ function disableStaffPanel(spec) {
       labelled({
         id: "staff-disable-id",
         label: "Mã nhân viên",
-        hint: "Kiểm tra kỹ mã này. Không có lệnh hoàn tác và không có route bật lại.",
+        hint: "Kiểm tra kỹ mã này. Không có lệnh hoàn tác và máy chủ chưa có cách bật lại.",
         control: idInput,
       }),
       confirmHost,
@@ -617,7 +624,7 @@ function disableStaffPanel(spec) {
 
   return {
     node: panel({
-      eyebrow: "LỆNH · POST /internal/v1/staff/{id}/disable",
+      eyebrow: "Lệnh · POST /internal/v1/staff/{id}/disable",
       title: "Vô hiệu hoá nhân sự",
       guardrail:
         "Lệnh này cũng thu hồi toàn bộ phiên đăng nhập của người đó trong cùng một giao dịch. " +
@@ -669,13 +676,11 @@ function assignStorePanel(spec) {
     const staffUserId = draft.staffUserId.trim();
     const storeId = draft.storeId.trim();
     if (!UUID.test(staffUserId) || !UUID.test(storeId)) {
-      result.dataset.state = "danger";
-      result.textContent = "Mã nhân viên và mã cửa hàng đều phải là UUID.";
+      setResult(result, "danger", "Mã nhân viên và mã cửa hàng đều phải là UUID.");
       return;
     }
 
-    result.dataset.state = "warn";
-    result.textContent = intent === "grant" ? "Đang gán cửa hàng…" : "Đang thu hồi…";
+    setResult(result, "warn", intent === "grant" ? "Đang gán cửa hàng…" : "Đang thu hồi…");
     render(resultHost);
 
     try {
@@ -684,11 +689,13 @@ function assignStorePanel(spec) {
         { method: intent === "grant" ? "POST" : "DELETE", idempotencyKey: submission.key() },
       );
       submission.reset();
-      result.dataset.state = "ok";
-      result.textContent =
+      setResult(
+        result,
+        "ok",
         intent === "grant"
           ? `Đã gán ${shortId(storeId)} cho ${shortId(staffUserId)}.`
-          : `Đã thu hồi ${shortId(storeId)} khỏi ${shortId(staffUserId)}.`;
+          : `Đã thu hồi ${shortId(storeId)} khỏi ${shortId(staffUserId)}.`,
+      );
       render(
         resultHost,
         h(
@@ -698,18 +705,20 @@ function assignStorePanel(spec) {
           h(
             "p",
             null,
-            "Không có route nào đọc lại danh sách cửa hàng của người khác, nên bảng vận hành " +
+            "Máy chủ chưa có cách đọc lại danh sách cửa hàng của người khác, nên bảng vận hành " +
               "không xác nhận được trạng thái hiện tại của họ. Người đó đăng nhập rồi xem thanh " +
               "trên cùng là cách kiểm tra chắc chắn.",
           ),
         ),
       );
     } catch (error) {
-      result.dataset.state = error.kind === "DENIED" ? "warn" : "danger";
-      result.textContent =
+      setResult(
+        result,
+        error.kind === "DENIED" ? "warn" : "danger",
         error.kind === "DENIED"
           ? "Chỉ chủ cửa hàng đang hoạt động mới gán hoặc thu hồi được."
-          : "Không thực hiện được lệnh.";
+          : "Không thực hiện được lệnh.",
+      );
       render(resultHost, errorNotice(error));
     }
   }
@@ -787,7 +796,7 @@ function assignStorePanel(spec) {
 
   return {
     node: panel({
-      eyebrow: "LỆNH · POST/DELETE /internal/v1/staff/{id}/stores/{store}",
+      eyebrow: "Lệnh · POST/DELETE /internal/v1/staff/{id}/stores/{store}",
       title: "Gán cửa hàng",
       guardrail:
         "Không có dòng gán thì mọi màn hình theo cửa hàng đều từ chối người đó, kể cả khi vai trò " +
@@ -828,25 +837,23 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "CHỈ CHỦ · BỐN LỆNH, KHÔNG CÓ DANH SÁCH"),
+      h("p", { class: "eyebrow" }, "Chỉ chủ · không có danh sách"),
       h("h1", null, "Nhân sự"),
       h(
         "p",
         { class: "screen__lede" },
-        "Ba lệnh danh tính mà API có. Không có route nào đọc lại nhân sự, nên màn hình này viết " +
+        "Ba lệnh danh tính mà máy chủ có. Máy chủ chưa có cách đọc lại nhân sự, nên màn hình này viết " +
           "chứ không đọc: mọi thứ nó khẳng định là kết quả của lệnh vừa gửi, không phải trạng thái " +
           "đang có.",
       ),
     ),
-    h(
-      "div",
-      { class: "notice", dataState: "info" },
-      h("p", { class: "notice__title" }, "Thứ tự cấp quyền cho một người mới"),
+    explain(
+      "Thứ tự cấp quyền cho một người mới — gồm mấy bước?",
       h(
         "p",
         null,
         "1) Tạo nhân sự — 2) Gán vai trò — 3) Gán cửa hàng. Cả ba bước đều làm trên màn hình " +
-          "này; một tài khoản mới bị mọi route theo cửa hàng từ chối cho tới khi bước ba xong.",
+          "này; một tài khoản mới bị máy chủ từ chối ở mọi thao tác theo cửa hàng cho tới khi bước ba xong.",
       ),
     ),
     create,

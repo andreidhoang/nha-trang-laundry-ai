@@ -21,6 +21,15 @@
 /** The business timezone, pinned by `specs/contracts/canonical-enums-v1.json`. */
 export const TIMEZONE = "Asia/Ho_Chi_Minh";
 
+/**
+ * Loose UUID shape.
+ *
+ * Matched in the browser only to catch a mistyped or mis-pasted identifier before a round trip —
+ * the server remains the authority on whether the identifier exists. Loose on case because a pasted
+ * identifier is often uppercase; the server parses either.
+ */
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const VND = new Intl.NumberFormat("vi-VN", {
   style: "currency",
   currency: "VND",
@@ -41,6 +50,13 @@ const TIME_ONLY = new Intl.DateTimeFormat("vi-VN", {
   hour: "2-digit",
   minute: "2-digit",
   second: "2-digit",
+});
+
+const DATE_ONLY = new Intl.DateTimeFormat("vi-VN", {
+  timeZone: TIMEZONE,
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
 });
 
 /** What to show where a number would be if the server has not decided one. */
@@ -114,6 +130,15 @@ export function timeOnly(value) {
 }
 
 /**
+ * @param {string|null|undefined} value
+ * @returns {string}
+ */
+export function dateOnly(value) {
+  const parsed = parseInstant(value);
+  return parsed ? DATE_ONLY.format(parsed) : UNKNOWN;
+}
+
+/**
  * Time left before an approval envelope expires.
  *
  * Approval TTLs are short — ten to thirty minutes (`SECURITY_RELIABILITY_SPEC_V1.md:354`) — and an
@@ -132,11 +157,17 @@ export function countdown(expiresAt, now = new Date()) {
   if (seconds <= 0) return { seconds, text: "đã hết hạn", expired: true };
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
-  return {
-    seconds,
-    expired: false,
-    text: minutes > 0 ? `còn ${minutes} phút ${remainder}s` : `còn ${remainder}s`,
-  };
+  // Whole Vietnamese units, never a bare "s". Seconds are noise once the wait reaches ten
+  // minutes, so they drop out there; below one minute there is no minute part to show.
+  const text =
+    minutes >= 10
+      ? `còn ${minutes} phút`
+      : minutes > 0
+        ? remainder > 0
+          ? `còn ${minutes} phút ${remainder} giây`
+          : `còn ${minutes} phút`
+        : `còn ${remainder} giây`;
+  return { seconds, expired: false, text };
 }
 
 /**
@@ -181,6 +212,20 @@ export function shortHash(value) {
   const prefix = text.slice(0, separator + 1);
   const digest = text.slice(separator + 1);
   return digest.length <= 12 ? text : `${prefix}${digest.slice(0, 8)}…${digest.slice(-4)}`;
+}
+
+/**
+ * An integer the server decided, rendered only when it actually is one.
+ *
+ * `null` is not `0` — `IMPLEMENTATION_ROADMAP_V1.md:906` — and this is the guard for fields where
+ * the difference matters: a zeroth attempt and an unrecorded attempt count are different facts. A
+ * non-integer is a contract violation, so it reads as unknown rather than being coerced.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function integer(value) {
+  return Number.isInteger(value) ? String(value) : UNKNOWN;
 }
 
 /**

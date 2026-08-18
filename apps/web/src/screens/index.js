@@ -14,10 +14,12 @@
  */
 
 import { screen as approvals } from "./approvals.js";
+import { screen as assistant } from "./assistant.js";
 import { screen as exceptions } from "./exceptions.js";
 import { screen as gaps } from "./gaps.js";
 import { screen as incidents } from "./incidents.js";
 import { screen as orderDetail } from "./orderDetail.js";
+import { screen as orderRequests } from "./orderRequests.js";
 import { screen as orders } from "./orders.js";
 import { screen as quotes } from "./quotes.js";
 import { screen as shadow } from "./shadow.js";
@@ -28,10 +30,12 @@ import { screen as today } from "./today.js";
 /** @type {import("../core/router.js").Route[]} */
 export const ROUTES = [
   today,
+  orderRequests,
   quotes,
   orders,
   orderDetail,
   approvals,
+  assistant,
   shadow,
   exceptions,
   incidents,

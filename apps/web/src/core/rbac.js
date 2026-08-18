@@ -24,6 +24,8 @@
  * @module core/rbac
  */
 
+import { enumLabel } from "./i18n.js";
+
 const OWNER = "OWNER_ADMIN";
 const APPROVER = "OPS_APPROVER";
 const OPERATOR = "OPERATOR";
@@ -51,7 +53,7 @@ export const CAPABILITIES = {
   ORDERS_WRITE: {
     roles: [OWNER, APPROVER, OPERATOR],
     mfa: true,
-    why: "Tạo và chuyển trạng thái đơn cần vai trò vận hành và đã xác thực MFA.",
+    why: "Tạo và chuyển trạng thái đơn cần vai trò vận hành và đã xác thực hai bước.",
   },
   QUOTES_READ: {
     roles: [OWNER, APPROVER, OPERATOR],
@@ -61,7 +63,7 @@ export const CAPABILITIES = {
   QUOTES_WRITE: {
     roles: [OWNER, APPROVER, OPERATOR],
     mfa: true,
-    why: "Tính giá cần vai trò vận hành và đã xác thực MFA.",
+    why: "Tính giá cần vai trò vận hành và đã xác thực hai bước.",
   },
   INCIDENTS_READ: {
     roles: [OWNER, APPROVER, OPERATOR],
@@ -71,7 +73,7 @@ export const CAPABILITIES = {
   INCIDENTS_WRITE: {
     roles: [OWNER, APPROVER, OPERATOR],
     mfa: true,
-    why: "Mở sự cố cần vai trò vận hành và đã xác thực MFA.",
+    why: "Mở sự cố cần vai trò vận hành và đã xác thực hai bước.",
   },
   APPROVALS_READ: {
     roles: [OWNER, APPROVER],
@@ -91,17 +93,22 @@ export const CAPABILITIES = {
   SHADOW_DECIDE: {
     roles: [OWNER, APPROVER],
     mfa: true,
-    why: "Quyết định bản nháp và đối soát chỉ dành cho chủ hoặc người duyệt — OPERATOR qua được cổng route nhưng bị kho dữ liệu từ chối.",
+    why: "Quyết định bản nháp và đối soát chỉ dành cho chủ hoặc người duyệt — OPERATOR qua được cổng truy cập nhưng bị từ chối ở tầng dữ liệu.",
   },
   MANUAL_SEND: {
     roles: [OWNER, APPROVER, OPERATOR],
     mfa: true,
-    why: "Khoá và chứng thực gửi thủ công cần vai trò vận hành và đã xác thực MFA.",
+    why: "Khoá và chứng thực gửi thủ công cần vai trò vận hành và đã xác thực hai bước.",
   },
   STAFF_ADMIN: {
     roles: [OWNER],
     mfa: false,
     why: "Quản lý nhân sự chỉ dành cho chủ.",
+  },
+  ASSISTANT: {
+    roles: [OWNER, APPROVER, OPERATOR],
+    mfa: true,
+    why: "Trợ lý AI dùng cổng vận hành: vai trò vận hành, đã xác thực hai bước, và được gán cửa hàng.",
   },
 };
 
@@ -135,13 +142,15 @@ export function can(principal, capability) {
 
   const held = principal.roles.filter((role) => rule.roles.includes(role));
   if (held.length === 0) {
-    const names = rule.roles.join(", ");
+    // The dual-language rule applies here too: the operator reads the Vietnamese gloss, the token
+    // stays verbatim so the conversation with engineering has something exact to quote.
+    const names = rule.roles.map((role) => enumLabel(role)).join(", ");
     return { allowed: false, reason: `${rule.why} Vai trò được phép: ${names}.` };
   }
   if (rule.mfa && !principal.mfaVerified) {
     return {
       allowed: false,
-      reason: "Phiên này chưa xác thực MFA, nên máy chủ sẽ từ chối thao tác.",
+      reason: "Phiên này chưa xác thực hai bước, nên máy chủ sẽ từ chối thao tác.",
     };
   }
   return { allowed: true, reason: "" };

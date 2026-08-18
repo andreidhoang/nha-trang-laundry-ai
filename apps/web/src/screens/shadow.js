@@ -30,22 +30,22 @@
  * @module screens/shadow
  */
 
-import { Submission, isTruncated, request } from "../core/api.js";
+import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UNKNOWN, count, dateTime, shortId } from "../core/format.js";
+import { UNKNOWN, dateTime, integer, shortId } from "../core/format.js";
 import { enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
-  empty,
   errorNotice,
   facts,
   gated,
   labelled,
+  listView,
   panel,
   resultLine,
+  revealError,
   setResult,
-  skeleton,
   warningBadges,
 } from "../ui/components.js";
 
@@ -111,17 +111,6 @@ const REFUSED_BEFORE_WRITE = new Set([
  */
 
 /**
- * Whether an integer the server sent is actually a number. A missing count is shown as unknown; it
- * is never shown as zero, which would read as "the agent called no tools".
- *
- * @param {unknown} value
- * @returns {string}
- */
-function integer(value) {
-  return Number.isInteger(value) ? String(value) : UNKNOWN;
-}
-
-/**
  * The draft body, in its own block.
  *
  * Line breaks are preserved by splitting into paragraphs rather than by styling whitespace, so a
@@ -137,7 +126,7 @@ function draftBody(text) {
   return h(
     "div",
     { class: "notice" },
-    h("p", { class: "eyebrow" }, "NỘI DUNG BẢN NHÁP · VĂN BẢN KHÔNG TIN CẬY"),
+    h("p", { class: "eyebrow" }, "Nội dung bản nháp · Văn bản không tin cậy"),
     h(
       "div",
       { class: "stack stack--tight" },
@@ -158,8 +147,8 @@ function draftBody(text) {
  */
 function provenance(item) {
   return facts([
-    ["Kết cục lượt chạy", enumLabel(item.terminal_outcome), { mono: true }],
-    ["Mã kết cục", enumLabel(item.terminal_code), { mono: true }],
+    ["Kết quả lượt chạy", enumLabel(item.terminal_outcome), { mono: true }],
+    ["Mã kết quả", enumLabel(item.terminal_code), { mono: true }],
     ["Số lần gọi công cụ", integer(item.tool_call_count)],
     ["Agent ghi lúc", dateTime(item.produced_at)],
     [
@@ -191,7 +180,7 @@ function provenance(item) {
  */
 function decisionPanel(decided, line) {
   return panel({
-    eyebrow: "ĐÃ GHI",
+    eyebrow: "Đã ghi",
     title: "Quyết định gần nhất của bạn",
     children: h(
       "div",
@@ -305,9 +294,6 @@ export function render_() {
   const decisionHost = h("div");
   const noticeHost = h("div");
   const decisionLine = resultLine();
-  const listHost = h("div", null, skeleton(2));
-  const queueCount = h("span", { class: "count" }, "…");
-  const truncation = h("p", { class: "hint" });
 
   /**
    * @param {string} agentRunId
@@ -349,6 +335,9 @@ export function render_() {
   function showFailure(entry, failure) {
     entry.failure = failure;
     if (entry.failureHost) render(entry.failureHost, failureBlock(entry));
+    // The failure block sits under a possibly long draft body; scroll it into view so a refusal is
+    // not missed below the fold.
+    if (failure && entry.failureHost) revealError(entry.failureHost);
   }
 
   /** @param {Review} entry */
@@ -459,7 +448,7 @@ export function render_() {
         `Đã ghi quyết định ${decided.decision}. Không có tin nhắn nào được gửi đi.`,
       );
       render(decisionHost, decisionPanel(decided, decisionLine));
-      await loadQueue();
+      await queue.reload();
       return;
     } catch (error) {
       if (REFUSED_BEFORE_WRITE.has(error?.kind)) {
@@ -484,7 +473,7 @@ export function render_() {
           ? "Máy chủ từ chối: nhiều khả năng đã có người quyết định bản nháp này."
           : "Không rõ quyết định đã được ghi hay chưa, nên các nút của bản nháp này bị khoá lại.",
       );
-      const reloaded = await loadQueue();
+      const reloaded = await queue.reload();
       // The queue lists undecided drafts only, so a draft that left it after a failed submission
       // has a decision on record. Which decision, and whose, is a question for the audit timeline —
       // this cannot know whether the vanished row is the one this card tried to write.
@@ -627,17 +616,6 @@ export function render_() {
     );
   }
 
-  /**
-   * @param {any[]} items
-   * @returns {HTMLElement}
-   */
-  function queueList(items) {
-    if (!items.length) {
-      return empty("Không có bản nháp nào đang chờ quyết định trong cửa hàng này.");
-    }
-    return h("div", { class: "stack" }, items.map(draftCard));
-  }
-
   /** Drop the state of drafts that have left the queue, so the map cannot grow across a shift. */
   function prune(items) {
     const live = new Set(items.map((item) => item.agent_run_id));
@@ -647,38 +625,35 @@ export function render_() {
   }
 
   /**
-   * Reload the queue. A read, so retrying it is offered; nothing here re-issues a decision.
-   *
-   * @returns {Promise<boolean>} whether the queue on screen is now the server's current answer
+   * The queue. A read, so retrying it is offered; nothing here re-issues a decision. `reload()`
+   * resolves to whether the queue on screen is now the server's current answer — the conflict path
+   * in `decide` depends on that signal.
    */
-  async function loadQueue() {
-    // The cards about to be replaced no longer own the nodes their entries point at.
-    for (const entry of reviews.values()) {
-      entry.line = null;
-      entry.failureHost = null;
-    }
-    render(listHost, skeleton(2));
-    try {
+  const queue = listView({
+    limit: QUEUE_LIMIT,
+    fetch: async () => {
       const body = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/shadow/drafts?limit=${QUEUE_LIMIT}`,
       );
-      const items = Array.isArray(body) ? body : [];
-      queueCount.textContent = count(items, QUEUE_LIMIT);
-      truncation.textContent = isTruncated(items, QUEUE_LIMIT)
-        ? `Máy chủ trả tối đa ${QUEUE_LIMIT} bản nháp và đã trả đủ; có thể còn nữa. API này không có phân trang.`
-        : "";
-      prune(items);
-      render(listHost, queueList(items));
-      return true;
-    } catch (error) {
-      queueCount.textContent = UNKNOWN;
-      truncation.textContent = "";
-      render(listHost, errorNotice(error, { onRetry: () => void loadQueue() }));
-      return false;
-    }
-  }
+      return Array.isArray(body) ? body : [];
+    },
+    renderItem: draftCard,
+    emptyText: "Không có bản nháp nào đang chờ quyết định trong cửa hàng này.",
+    skeletonRows: 2,
+    clearMetaOnError: true,
+    truncationText: (limit) =>
+      `Máy chủ trả tối đa ${limit} bản nháp và đã trả đủ; có thể còn nữa. API này không có phân trang.`,
+    onLoadStart: () => {
+      // The cards about to be replaced no longer own the nodes their entries point at.
+      for (const entry of reviews.values()) {
+        entry.line = null;
+        entry.failureHost = null;
+      }
+    },
+    onLoaded: prune,
+  });
 
-  void loadQueue();
+  void queue.reload();
 
   return h(
     "section",
@@ -686,7 +661,7 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "NGƯỜI QUYẾT ĐỊNH · MÁY KHÔNG TỰ GỬI"),
+      h("p", { class: "eyebrow" }, "Người quyết định · Máy không tự gửi"),
       h("h1", null, "Bản nháp AI"),
       h(
         "p",
@@ -698,13 +673,20 @@ export function render_() {
     decisionHost,
     noticeHost,
     panel({
-      eyebrow: "CHỜ NGƯỜI QUYẾT ĐỊNH",
+      eyebrow: "Chờ người quyết định",
       title: "Bản nháp chưa ai xử lý",
-      count: queueCount,
+      count: queue.count,
       guardrail:
         "Duyệt ở đây không phải là gửi. Một bản nháp rời khỏi hàng chờ này ngay khi có người quyết " +
         "định, và mỗi lượt chạy chỉ nhận đúng một quyết định.",
-      children: h("div", { class: "stack" }, houseRules(), truncation, listHost),
+      children: h(
+        "div",
+        { class: "stack" },
+        queue.bar.node,
+        houseRules(),
+        queue.truncation,
+        queue.host,
+      ),
     }),
   );
 }

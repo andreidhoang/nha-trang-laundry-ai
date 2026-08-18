@@ -1,0 +1,81 @@
+/* Print.
+ *
+ * What gets printed from this console is a record: the order detail facts with their audit
+ * timeline, or a quote result a customer asks to see on paper. So the sheet keeps the server's
+ * words and numbers exactly as rendered — badges keep their text, nothing is recomputed — and
+ * drops everything that is a control rather than a fact: navigation, banners, forms, buttons,
+ * toolbars. A printed badge may lose its background at the printer's discretion; the word it
+ * carries is the meaning, so the word is set in a strong weight instead.
+ */
+
+@media print {
+  .app {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+
+  .main {
+    overflow: visible;
+    padding: 0;
+  }
+
+  .appbar,
+  .nav,
+  .banners,
+  .action-bar,
+  .toolbar,
+  .filter-status,
+  .form__actions,
+  form,
+  button,
+  .button,
+  .skeleton {
+    display: none !important;
+  }
+
+  .screen {
+    max-width: none;
+  }
+
+  .card {
+    border: 1px solid #999;
+    box-shadow: none;
+    break-inside: avoid;
+  }
+
+  .badge {
+    border: 1px solid currentColor;
+    font-weight: var(--weight-heavy);
+  }
+
+  /* The token span a compact badge sheds on narrow screens comes back on paper: a printed badge
+   * carries the full `Gloss (TOKEN)` at any viewport width. */
+  .badge--compact .badge__token {
+    display: inline;
+  }
+
+  /* A folded explanation is still part of the record, so every explain() prints expanded. A
+   * closed <details> is not hidden by any author-overridable display rule — Blink sets
+   * `content-visibility: hidden` inline on the content slot inside the UA shadow tree and Gecko
+   * sets it in its UA sheet on `::details-content` — so the override has to address that pseudo.
+   * (Verified by printing a closed details to PDF from headless Chrome: a display override on the
+   * children prints nothing; the content-visibility override prints.) The display revert below
+   * covers engines that still hide closed content with a UA display rule. */
+  details.explain::details-content {
+    content-visibility: visible !important;
+  }
+
+  details.explain:not([open]) > :not(summary) {
+    display: revert;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  th {
+    position: static;
+  }
+}

@@ -31,11 +31,11 @@
  * @module screens/approvals
  */
 
-import { isTruncated, request } from "../core/api.js";
+import { request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { count, countdown, dateTime, shortHash, shortId } from "../core/format.js";
+import { countdown, dateTime, shortHash, shortId } from "../core/format.js";
 import { enumLabel } from "../core/i18n.js";
-import { badge, empty, errorNotice, facts, panel, skeleton } from "../ui/components.js";
+import { badge, explain, facts, listView, panel } from "../ui/components.js";
 
 const LIST_LIMIT = 100;
 
@@ -96,8 +96,8 @@ function decisionControls() {
     h(
       "p",
       { class: "hint" },
-      "Không bấm được: quyết định cần ba giá trị mà danh sách này không trả về. Xem “Vì sao không " +
-        "quyết định được ở đây” bên trên.",
+      "Không bấm được: quyết định cần ba giá trị mà danh sách này không trả về. Xem “Tại sao nút " +
+        "Duyệt đang tắt?” trong bảng giới hạn bên dưới.",
     ),
   );
 }
@@ -148,120 +148,138 @@ function approvalCard(item, registerClock) {
 }
 
 /**
- * Everything this screen deliberately does not offer, stated before the queue rather than after it.
+ * Everything this screen deliberately does not offer, folded behind the questions it answers.
+ *
+ * The queue renders above this panel — the day's most time-critical list is the data, and the
+ * education about the data comes after it (UX refactor spec WS2). Nothing here is deleted: each
+ * standing notice keeps its exact text, moved into an `explain()` whose summary names what it
+ * explains. The read-only guardrail stays visible because it states what the whole screen cannot
+ * do, and the refusal reason for the disabled decision buttons stays visible under them.
  *
  * @returns {HTMLElement}
  */
 function limitsPanel() {
   return panel({
-    eyebrow: "GIỚI HẠN CỦA MÀN HÌNH",
-    title: "Danh sách này không phải toàn bộ hàng chờ",
+    eyebrow: "Giới hạn",
+    title: "Giới hạn của màn hình này",
     guardrail:
       "Đây là màn hình chỉ đọc. Không có thao tác nào ở đây ghi vào máy chủ, kể cả khi phong bì " +
       "sắp hết hạn.",
     children: h(
       "div",
       { class: "stack" },
-      h(
-        "div",
-        { class: "notice", dataState: "warn" },
-        h("p", { class: "notice__title" }, "Chỉ hiện phê duyệt gắn với đơn hàng"),
-        h(
-          "p",
-          null,
-          "Máy chủ tra cứu hàng chờ qua đơn hàng, nên phong bì nào trỏ tới thứ khác — bản báo giá " +
-            "(QUOTE_REVISION), bản nháp tin nhắn (MESSAGE_DRAFT), đề xuất khung giờ " +
-            "(SLOT_PROPOSAL), đề xuất phí giao (DELIVERY_FEE_PROPOSAL) — sẽ không xuất hiện ở đây. " +
-            "Những phong bì đó vẫn tồn tại và vẫn đếm ngược; danh sách này chỉ không thấy chúng.",
-        ),
-        h(
-          "p",
-          { class: "hint" },
-          "Hệ quả: danh sách trống không có nghĩa là không còn gì chờ duyệt.",
-        ),
-      ),
-      h(
-        "div",
-        { class: "notice", dataState: "info" },
-        h("p", { class: "notice__title" }, "Chỉ trạng thái REQUESTED"),
-        h(
-          "p",
-          null,
-          "Phong bì đã duyệt, đã từ chối hoặc đã hết hạn không nằm trong danh sách này và không " +
-            "tra cứu lại được từ đây.",
-        ),
-      ),
-      h(
-        "div",
-        { class: "notice", dataState: "warn", id: BLOCK_ID },
-        h("p", { class: "notice__title" }, "Vì sao không quyết định được ở đây"),
-        h(
-          "p",
-          null,
-          "Gửi một quyết định bắt buộc phải kèm resource_version, snapshot_hash và rendered_hash. " +
-            "Danh sách trên không trả về giá trị nào trong ba giá trị đó — nó chỉ có envelope_hash, " +
-            "là một giá trị khác và không thay thế được. Người duyệt vì thế không thể dựng một " +
-            "quyết định hợp lệ từ những gì màn hình này nhìn thấy.",
-        ),
-        h(
-          "p",
-          null,
-          "Gõ tay các mã băm để duyệt một nội dung bạn chưa được xem chính là duyệt mù một tin " +
-            "nhắn sẽ gửi tới khách. Nên màn hình này cố ý không có ô để dán mã băm, và hai nút " +
-            "Duyệt / Từ chối được để hiện nhưng khoá.",
-        ),
-        h(
-          "p",
-          null,
-          h("a", { href: "#/gaps" }, "Xem danh mục việc chưa hỗ trợ"),
-        ),
-      ),
-      h(
-        "div",
-        { class: "notice", dataState: "info" },
-        h("p", { class: "notice__title" }, "Tạo yêu cầu duyệt cũng không có ở đây"),
-        h(
-          "p",
-          null,
-          "Cùng một loại lý do: một yêu cầu duyệt cần resource_type khớp đúng ánh xạ hành động → " +
-            "loại tài nguyên của máy chủ, cộng hai mã băm JCS và một policy_version. Không giá trị " +
-            "nào trong số đó nhân viên gõ tay ra được, nên màn hình không mời bạn thử.",
-        ),
-      ),
-      h(
-        "dl",
-        { class: "fields" },
+      explain(
+        "Danh sách này có phải toàn bộ hàng chờ không?",
         h(
           "div",
-          { class: "field field--span" },
-          h("dt", null, "Tách vai người làm / người duyệt"),
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Chỉ hiện phê duyệt gắn với đơn hàng"),
           h(
-            "dd",
+            "p",
             null,
-            "Máy chủ từ chối quyết định đến từ chính nhân viên đã tạo yêu cầu. Danh sách này không " +
-              "trả về ai là người yêu cầu, nên bạn chỉ biết mình vướng quy tắc đó khi máy chủ từ chối.",
+            "Máy chủ tra cứu hàng chờ qua đơn hàng, nên phong bì nào trỏ tới thứ khác — bản báo giá " +
+              "(QUOTE_REVISION), bản nháp tin nhắn (MESSAGE_DRAFT), đề xuất khung giờ " +
+              "(SLOT_PROPOSAL), đề xuất phí giao (DELIVERY_FEE_PROPOSAL) — sẽ không xuất hiện ở đây. " +
+              "Những phong bì đó vẫn tồn tại và vẫn đếm ngược; danh sách này chỉ không thấy chúng.",
+          ),
+          h(
+            "p",
+            { class: "hint" },
+            "Hệ quả: danh sách trống không có nghĩa là không còn gì chờ duyệt.",
           ),
         ),
         h(
           "div",
-          { class: "field field--span" },
-          h("dt", null, "Thời hạn phong bì"),
+          { class: "notice", dataState: "info" },
+          h("p", { class: "notice__title" }, "Chỉ trạng thái REQUESTED"),
           h(
-            "dd",
+            "p",
             null,
-            "10, 15 hoặc 30 phút tuỳ hành động, và hết hạn thì không bao giờ được gia hạn ngầm. " +
-              "Hết giờ nghĩa là phải tạo lại yêu cầu mới, không phải xin thêm thời gian.",
+            "Phong bì đã duyệt, đã từ chối hoặc đã hết hạn không nằm trong danh sách này và không " +
+              "tra cứu lại được từ đây.",
           ),
         ),
+      ),
+      explain(
+        "Tại sao nút Duyệt đang tắt?",
         h(
           "div",
-          { class: "field field--span" },
-          h("dt", null, "Phạm vi cửa hàng"),
+          { class: "notice", dataState: "warn", id: BLOCK_ID },
+          h("p", { class: "notice__title" }, "Vì sao không quyết định được ở đây"),
           h(
-            "dd",
+            "p",
             null,
-            "Hàng chờ này gồm mọi cửa hàng mà tài khoản của bạn được gán, không lọc theo cửa hàng " +
-              "đang chọn ở thanh phía trên.",
+            "Gửi một quyết định bắt buộc phải kèm resource_version, snapshot_hash và rendered_hash. " +
+              "Danh sách trên không trả về giá trị nào trong ba giá trị đó — nó chỉ có envelope_hash, " +
+              "là một giá trị khác và không thay thế được. Người duyệt vì thế không thể dựng một " +
+              "quyết định hợp lệ từ những gì màn hình này nhìn thấy.",
+          ),
+          h(
+            "p",
+            null,
+            "Gõ tay các mã băm để duyệt một nội dung bạn chưa được xem chính là duyệt mù một tin " +
+              "nhắn sẽ gửi tới khách. Nên màn hình này cố ý không có ô để dán mã băm, và hai nút " +
+              "Duyệt / Từ chối được để hiện nhưng khoá.",
+          ),
+          h(
+            "p",
+            null,
+            h("a", { href: "#/gaps" }, "Xem danh mục việc chưa hỗ trợ"),
+          ),
+        ),
+      ),
+      explain(
+        "Vì sao không tạo được yêu cầu duyệt ở đây?",
+        h(
+          "div",
+          { class: "notice", dataState: "info" },
+          h("p", { class: "notice__title" }, "Tạo yêu cầu duyệt cũng không có ở đây"),
+          h(
+            "p",
+            null,
+            "Cùng một loại lý do: một yêu cầu duyệt cần resource_type khớp đúng ánh xạ hành động → " +
+              "loại tài nguyên của máy chủ, cộng hai mã băm JCS và một policy_version. Không giá trị " +
+              "nào trong số đó nhân viên gõ tay ra được, nên màn hình không mời bạn thử.",
+          ),
+        ),
+      ),
+      explain(
+        "Phê duyệt còn những quy tắc nào khác?",
+        h(
+          "dl",
+          { class: "fields" },
+          h(
+            "div",
+            { class: "field field--span" },
+            h("dt", null, "Tách vai người làm / người duyệt"),
+            h(
+              "dd",
+              null,
+              "Máy chủ từ chối quyết định đến từ chính nhân viên đã tạo yêu cầu. Danh sách này không " +
+                "trả về ai là người yêu cầu, nên bạn chỉ biết mình vướng quy tắc đó khi máy chủ từ chối.",
+            ),
+          ),
+          h(
+            "div",
+            { class: "field field--span" },
+            h("dt", null, "Thời hạn phong bì"),
+            h(
+              "dd",
+              null,
+              "10, 15 hoặc 30 phút tuỳ hành động, và hết hạn thì không bao giờ được gia hạn ngầm. " +
+                "Hết giờ nghĩa là phải tạo lại yêu cầu mới, không phải xin thêm thời gian.",
+            ),
+          ),
+          h(
+            "div",
+            { class: "field field--span" },
+            h("dt", null, "Phạm vi cửa hàng"),
+            h(
+              "dd",
+              null,
+              "Hàng chờ này gồm mọi cửa hàng mà tài khoản của bạn được gán, không lọc theo cửa hàng " +
+                "đang chọn ở thanh phía trên.",
+            ),
           ),
         ),
       ),
@@ -277,58 +295,37 @@ export function render_() {
    * The live countdown badges, rebuilt every time the list reloads.
    *
    * Held as a list rather than read out of the DOM so that one interval — started once, in this
-   * function — drives every badge no matter how many times the list is refreshed. Starting a timer
-   * inside `loadList` would stack a new one on each reload.
+   * function — drives every badge no matter how many times the list is refreshed. The registry is
+   * cleared around each reload (the queue's hooks below) and refilled as the new cards are built.
    *
    * @type {Array<{host: HTMLElement, expiresAt: string}>}
    */
   const clocks = [];
 
-  const listHost = h("div", null, skeleton(3));
-  const listCount = h("span", { class: "count" }, "…");
-  const truncation = h("p", { class: "hint" });
-
-  async function loadList() {
-    clocks.length = 0;
-    render(listHost, skeleton(3));
-    try {
-      const items = await request(`/internal/v1/approvals?limit=${LIST_LIMIT}`);
+  /**
+   * The queue. One `listView` owns the fetch–truncate–skeleton cycle; what stays here is the clock
+   * registry above. Server order is `ORDER BY expires_at, id` — the envelope dying soonest is
+   * first — and it is not re-sorted here: the order is itself information about what to look at.
+   */
+  const queue = listView({
+    limit: LIST_LIMIT,
+    fetch: () => request(`/internal/v1/approvals?limit=${LIST_LIMIT}`),
+    renderItem: (item) =>
+      approvalCard(item, (host, expiresAt) => clocks.push({ host, expiresAt })),
+    emptyText:
+      "Không có phong bì nào gắn với đơn hàng đang chờ bạn quyết định. Đây không phải bằng " +
+      "chứng là hàng chờ trống — xem bảng giới hạn bên dưới.",
+    clearMetaOnError: true,
+    onLoadStart: () => {
       clocks.length = 0;
-      listCount.textContent = count(items, LIST_LIMIT);
-      truncation.textContent = isTruncated(items, LIST_LIMIT)
-        ? `Máy chủ trả tối đa ${LIST_LIMIT} bản ghi và đã trả đủ; có thể còn nữa. API này không có phân trang.`
-        : "";
-
-      if (!items.length) {
-        render(
-          listHost,
-          empty(
-            "Không có phong bì nào gắn với đơn hàng đang chờ bạn quyết định. Đây không phải bằng " +
-              "chứng là hàng chờ trống — xem giới hạn ở trên.",
-          ),
-        );
-        return;
-      }
-
-      // Server order is `ORDER BY expires_at, id`: the envelope dying soonest is first. Not
-      // re-sorted here — the order is itself information about what to look at next.
-      render(
-        listHost,
-        h(
-          "div",
-          { class: "stack" },
-          items.map((item) =>
-            approvalCard(item, (host, expiresAt) => clocks.push({ host, expiresAt })),
-          ),
-        ),
-      );
-    } catch (error) {
+    },
+    onLoaded: () => {
       clocks.length = 0;
-      listCount.textContent = "—";
-      truncation.textContent = "";
-      render(listHost, errorNotice(error, { onRetry: () => void loadList() }));
-    }
-  }
+    },
+    onError: () => {
+      clocks.length = 0;
+    },
+  });
 
   const root = h(
     "section",
@@ -336,7 +333,7 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "HÀNG CHỜ DUYỆT · CHỈ ĐỌC"),
+      h("p", { class: "eyebrow" }, "Chỉ đọc"),
       h("h1", null, "Duyệt"),
       h(
         "p",
@@ -346,18 +343,13 @@ export function render_() {
           "API, không phải nút bị quên.",
       ),
     ),
-    limitsPanel(),
     panel({
-      eyebrow: "ĐANG CHỜ",
+      eyebrow: "Đang chờ",
       title: "Phong bì chờ quyết định",
-      count: listCount,
-      actions: h(
-        "button",
-        { type: "button", dataVariant: "quiet", onClick: () => void loadList() },
-        "Tải lại",
-      ),
-      children: h("div", { class: "stack" }, truncation, listHost),
+      count: queue.count,
+      children: h("div", { class: "stack" }, queue.bar.node, queue.truncation, queue.host),
     }),
+    limitsPanel(),
   );
 
   // One interval for the whole screen. It checks that the screen is still in the document before
@@ -371,7 +363,7 @@ export function render_() {
     for (const clock of clocks) render(clock.host, countdownBadge(clock.expiresAt));
   }, TICK_MS);
 
-  void loadList();
+  void queue.reload();
 
   return root;
 }

@@ -32,7 +32,7 @@ import { h, render } from "../core/dom.js";
 import { UNKNOWN, shortId } from "../core/format.js";
 import { enumLabel } from "../core/i18n.js";
 import { snapshot } from "../core/session.js";
-import { badge, errorNotice, facts, panel, skeleton } from "../ui/components.js";
+import { badge, errorNotice, facts, markUpdated, panel, skeleton, toolbar } from "../ui/components.js";
 
 /**
  * The badge a non-zero counter earns.
@@ -46,7 +46,7 @@ const STUCK = {
   failed: { token: "FAILED", gloss: "lượt chạy agent đã thất bại; cần người xử lý", state: "danger" },
   expired: {
     token: "LEASE EXPIRED",
-    gloss: "quá hạn giữ chỗ; vẫn nằm trong PROCESSING",
+    gloss: "quá hạn khóa tạm; vẫn nằm trong PROCESSING",
     state: "warn",
   },
 };
@@ -105,13 +105,13 @@ function internalQueue(summary) {
     h(
       "p",
       { class: "hint" },
-      "Sự kiện đã ghi cùng giao dịch nghiệp vụ và đang chờ worker phát đi. Đây là nơi một lệnh đã " +
+      "Sự kiện đã ghi cùng giao dịch nghiệp vụ và đang chờ tiến trình gửi phát đi. Đây là nơi một lệnh đã " +
         "được lưu nhưng chưa rời khỏi hệ thống.",
     ),
     facts([
       ["PENDING · chờ nhận", counter(summary.pending_internal)],
       ["PROCESSING · đang xử lý", counter(summary.processing_internal)],
-      ["PROCESSING quá hạn giữ chỗ", counter(summary.expired_internal, STUCK.expired)],
+      ["PROCESSING quá hạn khóa tạm", counter(summary.expired_internal, STUCK.expired)],
       ["DEAD · đã bỏ", counter(summary.dead_internal, STUCK.dead)],
     ]),
   );
@@ -141,7 +141,7 @@ function agentQueue(summary) {
     facts([
       ["PENDING · chờ nhận", counter(summary.pending_agent)],
       ["PROCESSING · đang chạy", counter(summary.processing_agent)],
-      ["PROCESSING quá hạn giữ chỗ", counter(summary.expired_agent, STUCK.expired)],
+      ["PROCESSING quá hạn khóa tạm", counter(summary.expired_agent, STUCK.expired)],
       ["FAILED · đã thất bại", counter(summary.failed_agent, STUCK.failed)],
     ]),
   );
@@ -169,8 +169,8 @@ function replayNotice(summary) {
     h(
       "p",
       null,
-      "Bảng vận hành cũng không có nút phát lại, xếp lại hay thử lại cho hai hàng đợi này — API " +
-        "chưa có route nào cho việc đó.",
+      "Bảng vận hành cũng không có nút phát lại, xếp lại hay thử lại cho hai hàng đợi này — hệ thống " +
+        "chưa có đường nào cho việc đó.",
     ),
   );
 }
@@ -185,7 +185,7 @@ function sessionPanel() {
   const person = state.principal;
 
   return panel({
-    eyebrow: "PHIÊN LÀM VIỆC",
+    eyebrow: "Phiên làm việc",
     title: "Phiên hiện tại",
     children: h(
       "div",
@@ -204,7 +204,7 @@ function sessionPanel() {
           { span: true },
         ],
         [
-          "MFA",
+          "Xác thực hai bước",
           person ? (person.mfaVerified ? "đã xác thực" : "chưa xác thực") : UNKNOWN,
         ],
         [
@@ -228,7 +228,7 @@ function sessionPanel() {
         h(
           "p",
           null,
-          "Máy chủ chỉ trả về mã nhân viên, vai trò và trạng thái MFA cho phiên đang dùng; nó " +
+          "Máy chủ chỉ trả về mã nhân viên, vai trò và trạng thái xác thực hai bước cho phiên đang dùng; nó " +
             "không trả về mã phiên. Thu hồi một phiên cần đúng mã phiên đó, nên bảng vận hành " +
             "không thể liệt kê các phiên đang mở, cũng không thể đóng phiên trên máy khác. Nút " +
             "“Thoát” trên thanh phía trên chỉ kết thúc phiên này.",
@@ -253,12 +253,13 @@ export function render_() {
     render(host, skeleton(2));
     try {
       const summary = await request("/internal/v1/queue-recovery");
+      markUpdated(tools.stamp);
       render(
         host,
         h(
           "p",
           { class: "hint" },
-          "Số quá hạn giữ chỗ nằm bên trong số PROCESSING, không phải một nhóm riêng. Đừng cộng " +
+          "Số quá hạn khóa tạm nằm bên trong số PROCESSING, không phải một nhóm riêng. Đừng cộng " +
             "bốn dòng lại với nhau — màn hình này cố ý không hiển thị tổng.",
         ),
         h("div", { class: "panels" }, internalQueue(summary), agentQueue(summary)),
@@ -269,6 +270,8 @@ export function render_() {
     }
   }
 
+  const tools = toolbar({ onReload: load });
+
   void load();
 
   return h(
@@ -277,7 +280,7 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "CHỈ QUAN SÁT · TOÀN HỆ THỐNG"),
+      h("p", { class: "eyebrow" }, "Chỉ quan sát · Toàn hệ thống"),
       h("h1", null, "Hệ thống"),
       h(
         "p",
@@ -287,12 +290,12 @@ export function render_() {
       ),
     ),
     panel({
-      eyebrow: "HÀNG ĐỢI",
+      eyebrow: "Hàng đợi",
       title: "Tình trạng phục hồi hàng đợi",
       guardrail:
         "Màn hình này chỉ để nhìn. Không phát lại, không thử lại, không xếp lại — và các con số " +
         "đếm trên mọi cửa hàng của hệ thống, không theo cửa hàng đang chọn.",
-      children: host,
+      children: h("div", { class: "stack" }, tools.node, host),
     }),
     sessionPanel(),
   );

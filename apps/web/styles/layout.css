@@ -61,6 +61,18 @@
   text-transform: uppercase;
 }
 
+/* A phone's appbar is tight: the eyebrow shrinks and truncates rather than wrapping, because a
+ * two-line eyebrow pushes the session chip and sign-out control onto their own row. */
+@media (max-width: 47.99rem) {
+  .appbar__eyebrow {
+    font-size: 0.625rem;
+    letter-spacing: 0.08em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 .appbar__session {
   align-items: center;
   background: rgb(255 255 255 / 0.14);
@@ -73,6 +85,17 @@
   gap: var(--space-2);
   min-height: var(--tap-min);
   padding: var(--space-1) var(--space-3);
+}
+
+/* Buttons on the appbar sit on the dark brand gradient, so the usual quiet-variant colors —
+ * dark text on a light hover — are illegible there. */
+.appbar button {
+  border-color: rgb(255 255 255 / 0.35);
+  color: var(--text-on-brand);
+}
+
+.appbar button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.14);
 }
 
 /* A single unmissable strip for conditions that change what the console may do at all: no session,
@@ -134,10 +157,6 @@
     align-items: start;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
-
-  .split--wide-detail {
-    grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
-  }
 }
 
 .panels {
@@ -152,29 +171,139 @@
 }
 
 /* Navigation ------------------------------------------------------------------------------------
- * Bottom bar on a phone. Horizontal scroll rather than a hamburger, because a hidden nav on an
- * operations console costs a tap on every single task. */
+ * Phone: a bottom bar holding the five daily destinations in a fixed order plus a "Thêm" sheet
+ * for everything else — six equal shares, so nothing scrolls and nothing hides. Desktop: the full
+ * grouped list in a sidebar. A destination the role lacks is shown disabled with its reason, never
+ * removed (the reason renders as text wherever there is room: the sheet and the sidebar). */
 
 .nav {
   background: var(--surface);
   border-top: 1px solid var(--border);
   bottom: 0;
   grid-area: nav;
-  overflow-x: auto;
   padding-bottom: env(safe-area-inset-bottom);
   position: sticky;
-  scrollbar-width: none;
   z-index: var(--layer-sticky);
-}
-
-.nav::-webkit-scrollbar {
-  display: none;
 }
 
 .nav__list {
   display: flex;
   gap: var(--space-1);
   padding: var(--space-1) var(--space-2);
+}
+
+/* The "Thêm" entry is phone-only; the desktop sidebar lists every destination. */
+.nav__more {
+  display: none;
+}
+
+.nav__more summary {
+  list-style: none;
+}
+
+.nav__more summary::-webkit-details-marker {
+  display: none;
+}
+
+.nav__more summary[data-active="true"] {
+  background: var(--brand-050);
+  color: var(--brand-700);
+}
+
+/* The sheet floats above the bottom bar as a fixed overlay: anchoring it inside `.nav` would clip
+ * it, because the bar scrolls horizontally on narrow widths. It closes on the next route change —
+ * the shell re-renders the nav — so it can never strand the operator on a stale menu. */
+.nav__more__list {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 0.75rem);
+  bottom: calc(var(--tap-min) + (2 * var(--space-1)) + env(safe-area-inset-bottom) + var(--space-2));
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 0.18);
+  display: grid;
+  gap: 2px;
+  left: var(--space-2);
+  max-height: 60dvh;
+  overflow-y: auto;
+  padding: var(--space-2);
+  position: fixed;
+  right: var(--space-2);
+  z-index: calc(var(--layer-sticky) + 1);
+}
+
+.nav__more__list .nav__link {
+  align-items: center;
+  flex-direction: row;
+  justify-content: flex-start;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  width: 100%;
+}
+
+.nav__more-group {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-heavy);
+  margin: var(--space-2) 0 0;
+  padding: 0 var(--space-3);
+}
+
+/* A denial reason in words, not a tooltip. Hidden only where space genuinely runs out (the phone
+ * bottom bar), and even there the guard screen after the tap states it in full. */
+.nav__reason {
+  display: none;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-normal, 400);
+}
+
+.nav__more__list .nav__reason {
+  display: block;
+  flex-basis: 100%;
+}
+
+@media (max-width: 63.99rem) {
+  /* Six equal shares: the five phone-primary destinations plus "Thêm". The fixed order matches the
+   * day's rhythm — triage first (Hôm nay, Duyệt), then the order book, drafts, quotes. */
+  .nav__list > li {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .nav__item:not(.nav__item--phone-primary) {
+    display: none;
+  }
+
+  .nav__list > li:has(> a[href="#/"]) {
+    order: 1;
+  }
+
+  .nav__list > li:has(> a[href="#/approvals"]) {
+    order: 2;
+  }
+
+  .nav__list > li:has(> a[href="#/orders"]) {
+    order: 3;
+  }
+
+  .nav__list > li:has(> a[href="#/shadow"]) {
+    order: 4;
+  }
+
+  .nav__list > li:has(> a[href="#/quotes"]) {
+    order: 5;
+  }
+
+  .nav__more {
+    display: block;
+    order: 6;
+  }
+
+  /* Higher specificity than the base `.nav__link` rule below it in this file: on a phone the six
+   * shares size the links, not a fixed minimum width. */
+  .nav__list .nav__link {
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 .nav__link {
@@ -218,15 +347,16 @@
 }
 
 /* A nav entry the current role may not use is shown and disabled, never hidden. Hiding it teaches
- * staff the capability does not exist; disabling it with a reason teaches them who to ask. */
+ * staff the capability does not exist; disabling it with a reason teaches them who to ask. The
+ * muted colour alone carries the state — opacity would push the label under AA contrast. */
 .nav__link[aria-disabled="true"] {
   color: var(--text-muted);
   cursor: not-allowed;
-  opacity: 0.5;
 }
 
 .nav__badge {
   background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
   border-radius: var(--radius-pill);
   color: var(--danger-fg);
   font-size: 0.6875rem;
@@ -234,6 +364,14 @@
   font-weight: var(--weight-heavy);
   min-width: 1.25rem;
   padding: 0 0.3rem;
+  position: absolute;
+  right: 0.35rem;
+  text-align: center;
+  top: 0.2rem;
+}
+
+.nav__link {
+  position: relative;
 }
 
 @media (min-width: 64rem) {
@@ -279,6 +417,7 @@
   .nav__link {
     align-items: center;
     flex-direction: row;
+    flex-wrap: wrap;
     font-size: var(--text-base);
     gap: var(--space-2);
     justify-content: flex-start;
@@ -293,6 +432,14 @@
 
   .nav__badge {
     margin-left: auto;
+    position: static;
+  }
+
+  /* The sidebar has room, so a denied destination states its reason in text, not a tooltip. */
+  .nav__reason {
+    color: var(--text-muted);
+    display: block;
+    flex-basis: 100%;
   }
 }
 
@@ -316,50 +463,4 @@
   .action-bar button {
     flex: 0 0 auto;
   }
-}
-
-/* Dialogs --------------------------------------------------------------------------------------- */
-
-dialog {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  color: var(--text);
-  max-height: 85dvh;
-  max-width: min(38rem, calc(100vw - var(--space-4) * 2));
-  padding: var(--space-5);
-  width: 100%;
-}
-
-dialog::backdrop {
-  background: rgb(7 42 38 / 0.55);
-}
-
-/* The entry motion is transform-and-fade only, and the global reduced-motion rule in base.css
- * collapses it to nothing for people who ask for that. */
-dialog[open] {
-  animation: dialog-in var(--motion-base) var(--easing);
-}
-
-@keyframes dialog-in {
-  from {
-    opacity: 0;
-    transform: translateY(0.5rem) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.dialog__title {
-  margin-bottom: var(--space-3);
-}
-
-.dialog__actions {
-  display: flex;
-  gap: var(--space-2);
-  justify-content: flex-end;
-  margin-top: var(--space-5);
 }

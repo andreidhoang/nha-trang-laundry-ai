@@ -28,22 +28,24 @@
  * @module screens/incidents
  */
 
-import { Submission, isTruncated, request } from "../core/api.js";
+import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { count, dateTime, shortId } from "../core/format.js";
+import { UUID, dateTime, shortId } from "../core/format.js";
 import { WARNING, enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
   badge,
-  empty,
+  boundInput,
   errorNotice,
   facts,
   gated,
   labelled,
+  listView,
   panel,
   resultLine,
-  skeleton,
+  revealError,
+  setResult,
 } from "../ui/components.js";
 
 const LIST_LIMIT = 100;
@@ -56,9 +58,6 @@ const LIST_LIMIT = 100;
  * not to be the authority.
  */
 const INCIDENT_HASH = /^sha256:[0-9a-f]{64}$/;
-
-/** A shape check on the order identifier, to save a round trip on an obvious typo. */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * The two domain refusals this route can answer with, keyed by the server's exact string.
@@ -75,6 +74,26 @@ const REFUSAL_NOTE = {
     "Ràng buộc của sự cố không qua được kiểm tra miền — thường là một trong hai mã băm sai định " +
     "dạng. Không có sự cố nào được ghi.",
 };
+
+/**
+ * The cross-screen hand-off staged by order detail's "Mở sự cố cho đơn này" action.
+ *
+ * Module state, in memory only — invariant 3 of the UX refactor spec permits nothing else,
+ * and an order id is not a secret worth persisting. The render below reads it once and clears
+ * it, so a later visit to this form starts empty rather than resurrecting a stale order. It is
+ * the same idea as the staff screen's create-to-assign carry-over, but between routes instead
+ * of between panels on one screen.
+ */
+let orderPrefill = "";
+
+/**
+ * Stage an order UUID for this screen's next render.
+ *
+ * @param {string} orderId
+ */
+export function setIncidentOrderPrefill(orderId) {
+  orderPrefill = String(orderId || "");
+}
 
 /**
  * How a fault or remedy flag is shown.
@@ -205,40 +224,35 @@ function incidentResult(result) {
 }
 
 /**
- * @param {any[]} items
+ * One incident on the list.
+ *
+ * @param {any} item
  * @returns {HTMLElement}
  */
-function incidentList(items) {
-  if (!items.length) return empty("Chưa có sự cố nào trong cửa hàng này.");
+function incidentCard(item) {
   return h(
-    "div",
-    { class: "stack" },
-    items.map((item) =>
-      h(
-        "article",
-        { class: "card" },
-        h(
-          "div",
-          { class: "spread" },
-          h("strong", { class: "mono", title: item.incident_id }, shortId(item.incident_id)),
-          // The mandated INCIDENT warning, and only while the record is still open. A closed
-          // incident is history; a red badge on it would train staff to ignore the red badge.
-          item.status === "OPEN" ? badge(WARNING.INCIDENT) : null,
-        ),
-        facts([
-          ["Loại", enumLabel(item.category), { mono: true, span: true }],
-          ["Trạng thái", enumLabel(item.status), { mono: true }],
-          [
-            "Đơn liên quan",
-            h("span", { title: item.order_id || null }, shortId(item.order_id)),
-            { mono: true },
-          ],
-          ["Lỗi thuộc về ai", decisionLabel(item.fault_decided)],
-          ["Bồi hoàn cho khách", decisionLabel(item.remedy_decided)],
-          ["Mở lúc", dateTime(item.opened_at)],
-        ]),
-      ),
+    "article",
+    { class: "card" },
+    h(
+      "div",
+      { class: "spread" },
+      h("strong", { class: "mono", title: item.incident_id }, shortId(item.incident_id)),
+      // The mandated INCIDENT warning, and only while the record is still open. A closed
+      // incident is history; a red badge on it would train staff to ignore the red badge.
+      item.status === "OPEN" ? badge(WARNING.INCIDENT) : null,
     ),
+    facts([
+      ["Loại", enumLabel(item.category), { mono: true, span: true }],
+      ["Trạng thái", enumLabel(item.status), { mono: true }],
+      [
+        "Đơn liên quan",
+        h("span", { title: item.order_id || null }, shortId(item.order_id)),
+        { mono: true },
+      ],
+      ["Lỗi thuộc về ai", decisionLabel(item.fault_decided)],
+      ["Bồi hoàn cho khách", decisionLabel(item.remedy_decided)],
+      ["Mở lúc", dateTime(item.opened_at)],
+    ]),
   );
 }
 
@@ -252,6 +266,12 @@ export function render_() {
 
   /** @type {{orderId: string, contactScopeHash: string, evidenceSummaryHash: string}} */
   const draft = { orderId: "", contactScopeHash: "", evidenceSummaryHash: "" };
+
+  // A staged hand-off is consumed exactly once, here, before the inputs are built — the
+  // order field opens holding the carried id.
+  const staged = orderPrefill;
+  orderPrefill = "";
+  if (staged) draft.orderId = staged;
 
   /**
    * The exact payload of the last successful commit.
@@ -268,104 +288,69 @@ export function render_() {
 
   const resultHost = h("div", { class: "stack" });
   const result = resultLine();
-  const listHost = h("div", null, skeleton(2));
-  const listCount = h("span", { class: "count" }, "…");
-  const truncation = h("p", { class: "hint" });
-
-  async function loadList() {
-    render(listHost, skeleton(2));
-    try {
-      const items = await request(
-        `/internal/v1/stores/${encodeURIComponent(store)}/incidents?limit=${LIST_LIMIT}`,
-      );
-      listCount.textContent = count(items, LIST_LIMIT);
-      truncation.textContent = isTruncated(items, LIST_LIMIT)
-        ? `Máy chủ trả tối đa ${LIST_LIMIT} bản ghi và đã trả đủ; có thể còn nữa. API này không có phân trang.`
-        : "";
-      render(listHost, incidentList(items));
-    } catch (error) {
-      render(listHost, errorNotice(error, { onRetry: () => void loadList() }));
-    }
-  }
 
   /**
-   * A text input that reports its own validity as the operator types.
-   *
-   * The field is marked rather than the form redrawn, so the caret stays where the operator put it.
-   *
-   * @param {object} spec
-   * @param {"id"|"hash"} spec.format
-   * @param {string} spec.placeholder
-   * @param {RegExp} spec.pattern
-   * @param {(value: string) => void} spec.onValue
-   * @returns {HTMLInputElement}
+   * The recorded incidents. The filter narrows the rows already fetched, and nothing else: a
+   * case-insensitive substring test over the raw `incident_id`, `order_id` and `status` strings —
+   * the same values the row renders. It computes nothing and touches no money field; while it is
+   * active both counts stay on screen so a shortened list never reads as lost data.
    */
-  function guardedInput(spec) {
-    return /** @type {HTMLInputElement} */ (
-      h("input", {
-        type: "text",
-        value: "",
-        autocomplete: "off",
-        spellcheck: "false",
-        dataFormat: spec.format,
-        placeholder: spec.placeholder,
-        onInput: (event) => {
-          const input = /** @type {HTMLInputElement} */ (event.target);
-          // Trimmed, because a pasted value regularly carries a trailing space, and never
-          // lower-cased: a digest that arrives in the wrong case is a real mismatch, and quietly
-          // repairing it would hide the fact that the wrong thing was copied.
-          const value = input.value.trim();
-          if (value !== input.value) input.value = value;
-          spec.onValue(value);
-          if (value && !spec.pattern.test(value)) input.setAttribute("aria-invalid", "true");
-          else input.removeAttribute("aria-invalid");
-          // Any edit is a new intent, so the previous key must not be reused for it.
-          submission.reset();
-        },
-      })
-    );
-  }
+  const list = listView({
+    limit: LIST_LIMIT,
+    fetch: () =>
+      request(`/internal/v1/stores/${encodeURIComponent(store)}/incidents?limit=${LIST_LIMIT}`),
+    renderItem: incidentCard,
+    emptyText: "Chưa có sự cố nào trong cửa hàng này.",
+    skeletonRows: 2,
+    filter: {
+      placeholder: "Lọc theo mã sự cố, mã đơn, trạng thái…",
+      noun: "sự cố",
+      matches: (item, needle) =>
+        [item.incident_id, item.order_id, item.status].some(
+          (value) => typeof value === "string" && value.toLowerCase().includes(needle),
+        ),
+    },
+  });
 
-  const orderInput = guardedInput({
-    format: "id",
-    placeholder: "00000000-0000-0000-0000-000000000000",
+  const orderInput = boundInput({
+    target: draft,
+    key: "orderId",
     pattern: UUID,
-    onValue: (value) => {
-      draft.orderId = value;
-    },
+    placeholder: "00000000-0000-0000-0000-000000000000",
+    submission,
   });
 
-  const contactInput = guardedInput({
-    format: "hash",
-    placeholder: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  const contactInput = boundInput({
+    target: draft,
+    key: "contactScopeHash",
     pattern: INCIDENT_HASH,
-    onValue: (value) => {
-      draft.contactScopeHash = value;
-    },
+    placeholder: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    submission,
+    format: "hash",
   });
 
-  const evidenceInput = guardedInput({
-    format: "hash",
-    placeholder: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  const evidenceInput = boundInput({
+    target: draft,
+    key: "evidenceSummaryHash",
     pattern: INCIDENT_HASH,
-    onValue: (value) => {
-      draft.evidenceSummaryHash = value;
-    },
+    placeholder: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    submission,
+    format: "hash",
   });
 
   /**
    * @returns {string} empty when the draft may be sent
    */
   function validate() {
-    if (!draft.orderId) return "Nhập mã đơn (UUID). API này bắt buộc phải có đơn.";
+    if (!draft.orderId) return "Chưa nhập mã đơn (UUID). Máy chủ bắt buộc phải có đơn.";
     if (!UUID.test(draft.orderId)) return "Mã đơn phải là UUID đủ 36 ký tự.";
-    if (!draft.contactScopeHash) return "Nhập contact_scope_hash.";
+    if (!draft.contactScopeHash) return "Chưa nhập mã băm phạm vi liên hệ (contact_scope_hash).";
     if (!INCIDENT_HASH.test(draft.contactScopeHash)) {
-      return "contact_scope_hash phải bắt đầu bằng sha256: và có đúng 64 ký tự hex thường.";
+      return "Mã băm phạm vi liên hệ (contact_scope_hash) phải bắt đầu bằng sha256: và có đúng 64 ký tự hex thường.";
     }
-    if (!draft.evidenceSummaryHash) return "Nhập evidence_summary_hash.";
+    if (!draft.evidenceSummaryHash) return "Chưa nhập mã băm tóm tắt bằng chứng (evidence_summary_hash).";
     if (!INCIDENT_HASH.test(draft.evidenceSummaryHash)) {
-      return "evidence_summary_hash phải bắt đầu bằng sha256: và có đúng 64 ký tự hex thường.";
+      return "Mã băm tóm tắt bằng chứng (evidence_summary_hash) phải bắt đầu bằng sha256: và có đúng 64 ký tự hex thường.";
     }
     return "";
   }
@@ -377,8 +362,7 @@ export function render_() {
     event.preventDefault();
     const problem = validate();
     if (problem) {
-      result.dataset.state = "danger";
-      result.textContent = problem;
+      setResult(result, "danger", problem);
       return;
     }
 
@@ -389,15 +373,16 @@ export function render_() {
     };
     const signature = JSON.stringify(payload);
     if (signature === lastCommitted) {
-      result.dataset.state = "warn";
-      result.textContent =
+      setResult(
+        result,
+        "warn",
         "Nội dung này vừa được ghi thành công. Gửi lại y nguyên sẽ tạo thêm một sự cố thứ hai, " +
-        "nên máy không gửi. Sửa dữ liệu nếu đây là sự cố khác, hoặc xem danh sách bên dưới.";
+          "nên máy không gửi. Sửa dữ liệu nếu đây là sự cố khác, hoặc xem danh sách bên dưới.",
+      );
       return;
     }
 
-    result.dataset.state = "warn";
-    result.textContent = "Đang ghi sự cố…";
+    setResult(result, "warn", "Đang ghi sự cố…");
     render(resultHost);
 
     try {
@@ -409,24 +394,31 @@ export function render_() {
       submission.reset();
       lastCommitted = signature;
       // Confirmed exactly once, in one place.
-      result.dataset.state = "ok";
-      result.textContent = `Đã ghi sự cố ${shortId(created.incident_id)}. Chưa có phán quyết lỗi và chưa có bồi hoàn.`;
+      setResult(
+        result,
+        "ok",
+        `Đã ghi sự cố ${shortId(created.incident_id)}. Chưa có phán quyết lỗi và chưa có bồi hoàn.`,
+      );
       render(resultHost, incidentResult(created));
-      await loadList();
+      await list.reload();
     } catch (error) {
       // A refusal is the system working. A binding refusal, a denial and a REQUIRE_HUMAN are
       // outcomes with a cause the operator can act on; only the rest are presented as breakage.
       const note = refusalNote(error);
       const refused = Boolean(note) || error.kind === "DENIED" || error.kind === "REQUIRE_HUMAN";
-      result.dataset.state = refused ? "warn" : "danger";
-      result.textContent =
+      setResult(
+        result,
+        refused ? "warn" : "danger",
         error.kind === "DENIED"
           ? "Máy chủ từ chối thao tác này cho phiên hiện tại. Không có sự cố nào được ghi."
           : refused
             ? "Máy chủ từ chối ràng buộc của sự cố. Không có sự cố nào được ghi."
-            : "Không ghi được sự cố.";
+            : "Không ghi được sự cố.",
+      );
       // A write is never retried by software, so no retry handler is offered here.
-      render(resultHost, errorNotice(error), note);
+      const notice = errorNotice(error);
+      render(resultHost, notice, note);
+      revealError(notice);
     }
   }
 
@@ -451,17 +443,17 @@ export function render_() {
     }),
     labelled({
       id: "incident-contact-hash",
-      label: "contact_scope_hash",
+      label: "Mã băm phạm vi liên hệ",
       hint:
-        "Bắt đầu bằng sha256: rồi 64 ký tự hex thường — KHÔNG phải JCS-SHA256-V1: như mã băm của " +
+        "contact_scope_hash — chép nguyên văn, gồm tiền tố sha256: rồi 64 ký tự hex thường — KHÔNG phải JCS-SHA256-V1: như mã băm của " +
         "báo giá hay phiếu duyệt. Dán nhầm loại sẽ bị máy chủ trả 422 khó hiểu.",
       control: contactInput,
     }),
     labelled({
       id: "incident-evidence-hash",
-      label: "evidence_summary_hash",
+      label: "Mã băm tóm tắt bằng chứng",
       hint:
-        "Cùng định dạng: sha256: + 64 ký tự hex thường. Đây là mã băm của bản tóm tắt bằng chứng, " +
+        "evidence_summary_hash — chép nguyên văn, gồm tiền tố sha256: rồi 64 ký tự hex thường. Đây là mã băm của bản tóm tắt bằng chứng, " +
         "không phải bản thân bằng chứng — không dán nội dung khách gửi vào đây.",
       control: evidenceInput,
     }),
@@ -469,7 +461,7 @@ export function render_() {
     result,
   );
 
-  void loadList();
+  void list.reload();
 
   return h(
     "section",
@@ -477,7 +469,7 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "BẢN GHI SỰ CỐ · KHÔNG PHÁN QUYẾT"),
+      h("p", { class: "eyebrow" }, "Bản ghi sự cố · Không phán quyết"),
       h("h1", null, "Sự cố"),
       h(
         "p",
@@ -487,7 +479,7 @@ export function render_() {
       ),
     ),
     panel({
-      eyebrow: "LỆNH",
+      eyebrow: "Lệnh",
       title: "Mở một sự cố",
       guardrail:
         "Sự cố mở ở đây luôn là SERVICE_QUALITY do nhân viên ghi, luôn ở trạng thái OPEN, và luôn " +
@@ -495,10 +487,17 @@ export function render_() {
       children: h("div", { class: "stack" }, form, resultHost),
     }),
     panel({
-      eyebrow: "ĐÃ GHI",
+      eyebrow: "Đã ghi",
       title: "Sự cố của cửa hàng",
-      count: listCount,
-      children: h("div", { class: "stack" }, truncation, listHost),
+      count: list.count,
+      children: h(
+        "div",
+        { class: "stack" },
+        list.bar.node,
+        list.filterStatus,
+        list.truncation,
+        list.host,
+      ),
     }),
   );
 }

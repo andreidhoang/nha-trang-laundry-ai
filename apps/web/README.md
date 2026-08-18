@@ -13,7 +13,7 @@ index.html            the shell: app bar, banner slot, main outlet, nav. No scre
 app.js                entry module: session, store scope, navigation, standing banners
 sw.js                 GENERATED — service worker, precaches the shell and nothing else
 manifest.webmanifest
-styles/               tokens · base · components · layout
+styles/               tokens · base · components · layout · print (media="print" only)
 src/core/             api, errors, session, rbac, router, dom, format, i18n
 src/ui/               the shared component vocabulary every screen is built from
 src/screens/          one module per screen, registered in screens/index.js
@@ -94,6 +94,13 @@ not a same-origin absolute path is ignored.
   writes a response into a cache (`packages/evals/tests/test_staff_console_privacy.py`).
 - Every screen's declared capability exists in `src/core/rbac.js`; every store-scoped screen declares
   `needsStore`.
+- Role names in user-facing copy gloss through the role map in `src/core/i18n.js` (`enumLabel` →
+  `Gloss (TOKEN)`) — the same dual-language rule as every other enum token, never a bare token and
+  never a hand translation per screen.
+- The `Trợ lý AI` screen (`src/screens/assistant.js`, capability `ASSISTANT`) calls no model: the
+  brain is deterministic and server-side, the SSE stream is paced replay of an answer that was
+  persisted before the stream started, and conversation history is read from the server only — the
+  browser keeps no transcript.
 - Every module parses (`node --check` against a `.mjs` copy, skipped where node is absent).
 
 ## What this console deliberately does not do

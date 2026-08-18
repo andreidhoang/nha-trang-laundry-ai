@@ -101,6 +101,8 @@ domains:
     sources:
       - specs/DOMAIN_DATA_API_SPEC_V1.md
       - specs/SECURITY_RELIABILITY_SPEC_V1.md
+      - packages/db/migrations/0026_assistant_turns.sql
+      - packages/db/migrations/0027_assistant_transcript_retention.sql
     contracts:
       - specs/contracts/canonical-enums-v1.json
     prohibitions:
@@ -109,6 +111,9 @@ domains:
     sources:
       - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
       - specs/SECURITY_RELIABILITY_SPEC_V1.md
+      - packages/db/src/nha_trang_laundry_db/assistant.py
+      - apps/api/src/nha_trang_laundry_api/assistant.py
+      - apps/web/src/screens/assistant.js
     contracts:
       - specs/contracts/agent-tools-v1.openapi.yaml
       - specs/contracts/release-gate-manifest-v1.schema.json
@@ -121,6 +126,7 @@ domains:
       - specs/ENGINEERING_SPEC_V1.md
       - specs/SECURITY_RELIABILITY_SPEC_V1.md
       - CUSTOMER_SERVICE_POLICY_DRAFT.md
+      - packages/db/src/nha_trang_laundry_db/retention.py
     contracts:
       - specs/contracts/canonical-enums-v1.json
     prohibitions:

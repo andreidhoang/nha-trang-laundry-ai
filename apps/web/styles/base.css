@@ -122,7 +122,6 @@ svg {
 
 /* Numbers ------------------------------------------------------------------------------------ */
 
-.tabular,
 .money,
 .mono {
   font-variant-numeric: tabular-nums;
@@ -236,12 +235,21 @@ textarea[aria-invalid="true"] {
   background: var(--danger-bg);
 }
 
+/* Denied and busy controls stay on screen with their reason printed beside them, so a disabled
+ * label must clear AA contrast like any other text. Dimming is done with the sunken surface and
+ * the secondary text colour (an AA pair in both light and dark), never with opacity. The button
+ * rule lives after the variant definitions below so it wins for every variant. */
 input:disabled,
 select:disabled,
-textarea:disabled,
+textarea:disabled {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
 }
 
 /* A UUID or a hash is not prose. Showing it in mono stops staff mis-reading 0 for O when they are
@@ -307,4 +315,16 @@ button[data-variant="quiet"] {
 
 button[data-variant="quiet"]:hover:not(:disabled) {
   background: var(--surface-sunken);
+}
+
+/* Every variant collapses to the same calm disabled state: sunken background, ordinary border,
+ * full-strength secondary text. A disabled primary button must not keep the brand fill at reduced
+ * opacity — it would read as enabled while failing contrast at the same time. */
+button:disabled,
+button[data-variant="primary"]:disabled,
+button[data-variant="danger"]:disabled,
+button[data-variant="quiet"]:disabled {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  color: var(--text-secondary);
 }

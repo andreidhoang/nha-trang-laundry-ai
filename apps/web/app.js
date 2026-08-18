@@ -14,14 +14,15 @@
  * @module app
  */
 
-import { shortId } from "./src/core/format.js";
+import { count, shortId } from "./src/core/format.js";
+import { request } from "./src/core/api.js";
 import { h, render } from "./src/core/dom.js";
-import { NAV, enumLabel } from "./src/core/i18n.js";
+import { NAV, enumVi } from "./src/core/i18n.js";
 import { can } from "./src/core/rbac.js";
 import * as router from "./src/core/router.js";
 import * as session from "./src/core/session.js";
 import { ROUTES } from "./src/screens/index.js";
-import { errorNotice } from "./src/ui/components.js";
+import { errorNotice, icon } from "./src/ui/components.js";
 
 const screenTitle = document.querySelector("#screen-title");
 const appbarActions = document.querySelector("#appbar-actions");
@@ -29,52 +30,195 @@ const banners = document.querySelector("#banners");
 const navList = document.querySelector("#nav-list");
 const outlet = document.querySelector("#main");
 
-/** Navigation, in the order an operator's day runs. */
+/**
+ * Navigation, grouped by the kind of work: running the shop, supervising the agent, and
+ * administering the system. The group labels render only in the desktop sidebar.
+ */
 const NAV_ITEMS = [
-  { path: "/", label: NAV.today },
-  { path: "/quotes", label: NAV.quotes, capability: "QUOTES_READ" },
-  { path: "/orders", label: NAV.orders, capability: "ORDERS_READ" },
-  { path: "/approvals", label: NAV.approvals, capability: "APPROVALS_READ" },
-  { path: "/shadow", label: NAV.shadow, capability: "SHADOW_READ" },
-  { path: "/exceptions", label: NAV.exceptions, capability: "SHADOW_READ" },
-  { path: "/incidents", label: NAV.incidents, capability: "INCIDENTS_READ" },
-  { path: "/system", label: NAV.system, capability: "QUEUE_READ" },
-  { path: "/staff", label: NAV.staff, capability: "STAFF_ADMIN" },
-  { path: "/gaps", label: NAV.unsupported },
+  { path: "/", label: NAV.today, icon: "today", group: "Vận hành" },
+  {
+    path: "/order-requests",
+    label: NAV.orderRequests,
+    capability: "QUOTES_READ",
+    icon: "intake",
+    group: "Vận hành",
+  },
+  { path: "/quotes", label: NAV.quotes, capability: "QUOTES_READ", icon: "quote", group: "Vận hành" },
+  { path: "/orders", label: NAV.orders, capability: "ORDERS_READ", icon: "order", group: "Vận hành" },
+  {
+    path: "/incidents",
+    label: NAV.incidents,
+    capability: "INCIDENTS_READ",
+    icon: "incident",
+    group: "Vận hành",
+  },
+  {
+    path: "/approvals",
+    label: NAV.approvals,
+    capability: "APPROVALS_READ",
+    icon: "approval",
+    group: "Giám sát AI",
+  },
+  {
+    path: "/assistant",
+    label: NAV.assistant,
+    capability: "ASSISTANT",
+    icon: "search",
+    group: "Giám sát AI",
+  },
+  { path: "/shadow", label: NAV.shadow, capability: "SHADOW_READ", icon: "draft", group: "Giám sát AI" },
+  {
+    path: "/exceptions",
+    label: NAV.exceptions,
+    capability: "SHADOW_READ",
+    icon: "exception",
+    group: "Giám sát AI",
+  },
+  { path: "/system", label: NAV.system, capability: "QUEUE_READ", icon: "system", group: "Quản trị" },
+  { path: "/staff", label: NAV.staff, capability: "STAFF_ADMIN", icon: "staff", group: "Quản trị" },
+  { path: "/gaps", label: NAV.unsupported, icon: "gaps", group: "Quản trị" },
 ];
 
 function currentPath() {
   return router.current().path;
 }
 
+/**
+ * The pending-approvals count shown on the Duyệt nav entry.
+ *
+ * Approvals are the one queue where minutes matter — the envelopes carry ten-to-thirty-minute
+ * TTLs — so the shell polls this single read endpoint once a minute while a session is active,
+ * online, and allowed. It is a plain GET: nothing is written, retried, or queued, a failure just
+ * clears the badge, and the count renders through `count()` so a full page reads `100+` rather
+ * than posing as an exact total.
+ */
+const APPROVALS_POLL_MS = 60_000;
+const APPROVALS_LIMIT = 100;
+let approvalsBadge = "";
+
+async function pollApprovals() {
+  const state = session.snapshot();
+  const allowed =
+    state.status === "active" && state.online && can(state.principal, "APPROVALS_READ").allowed;
+  let next = "";
+  if (allowed) {
+    try {
+      const items = await request(`/internal/v1/approvals?limit=${APPROVALS_LIMIT}`);
+      next = Array.isArray(items) && items.length ? count(items, APPROVALS_LIMIT) : "";
+    } catch {
+      next = "";
+    }
+  }
+  if (next !== approvalsBadge) {
+    approvalsBadge = next;
+    renderNav();
+  }
+}
+
+/**
+ * The five destinations on the phone's bottom bar, in display order. Every other destination lives
+ * behind "Thêm" — same links, same disabled-with-reason rule, nothing hidden. The desktop sidebar
+ * ignores this and shows the full grouped list.
+ */
+const PHONE_PRIMARY_PATHS = ["/", "/approvals", "/orders", "/shadow", "/quotes"];
+
+/**
+ * @param {ReturnType<typeof session.principal>} principal
+ * @param {(typeof NAV_ITEMS)[number]} item
+ */
+function navVerdict(principal, item) {
+  return item.capability
+    ? can(principal, item.capability)
+    : { allowed: Boolean(principal), reason: "Chưa có phiên đăng nhập." };
+}
+
+/**
+ * One nav destination. A capability this role lacks is shown and marked, never removed — hiding it
+ * teaches staff the feature does not exist; marking it teaches them whom to ask. The reason rides
+ * in a `nav__reason` span that CSS reveals where there is room for it (the desktop sidebar and the
+ * phone's "Thêm" sheet), because a `title` tooltip is unreachable on touch.
+ *
+ * @param {(typeof NAV_ITEMS)[number]} item
+ * @param {{allowed: boolean, reason?: string}} verdict
+ * @returns {HTMLElement}
+ */
+function navLink(item, verdict) {
+  const active = currentPath() === item.path;
+  return h(
+    "a",
+    {
+      class: "nav__link",
+      href: `#${item.path}`,
+      "aria-current": active ? "page" : null,
+      "aria-disabled": verdict.allowed ? null : "true",
+      title: verdict.allowed ? item.label : `${item.label} — ${verdict.reason}`,
+    },
+    icon(item.icon),
+    h("span", null, item.label),
+    item.path === "/approvals" && approvalsBadge
+      ? h("span", { class: "nav__badge" }, approvalsBadge)
+      : null,
+    verdict.allowed ? null : h("span", { class: "nav__reason" }, verdict.reason),
+  );
+}
+
 function renderNav() {
   const principal = session.principal();
-  render(
-    navList,
-    NAV_ITEMS.map((item) => {
-      const verdict = item.capability
-        ? can(principal, item.capability)
-        : { allowed: Boolean(principal), reason: "Chưa có phiên đăng nhập." };
-      const active = currentPath() === item.path;
-      return h(
+  const children = [];
+  let lastGroup = null;
+  /** @type {Array<{item: (typeof NAV_ITEMS)[number], verdict: {allowed: boolean, reason?: string}}>} */
+  const overflow = [];
+  let overflowActive = false;
+
+  for (const item of NAV_ITEMS) {
+    if (item.group !== lastGroup) {
+      lastGroup = item.group;
+      children.push(h("li", { class: "nav__group", "aria-hidden": "true" }, item.group));
+    }
+    const verdict = navVerdict(principal, item);
+    const isPhonePrimary = PHONE_PRIMARY_PATHS.includes(item.path);
+    children.push(
+      h(
         "li",
+        { class: isPhonePrimary ? "nav__item nav__item--phone-primary" : "nav__item" },
+        navLink(item, verdict),
+      ),
+    );
+    if (!isPhonePrimary) {
+      overflow.push({ item, verdict });
+      if (currentPath() === item.path) overflowActive = true;
+    }
+  }
+
+  // The phone overflow sheet. Native <details>, so there is no state to persist or restore and the
+  // next renderNav — which runs on every route change — closes it behind the chosen destination.
+  const moreChildren = [];
+  let moreGroup = null;
+  for (const { item, verdict } of overflow) {
+    if (item.group !== moreGroup) {
+      moreGroup = item.group;
+      moreChildren.push(h("p", { class: "nav__more-group" }, item.group));
+    }
+    moreChildren.push(navLink(item, verdict));
+  }
+  children.push(
+    h(
+      "li",
+      { class: "nav__more" },
+      h(
+        "details",
         null,
         h(
-          "a",
-          {
-            class: "nav__link",
-            href: `#${item.path}`,
-            "aria-current": active ? "page" : null,
-            // A capability this role lacks is shown and marked, never removed. Hiding it teaches
-            // staff the feature does not exist; marking it teaches them whom to ask.
-            "aria-disabled": verdict.allowed ? null : "true",
-            title: verdict.allowed ? item.label : `${item.label} — ${verdict.reason}`,
-          },
-          item.label,
+          "summary",
+          { class: "nav__link", dataActive: overflowActive ? "true" : null },
+          icon("more"),
+          h("span", null, "Thêm"),
         ),
-      );
-    }),
+        h("div", { class: "nav__more__list" }, ...moreChildren),
+      ),
+    ),
   );
+  render(navList, children);
 }
 
 function renderAppbar() {
@@ -84,15 +228,15 @@ function renderAppbar() {
     return;
   }
 
-  const roles = state.principal.roles.map(enumLabel).join(" · ") || "không có vai trò";
+  const roles = state.principal.roles.join(" · ") || "không có vai trò";
   const mfa = state.principal.mfaVerified ? "đã xác thực" : "chưa xác thực";
   render(
     appbarActions,
     h(
       "span",
-      { class: "appbar__session", title: `${roles} · MFA ${mfa}` },
-      state.principal.roles.join(" · ") || "—",
-      h("span", { class: "sr-only" }, ` MFA ${mfa}`),
+      { class: "appbar__session", title: `${roles} · ${mfa} hai bước` },
+      state.principal.roles.map(enumVi).join(" · ") || "—",
+      h("span", { class: "sr-only" }, ` ${mfa} hai bước`),
     ),
     h(
       "button",
@@ -353,6 +497,7 @@ async function boot() {
   let renderedKey = null;
   session.subscribe(() => {
     syncChrome();
+    void pollApprovals();
     const state = session.snapshot();
 
     // A session ending must not rebuild the screen. That is the single worst moment to discard a
@@ -377,6 +522,10 @@ async function boot() {
   } catch (error) {
     render(outlet, errorNotice(error));
   }
+
+  // The one standing poll in the application: a read-only count behind the approvals badge.
+  setInterval(() => void pollApprovals(), APPROVALS_POLL_MS);
+  void pollApprovals();
 
   // The service worker caches the application shell and nothing else. Registered last so that a
   // failure to register never blocks sign-in.

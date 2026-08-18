@@ -312,7 +312,7 @@ function gapCard(gap) {
  */
 function gapGroup(group) {
   return panel({
-    eyebrow: "NHÓM",
+    eyebrow: "Nhóm",
     title: group.heading,
     count: String(group.entries.length),
     children: h(
@@ -336,7 +336,7 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "CHƯA HỖ TRỢ · DANH SÁCH ĐẦY ĐỦ"),
+      h("p", { class: "eyebrow" }, "Chưa hỗ trợ · Danh sách đầy đủ"),
       h("h1", null, "Chưa hỗ trợ"),
       h(
         "p",

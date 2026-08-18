@@ -20,6 +20,11 @@
  *     scoped to the selected store at all, and a count whose scope the reader guesses wrong is
  *     worse than no count.
  *
+ * A shared toolbar tops the tile panel. Its reload button re-runs every permitted read, and the
+ * stamp beside it records when the last successful fetch landed, so "these counts look stale" is
+ * a checkable fact rather than a feeling. There is no filter: these are per-queue counts, not a
+ * searchable list, and narrowing them would compute nothing.
+ *
  * Nothing on this screen writes, so there is no `Submission` and no result line.
  *
  * @module screens/today
@@ -30,7 +35,7 @@ import { h, render } from "../core/dom.js";
 import { UNKNOWN, count } from "../core/format.js";
 import { can } from "../core/rbac.js";
 import { snapshot } from "../core/session.js";
-import { errorNotice, panel, skeleton } from "../ui/components.js";
+import { errorNotice, explain, markUpdated, panel, skeleton, toolbar } from "../ui/components.js";
 
 /**
  * One tile.
@@ -48,7 +53,8 @@ import { errorNotice, panel, skeleton } from "../ui/components.js";
  * @property {number} limit
  * @property {string} href hash path of the screen that owns this queue
  * @property {string} action label of the link into that screen
- * @property {string} scope who and what the count covers, in one sentence
+ * @property {string} hint the count's scope in a few words, always visible
+ * @property {string} scope who and what the count covers, in one sentence — inside an explain()
  * @property {string} zero what an empty list means
  * @property {(store: string) => string} url
  */
@@ -57,13 +63,14 @@ import { errorNotice, panel, skeleton } from "../ui/components.js";
 const TILES = [
   {
     id: "approvals",
-    eyebrow: "CẦN NGƯỜI DUYỆT",
+    eyebrow: "Cần người duyệt",
     title: "Hàng chờ duyệt",
     capability: "APPROVALS_READ",
     needsStore: false,
     limit: 100,
     href: "/approvals",
     action: "Mở hàng chờ duyệt",
+    hint: "Mọi cửa hàng bạn được gán, không chỉ cửa hàng đang chọn.",
     scope:
       "Đếm phong bì duyệt đang ở trạng thái REQUESTED trên mọi cửa hàng bạn được gán, không chỉ " +
       "cửa hàng đang chọn. Phong bì duyệt có hạn ngắn và không tự gia hạn.",
@@ -72,26 +79,28 @@ const TILES = [
   },
   {
     id: "drafts",
-    eyebrow: "AI SOẠN · NGƯỜI QUYẾT",
+    eyebrow: "AI soạn · người quyết",
     title: "Bản nháp AI chờ duyệt",
     capability: "SHADOW_READ",
     needsStore: true,
     limit: 50,
     href: "/shadow",
     action: "Mở bản nháp AI",
+    hint: "Cửa hàng đang chọn; nháp chưa có quyết định.",
     scope: "Đếm bản nháp chưa có quyết định của cửa hàng đang chọn. Không có bản nháp nào tự gửi đi.",
     zero: "Không có bản nháp nào đang chờ quyết định.",
     url: (store) => `/internal/v1/stores/${encodeURIComponent(store)}/shadow/drafts?limit=50`,
   },
   {
     id: "unknown-sends",
-    eyebrow: "CHƯA ĐỐI SOÁT",
+    eyebrow: "Chưa đối soát",
     title: "Gửi chưa rõ kết quả",
     capability: "SHADOW_READ",
     needsStore: false,
     limit: 50,
     href: "/exceptions",
     action: "Mở ngoại lệ",
+    hint: "Toàn hệ thống, không theo cửa hàng.",
     scope:
       "Đếm biên nhận gửi ở trạng thái UNKNOWN hoặc UNKNOWN_REQUIRES_HUMAN trên toàn hệ thống, " +
       "không theo cửa hàng đang chọn. Chưa rõ nghĩa là không được gửi lại cho tới khi có người đối soát.",
@@ -100,13 +109,14 @@ const TILES = [
   },
   {
     id: "incidents",
-    eyebrow: "ĐANG MỞ",
+    eyebrow: "Đang mở",
     title: "Sự cố đang mở",
     capability: "INCIDENTS_READ",
     needsStore: true,
     limit: 100,
     href: "/incidents",
     action: "Mở sự cố",
+    hint: "Cửa hàng đang chọn, theo đúng trang máy chủ trả.",
     scope:
       "Đếm sự cố của cửa hàng đang chọn theo đúng những gì máy chủ trả về cho danh sách này. " +
       "Lỗi thuộc về ai và bồi thường thế nào là hai quyết định riêng, không suy ra từ con số này.",
@@ -115,13 +125,14 @@ const TILES = [
   },
   {
     id: "orders",
-    eyebrow: "BẢNG ĐƠN",
+    eyebrow: "Bảng đơn",
     title: "Đơn hàng",
     capability: "ORDERS_READ",
     needsStore: true,
     limit: 100,
     href: "/orders",
     action: "Mở bảng đơn",
+    hint: "Cửa hàng đang chọn; không lọc theo trạng thái.",
     scope:
       "Đếm đơn của cửa hàng đang chọn mà máy chủ trả về trong một trang. Đây là số dòng, không " +
       "phải số đơn đang cần xử lý — danh sách này không lọc theo trạng thái.",
@@ -131,15 +142,15 @@ const TILES = [
 ];
 
 /**
- * The standing note that keeps every number on this screen honest.
+ * The standing note that keeps every number on this screen honest. It is education, not a
+ * point-of-action warning, so WS2 collapses it into an explain() — collapsed by default,
+ * flattened by print.css, never deleted.
  *
  * @returns {HTMLElement}
  */
 function notKpiNotice() {
-  return h(
-    "div",
-    { class: "notice", dataState: "info" },
-    h("p", { class: "notice__title" }, "Đây là số bản ghi đang chờ, không phải chỉ số KPI"),
+  return explain(
+    "Vì sao đây là số bản ghi đang chờ, không phải chỉ số KPI?",
     h(
       "p",
       null,
@@ -184,7 +195,8 @@ function tileCard(tile) {
       countNode,
     ),
     body,
-    h("p", { class: "hint" }, tile.scope),
+    h("p", { class: "hint" }, tile.hint),
+    explain("Con số này đếm gì, ở phạm vi nào?", h("p", null, tile.scope)),
     h("div", { class: "form__actions" }, link),
   );
 
@@ -234,6 +246,8 @@ export function render_() {
         return;
       }
       entry.countNode.textContent = count(items, entry.tile.limit);
+      // Each tile fetches on its own clock; the stamp records the most recent one that landed.
+      markUpdated(bar.stamp);
       render(
         entry.body,
         items.length === 0 ? h("p", { class: "hint" }, entry.tile.zero) : null,
@@ -314,6 +328,13 @@ export function render_() {
     await Promise.allSettled(runnable.map((entry) => loadTile(entry, store || "")));
   }
 
+  /**
+   * Reload re-runs the whole gate-and-fetch pass, not just the tiles that succeeded: a tile that
+   * was refused or missing a store is re-checked against the session, so the button stays honest
+   * after a store switch. Per-tile error notices keep their own retry for the single-queue case.
+   */
+  const bar = toolbar({ onReload: loadAll });
+
   void loadAll();
 
   return h(
@@ -322,7 +343,7 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "SỐ BẢN GHI ĐANG CHỜ · KHÔNG PHẢI CHỈ SỐ"),
+      h("p", { class: "eyebrow" }, "Số bản ghi đang chờ"),
       h("h1", null, "Hôm nay"),
       h(
         "p",
@@ -333,16 +354,12 @@ export function render_() {
     ),
     notKpiNotice(),
     panel({
-      eyebrow: "HÀNG ĐỢI",
+      eyebrow: "Hàng đợi",
       title: "Đang chờ người xử lý",
       guardrail:
         "Mỗi ô chỉ hỏi máy chủ khi vai trò hiện tại được phép. Ô bị từ chối hoặc thiếu cửa hàng " +
         "nêu rõ lý do và không gọi API, chứ không hiện số 0.",
-      children: h(
-        "div",
-        { class: "panels" },
-        cards.map((entry) => entry.card),
-      ),
+      children: [bar.node, h("div", { class: "panels" }, cards.map((entry) => entry.card))],
     }),
   );
 }

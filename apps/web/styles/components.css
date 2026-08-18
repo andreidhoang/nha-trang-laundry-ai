@@ -17,11 +17,6 @@
   padding: var(--space-4);
 }
 
-.card--flush {
-  padding: 0;
-  overflow: hidden;
-}
-
 .card__header {
   align-items: flex-start;
   display: flex;
@@ -30,20 +25,14 @@
   margin-bottom: var(--space-3);
 }
 
-.card__title {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
+/* A short section label above a heading. It is sentence case by design: Vietnamese carries its
+ * meaning in stacked diacritics, and uppercasing them (the previous style) was both harder to scan
+ * and lossy to type, so the refactor spec WS2 replaced all-caps eyebrows with short plain labels —
+ * three words at most where the label marks a true group. */
 .eyebrow {
   color: var(--text-muted);
   font-size: var(--text-xs);
   font-weight: var(--weight-heavy);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 /* Badges --------------------------------------------------------------------------------------- */
@@ -96,6 +85,24 @@
   background: var(--info-bg);
   border-color: var(--info-border);
   color: var(--info-fg);
+}
+
+/* The server's verbatim token, kept beside the Vietnamese word at a step down in emphasis. */
+.badge__token {
+  font-size: 0.92em;
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.02em;
+  opacity: 0.72;
+}
+
+/* On a narrow phone the token span of a compact badge folds away and the gloss alone carries the
+ * row; the token survives in the badge's title and aria-label, and print.css restores it on paper.
+ * Only badges built with `compact: true` ever do this — detail and audit surfaces keep
+ * `Gloss (TOKEN)` at every width. */
+@media (max-width: 47.99rem) {
+  .badge--compact .badge__token {
+    display: none;
+  }
 }
 
 /* A count next to a panel heading. Reads as data, not as a badge with meaning. */
@@ -156,6 +163,60 @@
   padding-left: var(--space-5);
 }
 
+/* Progressive disclosure ----------------------------------------------------------------------
+ *
+ * `explain()` — a standing explanation folded behind the question it answers. The styling is
+ * deliberately quieter than a notice: this is prose a repeat user no longer needs, not a fact
+ * that changes what they may do. The widget is the native <details>, so there is no JS state and
+ * nothing persists between sessions; print.css flattens it so a printed record keeps the text.
+ */
+
+.explain {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* The summary is a tap target like any other control, and carries its own affordance: the
+ * chevron rotates open rather than relying on the platform triangle, which is too small to read
+ * as tappable on a phone. */
+.explain > summary {
+  align-items: center;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  font-weight: var(--weight-bold);
+  gap: var(--space-2);
+  list-style: none;
+  min-height: var(--tap-min);
+  padding: var(--space-1) var(--space-2);
+}
+
+.explain > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The rotation is the only motion; the global prefers-reduced-motion rule in base.css collapses
+ * it to instant for people who ask for that. */
+.explain > summary::before {
+  content: "▸";
+  flex: none;
+  transition: transform var(--motion-fast) var(--easing);
+}
+
+.explain[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.explain > summary:hover {
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+}
+
+.explain__body {
+  padding: 0 var(--space-2) var(--space-2) calc(var(--space-2) + 1em);
+}
+
 /* Definition grids ------------------------------------------------------------------------------ */
 
 .fields {
@@ -187,6 +248,28 @@
   overflow-wrap: anywhere;
 }
 
+/* Copy-to-clipboard ------------------------------------------------------------------------------
+ *
+ * `copyable()` — a paste-source value with a one-tap copy beside it (WS6 of the UX refactor
+ * spec). The button keeps the standard quiet variant and its full tap height: it is a real
+ * control, used on phones. When the clipboard API is missing or refuses the write, the value
+ * itself becomes the fallback — it is revealed in full, and one tap selects it whole, so a
+ * manual copy cannot lift a shortened display by accident. In print the button drops out with
+ * every other control and the value remains.
+ */
+
+.copyable {
+  align-items: baseline;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.copyable--manual .copyable__text {
+  -webkit-user-select: all;
+  user-select: all;
+}
+
 /* Lists ------------------------------------------------------------------------------------------ */
 
 .stack {
@@ -203,10 +286,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-.row--end {
-  justify-content: flex-end;
 }
 
 .spread {
@@ -290,10 +369,6 @@
 }
 
 /* Tables — used only where staff genuinely compare rows, never as a layout device. */
-.table-scroll {
-  overflow-x: auto;
-}
-
 table {
   border-collapse: collapse;
   width: 100%;
@@ -381,4 +456,214 @@ th.numeric {
   color: var(--text-muted);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
+}
+
+/* Chat — the Trợ lý AI transcript ---------------------------------------------------------------
+ *
+ * The layout borrows the chat convention (own words on the right in a bubble, the assistant's
+ * answers full-width without one) but keeps the console's rules: every state carries a word, and
+ * the streaming caret and typing dots are motion only — the answer's text is the information.
+ */
+
+.chat {
+  display: flex;
+  justify-content: center;
+}
+
+.chat__col {
+  display: grid;
+  gap: var(--space-5);
+  max-width: 48rem;
+  width: 100%;
+}
+
+.chat__transcript {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.chat__transcript:empty {
+  display: none;
+}
+
+/* The operator's own words: a right-aligned bubble, visually distinct from the assistant's
+ * full-width answers so the two voices can never be confused mid-scroll. */
+.chat__user {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  justify-self: end;
+  max-width: 85%;
+  padding: var(--space-3) var(--space-4);
+}
+
+.chat__user > p {
+  margin: 0;
+}
+
+.chat__user .eyebrow {
+  margin-bottom: var(--space-1);
+}
+
+/* An assistant answer is not a bubble: full width, eyebrow on top, provenance underneath. */
+.chat__assistant {
+  display: grid;
+  gap: var(--space-2);
+  justify-self: stretch;
+}
+
+.chat__answer {
+  overflow-wrap: anywhere;
+}
+
+/* The live answer is one inline stream; pre-wrap keeps the stored newlines exactly. */
+.chat__answer--live {
+  white-space: pre-wrap;
+}
+
+.chat__body {
+  min-height: var(--tap-min);
+}
+
+/* The blinking caret trailing a streaming answer. Removed the moment the stream ends; it signals
+ * "more text is coming" and nothing else. */
+.chat__caret {
+  animation: chat-caret-blink 1s steps(2, start) infinite;
+  background: var(--text-muted);
+  display: inline-block;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: -0.12em;
+  width: 0.55em;
+}
+
+@keyframes chat-caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Three dots while the question travels to the server and back. `role="status"` with a spoken
+ * label carries the state; the motion is only a reinforcement. */
+.chat__dots {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+}
+
+.chat__dots > span[aria-hidden] {
+  animation: chat-dot-pulse 1.2s ease-in-out infinite;
+  background: var(--text-muted);
+  border-radius: var(--radius-pill);
+  display: inline-block;
+  height: 0.45rem;
+  width: 0.45rem;
+}
+
+.chat__dots > span[aria-hidden]:nth-child(3) {
+  animation-delay: 0.15s;
+}
+
+.chat__dots > span[aria-hidden]:nth-child(4) {
+  animation-delay: 0.3s;
+}
+
+@keyframes chat-dot-pulse {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-0.2rem);
+  }
+}
+
+/* The empty transcript: a welcome and tappable starters, each a question the server is
+ * documented to answer. */
+.chat__empty {
+  background: var(--surface-sunken);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.chat__welcome {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  margin: 0;
+}
+
+.chat__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: center;
+}
+
+.chip {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  font-weight: var(--weight-medium);
+  padding: var(--space-2) var(--space-3);
+}
+
+.chip:hover:not(:disabled) {
+  background: var(--brand-050);
+  border-color: var(--brand-700);
+}
+
+/* The composer rides the bottom of the transcript column, so it is reachable however long the
+ * conversation grows. It is a form: print drops it, the transcript stays. */
+.chat__composer {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  bottom: var(--space-3);
+  box-shadow: var(--shadow-md);
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  position: sticky;
+  z-index: var(--layer-sticky);
+}
+
+.chat__composer-row {
+  align-items: flex-end;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.chat__composer textarea {
+  border-color: transparent;
+  max-height: 13rem; /* about eight rows; beyond that the field scrolls */
+  min-height: var(--tap-min);
+  overflow-y: auto;
+  resize: none;
+}
+
+.chat__composer textarea:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.chat__send {
+  border-radius: var(--radius-pill);
+  flex: none;
+  height: var(--tap-min);
+  padding: 0;
+  width: var(--tap-min);
+}
+
+.chat__composer-hint {
+  margin: 0;
+  padding: 0 var(--space-2);
+  text-align: center;
 }

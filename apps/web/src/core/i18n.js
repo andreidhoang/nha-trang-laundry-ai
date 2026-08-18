@@ -7,22 +7,24 @@
  * `ĐÃ DUYỆT`). Nothing says which wins, and dropping either is a defect: the tokens are what an
  * eval or an auditor greps for, the Vietnamese is what the person at the counter reads.
  *
- * So both are rendered — the mandated token verbatim, then a Vietnamese gloss. `TAX UNVERIFIED ·
- * Chưa xác minh thuế`. The token is never translated away and never abbreviated.
+ * So both are rendered — but Vietnamese leads, because Vietnamese is the reading language of the
+ * counter. The mandated token stays verbatim as the secondary caption (`Chưa xác minh thuế · TAX
+ * UNVERIFIED`), never translated away and never abbreviated: it is what an eval or an auditor
+ * greps for, and what an operator quotes when reporting a problem.
  *
- * Enum values are a different matter. A server enum is shown verbatim, always, with the gloss
- * beside it rather than instead of it: an operator who learns that `WAITING_SLOT_APPROVAL` is the
- * thing the API says can talk to an engineer about it, and a translated-only UI makes that
- * conversation impossible.
+ * Enum values follow the same rule. A server enum is shown Vietnamese-first with the verbatim
+ * value in parentheses (`Nháp (DRAFT)`): the person at the counter reads their own language, and
+ * the token survives for the conversation with engineering.
  *
  * @module core/i18n
  */
 
-/** The three price-state labels of `IMPLEMENTATION_ROADMAP_V1.md:886`. */
+/** The three price-state labels of `IMPLEMENTATION_ROADMAP_V1.md:886`. These tokens are already
+ * Vietnamese — they are the mandated display strings — so they lead and the gloss follows. */
 export const PRICE_STATE = {
-  ESTIMATE: { token: "ƯỚC TÍNH", gloss: "chưa phải giá cuối", state: "info" },
-  RANGE: { token: "KHOẢNG GIÁ", gloss: "chờ nhân viên chọn giá chính xác", state: "warn" },
-  APPROVED_EXACT: { token: "ĐÃ DUYỆT", gloss: "giá chính xác đã được duyệt", state: "ok" },
+  ESTIMATE: { token: "ƯỚC TÍNH", gloss: "chưa phải giá cuối", state: "info", tokenFirst: true },
+  RANGE: { token: "KHOẢNG GIÁ", gloss: "chờ nhân viên chọn giá chính xác", state: "warn", tokenFirst: true },
+  APPROVED_EXACT: { token: "ĐÃ DUYỆT", gloss: "giá chính xác đã được duyệt", state: "ok", tokenFirst: true },
 };
 
 /** The seven critical warnings of `IMPLEMENTATION_ROADMAP_V1.md:896-904`. */
@@ -102,6 +104,9 @@ export const REASON_NOTE = {
   AMBIGUOUS_SERVICE: "Mã dịch vụ khớp nhiều mục; cần chọn rõ.",
   INCOMPATIBLE_UNIT: "Đơn vị không dùng được với dịch vụ này.",
   VALIDATION_ERROR: "Dữ liệu vào không hợp lệ với quy tắc miền.",
+  CONTACT_BINDING_UNKNOWN:
+    "Không có liên hệ nào mang mã này. Liên hệ chỉ được tạo từ một hội thoại kênh đã xác minh; " +
+    "màn hình tiếp nhận không tạo liên hệ mới.",
 };
 
 /** Server enum values, glossed. The value itself is always displayed too. */
@@ -138,6 +143,9 @@ export const ENUM_GLOSS = {
   PAID: "đã thanh toán",
   OVERPAID: "thu thừa",
   ON_ACCOUNT: "ghi nợ",
+  // OrderRequestStatus — `order_requests.status CHECK (status IN ('DRAFT','SUBMITTED','CANCELLED'))`;
+  // DRAFT and CANCELLED share the glosses declared above with the same meaning here
+  SUBMITTED: "đã gửi",
   // QuoteRevisionStatus
   PROVISIONAL: "tạm thời",
   REVIEW_REQUIRED: "cần xem xét",
@@ -180,13 +188,70 @@ export const ENUM_GLOSS = {
   MANUAL_SEND_RECORDED: "đã ghi nhận người gửi tay",
   // Actor types on the audit timeline
   STAFF: "nhân viên",
-  AGENT_RUNNER: "bộ chạy agent",
-  OUTBOX_WORKER: "worker gửi",
+  AGENT_RUNNER: "tiến trình chạy agent",
+  OUTBOX_WORKER: "tiến trình gửi",
   BOOTSTRAP: "khởi tạo hệ thống",
+  // Assistant intents
+  GREETING: "lời chào",
+  TODAY_OVERVIEW: "tình hình hôm nay",
+  SLA_RISK: "nguy cơ trễ SLA",
+  PENDING_APPROVALS: "chờ phê duyệt",
+  ORDER_LOOKUP: "tra cứu đơn",
+  REVENUE_UNAVAILABLE: "doanh thu chưa kết nối",
+  UNSUPPORTED: "chưa trả lời được",
+  // Incident status — `customer_incidents.status CHECK (status IN ('OPEN','UNDER_REVIEW','CLOSED'))`
+  OPEN: "đang mở",
+  UNDER_REVIEW: "đang xem xét",
+  CLOSED: "đã đóng",
+  // Incident categories — `IncidentRepository` admits exactly these two
+  SERVICE_QUALITY: "chất lượng dịch vụ",
+  AUTOMATED_MESSAGE_ERROR: "lỗi tin nhắn tự động",
+  // Agent run terminal outcome — `agent_drafts.terminal_outcome IN ('DRAFT','REQUIRE_HUMAN')`;
+  // DRAFT shares the order-status gloss "nháp" above, which is what it means here too
+  REQUIRE_HUMAN: "cần người quyết định",
+  // Agent run terminal codes — the fixed vocabulary `responses_runtime` and the worker pipeline
+  // emit. Model-supplied reason codes pass through untouched and render raw, which is deliberate:
+  // a code this map does not know must look unfamiliar.
+  DRAFT_REQUIRES_HUMAN: "bản nháp chờ người duyệt",
+  VALIDATED_DRAFT: "bản nháp hợp lệ",
+  MODEL_REQUESTED_HANDOFF: "mô hình xin chuyển cho người",
+  PROVIDER_CONNECTION_FAILURE: "không kết nối được nhà cung cấp",
+  PROVIDER_OUTCOME_AMBIGUOUS: "kết quả từ nhà cung cấp không rõ",
+  PROVIDER_REQUEST_CANCELLED: "yêu cầu tới nhà cung cấp bị huỷ",
+  PROVIDER_TIMEOUT: "nhà cung cấp không trả lời kịp",
+  CONTEXT_REJECTED: "gói ngữ cảnh bị từ chối",
+  BUDGET_EXHAUSTED: "hết hạn mức cho lượt chạy",
+  TOOL_BRIDGE_REJECTED: "cầu nối công cụ từ chối",
+  INVALID_PROVIDER_OUTPUT: "kết quả nhà cung cấp không hợp lệ",
+  UNEXPECTED_RUNTIME_FAILURE: "tiến trình chạy agent gặp lỗi không mong đợi",
+  // Audit actions visible on the order timeline — the `audit_action` of every material change
+  // whose aggregate id is the order's
+  ORDER_CREATE_FROM_FINAL_QUOTE: "tạo đơn từ báo giá đã chốt",
+  ORDER_STATE_TRANSITION: "chuyển trạng thái đơn",
+  ORDER_SETTLEMENT_RECORD: "ghi nhận tất toán",
 };
 
 /**
- * `VALUE · gloss`, or just the value when no gloss exists. Never gloss-only.
+ * The Vietnamese name of a server enum, capitalized for standalone display.
+ *
+ * Vietnamese is the reading language of this console; the raw token remains available wherever
+ * precision matters (selects keep it in parentheses, badges keep it as a secondary caption, and
+ * the app bar keeps it in the tooltip), because it is what an engineer greps for.
+ *
+ * @param {string|null|undefined} value
+ * @returns {string}
+ */
+export function enumVi(value) {
+  if (!value) return "—";
+  const gloss = ENUM_GLOSS[value];
+  if (!gloss) return String(value);
+  return gloss.charAt(0).toUpperCase() + gloss.slice(1);
+}
+
+/**
+ * `Gloss (VALUE)` — Vietnamese first, the verbatim token in parentheses. Never gloss-only: an
+ * operator who learns that `WAITING_SLOT_APPROVAL` is the thing the API says can talk to an
+ * engineer about it, and a translated-only UI makes that conversation impossible.
  *
  * @param {string|null|undefined} value
  * @returns {string}
@@ -194,19 +259,21 @@ export const ENUM_GLOSS = {
 export function enumLabel(value) {
   if (!value) return "—";
   const gloss = ENUM_GLOSS[value];
-  return gloss ? `${value} · ${gloss}` : String(value);
+  return gloss ? `${enumVi(value)} (${value})` : String(value);
 }
 
 /** Screen and navigation titles. */
 export const NAV = {
   today: "Hôm nay",
+  orderRequests: "Tiếp nhận",
   quotes: "Báo giá",
   orders: "Đơn hàng",
   approvals: "Duyệt",
   shadow: "Bản nháp AI",
+  assistant: "Trợ lý AI",
   exceptions: "Ngoại lệ",
   incidents: "Sự cố",
   system: "Hệ thống",
   staff: "Nhân sự",
-  unsupported: "Chưa hỗ trợ",
+  unsupported: "Việc chưa hỗ trợ",
 };

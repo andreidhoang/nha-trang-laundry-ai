@@ -127,9 +127,11 @@
 }
 
 /* Dark mode is for the evening shift, not for decoration. The state hues keep their meaning and
- * only their luminance moves, so a badge learned in daylight still reads the same after dark. */
+ * only their luminance moves, so a badge learned in daylight still reads the same after dark. It
+ * follows the OS setting only: nothing in the console sets a `data-theme` attribute, so there is
+ * no manual override — the previous `[data-theme]` blocks were dead code (refactor spec D11). */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root {
     --canvas: #0b1412;
     --surface: #13201d;
     --surface-sunken: #0f1a18;
@@ -171,45 +173,4 @@
     --shadow-md: 0 2px 6px rgb(0 0 0 / 0.4), 0 8px 20px rgb(0 0 0 / 0.35);
     --shadow-lg: 0 10px 34px rgb(0 0 0 / 0.55);
   }
-}
-
-[data-theme="dark"] {
-  --canvas: #0b1412;
-  --surface: #13201d;
-  --surface-sunken: #0f1a18;
-  --surface-raised: #182825;
-  --border: #263833;
-  --border-strong: #3a514a;
-
-  --text: #e8f1ee;
-  --text-secondary: #adc0ba;
-  --text-muted: #8ba099;
-
-  --ok-fg: #7fd8bd;
-  --ok-bg: #0d2b25;
-  --ok-border: #1f5a4c;
-
-  --warn-fg: #f0c076;
-  --warn-bg: #2e2312;
-  --warn-border: #6d5322;
-
-  --danger-fg: #f3a5a5;
-  --danger-bg: #331616;
-  --danger-border: #6e2e2e;
-
-  --info-fg: #8fc4ea;
-  --info-bg: #12262f;
-  --info-border: #2b5570;
-
-  --neutral-fg: #adc0ba;
-  --neutral-bg: #1a2724;
-  --neutral-border: #2f423d;
-
-  --focus-ring: #6db2f2;
-  --brand-050: #10231f;
-  --brand-200: #1d4a40;
-
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-md: 0 2px 6px rgb(0 0 0 / 0.4), 0 8px 20px rgb(0 0 0 / 0.35);
-  --shadow-lg: 0 10px 34px rgb(0 0 0 / 0.55);
 }

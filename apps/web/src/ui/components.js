@@ -8,9 +8,10 @@
  * @module ui/components
  */
 
+import { isTruncated } from "../core/api.js";
 import { field, h, render } from "../core/dom.js";
-import { UNKNOWN, money, moneyRange, timeOnly } from "../core/format.js";
-import { PRICE_STATE, REASON_NOTE, WARNING, enumLabel, warningFor } from "../core/i18n.js";
+import { UNKNOWN, count, moneyRange, timeOnly } from "../core/format.js";
+import { PRICE_STATE, REASON_NOTE, enumLabel, warningFor } from "../core/i18n.js";
 
 /**
  * The console's icon set: one 24×24 stroke grid, drawn with the safe `h()` builder.
@@ -26,6 +27,11 @@ const ICONS = {
     h("line", { x1: "16", y1: "2", x2: "16", y2: "6" }),
     h("line", { x1: "8", y1: "2", x2: "8", y2: "6" }),
     h("line", { x1: "3", y1: "10", x2: "21", y2: "10" }),
+  ],
+  intake: [
+    h("path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }),
+    h("polyline", { points: "7 10 12 15 17 10" }),
+    h("line", { x1: "12", y1: "15", x2: "12", y2: "3" }),
   ],
   quote: [
     h("path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" }),
@@ -82,6 +88,15 @@ const ICONS = {
     h("circle", { cx: "11", cy: "11", r: "8" }),
     h("line", { x1: "21", y1: "21", x2: "16.65", y2: "16.65" }),
   ],
+  "arrow-up": [
+    h("line", { x1: "12", y1: "19", x2: "12", y2: "5" }),
+    h("path", { d: "M5 12l7-7 7 7" }),
+  ],
+  more: [
+    h("circle", { cx: "5", cy: "12", r: "1.75" }),
+    h("circle", { cx: "12", cy: "12", r: "1.75" }),
+    h("circle", { cx: "19", cy: "12", r: "1.75" }),
+  ],
 };
 
 /**
@@ -111,18 +126,55 @@ export function icon(name) {
 }
 
 /**
- * A state badge: the mandated token, then a Vietnamese gloss.
+ * A state badge: the Vietnamese gloss as the primary word, then the mandated token small.
  *
- * @param {{token: string, gloss: string, state: string}} spec
+ * Vietnamese leads because it is the reading language of the counter; the token stays visible,
+ * verbatim and unabbreviated, because it is what an engineer greps for and what an eval asserts
+ * on. When no gloss exists the token stands alone — an unrecognised value must look unfamiliar,
+ * not be quietly absorbed.
+ *
+ * `compact: true` keeps both spans but marks the badge as allowed to shed its token span on a
+ * narrow viewport (components.css hides it under 48rem, where four full `Gloss (TOKEN)` badges
+ * wrap an order card into unreadability). The full form survives in `title` and `aria-label`, and
+ * print.css restores the token on paper. Only dense list rows may pass the flag — detail and
+ * audit surfaces keep `Gloss (TOKEN)` always, per the UX refactor spec WS2.
+ *
+ * @param {{token: string, gloss: string, state: string, tokenFirst?: boolean, compact?: boolean}} spec
  * @returns {HTMLElement}
  */
 export function badge(spec) {
+  const primary = spec.tokenFirst ? spec.token : spec.gloss || spec.token;
+  const secondary =
+    primary === spec.token ? (spec.gloss && spec.gloss !== spec.token ? spec.gloss : null) : spec.token;
+  const compact = Boolean(spec.compact && secondary && !spec.tokenFirst);
   return h(
     "span",
-    { class: "badge", dataState: spec.state, title: spec.gloss },
-    spec.token,
-    spec.gloss ? h("span", { class: "sr-only" }, ` — ${spec.gloss}`) : null,
+    {
+      class: compact ? "badge badge--compact" : "badge",
+      dataState: spec.state,
+      title: secondary ? `${spec.token} — ${spec.gloss}` : spec.token,
+      "aria-label": compact ? `${spec.gloss} (${spec.token})` : null,
+    },
+    primary,
+    secondary
+      ? h("span", { class: "badge__token mono" }, compact ? `(${secondary})` : secondary)
+      : null,
   );
+}
+
+/**
+ * One state dimension of an order, as a neutral badge.
+ *
+ * Deliberately uncoloured. Colouring `EXCEPTION` red and `PAID` green would be this console
+ * ranking the severity of domain states, and nothing in the specification ranks them — the server
+ * publishes the value, not an opinion about it. `components.css` already says state is never
+ * conveyed by colour alone; here the word is the whole message, so the word is all there is.
+ *
+ * @param {string|null|undefined} value a server enum value
+ * @returns {HTMLElement}
+ */
+export function dimensionBadge(value) {
+  return badge({ token: enumLabel(value), gloss: "", state: "neutral" });
 }
 
 /**
@@ -296,6 +348,40 @@ export function panel(spec) {
 }
 
 /**
+ * A standing explanation folded behind its own question: a native `<details>`/`<summary>`.
+ *
+ * This is the WS2 progressive-disclosure component (`docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md`).
+ * What may go inside it is constrained by that spec, and the constraint is stated here because
+ * this is the component that enforces it:
+ *
+ *   - **Context and limit education only.** What a read model does not carry, why a list is
+ *     capped, which conditions a command will be checked against — the prose a repeat user no
+ *     longer needs to read every visit.
+ *   - **Never** a point-of-action safety disclosure (MANUAL_SEND_RECORDED ≠ delivered, settlement
+ *     finality, the CONFIRMED_SENT danger meaning), never a capability refusal, never a truncation
+ *     disclosure. Those stay visible, uncollapsed, next to the control or list they guard.
+ *   - The summary names what the explanation covers, in plain Vietnamese as a question or a topic
+ *     ("Tại sao nút Duyệt đang tắt?") — never "Xem thêm".
+ *
+ * There is deliberately no JS state: open/closed lives only in the DOM, so there is nothing to
+ * persist (invariant 3) and nothing to restore. Data comes first — an `explain()` renders below
+ * or beside what it explains, never between the operator and the first actionable control.
+ * print.css flattens every `details.explain`, so a printed record keeps every explanation.
+ *
+ * @param {string} summary
+ * @param {...unknown} body
+ * @returns {HTMLElement}
+ */
+export function explain(summary, ...body) {
+  return h(
+    "details",
+    { class: "explain" },
+    h("summary", null, summary),
+    h("div", { class: "explain__body stack stack--tight" }, ...body),
+  );
+}
+
+/**
  * @param {string} text
  * @returns {HTMLElement}
  */
@@ -310,7 +396,7 @@ export function empty(text) {
 export function skeleton(rows = 3) {
   return h(
     "div",
-    { class: "stack", ariaBusy: "true", "aria-label": "Đang tải" },
+    { class: "stack", "aria-busy": "true", "aria-label": "Đang tải" },
     Array.from({ length: rows }, () => h("div", { class: "skeleton" })),
   );
 }
@@ -435,6 +521,19 @@ export function gated(control, verdict) {
 }
 
 /**
+ * Bring a just-rendered failure into view.
+ *
+ * A submit that fails below the fold used to leave the operator staring at an apparently dead
+ * button. The scroll is `block: "nearest"` so a result already on screen does not move the page,
+ * and the global reduced-motion rule in base.css forces it instant for people who ask for that.
+ *
+ * @param {HTMLElement} node
+ */
+export function revealError(node) {
+  node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+/**
  * A `role="status"` line under a form. Announced on change, cleared on resubmit.
  *
  * @returns {HTMLElement}
@@ -456,6 +555,217 @@ export function setResult(node, state, content) {
   }
   node.dataset.state = state;
   render(node, content);
+}
+
+/**
+ * The filter + freshness row that tops a list panel.
+ *
+ * Two honesty rules are built in rather than left to each screen. The reload control is a plain
+ * read — never disabled, never throttled — and the stamp beside it records when the data on screen
+ * was fetched, so "this list looks old" is a fact staff can read. The filter narrows the rows
+ * already fetched and nothing else: it computes nothing, and the screen shows both counts while it
+ * is active so a shortened list never reads as lost data.
+ *
+ * @param {object} spec
+ * @param {() => Promise<unknown>} spec.onReload re-run the screen's reads
+ * @param {{placeholder: string, label?: string, onChange: (value: string) => void}} [spec.filter]
+ * @returns {{node: HTMLElement, stamp: HTMLElement, search: HTMLInputElement|null}}
+ */
+export function toolbar(spec) {
+  const stamp = h("span", { class: "updated", role: "status" });
+  const search = spec.filter
+    ? /** @type {HTMLInputElement} */ (
+        h("input", {
+          type: "search",
+          class: "toolbar__search",
+          placeholder: spec.filter.placeholder,
+          "aria-label": spec.filter.label || spec.filter.placeholder,
+          onInput: (event) => spec.filter.onChange(event.target.value),
+        })
+      )
+    : null;
+  return {
+    node: h(
+      "div",
+      { class: "toolbar" },
+      search,
+      h(
+        "div",
+        { class: "toolbar__meta" },
+        stamp,
+        h(
+          "button",
+          { type: "button", dataVariant: "quiet", onClick: () => void spec.onReload() },
+          icon("refresh"),
+          "Tải lại",
+        ),
+      ),
+    ),
+    stamp,
+    search,
+  };
+}
+
+/**
+ * Record when the data on screen was fetched, in business time.
+ *
+ * @param {HTMLElement} stamp the `stamp` element from `toolbar()`
+ * @param {Date} [at]
+ */
+export function markUpdated(stamp, at = new Date()) {
+  stamp.textContent = `Cập nhật lúc ${timeOnly(at.toISOString())}`;
+}
+
+/**
+ * The fetch–filter–truncate–skeleton cycle of a list panel, owned once here.
+ *
+ * Every list screen in the console runs the same lifecycle: show a skeleton, fetch with a limit,
+ * stamp the fetch time, disclose truncation when the page came back full, render the rows or an
+ * honest empty state, and offer a retry on failure. Six screens used to re-implement that with
+ * small variations, and the variations are where a truncation disclosure or a "đang lọc X/Y" line
+ * quietly goes missing. What stays per-screen is passed in:
+ *
+ *   - `fetch`, `renderItem`, `emptyText` — the data and what one row looks like.
+ *   - `filter` — optional. The match itself (`matches`) stays with the screen, because which fields
+ *     a filter reads is a statement about that screen's data. The status line is built here so the
+ *     both-counts rule ("a shortened list never reads as lost data") cannot be forgotten.
+ *   - `truncationText` — the disclosure sentence; the default covers the common no-pagination API.
+ *     Pass `truncation: null` only when the screen renders its own truncation block (the unknown
+ *     sends queue, whose page-size escalation control lives inside it) via `onLoadStart`/`onLoaded`.
+ *   - `onLoadStart` / `onLoaded` / `onError` — hooks for state that survives the list, like the
+ *     approvals countdown registry or the shadow review map. `onLoaded` runs after the meta line is
+ *     updated and before the rows are rebuilt.
+ *   - `clearMetaOnError` — whether a failed reload resets the count and truncation line. Screens
+ *     that keep them (quotes, incidents) leave a stale count beside the error; screens that reset
+ *     them (orders, approvals, shadow, exceptions) show "—". Both behaviours are preserved as found.
+ *
+ * The filter only ever narrows rows already fetched; it computes nothing and never refetches.
+ * `reload()` resolves to whether the list on screen is now the server's current answer — the shadow
+ * queue's conflict path depends on that signal.
+ *
+ * @param {object} spec
+ * @param {() => Promise<any[]>} spec.fetch
+ * @param {(item: any) => HTMLElement} spec.renderItem one row of the list
+ * @param {string} spec.emptyText shown when there is nothing to list
+ * @param {number|(() => number)} spec.limit the page size `fetch` asks for
+ * @param {number} [spec.skeletonRows]
+ * @param {(limit: number) => string} [spec.truncationText]
+ * @param {null} [spec.truncation] pass `null` to manage the truncation block via the hooks
+ * @param {object} [spec.filter]
+ * @param {string} spec.filter.placeholder
+ * @param {string} [spec.filter.label]
+ * @param {string} spec.filter.noun the counted thing, for "Đang lọc X/Y <noun>"
+ * @param {(item: any, needle: string) => boolean} spec.filter.matches
+ * @param {string} [spec.filter.filteredEmptyText] shown when the filter hides every row
+ * @param {boolean} [spec.filterStatusHiddenWhenInactive] hide the status line rather than empty it
+ * @param {boolean} [spec.clearMetaOnError]
+ * @param {() => void} [spec.onLoadStart]
+ * @param {(items: any[]) => void} [spec.onLoaded]
+ * @param {(error: unknown) => void} [spec.onError]
+ * @returns {{
+ *   bar: {node: HTMLElement, stamp: HTMLElement, search: HTMLInputElement|null},
+ *   host: HTMLElement,
+ *   count: HTMLElement,
+ *   truncation: HTMLElement|null,
+ *   filterStatus: HTMLElement,
+ *   reload: () => Promise<boolean>,
+ * }}
+ */
+export function listView(spec) {
+  const rows = spec.skeletonRows ?? 3;
+  const host = h("div", null, skeleton(rows));
+  const countNode = h("span", { class: "count" }, "…");
+  const truncation = spec.truncation === null ? null : h("p", { class: "hint" });
+  const filterStatus = h("p", { class: "filter-status" });
+  if (spec.filter && spec.filterStatusHiddenWhenInactive) filterStatus.hidden = true;
+
+  /** The rows exactly as last fetched. The filter narrows a copy, never this list. */
+  let fetched = /** @type {any[]} */ ([]);
+  let filterText = "";
+
+  function visibleItems() {
+    if (!spec.filter) return fetched;
+    const needle = filterText.trim().toLowerCase();
+    if (!needle) return fetched;
+    return fetched.filter((item) => spec.filter.matches(item, needle));
+  }
+
+  function renderVisible() {
+    const visible = visibleItems();
+    const active = Boolean(spec.filter && filterText.trim());
+    if (spec.filter) {
+      if (spec.filterStatusHiddenWhenInactive) {
+        filterStatus.hidden = !active;
+        if (active) {
+          filterStatus.textContent = `Đang lọc ${visible.length}/${fetched.length} ${spec.filter.noun}`;
+        }
+      } else {
+        filterStatus.textContent = active
+          ? `Đang lọc ${visible.length}/${fetched.length} ${spec.filter.noun}`
+          : "";
+      }
+    }
+    render(
+      host,
+      visible.length
+        ? h(
+            "div",
+            { class: "stack" },
+            visible.map((item) => spec.renderItem(item)),
+          )
+        : empty(
+            active && spec.filter.filteredEmptyText
+              ? spec.filter.filteredEmptyText
+              : spec.emptyText,
+          ),
+    );
+  }
+
+  const bar = toolbar({
+    onReload: () => reload(),
+    filter: spec.filter
+      ? {
+          placeholder: spec.filter.placeholder,
+          label: spec.filter.label,
+          onChange: (value) => {
+            filterText = value;
+            renderVisible();
+          },
+        }
+      : undefined,
+  });
+
+  async function reload() {
+    spec.onLoadStart?.();
+    render(host, skeleton(rows));
+    try {
+      const items = await spec.fetch();
+      fetched = items;
+      const limit = typeof spec.limit === "function" ? spec.limit() : spec.limit;
+      markUpdated(bar.stamp);
+      countNode.textContent = count(items, limit);
+      if (truncation) {
+        truncation.textContent = isTruncated(items, limit)
+          ? (spec.truncationText ||
+            ((n) =>
+              `Máy chủ trả tối đa ${n} bản ghi và đã trả đủ; có thể còn nữa. API này không có phân trang.`))(limit)
+          : "";
+      }
+      spec.onLoaded?.(items);
+      renderVisible();
+      return true;
+    } catch (error) {
+      spec.onError?.(error);
+      if (spec.clearMetaOnError) {
+        countNode.textContent = UNKNOWN;
+        if (truncation) truncation.textContent = "";
+      }
+      render(host, errorNotice(error, { onRetry: () => void reload() }));
+      return false;
+    }
+  }
+
+  return { bar, host, count: countNode, truncation, filterStatus, reload };
 }
 
 /**
@@ -499,6 +809,108 @@ export function enumSelect(name, values, selected) {
 }
 
 /**
+ * A text field bound to one key of a draft object, marked `aria-invalid` as the operator types.
+ *
+ * The pattern only ever marks the field; it never decides the outcome — the form's `validate` does
+ * that, in words, at submit time. The field is marked rather than the form redrawn, so the caret
+ * stays where the operator put it. The value is trimmed (or `normalize`d) because a pasted value
+ * regularly carries a trailing space, and never case-folded: a digest that arrives in the wrong
+ * case is a real mismatch, and quietly repairing it would hide that the wrong thing was copied.
+ *
+ * Any edit resets the submission's idempotency key: the server hashes the payload alongside the
+ * key, so replaying the old key with changed content is a 409 rather than a replay.
+ *
+ * @param {object} spec
+ * @param {Record<string, string>} spec.target
+ * @param {string} spec.key
+ * @param {RegExp} spec.pattern
+ * @param {string} spec.placeholder
+ * @param {import("../core/api.js").Submission} spec.submission
+ * @param {(value: string) => string} [spec.normalize]
+ * @param {"id"|"hash"} [spec.format]
+ * @returns {HTMLElement}
+ */
+export function boundInput(spec) {
+  return h("input", {
+    type: "text",
+    value: spec.target[spec.key],
+    autocomplete: "off",
+    spellcheck: "false",
+    dataFormat: spec.format || "id",
+    placeholder: spec.placeholder,
+    "aria-invalid":
+      spec.target[spec.key] && !spec.pattern.test(spec.target[spec.key]) ? "true" : null,
+    onInput: (event) => {
+      const raw = spec.normalize ? spec.normalize(event.target.value) : event.target.value.trim();
+      if (raw !== event.target.value) event.target.value = raw;
+      spec.target[spec.key] = raw;
+      spec.submission.reset();
+      event.target.setAttribute("aria-invalid", raw && !spec.pattern.test(raw) ? "true" : "false");
+    },
+  });
+}
+
+/**
+ * A paste-source value with a one-tap copy beside it.
+ *
+ * This is the WS6 interim-flow component (`docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md`): until
+ * the upstream read APIs land, identifiers and hashes travel between screens by paste — a
+ * quote's snapshot hash into the order form, a staff UUID into the assignment forms. The
+ * button's own label is the whole feedback channel, because the console has no toast system,
+ * and nothing here is stored:
+ *
+ *   - **Success** — the label reads "Đã chép" for about two seconds, then
+ *     returns to "Sao chép".
+ *   - **Failure** — no clipboard API, a denied permission, an insecure context —
+ *     the label says what to do instead ("Chép không được —
+ *     bôi đen và tự chép") and the value is revealed in full with
+ *     select-all styling (`.copyable--manual` in components.css): copying a shortened
+ *     display would paste a truncated hash back as a 422.
+ *
+ * @param {object} spec
+ * @param {string} spec.value the full value — what a successful copy puts on the clipboard
+ * @param {string} [spec.display] what is shown before any interaction; defaults to the full value
+ * @returns {HTMLElement}
+ */
+export function copyable(spec) {
+  const text = h("span", { class: "copyable__text mono" }, spec.display ?? spec.value);
+  const button = h(
+    "button",
+    { type: "button", dataVariant: "quiet", onClick: attempt },
+    "Sao chép",
+  );
+  const root = h("span", { class: "copyable" }, text, button);
+  let timer = 0;
+
+  function attempt() {
+    const clipboard = navigator.clipboard;
+    // No API at all — an insecure context or an old WebView — skips straight to the manual
+    // path; a present-but-refused write rejects and lands in the same place.
+    if (!clipboard || typeof clipboard.writeText !== "function") {
+      manual();
+      return;
+    }
+    clipboard.writeText(spec.value).then(copied, manual);
+  }
+
+  function copied() {
+    button.textContent = "Đã chép";
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      button.textContent = "Sao chép";
+    }, 2000);
+  }
+
+  function manual() {
+    text.textContent = spec.value;
+    root.classList.add("copyable--manual");
+    button.textContent = "Chép không được — bôi đen và tự chép";
+  }
+
+  return root;
+}
+
+/**
  * A row of key/value facts.
  *
  * @param {Array<[string, unknown, object?]|null>} entries
@@ -511,5 +923,3 @@ export function facts(entries) {
     entries.filter(Boolean).map(([term, value, options]) => field(term, value, options || {})),
   );
 }
-
-export { money, moneyRange, UNKNOWN, WARNING, badge as stateBadge };

@@ -14,9 +14,10 @@ authorization source. A code status never authorizes a release.
 Every capability reads `NOT_AUTHORIZED`. Resolving a decision removes one fail-closed reason for the
 capabilities it names — it authorizes nothing by itself; G1–G4 evidence still governs authorization.
 
-**One pending item is now buildable: `RETENTION-001`.** `uv run python scripts/run_delivery_loop.py`
-selects it as of this snapshot — `DEC-008` (the retention schedule) resolved 2026-08-18, which was
-its sole blocker. Every other pending item still traces to an owner decision or an external party;
+~~**One pending item is now buildable: `RETENTION-001`.**~~ **Superseded 2026-08-18 — it was built.**
+`DEC-008` resolving was its sole blocker; the mechanism had been written on 2026-08-13 and parked with
+draft evidence. `RETENTION-001` is now `COMPLETE`, and completing it unblocked
+`EVAL-SYNTHETIC-COMBINATORIAL-001` in the same session (see below). Every other pending item still traces to an owner decision or an external party;
 see [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 and §6a.
 Since 2026-08-14 the queue recorded `TEST-ISOLATION-001`, `DEMO-STACK-001`, `QUOTE-COMMAND-001`,
 `STORE-SCOPING-002`, `STORE-ASSIGNMENT-001`, `SETTLEMENT-001` and `TOOL-BACKEND-001` complete, and
@@ -89,7 +90,7 @@ buildable — DEC-009's resolution removed a decision, not a blocker on this par
 | `PROVIDER-ACCESS-001` | Dedicated provider organization, credential, and data-control posture | — | Blocked | — |
 | `EVIDENCE-REPIN-001` | Re-establish the local synthetic evidence pin so the core can change | — | Complete | — |
 | `PROVIDER-TRANSPORT-001` | Real Responses provider transport behind the existing injectable boundary | `PROVIDER-ACCESS-001` | Pending | — |
-| `EVAL-SYNTHETIC-COMBINATORIAL-001` | Synthetic combinatorial suite generated from the deterministic domain | `DOMAIN-005`, `RESPONSES-RUNTIME-001`, `EVIDENCE-REPIN-001` | Blocked | — |
+| `EVAL-SYNTHETIC-COMBINATORIAL-001` | Synthetic combinatorial suite generated from the deterministic domain | `DOMAIN-005`, `RESPONSES-RUNTIME-001`, `EVIDENCE-REPIN-001` | **Complete 2026-08-18** | — (was `Blocked` by a condition its own text said had lifted; unblocked on `EVIDENCE-REPIN-001` being complete. Corpus **0 → 669 of 1,300**; no release blocker removed) |
 | `CORPUS-CONSENT-001` | Consent basis and reviewed anonymization of real customer message history | — | Blocked | — |
 | `AGENT-PIPELINE-001` | Assemble the constrained runtime into a running worker pipeline | `RESPONSES-RUNTIME-001` | Complete | — |
 | `MODEL-PIN-001` | Immutable model release pin and registry artifact verification | `PROVIDER-TRANSPORT-001`, `EVIDENCE-REPIN-001` | Pending | — |
@@ -135,9 +136,9 @@ buildable — DEC-009's resolution removed a decision, not a blocker on this par
 | `DEPLOY-TARGET-001` | Production topology, isolated agent cell host, and closed capability flags | `DECISION-HOSTING-001` | Pending | — |
 | `MONITORING-001` | Telemetry collector, retention, and paging alert contracts | `DEPLOY-TARGET-001` | Pending | — |
 | `SIGNER-REGISTRY-001` | Two-party release schema, verifier enforcement, and signer key ceremony | `EVIDENCE-REPIN-001` | Blocked | — |
-| `RETENTION-001` | Customer data retention, redaction, and deletion jobs | `DB-001`, `OBSERVABILITY-001` | Pending | — (DEC-008 resolved 2026-08-18; buildable — selected by the controller) |
+| `RETENTION-001` | Customer data retention, redaction, and deletion jobs | `DB-001`, `OBSERVABILITY-001` | **Complete 2026-08-18** | — (`DEC-008` resolved the same day; the mechanism was already built and parked on 2026-08-13) |
 | `OPS-RUNBOOK-001` | The five G1 runbooks, each executed once by its operator | `DEPLOY-TARGET-001` | Pending | — |
-| `RETENTION-STORE-001` | Separate disposable payload from the append-only ledger | `RETENTION-001` | Pending | — (DEC-008 resolved; still waits on `RETENTION-001` completing, a queue dependency not a decision) |
+| `RETENTION-STORE-001` | Separate disposable payload from the append-only ledger | `RETENTION-001` | Pending | — (`DEC-008` resolved and `RETENTION-001` is now complete, so **this is the controller's current selection**. HIGH risk: it touches the ledger guarantee) |
 | `SLO-VERIFY-001` | Measured verification of the declared Shadow-stage SLOs | `DEPLOY-TARGET-001`, `MONITORING-001` | Pending | — |
 
 ### REAL_SHADOW_READINESS
@@ -175,8 +176,8 @@ blocked history. They are not resumed, rewritten or deleted. G1 agent evidence i
 
 The rest are blocked on named external actions. `EVIDENCE-REPIN-001` was the cheapest and was
 completed 2026-08-13; the six items it held no longer wait on the pin, though each keeps its own
-remaining blocker. `DEC-008` was the next-cheapest and resolved 2026-08-18, making `RETENTION-001`
-buildable today. The cheapest decision left on the board is `DEC-006` — it is the sole remaining
+remaining blocker. `DEC-008` was the next-cheapest and resolved 2026-08-18; `RETENTION-001` was built the
+same day and `EVAL-SYNTHETIC-COMBINATORIAL-001` followed it. The cheapest decision left on the board is `DEC-006` — it is the sole remaining
 decision blocker on `RUNTIME-PARITY-001`, `AGENT-002`, `SECURITY-001`, and (alongside external Zalo
 verification) `CHANNEL-001`; a stance toward resolving it (`PROCEED_TOWARD_VERIFICATION`) is recorded
 in [`docs/DECISION_REQUEST_PROVIDER_DATA_2026-08.md`](DECISION_REQUEST_PROVIDER_DATA_2026-08.md),

@@ -625,7 +625,7 @@ the owner's. The `Actor` column is the point of the table.
 |---:|---|---|---|---|
 | 1 | ~~Enqueue `EVAL-PUBLISH-001`~~ — **done 2026-08-18 as `EVAL-SYNTHETIC-COMBINATORIAL-001`** | **Agent, via controller unblock** | 0/1,300 → 669/1,300; first of five suite minima satisfied. No release blocker removed. | ~~nothing~~ done |
 | 2 | Contract the two undocumented routes (§6) | **Owner enqueues → agent builds** | Closes the ungoverned surface the console depends on | nothing |
-| 3 | Wire `build_agent_cycle` into the worker behind a closed flag | **Owner enqueues → agent builds** | The pipeline becomes reachable in a running process for the first time | nothing |
+| 3 | Reconcile `AGENT-PIPELINE-001` with `main.py` — see the note below | **Owner decides: corrective item or narrowed evidence** | The pipeline becomes reachable in a running process for the first time | owner's call |
 | 4 | Contract-test the assistant's disclosure copy (§5.5) | **Owner enqueues → agent builds** | Makes a live compliance claim un-breakable in silence | nothing |
 | 5 | Sign `DEC-013` (walk-in identity) | **Owner only** | The system can record its first customer | owner's answer |
 | 6 | Sign `DEC-015` (what a customer record is) | **Owner only** | Sets the boundary the acquisition work runs into on success | owner's answer |
@@ -633,6 +633,22 @@ the owner's. The `Actor` column is the point of the table.
 | 8 | Resolve `DEC-006` + provision a dedicated credential | **Owner only** | The first provider-backed model run; evidence base leaves zero | legal check + provider account |
 | 9 | Start `SHOP-INSTRUMENT-001` measurement | **Owner only, 4–6 weeks** | Starts the calendar clock that G1 cannot compress | physical measurement |
 | 10 | Build `PARTY-001` / `FULFILMENT-001` / `CATALOG-PRICEBOOK-001` | **Owner enqueues → agent builds** | First movement in the 14-of-63 aggregate count since measurement began | 5, 6 for the first |
+
+**Row 3 needs the same correction §8a applies to row 1, and it was found the same way.**
+`AGENT-PIPELINE-001` is `COMPLETE` and one of its declared `required_evidence` entries is
+`agent_cycle_constructed_and_injected` — yet `apps/worker/.../main.py` contains no reference to
+`agent_cycle` at all. So this is not new work to enqueue; it is an existing completed item whose
+evidence name and whose deployed entry point disagree. Two readings are available and choosing
+between them is not an engineer's call: the evidence may legitimately describe the *test*
+composition — `AGENT-PIPELINE-001`'s own evidence says the module "is referenced by no process entry
+point" and frames that as a rollback property — or the entry itself is over-claimed. Either way
+`context/CONTINUATION_PROTOCOL.md` is explicit that a `COMPLETE` item is immutable planning history
+unless a **new corrective work item** is created, and creating one is the owner's.
+
+**Rows 2 and 4 were checked against the queue and are genuinely absent** — no item mentions
+`settlements/today`, `pricebook/services`, or the assistant disclosure copy. So those two really do
+need enqueueing; row 1 did not, and row 3 does not. The lesson generalizes: **before proposing that
+something be enqueued, grep the queue for it.**
 
 Rows 1–4 are available today and none of them needs a decision, a credential, or a deployment. Rows
 5–9 cannot be moved by any agent, by any prompt, in any amount of time. That division is the schedule.

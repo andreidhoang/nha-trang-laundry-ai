@@ -34,7 +34,7 @@
 import { request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { countdown, dateTime, shortHash, shortId } from "../core/format.js";
-import { enumLabel } from "../core/i18n.js";
+import { enumVi } from "../core/i18n.js";
 import { badge, explain, facts, listView, panel } from "../ui/components.js";
 
 const LIST_LIMIT = 100;
@@ -127,11 +127,11 @@ function approvalCard(item, registerClock) {
       clockHost,
     ),
     facts([
-      ["Trạng thái", enumLabel(item.status), { mono: true }],
-      ["Vai trò được phép quyết định", enumLabel(item.required_role), { mono: true, span: true }],
+      ["Trạng thái", enumVi(item.status)],
+      ["Ai được quyết", enumVi(item.required_role), { span: true }],
       ["Hết hạn lúc", dateTime(item.expires_at)],
       [
-        "Mã băm phong bì",
+        "Mã niêm phong",
         h("span", { title: item.envelope_hash || "" }, shortHash(item.envelope_hash)),
         { mono: true, span: true },
       ],
@@ -140,7 +140,7 @@ function approvalCard(item, registerClock) {
       ? h(
           "div",
           { class: "notice", dataState: "info" },
-          "Bản ghi được phát lại từ một lệnh trùng khoá thao tác trước đó.",
+          "Lệnh này đã chạy trước đó — đây là bản ghi cũ hiện lại.",
         )
       : null,
     decisionControls(),
@@ -177,10 +177,10 @@ function limitsPanel() {
           h(
             "p",
             null,
-            "Máy chủ tra cứu hàng chờ qua đơn hàng, nên phong bì nào trỏ tới thứ khác — bản báo giá " +
-              "(QUOTE_REVISION), bản nháp tin nhắn (MESSAGE_DRAFT), đề xuất khung giờ " +
-              "(SLOT_PROPOSAL), đề xuất phí giao (DELIVERY_FEE_PROPOSAL) — sẽ không xuất hiện ở đây. " +
-              "Những phong bì đó vẫn tồn tại và vẫn đếm ngược; danh sách này chỉ không thấy chúng.",
+            "Máy chủ tìm hàng chờ theo đơn hàng, nên việc chờ duyệt nào không gắn với một đơn — " +
+              "một bản báo giá, một tin nhắn soạn sẵn, một khung giờ hay một mức phí giao đề " +
+              "xuất — sẽ không hiện ở đây. Chúng vẫn đang chờ và vẫn đang đếm ngược; chỉ là danh " +
+              "sách này không thấy chúng.",
           ),
           h(
             "p",
@@ -191,12 +191,12 @@ function limitsPanel() {
         h(
           "div",
           { class: "notice", dataState: "info" },
-          h("p", { class: "notice__title" }, "Chỉ trạng thái REQUESTED"),
+          h("p", { class: "notice__title" }, "Chỉ hiện việc đang chờ quyết"),
           h(
             "p",
             null,
-            "Phong bì đã duyệt, đã từ chối hoặc đã hết hạn không nằm trong danh sách này và không " +
-              "tra cứu lại được từ đây.",
+            "Việc đã duyệt, đã từ chối hoặc đã hết hạn không nằm trong danh sách này và không tra " +
+              "cứu lại được từ đây.",
           ),
         ),
       ),
@@ -209,17 +209,17 @@ function limitsPanel() {
           h(
             "p",
             null,
-            "Gửi một quyết định bắt buộc phải kèm resource_version, snapshot_hash và rendered_hash. " +
-              "Danh sách trên không trả về giá trị nào trong ba giá trị đó — nó chỉ có envelope_hash, " +
-              "là một giá trị khác và không thay thế được. Người duyệt vì thế không thể dựng một " +
-              "quyết định hợp lệ từ những gì màn hình này nhìn thấy.",
+            "Để duyệt, máy chủ đòi ba mã niêm phong chứng minh bạn đã xem đúng nội dung đó. " +
+              "Danh sách trên không trả về mã nào trong ba mã ấy — nó chỉ có mã của chính phong " +
+              "bì, là một giá trị khác và không thay được. Nên từ những gì màn hình này thấy, " +
+              "không dựng nổi một quyết định hợp lệ.",
           ),
           h(
             "p",
             null,
-            "Gõ tay các mã băm để duyệt một nội dung bạn chưa được xem chính là duyệt mù một tin " +
-              "nhắn sẽ gửi tới khách. Nên màn hình này cố ý không có ô để dán mã băm, và hai nút " +
-              "Duyệt / Từ chối được để hiện nhưng khoá.",
+            "Gõ tay mấy mã đó để duyệt một nội dung bạn chưa được xem chính là duyệt mù một tin " +
+              "nhắn sắp gửi tới khách. Nên màn hình này cố ý không có ô để dán, và hai nút " +
+              "Duyệt / Từ chối để hiện nhưng khoá — không phải quên làm.",
           ),
           h(
             "p",
@@ -237,9 +237,9 @@ function limitsPanel() {
           h(
             "p",
             null,
-            "Cùng một loại lý do: một yêu cầu duyệt cần resource_type khớp đúng ánh xạ hành động → " +
-              "loại tài nguyên của máy chủ, cộng hai mã băm JCS và một policy_version. Không giá trị " +
-              "nào trong số đó nhân viên gõ tay ra được, nên màn hình không mời bạn thử.",
+            "Cùng một lý do: mở một yêu cầu duyệt cần đúng loại việc theo bảng của máy chủ, cộng " +
+              "hai mã niêm phong và phiên bản chính sách đang áp dụng. Không giá trị nào trong số " +
+              "đó nhân viên gõ tay ra được, nên màn hình không mời bạn thử.",
           ),
         ),
       ),
@@ -338,14 +338,13 @@ export function render_() {
       h(
         "p",
         { class: "screen__lede" },
-        "Các phong bì duyệt đang chờ và thời gian còn lại của từng cái. Quyết định duyệt hay từ " +
-          "chối không thực hiện được từ đây, và phần bên dưới nói rõ vì sao — đó là giới hạn của " +
-          "API, không phải nút bị quên.",
+        "Việc đang chờ duyệt và còn bao lâu nữa hết hạn. Chưa quyết được từ màn hình này; " +
+          "phần bên dưới nói rõ vì sao.",
       ),
     ),
     panel({
       eyebrow: "Đang chờ",
-      title: "Phong bì chờ quyết định",
+      title: "Việc chờ bạn quyết",
       count: queue.count,
       children: h("div", { class: "stack" }, queue.bar.node, queue.truncation, queue.host),
     }),

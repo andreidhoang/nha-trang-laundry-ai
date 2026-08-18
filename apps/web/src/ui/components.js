@@ -11,7 +11,7 @@
 import { isTruncated } from "../core/api.js";
 import { field, h, render } from "../core/dom.js";
 import { UNKNOWN, count, moneyRange, timeOnly } from "../core/format.js";
-import { PRICE_STATE, REASON_NOTE, enumLabel, warningFor } from "../core/i18n.js";
+import { PRICE_STATE, REASON_NOTE, enumLabel, enumVi, warningFor } from "../core/i18n.js";
 
 /**
  * The console's icon set: one 24×24 stroke grid, drawn with the safe `h()` builder.
@@ -139,7 +139,13 @@ export function icon(name) {
  * print.css restores the token on paper. Only dense list rows may pass the flag — detail and
  * audit surfaces keep `Gloss (TOKEN)` always, per the UX refactor spec WS2.
  *
- * @param {{token: string, gloss: string, state: string, tokenFirst?: boolean, compact?: boolean}} spec
+ * `title` overrides the tooltip. It exists for the one shape this component could not otherwise
+ * express: a badge whose visible word is already the Vietnamese name (so there is no gloss to pair
+ * with a token), on a screen that still owes an engineer the server's verbatim value. Without it,
+ * moving a badge from `enumLabel` to `enumVi` would drop the token from the page entirely, and the
+ * rule in `core/i18n` is that the token survives somewhere the reader can reach.
+ *
+ * @param {{token: string, gloss: string, state: string, tokenFirst?: boolean, compact?: boolean, title?: string}} spec
  * @returns {HTMLElement}
  */
 export function badge(spec) {
@@ -152,7 +158,7 @@ export function badge(spec) {
     {
       class: compact ? "badge badge--compact" : "badge",
       dataState: spec.state,
-      title: secondary ? `${spec.token} — ${spec.gloss}` : spec.token,
+      title: spec.title || (secondary ? `${spec.token} — ${spec.gloss}` : spec.token),
       "aria-label": compact ? `${spec.gloss} (${spec.token})` : null,
     },
     primary,
@@ -174,7 +180,7 @@ export function badge(spec) {
  * @returns {HTMLElement}
  */
 export function dimensionBadge(value) {
-  return badge({ token: enumLabel(value), gloss: "", state: "neutral" });
+  return badge({ token: enumVi(value), gloss: "", state: "neutral" });
 }
 
 /**
@@ -802,7 +808,7 @@ export function enumSelect(name, values, selected) {
       "select",
       { name },
       values.map((value) =>
-        h("option", { value, selected: value === selected }, enumLabel(value)),
+        h("option", { value, selected: value === selected, title: value }, enumVi(value)),
       ),
     )
   );

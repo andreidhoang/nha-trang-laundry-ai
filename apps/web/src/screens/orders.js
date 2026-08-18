@@ -33,7 +33,7 @@
 import { MAX_LIMIT, Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UUID, shortId } from "../core/format.js";
-import { enumLabel } from "../core/i18n.js";
+import { enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
@@ -108,8 +108,8 @@ function orderCard(item, options = {}) {
       ? h(
           "div",
           { class: "notice", dataState: "info" },
-          "Kết quả được phát lại: cùng khoá thao tác và cùng nội dung đã gửi trước đó. Không có " +
-            "bản ghi mới nào được tạo.",
+          "Lệnh này đã chạy trước đó — đây là kết quả cũ hiện lại. Không có bản ghi mới nào " +
+            "được tạo.",
         )
       : null,
     facts([
@@ -117,7 +117,7 @@ function orderCard(item, options = {}) {
       ["Tiếp nhận", dimensionBadge(item.intake)],
       ["Sản xuất", dimensionBadge(item.production)],
       ["Công nợ", dimensionBadge(item.balance)],
-      ["Phiên bản dòng", `v${item.row_version}`],
+      ["Bản ghi", `v${item.row_version}`, { mono: true }],
     ]),
     h(
       "div",
@@ -141,16 +141,15 @@ function orderCard(item, options = {}) {
  */
 function readModelNotice() {
   return explain(
-    "Vì sao bảng đơn chỉ có trạng thái và phiên bản dòng?",
+    "Vì sao bảng đơn không có tên khách, giờ hẹn hay số tiền?",
     h(
       "p",
       null,
-      "Máy chủ trả đúng tám trường cho một đơn: hai định danh, bốn trạng thái, phiên bản dòng và " +
-        "cờ phát lại. Không có khách hàng, không có mốc thời gian, không có tổng tiền, không có " +
-        "hình thức giao nhận. Những cột đó chưa tồn tại ở phía máy chủ, nên màn hình này không " +
-        "hiển thị chúng thay vì đoán.",
+      "Vì máy chủ chưa lưu những thứ đó cho một đơn. Không phải màn hình này giấu đi — chúng " +
+        "chưa tồn tại. Hiện một cột “Khách” lấy từ chỗ khác là bịa ra một điều máy chủ chưa từng " +
+        "nói, nên bảng để trống và ghi nhận đây là việc chưa làm được.",
     ),
-    h("p", null, h("a", { href: "#/gaps" }, "Xem danh sách khoảng trống chưa hỗ trợ")),
+    h("p", null, h("a", { href: "#/gaps" }, "Xem danh sách việc chưa hỗ trợ")),
   );
 }
 
@@ -240,12 +239,12 @@ export function render_(_context) {
    * @returns {string} an empty string when the draft is submittable
    */
   function validateCreate() {
-    if (!UUID.test(draft.contactId.trim())) return "Mã liên hệ đã ràng buộc phải là một UUID.";
-    if (!UUID.test(draft.quoteId.trim())) return "Mã báo giá phải là một UUID.";
+    if (!UUID.test(draft.contactId.trim())) return "Mã khách chưa đúng dạng.";
+    if (!UUID.test(draft.quoteId.trim())) return "Mã báo giá chưa đúng dạng.";
     const revision = Number.parseInt(draft.revision.trim(), 10);
     if (!Number.isInteger(revision) || revision < 1) return "Bản báo giá phải là số nguyên từ 1.";
     if (!SNAPSHOT_HASH.test(draft.hash.trim())) {
-      return "Mã băm ảnh chụp phải đúng dạng JCS-SHA256-V1: theo sau là 64 ký tự hex thường.";
+      return "Mã niêm phong chưa đúng dạng. Chép lại nguyên văn từ bản báo giá.";
     }
     // An empty datetime is refused here rather than sent as an empty string, because the field is
     // required and timezone-aware: there is no defensible value to substitute for "not filled in".
@@ -403,14 +402,13 @@ export function render_(_context) {
       "form",
       { class: "form", onSubmit: submitCreate },
       explain(
-        "Lệnh tạo đơn sẽ bị từ chối cho tới khi có đường duyệt giá — vì sao?",
+        "Vì sao lệnh tạo đơn đang luôn bị từ chối?",
         h(
           "p",
           null,
-          "Máy chủ chỉ nhận một báo giá đã chốt tuyệt đối: finality APPROVED_EXACT, status " +
-            "ACCEPTED_FINAL, mã băm khớp đúng bản đó, approval_id khác null, và chưa quá " +
-            "valid_until. Thiếu bất kỳ điều kiện nào, câu trả lời là 409 " +
-            '"accepted exact quote is missing, stale, or expired".',
+          "Máy chủ chỉ nhận một báo giá thoả đủ năm điều: giá đã là giá chính xác chứ không phải " +
+            "ước tính, khách đã chốt bản đó, bản gửi lên đúng là bản khách chốt, đã có người " +
+            "duyệt giá, và báo giá chưa hết hạn. Thiếu một điều là bị từ chối.",
         ),
         h(
           "p",
@@ -423,14 +421,14 @@ export function render_(_context) {
       ),
       labelled({
         id: "order-contact",
-        label: "Mã liên hệ đã ràng buộc (contact_id)",
-        hint: "UUID của ràng buộc liên hệ đã xác thực. Màn hình này không tra cứu được khách hàng — hệ thống chưa có đường đọc liên hệ.",
+        label: "Mã khách",
+        hint: "Chép từ màn hình Tiếp nhận. Màn hình này chưa tra cứu được khách theo tên hay số điện thoại.",
         control: contactInput,
       }),
       labelled({
         id: "order-quote",
-        label: "Mã báo giá (quote_id)",
-        hint: "UUID của báo giá đã được khách chốt.",
+        label: "Mã báo giá",
+        hint: "Của bản báo giá khách đã chốt.",
         control: quoteInput,
       }),
       labelled({
@@ -441,8 +439,8 @@ export function render_(_context) {
       }),
       labelled({
         id: "order-hash",
-        label: "Mã băm ảnh chụp báo giá",
-        hint: "Chép nguyên văn từ bản báo giá, gồm cả tiền tố JCS-SHA256-V1:. Máy chủ so khớp đúng chuỗi này.",
+        label: "Mã niêm phong báo giá",
+        hint: "Chép nguyên văn từ bản báo giá, đủ cả phần đầu. Máy chủ so khớp từng ký tự để chắc chắn đây đúng là bản khách đã chốt.",
         control: hashInput,
       }),
       labelled({
@@ -453,7 +451,7 @@ export function render_(_context) {
       labelled({
         id: "order-accepted",
         label: "Thời điểm khách chốt giá",
-        hint: "Đọc theo múi giờ của thiết bị này rồi gửi đi dưới dạng UTC, nên luôn có múi giờ. Bỏ trống thì không gửi.",
+        hint: "Đọc theo giờ của máy bạn đang dùng — kiểm lại nếu máy đặt sai múi giờ. Bỏ trống thì không gửi.",
         control: acceptedInput,
       }),
       h("div", { class: "action-bar" }, gated(submit, writeVerdict)),
@@ -467,10 +465,10 @@ export function render_(_context) {
    * @returns {string} an empty string when the command is submittable
    */
   function validateMove() {
-    if (!UUID.test(move.orderId.trim())) return "Mã đơn phải là một UUID.";
+    if (!UUID.test(move.orderId.trim())) return "Mã đơn chưa đúng dạng.";
     const version = Number.parseInt(move.rowVersion.trim(), 10);
     if (!Number.isInteger(version) || version < 1) {
-      return "Phiên bản dòng phải là số nguyên từ 1. Chọn lại đơn từ bảng để lấy đúng giá trị.";
+      return "Chọn lại đơn từ bảng bên dưới để lấy đúng bản ghi.";
     }
     return "";
   }
@@ -513,7 +511,7 @@ export function render_(_context) {
       setResult(
         moveResult,
         "ok",
-        `Đã chuyển sang ${enumLabel(moved.commercial)}, phiên bản dòng v${moved.row_version}.`,
+        `Đã chuyển sang ${enumVi(moved.commercial)}. Bản ghi giờ là v${moved.row_version}.`,
       );
       render(moveResultHost, orderCard(moved));
       render(moveBody, moveForm());
@@ -602,14 +600,14 @@ export function render_(_context) {
       { class: "form", onSubmit: submitMove },
       labelled({
         id: "move-order",
-        label: "Mã đơn hàng (order_id)",
-        hint: "Bấm “Chọn để chuyển trạng thái” trên một đơn ở bảng bên dưới để điền sẵn ô này và phiên bản dòng.",
+        label: "Mã đơn hàng",
+        hint: "Bấm “Chọn để chuyển trạng thái” trên một đơn ở bảng bên dưới để điền sẵn ô này.",
         control: orderInput,
       }),
       labelled({
         id: "move-version",
-        label: "Phiên bản dòng đang giữ",
-        hint: "Gửi kèm dưới dạng If-Match. Nếu ai đó vừa đổi đơn này, máy chủ từ chối bằng STALE_VERSION và không có gì thay đổi.",
+        label: "Bản ghi bạn đang giữ",
+        hint: "Nếu ai đó vừa đổi đơn này trong lúc bạn đang xem, máy chủ sẽ từ chối và không có gì thay đổi — khi đó hãy tải lại bảng.",
         control: versionInput,
       }),
       labelled({
@@ -633,13 +631,13 @@ export function render_(_context) {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "Bốn trục trạng thái"),
+      h("p", { class: "eyebrow" }, "Đơn của cửa hàng"),
       h("h1", null, "Đơn hàng"),
       h(
         "p",
         { class: "screen__lede" },
-        "Bảng này hiển thị đúng những gì máy chủ trả về cho một đơn: bốn trạng thái và một phiên " +
-          "bản dòng. Không suy diễn thêm cột nào.",
+        "Đơn nào đang ở đâu. Mỗi đơn có bốn phần chạy riêng — bán hàng, nhận đồ, làm đồ, tiền — " +
+          "nên hãy đọc từng phần một.",
       ),
     ),
     panel({
@@ -647,9 +645,9 @@ export function render_(_context) {
       title: "Bảng đơn của cửa hàng",
       count: board.count,
       guardrail:
-        "Bốn trục — thương mại, tiếp nhận, sản xuất, công nợ — chuyển động độc lập với nhau. Một " +
-        "đơn CONFIRMED vẫn có thể đang NOT_STARTED và UNPAID cùng lúc. Đừng đọc bốn nhãn như một " +
-        "chuỗi tuần tự.",
+        "Bốn phần của một đơn — bán hàng, nhận đồ, làm đồ, tiền — chạy riêng với nhau. Đơn đã " +
+        "xác nhận vẫn có thể chưa bắt đầu giặt và chưa thu tiền. Đọc bốn nhãn như bốn câu trả " +
+        "lời riêng, không phải một chuỗi nối tiếp.",
       children: h(
         "div",
         { class: "stack" },
@@ -664,17 +662,17 @@ export function render_(_context) {
       eyebrow: "Lệnh",
       title: "Chuyển trạng thái thương mại",
       guardrail:
-        "Màn hình này không biết chuyển đổi nào hợp lệ và cố ý không biết. Bảng chuyển trạng thái " +
-        "là quy tắc miền (FR-ORD-002); chép nó vào trình duyệt là tạo bản sao thứ hai không ai " +
-        "giữ đồng bộ được. Tất cả tám đích đều được chào, và máy chủ từ chối cái nào không hợp lệ.",
+        "Màn hình này cố ý không biết bước nào là hợp lệ — quy tắc đó thuộc về máy chủ, và chép " +
+        "nó sang trình duyệt là tạo bản thứ hai không ai giữ cho khớp được. Cả tám đích đều được " +
+        "chào; máy chủ từ chối cái nào không hợp lệ và nói rõ vướng ở đâu.",
       children: h("div", { class: "stack" }, moveBody, moveResultHost),
     }),
     panel({
       eyebrow: "Lệnh",
       title: "Tạo đơn từ báo giá đã chốt",
       guardrail:
-        "Đơn chỉ được tạo từ một báo giá đã chốt tuyệt đối. Máy chủ kiểm lại toàn bộ điều kiện; " +
-        "màn hình này chỉ kiểm dạng dữ liệu để bắt lỗi gõ trước khi gửi.",
+        "Đơn chỉ được tạo từ một báo giá khách đã chốt và đã duyệt giá chính xác. Máy chủ kiểm " +
+        "lại toàn bộ điều kiện; màn hình này chỉ bắt lỗi gõ trước khi gửi.",
       children: h("div", { class: "stack" }, createBody, createResultHost),
     }),
   );

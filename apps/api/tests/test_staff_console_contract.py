@@ -102,6 +102,7 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/stores",
         "/internal/v1/stores/{}/orders",
         "/internal/v1/stores/{}/quotes",
+        "/internal/v1/pricebook/services",
         "/internal/v1/stores/{}/order-requests",
         "/internal/v1/stores/{}/incidents",
         "/internal/v1/approvals",

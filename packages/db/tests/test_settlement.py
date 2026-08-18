@@ -31,11 +31,13 @@ from nha_trang_laundry_db.orders import (
 )
 from nha_trang_laundry_db.quotes import QuoteRepository, QuoteRevisionCommand
 from nha_trang_laundry_db.settlement import (
+    CollectedToday,
     SettlementAuthorizationError,
     SettlementCommand,
     SettlementRepository,
     SettlementStateError,
 )
+from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     FulfillmentMode,
@@ -176,6 +178,7 @@ def _settle(
     *,
     amount: int = QUOTED_TOTAL,
     collected: bool = True,
+    attested_at: datetime = NOW,
 ) -> Any:
     return SettlementRepository().record(
         connection,
@@ -185,7 +188,7 @@ def _settle(
             collected_by_customer=collected,
             principal=staff,
             correlation_id=uuid4(),
-            attested_at=NOW,
+            attested_at=attested_at,
         ),
     )
 
@@ -469,3 +472,85 @@ def test_a_read_only_role_cannot_settle(connection: psycopg.Connection[Any]) -> 
     with pytest.raises(SettlementAuthorizationError):
         _settle(connection, order_id, auditor)
     assert _order_row(connection, order_id)[1] == "UNPAID"
+
+
+# --- collected_today: the one money figure the console reads -----------------------------------
+#
+# The owner's morning has a money question in it. The risk in answering it is not arithmetic — the
+# database sums a BIGINT column — but scope: a number labelled "today" that quietly includes
+# yesterday, or one store's counter that quietly includes another's, is worse than no number at
+# all, because it looks checkable and is not. These four tests are that scope.
+
+
+def test_todays_takings_count_today_and_only_today(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The day boundary is real: an older settlement is outside the window, not merely older."""
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    now = datetime.now(UTC)
+
+    for _ in range(2):
+        order_id, _version = _ready_active_order(connection, store_id, staff)
+        _settle(connection, order_id, staff, attested_at=now)
+    # `NOW` is 2026-08-01, which is not today by any clock this test can run on.
+    stale_order, _stale_version = _ready_active_order(connection, store_id, staff)
+    _settle(connection, stale_order, staff, attested_at=NOW)
+
+    with connection.cursor() as cursor:
+        collected = SettlementRepository.collected_today(cursor, store_id=store_id, principal=staff)
+    assert collected.settlement_count == 2
+    assert collected.collected_vnd == 2 * QUOTED_TOTAL
+
+
+def test_a_store_with_nothing_settled_today_reads_zero_not_null(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """`coalesce` earns its place: "chưa thu đồng nào" is an answer, and null is not renderable."""
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    with connection.cursor() as cursor:
+        collected = SettlementRepository.collected_today(cursor, store_id=store_id, principal=staff)
+    assert collected == CollectedToday(collected_vnd=0, settlement_count=0)
+
+
+def test_takings_never_cross_a_store_boundary(connection: psycopg.Connection[Any]) -> None:
+    """Assigned to both stores is not permission to see them added together."""
+    first, second = uuid4(), uuid4()
+    staff = _staff(connection, first, StaffRole.OPERATOR)
+    # Assigned to the second store as well — by somebody who exists, since the assignment carries a
+    # real foreign key to the staff member who granted it.
+    assigner = _staff(connection, second, StaffRole.OWNER_ADMIN)
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO staff_store_assignments (
+                staff_user_id, store_id, assigned_by_staff_id, assigned_at, row_version
+            ) VALUES (%s, %s, %s, %s, 1)
+            """,
+            (staff.staff_user_id, second, assigner.staff_user_id, NOW),
+        )
+    order_id, _version = _ready_active_order(connection, first, staff)
+    _settle(connection, order_id, staff, attested_at=datetime.now(UTC))
+
+    with connection.cursor() as cursor:
+        assert SettlementRepository.collected_today(
+            cursor, store_id=second, principal=staff
+        ) == CollectedToday(collected_vnd=0, settlement_count=0)
+        busy = SettlementRepository.collected_today(cursor, store_id=first, principal=staff)
+    assert busy.collected_vnd == QUOTED_TOTAL
+
+
+def test_a_non_member_is_refused_the_takings(connection: psycopg.Connection[Any]) -> None:
+    """Money is the last read that should leak a store's activity to somebody not assigned to it."""
+    store_id = uuid4()
+    member = _staff(connection, store_id, StaffRole.OPERATOR)
+    outsider = _staff(connection, None, StaffRole.OWNER_ADMIN)
+    order_id, _version = _ready_active_order(connection, store_id, member)
+    _settle(connection, order_id, member, attested_at=datetime.now(UTC))
+
+    with (
+        connection.cursor() as cursor,
+        pytest.raises((SettlementAuthorizationError, StoreAccessError)),
+    ):
+        SettlementRepository.collected_today(cursor, store_id=store_id, principal=outsider)

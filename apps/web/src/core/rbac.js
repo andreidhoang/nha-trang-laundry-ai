@@ -65,6 +65,11 @@ export const CAPABILITIES = {
     mfa: true,
     why: "Tính giá cần vai trò vận hành và đã xác thực hai bước.",
   },
+  SETTLEMENTS_READ: {
+    roles: [OWNER, APPROVER, OPERATOR],
+    mfa: true,
+    why: "Tiền đã thu hôm nay dùng cùng cổng vận hành với báo giá.",
+  },
   INCIDENTS_READ: {
     roles: [OWNER, APPROVER, OPERATOR],
     mfa: true,

@@ -249,6 +249,40 @@ export function enumVi(value) {
 }
 
 /**
+ * Vietnamese headings for the published pricebook's service categories.
+ *
+ * These are not server enums, which is why they live apart from `ENUM_GLOSS`. They are values of a
+ * free-text column in the owner's own pricebook CSV (`templates/services-pricebook.csv`), and they
+ * arrive lowercase and English — `dry_cleaning`, `standard_weight`. The service *names* in that
+ * file are already Vietnamese; only the grouping key is not, so only the grouping key is mapped.
+ *
+ * An unmapped category falls through to its raw value on purpose. The picker must not invent a
+ * heading for a category the owner added after this map was written — an unfamiliar-looking group
+ * label is a prompt to update this file, whereas a plausible guess would hide the omission.
+ */
+const SERVICE_CATEGORY = {
+  standard_weight: "Giặt sấy theo ký",
+  drying: "Sấy riêng",
+  bedding: "Chăn ga gối",
+  ironing: "Ủi",
+  leather: "Đồ da",
+  shoes: "Giày dép",
+  dry_cleaning: "Giặt khô",
+  other: "Dịch vụ khác",
+};
+
+/**
+ * The Vietnamese heading for one pricebook service category.
+ *
+ * @param {string|null|undefined} value
+ * @returns {string}
+ */
+export function serviceCategoryVi(value) {
+  if (!value) return "Khác";
+  return SERVICE_CATEGORY[value] || String(value);
+}
+
+/**
  * `Gloss (VALUE)` — Vietnamese first, the verbatim token in parentheses. Never gloss-only: an
  * operator who learns that `WAITING_SLOT_APPROVAL` is the thing the API says can talk to an
  * engineer about it, and a translated-only UI makes that conversation impossible.

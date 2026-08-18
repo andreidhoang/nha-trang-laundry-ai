@@ -8,11 +8,20 @@ Not part of the default suite, and Playwright is deliberately not a repository d
 It exists because the defects it covers are invisible to everything else in the repository, and one
 of them shipped. The earlier browser verification drove the quote builder with Playwright's
 ``page.fill()``, which sets a field's value in one shot. A human types. Typing rebuilt the form on
-every keystroke, so ``STANDARD_WASH_DRY`` entered character by character produced ``S`` — the
-flagship screen was unusable by an operator, and a check that never typed certified it as working.
+every keystroke, so a service code entered character by character produced ``S`` — the flagship
+screen was unusable by an operator, and a check that never typed certified it as working.
 
 A source-text test cannot see focus, a caret position, or whether a form survived a 401. This can.
-Every assertion here was confirmed to fail against the code as it was before the fix.
+
+The service field is no longer typed at all: it is a picker over the published pricebook, so the
+assertions that typed ``STANDARD_WASH_DRY`` into it were deleted rather than weakened, and section
+1 now checks the control that replaced them. The typing invariant kept its real subjects — the
+quantity field and the contact field — and is still asserted on both.
+
+Section 6 covers what the owner's-morning redesign is answerable for: that the day's takings are
+rendered as the server sent them, that an empty queue costs no space, and that the all-clear line
+claims only the queues it actually checked. That last one is an assertion about a *refusal*, which
+is the kind this console most needs and most easily loses.
 """
 
 from __future__ import annotations
@@ -63,6 +72,38 @@ ORDER_REQUEST = {
     "created_at": "2026-08-16T03:00:00+00:00",
 }
 ORDER_REQUEST_CREATED = {**ORDER_REQUEST, "store_id": STORE, "replayed": False}
+
+#: What `GET /internal/v1/stores/{id}/settlements/today` returns. A non-round figure so a screen
+#: that quietly rounded or reformatted it would be visible in the assertion.
+SETTLEMENTS_TODAY = {
+    "collected_vnd": 1_285_000,
+    "settlement_count": 7,
+    "business_timezone": "Asia/Ho_Chi_Minh",
+}
+
+#: What `GET /internal/v1/pricebook/services` returns, in the shape the real route publishes.
+#: Two categories so the picker's grouping is actually exercised, and the units differ so that
+#: choosing a service is observably what sets the line's unit.
+PRICEBOOK_SERVICES = [
+    {
+        "code": "STD_WASH_DRY_LT6",
+        "display_name": "Giặt sấy dưới 6kg",
+        "category": "standard_weight",
+        "unit": "KG",
+    },
+    {
+        "code": "STD_WASH_DRY_GE6",
+        "display_name": "Giặt sấy từ 6kg trở lên",
+        "category": "standard_weight",
+        "unit": "KG",
+    },
+    {
+        "code": "IRON_TROUSERS_SHIRT",
+        "display_name": "Ủi quần tây, áo sơ mi",
+        "category": "ironing",
+        "unit": "ITEM",
+    },
+]
 MISSING_REQUEST = "99999999-9999-4999-8999-999999999999"
 
 
@@ -155,6 +196,12 @@ with sync_playwright() as playwright:
                 }
             else:
                 body = []
+        elif "/settlements/today" in url:
+            body = SETTLEMENTS_TODAY
+        elif "/pricebook/services" in url:
+            # The quote form refuses to build without this, so an empty stub would leave every
+            # assertion below looking at a refusal notice rather than a form.
+            body = PRICEBOOK_SERVICES
         elif "/order-requests/" in url:
             # The single-fetch endpoint, which the quotes prefill resolves `?request=` against.
             if state.get("request_missing"):
@@ -183,36 +230,60 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(1200)
 
     print("=" * 74)
-    print("1. TYPING — the defect page.fill() cannot see")
+    print("1. THE SERVICE PICKER — chosen by name, never typed as a code")
     print("=" * 74)
 
+    # This section used to drive `#quote-line-0-code` as a text input and assert that
+    # `STANDARD_WASH_DRY`, typed one character at a time, survived intact with the caret where the
+    # operator left it. That invariant is gone because its subject is gone: the field is a
+    # <select> fed by the published pricebook, and an operator no longer types a service code at
+    # all. Those assertions are deleted rather than weakened — the honest replacement is to check
+    # the control that took its place. The typing invariant itself still has real subjects, and is
+    # still asserted below on the quantity field (section 2) and the contact field (section 5).
+
     code = page.locator("#quote-line-0-code")
-    code.click()
-    page.keyboard.type("STANDARD_WASH_DRY", delay=12)
-    page.wait_for_timeout(250)
 
     check(
-        "the whole code survives being typed one character at a time",
-        code.input_value() == "STANDARD_WASH_DRY",
+        "the service field is a picker, not a field to type a code into",
+        code.evaluate("node => node.tagName") == "SELECT",
+        code.evaluate("node => node.tagName"),
+    )
+    check(
+        "it offers the published services by their Vietnamese names",
+        code.locator("option", has_text="Giặt sấy dưới 6kg").count() == 1,
+        f"{code.locator('option').count()} options",
+    )
+    check(
+        "grouped under Vietnamese category headings, not pricebook tokens",
+        code.locator("optgroup[label='Giặt sấy theo ký']").count() == 1
+        and code.locator("optgroup[label='standard_weight']").count() == 0,
+        repr(code.evaluate("n => [...n.querySelectorAll('optgroup')].map(g => g.label)")),
+    )
+
+    code.select_option(label="Giặt sấy dưới 6kg")
+    page.wait_for_timeout(200)
+
+    check(
+        "choosing by name is what sets the code the server will receive",
+        code.input_value() == "STD_WASH_DRY_LT6",
         repr(code.input_value()),
     )
     check(
-        "focus is still in the field after 17 keystrokes",
-        page.evaluate("document.activeElement?.id") == "quote-line-0-code",
-        f"activeElement={page.evaluate('document.activeElement?.id')}",
+        "and the unit follows the chosen service, as a stated fact not a second choice",
+        "Tính theo: Kilôgam" in page.content() and page.locator("#quote-line-0-unit").count() == 0,
+        repr("Tính theo: Kilôgam" in page.content()),
     )
 
-    # Caret preservation: correcting a character mid-string must not jump to the end.
-    code.click()
-    page.keyboard.press("Home")
-    page.keyboard.press("ArrowRight")
-    page.keyboard.type("X", delay=12)
-    page.wait_for_timeout(150)
+    # The unit belongs to the service, so de-selecting must not leave the previous one standing.
+    code.select_option(value="")
+    page.wait_for_timeout(200)
     check(
-        "a character typed mid-string lands mid-string, not at the end",
-        code.input_value() == "SXTANDARD_WASH_DRY",
-        repr(code.input_value()),
+        "going back to no service clears the unit rather than keeping a stale one",
+        "Tính theo:" not in page.content(),
+        repr(page.locator("#quote-line-0-code").input_value()),
     )
+    code.select_option(label="Giặt sấy dưới 6kg")
+    page.wait_for_timeout(200)
 
     print()
     print("=" * 74)
@@ -270,8 +341,8 @@ with sync_playwright() as playwright:
         repr(typed_request),
     )
     check(
-        "the service code is still there",
-        page.locator("#quote-line-0-code").input_value() == "SXTANDARD_WASH_DRY",
+        "the service the operator picked is still selected",
+        page.locator("#quote-line-0-code").input_value() == "STD_WASH_DRY_LT6",
     )
     check(
         "the quantity is still there",
@@ -370,7 +441,7 @@ with sync_playwright() as playwright:
     )
     check(
         "the question landed in the transcript",
-        "Hôm nay thế nào?" in transcript and "BẠN HỎI" in transcript,
+        "Hôm nay thế nào?" in transcript and "Bạn hỏi" in transcript,
     )
     check(
         "the assistant's answer landed with its intent token",
@@ -436,8 +507,9 @@ with sync_playwright() as playwright:
         quote_now.first.get_attribute("href") if quote_now.count() else "absent",
     )
     check(
-        "the recent-intake list below shows the draft with its state gloss",
-        "Nháp (DRAFT)" in page.content(),
+        "the recent-intake list shows the draft's state in Vietnamese, with the token in reach",
+        "Nháp" in page.content() and page.locator("[title='DRAFT']").count() >= 1,
+        repr(page.locator("[title='DRAFT']").count()),
     )
 
     # The whole point of the slice: follow the link and the quote screen binds the request
@@ -472,6 +544,57 @@ with sync_playwright() as playwright:
         missing_summary.first.text_content() if missing_summary.count() else "no notice rendered",
     )
     state["request_missing"] = False
+
+    print()
+    print("=" * 74)
+    print("6. HÔM NAY — the owner's morning, and what it refuses to claim")
+    print("=" * 74)
+
+    # Every queue stub returns `[]`, so this is the empty-morning case: the one an owner sees most
+    # often and the one the old screen answered with five zero-cards and a wall of footnotes.
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    body = page.content()
+
+    check(
+        "the day's takings lead the screen, formatted as VND and not recomputed",
+        "1.285.000" in body.replace("&nbsp;", " ") or "1.285.000 ₫" in body,
+        repr(page.locator(".takings__amount").text_content()),
+    )
+    check(
+        "the figure says how many settlements it is a sum of",
+        "7 đơn đã tất toán hôm nay" in body,
+    )
+    check(
+        "and names itself as money collected, never as doanh thu",
+        "Đã thu tại quầy" in body and "đây không phải doanh thu" in body,
+    )
+    # Asked as "can the operator see it", not "does it carry the class". The first version of this
+    # check counted `.tile--clear` elements and passed while all four tiles were still on screen:
+    # the class was applied, and a `display: grid` declared later in the same stylesheet outranked
+    # the `display: none`. A class is an intention; visibility is the claim.
+    empty_tiles = page.locator("article.tile--clear")
+    check(
+        "an empty queue takes no space instead of showing a zero card",
+        empty_tiles.count() >= 1
+        and all(not empty_tiles.nth(i).is_visible() for i in range(empty_tiles.count())),
+        f"{empty_tiles.count()} marked empty, "
+        f"{sum(empty_tiles.nth(i).is_visible() for i in range(empty_tiles.count()))} still visible",
+    )
+    check(
+        "the all-clear line claims only what was checked, never that nothing is pending",
+        "Các hàng đợi đã kiểm đều đang trống." in body
+        and "Không có việc nào đang chờ bạn xử lý" not in body,
+    )
+    # `page.content()` serialises hidden nodes too, so this must ask what the operator can see.
+    # The scope note stays in the DOM and is revealed only for a session with more than one store —
+    # the reader it can matter to — rather than being deleted for everyone.
+    scope_note = page.locator("p.hint", has_text="Mọi cửa hàng bạn được gán.")
+    check(
+        "a single-store session is not told which reads ignore the store picker",
+        scope_note.count() >= 1 and not scope_note.first.is_visible(),
+        f"{scope_note.count()} in DOM, hidden from a one-store session",
+    )
 
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))
     browser.close()

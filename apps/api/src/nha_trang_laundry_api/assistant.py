@@ -214,13 +214,13 @@ def _greeting() -> AssistantAnswer:
 def _today_overview(context_reads: AssistantContextReads) -> AssistantAnswer:
     counts = dict(context_reads.today_counts)
     if not counts:
-        text = "Hôm nay cửa hàng này chưa có đơn nào (theo giờ Asia/Ho_Chi_Minh)."
+        text = "Hôm nay cửa hàng này chưa có đơn nào (theo giờ Việt Nam)."
     else:
         breakdown = ", ".join(
             f"{count} đơn ở trạng thái {status}" for status, count in context_reads.today_counts
         )
         text = (
-            f"Hôm nay (theo giờ Asia/Ho_Chi_Minh) cửa hàng có {breakdown}. "
+            f"Hôm nay (theo giờ Việt Nam) cửa hàng có {breakdown}. "
             f"Tổng cộng {sum(counts.values())} đơn. Đây là số đếm theo trạng thái máy chủ ghi "
             "nhận, không phải chỉ số hiệu suất."
         )

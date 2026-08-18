@@ -32,7 +32,11 @@ from nha_trang_laundry_db.quotes import QuoteRepository, QuoteStateError
 from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_domain.canonical import canonical_document
 from nha_trang_laundry_domain.catalog import QuantityBasis, Unit
-from nha_trang_laundry_domain.pricebook_import import import_pricebook_csv, runtime_price_rules
+from nha_trang_laundry_domain.pricebook_import import (
+    EXPECTED_SERVICE_COUNT,
+    import_pricebook_csv,
+    runtime_price_rules,
+)
 from nha_trang_laundry_domain.pricing import PriceLine, price_lines
 from nha_trang_laundry_domain.quote_composition import RequestedLine
 
@@ -239,6 +243,46 @@ def test_no_published_pricebook_means_no_price(connection: Any, service: Operati
             idempotency_key="quote-no-pricebook",
             principal=staff,
         )
+
+
+def test_the_published_catalog_is_what_the_console_picker_offers(
+    connection: Any, service: OperationsService
+) -> None:
+    """The picker serves the approved names from the same digest-checked payload that prices."""
+    _publish(connection)
+    services = service.list_published_services()
+    assert len(services) == EXPECTED_SERVICE_COUNT
+    standard = next(item for item in services if item.code == STANDARD)
+    assert standard.display_name  # a name the operator reads, not the code they used to memorize
+    assert standard.unit is Unit.KG
+    assert all(item.display_name and item.category for item in services)
+
+
+def test_no_published_pricebook_means_no_catalog(service: OperationsService) -> None:
+    """The picker refuses the way the pricing path does — no degraded fallback list."""
+    with pytest.raises(QuotePricingUnavailable):
+        service.list_published_services()
+
+
+def test_the_catalog_route_serves_the_published_services(
+    connection: Any, service: OperationsService
+) -> None:
+    """Role-gated like the pricing surface, and readable without store membership: the catalog
+    is deployment-global configuration, so membership is not a precondition."""
+    _publish(connection)
+    staff = _staff(connection, None, StaffRole.OPERATOR)
+    app.dependency_overrides[current_principal] = lambda: staff
+    app.dependency_overrides[get_operations_service] = lambda: service
+    try:
+        with TestClient(app) as client:
+            response = client.get("/internal/v1/pricebook/services", headers={"Origin": ORIGIN})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == EXPECTED_SERVICE_COUNT
+    assert {item["code"] for item in body} >= {STANDARD}
+    assert all(set(item) == {"code", "display_name", "category", "unit"} for item in body)
 
 
 def test_a_published_pricebook_cannot_be_edited_in_place(connection: Any) -> None:

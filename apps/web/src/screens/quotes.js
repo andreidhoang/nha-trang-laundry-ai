@@ -16,6 +16,11 @@
  *     number here would show the top of a range as a settled price.
  *   - **A refusal is a result, not an error.** A 422 carrying `REQUIRE_HUMAN` means the engine
  *     declined to guess. It is rendered as an outcome with its reason codes intact.
+ *   - **The service is picked by name, never typed as a code.** The picker offers the published
+ *     pricebook's Vietnamese display names (`GET /internal/v1/pricebook/services`), grouped by
+ *     category; the unit follows the chosen service because every service has exactly one
+ *     canonical unit. If the catalog cannot be read, the form refuses too — the same digest gate
+ *     that prices guards the picker, and a memorized code is not a fallback worth keeping.
  *   - **The order request is picked or prefilled, not pasted.** The common path is the Tiếp nhận
  *     screen's "Báo giá ngay" link (`#/quotes?request=<id>`, resolved against the server before
  *     the form binds it) or a pick from the recent-intake list below the form. A bare UUID field
@@ -28,7 +33,7 @@
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UUID, dateTime, shortHash, shortId } from "../core/format.js";
-import { enumLabel } from "../core/i18n.js";
+import { enumVi, serviceCategoryVi } from "../core/i18n.js";
 import { storeId } from "../core/session.js";
 import {
   amount,
@@ -51,12 +56,17 @@ import {
   warningBadges,
 } from "../ui/components.js";
 
-const UNITS = ["KG", "ITEM", "PAIR", "SET", "ANIMAL_PLUSH_ITEM", "CASE", "M2"];
 const BASES = ["STAFF_MEASUREMENT", "CUSTOMER_ESTIMATE", "APPROVED_MANUAL"];
 const LIST_LIMIT = 100;
 const MAX_LINES = 20;
 
-/** `QuoteLineRequest.service_code` — matched here only to catch a typo before a round trip. */
+/**
+ * `QuoteLineRequest.service_code`, mirrored byte for byte from `main.py`'s `Field(pattern=...)`.
+ *
+ * It used to catch an operator's typo. Nobody can type a service code any more, so what it catches
+ * now is a published pricebook offering a code the API would reject — a pricebook problem, and the
+ * refusal message says so rather than blaming the person who only picked from a list.
+ */
 const SERVICE_CODE = /^[A-Z][A-Z0-9_]{1,62}$/;
 
 /**
@@ -73,10 +83,44 @@ const PICKER_LIMIT = 100;
  */
 
 /**
+ * One published service, as the catalog route returns it.
+ *
+ * @typedef {{code: string, display_name: string, category: string, unit: string}} CatalogService
+ */
+
+/**
+ * Group the catalog by category, in the order the published payload lists them.
+ *
+ * No sorting happens here on purpose. The payload's order is the published pricebook's order, and
+ * a picker that re-sorts puts the services in a different sequence than the document the owner
+ * approved — a difference nobody can see and everybody has to relearn. Grouping is the one
+ * rearrangement worth making, because "Ủi" and "Giặt khô" are how the counter thinks about the
+ * work; within a group the published order stands.
+ *
+ * @param {CatalogService[]} services
+ * @returns {Array<{category: string, services: CatalogService[]}>}
+ */
+function serviceGroups(services) {
+  /** @type {Array<{category: string, services: CatalogService[]}>} */
+  const groups = [];
+  for (const service of services) {
+    let group = groups.find((item) => item.category === service.category);
+    if (!group) {
+      group = { category: service.category, services: [] };
+      groups.push(group);
+    }
+    group.services.push(service);
+  }
+  return groups;
+}
+
+/**
  * @returns {Line}
  */
 function blankLine() {
-  return { serviceCode: "", quantity: "", unit: "KG", basis: "STAFF_MEASUREMENT" };
+  // No unit, because the unit is the chosen service's and no service is chosen yet. The old `"KG"`
+  // default was a guess the operator could neither see nor change once the unit picker was gone.
+  return { serviceCode: "", quantity: "", unit: "", basis: "STAFF_MEASUREMENT" };
 }
 
 /**
@@ -86,22 +130,29 @@ function blankLine() {
  * screen confused them and the result was a form that dropped focus on every keystroke.
  *
  *   **Structural** — a line added or removed. The set of cards changes, so the editor is rebuilt.
- *   **Value** — a character typed, a unit picked. The set of cards is unchanged, so nothing is
- *   rebuilt: the line's state is updated in place and only the two nodes that actually depend on
- *   the value are refreshed — the validity flag on the input, and that line's 6 kg notice.
+ *   **Value** — a character typed, a service picked. The set of cards is unchanged, so nothing is
+ *   rebuilt: the line's state is updated in place and only the nodes that actually depend on the
+ *   value are refreshed — the unit echo, and that line's 6 kg notice.
  *
- * Typing `STANDARD_WASH_DRY` used to rebuild the whole form seventeen times and move the caret to
- * the end after each one. A Playwright check does not catch this, because `page.fill()` sets a
- * value in one shot; only a human typing does.
+ * The weight field is where this still matters. Typing into it used to rebuild the whole form on
+ * every keystroke and move the caret to the end after each one; a Playwright check does not catch
+ * that, because `page.fill()` sets a value in one shot and only a human typing does. The service
+ * field no longer has the problem at all, because picking from a list is one event rather than
+ * seventeen — which is a second, quieter reason the picker replaced the typed code.
  *
  * @param {object} options
+ * @param {CatalogService[]} options.catalog the published services the picker offers
  * @param {Line[]} options.lines
  * @param {() => void} options.onStructuralChange rebuild — the set of lines changed
  * @param {() => void} options.onValueChange a value changed; invalidates the idempotency key only
  * @param {() => void} options.onAddLine Enter in a quantity field — same path as "Thêm dòng"
  * @returns {HTMLElement}
  */
-function lineEditor({ lines, onStructuralChange, onValueChange, onAddLine }) {
+function lineEditor({ catalog, lines, onStructuralChange, onValueChange, onAddLine }) {
+  // Grouped once, not once per line. Twenty lines × forty-three services is a rearrangement the
+  // browser would otherwise redo on every structural rebuild, for an answer that cannot differ.
+  const groups = serviceGroups(catalog);
+
   return h(
     "div",
     { class: "stack" },
@@ -110,36 +161,53 @@ function lineEditor({ lines, onStructuralChange, onValueChange, onAddLine }) {
       // Owned by this card and refreshed in place, so the notice can follow the typed weight across
       // the 6 kg boundary without the input losing focus.
       const cliffHost = h("div");
-      const refreshCliff = () => render(cliffHost, pricingCliffNotice(line.quantity, line.unit));
+      // The 6 kg notice is about a *priced* weight, so it says nothing until there is a service to
+      // price. Before a pick there is no unit to be near a boundary of, and an empty quantity
+      // parses to NaN — which the notice treats as "near the cliff" and would announce on every
+      // blank line the operator adds.
+      const refreshCliff = () =>
+        render(cliffHost, line.serviceCode ? pricingCliffNotice(line.quantity, line.unit) : null);
 
-      const codeInput = h("input", {
-        type: "text",
-        value: line.serviceCode,
-        autocomplete: "off",
-        spellcheck: "false",
-        placeholder: "STANDARD_WASH_DRY",
-        dataFormat: "id",
-        "aria-invalid": line.serviceCode && !SERVICE_CODE.test(line.serviceCode) ? "true" : "false",
-        onInput: (event) => {
-          const input = event.target;
-          // Uppercasing is a convenience — the server's pattern demands it — but rewriting the
-          // value unconditionally sends the caret to the end, so an operator correcting a character
-          // in the middle of a code cannot. Rewrite only when the text actually changed, and put
-          // the caret back where it was.
-          const caret = input.selectionStart;
-          const normalized = input.value.toUpperCase().replace(/\s+/g, "");
-          if (normalized !== input.value) {
-            input.value = normalized;
-            input.setSelectionRange(caret, caret);
-          }
-          line.serviceCode = normalized;
-          input.setAttribute(
-            "aria-invalid",
-            normalized && !SERVICE_CODE.test(normalized) ? "true" : "false",
-          );
-          onValueChange();
+      // The unit is shown, never chosen. Every published service has exactly one canonical unit,
+      // so offering a second control was offering the operator a way to contradict the pricebook —
+      // and the server refuses that contradiction (INCOMPATIBLE_UNIT) rather than pricing it.
+      const unitEcho = h("p", { class: "hint" });
+      const refreshUnit = () =>
+        render(unitEcho, line.serviceCode ? `Tính theo: ${enumVi(line.unit)}` : null);
+
+      // The picker. One tap chooses by the name the pricebook was approved with; the code travels
+      // as the option's value, and the unit follows the service.
+      const serviceSelect = h(
+        "select",
+        {
+          name: "service_code",
+          onChange: (event) => {
+            const select = event.target;
+            line.serviceCode = select.value;
+            const service = catalog.find((item) => item.code === select.value);
+            // Back to the placeholder clears the unit too. Keeping the previous service's unit on
+            // a line with no service is a value nobody set, and the 6 kg notice reads it.
+            line.unit = service ? service.unit : "";
+            refreshUnit();
+            refreshCliff();
+            onValueChange();
+          },
         },
-      });
+        h("option", { value: "", selected: !line.serviceCode }, "— Chọn dịch vụ —"),
+        groups.map((group) =>
+          h(
+            "optgroup",
+            { label: serviceCategoryVi(group.category) },
+            group.services.map((service) =>
+              h(
+                "option",
+                { value: service.code, selected: service.code === line.serviceCode, title: service.code },
+                service.display_name,
+              ),
+            ),
+          ),
+        ),
+      );
 
       const quantityInput = h("input", {
         // Deliberately `text`, not `number`. A number input lets the browser normalize, step and
@@ -166,19 +234,15 @@ function lineEditor({ lines, onStructuralChange, onValueChange, onAddLine }) {
         },
       });
 
-      const unitSelect = enumSelect("unit", UNITS, line.unit);
-      unitSelect.addEventListener("change", (event) => {
-        line.unit = /** @type {HTMLSelectElement} */ (event.target).value;
-        refreshCliff();
-        onValueChange();
-      });
-
       const basisSelect = enumSelect("quantity_basis", BASES, line.basis);
       basisSelect.addEventListener("change", (event) => {
         line.basis = /** @type {HTMLSelectElement} */ (event.target).value;
         onValueChange();
       });
 
+      // Both derived nodes are painted once here, so a line that already has a service keeps its
+      // unit and its 6 kg notice through a structural rebuild.
+      refreshUnit();
       refreshCliff();
 
       return h(
@@ -206,18 +270,20 @@ function lineEditor({ lines, onStructuralChange, onValueChange, onAddLine }) {
         h(
           "div",
           { class: "stack stack--tight" },
-          labelled({ id: `${prefix}-code`, label: "Mã dịch vụ", hint: "Mã trong bảng giá chủ tiệm đã chốt (PRICEBOOK_V1, 43 mã): STANDARD_WASH_DRY, DRY_WET_CLOTHES, DRY_BEDDING, BED_BLANKET, BED_TOPPER, BED_PILLOW, IRON_KNIT, IRON_TROUSERS_SHIRT…", control: codeInput }),
+          labelled({ id: `${prefix}-code`, label: "Dịch vụ", control: serviceSelect }),
+          // Directly under the field it describes: the unit is a consequence of the service, and
+          // reading it two fields away is reading it as a separate decision.
+          unitEcho,
           labelled({
             id: `${prefix}-qty`,
             label: "Khối lượng / số lượng",
             hint: "Gửi nguyên văn như bạn gõ. Màn hình này không làm tròn và không đổi định dạng.",
             control: quantityInput,
           }),
-          labelled({ id: `${prefix}-unit`, label: "Đơn vị", control: unitSelect }),
           labelled({
             id: `${prefix}-basis`,
             label: "Cơ sở khối lượng",
-            hint: "Chỉ STAFF_MEASUREMENT dưới chính sách đo lường đã công bố mới cho ra giá cuối.",
+            hint: "Chỉ khối lượng nhân viên đã cân mới tính ra giá cuối.",
             control: basisSelect,
           }),
         ),
@@ -254,7 +320,7 @@ function revisionResult(result) {
     warningBadges([...(result.reason_codes || []), ...(result.required_approvals || [])]),
     facts([
       ["Mã báo giá", shortId(result.quote_id), { mono: true }],
-      ["Trạng thái", enumLabel(result.status)],
+      ["Trạng thái", enumVi(result.status)],
       ["Phiên bản dòng", `v${result.row_version}`],
       [
         "Tổng hiển thị cho khách",
@@ -324,7 +390,7 @@ function quoteCard(item, onPickRevision) {
     ),
     facts([
       ["Bản", `r${item.revision} · dòng v${item.row_version}`],
-      ["Trạng thái", enumLabel(item.status)],
+      ["Trạng thái", enumVi(item.status)],
       [
         "Tổng hiển thị",
         amount({
@@ -395,7 +461,11 @@ export function render_(context) {
   // only changes a value must call `invalidateKey` instead, or the caret moves as the operator types.
   const redrawBuilder = () => {
     invalidateKey();
-    render(builderBody, buildForm());
+    // Without a catalog there is no form to redraw. Saying so matters because `pickRevision` is
+    // reachable from the recorded-quotes list, which loads independently: without this branch the
+    // draft would silently take on a quote id and then scroll the operator to an error notice.
+    if (catalog && catalog.length) render(builderBody, buildForm());
+    else render(builderBody, catalogRefusal());
   };
 
   // The one structural path for adding a line — the button below and Enter in a quantity field
@@ -405,6 +475,71 @@ export function render_(context) {
     draft.lines.push(blankLine());
     redrawBuilder();
   };
+
+  /** @type {CatalogService[]|null} the picker's data, once the server has answered */
+  let catalog = null;
+
+  /**
+   * What stands where the form would be when the catalog is unusable.
+   *
+   * `errorNotice` withholds its retry button unless the error is retryable, and the likeliest
+   * failure here — a 503 `PRICEBOOK_UNAVAILABLE` from an unpublished or digest-failing pricebook —
+   * is deliberately not. That rule is right for a write; here it would leave the operator with a
+   * dead screen and no control anywhere on it, because the form's host has no reload of its own
+   * the way the intake picker does. So the refusal carries its own "Thử tải lại" — which asks the
+   * server again and changes nothing if the answer is the same, unlike retrying a write.
+   *
+   * @param {unknown} [error] the failure, when there was one; absent means the catalog was empty
+   * @returns {HTMLElement}
+   */
+  function catalogRefusal(error) {
+    return h(
+      "div",
+      { class: "stack stack--tight" },
+      error
+        ? errorNotice(error)
+        : h(
+            "div",
+            { class: "notice", dataState: "warn" },
+            h("p", { class: "notice__title" }, "Bảng giá chưa có dịch vụ nào"),
+            h(
+              "p",
+              null,
+              "Máy chủ trả về một bảng giá rỗng, nên không có dịch vụ nào để chọn và không thể " +
+                "tính giá. Đây là vấn đề của bảng giá đã công bố, không phải của thao tác này.",
+            ),
+          ),
+      h(
+        "div",
+        { class: "form__actions" },
+        h(
+          "button",
+          { type: "button", dataVariant: "quiet", onClick: () => void loadCatalog() },
+          icon("refresh"),
+          "Thử tải lại bảng giá",
+        ),
+      ),
+    );
+  }
+
+  /**
+   * The form cannot be built before the picker has its names, and it must not fall back to typed
+   * codes when the catalog is unreadable — the same published payload prices and labels, so one
+   * refusal covers both. An empty catalog counts as unreadable: a picker offering nothing but
+   * "— Chọn dịch vụ —" is a form that cannot be completed, and it should say so rather than look
+   * available.
+   */
+  async function loadCatalog() {
+    render(builderBody, skeleton(2));
+    try {
+      const services = await request("/internal/v1/pricebook/services");
+      catalog = Array.isArray(services) ? services : null;
+      render(builderBody, catalog && catalog.length ? buildForm() : catalogRefusal());
+    } catch (error) {
+      catalog = null;
+      render(builderBody, catalogRefusal(error));
+    }
+  }
 
   const pickRevision = (item) => {
     draft.quoteId = item.quote_id;
@@ -457,7 +592,7 @@ export function render_(context) {
             h(
               "p",
               null,
-              `${enumLabel(item.status)} · tiếp nhận lúc ${dateTime(item.created_at)} · ` +
+              `${enumVi(item.status)} · tiếp nhận lúc ${dateTime(item.created_at)} · ` +
                 `liên hệ ${shortId(item.contact_binding_id)}`,
             ),
             h(
@@ -525,7 +660,7 @@ export function render_(context) {
               { class: "mono", title: item.order_request_id },
               shortId(item.order_request_id),
             ),
-            ` · ${enumLabel(item.status)} · ${dateTime(item.created_at)}`,
+            ` · ${enumVi(item.status)} · ${dateTime(item.created_at)}`,
           ),
           h(
             "button",
@@ -600,7 +735,7 @@ export function render_(context) {
             h(
               "p",
               null,
-              "Mã có thể thuộc cửa hàng khác hoặc đã bị gõ sai — máy chủ trả lờ cùng một cách cho " +
+              "Mã có thể thuộc cửa hàng khác hoặc đã bị gõ sai — máy chủ trả lời cùng một cách cho " +
                 "cả hai, nên màn hình này cũng không đoán. Không có dữ kiện nào được điền sẵn; " +
                 "hãy chọn từ danh sách bên dưới.",
             ),
@@ -618,8 +753,12 @@ export function render_(context) {
     }
     if (draft.lines.length === 0) return "Cần ít nhất một dòng.";
     for (const [index, line] of draft.lines.entries()) {
+      if (!line.serviceCode) return `Dòng ${index + 1}: chưa chọn dịch vụ.`;
+      // The picker can only yield a published code, so this can fail only if the catalog itself
+      // carries a malformed one. That is a pricebook problem, and it says so rather than blaming
+      // the operator for a field they cannot type into.
       if (!SERVICE_CODE.test(line.serviceCode)) {
-        return `Dòng ${index + 1}: mã dịch vụ phải viết hoa, dạng A-Z 0-9 _.`;
+        return `Dòng ${index + 1}: bảng giá trả về mã dịch vụ không hợp lệ (${line.serviceCode}).`;
       }
       if (!line.quantity.trim()) return `Dòng ${index + 1}: chưa nhập khối lượng.`;
       if (line.quantity.length > 16) return `Dòng ${index + 1}: khối lượng quá 16 ký tự.`;
@@ -758,6 +897,7 @@ export function render_(context) {
         ),
       ),
       lineEditor({
+        catalog,
         lines: draft.lines,
         onStructuralChange: redrawBuilder,
         onValueChange: invalidateKey,
@@ -790,7 +930,7 @@ export function render_(context) {
     );
   }
 
-  render(builderBody, buildForm());
+  void loadCatalog();
   void loadPicker();
   void list.reload();
   if (prefillId) void prefill(prefillId);
@@ -801,20 +941,19 @@ export function render_(context) {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "Ảnh chụp bất biến · Giá do máy chủ quyết"),
+      h("p", { class: "eyebrow" }, "Giá do máy chủ quyết"),
       h("h1", null, "Báo giá"),
       h(
         "p",
         { class: "screen__lede" },
-        "Màn hình gửi dữ kiện và hiển thị kết quả. Không cộng, không làm tròn, không đoán khối lượng.",
+        "Chọn yêu cầu, chọn dịch vụ, nhập khối lượng — máy chủ tính theo bảng giá đã chốt. Màn hình này không tự cộng tiền, không làm tròn.",
       ),
     ),
     panel({
       eyebrow: "Lệnh",
       title: "Tính giá cho một yêu cầu",
       guardrail:
-        "Mọi con số bên dưới do bộ tính giá xác định. Nếu thiếu dữ kiện, máy chủ trả REQUIRE_HUMAN " +
-        "thay vì đoán, và không có dòng nào được ghi.",
+        "Thiếu dữ kiện thì máy chủ từ chối đoán và không ghi gì cả — người quyết, không phải máy.",
       children: h(
         "div",
         { class: "stack" },

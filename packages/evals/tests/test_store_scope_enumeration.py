@@ -70,6 +70,9 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/orders/{order_id}/settlement"): store_scoped(
         "settlement", "SettlementRepository.record"
     ),
+    ("GET", "/internal/v1/stores/{store_id}/settlements/today"): store_scoped(
+        "settlement", "SettlementRepository.collected_today"
+    ),
     ("POST", "/internal/v1/stores/{store_id}/quotes"): RouteScope(
         "STORE_SCOPED",
         None,
@@ -204,6 +207,13 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ),
     ("GET", "/internal/v1/queue-recovery"): RouteScope(
         "NOT_STORE_DATA", None, "process-wide queue counters; contains no customer data"
+    ),
+    ("GET", "/internal/v1/pricebook/services"): RouteScope(
+        "NOT_STORE_DATA",
+        None,
+        "the published pricebook is deployment-global configuration, not store data; the read "
+        "carries no store column and no customer data, and is role-gated like the pricing "
+        "surface it feeds",
     ),
 }
 

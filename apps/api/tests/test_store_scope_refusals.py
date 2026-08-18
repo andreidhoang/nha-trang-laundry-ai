@@ -31,6 +31,7 @@ from nha_trang_laundry_api.main import (
 )
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.orders import OrderAuthorizationError
+from nha_trang_laundry_db.settlement import SettlementAuthorizationError
 from nha_trang_laundry_db.store_access import StoreAccessError
 
 STAFF_ID = UUID("00000000-0000-0000-0000-0000000002a1")
@@ -59,6 +60,12 @@ class RefusingOperationsService:
 
     def list_incidents(self, **_: Any) -> None:
         raise StoreAccessError("store access is not authorized")
+
+    def collected_today(self, **_: Any) -> None:
+        # The settlement repository raises its own authorization error, not `StoreAccessError`,
+        # because `require_store_membership` is given `SettlementAuthorizationError` as its error
+        # type. The route must map that to the same opaque 403 as everything else here.
+        raise SettlementAuthorizationError("store access is not authorized")
 
     def list_member_stores(self, **_: Any) -> tuple[UUID, ...]:
         return ()
@@ -109,6 +116,20 @@ def test_creating_an_order_in_an_unassigned_store_is_refused_not_crashed(
 
 def test_listing_quotes_in_an_unassigned_store_is_refused_not_crashed(client: TestClient) -> None:
     response = client.get(f"/internal/v1/stores/{STORE_ID}/quotes")
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "operation denied"}
+
+
+def test_reading_takings_for_an_unassigned_store_is_refused_not_crashed(
+    client: TestClient,
+) -> None:
+    """The money read refuses with the same opaque string as every other store-scoped read.
+
+    A distinguishable refusal here would be worse than elsewhere: "403 denied" versus "404 no such
+    store" would let somebody outside a store confirm it exists by asking what it earned.
+    """
+    response = client.get(f"/internal/v1/stores/{STORE_ID}/settlements/today")
 
     assert response.status_code == 403
     assert response.json() == {"detail": "operation denied"}

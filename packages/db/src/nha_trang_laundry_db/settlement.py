@@ -35,6 +35,11 @@ from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commi
 #: Recording money taken at the counter is an operations action, not an approval one.
 SETTLEMENT_ROLES = frozenset({StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.OPERATOR})
 
+#: The business day "hôm nay" means, matching `assistant.BUSINESS_TIMEZONE` and canonical-enums-v1.
+#: A counter closes by the local clock, not by UTC, so a settlement at 22:00 local belongs to the
+#: day the staff member worked and not to the next one.
+BUSINESS_TIMEZONE = "Asia/Ho_Chi_Minh"
+
 
 class SettlementAuthorizationError(PermissionError):
     """Raised when a principal may not record a settlement for this store."""
@@ -69,6 +74,20 @@ class StoredSettlement:
     balance_status: str
     self_collection_recorded: bool
     row_version: int
+
+
+@dataclass(frozen=True, slots=True)
+class CollectedToday:
+    """What one store's counter took in, on today's local business day.
+
+    Deliberately two integers and nothing else. `collected_vnd` is a sum of `paid_amount_vnd`, a
+    BIGINT column the database itself constrains to equal `expected_total_vnd`, so it cannot be a
+    partial payment, a deposit or a rounded figure — every row it sums is a customer who paid the
+    quoted total in full and took their goods.
+    """
+
+    collected_vnd: int
+    settlement_count: int
 
 
 class SettlementRepository:
@@ -245,6 +264,45 @@ class SettlementRepository:
             row_version=int(row[6]),
         )
 
+    @staticmethod
+    def collected_today(
+        cursor: Any, *, store_id: UUID, principal: StaffPrincipal
+    ) -> CollectedToday:
+        """Sum today's attested settlements for one store.
+
+        This is the only money figure the console reads, and its narrowness is the reason it is
+        safe to show. It is not revenue: it does not know about work in progress, about an order
+        delivered but unpaid, about a refund (the schema has no such row), or about anything that
+        happened before today's local midnight. It is one question — "how much came across the
+        counter today" — answered by summing an append-only ledger.
+
+        The database does the arithmetic. Nothing here adds, rounds, converts or reconciles, and no
+        model is involved at any point: `SUM` over a BIGINT column is exact in a way that a
+        floating-point total in application code would not be.
+
+        `coalesce` matters: a store with no settlements today must read as 0, not as null, because
+        the caller renders this number and "chưa thu đồng nào" is a real answer.
+        """
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=SettlementAuthorizationError,
+        )
+        cursor.execute(
+            """
+            SELECT coalesce(sum(paid_amount_vnd), 0), count(*)
+            FROM order_settlements
+            WHERE store_id = %s
+              AND (attested_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date
+            """,
+            (store_id, BUSINESS_TIMEZONE, BUSINESS_TIMEZONE),
+        )
+        row = cursor.fetchone()
+        if row is None:  # pragma: no cover - an aggregate always returns one row
+            return CollectedToday(collected_vnd=0, settlement_count=0)
+        return CollectedToday(collected_vnd=int(row[0]), settlement_count=int(row[1]))
+
 
 def _uuid(value: object) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))
@@ -255,7 +313,9 @@ def _optional_int(value: object) -> int | None:
 
 
 __all__ = [
+    "BUSINESS_TIMEZONE",
     "SETTLEMENT_ROLES",
+    "CollectedToday",
     "SettlementAuthorizationError",
     "SettlementCommand",
     "SettlementRepository",

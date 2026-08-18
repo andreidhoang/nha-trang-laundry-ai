@@ -56,6 +56,7 @@ from nha_trang_laundry_db.quotes import (
     QuoteSummary,
 )
 from nha_trang_laundry_db.settlement import (
+    CollectedToday,
     SettlementCommand,
     SettlementRepository,
     StoredSettlement,
@@ -77,6 +78,8 @@ from nha_trang_laundry_domain.catalog import (
     ApprovalAction,
     CommercialOrderStatus,
     FulfillmentMode,
+    ServiceDefinition,
+    Unit,
 )
 from nha_trang_laundry_domain.pricebook_import import PricebookImportError, published_price_rules
 from nha_trang_laundry_domain.quote_composition import (
@@ -530,14 +533,7 @@ class OperationsService:
         the digest recorded when it was published, and that payload must rebuild into rules without
         losing a field.
         """
-        published = ConfigurationRepository.latest_published(cursor, "PRICEBOOK")
-        if published is None:
-            raise QuotePricingUnavailable("no published pricebook")
-        payload = ConfigurationRepository.get_published(cursor, published.version_id)
-        if payload is None:
-            raise QuotePricingUnavailable("published pricebook payload is missing")
-        if not hmac.compare_digest(snapshot_hash(payload), published.snapshot_hash):
-            raise QuotePricingUnavailable("published pricebook payload does not match its digest")
+        payload, published = self._resolve_published_pricebook(cursor)
         try:
             rules = published_price_rules(payload)
         except PricebookImportError as error:
@@ -547,6 +543,67 @@ class OperationsService:
             version=published.version,
             snapshot_hash=f"JCS-SHA256-V1:{published.snapshot_hash}",
         )
+
+    @staticmethod
+    def _resolve_published_pricebook(cursor: Any) -> tuple[Any, Any]:
+        """The published pricebook document and its publication record, digest-checked.
+
+        The one integrity gate every pricebook read passes through — pricing and the console's
+        service picker alike — so neither can silently read a payload nobody approved.
+        """
+        published = ConfigurationRepository.latest_published(cursor, "PRICEBOOK")
+        if published is None:
+            raise QuotePricingUnavailable("no published pricebook")
+        payload = ConfigurationRepository.get_published(cursor, published.version_id)
+        if payload is None:
+            raise QuotePricingUnavailable("published pricebook payload is missing")
+        if not hmac.compare_digest(snapshot_hash(payload), published.snapshot_hash):
+            raise QuotePricingUnavailable("published pricebook payload does not match its digest")
+        return payload, published
+
+    def list_published_services(self) -> tuple[ServiceDefinition, ...]:
+        """The published service catalog, for the quote form's picker.
+
+        The form used to make an operator type a service code from memory. The published payload
+        already carries the approved Vietnamese display names, so the picker offers them instead —
+        through the same digest gate that prices, because a picker filled from an unverified
+        payload would present a pricebook nobody approved.
+        """
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            payload, _published = self._resolve_published_pricebook(cursor)
+        services = payload.get("services") if isinstance(payload, dict) else None
+        if not isinstance(services, list):
+            raise QuotePricingUnavailable("published pricebook payload has no service catalog")
+        try:
+            return tuple(
+                ServiceDefinition(
+                    code=str(item["code"]),
+                    display_name=str(item["display_name"]),
+                    category=str(item["category"]),
+                    unit=Unit(str(item["unit"])),
+                )
+                for item in services
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise QuotePricingUnavailable("published pricebook catalog is not usable") from error
+
+    def collected_today(self, *, store_id: UUID, principal: StaffPrincipal) -> CollectedToday:
+        """Today's counter takings for one store.
+
+        A pass-through by design. The sum is computed by the database over an append-only ledger
+        and the membership check runs on the same cursor; there is nothing for this layer to add
+        that would not be a second opinion about money.
+        """
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return SettlementRepository.collected_today(
+                cursor, store_id=store_id, principal=principal
+            )
 
     def list_quotes(
         self, *, store_id: UUID, principal: StaffPrincipal, limit: int

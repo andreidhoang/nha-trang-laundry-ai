@@ -17,6 +17,41 @@
   padding: var(--space-4);
 }
 
+/* Hôm nay: an empty queue takes no space — the clear line under the grid says what was checked.
+   Written as `.card.tile--clear`, not `.tile--clear`, and the doubled class is load-bearing: every
+   tile is also a `.stack`, whose `display: grid` is declared further down this file. At equal
+   specificity the later rule wins, so the single-class form lost silently — the class landed on the
+   element, a test asserting on the class passed, and the tile stayed on screen. */
+.card.tile--clear {
+  display: none;
+}
+
+/* Hôm nay: the takings card. The amount is the largest thing on the screen because it is the one
+   number an owner opens the console to see; `tabular-nums` keeps the digits from shifting width as
+   the day's total grows, so a glance at 9am and one at 2pm land in the same place. */
+.takings {
+  border-color: var(--brand-200);
+}
+
+.takings__amount {
+  color: var(--brand-700);
+  font-size: var(--text-2xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-heavy);
+  line-height: 1.1;
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+@media (prefers-color-scheme: dark) {
+  .takings {
+    border-color: var(--brand-700);
+  }
+
+  .takings__amount {
+    color: var(--brand-400);
+  }
+}
+
 .card__header {
   align-items: flex-start;
   display: flex;

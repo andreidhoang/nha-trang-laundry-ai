@@ -34,6 +34,7 @@ from nha_trang_laundry_db.orders import (
 )
 from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
 from nha_trang_laundry_db.settlement import (
+    BUSINESS_TIMEZONE,
     SettlementAuthorizationError,
     SettlementStateError,
 )
@@ -1044,6 +1045,101 @@ def list_quotes(
     # be told 403 when creating a quote and 500 when listing the same store's quotes.
     except (StoreAccessError, ValueError) as error:
         _raise_operations_error(error)
+
+
+# --- Today's counter takings: the one money read the console makes ----------------------------
+#
+# The owner's morning has a money question in it, and until now the console had no honest answer:
+# the assistant refuses revenue questions because no revenue read existed. This is not that read,
+# and it deliberately does not make the assistant able to answer one. It is a narrower fact with a
+# ledger behind it — the sum of today's attested settlements — and it is named for what it is.
+#
+# Why this is safe to show when "doanh thu" is not: `order_settlements` is append-only, one row per
+# order, and the database itself constrains `paid_amount_vnd = expected_total_vnd`, so every row is
+# a customer who paid the quoted total in full at the counter. Summing it involves no policy, no
+# proration and no model. Revenue would require answering what to do about work in progress,
+# delivery collections, refunds and B2B accounts — all of which are DEC-010, and none of which this
+# route pretends to have settled.
+
+
+class CollectedTodayResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    collected_vnd: int
+    settlement_count: int
+    business_timezone: str
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/settlements/today",
+    response_model=CollectedTodayResponse,
+)
+def collected_today(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> CollectedTodayResponse:
+    """Money attested as collected at this store's counter, on today's local business day."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        collected = service.collected_today(store_id=store_id, principal=principal)
+    except SettlementAuthorizationError as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+    # The window is published with the figure. A total whose day boundary the reader has to guess
+    # is a number they cannot check, and this one is settled by the counter's clock, not by UTC.
+    return CollectedTodayResponse(
+        collected_vnd=collected.collected_vnd,
+        settlement_count=collected.settlement_count,
+        business_timezone=BUSINESS_TIMEZONE,
+    )
+
+
+# --- The published service catalog: what the quote form's picker offers -----------------------
+#
+# The quote form used to make an operator type a service code from memory — 43 uppercase tokens.
+# The published pricebook already carries the approved Vietnamese display names, so this read hands
+# them to the picker. It is deployment-global (the pricebook is not store data), role-gated like
+# every pricing surface, and digest-gated by the same check that prices.
+
+
+class PricebookServiceResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    display_name: str
+    category: str
+    unit: str
+
+
+@app.get(
+    "/internal/v1/pricebook/services",
+    response_model=list[PricebookServiceResponse],
+)
+def list_pricebook_services(
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> list[PricebookServiceResponse]:
+    """Names for the picker, in published order. No store scope: the catalog is not store data."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        services = service.list_published_services()
+    except QuotePricingUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="pricebook unavailable"
+        ) from error
+    return [
+        PricebookServiceResponse(
+            code=item.code,
+            display_name=item.display_name,
+            category=item.category,
+            unit=item.unit.value,
+        )
+        for item in services
+    ]
 
 
 # --- INTAKE-UI-001: staff counter intake onto the order-request aggregate ----------------------

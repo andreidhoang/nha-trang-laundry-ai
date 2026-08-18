@@ -26,13 +26,14 @@
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { count, dateTime, shortId } from "../core/format.js";
-import { enumLabel } from "../core/i18n.js";
+import { enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
   badge,
   empty,
   errorNotice,
+  explain,
   facts,
   gated,
   labelled,
@@ -57,7 +58,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * @returns {HTMLElement}
  */
 function statusBadge(value) {
-  return badge({ token: enumLabel(value), gloss: "", state: "neutral" });
+  return badge({ token: enumVi(value), gloss: "", state: "neutral", title: value });
 }
 
 /**
@@ -81,14 +82,13 @@ function createdCard(result) {
       ? h(
           "div",
           { class: "notice", dataState: "info" },
-          "Kết quả được phát lại: cùng khoá thao tác và cùng nội dung đã gửi trước đó. Không có " +
-            "yêu cầu mới nào được tạo.",
+          "Lượt tiếp nhận này đã được ghi trước đó — đây là kết quả cũ hiện lại. Không có yêu " +
+            "cầu mới nào được tạo.",
         )
       : null,
     facts([
       ["Tiếp nhận lúc", dateTime(result.created_at)],
-      ["Liên hệ", shortId(result.contact_binding_id), { mono: true }],
-      ["Phiên bản dòng", `v${result.row_version}`],
+      ["Khách", shortId(result.contact_binding_id), { mono: true }],
     ]),
     h(
       "div",
@@ -104,7 +104,16 @@ function createdCard(result) {
         "Báo giá ngay",
       ),
     ),
-    h("p", { class: "hint mono" }, `mã yêu cầu: ${result.order_request_id}`),
+    explain(
+      "Mã kỹ thuật của lượt tiếp nhận này",
+      h(
+        "p",
+        null,
+        "Chỉ cần khi bạn báo lỗi cho kỹ thuật. Thao tác thường ngày không dùng tới nó — nút " +
+          "“Báo giá ngay” ở trên đã mang sẵn mã này sang màn hình Báo giá.",
+      ),
+      h("p", { class: "mono" }, `${result.order_request_id} · v${result.row_version}`),
+    ),
   );
 }
 
@@ -226,7 +235,7 @@ export function render_() {
       markUpdated(bar.stamp);
       listCount.textContent = count(items, LIST_LIMIT);
       truncation.textContent = isTruncated(items, LIST_LIMIT)
-        ? `Máy chủ trả tối đa ${LIST_LIMIT} bản ghi và đã trả đủ; có thể còn nữa. API này không có phân trang.`
+        ? `Đang hiện ${LIST_LIMIT} lượt gần nhất; có thể còn nữa ở phía trước.`
         : "";
       renderList();
     } catch (error) {
@@ -239,7 +248,7 @@ export function render_() {
     const contactId = draft.contactId.trim();
     if (!UUID.test(contactId)) {
       result.dataset.state = "danger";
-      result.textContent = "Mã liên hệ phải là một UUID hợp lệ.";
+      result.textContent = "Mã khách chưa đúng dạng. Chép lại nguyên văn từ kênh chat của khách.";
       return;
     }
 
@@ -299,13 +308,35 @@ export function render_() {
       { class: "form", onSubmit: submit },
       labelled({
         id: "intake-contact",
-        label: "Mã liên hệ của khách (contact binding UUID)",
+        label: "Mã khách",
         hint:
-          "Liên hệ phải đã tồn tại: nó được tạo khi khách nhắn qua kênh chính thức và máy chủ " +
-          "xác minh. Màn hình này không tạo liên hệ, không lưu tên hay số điện thoại — mã không " +
-          "tồn tại sẽ bị máy chủ từ chối (CONTACT_BINDING_UNKNOWN).",
+          "Khách phải đã từng nhắn tin cho tiệm qua kênh chính thức — mã này sinh ra từ lần " +
+          "nhắn đó. Màn hình này không tạo khách mới và không lưu tên hay số điện thoại; mã lạ " +
+          "sẽ bị từ chối chứ không được tự tạo. Khách vãng lai chưa nhắn tin thì chưa tiếp nhận " +
+          "được ở đây — xem mục bên dưới.",
         control: contactInput,
       }),
+      // The question every counter shift asks on its first day. It is answered here, next to the
+      // field that raises it, because sending somebody to a register of unsupported capabilities
+      // to learn that a walk-in cannot be served is answering it too late.
+      explain(
+        "Khách đi thẳng vào tiệm, chưa từng nhắn tin thì sao?",
+        h(
+          "p",
+          null,
+          "Chưa tiếp nhận được ở màn hình này. Mã khách chỉ sinh ra từ một tin nhắn khách đã gửi " +
+            "qua kênh chính thức, nên người chưa nhắn bao giờ thì chưa có mã.",
+        ),
+        h(
+          "p",
+          null,
+          "Đây là khoảng trống quy trình đã ghi nhận, không phải lỗi. Tạo khách ngay tại quầy là " +
+            "lưu thông tin cá nhân khi chưa có cơ sở đồng ý, nên hệ thống từ chối thay vì tự làm. " +
+            "Trước mắt: nhận đồ và ghi tay như cũ. ",
+          h("a", { href: "#/gaps" }, "Xem khoảng trống này"),
+          ".",
+        ),
+      ),
       h(
         "div",
         { class: "action-bar" },
@@ -331,7 +362,7 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "TIẾP NHẬN · KHÔNG TẠO LIÊN HỆ · KHÔNG LƯU LỜI KHÁCH"),
+      h("p", { class: "eyebrow" }, "Quầy tiếp khách"),
       h("h1", null, "Tiếp nhận"),
       h(
         "p",
@@ -340,15 +371,15 @@ export function render_() {
       ),
     ),
     panel({
-      eyebrow: "LỆNH",
-      title: "Tiếp nhận một yêu cầu",
+      eyebrow: "Lệnh",
+      title: "Tiếp nhận một khách",
       guardrail:
-        "Tiếp nhận chỉ mở một yêu cầu ở trạng thái nháp: không giá, không lịch, không cam kết. " +
-        "Mọi con số thuộc về màn hình Báo giá và do máy chủ quyết.",
+        "Bước này chỉ mở một phiếu nháp: chưa có giá, chưa hẹn giờ, chưa hứa gì với khách. " +
+        "Giá tính ở màn hình Báo giá và do máy chủ quyết.",
       children: h("div", { class: "stack" }, formHost, resultHost),
     }),
     panel({
-      eyebrow: "ĐÃ GHI",
+      eyebrow: "Đã ghi",
       title: "Tiếp nhận gần đây",
       count: listCount,
       children: h("div", { class: "stack" }, bar.node, filterStatus, truncation, listHost),

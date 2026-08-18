@@ -90,6 +90,55 @@ not an *enqueue*. The playbook's P4a stop rule ("if it touches a pinned hash, st
 and is amended: hand-editing a pinned hash is always forbidden; changing a pinned file is legal only
 through a sanctioned re-derivation, if one exists.
 
+### `RETENTION-STORE-001` is BLOCKED, and the reason is policy, not schema
+
+The controller selected it, and it was designed, reviewed by three adversarial lenses, and **not
+implemented**. All three lenses refuted the design. Three decisions were opened instead:
+`DEC-018`, `DEC-019`, `DEC-020` — packet `docs/DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md`.
+**The registry now holds 20 decisions, 9 `OPEN`.**
+
+**The obstacle is not the ledger trigger the packet anticipated.** Probed against the live schema
+inside a rolled-back transaction: `ALTER TABLE ... DROP COLUMN` **succeeds** under an append-only row
+trigger (DDL does not fire row triggers in PG16), and the trigger is **still armed afterwards**. So
+separating payload from ledger is mechanically available. Do not re-derive this.
+
+What blocks it:
+
+1. **`DEC-008` collides with itself.** It signs raw webhook payload 30d PURGE *and* consent evidence
+   retained indefinitely. `consent_events.evidence_webhook_id` is `NOT NULL` and references
+   `webhook_events(id)`, so for a `DỪNG` message those are the same row. Same shape on
+   `inbox_replay_conflicts.webhook_event_id` and `agent_runs.source_webhook_event_id`.
+2. **The assistant answer is stored twice.** `_turn_mapping` puts `answer` and `links` into the
+   idempotency response document, `idempotency.py:88-96` persists it as JSONB, and
+   `protect_idempotency_record` (read live from `pg_proc`) raises on `DELETE` and on any update of a
+   completed record. So the signed 180-day transcript purge would leave a byte-identical copy in a
+   permanently immutable row. Honouring it needs a corrective item against `ASSISTANT-001`, which is
+   `COMPLETE` and therefore immutable planning history.
+3. **No identity can execute a purge.** There is no `GRANT`, `REVOKE`, `CREATE ROLE` or `ROW LEVEL
+   SECURITY` statement in migrations `0001`–`0027`, and `scripts/apply_demo_grants.py:33-35` REVOKEs
+   `DELETE` on all tables from the API and worker roles, pinned by a test.
+
+**Scope, measured rather than assumed.** Of `DEC-008`'s ten classes exactly **two** have a separable
+backing store today — `RAW_WEBHOOK_PAYLOAD` (`webhook_events.encrypted_payload`) and
+`ASSISTANT_TRANSCRIPT` (`assistant_turns.question/answer`). Four have **no backing store at all**
+(`conversations`, `messages`, `addresses`, `evidence_assets` are absent), two are retained forever,
+one is not due for ten years, and `DEBUG_LOG` is not in the database at all so this control plane can
+never dispose of it. `agent_tool_calls` is already payload-free by construction —
+`request_fingerprint()` documents it: "Hash tool arguments for audit without persisting
+model-visible raw customer content."
+
+**And a gap nobody had recorded:** `agent_drafts.draft_text` and `agent_draft_reviews.edited_text`
+hold customer-facing text and are named by **no** retention class. A sweep of every `text`/`jsonb`/
+`bytea` column across all 41 tables found the same on `approval_decisions.note`,
+`channel_send_receipts.resolution_note`, `staff_users.display_name`/`email`,
+`contact_channel_bindings.provider_user_ref` and four `jsonb` payload columns. That is `DEC-019`.
+
+### The queue is now exhausted of agent-movable work
+
+`run_delivery_loop.py` selects **nothing**: 44 `COMPLETE`, 18 `PENDING`, 15 `BLOCKED`, and every
+pending item waits on a dependency or a decision. The next move in this repository is an owner's, and
+the highest-leverage one is `CORPUS-CONSENT-001` — it gates 700 of the 800 remaining eval cases.
+
 ### What was deliberately not done
 
 Nothing was enqueued. `delivery/WORK_QUEUE.yaml`, `LOOP_STATE.yaml`, `CAPABILITY_STATUS.yaml` and

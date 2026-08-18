@@ -277,3 +277,69 @@ decisions:
       No customer-facing asset is produced under either name. SALES_AND_NURTURE_PLAYBOOK.md already
       forbids issuing the one-page B2B offer while any field is a guess, and the name is now one of
       those fields. The prospect list, the visit route and the offer draft are internal only.
+  - id: DEC-018
+    title: What purge means when the same bytes are both disposable payload and retained evidence
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, PUBLIC_FAQ, LIST_PRICE_INFO, ORDER_STATUS]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md
+    opened_at: '2026-08-18'
+    question: >-
+      DEC-008 signs raw webhook payload 30d PURGE and, in the same sentence, consent evidence
+      retained indefinitely. consent_events.evidence_webhook_id is NOT NULL and references
+      webhook_events(id), so for a STOP message those two instructions land on the same row: the
+      ciphertext scheduled for deletion at 30 days IS the evidence for a withdrawal retained
+      forever. The same shape recurs on inbox_replay_conflicts.webhook_event_id and
+      agent_runs.source_webhook_event_id. Separately, the assistant answer is persisted a second
+      time into command_idempotency_records.response, and protect_idempotency_record raises on
+      DELETE and on any update of a completed record, so the signed 180-day transcript purge would
+      leave a byte-identical copy in a row nothing may ever remove. The owner decides which rule
+      wins when a payload is also evidence, whether a partial purge may be called a purge, and
+      whether a corrective item should stop the assistant answer being stored twice.
+    blocking_today: >-
+      SUPPORTED_PURGE_CLASSES stays empty and every class refuses, so nothing is disposed of and
+      nothing claims to be. RETENTION-STORE-001 is BLOCKED on this: the two classes with a
+      separable backing store today are exactly the two this question governs.
+  - id: DEC-019
+    title: Which retention class covers AI-generated draft text and a human's edit of it
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md
+    opened_at: '2026-08-18'
+    question: >-
+      agent_drafts.draft_text holds up to 4000 characters of model-composed customer-facing text and
+      agent_draft_reviews.edited_text holds the human-edited version. Neither is named by any class
+      in retention.py or by any schedule in DEC-008. A sweep of every text, jsonb and bytea column
+      across all 41 tables found the same condition on approval_decisions.note,
+      channel_send_receipts.resolution_note, staff_users.display_name and email,
+      contact_channel_bindings.provider_user_ref, and the jsonb payload columns on
+      approval_requests, outbox_events, domain_events and command_idempotency_records. The owner
+      decides which class an AI draft belongs to, whether a human's edit inherits it, and whether
+      the remaining columns are deliberately out of scope.
+    blocking_today: >-
+      Nothing, because none of those columns holds real customer data yet. SHADOW-001 is the point
+      at which that stops being true, so the obligation attaches before that item, not after it.
+  - id: DEC-020
+    title: Which identity may execute a retention purge, and what the database grants it
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md
+    opened_at: '2026-08-18'
+    question: >-
+      No GRANT, REVOKE, CREATE ROLE or ROW LEVEL SECURITY statement exists anywhere in migrations
+      0001 to 0027, and scripts/apply_demo_grants.py REVOKEs DELETE, TRUNCATE, REFERENCES and
+      TRIGGER on all tables from the API and worker roles, with a test pinning that behaviour. A
+      purge is a DELETE, so no identity in this system can execute one. SECURITY_RELIABILITY_SPEC_V1
+      section 9.4 requires deletion of raw inbox data to be audited AND restricted; the audited half
+      is built and the restricted half does not exist. The owner decides which identity purges,
+      whether a purge may run unattended at all, and whether the disposable side tables should be
+      the only tables in the schema with DELETE granted to anyone.
+    blocking_today: >-
+      No purge can execute regardless of schedule, which is fail-closed and correct. It also means
+      RETENTION-STORE-001 cannot be completed by engineering alone, which is why it is recorded as a
+      blocker rather than worked around.

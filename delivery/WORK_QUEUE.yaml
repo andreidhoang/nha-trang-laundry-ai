@@ -2230,7 +2230,7 @@ items:
 - id: RETENTION-STORE-001
   phase: PRODUCTION_HARDENING
   title: Separate disposable payload from the append-only ledger
-  status: PENDING
+  status: BLOCKED
   priority: 225
   depends_on:
   - RETENTION-001
@@ -2261,6 +2261,18 @@ items:
   - rollback_assessment
   blocked_by_decisions:
   - DEC-008
+  blocking_condition: 'Blocked on DEC-018 and DEC-020 (docs/DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md).
+    Not the ledger trigger the packet anticipated: DROP COLUMN was probed live in
+    a rolled-back transaction and succeeds under an append-only trigger, which stays
+    armed. Policy blocks it. (1) DEC-008 signs webhook payload 30d PURGE and consent
+    evidence retained forever; consent_events.evidence_webhook_id NOT NULL makes those
+    one row for a STOP message, and DEC-008 does not say which wins. (2) The assistant
+    answer is stored again in command_idempotency_records.response, made permanently
+    undeletable by protect_idempotency_record, so the 180d transcript purge needs
+    a corrective item against the COMPLETE ASSISTANT-001. (3) No GRANT/REVOKE/RLS
+    exists in migrations 0001-0027 and apply_demo_grants.py REVOKEs DELETE from the
+    API and worker roles, so no identity can purge. Two of ten classes have a separable
+    store today; both governed by DEC-018. Three adversarial reviews refuted the design.'
 - id: STORE-SCOPING-001
   phase: PRODUCTION_HARDENING
   title: Enforce staff store membership on the pre-existing console routes

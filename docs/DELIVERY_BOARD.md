@@ -138,7 +138,7 @@ buildable — DEC-009's resolution removed a decision, not a blocker on this par
 | `SIGNER-REGISTRY-001` | Two-party release schema, verifier enforcement, and signer key ceremony | `EVIDENCE-REPIN-001` | Blocked | — |
 | `RETENTION-001` | Customer data retention, redaction, and deletion jobs | `DB-001`, `OBSERVABILITY-001` | **Complete 2026-08-18** | — (`DEC-008` resolved the same day; the mechanism was already built and parked on 2026-08-13) |
 | `OPS-RUNBOOK-001` | The five G1 runbooks, each executed once by its operator | `DEPLOY-TARGET-001` | Pending | — |
-| `RETENTION-STORE-001` | Separate disposable payload from the append-only ledger | `RETENTION-001` | Pending | — (`DEC-008` resolved and `RETENTION-001` is now complete, so **this is the controller's current selection**. HIGH risk: it touches the ledger guarantee) |
+| `RETENTION-STORE-001` | Separate disposable payload from the append-only ledger | `RETENTION-001` | **Blocked 2026-08-18** | `DEC-018`, `DEC-020` — designed and adversarially reviewed, not implemented. The ledger trigger is *not* the obstacle (DROP COLUMN was probed live and succeeds); `DEC-008` collides with itself on payload-that-is-also-consent-evidence, the assistant answer is stored twice in a permanently immutable record, and no database identity holds `DELETE` |
 | `SLO-VERIFY-001` | Measured verification of the declared Shadow-stage SLOs | `DEPLOY-TARGET-001`, `MONITORING-001` | Pending | — |
 
 ### REAL_SHADOW_READINESS

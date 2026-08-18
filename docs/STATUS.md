@@ -124,5 +124,15 @@ that item's sanctioned re-derivation rather than by hand. **No release blocker w
 `REQUIRED_DATASET_MINIMA_NOT_MET` stays while four suites sit at zero — and all 13 capabilities remain
 `NOT_AUTHORIZED`. Queue: 42 → 44 `COMPLETE`.
 
+`RETENTION-STORE-001` was then selected, designed, adversarially reviewed and **deliberately not
+implemented**: all three review lenses refuted the design, and the blocker is policy rather than
+schema. `DEC-018`, `DEC-019` and `DEC-020` were opened
+([`docs/DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md`](DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md));
+**the registry now holds 20 decisions, 9 `OPEN`.** `DEC-008` signs a 30-day purge for raw webhook
+payload and indefinite retention for consent evidence, and those land on the same row; the assistant
+answer is stored a second time in a permanently immutable idempotency record; and no database identity
+holds `DELETE`, so no purge can execute at all. **The controller now selects nothing** — 44 `COMPLETE`,
+18 `PENDING`, 15 `BLOCKED`, every pending item waiting on a dependency or a decision.
+
 Read the [engineering continuation brief](../context/PROJECT_CONTINUATION.md) before resuming and run
 `uv run python scripts/run_delivery_loop.py` for the authoritative work brief.

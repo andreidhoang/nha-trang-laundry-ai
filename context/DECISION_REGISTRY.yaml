@@ -208,3 +208,72 @@ decisions:
       inventing a stricter client-side rule, because a console that hides what the API would
       answer teaches staff a permission boundary that does not exist. If the owner wants the
       figure restricted, the change belongs in the server gate and the console follows it.
+  - id: DEC-015
+    title: What a customer record is, and when a person becomes one
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, QUOTE_ESTIMATE, BOOKING, MARKETING_FOLLOWUP]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_REQUEST_ACQUISITION_2026-08.md
+    opened_at: '2026-08-18'
+    supersedes_recommendation: >-
+      docs/PRODUCTION_READINESS_ASSESSMENT.md and docs/STAFF_CONSOLE_COMPLETION_PROGRAM_V1.md both
+      recommend opening this decision as DEC-011. DEC-011 was subsequently used for the staff
+      identity provider, so the recommendation is honoured under this id instead. No existing
+      decision changes; apps/web/src/screens/gaps.js is corrected to point here.
+    question: >-
+      The system can record zero customers from any source: CreateOrderCommand requires
+      bound_contact_id, the only writer of contact_channel_bindings is keyed on a messaging-provider
+      identity, the provider column admits only ZALO_OA, TELEGRAM_SANDBOX and FACEBOOK_MESSENGER,
+      and no provider is connected. DEC-013 covers the counter case narrowly; this is the wider
+      question it sits inside. The owner decides whether a customer record (a parties aggregate with
+      contact points and addresses) exists at all; what may be stored about an organisation the shop
+      has researched but never spoken to; and what consent wording a customer actually agrees to,
+      with its version, so that an affirmative CLEAR suppression state can ever be written.
+    blocking_today: >-
+      ACQUISITION-001 is written (context/tasks/TASK-acquisition-001.md) and deliberately not
+      enqueued. The researched prospect list ships as templates/accounts.csv holding organisations
+      only, with no individual's name, personal mobile or personal email, because storing those
+      would create a personal-data processing record for parties who have not been asked.
+  - id: DEC-016
+    title: Who staffs the inbound channel, and whose account it is
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [PUBLIC_FAQ, LIST_PRICE_INFO, INTAKE_QUESTION, ORDER_STATUS]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_ACQUISITION_2026-08.md
+    opened_at: '2026-08-18'
+    question: >-
+      BUSINESS_TRUTH_INTAKE.md carries the field "Người trực inbound:" and it is blank, while the
+      same document commits the business to a 5-10 minute response between 08:00 and 20:00 and
+      records the Zalo presence as an account on the owner's own hotline number, not a confirmed
+      Zalo OA. Two staff cover 08:00-20:00 and also wash, fold and deliver. The owner decides who
+      answers inbound by name and in which hours, whether the channel belongs to the company or to a
+      person, and what the shop says outside opening hours.
+    blocking_today: >-
+      Nothing is broken because no channel is connected. But every acquisition motion ends with a
+      stranger sending a message, so CHANNEL-TELEGRAM-001 and CHANNEL-ZALO-APPLY-001 should not
+      start before this is answered - they deliver strangers to a phone with no named owner, and an
+      assistant answering out of hours would make promises no human is behind.
+  - id: DEC-017
+    title: Which name the shop goes to market under, and the franchise relationship behind it
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [PUBLIC_FAQ, LIST_PRICE_INFO, MARKETING_FOLLOWUP]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_ACQUISITION_2026-08.md
+    opened_at: '2026-08-18'
+    question: >-
+      Verified 2026-08-18 from public sources: "Giặt Là Sạch Cộng" is a national franchise chain
+      headquartered in Hanoi claiming 500+ stores across 48 provinces and actively selling
+      franchises; its public store directory lists no store in Khánh Hòa. CÔNG TY TNHH A & T CARE,
+      MST 4202059758, at 3A Lê Đại Hành is confirmed in public registry listings.
+      BUSINESS_TRUTH_INTAKE.md records the brand name as confirmed and sets an identity rule, but
+      records no franchise relationship, and no agreement, licence or territory grant exists in this
+      repository. Whether one exists is a fact only the owner has and is not assumed here. The owner
+      decides which identity goes on customer-facing assets, given that a brand search returns the
+      Hanoi franchisor and hundreds of other stores rather than this shop.
+    blocking_today: >-
+      No customer-facing asset is produced under either name. SALES_AND_NURTURE_PLAYBOOK.md already
+      forbids issuing the one-page B2B offer while any field is a guess, and the name is now one of
+      those fields. The prospect list, the visit route and the offer draft are internal only.

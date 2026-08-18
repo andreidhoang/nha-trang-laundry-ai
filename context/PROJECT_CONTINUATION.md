@@ -8,6 +8,113 @@ the owner-directed assistant slice is now registered as `ASSISTANT-001` (COMPLET
 `evidence/delivery-loop/ASSISTANT-001.yaml`). The spine is built and tested end to end at **941
 passing** with the guarded PostgreSQL suite; migrations run `0001`–`0027`.
 
+## Read this first — 2026-08-18 client-acquisition session
+
+Owner-directed, outside the delivery queue, same as `ASSISTANT-001` and the console rebuild. The ask
+was "make the AI agents find and convert clients automatically." **The answer that survived research
+was that almost none of it should be automated, and the reason is not caution — it is that every
+mass-outreach path is closed by law, by platform, or by this system's own design.** What follows is
+repo truth now; do not re-derive it.
+
+### The finding that reframes everything
+
+**This system can record zero customers, from any source.** Verified from four files:
+
+- `CreateOrderCommand.bound_contact_id` is required — `packages/db/.../orders.py:43`.
+- The only writer of `contact_channel_bindings` is `ChannelBindingRepository.resolve_or_create`
+  (`.../channel.py:112`), keyed on `(provider, provider_user_ref)`.
+- That provider column is `CHECK`ed to `ZALO_OA | TELEGRAM_SANDBOX | FACEBOOK_MESSENGER`
+  (`migrations/0020_channel_envelope.sql`). **There is no counter value.**
+- No provider is connected (`FEATURE_PUBLIC_CHANNELS_ENABLED = "false"`, two contract tests).
+
+So a messaged customer has no channel and a walk-in has no creatable identity. **`DEC-013` is not a
+console UX gap — it is the binding constraint on acquisition**, and the peer session folded a version
+of this into `docs/PRODUCTION_READINESS_ASSESSMENT.md`'s G3 section.
+
+### Three decisions opened: `DEC-015`, `DEC-016`, `DEC-017`
+
+All `OPEN`, all fail closed, none blocks the others.
+Packet: `docs/DECISION_REQUEST_ACQUISITION_2026-08.md`.
+
+- **`DEC-015`** — what a customer record is, and when a person becomes one. **This is the CRM/party
+  decision that `docs/PRODUCTION_READINESS_ASSESSMENT.md` §5.2 and
+  `docs/STAFF_CONSOLE_COMPLETION_PROGRAM_V1.md` §8 both recommend opening as `DEC-011`.** `DEC-011`
+  was taken by the staff IdP, so the recommendation is honoured under `DEC-015` and the live console
+  pointer in `apps/web/src/screens/gaps.js` was corrected. **Do not open a second CRM decision.**
+- **`DEC-016`** — who staffs inbound and whose account the channel is. `BUSINESS_TRUTH_INTAKE.md` §1
+  carries the field `Người trực inbound:` and it is **blank**, while §4 promises a 5–10 minute
+  response. `CHANNEL-TELEGRAM-001` and `CHANNEL-ZALO-APPLY-001` should not start before this is
+  answered — they deliver strangers to a phone with no named owner.
+- **`DEC-017`** — which name the shop markets under. Verified from public sources: *"Giặt Là Sạch
+  Cộng" is a national franchise chain* (`giatlasachcong.com`, 500+ stores across 48 provinces, HQ
+  Hanoi, actively selling franchises), and **its public store directory lists no store in Khánh Hòa
+  at all**. `BUSINESS_TRUTH_INTAKE.md` recorded the brand name as `ĐÃ XÁC NHẬN` and set an identity
+  rule but **recorded no franchise relationship anywhere**, and no agreement exists in this repo.
+  **Whether one exists was NOT verified and is NOT assumed** — a `CẦN XÁC MINH` line now sits in
+  `BUSINESS_TRUTH_INTAKE.md` §1 so the identity rule above it no longer reads as settled truth. The
+  brand name itself was not changed; the owner confirmed it and it stays confirmed.
+
+### Legal corrections — `RESEARCH_BRIEF.md` §11 is stale, do not cite it as current
+
+| Correction | Verified 2026-08-18 |
+|---|---|
+| **`Nghị định 13/2023/NĐ-CP` ceased to be effective 2026-01-01** | Replaced by **`Nghị định 356/2025/NĐ-CP`** (issued 2025-12-31), the only implementing decree of Luật 91/2025/QH15 so far |
+| **Advertising by ordinary phone number is prohibited** | `NĐ 91/2020` Điều 13 khoản 8, verbatim: sending advertising SMS or making advertising calls requires a granted **tên định danh**, and a phone number may not be used for it. Advertising SMS must also carry `[QC]`/`[AD]` in first position (Điều 14–16) |
+| **AI self-disclosure is now a legal duty** | Luật 134/2025/QH15 Điều 11. The playbook's *"Em là trợ lý tự động…"* line is no longer only an ethics rule |
+| Relief worth knowing | Luật 91/2025 Điều 38 defers impact-assessment dossiers and a designated DPO for five years for small enterprises; Điều 39 grandfathers consent validly obtained under `NĐ 13/2023`. **Both defer paperwork, not the duty to obtain consent** |
+
+Combined with **Zalo OA having no cold DM** and every large Russian/expat Telegram group routing
+commercial posts through a paid admin, **there is no lawful mass-outreach channel available to this
+business.** The remaining motion is a human walking to the door — which is also the highest-converting
+one, and `SALES_AND_NURTURE_PLAYBOOK.md` already scripts it.
+
+Also corrected: Zalo's Tin Tư vấn window is **365 days via the OA Manager UI**, 7 days only via
+OpenAPI. The brief states 7 for both.
+
+### What shipped
+
+- **`docs/CLIENT_ACQUISITION_EXECUTION_2026-08.md`** — the execution delta on `RESEARCH_BRIEF.md`,
+  Vietnamese-first, owner-facing. Two of the brief's strategic calls needed revision: *Offer B*
+  (front-desk QR) is already run by WashInCloud **paying hotels 25% of revenue**, and *Peak-Day Linen
+  Rescue* misreads who is overloaded — a large hotel's supplier is likely VIKHACO at **24 tons/day**.
+- **`templates/accounts.csv`** — **184 organisations**, deduped from 193 raw rows: 125 tier A (≤2km,
+  free delivery), 23 tier B, 32 later, 4 out of wedge. **Organisations only — no person's name,
+  personal mobile or personal email**, per `DEC-015`'s reasoning. `fit_score` is written **`N/45`,
+  never a bare number**, because only 3 of the playbook's 7 rubric components are knowable without a
+  conversation; the other 55 points need a human in the room.
+- **`context/tasks/TASK-acquisition-001.md`** — `ACQUISITION-001`, **deliberately not enqueued.**
+  Enqueueing is a scheduling act and the first slice is gated on `DEC-013`.
+
+### The two findings most likely to change what gets built
+
+1. **The 10–40 room wedge is a capacity ceiling, not a preference.** Of 43 properties publishing room
+   counts the median is **56 rooms**. A 56-room hotel at 80% occupancy turns ~45 rooms/day; at an
+   industry-estimate 3–5 kg of linen per room that is **135–225 kg/day for one property**, against a
+   claimed and unmeasured 300–400 kg/day for the whole shop (AI-confirmable: **0**). One mid-size
+   hotel eats half the shop's stated capacity. Above ~80 rooms only true overflow is sellable. The
+   3–5 kg figure is an industry estimate, not measured — `SHOP-INSTRUMENT-001` replaces it.
+2. **The shop's defensible edge is specialty, not kg laundry.** It is at market rate on the
+   commodity (25–30k/kg citywide) but its published leather prices are **80–120k against Giặt Ủi
+   2H's 200–400k**, on list price with no promotion needed. `templates/promotion-service-rules.csv`
+   marks `category leather` as `UNCLEAR / HUMAN_CONFIRM` — **do not advertise leather at −40%.**
+   The competitor figures are marketing-page ranges and the services may not be equivalent; one
+   mystery-shop call settles it and must happen before anything is printed.
+
+### Environment / process notes
+
+- **The research ran as a 12-agent workflow; one agent hung.** The provincial accommodation-directory
+  extractor went silent after ~14 minutes and was time-boxed out. Its coverage is redundant with the
+  hotel set, so the list shipped without it — this is recorded in the CSV's own limitations, not
+  hidden. If re-run, `Workflow({scriptPath, resumeFromRunId})` returns the completed agents cached.
+- **The ranking was done locally and deterministically**, not by an LLM stage, after the hang. Scoring
+  is mechanical (three rubric components, distance tiebreak, containment dedup).
+- **Known list limits, stated rather than smoothed:** 79/184 rows have no published phone, 143/184 no
+  room count, and every distance is a straight-line estimate from the **street centroid** of Lê Đại
+  Hành — not from number 3A — so there is a few-hundred-metre error exactly at the 2km free-delivery
+  threshold.
+- **Two concurrent Claude Code sessions shared this checkout again** and coordinated by message; each
+  staged only its own files by path. The peer's commit is `9721bd0`.
+
 ## Read this first — 2026-08-18 decision ratification round and doc refresh
 
 **Nine decisions closed in one working session, by two concurrent Claude Code sessions on the same
@@ -51,6 +158,11 @@ figures** and remains case-by-case negotiated with no ceiling stated — do not 
 5×/100,000đ numbers; that reading was flagged in the packet as unconfirmed by design.
 
 ### Decision state as of `1d5be44`
+
+> **Superseded as a count.** This block is accurate for `1d5be44` and is kept as history. The
+> acquisition session that followed opened `DEC-015`, `DEC-016` and `DEC-017`, so the current
+> registry holds **17 decisions, 6 `OPEN`** — see the acquisition section above. The per-decision
+> reasoning below is unchanged and still correct.
 
 14 registered in `context/DECISION_REGISTRY.yaml`. **11 `RESOLVED`:** DEC-001, DEC-002, DEC-003,
 DEC-004, DEC-005, DEC-007, DEC-008, DEC-009, DEC-010, DEC-011, DEC-012. **3 `OPEN`:**

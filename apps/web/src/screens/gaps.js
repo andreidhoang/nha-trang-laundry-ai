@@ -86,8 +86,9 @@ const GROUPS = [
           "vào đúng người.",
         missing:
           "Không tồn tại aggregate parties, contact_points hay addresses nào. Không có gì để đọc " +
-          "và không có gì để ghi.",
-        blockedBy: "Chưa có quyết định về CRM (đề xuất mở DEC-011)",
+          "và không có gì để ghi. Hệ quả rộng hơn: không có nguồn nào sinh ra bound_contact_id, " +
+          "nên hiện tại hệ thống không ghi nhận được khách hàng từ bất kỳ nguồn nào.",
+        blockedBy: "DEC-015 — chủ tiệm quyết hồ sơ khách hàng là gì và khi nào một người trở thành khách",
         today:
           "Liên hệ được nhận diện phía máy chủ qua contact binding; bảng vận hành không tạo khách.",
       },

@@ -80,6 +80,17 @@ gap, and block nothing today: `DEC-013` (how a walk-in customer with no prior ch
 identified) and `DEC-014` (which staff roles may see the day's takings). See
 [`docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md`](DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md).
 
+Three more opened the same day from the client-acquisition session — `DEC-015` (what a customer
+record is, and when a person becomes one — **this is the CRM decision §5.2 of the readiness
+assessment recommends opening as `DEC-011`, which was taken by the staff IdP**), `DEC-016` (who
+staffs the inbound channel and whose account it is), `DEC-017` (which name the shop markets under,
+given that the brand is a 500+ store national franchise whose directory lists no Khánh Hòa store).
+See [`docs/DECISION_REQUEST_ACQUISITION_2026-08.md`](DECISION_REQUEST_ACQUISITION_2026-08.md) and
+the plan at [`docs/CLIENT_ACQUISITION_EXECUTION_2026-08.md`](CLIENT_ACQUISITION_EXECUTION_2026-08.md).
+**The registry now holds 17 decisions, 6 `OPEN`.** `DEC-013` is no longer only a console gap: it is
+the binding constraint on acquiring a `bound_contact_id` from any source, so the system can record
+no customer at all today.
+
 Each has a task packet under `context/tasks/` written to be actionable without an engineer present.
 [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 is the full owner action table
 (pre-dates the 2026-08-18 resolutions; read its structure, not its decision-status claims).

@@ -25,7 +25,10 @@ on 2026-08-16 the owner-directed internal assistant was registered after the fac
 authorized). On 2026-08-18 nine open decisions resolved in one session — `DEC-001`, `DEC-002`,
 `DEC-003`, `DEC-004`, `DEC-005`, `DEC-009`, `DEC-010`, `DEC-011`, `DEC-012` — and the same session's
 console rebuild opened two new ones, `DEC-013` (walk-in customer identification) and `DEC-014`
-(which staff roles see the day's takings); see "Reading this board" below. No queue item's *status*
+(which staff roles see the day's takings), and a later client-acquisition session opened three more —
+`DEC-015` (the customer record; the CRM decision previously recommended as `DEC-011`), `DEC-016`
+(inbound channel custody and staffing) and `DEC-017` (market identity and the franchise
+relationship). **17 registered, 6 `OPEN`.** See "Reading this board" below. No queue item's *status*
 moved as a result — only the "Open decisions" column changed, plus `RETENTION-001` becoming
 selectable — because only the controller flips a status, and it has run once since (selecting
 `RETENTION-001`), not enqueued anything new.
@@ -179,6 +182,11 @@ verification) `CHANNEL-001`; a stance toward resolving it (`PROCEED_TOWARD_VERIF
 in [`docs/DECISION_REQUEST_PROVIDER_DATA_2026-08.md`](DECISION_REQUEST_PROVIDER_DATA_2026-08.md),
 but the registry entry stays `OPEN` until a real OpenAI account setting is verified and a legal check
 on cross-border customer PII lands. Everything else on this board is calendar-bound.
+
+A client-acquisition session on 2026-08-18 opened `DEC-015`, `DEC-016` and `DEC-017`
+(`docs/DECISION_REQUEST_ACQUISITION_2026-08.md`). None is enqueued as work: `ACQUISITION-001` exists
+as a packet at `context/tasks/TASK-acquisition-001.md` but **was deliberately not added to the
+queue**, because enqueueing is a scheduling act and its first slice is gated on `DEC-013`.
 
 Two decisions opened 2026-08-18 by the console rebuild, `DEC-013` (how a walk-in customer with no
 prior channel message is identified at the counter) and `DEC-014` (which staff roles may see the

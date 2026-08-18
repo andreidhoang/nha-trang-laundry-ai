@@ -211,13 +211,38 @@ def _greeting() -> AssistantAnswer:
     )
 
 
+#: Vietnamese for the commercial order statuses, for the two answers that name one.
+#:
+#: The assistant answers in Vietnamese, so an answer reading "1 đơn ở trạng thái ACTIVE" is a
+#: sentence half of which the reader cannot read. This is display vocabulary, not policy: nothing
+#: here decides or derives a status, and the mapping is deliberately partial in one direction —
+#: an unrecognised status falls through to its raw token, because a status this map has not been
+#: taught must look unfamiliar rather than be quietly absorbed into a plausible Vietnamese phrase.
+#: The console's `core/i18n.js` holds the same glosses for the same reason.
+_STATUS_VI = {
+    "DRAFT": "nháp",
+    "REQUESTED": "đã yêu cầu",
+    "STORE_CONFIRMATION_PENDING": "chờ cửa hàng xác nhận",
+    "CONFIRMED": "đã xác nhận",
+    "ACTIVE": "đang chạy",
+    "CANCELLATION_REVIEW": "đang xem xét huỷ",
+    "CANCELLED": "đã huỷ",
+    "COMPLETED": "đã hoàn tất",
+}
+
+
+def _status_vi(status: str) -> str:
+    """The Vietnamese name of an order status, or the raw token when there is none."""
+    return _STATUS_VI.get(status, status)
+
+
 def _today_overview(context_reads: AssistantContextReads) -> AssistantAnswer:
     counts = dict(context_reads.today_counts)
     if not counts:
         text = "Hôm nay cửa hàng này chưa có đơn nào (theo giờ Việt Nam)."
     else:
         breakdown = ", ".join(
-            f"{count} đơn ở trạng thái {status}" for status, count in context_reads.today_counts
+            f"{count} đơn {_status_vi(status)}" for status, count in context_reads.today_counts
         )
         text = (
             f"Hôm nay (theo giờ Việt Nam) cửa hàng có {breakdown}. "
@@ -288,7 +313,7 @@ def _order_lookup(order_id: UUID, context_reads: AssistantContextReads) -> Assis
         )
     return AssistantAnswer(
         intent="ORDER_LOOKUP",
-        answer=f"Đơn {found.order_id} đang ở trạng thái {found.commercial_status}.",
+        answer=f"Đơn {found.order_id}: {_status_vi(found.commercial_status)}.",
         links=(AssistantLink(label="Mở đơn hàng", href=f"#/orders/{found.order_id}"),),
         reason_codes=(),
     )

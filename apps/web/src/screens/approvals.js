@@ -60,8 +60,8 @@ function countdownBadge(expiresAt) {
   return badge({
     token: left.text,
     gloss: left.expired
-      ? "phong bì đã hết hạn — không có gia hạn ngầm, phải tạo yêu cầu mới"
-      : "thời gian còn lại trước khi phong bì hết hạn",
+      ? "đã hết hạn — không tự gia hạn, phải tạo yêu cầu mới"
+      : "thời gian còn lại trước khi hết hạn",
     state: left.expired ? "danger" : "warn",
   });
 }
@@ -163,7 +163,7 @@ function limitsPanel() {
     eyebrow: "Giới hạn",
     title: "Giới hạn của màn hình này",
     guardrail:
-      "Đây là màn hình chỉ đọc. Không có thao tác nào ở đây ghi vào máy chủ, kể cả khi phong bì " +
+      "Đây là màn hình chỉ đọc. Không có thao tác nào ở đây ghi vào máy chủ, kể cả khi một việc " +
       "sắp hết hạn.",
     children: h(
       "div",
@@ -262,7 +262,7 @@ function limitsPanel() {
           h(
             "div",
             { class: "field field--span" },
-            h("dt", null, "Thời hạn phong bì"),
+            h("dt", null, "Thời hạn quyết định"),
             h(
               "dd",
               null,
@@ -313,7 +313,7 @@ export function render_() {
     renderItem: (item) =>
       approvalCard(item, (host, expiresAt) => clocks.push({ host, expiresAt })),
     emptyText:
-      "Không có phong bì nào gắn với đơn hàng đang chờ bạn quyết định. Đây không phải bằng " +
+      "Không có việc nào gắn với đơn hàng đang chờ bạn quyết định. Đây không phải bằng " +
       "chứng là hàng chờ trống — xem bảng giới hạn bên dưới.",
     clearMetaOnError: true,
     onLoadStart: () => {

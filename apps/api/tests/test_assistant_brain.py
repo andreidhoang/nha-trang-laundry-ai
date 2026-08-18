@@ -46,9 +46,28 @@ def test_today_overview_is_diacritic_insensitive_and_names_counts() -> None:
     plain = BRAIN.answer("hom nay tinh hinh the nao?", _reads())
 
     assert accented.intent == plain.intent == "TODAY_OVERVIEW"
-    assert "2 đơn ở trạng thái CONFIRMED" in accented.answer
-    assert "1 đơn ở trạng thái ACTIVE" in accented.answer
+    # Vietnamese, because the whole answer is Vietnamese — "1 đơn ở trạng thái ACTIVE" is a
+    # sentence half of which the person reading it cannot read.
+    assert "2 đơn đã xác nhận" in accented.answer
+    assert "1 đơn đang chạy" in accented.answer
+    assert "ACTIVE" not in accented.answer
     assert accented.links[0].href == "#/"
+
+
+def test_a_status_with_no_vietnamese_name_is_shown_raw_not_guessed() -> None:
+    """A status the gloss has not been taught must look unfamiliar, not plausible.
+
+    The failure this guards against is the quiet one: somebody adds a status to the domain, the
+    assistant does not know its Vietnamese name, and rather than saying something the reader can
+    see is unfamiliar it drops the status or renders an approximation. The raw token is the honest
+    answer — it is unreadable in exactly the way that prompts a question.
+    """
+    def lookup(order_id: UUID) -> OrderFact:
+        return OrderFact(order_id=order_id, commercial_status="AWAITING_ALIEN_INSPECTION")
+
+    found = BRAIN.answer(f"Đơn {ORDER_ID} tới đâu rồi?", _reads(lookup_order=lookup))
+
+    assert "AWAITING_ALIEN_INSPECTION" in found.answer
 
 
 def test_the_intent_table_is_first_match_wins() -> None:
@@ -87,7 +106,7 @@ def test_order_lookup_extracts_the_reference_from_the_raw_question() -> None:
 
     assert found.intent == "ORDER_LOOKUP"
     assert seen == [ORDER_ID]
-    assert "ACTIVE" in found.answer
+    assert "đang chạy" in found.answer and "ACTIVE" not in found.answer
     assert found.links[0].href == f"#/orders/{ORDER_ID}"
 
     missing = BRAIN.answer(f"đơn {ORDER_ID}", _reads())

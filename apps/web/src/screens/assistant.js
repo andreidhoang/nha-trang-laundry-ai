@@ -51,7 +51,7 @@ const MAX_QUESTION = 4000;
 /** Starters for the empty transcript. Each one maps to a documented intent of the brain. */
 const SUGGESTIONS = [
   "Hôm nay thế nào?",
-  "Đơn nào đang có nguy cơ trễ SLA?",
+  "Đơn nào sắp trễ hẹn?",
   "Có gì chờ duyệt không?",
   "Bạn trả lời được gì?",
 ];
@@ -63,7 +63,7 @@ const SUGGESTIONS = [
  * @returns {HTMLElement}
  */
 function intentBadge(intent) {
-  return badge({ token: intent, gloss: enumVi(intent), state: "info" });
+  return badge({ token: enumVi(intent), gloss: "", state: "info", title: intent });
 }
 
 /**

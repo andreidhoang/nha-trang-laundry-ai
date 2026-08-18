@@ -1,12 +1,89 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-08-16 (Asia/Ho_Chi_Minh)
+**Last reconciled:** 2026-08-18 (Asia/Ho_Chi_Minh)
 **Active work item:** none. The queue's 2026-08-14/15 completions (`TEST-ISOLATION-001`,
 `DEMO-STACK-001`, `QUOTE-COMMAND-001`, `STORE-SCOPING-002`, `STORE-ASSIGNMENT-001`,
 `SETTLEMENT-001`, `TOOL-BACKEND-001`) are recorded with evidence in `delivery/LOOP_STATE.yaml`, and
 the owner-directed assistant slice is now registered as `ASSISTANT-001` (COMPLETE, evidence at
 `evidence/delivery-loop/ASSISTANT-001.yaml`). The spine is built and tested end to end at **941
 passing** with the guarded PostgreSQL suite; migrations run `0001`–`0027`.
+
+## Read this first — 2026-08-18 owner-directed console rebuild
+
+The business owner reviewed the staff console and rejected it: correct, auditable, and useless at
+7am. It explained its own implementation instead of doing work — contact-binding UUIDs at the
+counter, "bốn trục trạng thái" over an order, service codes typed from memory. This slice is the
+rebuild. Owner-directed, outside the delivery queue, same as `ASSISTANT-001`.
+
+**Two commits.** `58f994f` is the code and is verified. `595021a` is decisions — and it also
+carries pricing-policy ratifications (DEC-001/002/003/010/011/012) that were already in the working
+tree when the session resumed. **They were kept in a separate commit on purpose: ratifying
+DEC-001–DEC-006 is explicitly not an agent's call, so if those resolutions were not the owner's,
+revert `595021a` alone and the code is untouched.**
+
+### What shipped
+
+- **Hôm nay is the owner's morning.** Takings first, then only queues that have something in them.
+  An empty tile is hidden and named once in a passing line. The all-clear line says *the queues
+  that were checked are empty* — never "nothing is waiting", because a tile the role could not read
+  was never checked and the approvals list drops non-order envelopes.
+- **`GET /internal/v1/stores/{id}/settlements/today`** — `SettlementRepository.collected_today`
+  sums `paid_amount_vnd` for one store on today's `Asia/Ho_Chi_Minh` date. Safe because of what it
+  sums: append-only, one row per order, DB-enforced `paid_amount_vnd = expected_total_vnd`. It is
+  **money collected, not doanh thu**, and the assistant still refuses revenue questions.
+- **Báo giá picks services by name** from `GET /internal/v1/pricebook/services`, through the same
+  digest gate that prices. The unit follows the service; the unit picker is gone. An unreadable or
+  empty catalog refuses the form and carries its own reload.
+- **Vocabulary pass** across Hôm nay, Tiếp nhận, Báo giá, Đơn hàng, Duyệt, Trợ lý AI. Enum tokens
+  left the screen and survive in `title`. The assistant's *answers* are Vietnamese too now
+  (`_STATUS_VI` in `assistant.py`) — an unknown status still falls through raw, on purpose.
+- **The load-bearing refusals all survived reworded, not deleted.** If you touch this copy, keep:
+  the four order dimensions move independently; an empty approvals list is not evidence; the order
+  board will not guess a customer column; the console does not know which transitions are legal.
+
+### Open decisions this slice raised
+
+- **`DEC-013` — walk-in customers.** A customer who never messaged the shop has no contact binding
+  and **cannot be taken in at all.** Real workflow hole, not a UI bug. Recorded on the intake
+  screen, in `#/gaps`, and in `docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md`.
+- **`DEC-014` — who may see the day's takings.** The read is gated by `require_operations_staff`
+  (owner, approver, **operator**), inherited from the pricing surfaces rather than chosen for
+  money. The console mirrors the server exactly rather than inventing a stricter client rule.
+
+### Deferred, named rather than dropped
+
+- **No `specs/` addendum was written** for the settlements read or the pricebook catalog route.
+  Both are covered by contracts and the store-scope enumeration eval, but the spec text does not
+  yet describe them.
+- `apps/web/README.md` still describes the quote form as typed-code entry.
+
+### Environment notes — do not re-derive these
+
+- **A test PostgreSQL is already running:** container `ntl-test-postgres`, `postgresql://app:app@127.0.0.1:55432/nha_trang_laundry`.
+  Export it as `DATABASE_URL` and the guarded suite runs for real. Without it every integration
+  test **skips**, and a skip is not evidence.
+- **mypy needs `MYPYPATH`** because of `ENV-INTEGRITY-001` (iCloud sets `UF_HIDDEN` on `.pth`
+  files, so editable installs vanish). Without it you get ~70 phantom `import-not-found` errors:
+
+  ```bash
+  ROOTS=$(uv run python -c "import sys; sys.path.insert(0,'scripts'); import workspace_env as w; print(':'.join(str(p) for p in w.workspace_source_roots()))")
+  MYPYPATH="$ROOTS" uv run mypy apps packages
+  ```
+
+- **The browser check is real and worth running:**
+  `uv run --with playwright python scripts/verify_console_interaction.py` — 46/46. It needs Google
+  Chrome installed. Two of its checks were *repaired* this session, both instructive: one asserted
+  `"BẠN HỎI"` against a DOM that only ever held `"Bạn hỏi"` (the uppercase is CSS), and a new
+  empty-tile check passed on class presence while all four tiles were still on screen —
+  `.stack { display: grid }` outranked `.tile--clear` from earlier in the same stylesheet. **Assert
+  on visibility, not on class names.**
+- Any byte changed under `apps/web` makes `sw.js` stale and fails the console contract test. Run
+  `uv run python scripts/generate_staff_console_manifest.py` **last**, after all web edits.
+
+### Gates at the end of this slice
+
+ruff clean · mypy clean, 202 files · contracts validated (19 JSON, 2 YAML, 669 synthetic cases) ·
+**972 passed, 1 skipped** against real PostgreSQL 16 · context drift clean · browser 46/46.
 
 ## Read this first — 2026-08-16 owner-assistant and console slice
 

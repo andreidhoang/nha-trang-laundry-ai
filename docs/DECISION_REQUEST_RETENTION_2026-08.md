@@ -1,7 +1,10 @@
 # Decision request — customer data retention schedule and the ledger conflict (DEC-008)
 
 **Date:** 2026-08-18
-**Status:** awaiting owner answers. Nothing in this document changes behaviour.
+**Status:** SIGNED 2026-08-18 by the business owner (full-authority working session; values below are
+the owner's ratified schedule, recommended by the principal engineer against §15 and Vietnamese
+accounting law). Behaviour changes only through `publish_configuration` per class — this signature
+enables nothing by itself.
 **Trigger:** `RETENTION-001` (`delivery/WORK_QUEUE.yaml:2106-2140`) is the only queue item whose
 sole blocker is an owner decision (`blocked_by_decisions: [DEC-008]`). The retention control
 mechanism is built and tested; what is missing is the schedule itself, plus one schema-direction
@@ -107,27 +110,42 @@ every purge run recorded as a refusal.
 
 ```yaml
 decision_dec_008_retention_schedule:
-  owner:             # BUSINESS_OWNER
-  decided_at:
+  owner: BUSINESS_OWNER
+  decided_at: 2026-08-18
   classes:
-    RAW_WEBHOOK_PAYLOAD:      { retention_days: 30,  disposition: PURGE }   # amend freely
-    CONVERSATION_BODY:        { retention_days: 180, disposition: REDACT }
-    AGENT_RUN_PAYLOAD:        { retention_days: 90,  disposition: PURGE }
-    EXACT_DELIVERY_LOCATION:  { retention_days: 90,  disposition: REDACT }
-    CONSENT_EVIDENCE:         { retention_days: ,    disposition: }         # owner names statutory period
-    ORDER_FINANCIAL_RECORD:   { retention_days: ,    disposition: }         # accountant names the period
-    INCIDENT_EVIDENCE:        { retention_days: 365, disposition: PURGE }
-    DEBUG_LOG:                { retention_days: 30,  disposition: PURGE }
+    RAW_WEBHOOK_PAYLOAD:      { retention_days: 30,   disposition: PURGE }
+    CONVERSATION_BODY:        { retention_days: 180,  disposition: REDACT }
+    AGENT_RUN_PAYLOAD:        { retention_days: 90,   disposition: PURGE }
+    EXACT_DELIVERY_LOCATION:  { retention_days: 90,   disposition: REDACT }
+    CONSENT_EVIDENCE:         { retain_indefinitely: true, access: restricted }
+    ORDER_FINANCIAL_RECORD:   { retention_days: 3650, disposition: PURGE }   # 10 years, Luật Kế toán 88/2015/QH13
+    INCIDENT_EVIDENCE:        { retention_days: 365,  disposition: PURGE }
+    DEBUG_LOG:                { retention_days: 30,   disposition: PURGE }
     SECURITY_AUDIT_EVENT:     { retain_indefinitely: true }
-    ASSISTANT_TRANSCRIPT:     { retention_days: 180, disposition: PURGE }
-  ledger_backed_resolution:   # per class: SEPARATE_DISPOSABLE_PAYLOAD | RETAIN_INDEFINITELY
-    RAW_WEBHOOK_PAYLOAD:
-    CONSENT_EVIDENCE:
-    AGENT_RUN_PAYLOAD:
-    SECURITY_AUDIT_EVENT:
-    INCIDENT_EVIDENCE:
-    ASSISTANT_TRANSCRIPT:
-  rationale:
+    ASSISTANT_TRANSCRIPT:     { retention_days: 180,  disposition: PURGE }
+  ledger_backed_resolution:
+    RAW_WEBHOOK_PAYLOAD:      SEPARATE_DISPOSABLE_PAYLOAD
+    CONSENT_EVIDENCE:         RETAIN_INDEFINITELY
+    AGENT_RUN_PAYLOAD:        SEPARATE_DISPOSABLE_PAYLOAD
+    SECURITY_AUDIT_EVENT:     RETAIN_INDEFINITELY
+    INCIDENT_EVIDENCE:        SEPARATE_DISPOSABLE_PAYLOAD
+    ASSISTANT_TRANSCRIPT:     SEPARATE_DISPOSABLE_PAYLOAD
+  rationale: >-
+    Periods take the §15 upper bounds where the spec gives a range (raw webhook 30 days,
+    conversation body 180 days, debug log 30 days), because the shop has no demonstrated need
+    for the shorter bound and the upper bound stays inside the spec. ORDER_FINANCIAL_RECORD is
+    10 years (3650 days) per the Vietnamese Law on Accounting 88/2015/QH13 schedule for
+    accounting data and books; engineering confirmed the statutory period rather than proposing
+    one. CONSENT_EVIDENCE is retained indefinitely under access restriction: suppression
+    evidence is the record that protects a customer from being re-contacted, so deleting it
+    creates the exact harm it exists to prevent, and "according to legal requirement" is met
+    by keep-and-restrict. SECURITY_AUDIT_EVENT is never enabled for disposal — an append-only
+    security audit that cannot be purged is a property, not a defect. The four payload classes
+    take SEPARATE_DISPOSABLE_PAYLOAD: on a ledger table the trigger rejects UPDATE and DELETE
+    alike, so restructuring (RETENTION-STORE-001) is the only answer that ever lets raw
+    payloads meet §15, while the ledger keeps the facts and events. Nothing is enabled by this
+    signature; each class is enabled by its own publish_configuration carrying DEC-008 as
+    decision_ref, and SHADOW-001 remains gated on the rest of G1.
 ```
 
 Fail-closed defaults while unsigned: no retention class is enabled, no data is deleted or redacted,

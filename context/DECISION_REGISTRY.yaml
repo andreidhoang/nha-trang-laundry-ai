@@ -3,25 +3,49 @@ last_reviewed: 2026-08-10
 decisions:
   - id: DEC-001
     title: Weight precision and rounding policy
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [QUOTE_ESTIMATE, BOOKING]
     fail_closed_behavior: REQUIRE_HUMAN
     source: specs/TEAM_REVIEW_REPORT_V1.md
+    resolved_at: '2026-08-18'
+    decision_record: docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record (Decision A of the linked packet):
+      no rounding — bill the exact scale reading, matching the already-confirmed worked examples
+      (5.9kg = 147,500đ, 6.1kg = 122,000đ). Scale precision is assumed 0.1kg in the packet and has
+      not been separately confirmed by the owner; input validation should be revisited if that
+      assumption is wrong.
   - id: DEC-002
     title: Definitive promotion eligibility event across channels
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [QUOTE_ESTIMATE, MARKETING_FOLLOWUP]
     fail_closed_behavior: REQUIRE_HUMAN
     source: specs/TEAM_REVIEW_REPORT_V1.md
+    resolved_at: '2026-08-18'
+    decision_record: docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record (Decision B): the eligibility event
+      is `accepted_at`, the store-side order-acceptance timestamp already used in
+      PROMOTION_2026_08.md. Channel-agnostic by construction, since acceptance always happens at
+      the store regardless of intake channel.
   - id: DEC-003
     title: Delivery pricing over 6km and one-leg delivery policy
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [DELIVERY_ADVISORY, BOOKING]
     fail_closed_behavior: REQUIRE_HUMAN
     source: specs/TEAM_REVIEW_REPORT_V1.md
+    resolved_at: '2026-08-18'
+    decision_record: docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record (Decision C): the existing
+      staff-negotiated behaviour for routes over 6km (staff and customer agree a total
+      pickup+return fee, entered as `delivery_fee_vnd`, customer must agree before the store
+      proceeds) is ratified as the intentional >6km policy, not a placeholder. This decision is
+      explicitly supersedable by a measured formula once SHOP-INSTRUMENT-001's delivery-cost log
+      exists.
   - id: DEC-004
     title: Rewash, loss, damage, compensation, and credit policy
     status: OPEN
@@ -31,11 +55,19 @@ decisions:
     source: specs/TEAM_REVIEW_REPORT_V1.md
   - id: DEC-005
     title: Official production customer channel and supported provider path
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [PUBLIC_FAQ, LIST_PRICE_INFO, INTAKE_QUESTION, ORDER_STATUS]
     fail_closed_behavior: NOT_SUPPORTED
     source: specs/TEAM_REVIEW_REPORT_V1.md
+    resolved_at: '2026-08-18'
+    decision_record: docs/DECISION_REQUEST_CHANNEL_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record: Telegram for Shadow-mode
+      validation now, Zalo OA (business-verified, not Zalo Personal) as the official production
+      customer channel once verified. The decision is resolved; CHANNEL-TELEGRAM-001 and
+      CHANNEL-ZALO-APPLY-001 remain blocked on their own separate artifacts — a Telegram bot token
+      and a completed Zalo OA business-verification application — neither of which exists yet.
   - id: DEC-006
     title: Model-provider data use, training, retention, region, and deletion approval
     status: OPEN
@@ -45,25 +77,50 @@ decisions:
     source: specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
   - id: DEC-008
     title: Customer data retention, redaction, and deletion schedule
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW, PUBLIC_FAQ, LIST_PRICE_INFO, ORDER_STATUS]
     fail_closed_behavior: REQUIRE_HUMAN
     source: specs/SECURITY_RELIABILITY_SPEC_V1.md
+    resolved_at: '2026-08-18'
+    decision_record: docs/DECISION_REQUEST_RETENTION_2026-08.md
+    resolution: >-
+      Per-class schedule signed in the decision record: raw webhook 30d PURGE, conversation body
+      180d REDACT, agent run payload 90d PURGE, exact delivery location 90d REDACT, order
+      financial record 3650d PURGE (10-year Vietnamese accounting schedule), incident evidence
+      365d PURGE, debug log 30d PURGE, assistant transcript 180d PURGE; consent evidence and
+      security audit events retained indefinitely under access restriction. Ledger-backed payload
+      classes resolve to SEPARATE_DISPOSABLE_PAYLOAD (input to RETENTION-STORE-001). No class is
+      enabled by the decision itself; enabling remains a publish_configuration act carrying
+      DEC-008 as decision_ref.
   - id: DEC-009
     title: Customer-supplied media exposure to an inference endpoint
-    status: OPEN
+    status: RESOLVED
     owner: SECURITY_PRIVACY_OWNER
     affected_capabilities: [INTERNAL_SHADOW, INTAKE_QUESTION, INTAKE_FACT_CAPTURE, INCIDENT_RECEIPT]
     fail_closed_behavior: NOT_SUPPORTED
     source: docs/adr/0008-inference-topology-and-multimodal-scope.md
+    resolved_at: '2026-08-18'
+    decision_record: docs/DECISION_REQUEST_TIERED_INFERENCE_2026-08.md
+    resolution: >-
+      Owner ratified the recommendation on record (Decision B, answer 2): staff-supplied media
+      only. A staff member photographing an intake slip, care label, or invoice is inside the
+      business and may reach the inference endpoint once MULTIMODAL-PERCEPTION-001 is built;
+      customer-supplied media is never fetched. This answer does not depend on DEC-008.
   - id: DEC-010
     title: Settlement shapes beyond exact payment in full at handover
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW, ORDER_STATUS, BOOKING]
     fail_closed_behavior: NOT_SUPPORTED
     source: context/tasks/TASK-settlement-001.md
+    resolved_at: '2026-08-18'
+    decision_record: docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md
+    resolution: >-
+      Owner ratified the recommendation on record (Decision E): deliberately deferred. Partial
+      payment, deposits, instalments, and ON_ACCOUNT B2B credit terms stay NOT_SUPPORTED by
+      decision, not by omission, because no B2B credit relationship exists yet and the built
+      exact-payment self-collection path already covers the ordinary retail case.
   - id: DEC-007
     title: Provider-neutral public runtime with custom Responses target
     status: RESOLVED
@@ -77,15 +134,67 @@ decisions:
     retirement_condition: RUNTIME_PARITY_PROVIDER_DATA_SECURITY_AND_ROLLBACK_ACCEPTED
   - id: DEC-011
     title: Production staff identity provider selection (Keycloak self-hosted vs managed OIDC)
-    status: OPEN
+    status: RESOLVED
     owner: SECURITY_PRIVACY_OWNER
     affected_capabilities: [INTERNAL_SHADOW]
     fail_closed_behavior: NOT_SUPPORTED
     source: docs/DECISION_REQUEST_AUTH_IDP_AND_FRONTEND_FRAMEWORK_2026-08.md
+    resolved_at: '2026-08-18'
+    decision_record: docs/DECISION_REQUEST_AUTH_IDP_AND_FRONTEND_FRAMEWORK_2026-08.md
+    resolution: >-
+      Owner ratified the recommendation on record (Decision A): Keycloak self-hosted in Zone C.
+      Staff PII never leaves the owner-controlled host, so no DEC-006-pattern residency
+      assessment is owed for staff identity, and WebAuthn/passkey plus TOTP satisfy the
+      no-SMS-only-MFA requirement for privileged roles through configuration alone.
   - id: DEC-012
     title: Staff console frontend framework adoption timing
-    status: OPEN
+    status: RESOLVED
     owner: PRODUCT_ENGINEERING_OWNER
     affected_capabilities: [INTERNAL_SHADOW]
     fail_closed_behavior: NOT_SUPPORTED
     source: docs/DECISION_REQUEST_AUTH_IDP_AND_FRONTEND_FRAMEWORK_2026-08.md
+    resolved_at: '2026-08-18'
+    decision_record: docs/DECISION_REQUEST_AUTH_IDP_AND_FRONTEND_FRAMEWORK_2026-08.md
+    resolution: >-
+      Owner ratified the recommendation on record (Decision B): stay framework-free until
+      P3-P7 land. The UX audit found no defect a framework would fix; adopting one now would
+      require a supply-chain prerequisite (licence audit, npm audit, evidence lockfile, image
+      SBOM) ahead of any framework code, for no sooner UX benefit.
+  - id: DEC-013
+    title: How a walk-in customer is identified at the counter
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, QUOTE_ESTIMATE]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md
+    opened_at: '2026-08-18'
+    question: >-
+      The intake screen requires a contact binding, and the only source of one is a message the
+      customer already sent through a verified channel. A person who walks in off the street has
+      never sent one, so they cannot be taken in through the system at all. Creating a contact at
+      the counter means recording personal data with no consent record behind it, which the
+      privacy posture forbids by default. The owner decides what may be stored (a name? a phone
+      number? nothing at all?), for how long, and how the customer agrees to it.
+    blocking_today: >-
+      Walk-in customers are handled on paper. The console states this on the intake screen and in
+      the unsupported-capability register rather than offering a field that would quietly create
+      the record the decision has not authorized.
+  - id: DEC-014
+    title: Which staff roles may see the day's counter takings
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md
+    opened_at: '2026-08-18'
+    question: >-
+      `GET /internal/v1/stores/{id}/settlements/today` is gated by `require_operations_staff`,
+      which admits OWNER_ADMIN, OPS_APPROVER and OPERATOR alike — so counter staff can read the
+      shop's takings for the day. That gate was inherited from the pricing surfaces rather than
+      chosen for money, and whether an operator should see the day's total is the owner's call,
+      not an engineering default.
+    blocking_today: >-
+      Nothing is blocked. The console mirrors the server's existing gate exactly rather than
+      inventing a stricter client-side rule, because a console that hides what the API would
+      answer teaches staff a permission boundary that does not exist. If the owner wants the
+      figure restricted, the change belongs in the server gate and the console follows it.

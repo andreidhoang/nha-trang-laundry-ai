@@ -1,7 +1,10 @@
 # Decision request — the tiered-inference and multimodal path
 
 **Date:** 2026-08-13
-**Status:** awaiting owner answers. Nothing in this document changes behaviour.
+**Status:** Decision B (DEC-009) ratified 2026-08-18 by the security/privacy owner against the
+recommendation in §3 — see `context/DECISION_REGISTRY.yaml` DEC-009 and the signature block in §7.
+Decisions A (ADR-0008) and C (DEC-006 for a second provider) remain unanswered — neither was part of
+the 2026-08-18 ratification.
 **Trigger:** an NVIDIA build-platform API credential became available to the owner on 2026-08-13.
 **Assessment this rests on:** `docs/TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md`
 **Decision anchor:** `docs/adr/0008-inference-topology-and-multimodal-scope.md` (**proposed**, not accepted)
@@ -159,11 +162,11 @@ decision_a_adr_0008:
   decided_at:
   rationale:
 decision_b_dec_009:
-  answer:            # NO_MEDIA | STAFF_SUPPLIED_ONLY | CUSTOMER_SUPPLIED_WITH_BASIS
-  owner:             # SECURITY_PRIVACY_OWNER
-  decided_at:
-  consent_basis:     # required only for CUSTOMER_SUPPLIED_WITH_BASIS
-  retention_window:  # required only for CUSTOMER_SUPPLIED_WITH_BASIS
+  answer: STAFF_SUPPLIED_ONLY
+  owner: SECURITY_PRIVACY_OWNER
+  decided_at: '2026-08-18'
+  consent_basis:     # not required — STAFF_SUPPLIED_ONLY does not need CUSTOMER_SUPPLIED_WITH_BASIS
+  retention_window:  # not required — see above
 decision_c_dec_006_second_provider:
   answer:            # NOT_NOW | REVIEW_REQUESTED | APPROVED
   owner:             # SECURITY_PRIVACY_OWNER

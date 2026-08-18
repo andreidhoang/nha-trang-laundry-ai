@@ -1,7 +1,8 @@
 # Decision request — production staff identity provider and frontend framework path
 
 **Date:** 2026-08-16
-**Status:** awaiting owner answers. Nothing in this document changes behaviour.
+**Status:** ratified 2026-08-18 by the owner against the recommendations in §§2, 3 — see
+`context/DECISION_REGISTRY.yaml` DEC-011, DEC-012 and the signature block in §6.
 **Trigger:** planning for production staff sign-in and the staff-console UX refactor program
 (`docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md`) surfaced two unregistered decisions.
 **Assessments this rests on:** `apps/web/README.md:22-53` (supply-chain rationale),
@@ -113,18 +114,18 @@ Neither decision blocks the WS1–WS6 console refactor; both unblock paths keep 
 Fill and commit. Unsigned rows keep their fail-closed defaults, which is the current behaviour.
 
 ```yaml
-decision_a_staff_idp:        # proposed DEC-011
-  answer:            # KEYCLOAK_SELF_HOSTED_ZONE_C | MANAGED_OIDC | DEFER
-  owner:             # SECURITY_PRIVACY_OWNER
-  decided_at:
-  provider:          # required for MANAGED_OIDC
-  residency_record:  # required for MANAGED_OIDC — path to the staff-PII assessment
-  rationale:
-decision_b_frontend_framework:  # proposed DEC-012
-  answer:            # STAY_FRAMEWORK_FREE_UNTIL_P3_P7 | ADOPT_REACT_VITE_NOW | DEFER
-  owner:             # PRODUCT_ENGINEERING_OWNER
-  decided_at:
-  rationale:
+decision_a_staff_idp:        # DEC-011
+  answer: KEYCLOAK_SELF_HOSTED_ZONE_C
+  owner: SECURITY_PRIVACY_OWNER
+  decided_at: '2026-08-18'
+  provider:          # not required — not MANAGED_OIDC
+  residency_record:  # not required — self-hosted keeps staff PII in Zone C
+  rationale: Recommendation in §2 ratified as-is; no new counterparty, no residency question.
+decision_b_frontend_framework:  # DEC-012
+  answer: STAY_FRAMEWORK_FREE_UNTIL_P3_P7
+  owner: PRODUCT_ENGINEERING_OWNER
+  decided_at: '2026-08-18'
+  rationale: Recommendation in §3 ratified as-is; no UX defect a framework would fix today.
 ```
 
 Fail-closed defaults while unsigned: no production staff issuer is configured (demo IdP remains

@@ -12,6 +12,12 @@ Quy ước: `ĐÃ XÁC NHẬN` là dữ liệu chủ tiệm cung cấp; `CHỨNG
 - Địa chỉ cửa hàng: **3A Lê Đại Hành, Phường Nha Trang, Khánh Hòa — ĐÃ XÁC NHẬN**
 - Địa chỉ ghi trên biển pháp nhân: **Số 3A Lê Đại Hành, Phường Nha Trang, Tỉnh Khánh Hòa, Việt Nam — QUAN SÁT TRÊN ẢNH**
 - Quy tắc nhận diện: **dùng “Giặt Là Sạch Cộng” khi giao tiếp thương hiệu; dùng tên pháp nhân và mã số thuế trên hợp đồng/hóa đơn/chứng từ cần danh tính pháp lý**
+- Quan hệ nhượng quyền: **CẦN XÁC MINH — chưa được ghi nhận ở bất kỳ đâu trong repo.** Tra cứu công khai
+  ngày 2026-08-18: “Giặt Là Sạch Cộng” là chuỗi nhượng quyền toàn quốc (`giatlasachcong.com`, trụ sở Hà
+  Nội, công bố 500+ tiệm tại 48 tỉnh, đang bán nhượng quyền), và **danh sách tiệm công khai của chuỗi
+  không có tiệm nào ở Khánh Hòa**. Không có hợp đồng, licence hay territory grant nào trong repo. Cho tới
+  khi chủ tiệm trả lời, **quy tắc nhận diện ở dòng trên đang dựa trên một giả định chưa được ghi nhận** —
+  xem `DEC-017` và `docs/DECISION_REQUEST_ACQUISITION_2026-08.md`.
 - Trạng thái tra cứu độc lập: **chưa đối chiếu cổng đăng ký doanh nghiệp/cơ quan thuế; người đại diện pháp luật và trạng thái hoạt động thuế CẦN XÁC MINH trước tích hợp hóa đơn**
 - Bản ghi cấu hình có cấu trúc: `templates/business-profile.csv`
 - Giờ mở cửa: **08:00–20:00 hằng ngày — ĐÃ XÁC NHẬN**

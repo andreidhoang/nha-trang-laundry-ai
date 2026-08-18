@@ -1,9 +1,16 @@
 """Retention control for the section 15 schedule: versioned, held, audited, and fail-closed.
 
 `SHADOW-001` is where real customer names, phone numbers and delivery addresses first enter this
-database, so the disposal rule has to exist before the data does. `DEC-008` is open, which is
-exactly why this module ships with no class enabled: a class with no approved schedule refuses to
-run rather than defaulting to delete or to keep-forever.
+database, so the disposal rule has to exist before the data does. A class with no approved schedule
+refuses to run rather than defaulting to delete or to keep-forever.
+
+`DEC-008` was **resolved on 2026-08-18** and now carries a signed per-class schedule. That changed
+nothing here, deliberately, and the reason is worth stating because it looks like an omission: the
+resolution says in terms that *no class is enabled by the decision itself* — enabling stays a
+`publish_configuration` act carrying `DEC-008` as its `decision_ref`. A resolved decision is
+therefore permission to publish a schedule, never a published schedule, and this module still ships
+with every class refusing. The same resolution routes the ledger-backed classes to
+`SEPARATE_DISPOSABLE_PAYLOAD`, which is `RETENTION-STORE-001`, not this item.
 
 Two things this module deliberately does not do.
 

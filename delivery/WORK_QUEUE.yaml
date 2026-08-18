@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-16'
+last_updated: '2026-08-18'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -2106,7 +2106,7 @@ items:
 - id: RETENTION-001
   phase: PRODUCTION_HARDENING
   title: Customer data retention, redaction, and deletion jobs
-  status: PENDING
+  status: COMPLETE
   priority: 224
   depends_on:
   - DB-001

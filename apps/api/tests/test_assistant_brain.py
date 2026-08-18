@@ -62,6 +62,7 @@ def test_a_status_with_no_vietnamese_name_is_shown_raw_not_guessed() -> None:
     see is unfamiliar it drops the status or renders an approximation. The raw token is the honest
     answer — it is unreadable in exactly the way that prompts a question.
     """
+
     def lookup(order_id: UUID) -> OrderFact:
         return OrderFact(order_id=order_id, commercial_status="AWAITING_ALIEN_INSPECTION")
 

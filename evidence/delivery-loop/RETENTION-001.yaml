@@ -1,6 +1,6 @@
 schema_version: 1
 work_item: RETENTION-001
-recorded_at: '2026-08-13T18:40:00+07:00'
+recorded_at: '2026-08-18T21:40:00+07:00'
 requirement_contract: >-
   context/tasks/TASK-retention-001.md and specs/SECURITY_RELIABILITY_SPEC_V1.md section 15 require
   the retention schedule to be an executable, audited, testable job rather than a table in a
@@ -9,28 +9,48 @@ requirement_contract: >-
   no approved schedule refusing to run rather than defaulting to delete or to keep-forever. Section
   15 also requires purge to be reversible only through backup policy, which forbids a hidden
   soft-delete. specs/DOMAIN_DATA_API_SPEC_V1.md remains authoritative for atomic mutation plus
-  domain event plus audit plus outbox semantics. DEC-008 is open and governs the schedule itself.
+  domain event plus audit plus outbox semantics. DEC-008 governs the schedule itself and was
+  RESOLVED on 2026-08-18; see unresolved_assumptions for what that did and did not change.
 rollback_impact: >-
   Reverting removes packages/db/src/nha_trang_laundry_db/retention.py and its test file. Migration
-  0023 creates three new tables and alters none, so leaving it applied under a code rollback is safe
-  and the tables become unused. Nothing calls the module yet: no route, no worker path and no
-  scheduled job runs a purge, so removing it cannot break a live behaviour and cannot strand data.
-  Because no class can dispose of anything, rolling back destroys nothing that a purge had already
-  removed. No capability, decision or release state moved; DEC-008 remains OPEN.
+  0023 creates three new tables and alters none, and 0027 only widens a CHECK constraint to admit the
+  ASSISTANT_TRANSCRIPT class name, so leaving both applied under a code rollback is safe and the
+  tables become unused. Nothing calls the module: no route, no worker path and no scheduled job runs
+  a purge, verified again on 2026-08-18. Because no class can dispose of anything, rolling back
+  destroys nothing that a purge had already removed. No capability, decision or release state moves
+  with this record; all 13 capabilities remain NOT_AUTHORIZED.
 unresolved_assumptions: >-
-  This item builds the control plane, and the control plane is currently a set of refusals. That is
-  the honest state rather than a shortfall: SUPPORTED_PURGE_CLASSES is empty, so every one of the
-  nine classes refuses with a reason, and a test asserts that for all nine. Two distinct causes sit
-  behind those refusals and the second is a finding this work produced. First, DEC-008 is open, so
-  no class carries an approved schedule; that resolves with an owner decision and a published
-  configuration, not a code change. Second, and more serious, five of the nine classes are backed by
-  append-only ledger tables whose triggers reject any DELETE or UPDATE, so the section 15 schedule
-  cannot be executed against them at all. The ledger design and the retention schedule are in direct
-  conflict, and resolving it requires a schema decision - most plausibly separating disposable
-  payload columns into mutable side tables - which is not an engineer's unilateral call and is not
-  attempted here. The remaining four classes have no backing store implemented yet. No purge target
-  is therefore wired, and the first one should be built together with whichever schema decision
-  resolves the ledger conflict. Every capability remains NOT_AUTHORIZED.
+  This item is the retention control plane, and the control plane is a set of refusals. That is its
+  correct terminal state rather than a shortfall, and the queue says so: TASK-retention-store-001.md
+  opens with "RETENTION-001 built the retention control plane and, in doing so, proved that it cannot
+  execute", and assigns SUPPORTED_PURGE_CLASSES to that item with the constraint that the set "must
+  never be widened ahead of the implementation". RETENTION-STORE-001 depends_on RETENTION-001, so the
+  split is machine truth, not an interpretation.
+
+  Both blockers the 2026-08-13 draft named have now cleared, and neither cleared by code. DEC-008 was
+  RESOLVED on 2026-08-18 with a signed per-class schedule, and the same resolution routes the
+  ledger-backed classes to SEPARATE_DISPOSABLE_PAYLOAD, which is RETENTION-STORE-001. The schema
+  conflict this item discovered therefore has an owner and a decided direction.
+
+  What the resolution deliberately did not do is enable anything: it states that no class is enabled
+  by the decision itself and that enabling remains a publish_configuration act carrying DEC-008 as
+  its decision_ref. So every one of the ten classes still refuses, and a test asserts that for all
+  ten. Class parity was checked directly this session: DEC-008 names ten classes and RetentionClass
+  contains exactly those ten, no more and no fewer.
+
+  One residual risk, stated because a later reader will meet it. The COMPLETED branch of run_purge
+  computes a cutoff and records affected_row_count=0 without deleting anything; it is unreachable
+  only because SUPPORTED_PURGE_CLASSES is empty. Widening that set without implementing a real
+  disposal would produce exactly the silent no-op this module exists to prevent. The guard today is
+  test_the_supported_purge_set_is_empty_until_a_store_is_implemented plus the stated constraint in
+  RETENTION-STORE-001's packet. That is a real guard and not a complete one; it is named here rather
+  than left for someone to discover.
+
+  Verification honesty: the adversarial pass on this claim was performed inline in the implementing
+  session rather than by a separate reviewer in a fresh context. That is the weaker form. The attack
+  attempted was that an empty SUPPORTED_PURGE_CLASSES means no class has "a job" as the packet
+  requires; it failed against RETENTION-STORE-001's packet and the depends_on edge, both quoted
+  above.
 evidence:
   retention_class_configuration_versioned: >-
     retention_class_configurations holds one immutable row per published version, keyed by class and
@@ -39,7 +59,9 @@ evidence:
     active_configuration reads the highest version. Tests prove a second publication becomes version
     n+1, that the newer values are the active ones, and that updating an earlier version is rejected
     by the database. Publishing is OWNER_ADMIN only, proven by a negative test, and every
-    publication writes a RETENTION_SCHEDULE_PUBLISH audit row carrying its actor.
+    publication writes a RETENTION_SCHEDULE_PUBLISH audit row carrying its actor. Migration 0027
+    widened the class-name CHECK to admit ASSISTANT_TRANSCRIPT, so the versioned configuration
+    covers all ten classes DEC-008 names.
   purge_and_redaction_jobs_are_transactional: >-
     Every run goes through commit_material_change, so the run record, its domain event, its audit row
     and its outbox event commit together or not at all; a test asserts the tuple (1, 1, 1, 1) across
@@ -52,10 +74,10 @@ evidence:
     An active hold on a class causes run_purge to return REFUSED_LEGAL_HOLD and touch nothing,
     proven by test on an otherwise fully enabled class. Placing a hold requires OWNER_ADMIN or
     OPS_APPROVER; an auditor is refused. Holds cannot be hard deleted. Building this surfaced a gap
-    in my own first implementation - a hold could be placed but never released, which is a bug
-    rather than a safeguard - so release_legal_hold now exists, is attributed and audited, refuses
-    to release a hold that is not active, and is covered by a test that places, releases and
-    confirms purge is no longer suspended.
+    in the first implementation - a hold could be placed but never released, which is a bug rather
+    than a safeguard - so release_legal_hold exists, is attributed and audited, refuses to release a
+    hold that is not active, and is covered by a test that places, releases and confirms purge is no
+    longer suspended.
   purge_is_audited_and_reversible_only_through_backup: >-
     There is no soft-delete anywhere in the module: no status column, no tombstone, no hidden filter.
     A class whose disposition is PURGE either removes the data or refuses, which is what keeps
@@ -63,20 +85,25 @@ evidence:
     SUPPORTED_PURGE_CLASSES is empty, every class currently refuses, and the refusal is recorded with
     its reason instead of being reported as a successful run that deleted nothing. A test asserts
     that the append-only trigger really does reject a DELETE against webhook_events, so the refusal
-    describes the database's actual behaviour rather than a cautious guess.
+    describes the database's actual behaviour rather than a cautious guess. Confirmed by direct
+    reading this session: retention.py contains no DELETE and no UPDATE against any target table -
+    its only UPDATE is against retention_legal_holds, to release a hold.
   unset_schedule_fails_closed: >-
     A class with no period and no decision returns REFUSED_NO_APPROVED_SCHEDULE and names DEC-008 in
     its detail. A class published but not enabled returns SKIPPED_DISABLED. Enabling requires both a
     retention period and the decision reference that approved it, enforced twice: the repository
     raises, and a database CHECK rejects the same shape inserted directly, so DEC-008 cannot be
     satisfied by a deployment instead of by a decision. All three paths are covered by tests, and no
-    class ships enabled.
+    class ships enabled. DEC-008 resolving did not weaken this: the resolution publishes no
+    configuration, so a class with no published schedule still refuses and the test still passes.
   rollback_assessment: >-
-    Additive throughout: three new tables, one new module, one test file, and no change to any
-    existing table, route or behaviour. The module is referenced by nothing that runs, so removing it
-    removes a control rather than breaking a flow. No data has been disposed of by any code path in
-    this item, so a rollback cannot leave a half-purged state. The migration may safely remain
-    applied.
+    Additive throughout: three new tables in 0023, one widened CHECK in 0027, one module, one test
+    file, and no change to any existing table, route or behaviour. The module is referenced by
+    nothing that runs, so removing it removes a control rather than breaking a flow. No data has been
+    disposed of by any code path in this item, so a rollback cannot leave a half-purged state. Both
+    migrations may safely remain applied. This session's own change is comment-only in shipped code:
+    three statements that said DEC-008 was open were reconciled with its resolution, and no assertion
+    was added, removed or altered.
 checks:
 - command: uv run ruff check .
   status: PASSED

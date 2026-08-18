@@ -62,17 +62,18 @@ def _row(cursor: Any) -> tuple[Any, ...]:
     return cast(tuple[Any, ...], row)
 
 
-# --- fail-closed while DEC-008 is open -------------------------------------------------------
+# --- fail-closed until a schedule is published --------------------------------------------------
 
 
 def test_a_class_with_no_published_schedule_refuses_and_still_leaves_a_record(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    """The DEC-008 behaviour: unknown policy purges nothing and says why.
+    """Unknown policy purges nothing and says why.
 
-    The schedule is published with no period and no decision, which is exactly the state an open
-    DEC-008 leaves a class in. Asserting on a class that merely happens to be unpublished would
-    depend on what earlier tests left in the shared database.
+    The schedule is published with no period and no decision. `DEC-008` resolving on 2026-08-18 did
+    not remove this state: the resolution enables no class, so a class can still be published
+    without an approved period and must still refuse. Asserting on a class that merely happens to be
+    unpublished would instead depend on what earlier tests left in the shared database.
     """
     owner = _staff(postgres_connection, roles=frozenset({StaffRole.OWNER_ADMIN}))
     repository = RetentionRepository()

@@ -62,8 +62,12 @@ def get_agent_facade_service() -> AgentFacadeService:
 
 ```python
 # apps/api/.../assistant.py:376-382
-def __init__(self, settings: AuthSettings, connection_factory=psycopg.connect,
-             brain: AssistantBrain | None = None) -> None:
+def __init__(
+    self,
+    settings: AuthSettings,
+    connection_factory=psycopg.connect,
+    brain: AssistantBrain | None = None,
+) -> None:
     ...
     self._brain: AssistantBrain = brain or DeterministicAssistantBrain()
 ```

@@ -32,5 +32,18 @@
       "Read(./.env.*)",
       "Read(./**/secrets/**)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "payload=$(cat); path=$(printf '%s' \"$payload\" | jq -r '.tool_input.file_path // empty' 2>/dev/null || printf '%s' \"$payload\"); case \"$path\" in *apps/web/*) cd \"${CLAUDE_PROJECT_DIR:-.}\" && uv run python scripts/generate_staff_console_manifest.py >/dev/null 2>&1 || true ;; esac; exit 0"
+          }
+        ]
+      }
+    ]
   }
 }

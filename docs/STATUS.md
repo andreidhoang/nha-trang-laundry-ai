@@ -95,5 +95,25 @@ Each has a task packet under `context/tasks/` written to be actionable without a
 [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 is the full owner action table
 (pre-dates the 2026-08-18 resolutions; read its structure, not its decision-status claims).
 
+## How to drive this repository
+
+An owner-directed 2026-08-18 session produced
+[`AGENTIC_PRODUCTION_HARNESS_PLAYBOOK_2026-08.md`](AGENTIC_PRODUCTION_HARNESS_PLAYBOOK_2026-08.md) —
+analysis, not normative. Its frame: **every gate spends evidence, so evidence production is the only
+accelerator this architecture recognizes.** The line reads 0 of 1,300 eval cases, 0 provider runs,
+0 reachable agent processes, 0 recordable customers; two are agent-movable, two are owner-only, and
+that division is the schedule. It also carries a prompt library, the context-tier doctrine, a
+proposal-object spec for the agentic console surface, and a sequencing table with an actor on every
+row.
+
+Two live findings from it, neither yet enqueued: `apps/web/src/screens/assistant.js:487` renders a
+factual claim about the system with **no test behind it**, which becomes false when a provider-backed
+brain is wired; and two routes the console depends on
+(`GET .../settlements/today`, `GET /internal/v1/pricebook/services`) have **no `specs/` contract**.
+
+The same session added `.claude/agents/console-engineer.md`, `.claude/agents/eval-engineer.md`, three
+skills under `.claude/skills/`, and one `PostToolUse` hook that regenerates `sw.js` on `apps/web`
+writes. Nothing was enqueued; no capability, gate or decision changed.
+
 Read the [engineering continuation brief](../context/PROJECT_CONTINUATION.md) before resuming and run
 `uv run python scripts/run_delivery_loop.py` for the authoritative work brief.

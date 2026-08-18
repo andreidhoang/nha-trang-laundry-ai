@@ -8,6 +8,68 @@ the owner-directed assistant slice is now registered as `ASSISTANT-001` (COMPLET
 `evidence/delivery-loop/ASSISTANT-001.yaml`). The spine is built and tested end to end at **941
 passing** with the guarded PostgreSQL suite; migrations run `0001`–`0027`.
 
+## Read this first — 2026-08-18 agentic-harness session
+
+Owner-directed, outside the delivery queue. The ask was how to prompt and structure this repository
+so it reaches a production agentic system. Full artifact:
+**`docs/AGENTIC_PRODUCTION_HARNESS_PLAYBOOK_2026-08.md`** (analysis, not normative). Read that before
+re-deriving any of the below.
+
+### The frame it establishes
+
+**Every gate in `delivery/GATE_REGISTRY.yaml` spends evidence, so evidence production is the only
+accelerator this architecture recognizes.** The line reads: 0 of 1,300 eval cases, 0 provider runs,
+0 agent processes reachable in a running system, 0 recordable customers. Two of those four are
+agent-movable today; two are owner-only. That division is the schedule, and it is why "build the next
+feature" is almost never the right instruction here.
+
+### The structural fact worth not re-deriving
+
+The repo invented the same pattern twice, independently: a typed seam, a **safe default constructed at
+the production factory**, and a real implementation that exists and is not wired.
+
+- `apps/public-agent-tools/.../facade.py:152-153` → `AgentFacadeService(UnavailableAgentToolBackend())`
+- `apps/api/.../assistant.py:376-382` → `self._brain = brain or DeterministicAssistantBrain()`
+
+Both are capability authorizations wearing the costume of a one-line change. **An agent working here
+must distinguish "not built" from "built and deliberately not wired"; the second is never a bug.**
+
+### Two findings that change what gets built
+
+1. **`apps/web/src/screens/assistant.js:487` renders a factual claim with no test behind it** — that
+   the streamed text is display pacing, "không phải mô hình đang sinh từ". True today; **false the
+   moment a provider-backed brain is passed to `AssistantService(brain=…)`**, and the string appears
+   in neither `test_staff_console_contract.py` nor `verify_console_interaction.py`. UI disclosure
+   strings are compliance surface here and should be contract-tested like contracts.
+2. **Two routes the console depends on have no `specs/` contract** —
+   `GET /internal/v1/stores/{id}/settlements/today` (`main.py:1074`, called at `today.js:234`) and
+   `GET /internal/v1/pricebook/services` (`main.py:1118`, called at `quotes.js:535`). Contracts are
+   normative here, so an undocumented route is an ungoverned surface, not documentation debt.
+
+### What landed in the harness (all inside `.claude/`, all deletable with no residue)
+
+- `agents/console-engineer.md` — owns `apps/web`; 12,830 lines with no unit tests, previously unowned.
+- `agents/eval-engineer.md` — owns the binding constraint on G1, previously unowned.
+- `skills/delivery-item`, `skills/decision-request`, `skills/record-evidence` — the workflows that
+  were `AGENTS.md` prose, loaded on demand. They **wrap** `run_delivery_loop.py` and never replace it;
+  each defers to `AGENTS.md` and `context/AUTOMATION_PROTOCOL.md` on any disagreement.
+- `settings.json` — one `PostToolUse` hook regenerating `sw.js` on `apps/web` writes. Permissions
+  unchanged, byte for byte.
+
+### Process note worth keeping
+
+The hook's no-`jq` fallback was first "verified" with `env PATH=/usr/bin:/bin`, which proved nothing:
+**macOS ships `/usr/bin/jq`**, so the fallback branch never ran. It was only genuinely exercised
+against a `PATH` holding just `bash`, `cat` and `printf`. A test that does not execute the branch is
+indistinguishable from an untested claim — the same defect class this repository's evidence rules
+exist to catch, and worth remembering when a check "passes" suspiciously easily.
+
+### What was deliberately not done
+
+Nothing was enqueued. `delivery/WORK_QUEUE.yaml`, `LOOP_STATE.yaml`, `CAPABILITY_STATUS.yaml` and
+`DECISION_REGISTRY.yaml` are untouched. The playbook's §8 sequencing table carries an actor label on
+every row precisely because rows 5–9 cannot be moved by any agent.
+
 ## Read this first — 2026-08-18 client-acquisition session
 
 Owner-directed, outside the delivery queue, same as `ASSISTANT-001` and the console rebuild. The ask

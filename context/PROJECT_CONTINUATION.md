@@ -1,23 +1,70 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-08-13 (Asia/Ho_Chi_Minh)
-**Active work item:** none. Seven items completed on 2026-08-13 with the guarded PostgreSQL suite
-genuinely running: `RUNTIME-FREEZE-001`, `ENV-INTEGRITY-001`, `CHANNEL-ENVELOPE-001`,
-`AGENT-PIPELINE-001`, `SHADOW-CONSOLE-001`, `CONSENT-STOP-001` and `STORE-SCOPING-001`. The spine is
-built and tested end to end at 711 passing.
+**Last reconciled:** 2026-08-16 (Asia/Ho_Chi_Minh)
+**Active work item:** none. The queue's 2026-08-14/15 completions (`TEST-ISOLATION-001`,
+`DEMO-STACK-001`, `QUOTE-COMMAND-001`, `STORE-SCOPING-002`, `STORE-ASSIGNMENT-001`,
+`SETTLEMENT-001`, `TOOL-BACKEND-001`) are recorded with evidence in `delivery/LOOP_STATE.yaml`, and
+the owner-directed assistant slice is now registered as `ASSISTANT-001` (COMPLETE, evidence at
+`evidence/delivery-loop/ASSISTANT-001.yaml`). The spine is built and tested end to end at **941
+passing** with the guarded PostgreSQL suite; migrations run `0001`–`0027`.
 
-**Exactly one pending item is buildable: `TEST-ISOLATION-001`.** `scripts/run_delivery_loop.py`
-selects it; its only dependency `ENV-INTEGRITY-001` is complete and it carries no decision blocker.
-Earlier revisions of this brief said no item was buildable, which was wrong — the controller, not
-this prose, is the authority. The other 20 pending items each trace to an owner decision or an
-external party; the full graph is in
-[`docs/PATH_TO_PRODUCTION_REVIEW.md`](../docs/PATH_TO_PRODUCTION_REVIEW.md) §5 and §6a.
-`EVIDENCE-REPIN-001` was the cheapest unblock and is **complete as of 2026-08-13**: the owner chose
-re-derivation, the current bundle is `evidence/agent-shadow/local-synthetic-suite-v2.json`, and the
-superseded one is retained and asserted byte-for-byte. The six items it held no longer wait on the
-pin — each still carries its own remaining blocker. The cheapest unblock left is `DEC-008`, which
-frees retention and costs minutes. Everything else is calendar-bound: shop instrumentation, Zalo OA
-verification, the provider credential.
+## Read this first — 2026-08-16 owner-assistant and console slice
+
+**The internal owner-assistant "Trợ lý AI" exists and is live-verified.** It is staff-internal,
+owner-directed work built outside the delivery queue and registered after the fact as
+`ASSISTANT-001`. What and where:
+
+- Brain and service: `apps/api/src/nha_trang_laundry_api/assistant.py`. `DeterministicAssistantBrain`
+  does diacritic-insensitive Vietnamese intent matching over a fixed first-match-wins table
+  (GREETING, TODAY_OVERVIEW, SLA_RISK, PENDING_APPROVALS, ORDER_LOOKUP by UUID,
+  REVENUE_UNAVAILABLE, UNSUPPORTED fallback). **No model is called anywhere on this path.** The
+  `AssistantBrain` protocol is the deliberate seam for a future live model, which remains gated on
+  `INTERNAL_SHADOW` authorization plus a provider credential — holding a credential alone
+  authorizes nothing.
+- Limits by design: the brain never calculates money, policy, SLA or order state; revenue questions
+  get a static honest refusal, not an estimate. SLA risk is evaluated against `STANDARD_WASH_SLA`
+  only and the answer names that rule.
+- Persistence: `packages/db/src/nha_trang_laundry_db/assistant.py` records every turn through
+  `commit_material_change` (atomic turn + `assistant.turn_recorded.v1` + audit + outbox) into the
+  append-only `assistant_turns` table (migration `0026`, reject-update/delete trigger), enrolled in
+  retention as `RetentionClass.ASSISTANT_TRANSCRIPT` (migration `0027`,
+  `packages/db/src/nha_trang_laundry_db/retention.py`). Question and answer are redacted through
+  `redact_text` before persistence. This is staff-internal Tier-2-style memory, deliberately
+  separate from the customer conversation-turn-v1 contract in `specs/CUSTOMER_MEMORY_SPEC_V1.md`,
+  which remains `SPEC_DRAFT_AWAITING_OWNER_APPROVAL`.
+- Routes: `POST /internal/v1/stores/{store_id}/assistant/turns` (201, `Idempotency-Key` with
+  replay/conflict), `GET .../assistant/turns?limit=`, and `GET .../assistant/turns/{turn_id}/stream`
+  (SSE). The stream replays an **already-persisted** answer in paced word-sized frames — transport
+  pacing, not token generation. Access requires `OWNER_ADMIN`/`OPERATIONS_STAFF` plus
+  repository-level store membership; failures are one opaque 403.
+- Console: `apps/web/src/screens/assistant.js`, an eleventh screen under "Giám sát AI"
+  (capability `ASSISTANT`): bubbles, streaming caret, suggestion chips, Enter-to-send, history from
+  the server only.
+- Tests: `apps/api/tests/test_assistant.py` (17), `test_assistant_brain.py`,
+  `test_assistant_postgres.py` (9: atomicity, append-only trigger, redaction, retention purge/hold,
+  scoping, idempotent replay/conflict); `scripts/verify_console_interaction.py` section 4 covers
+  keystroke and progressive streaming (28 checks). Live-verified on the local demo stack with a
+  real sign-in and real SSE.
+
+**The staff console was refactored** in the same uncommitted tree: design polish across all
+screens, toolbars/filters/fetch-stamps on list screens, a new `styles/print.css`, an approvals nav
+badge, Vietnamese-primary enum rendering (`enumLabel` renders "Nháp (DRAFT)"), token-first price
+states, and Vietnamese appbar roles. The spec is `docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md`.
+
+**Running the demo stack locally (Caddy-less).** A lightweight local topology is in use alongside
+the compose demo: a dev proxy on **8899** fronts uvicorn on **8000**, which talks to the
+`ntl-console-pg` container on **55432**, with the local demo IdP on **9977**. Two environment
+details bite if forgotten:
+
+1. The API needs an explicit `PYTHONPATH` from `uv run python scripts/workspace_env.py
+   --print-pythonpath`, because `UF_HIDDEN` on the venv `.pth` files makes the interpreter skip
+   them (see `ENV-INTEGRITY-001` / `context/tasks/TASK-env-integrity-001.md`).
+2. The API requires identity configuration in the environment: `DATABASE_URL`, `OIDC_ISSUER`,
+   `OIDC_AUDIENCE`, `OIDC_JWKS_URL`, `OIDC_MFA_CLAIM`, `OIDC_MFA_VALUE` (the `AuthSettings` fields
+   in `apps/api/src/nha_trang_laundry_api/auth.py`), pointed at the local IdP on 9977.
+
+Nothing here authorizes a capability: `delivery/CAPABILITY_STATUS.yaml` is untouched and every
+capability remains `NOT_AUTHORIZED`.
 
 **Tiered inference and multimodal, assessed 2026-08-13.** A proposal to adopt a tiered NVIDIA stack
 (perception / execution / escalation) was assessed against the frozen runtime in

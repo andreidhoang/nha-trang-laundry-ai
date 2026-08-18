@@ -75,3 +75,17 @@ decisions:
     selected_target: CUSTOM_OPENAI_RESPONSES_ADAPTER
     comparison_candidate: OPENCLAW_EVAL_ONLY
     retirement_condition: RUNTIME_PARITY_PROVIDER_DATA_SECURITY_AND_ROLLBACK_ACCEPTED
+  - id: DEC-011
+    title: Production staff identity provider selection (Keycloak self-hosted vs managed OIDC)
+    status: OPEN
+    owner: SECURITY_PRIVACY_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_AUTH_IDP_AND_FRONTEND_FRAMEWORK_2026-08.md
+  - id: DEC-012
+    title: Staff console frontend framework adoption timing
+    status: OPEN
+    owner: PRODUCT_ENGINEERING_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_AUTH_IDP_AND_FRONTEND_FRAMEWORK_2026-08.md

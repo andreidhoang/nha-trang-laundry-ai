@@ -41,7 +41,7 @@ that the database zone is provisioned deliberately rather than by a compose file
 `generate_demo_material.py` writes keys, certificates and passwords into `.demo/`, which is
 gitignored — the generator is committed, its output never is.
 
-Three one-shot jobs run in order and must all exit 0: `migrate` applies the 23 forward-only
+Three one-shot jobs run in order and must all exit 0: `migrate` applies the 27 forward-only
 migrations as the migration identity, `demo-grants` gives the API and worker roles read/write on
 the migrated tables and nothing else, and `demo-seed` creates four synthetic staff and one store.
 Re-running `up --wait` re-runs all three; they are idempotent.
@@ -71,11 +71,17 @@ is why the console renders an empty membership as "ask an owner" rather than as 
 
 ## What to look at
 
-- **Ten screens** render, all store-scoped reads return data, and `demo-auditor` is refused on
+- **Eleven screens** render, all store-scoped reads return data, and `demo-auditor` is refused on
   every write with the same 403 a non-member would receive.
 - **The worker** is up and leasing; `docker compose ... logs worker` shows the supervisor cycle.
 - **Audit** — every mutation writes a row, a domain event, an audit entry and an outbox event in
   one transaction.
+- **Trợ lý AI** (`ASSISTANT-001`) — the eleventh screen, under *Giám sát AI*, is the internal owner
+  assistant. Sign in as `demo-owner`, ask **"Hôm nay thế nào?"** and watch the answer stream in.
+  Two things to know while you watch: the brain is deterministic — no model is called anywhere on
+  this path — and the streaming is paced replay of an answer that was already persisted before the
+  stream started, not token generation. Ask about revenue and it refuses honestly rather than
+  estimating money the governed data does not state.
 
 - **Pricing** (`QUOTE-COMMAND-001`) — the **Báo giá** screen prices a garment through the
   deterministic engine. The seed publishes the owner-confirmed pricebook as configuration version 1;
@@ -95,8 +101,9 @@ is why the console renders an empty membership as "ask an owner" rather than as 
   | `BED_PILLOW`, `1`, ITEM | Refused, `RANGE_PRICE_REQUIRES_HUMAN`. Range prices need a person |
   | Sign in as `demo-auditor` and price | 403, worded identically to a store-membership refusal |
 
-One thing is still visibly missing, and it is the next item in the queue: no order can reach
-`COMPLETED`, because nothing records payment or collection (`SETTLEMENT-001`).
+An order can now reach `COMPLETED` through the normal path: `SETTLEMENT-001` records exact
+payment plus a self-collection attestation, and every other settlement shape still fails closed as
+`NOT_SUPPORTED`. Nothing agent-reachable can write a balance.
 
 ## Verify
 

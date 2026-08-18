@@ -69,6 +69,11 @@
 17. [`../docs/adr/0007-production-deployment-topology.md`](../docs/adr/0007-production-deployment-topology.md)
     Ba vùng mạng, hai host tối thiểu, và hàm quyết định nhà cung cấp hosting.
 
+18. [`CUSTOMER_MEMORY_SPEC_V1.md`](./CUSTOMER_MEMORY_SPEC_V1.md) — **DRAFT, chưa được owner phê duyệt**
+    Bốn tầng memory cho customer-facing app: business DB, conversation state, context packet
+    assembler (deterministic compiler) và public corpus release. Không cấp phép implementation hay
+    capability nào cho tới khi được phê duyệt.
+
 ## Contracts có thể chạy bằng máy
 
 - [`contracts/canonical-enums-v1.json`](./contracts/canonical-enums-v1.json) — enum, canonicalization

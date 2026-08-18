@@ -1,6 +1,6 @@
 # Delivery board
 
-Generated from `delivery/WORK_QUEUE.yaml` on **2026-08-16**. It goes stale the moment the queue
+Generated from `delivery/WORK_QUEUE.yaml` on **2026-08-18**. It goes stale the moment the queue
 moves; when the two disagree, the queue is right. Run `uv run python scripts/run_delivery_loop.py`
 for the authoritative next item and `uv run python scripts/report_delivery_status.py` for
 machine-readable capability status.
@@ -11,23 +11,35 @@ machine-readable capability status.
 authorization source. A code status never authorizes a release.
 
 **77 items: 42 complete, 15 blocked, 20 pending.**
-Every capability reads `NOT_AUTHORIZED`.
+Every capability reads `NOT_AUTHORIZED`. Resolving a decision removes one fail-closed reason for the
+capabilities it names — it authorizes nothing by itself; G1–G4 evidence still governs authorization.
 
-**No pending item is currently buildable.** Each of the 20 pending items traces to an owner
-decision or an external party; see [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md)
-§5 and §6a. `uv run python scripts/run_delivery_loop.py` is the authority and selects nothing.
+**One pending item is now buildable: `RETENTION-001`.** `uv run python scripts/run_delivery_loop.py`
+selects it as of this snapshot — `DEC-008` (the retention schedule) resolved 2026-08-18, which was
+its sole blocker. Every other pending item still traces to an owner decision or an external party;
+see [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 and §6a.
 Since 2026-08-14 the queue recorded `TEST-ISOLATION-001`, `DEMO-STACK-001`, `QUOTE-COMMAND-001`,
 `STORE-SCOPING-002`, `STORE-ASSIGNMENT-001`, `SETTLEMENT-001` and `TOOL-BACKEND-001` complete, and
 on 2026-08-16 the owner-directed internal assistant was registered after the fact as
 `ASSISTANT-001` (deterministic brain, no model call, append-only transcript; no capability
-authorized).
+authorized). On 2026-08-18 nine open decisions resolved in one session — `DEC-001`, `DEC-002`,
+`DEC-003`, `DEC-004`, `DEC-005`, `DEC-009`, `DEC-010`, `DEC-011`, `DEC-012` — and the same session's
+console rebuild opened two new ones, `DEC-013` (walk-in customer identification) and `DEC-014`
+(which staff roles see the day's takings); see "Reading this board" below. No queue item's *status*
+moved as a result — only the "Open decisions" column changed, plus `RETENTION-001` becoming
+selectable — because only the controller flips a status, and it has run once since (selecting
+`RETENTION-001`), not enqueued anything new.
 
 `MODEL-ROUTE-001` and `MULTIMODAL-PERCEPTION-001` entered `Blocked` by construction: they specify
 the tiered-inference and perception direction assessed in
 [`TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md`](TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md)
 and proposed in [ADR-0008](adr/0008-inference-topology-and-multimodal-scope.md). `EVIDENCE-REPIN-001`
-stood in front of both and was completed 2026-08-13, so what remains for them is decisions: ADR-0008
-acceptance and `DEC-009`.
+stood in front of both and was completed 2026-08-13, so what remained for them was decisions:
+ADR-0008 acceptance (still unanswered — see
+[`docs/DECISION_REQUEST_TIERED_INFERENCE_2026-08.md`](DECISION_REQUEST_TIERED_INFERENCE_2026-08.md)
+Decision A) and `DEC-009`, resolved 2026-08-18 (staff-supplied media only). `MULTIMODAL-PERCEPTION-001`
+still needs `MODEL-ROUTE-001`, which still needs ADR-0008 accepted, so neither is actually closer to
+buildable — DEC-009's resolution removed a decision, not a blocker on this particular path.
 
 ### FOUNDATION
 
@@ -79,7 +91,7 @@ acceptance and `DEC-009`.
 | `AGENT-PIPELINE-001` | Assemble the constrained runtime into a running worker pipeline | `RESPONSES-RUNTIME-001` | Complete | — |
 | `MODEL-PIN-001` | Immutable model release pin and registry artifact verification | `PROVIDER-TRANSPORT-001`, `EVIDENCE-REPIN-001` | Pending | — |
 | `MODEL-ROUTE-001` | Per-role model pinning so a route is as pinned as its loosest member | `EVIDENCE-REPIN-001`, `PROVIDER-TRANSPORT-001`, `MODEL-PIN-001` | Blocked | — |
-| `MULTIMODAL-PERCEPTION-001` | Perception tier that emits observations and never conclusions | `MODEL-ROUTE-001`, `CONSENT-STOP-001` | Blocked | DEC-009, DEC-006, DEC-008 |
+| `MULTIMODAL-PERCEPTION-001` | Perception tier that emits observations and never conclusions | `MODEL-ROUTE-001`, `CONSENT-STOP-001` | Blocked | DEC-006 |
 | `EVAL-CORPUS-001` | Frozen Vietnamese regression corpus raised toward the manifest minimum | `CORPUS-CONSENT-001`, `EVIDENCE-REPIN-001` | Pending | — |
 | `AGENT-002` | Custom-runtime Shadow evidence and P0 provider-backed evaluation | `AGENT-PIPELINE-001`, `EVAL-CORPUS-001`, `MODEL-PIN-001`, `PROVIDER-TRANSPORT-001`, `RUNTIME-FREEZE-001`, `EVAL-SYNTHETIC-COMBINATORIAL-001`, `EVAL-LANGUAGE-CORPUS-001` | Pending | DEC-006 |
 | `EVAL-LANGUAGE-CORPUS-001` | Normal-language Vietnamese suite at the manifest distribution | `CORPUS-CONSENT-001`, `EVIDENCE-REPIN-001` | Pending | — |
@@ -120,9 +132,9 @@ acceptance and `DEC-009`.
 | `DEPLOY-TARGET-001` | Production topology, isolated agent cell host, and closed capability flags | `DECISION-HOSTING-001` | Pending | — |
 | `MONITORING-001` | Telemetry collector, retention, and paging alert contracts | `DEPLOY-TARGET-001` | Pending | — |
 | `SIGNER-REGISTRY-001` | Two-party release schema, verifier enforcement, and signer key ceremony | `EVIDENCE-REPIN-001` | Blocked | — |
-| `RETENTION-001` | Customer data retention, redaction, and deletion jobs | `DB-001`, `OBSERVABILITY-001` | Pending | DEC-008 |
+| `RETENTION-001` | Customer data retention, redaction, and deletion jobs | `DB-001`, `OBSERVABILITY-001` | Pending | — (DEC-008 resolved 2026-08-18; buildable — selected by the controller) |
 | `OPS-RUNBOOK-001` | The five G1 runbooks, each executed once by its operator | `DEPLOY-TARGET-001` | Pending | — |
-| `RETENTION-STORE-001` | Separate disposable payload from the append-only ledger | `RETENTION-001` | Pending | DEC-008 |
+| `RETENTION-STORE-001` | Separate disposable payload from the append-only ledger | `RETENTION-001` | Pending | — (DEC-008 resolved; still waits on `RETENTION-001` completing, a queue dependency not a decision) |
 | `SLO-VERIFY-001` | Measured verification of the declared Shadow-stage SLOs | `DEPLOY-TARGET-001`, `MONITORING-001` | Pending | — |
 
 ### REAL_SHADOW_READINESS
@@ -133,23 +145,23 @@ acceptance and `DEC-009`.
 | `SECURITY-001` | Identity, privacy, PITR, incident, kill-switch, and release-readiness gates | `AGENT-002`, `OBSERVABILITY-001`, `POLICY-001`, `SUPPLYCHAIN-001`, `HTTP-SECURITY-001`, `TELEMETRY-001`, `STAGING-001`, `BACKUP-RESTORE-001`, `DEPLOY-TARGET-001`, `MONITORING-001` | Pending | DEC-006 |
 | `SHADOW-001` | Internal real-order Shadow pilot and G1 evidence | `SECURITY-001`, `SHADOW-CONSOLE-001`, `SHOP-INSTRUMENT-001`, `SIGNER-REGISTRY-001`, `OPS-RUNBOOK-001`, `SLO-VERIFY-001`, `RETENTION-001`, `STORE-SCOPING-001`, `RETENTION-STORE-001` | Pending | — |
 | `SHOP-INSTRUMENT-001` | Physical shop instrumentation: cycle, capacity, and delivery cost baselines | — | Blocked | — |
-| `DECISION-BUSINESS-001` | Owner decision session closing DEC-001 through DEC-004 | — | Blocked | — |
+| `DECISION-BUSINESS-001` | Owner decision session closing DEC-001 through DEC-004 | — | Blocked | — (DEC-001–004 resolved 2026-08-18 in `docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md`; item status is the controller's to move, not this board's — its substance is done) |
 
 ### PUBLIC_ASSISTED
 
 | ID | Task | Depends on | Status | Open decisions |
 |---|---|---|---|---|
-| `CHANNEL-001` | Official channel and isolated public-cell Assisted entry | `CHANNEL-ZALO-001`, `CONSENT-STOP-001`, `PUBLIC-POLICY-001`, `SHADOW-001`, `EVAL-PUBLIC-CORPUS-001` | Pending | DEC-005, DEC-006 |
+| `CHANNEL-001` | Official channel and isolated public-cell Assisted entry | `CHANNEL-ZALO-001`, `CONSENT-STOP-001`, `PUBLIC-POLICY-001`, `SHADOW-001`, `EVAL-PUBLIC-CORPUS-001` | Pending | DEC-006 |
 | `CHANNEL-ZALO-APPLY-001` | Official Zalo OA registration and business verification | — | Blocked | — |
-| `CHANNEL-ZALO-001` | Official Zalo OA adapter with verified provider behavior | `CHANNEL-ENVELOPE-001`, `CHANNEL-ZALO-APPLY-001`, `CONSENT-STOP-001` | Pending | DEC-005 |
+| `CHANNEL-ZALO-001` | Official Zalo OA adapter with verified provider behavior | `CHANNEL-ENVELOPE-001`, `CHANNEL-ZALO-APPLY-001`, `CONSENT-STOP-001` | Pending | — (DEC-005 resolved 2026-08-18: Telegram for Shadow, Zalo OA for production; still waits on `CHANNEL-ZALO-APPLY-001`'s external verification) |
 | `PUBLIC-POLICY-001` | Published PUBLIC_CUSTOMER bundle and tested correction workflow | `DECISION-BUSINESS-001` | Pending | — |
-| `EVAL-PUBLIC-CORPUS-001` | Public corpus suite with exact fact-citation grading | `PUBLIC-POLICY-001`, `EVIDENCE-REPIN-001` | Pending | DEC-005 |
+| `EVAL-PUBLIC-CORPUS-001` | Public corpus suite with exact fact-citation grading | `PUBLIC-POLICY-001`, `EVIDENCE-REPIN-001` | Pending | — (DEC-005 resolved) |
 
 ### BOUNDED_AUTONOMY
 
 | ID | Task | Depends on | Status | Open decisions |
 |---|---|---|---|---|
-| `AUTONOMY-001` | Capability-specific bounded automation canary | `CHANNEL-001` | Pending | DEC-001, DEC-002, DEC-003, DEC-004 |
+| `AUTONOMY-001` | Capability-specific bounded automation canary | `CHANNEL-001` | Pending | — (DEC-001–004 all resolved 2026-08-18; this item's distance is now the G1–G4 gate ladder and `CHANNEL-001`, not a decision) |
 
 ## Reading this board
 
@@ -160,8 +172,25 @@ blocked history. They are not resumed, rewritten or deleted. G1 agent evidence i
 
 The rest are blocked on named external actions. `EVIDENCE-REPIN-001` was the cheapest and was
 completed 2026-08-13; the six items it held no longer wait on the pin, though each keeps its own
-remaining blocker. The cheapest left is `DEC-008`, which unblocks retention and costs minutes.
-Everything else is calendar-bound.
+remaining blocker. `DEC-008` was the next-cheapest and resolved 2026-08-18, making `RETENTION-001`
+buildable today. The cheapest decision left on the board is `DEC-006` — it is the sole remaining
+decision blocker on `RUNTIME-PARITY-001`, `AGENT-002`, `SECURITY-001`, and (alongside external Zalo
+verification) `CHANNEL-001`; a stance toward resolving it (`PROCEED_TOWARD_VERIFICATION`) is recorded
+in [`docs/DECISION_REQUEST_PROVIDER_DATA_2026-08.md`](DECISION_REQUEST_PROVIDER_DATA_2026-08.md),
+but the registry entry stays `OPEN` until a real OpenAI account setting is verified and a legal check
+on cross-border customer PII lands. Everything else on this board is calendar-bound.
+
+Two decisions opened 2026-08-18 by the console rebuild, `DEC-013` (how a walk-in customer with no
+prior channel message is identified at the counter) and `DEC-014` (which staff roles may see the
+day's takings), currently name no queue item as blocked on them — they surfaced from running code,
+not from a specification gap, and nothing in this board changes until a future item is enqueued
+against them. See
+[`docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md`](DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md).
+Separately, `DEC-HOSTING` (the hosting-provider choice behind `DECISION-HOSTING-001`) has never been
+a registry entry — ADR-0007 topology plus admissibility framework is drafted in
+[`docs/DECISION_REQUEST_HOSTING_2026-08.md`](DECISION_REQUEST_HOSTING_2026-08.md), but no candidate
+is selectable by an agent at all, and every cost/residency figure in that framework is explicitly
+unverified pending a real account.
 
 Every actionable item has a task packet under `context/tasks/` except the frozen `AGENT-001`, and
 must attach its declared checks, rollback impact and unresolved assumptions before completion.

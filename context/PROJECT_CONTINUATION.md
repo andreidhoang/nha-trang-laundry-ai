@@ -8,6 +8,113 @@ the owner-directed assistant slice is now registered as `ASSISTANT-001` (COMPLET
 `evidence/delivery-loop/ASSISTANT-001.yaml`). The spine is built and tested end to end at **941
 passing** with the guarded PostgreSQL suite; migrations run `0001`–`0027`.
 
+## Read this first — 2026-08-18 decision ratification round and doc refresh
+
+**Nine decisions closed in one working session, by two concurrent Claude Code sessions on the same
+checkout.** Read the provenance carefully — it determines which commit to revert if any single
+ratification turns out not to be the owner's.
+
+### Provenance — who decided what, and where the record is
+
+A Claude Sonnet 5 session drafted decision packets for `DEC-001`–`DEC-005`, `DEC-006` (stance only,
+not a resolution — see below), `DEC-010`, and `DEC-HOSTING`, and took each one to the business owner
+turn by turn in chat rather than as a blanket delegation: scope was disambiguated first, and DEC-004's
+three monetary figures were obtained as explicit owner answers, not proposed defaults. While those
+packet files sat uncommitted in the working tree, **a second, concurrent Claude Code session (Opus 5,
+a different session ID) was working the same git checkout.** That session picked up the uncommitted
+packets and committed them (`595021a`), then did its own independent work — the console rebuild
+(`58f994f`) and Vietnamese assistant answers (`4b7188f`) — and, from what the rebuild surfaced,
+independently opened `DEC-013` and `DEC-014`. The Sonnet session then closed the one decision the
+Opus session correctly left open — `DEC-004`, which needed real owner numbers no packet could
+supply — as commit `1d5be44`.
+
+Net effect: every ratification traces to an explicit owner answer in chat, recorded in a decision
+packet under `docs/`, and each commit in the chain (`595021a`, `1d5be44`) is independently revertible
+without touching the console-rebuild commits sitting between them.
+
+### DEC-008 provenance question — closed
+
+An earlier pass through this session left open whether `DEC-008`'s `ORDER_FINANCIAL_RECORD`
+3650-day figure and `CONSENT_EVIDENCE` indefinite-retention figure were genuinely accountant-sourced
+or filled in during drafting. **The owner confirmed today, on direct question, that both are
+genuine.** No change was made to `DEC-008`'s registry entry — the confirmation closes the question,
+it does not alter the record. Do not re-raise this; if a future review wants to re-verify, that is a
+new question, not a reopening of this one.
+
+### DEC-004 — the figures, and what they do not cover
+
+Resolved with owner-supplied numbers, not an inherited industry default: free rewash within **7
+days** of pickup when staff determines store fault; loss/damage compensation capped at **5× the
+item's cleaning fee**; staff may approve compensation up to **100,000đ** without escalation, above
+which the owner must approve. **Loss policy, as distinct from damage, was not covered by these
+figures** and remains case-by-case negotiated with no ceiling stated — do not assume it inherits the
+5×/100,000đ numbers; that reading was flagged in the packet as unconfirmed by design.
+
+### Decision state as of `1d5be44`
+
+14 registered in `context/DECISION_REGISTRY.yaml`. **11 `RESOLVED`:** DEC-001, DEC-002, DEC-003,
+DEC-004, DEC-005, DEC-007, DEC-008, DEC-009, DEC-010, DEC-011, DEC-012. **3 `OPEN`:**
+
+- `DEC-006` — a risk-acceptance *stance* (`PROCEED_TOWARD_VERIFICATION`) is recorded in
+  `docs/DECISION_REQUEST_PROVIDER_DATA_2026-08.md`, but the registry entry stays `OPEN` by that
+  packet's own design. Real resolution needs a verified OpenAI account setting (`store:false`
+  behind a real credential) and a named legal check on cross-border Vietnamese customer PII —
+  neither exists yet.
+- `DEC-013` — walk-in customer identification (opened by the console-rebuild session).
+- `DEC-014` — which staff roles may see the day's takings (opened by the console-rebuild session).
+
+Plus `DEC-HOSTING`, which is not and cannot be a `DECISION_REGISTRY.yaml` entry — `WORK_QUEUE.yaml`'s
+own text says a coding agent may not select a vendor, accept terms, or sign the approval. An
+admissibility *framework* exists (`docs/DECISION_REQUEST_HOSTING_2026-08.md`) with every cost and
+residency figure marked `UNVERIFIED` on purpose — there is no live vendor account to verify against.
+
+### New decision packets this session
+
+- `docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md` — DEC-001/002/003/004/010.
+- `docs/DECISION_REQUEST_CHANNEL_2026-08.md` — DEC-005: Telegram now for Shadow-mode validation
+  (adapter already built and tested), Zalo OA as the official production channel once its business
+  verification completes. Neither artifact (bot token, completed verification) exists yet — the
+  decision is resolved, the artifacts are not.
+- `docs/DECISION_REQUEST_PROVIDER_DATA_2026-08.md` — DEC-006 stance only, as above.
+- `docs/DECISION_REQUEST_HOSTING_2026-08.md` — DEC-HOSTING admissibility framework, no candidate
+  selected.
+
+All five are wired into `context/CONTEXT_MAP.yaml` under the domains their content matches
+(`pricing`/`promotion_delivery_sla`/`business_truth` for the pricing packet, `channel_operations`/
+`business_truth` for the channel packet, `runtime_architecture`/`evaluation_release` for the
+provider-data packet, `platform` for the hosting packet, `privacy_consent`/`business_truth` for the
+walk-in identity packet).
+
+### What's now decision-clear but not yet enqueued
+
+`docs/PRODUCTION_READINESS_ASSESSMENT.md`'s §5.2 table proposed three items gated on decisions that
+are now resolved: `REMEDY-001` (was gated on `DEC-004`), `CATALOG-PRICEBOOK-001` (was gated on
+`DEC-001`), `FULFILMENT-001` (was gated on `DEC-003`). None of the three exist in
+`delivery/WORK_QUEUE.yaml` yet — proposing an item is analysis, adding it to the queue is a change to
+machine truth and needs the owner's word, per that document's own rule. State this as what changed,
+not as a recommendation to enqueue.
+
+### Verified fresh, not inherited
+
+Full suite re-run this session against real PostgreSQL: **972 passed, 1 skipped** — identical to the
+console-rebuild session's figure, confirming nothing regressed across the commit chain.
+`scripts/verify_contracts.py` and `scripts/check_context_drift.py` both ran clean after every commit
+in the chain, including after the `CONTEXT_MAP.yaml` and this file's own edits (116 source references
+now reachable, up from 107, from the nine new pointers added to the map).
+
+### Environment note for future agents — check for a concurrent session before assuming stale memory
+
+If you find files already modified that you don't remember writing, or `git log` shows commits you
+don't recognize, **check for a concurrent session before assuming corruption or a stale memory of
+your own state.** `git log --oneline` against what you expect, then read the unfamiliar commits'
+messages before touching any file they touched. This happened for real in this session and cost
+nothing, because both sessions verified against `verify_contracts.py`/`check_context_drift.py` before
+every commit and used separate new commits rather than amending — a naive `git reset --hard` or a
+force-push at the wrong moment would have destroyed the other session's real work instead.
+
+Nothing here is pushed. The branch remains local-only, 47 commits ahead of `origin/main` as of
+`1d5be44` (re-check the count before relying on it; it moves).
+
 ## Read this first — 2026-08-18 owner-directed console rebuild
 
 The business owner reviewed the staff console and rejected it: correct, auditable, and useless at

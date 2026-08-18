@@ -36,6 +36,7 @@ domains:
       - docs/runbooks/private-staging.md
       - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
       - specs/ENGINEERING_SPEC_V1.md
+      - docs/DECISION_REQUEST_HOSTING_2026-08.md
     contracts: []
     prohibitions:
       - Do not introduce public channels or external automation in M0-M3.
@@ -53,6 +54,7 @@ domains:
       - docs/adr/0008-inference-topology-and-multimodal-scope.md
       - docs/runbooks/provider-credentials.md
       - docs/DECISION_REQUEST_TIERED_INFERENCE_2026-08.md
+      - docs/DECISION_REQUEST_PROVIDER_DATA_2026-08.md
       - delivery/PROGRAM_PLAN.yaml
     contracts:
       - specs/contracts/agent-tools-v1.openapi.yaml
@@ -80,6 +82,7 @@ domains:
       - specs/ENGINEERING_SPEC_V1.md
       - PRICEBOOK_V1.md
       - templates/services-pricebook.csv
+      - docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md
     contracts:
       - specs/contracts/canonical-enums-v1.json
       - specs/contracts/pricebook-import-manifest-v1.json
@@ -93,6 +96,7 @@ domains:
       - PROMOTION_2026_08.md
       - DELIVERY_POLICY_DRAFT.md
       - SERVICE_CATALOG_AND_SLA_V1.md
+      - docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md
     contracts:
       - specs/contracts/canonical-enums-v1.json
     prohibitions:
@@ -127,6 +131,8 @@ domains:
       - specs/SECURITY_RELIABILITY_SPEC_V1.md
       - CUSTOMER_SERVICE_POLICY_DRAFT.md
       - packages/db/src/nha_trang_laundry_db/retention.py
+      - docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md
+      - docs/DECISION_REQUEST_ACQUISITION_2026-08.md
     contracts:
       - specs/contracts/canonical-enums-v1.json
     prohibitions:
@@ -144,6 +150,7 @@ domains:
       - docs/adr/0007-production-deployment-topology.md
       - specs/CHANNEL_ADAPTER_SPEC_V1.md
       - specs/PUBLIC_CUSTOMER_POLICY_SPEC_V1.md
+      - docs/DECISION_REQUEST_CHANNEL_2026-08.md
     contracts:
       - specs/contracts/canonical-enums-v1.json
       - specs/contracts/channel-inbound-envelope-v1.schema.json
@@ -166,6 +173,11 @@ domains:
       - templates/business-profile.csv
       - templates/delivery-cost-log.csv
       - templates/machine-master.csv
+      - docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md
+      - docs/DECISION_REQUEST_CHANNEL_2026-08.md
+      - docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md
+      - docs/DECISION_REQUEST_ACQUISITION_2026-08.md
+      - docs/CLIENT_ACQUISITION_EXECUTION_2026-08.md
     contracts:
       - specs/contracts/pricebook-import-manifest-v1.json
     prohibitions:

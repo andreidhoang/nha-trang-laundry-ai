@@ -1,77 +1,130 @@
 # Production Readiness Assessment
 
-**Assessed:** 2026-08-14
-**Commit assessed:** `8e5395d` (the tree as merged to `main` on 2026-08-14)
-**Supersedes:** the 2026-08-12 assessment of `6e93371` (same path; see git history)
+**Assessed:** 2026-08-18
+**Commit assessed:** `1d5be44` (the tree on `main` after today's decision-ratification round)
+**Supersedes:** the 2026-08-14 assessment of `8e5395d` (same path; see git history)
 **Method:** direct codebase measurement, not documentation review
 **Status of this document:** analysis. It is **not normative**, resolves no decision, and authorizes
 nothing. `delivery/` remains the machine-readable truth.
 
 ## Verdict
 
-Two of the six findings in the 2026-08-12 assessment are now false, and measuring what replaced them
-exposed a larger one that the previous pass missed entirely.
+The 2026-08-14 verdict was "the authority layer is production-grade and almost nothing in the running
+system can reach it." Half of that is now false, and precisely half — which is itself informative,
+because the half that changed is the half that was pure wiring, and the half that did not is the half
+guarded by a deliberate fail-closed default.
 
-**The authority layer is production-grade and almost nothing in the running system can reach it.**
-~~The deterministic pricing engine — 3,365 lines and the single most valuable asset here — has no
-caller outside tests and synthetic harnesses.~~ **Pricing is reachable as of 2026-08-14**
-(`QUOTE-COMMAND-001`): a staff member prices a garment through the engine and the result is committed
-as an immutable revision, priced against a pricebook published through `CONFIG-001` rather than read
-from a file. The verdict above still holds for everything else, and the pricing sentence is left
-struck through rather than deleted so the distance travelled stays visible. The ten-operation Tool Facade is wired in production to
-a backend that returns `TOOL_UNAVAILABLE` for every operation. The three facts that make a laundry
-order finished in the physical world — money received, goods handed back, delivery run completed —
-are insert-time constants with no write path, with the provable consequence that **no order this
-system creates can ever reach `COMPLETED`** (§3, G2).
+~~The ten-operation Tool Facade is wired in production to a backend that returns `TOOL_UNAVAILABLE` for
+every operation.~~ **Still true, verified again today** (`facade.py:152-153`) — but no longer for lack
+of an implementation. `TOOL-BACKEND-001` built a real backend; the production factory function still
+constructs `AgentFacadeService(UnavailableAgentToolBackend())` regardless, because the item's own
+acceptance criteria required it to default to unavailable behind capability flags. This is now a
+capability-authorization fact, not an engineering gap — the distinction matters for anyone estimating
+distance to G1, because closing it is a flag flip guarded by evidence, not a code change.
 
-Against the project's own specification, **14 of the 63 aggregates named in
-`specs/DOMAIN_DATA_API_SPEC_V1.md` §4 exist as tables.** The 49 absent ones are not evenly spread.
-Every table in Finance, Custody/Production, Delivery, Catalog, Pricebook, Promotion, CRM and
-Organization is missing. What is built is the governance spine: approvals, audit, outbox, agent
-ledger, consent, identity — 9 of 9 in §4.14.
+~~The three facts that make a laundry order finished in the physical world — money received, goods
+handed back, delivery run completed — are insert-time constants with no write path, with the provable
+consequence that no order this system creates can ever reach `COMPLETED`.~~ **False as of
+`SETTLEMENT-001`, for the exact-payment/self-collection case.** `packages/db/src/.../settlement.py:202`
+commits an atomic `UPDATE orders SET balance_status = 'PAID', self_collection_recorded = TRUE ...
+WHERE id = %s AND row_version = %s AND balance_status = 'UNPAID'` through `commit_material_change`, and
+`packages/db/tests/test_settlement.py::test_an_order_reaches_completed_after_settlement` proves an
+order reaches `COMPLETED` through every intermediate transition. §3 G2 is rewritten below rather than
+struck through, because the finding didn't get weaker — it got narrower and more precise: every
+settlement shape *other than* exact-payment-in-full-at-handover (partial payment, deposits,
+`ON_ACCOUNT`) is `DEC-010`, and `DEC-010` is now `RESOLVED` as **deliberately** `NOT_SUPPORTED` — a
+decided scope boundary, not an open gap.
 
-That is a coherent thing to have built first, and it is the hard part. But the previous assessment's
-"deterministic authority ~90%, gap: polish" row was measuring the engine, not the system, and the
-engine is not the system.
+Against the specification, the headline number **did not move**: still **14 of 63** aggregates in
+`specs/DOMAIN_DATA_API_SPEC_V1.md` §4 exist as direct-fulfillment tables (§2.2). `order_settlements`
+(new since 08-14) is a fifth narrow stand-in, not a sixth full one — it satisfies neither `payments` nor
+`payment_allocations` as specified, because §4.12 explicitly requires "support partial/mixed payments"
+and `order_settlements` deliberately does not, by `DEC-010`. Counting generously: **~19 of 63**, up one
+stand-in from ~18.
+
+The larger movement this cycle is not in the codebase at all — it is in `context/DECISION_REGISTRY.yaml`.
+**11 of 14 registered decisions are now `RESOLVED`**, up from 6 of 12 on 08-14 (then: DEC-007, DEC-008
+only were resolved of the eight then registered — corrected below, see the note on the 08-14 document's
+own "8 open decisions" figure, which undercôunted). Three decision-shaped items remain: `DEC-006` (a
+risk-acceptance *stance* is recorded, but registry status stays `OPEN` — it needs a verified provider
+account setting and a legal check neither of which exists), `DEC-013` and `DEC-014` (both opened today
+by the console rebuild, both fail closed, neither blocks anything yet), plus `DEC-HOSTING`, which was
+never a registry entry and cannot be one — an agent may assemble its admissibility packet
+(`docs/DECISION_REQUEST_HOSTING_2026-08.md`, drafted today, every cost/residency figure marked
+`UNVERIFIED`) but may not select a vendor or accept terms.
+
+That is a coherent thing to have happened — decisions are cheaper to close than code is to write, and
+today closed nine of them in one sitting — but it changes almost nothing measured in this document,
+because **none of §5.2's proposed items were actually enqueued.** A resolved decision that gates an
+unenqueued item removes a future blocker, not a present one. §5 below states plainly what is now
+unlocked versus what remains a proposal.
 
 ## 1. Corrections to the 2026-08-12 assessment
 
+*(Historical — unchanged from the 08-14 revision, preserved for continuity.)*
+
 | Old finding | Status |
 |---|---|
-| **F1** — the agent runtime is an orphan, 1,216 lines no code path reaches | **Partly fixed — this row was too generous, corrected 2026-08-14.** `AGENT-PIPELINE-001` built the composition and proved it: a job traverses queue → claim → runtime → persisted evidence, and claim exclusivity holds under a real two-worker race. But `build_agent_cycle` still has **no caller outside tests**. `apps/worker/.../main.py` constructs `WorkerSupervisor(settings)` with no cycle injected, so the deployed worker process cannot run the pipeline — setting `WORKER_AGENT_QUEUE_ENABLED` yields `AGENT_RUNTIME_UNAVAILABLE`, not a running agent. `AGENT-PIPELINE-001`'s own evidence says the module "is referenced by no process entry point", framed there as a rollback property. The runtime is assembled and testable; it is not reachable in a running system. Found by `DEMO-STACK-001`. |
+| **F1** — the agent runtime is an orphan, 1,216 lines no code path reaches | **Partly fixed — this row was too generous, corrected 2026-08-14.** `AGENT-PIPELINE-001` built the composition and proved it: a job traverses queue → claim → runtime → persisted evidence, and claim exclusivity holds under a real two-worker race. But `build_agent_cycle` still has **no caller outside tests**. `apps/worker/.../main.py` constructs `WorkerSupervisor(settings)` with no cycle injected, so the deployed worker process cannot run the pipeline — setting `WORKER_AGENT_QUEUE_ENABLED` yields `AGENT_RUNTIME_UNAVAILABLE`, not a running agent. `AGENT-PIPELINE-001`'s own evidence says the module "is referenced by no process entry point", framed there as a rollback property. The runtime is assembled and testable; it is not reachable in a running system. Found by `DEMO-STACK-001`. **Reconfirmed 2026-08-18, byte-identical**: `main.py:19` still reads `effective_supervisor = supervisor or WorkerSupervisor(effective_settings)`, no `agent_cycle=` argument passed, though `WorkerSupervisor.__init__` (`host.py:79`) has accepted one since before 08-14. |
 | **F5** — the staff console has no Shadow surface | **Fixed.** `SHADOW-CONSOLE-001` complete. `agent_drafts` persists the proposal (previously only a character count was kept, so there was literally nothing to review); approve/edit/reject is attributed and single-shot by unique constraint; the `UNKNOWN` reconciliation queue has exactly one exit and it requires a named human; RBAC and IDOR are proven at the repository, not the route. |
-| **F2** — eval corpus at zero for every release-relevant layer | **Still true, with one correction.** The five gated layers total 1,300 required cases — frozen regression 200, normal language 300, adversarial 200, synthetic combinatorial 500, public corpus 100 — and every one of them stands at **0**. The 32 `SEED` cases count toward none of them. But 669 synthetic combinatorial cases *are* built, priced by the deterministic engine and content-hashed at `specs/evals/synthetic-combinatorial-v1.json`; the manifest inventory reads `0` only because publishing the count was reverted during the hash-pin freeze. See §5. |
-| **F3** — the model has never been invoked | **Still true.** `evidence/agent-shadow/local-synthetic-suite-v2.json`: `status: SKIP`, `runtime_path: DETERMINISTIC_DEGRADED`, `primary_provider_evidence: false`, `release_effect: NONE`, five declared release blockers. |
-| **F4** — test effort allocated away from the product | **Still true.** `packages/evals` is 5,911 source + 8,019 test lines, larger than the domain and data layers combined. |
-| **F6** — no channel code exists | **Partly fixed.** `CHANNEL-ENVELOPE-001` and `CONSENT-STOP-001` are complete: the canonical inbound envelope, outbound receipt, `webhook_events`, `channel_send_receipts`, consent and suppression are built and tested. No **adapter** exists — no provider is on the other end. |
+| **F2** — eval corpus at zero for every release-relevant layer | **Still true, with one correction.** The five gated layers total 1,300 required cases — frozen regression 200, normal language 300, adversarial 200, synthetic combinatorial 500, public corpus 100 — and every one of them stands at **0**. The 32 `SEED` cases count toward none of them. But 669 synthetic combinatorial cases *are* built, priced by the deterministic engine and content-hashed at `specs/evals/synthetic-combinatorial-v1.json`; the manifest inventory reads `0` only because publishing the count was reverted during the hash-pin freeze. Unchanged as of 08-18 — see §5. |
+| **F3** — the model has never been invoked | **Still true, unchanged.** `evidence/agent-shadow/local-synthetic-suite-v2.json`: `status: SKIP`, `runtime_path: DETERMINISTIC_DEGRADED`, `primary_provider_evidence: false`, `release_effect: NONE`, five declared release blockers. |
+| **F4** — test effort allocated away from the product | **Still true, and the gap widened.** `packages/evals` was 5,911/8,019 (source/test) on 08-14; it is unchanged at 5,911/8,958 on 08-18 (the test-line delta is unrelated churn, not new eval surface) — still larger than `packages/domain` + `packages/db` combined were on 08-14, and both of those grew too (see §2.1). |
+| **F6** — no channel code exists | **Partly fixed, unchanged since 08-14.** `CHANNEL-ENVELOPE-001` and `CONSENT-STOP-001` are complete. No **adapter** exists — no provider is on the other end. `CHANNEL-TELEGRAM-001` remains the cheapest unblock (§5.4); `DEC-005` is now `RESOLVED` (Telegram for Shadow, Zalo OA for production) but the bot token and the Zalo verification artifact each still do not exist. |
 
 The old document closed with "re-run this assessment after `AGENT-002`, not before." That was wrong
 in one direction: the intermediate states did not change the verdict, but measuring against the
 specification rather than against the previous document did.
 
+## 1a. Corrections to the 2026-08-14 assessment
+
+| Old finding | Status |
+|---|---|
+| **G2** — no order created by this system can ever be completed | **False for the exact-payment/self-collection case, `SETTLEMENT-001`.** See Verdict above and the rewritten §3 G2 below. |
+| G1, quote half — the pricing/promotion/delivery/SLA engines are reachable only from test harnesses | **False.** `POST /internal/v1/stores/{store_id}/quotes` now exists (`QUOTE-COMMAND-001`, already noted as reachable in the 08-14 verdict but not yet reflected in the §3 G1 write-up, which still described the old repository-level fact as current). Corrected in §3 G1 below. |
+| G1, Tool Facade half — `apps/public-agent-tools/.../facade.py:131` wires `UnavailableAgentToolBackend` unconditionally | **Unchanged in effect, changed in cause.** `TOOL-BACKEND-001` (complete) built a real backend; `get_agent_facade_service()` (now `facade.py:152-153`, the module gained lines) still constructs `UnavailableAgentToolBackend()`. The reachable behavior is identical; the reason is now "gated by design" rather than "not built." |
+| "8 open decisions" (08-14 §2.1 headline count) | **Was already imprecise on 08-14** — the registry held 12 entries then (DEC-001–006, 008–012, minus gaps), of which DEC-007 and DEC-008 were `RESOLVED`; "8 open" undercounted by not naming which were which. As of 08-18 the registry holds 14 entries, 11 `RESOLVED`, 3 `OPEN` (`DEC-006`, `DEC-013`, `DEC-014`) — see Verdict and §2.1. |
+| §4.12 Finance, 0/7 | **Still 0/7 by direct fulfillment.** `order_settlements` (new) is a fifth *narrow stand-in* (§2.2), not a sixth direct table — it does not support partial/mixed payment, which §4.12 requires of `payments`/`payment_allocations` and which `DEC-010` deliberately declined to build. |
+| §5.2's `REMEDY-001` (gated on `DEC-004`), `CATALOG-PRICEBOOK-001` (gated on `DEC-001`), `FULFILMENT-001` (gated on `DEC-003`) | **All three decisions are now `RESOLVED`.** None of the three items has been enqueued. See §5.2. |
+
 ## 2. What measurement shows now
 
 ### 2.1 Size
 
-| Area | Source LOC | Test LOC |
-|---|---|---|
-| `packages/domain` | 3,365 | 1,689 |
-| `packages/db` | 6,865 | 4,994 |
-| `packages/contracts` | 2,168 | 864 |
-| `packages/evals` | 5,911 | 8,019 |
-| `packages/policy` | 392 | 297 |
-| `packages/observability` | 640 | 261 |
-| `apps/api` | 2,189 | 909 |
-| `apps/worker` | 3,348 | 2,513 |
-| `apps/public-agent-tools` | 416 | 246 |
-| `apps/web` | 744 (JS/HTML/CSS) | — |
+| Area | Source LOC | Test LOC | Change since 08-14 |
+|---|---|---|---|
+| `packages/domain` | 3,922 | 2,086 | +557 / +397 |
+| `packages/db` | 8,156 | 6,264 | +1,291 / +1,270 |
+| `packages/contracts` | 2,168 | 864 | unchanged |
+| `packages/evals` | 5,911 | 8,958 | +0 / +939 |
+| `packages/policy` | 392 | 297 | unchanged |
+| `packages/observability` | 651 | 261 | +11 / unchanged |
+| `apps/api` | 4,070 | 4,019 | +1,881 / +3,110 |
+| `apps/worker` | 3,348 | 2,908 | unchanged / +395 |
+| `apps/public-agent-tools` | 1,392 | 1,187 | +976 / +941 |
+| `apps/web` | 12,148 (JS/CSS/HTML) | — (browser-verified, not unit-tested) | see note |
 
-23 forward-only migrations, 38 tables, 25 API routes (24 under `/internal/v1`, enumerated from the
-built `app` rather than by grep), 10 agent tool operations, 722 tests passing and 1
-platform-conditional skip. 70 queue items: **35 COMPLETE, 20 PENDING, 15 BLOCKED.** 13 capabilities
-`NOT_AUTHORIZED`. 8 open decisions.
+**Correction to the 08-14 row, not organic growth:** the prior `apps/web` figure of 744 was measured
+incorrectly or by a materially different method. A direct `find apps/web/src apps/web/styles -name
+"*.js" -o -name "*.css" -o -name "*.html" \| xargs wc -l` today returns 12,148, and the console already
+had roughly a dozen screens (`quotes.js`, `today.js`, `orders.js`, `shadow.js`, `manualSend.js`,
+`incidents.js`, `assistant.js`, `orderDetail.js`, `orderRequests.js`, `gaps.js`, `exceptions.js`,
+`staff.js`) before today's rebuild touched any of them further. Treat 12,148 as the first reliable
+measurement of this area, not as 16× growth in four days.
 
-### 2.2 Specification coverage — the headline number
+27 forward-only migrations (`0001`–`0027`), **40 tables** (up from 38 on 08-14; new:
+`retention_class_configurations`, `retention_legal_holds`, `retention_purge_runs`,
+`order_settlements`, `assistant_turns`), **37 routes** under `/internal/v1` (up from 24, enumerated
+from the built `app` object, not by grep — new since 08-14: `POST .../quotes`, `POST
+.../orders/{id}/settlement`, `GET .../settlements/today`, `GET .../pricebook/services`, three
+`.../assistant/turns` routes), 10 agent tool operations (unchanged), **972 passed, 1 skipped**
+(platform-conditional, not evidence-relevant) — re-run fresh today with real PostgreSQL, up from 722
+on 08-14. 77 queue items: **42 COMPLETE, 20 PENDING, 15 BLOCKED** (up from 70/35/20/15 — seven items
+completed, none newly added). 13 capabilities, all `NOT_AUTHORIZED`, unchanged. **14 registered
+decisions, 11 `RESOLVED`, 3 `OPEN`** (`DEC-006`, `DEC-013`, `DEC-014`), plus the unregistrable
+`DEC-HOSTING` — see Verdict.
+
+### 2.2 Specification coverage — the headline number, unchanged
 
 `specs/DOMAIN_DATA_API_SPEC_V1.md` §4 names 63 aggregates across 14 bounded contexts.
 
@@ -88,228 +141,273 @@ platform-conditional skip. 70 queue items: **35 COMPLETE, 20 PENDING, 15 BLOCKED
 | 4.9 Orders | 1/2 | `order_lines` |
 | 4.10 Custody and production | 0/5 | `custody_units`, `custody_events`, `batches`, `batch_operations`, `batch_allocations` |
 | 4.11 Delivery | 0/4 | `delivery_bundles`, `delivery_legs`, `distance_measurements`, `delivery_cost_events` |
-| 4.12 Finance | 0/7 | `charges`, `payments`, `payment_allocations`, `refunds`, `invoice_requests`, `invoices`, `accounts_receivable_entries` |
+| 4.12 Finance | 0/8 | `charges`, `payments`, `payment_allocations`, `refunds`, `invoice_requests`, `invoices`, `b2b_credit_terms`, `accounts_receivable_entries` |
 | 4.13 Incidents, remedies, credits | 0/6 | `incidents`, `incident_events`, `evidence_assets`, `remedies`, `credit_grants`, `credit_ledger_entries` |
-| 4.14 Approval, integration, audit | **9/9** | — |
+| 4.14 Approval, integration, audit | **9/9** | — (verified against the spec's own 9 named aggregates: `approval_requests`/`approval_decisions`, `webhook_events`, `outbox_events`/`delivery_attempts`/`dead_letter_events`, `agent_runs`/`agent_tool_calls`, `audit_events` — unchanged, no new table lands here) |
 
-Counting generously, four more have narrower stand-ins: `staff_users` for `staff_members`,
-`customer_incidents` for a much smaller `incidents`, `order_requests` for the intake draft, and
-`webhook_events` + `channel_send_receipts` for part of `messages`. That is **~18 of 63**.
+**Correction:** 4.12 is renumbered 0/8, not 0/7 — the spec names `b2b_credit_terms` as its own
+sub-heading alongside `accounts_receivable_entries`, which the 08-14 table's missing-list omitted.
+Still 0 either way.
 
-The shape is unambiguous. The governance context is complete; the eight contexts that describe
-running a laundry are empty.
+Counting generously, **five** now have narrower stand-ins (up from four): `staff_users` for
+`staff_members`, `customer_incidents` for a much smaller `incidents`, `order_requests` for the intake
+draft, `webhook_events` + `channel_send_receipts` for part of `messages`, and — new since 08-14 —
+`order_settlements` for a slice of `payments`/`payment_allocations`, covering only exact payment in
+full at handover and explicitly not the partial/mixed case the spec asks for. That is **~19 of 63**.
+`assistant_turns` and the three `retention_*` tables are deliberately **not** counted anywhere in this
+table — they are real, tested, and outside the 63-aggregate list entirely (staff-internal memory and
+data-lifecycle control, not a business-domain aggregate).
+
+The shape is unchanged from 08-14. The governance context is complete (4.14, 9/9); the eight contexts
+that describe running a laundry are still functionally empty, net of the stand-ins above.
 
 ## 3. Findings
 
-### G1 — The deterministic authority has no production write path
+### G1 — The deterministic authority now has a partial production write path
 
-`QuoteRepository.create_revision` (`packages/db/src/nha_trang_laundry_db/quotes.py:65`) is called
-from `packages/evals/src/.../synthetic_quote_lifecycle.py`, `synthetic_incidents.py` and three test
-modules. **It is called from no application.** `apps/api` imports `QuoteRepository` and uses exactly
-one method: `list_for_store` (`apps/api/src/nha_trang_laundry_api/operations.py:337`).
+**Corrected from 08-14.** `QuoteRepository.create_revision` is now called in production:
+`POST /internal/v1/stores/{store_id}/quotes` exists and is one of the 37 enumerated routes
+(`QUOTE-COMMAND-001`, complete). The pricing, promotion, delivery and SLA engines are reachable by a
+staff member through the console's Báo giá screen, not only from test harnesses. This half of the
+08-14 finding is retired.
 
-The route table agrees: `GET /internal/v1/stores/{store_id}/quotes` exists and there is no `POST`
-counterpart. Staff can list quotes and create an order *from* an accepted quote id; nothing in the
-system produces that quote. The pricing engine, the promotion engine, the delivery engine and the SLA
-engine — the four things this project is actually for — are reachable only from test harnesses.
-
-The repository-level fact is the stronger one and does not depend on route enumeration: the write
-method has no caller in any application.
-
-The Tool Facade is the other half of the same fact.
-`apps/public-agent-tools/src/.../facade.py:131` is the sole production wiring:
+The Tool Facade half is **not** retired, but the reason changed. `get_agent_facade_service()`
+(`apps/public-agent-tools/src/nha_trang_laundry_agent_tools/facade.py:152-153`) is the sole production
+wiring:
 
 ```python
-return AgentFacadeService(UnavailableAgentToolBackend())
+def get_agent_facade_service() -> AgentFacadeService:
+    return AgentFacadeService(UnavailableAgentToolBackend())
 ```
 
-All ten operations return `TOOL_UNAVAILABLE`. The only implemented backend, `_BoundFactBackend`,
-lives in `packages/evals` and serves exactly one operation.
+All ten operations still return `TOOL_UNAVAILABLE` in production. But `TOOL-BACKEND-001` (complete)
+built a real `AgentToolBackend` implementation over the deterministic domain — the queue item's own
+acceptance language required it to default to unavailable, behind the existing capability flags. So
+where 08-14 measured "the only implemented backend lives in `packages/evals` and serves exactly one
+operation," 08-18 measures "a real backend exists, and is deliberately not wired as the default." This
+is fail-closed and correct; it is also still the reason the agent path cannot serve a customer even
+with every decision resolved, because flipping it requires a capability authorization this document
+does not have the standing to grant.
 
-This is fail-closed and therefore safe. It is also the reason the system cannot serve a customer even
-with every decision resolved and every credential in hand.
+### G2 — No order created by this system can reach `COMPLETED` **except by exact payment and self-collection, which now works**
 
-### G2 — No order created by this system can ever be completed
+**Rewritten, not struck through — the finding narrowed rather than disappeared.**
 
-This is provable from three files, and it is the clearest single measure of the distance to a real
-deploy.
+**The completion rule, unchanged.** `transition_commercial` (`packages/domain/src/.../orders.py:106-114`)
+requires `ACTIVE`, `production = RELEASED`, `required_delivery_legs_succeeded OR
+self_collection_recorded`, and `balance IN {PAID, ON_ACCOUNT}`. Migration
+`0007_operations_control.sql:245-250` repeats all four as a table CHECK.
 
-**The completion rule.** Both the domain engine and the database enforce the same four conditions for
-`COMPLETED`. `transition_commercial` in `packages/domain/src/.../orders.py:106-114` requires
-`ACTIVE`, `production = RELEASED`, `required_delivery_legs_succeeded OR self_collection_recorded`,
-and `balance IN {PAID, ON_ACCOUNT}`. Migration `0007_operations_control.sql:245-250` repeats all four
-as a table CHECK. Money and custody must be proven before an order is finished — exactly right.
+**The new write path.** `SettlementRepository` (`packages/db/src/nha_trang_laundry_db/settlement.py`,
+backing migration `0025_order_settlement.sql`, new table `order_settlements`) supplies the missing
+proof for exactly the case the domain permits without a delivery leg:
 
-**The insert.** `OrderRepository.create` (`packages/db/src/.../orders.py:143-153`) hardcodes
-`balance_status = 'UNPAID'` and omits both fulfilment booleans, which take their `DEFAULT FALSE`.
-`CreateOrderCommand` has no field for any of the three, so a caller cannot supply them.
+```sql
+UPDATE orders
+SET balance_status = 'PAID', self_collection_recorded = TRUE, ...
+WHERE id = %s AND row_version = %s AND balance_status = 'UNPAID'
+```
 
-**The update.** The only `UPDATE orders` statement in the codebase (same file, line 294) sets
-`commercial_status`, `intake_status`, `production_status`, `production_resume_status`,
-`production_accepted_at`, `closed_at` and `row_version`. **It touches none of the three.** Nothing
-else in the repository writes them.
+committed atomically through `commit_material_change` (`settlement.py:202`) alongside the settlement
+row, its domain event, audit entry and outbox event. The `WHERE ... balance_status = 'UNPAID'` clause
+makes the write idempotent under the row-version compare-and-swap: recording the same settlement twice
+produces one row, not two.
+`packages/db/tests/test_settlement.py::test_an_order_reaches_completed_after_settlement` walks an order
+from creation through every intermediate transition to `COMPLETED` and is the empirical proof this
+finding relies on, not the SQL alone.
 
-Every order is therefore born `UNPAID` with both fulfilment flags false, and no code path in the
-system can change that. It can move through intake and production and then stops: the domain raises
-`INVALID_STATE_TRANSITION: fulfillment is incomplete`, and if that were bypassed the CHECK constraint
-would reject the row.
-
-This is fail-closed and correct — the system refuses to call an order finished when it has no
-evidence the customer paid or collected. But it means the order lifecycle is a three-quarters arc.
-The missing quarter is not a feature; it is the settlement and custody commands that would supply the
-proof the guard is asking for.
-
-Consistent with that, `PaymentStatus` and `DeliveryLegStatus` exist in the canonical enum registry
-(`packages/domain/src/.../catalog.py`) and are persisted nowhere. `delivery_attempts` is the outbox's
-message-delivery ledger, unrelated to a motorbike. `incident_open` is likewise insert-only.
+**What is still true, deliberately.** Every settlement shape other than exact-payment-in-full at
+handover — partial payment, deposits, instalments, `ON_ACCOUNT` — is `DEC-010`, and `DEC-010` is now
+`RESOLVED` as **deliberately deferred**: those shapes stay `NOT_SUPPORTED` by decision, not by a gap
+nobody noticed. There is no B2B credit relationship operating yet, so nothing today is blocked by this.
+`PaymentStatus` and `DeliveryLegStatus` still exist in the canonical enum registry
+(`packages/domain/src/.../catalog.py`) and are still persisted nowhere — `order_settlements` proves
+one binary fact (paid in full, collected in person), not a payment ledger. `delivery_attempts` remains
+the outbox's message-delivery ledger, unrelated to a motorbike; a delivered-leg-completes-order path
+still does not exist and is gated by `DEC-003`'s further engineering (`FULFILMENT-001`, unenqueued —
+see §5.2). `incident_open` is likewise still insert-only.
 
 ### G3 — There is no customer, no address, no shop, no price list
 
-`store_id UUID NOT NULL` appears eight times across six migrations with **no foreign key anywhere and
-no `stores` table**. A store is an unvalidated UUID. There is no shop record, no opening hours, no
-closure calendar.
+**Unchanged since 08-14** — verified again today: no `stores`, `parties`, `pricebooks`, or
+`organizations` table exists in any of the 27 migrations (`grep -l "CREATE TABLE stores\|CREATE TABLE
+parties\|CREATE TABLE pricebooks\|CREATE TABLE organizations" packages/db/migrations/*.sql` returns
+nothing). `store_id UUID NOT NULL` is still an unvalidated UUID with no foreign key anywhere.
+`bound_contact_id` still references nothing; `contact_channel_bindings` still holds no name, phone, or
+order history. The delivery engine still takes `verified_distance_m`, an integer a staff member
+supplies.
 
-`bound_contact_id` is a UUID referencing nothing. `contact_channel_bindings` holds
-`(provider, provider_user_ref)` and a verification state — no name, no phone, no order history.
-Grepping the entire source tree for an address, street, ward or district field returns nothing. The
-delivery engine takes `verified_distance_m`, an integer a staff member supplies.
+The two readings from 08-14 still both apply — correct-and-deliberate for shadow-phase design,
+unbuilt-not-descoped against the specification — and the decision about which reading stands is still
+absent from `context/DECISION_REGISTRY.yaml`. This is worth naming precisely: **it is not currently
+any of DEC-001 through DEC-014.** If a rider is ever dispatched against a `stores`/`parties`/`addresses`
+layer, that is a new, currently-unregistered decision — not something today's ratification round
+touched.
 
-Two readings, and the difference matters:
+**Sharper than 08-14 stated it: the system can record zero customers from any source today, and
+`DEC-013` is the reason, not a UI gap.** `CreateOrderCommand.bound_contact_id`
+(`packages/db/src/nha_trang_laundry_db/orders.py:43`) is required and non-nullable. The only writer of
+`contact_channel_bindings` is `ChannelBindingRepository.resolve_or_create`
+(`packages/db/src/nha_trang_laundry_db/channel.py:74`), keyed on a provider identity, and the
+`provider` CHECK constraint (migration `0020`) admits only `ZALO_OA`, `TELEGRAM_SANDBOX`,
+`FACEBOOK_MESSENGER` — none of which is connected (verified §5.4: `CHANNEL-TELEGRAM-001` still needs a
+bot token). So a customer who messages the shop has no channel to message it through, and a walk-in
+customer who never messaged at all has no path to a binding regardless — which is exactly what
+`DEC-013` (open, `docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md`) is about. Read together with G1's
+production-write-path finding, the order pipeline is reachable end to end (create → quote → settle →
+`COMPLETED`) but has no legitimate way to acquire the `bound_contact_id` it requires as its first
+argument, from either a connected channel or a counter walk-in. This raises `DEC-013` from "a console
+UX question" to the binding constraint on whether this system can serve its first real customer at
+all, independent of every gate and every other open decision.
 
-- **As shadow-phase design** this is correct and deliberate. Holding opaque bindings and content
-  hashes rather than personal data is why `CONSENT-STOP-001` and the redaction layer are clean, and
-  it is consistent with the prohibition on raw PII fixtures.
-- **Against the specification** it is unbuilt, not descoped. §4.3 names `parties`,
-  `customer_accounts`, `contact_points`, `addresses`; §4.11 names `distance_measurements`.
+### G4 — The price list is still not data
 
-Someone has to decide which reading stands before a rider is dispatched anywhere. That decision is
-not in `context/DECISION_REGISTRY.yaml`.
+**Unchanged since 08-14.** `import_pricebook_csv` still parses an owner-confirmed CSV into an
+in-process `CanonicalPricebook`. No `pricebooks`, `pricebook_versions`, `price_rules` or `price_tiers`
+table exists (confirmed in the same grep as G3). Changing a price is still a file change and a
+redeploy. `quote_revisions` still stores an immutable JCS-SHA256 snapshot hash — the integrity half of
+§4.6 remains genuinely solved; the publication half does not.
 
-### G4 — The price list is not data
+Newly relevant: `DEC-001` (weight precision and rounding, which the 08-14 doc's §5.2 identified as
+touching every stored price) is now `RESOLVED` (no rounding, exact scale reading). That removes the
+decision-gate on `CATALOG-PRICEBOOK-001` — it does not build the table. See §5.2.
 
-`import_pricebook_csv` parses an owner-confirmed CSV into an in-process `CanonicalPricebook`. No
-`pricebooks`, `pricebook_versions`, `price_rules` or `price_tiers` table exists, and no repository or
-route references one. Changing a price is a file change and a redeploy, not an operation.
+### G5 — Items marked `BLOCKED` by conditions their own text says have lifted, plus one newly stale field
 
-`quote_revisions` does store an immutable JCS-SHA256 snapshot hash, so a quote is reproducible — the
-integrity half of §4.6 is genuinely solved. The publication half is not: there is no published price
-version an auditor could point at, and §5.1 of the spec (price resolution) has no runtime.
+The queue-staleness pattern from 08-14 persists, and today's decision round added a new instance of it
+— not in `blocking_condition` prose this time, but in the `blocked_by_decisions` list itself.
 
-### G5 — Three items are marked `BLOCKED` by conditions their own text says have lifted
-
-The queue is stale in a way that hides buildable engineering.
-
-| Item | Its own `blocking_condition` now says |
+| Item | Its own text now says |
 |---|---|
-| `EVAL-SYNTHETIC-COMBINATORIAL-001` | *"the sequencing decision is made and the conflict is resolved for all four items… `manifest_inventory_updated` can now be satisfied truthfully… Reverting the change was the correct call at the time; **it no longer is**."* The 669 cases are built, frozen and re-priced by `verify_contracts.py` on every run. |
-| `SIGNER-REGISTRY-001` | *"the change-freeze half is lifted… the parked verifier on `spike/signer-registry-v2-verifier` can land."* Only the owner key ceremony remains, and that gates signing, not landing the verifier. |
-| `MODEL-ROUTE-001` | The hash-pin blocker is lifted; only ADR-0008 acceptance remains — and that decides whether the item exists at all. |
+| `EVAL-SYNTHETIC-COMBINATORIAL-001` | Unchanged since 08-14 — still `BLOCKED`, still says the sequencing conflict is resolved and the 500 cases are built, frozen, and re-priced by `verify_contracts.py` on every run (confirmed again today: `verify_contracts.py` output still reports 669 synthetic combinatorial cases). |
+| `SIGNER-REGISTRY-001` | Unchanged since 08-14 — still `BLOCKED`, `blocking_condition` text re-read verbatim today, still says only the owner key ceremony remains. |
+| `MODEL-ROUTE-001` | Unchanged since 08-14 — still `BLOCKED`, `blocking_condition` text re-read verbatim today, still says only ADR-0008 acceptance remains. |
+| `MULTIMODAL-PERCEPTION-001` — **new finding, 08-18** | `blocked_by_decisions: [DEC-009, DEC-006, DEC-008]` in `delivery/WORK_QUEUE.yaml` (line 1642-1645). **Two of the three are now `RESOLVED`** (`DEC-009` — staff-supplied media only; `DEC-008` — retention schedule). Only `DEC-006` is still genuinely `OPEN`. This field is machine truth and this document does not edit it (see header), but a reader relying on it without cross-checking the registry will overcount this item's blockers by two. |
 
-`EVAL-SYNTHETIC-COMBINATORIAL-001` matters most: it is 500 of the 1,300 required eval cases, it
-blocks `EVAL-CORPUS-001`, and `EVAL-CORPUS-001` blocks `AGENT-002`, which carries all G1 agent
-evidence. This is a real critical-path item currently invisible to the controller.
-
-`docs/STATUS.md` line 21 also still reads "the runtime is not yet wired into the worker —
-`AGENT-PIPELINE-001`", and line 43 says "None is buildable… 21 pending items". Both predate this
-week's completions.
+`EVAL-SYNTHETIC-COMBINATORIAL-001` still matters most for the same reason as 08-14: 500 of 1,300
+required eval cases, blocking `EVAL-CORPUS-001`, which blocks `AGENT-002`, which carries all G1 agent
+evidence.
 
 ## 4. Distance by layer
 
-Percentages are engineering judgement, not measurement. The 2026-08-12 column is shown to make the
-movement visible — and to show where the earlier number was measuring the wrong thing.
+Percentages are engineering judgement, not measurement. Columns are shown side by side to make
+movement visible.
 
-| Layer | 08-12 | 08-14 | Why it moved, or why it did not |
-|---|---|---|---|
-| Deterministic engines (pricing, promotion, delivery, SLA) | ~90% | ~90% | Unchanged and genuinely strong. |
-| **Domain persistence and command surface** | *(not separated)* | **~30%** | The row that was missing. 14/63 aggregates. The quote write path exists as of 2026-08-14 (`QUOTE-COMMAND-001`), and is the first command in the system that produces a monetary artefact; settlement is next. |
-| Control plane / internal API | ~75% | ~80% | Store scoping and the Shadow surface landed; still no create-quote, payment or fulfilment command. |
-| Agent product path | ~25% | ~45% | Pipeline wired end to end; facade backend still `Unavailable`; no channel adapter. |
-| Evidence base | ~2% | ~5% | 669 combinatorial cases exist unpublished; still 0 provider runs, and all five gated layers at 0/1,300. |
-| Production infrastructure | ~15% | ~15% | No host, no monitoring, no backup, no restore drill. All behind `DECISION-HOSTING-001`. |
-| Business readiness | ~10% | ~10% | 8 decisions open, 2 more than in August; shop baseline not started. |
+| Layer | 08-12 | 08-14 | 08-18 | Why it moved, or why it did not |
+|---|---|---|---|---|
+| Deterministic engines (pricing, promotion, delivery, SLA) | ~90% | ~90% | ~90% | Unchanged and genuinely strong. |
+| Domain persistence and command surface | *(n/a)* | ~30% | **~40%** | The quote write path (08-14) plus the settlement write path (08-18) are the first two commands that produce a durable monetary/fulfilment artefact. Still 14/63 direct aggregates — the movement is in *reachability* of what exists, not in aggregate count. |
+| Control plane / internal API | ~75% | ~80% | **~85%** | 37 routes (up from 24); create-quote and settlement are wired; console rebuilt around the owner's actual morning workflow. Still no payment-ledger, custody, or delivery-leg command. |
+| Agent product path | ~25% | ~45% | ~45% | Unchanged — pipeline still not reachable from the deployed worker process (G1), facade backend still `Unavailable` by design, no channel adapter landed. |
+| Evidence base | ~2% | ~5% | ~5% | Unchanged — 669 combinatorial cases still unpublished, still 0 provider runs, all five gated layers still 0/1,300. |
+| Production infrastructure | ~15% | ~15% | ~15% | Unchanged — no host, no monitoring, no backup, no restore drill. All still behind `DEC-HOSTING`, for which an admissibility *framework* now exists (`docs/DECISION_REQUEST_HOSTING_2026-08.md`) but zero figures are verified. |
+| Business readiness | ~10% | ~10% | **~35%** | The largest single-day movement in this document's history. 11 of 14 decisions resolved today, including all four decisions the 08-14 assessment's §5.2 identified as the gate on `REMEDY-001`, `CATALOG-PRICEBOOK-001`, and `FULFILMENT-001`. This is a decisions-cleared number, not a shipped-feature number — see the caveat in §5. |
 
-**To `G1_INTERNAL_SHADOW_READY`: ~30%. To `G2_PUBLIC_ASSISTED_ENTRY`: ~20%.**
-
-The G1 number moved; G2 did not, because G3 and G4 sit on the G2 path and were not previously
-counted at all.
+**To `G1_INTERNAL_SHADOW_READY`: ~35%** (up from ~30%, driven by control-plane and business-readiness
+movement; G1's own evidence gates — PITR, incident/kill-switch drills, `SHOP-INSTRUMENT-001`,
+`EVAL-CORPUS-001` — are all still at their 08-14 state). **To `G2_PUBLIC_ASSISTED_ENTRY`: ~22%** (up
+slightly from ~20% — G3 and G4, which sit on the G2 path, are both unchanged).
 
 ## 5. What "a full-featured core for real-world deploy" requires
 
 Grouped by what actually gates each one. Nothing below is enqueued — proposing work is analysis,
-adding it to `delivery/WORK_QUEUE.yaml` is a change to machine truth and needs the owner's word.
+adding it to `delivery/WORK_QUEUE.yaml` is a change to machine truth and needs the owner's word. This
+section changed more than any other since 08-14, because decisions closed today remove gates from
+three of the six §5.2 rows without building anything.
 
-### 5.1 Buildable now, no decision required (~5–7 weeks)
+### 5.1 Buildable now, no decision required
 
-| Proposed item | What it is | Why it is safe to build now |
-|---|---|---|
-| `QUOTE-COMMAND-001` | The create-quote command path: route → domain engine → `quote_revisions` with its snapshot hash. Refuses on any unresolved policy rather than guessing. | The engine, the snapshot table and the atomic-commit primitive all exist and are tested. This is wiring, and it is the single highest-value missing piece. |
-| `EVAL-PUBLISH-001` | Publish the 669 combinatorial cases into `eval-manifest-v1.yaml` and re-derive the evidence bundle, retaining the superseded one. | `EVIDENCE-REPIN-001` established exactly this procedure. Unblocks 500 of 1,300 cases and clears one critical-path node. |
-| `SIGNER-VERIFIER-LAND-001` | Land the parked v2 verifier from `spike/signer-registry-v2-verifier`, split from the key ceremony. | Verifier code and key ceremony are separable; only the ceremony is the owner's. |
-| `TOOL-BACKEND-001` | A real `AgentToolBackend` over the deterministic domain, behind the existing capability flags, defaulting to unavailable. | The nine validation gates and the contract are complete; the backend is the missing implementation, not a new boundary. |
-
-### 5.2 Buildable once one decision lands
-
-| Proposed item | Gate |
+| Proposed item | Status since 08-14 |
 |---|---|
-| `FULFILMENT-001` — `delivery_bundles`, `delivery_legs`, `distance_measurements`, and the write path that flips `required_delivery_legs_succeeded` | `DEC-003` (delivery pricing beyond 6 km, one-leg policy) |
-| `FINANCE-001` — `charges`, `payments`, `payment_allocations`, and a `balance_status` transition | An owner decision that does not yet exist. Partial payment, overpayment and `ON_ACCOUNT` are business policy, not engineering. **Recommend opening `DEC-010`.** |
-| `CUSTODY-001` — `custody_units`, `custody_events`, `batches` (item-count handoff, the thing that resolves "you lost my shirt") | `SHOP-INSTRUMENT-001` produces the checklist this models |
-| `REMEDY-001` — `remedies`, `credit_grants`, `credit_ledger_entries` | `DEC-004` (rewash, loss, damage, compensation) |
-| `CATALOG-PRICEBOOK-001` — persist and version the price list; `stores`, `organizations` | `DEC-001` (weight precision and rounding) touches every stored price |
-| `PARTY-001` — decide whether a CRM exists at all, then `parties` / `contact_points` / `addresses` | Not currently a registered decision. **Recommend opening `DEC-011`.** |
+| `QUOTE-COMMAND-001` | **Built.** Complete in the queue, verified as the new `POST .../quotes` route. |
+| `EVAL-PUBLISH-001` | Still proposed, still not enqueued. Unblocks 500 of 1,300 cases in one change — the fastest remaining move on the evidence base. |
+| `SIGNER-VERIFIER-LAND-001` | Still proposed, still not enqueued. |
+| `TOOL-BACKEND-001` | **Built**, and its own acceptance criteria intentionally kept it wired to `Unavailable` — see G1. |
 
-### 5.3 Calendar-bound, no code shortens them
+### 5.2 Buildable once one decision lands — three of six are now decision-clear
 
-- `SHOP-INSTRUMENT-001` — 4–6 weeks of real measurement. Without it `SHADOW-001` has no denominator.
-- `CHANNEL-ZALO-APPLY-001` — 2–8 weeks of external OA verification.
-- `CORPUS-CONSENT-001` — lawful basis for using message history; gates 300 eval cases.
-- `PROVIDER-ACCESS-001` + `DEC-006` — days once decided; until then the evidence base stays at zero.
-- `DECISION-HOSTING-001` — gates deploy target, monitoring, backup, restore drill, SLO verification.
+| Proposed item | Gate as of 08-14 | Gate as of 08-18 |
+|---|---|---|
+| `FULFILMENT-001` — `delivery_bundles`, `delivery_legs`, `distance_measurements`, the write path that flips `required_delivery_legs_succeeded` | `DEC-003` | **`DEC-003` is `RESOLVED`** (staff-negotiated >6km ratified as policy). Decision-clear; still not enqueued. |
+| `FINANCE-001` — `charges`, `payments`, `payment_allocations`, a real `balance_status` transition beyond exact payment | recommended opening `DEC-010` | **`DEC-010` is `RESOLVED`** — and resolved as *deliberately deferred*. This item is now explicitly **not** decision-clear in the direction that would build it; the decision says wait, not proceed. `SETTLEMENT-001` already covers the case that mattered before a B2B credit relationship exists. |
+| `CUSTODY-001` — `custody_units`, `custody_events`, `batches` | `SHOP-INSTRUMENT-001` | Unchanged — still gated by the 4–6 week physical measurement, not yet started. |
+| `REMEDY-001` — `remedies`, `credit_grants`, `credit_ledger_entries` | `DEC-004` | **`DEC-004` is `RESOLVED`** (7-day rewash window, 5× cleaning-fee compensation cap, 100,000đ staff-approval ceiling; loss policy as distinct from damage explicitly still unresolved). Decision-clear for the damage/rewash/compensation case; still not enqueued; the loss-policy carve-out means `REMEDY-001` as originally scoped would need to explicitly exclude loss or the decision extended first. |
+| `CATALOG-PRICEBOOK-001` — persist and version the price list; `stores`, `organizations` | `DEC-001` | **`DEC-001` is `RESOLVED`** (no rounding). Decision-clear; still not enqueued. |
+| `PARTY-001` — decide whether a CRM exists at all | recommended opening `DEC-011` | `DEC-011` was in fact opened and resolved — **but for a different question** (staff identity provider, not customer CRM). `PARTY-001`'s actual gate — whether a customer-record layer exists at all — remains genuinely unregistered. Do not read `DEC-011`'s resolution as touching this row. |
 
-### 5.4 Cheapest unblocking action available today
+**The caveat this section exists to state plainly:** three items are now buildable-once-decided in the
+purest sense — the decision text exists, is signed, and names no missing fact. None of the three has
+been enqueued. Business-readiness's jump to ~35% in §4 reflects decisions cleared, not code shipped;
+do not read it as schedule compression until these are actually queue items with task packets.
 
-`CHANNEL-TELEGRAM-001` needs a bot token and a reachable sandbox endpoint. Its contract is complete
-and tested. A token from BotFather costs minutes and proves the full inbound → envelope → runtime →
-draft → human approval → outbound → receipt path against a real provider, months before Zalo
-verification returns. It is the only way to retire the "no provider has ever been on the other end"
-class of risk early.
+### 5.3 Calendar-bound, no code shortens them — unchanged since 08-14
+
+- `SHOP-INSTRUMENT-001` — 4–6 weeks of real measurement, not started. Without it `SHADOW-001` has no
+  denominator. Its measurement templates (`templates/delivery-cost-log.csv`,
+  `templates/capacity-cycle-log.csv`) exist and are ready; `templates/machine-master.csv` is already
+  populated with the shop's four machines.
+- `CHANNEL-ZALO-APPLY-001` — 2–8 weeks of external OA verification, not started. `DEC-005` is now
+  `RESOLVED` (Telegram-Shadow, Zalo-OA-production), which sequences this correctly but does not start
+  the clock — that needs the owner's own Zalo Business account.
+- `CORPUS-CONSENT-001` — lawful basis for using message history; gates 300 eval cases. Unchanged.
+- `PROVIDER-ACCESS-001` + `DEC-006` — `DEC-006` now has a recorded stance
+  (`PROCEED_TOWARD_VERIFICATION`) but is still registry `OPEN`; the evidence base stays at zero until
+  an actual dedicated credential and legal check land.
+- `DEC-HOSTING` — gates deploy target, monitoring, backup, restore drill, SLO verification. An
+  admissibility framework now exists (§5.4 below is unaffected; see the Verdict) but every commercial
+  figure is `UNVERIFIED`.
+
+### 5.4 Cheapest unblocking action available today — unchanged
+
+`CHANNEL-TELEGRAM-001` still needs only a bot token and a reachable sandbox endpoint. Its contract is
+complete and tested. `DEC-005`'s resolution today makes this the *sequenced first step* of the official
+channel decision rather than a standalone sandbox exercise — proving the full inbound → envelope →
+runtime → draft → human approval → outbound → receipt path against a real provider now has a decided
+purpose, not just a nice-to-have.
 
 ## 6. Honest timeline
 
-| Milestone | Estimate | Binding constraint |
-|---|---|---|
-| Domain command surface usable by staff (§5.1) | 5–7 weeks | engineering only |
-| `G1_INTERNAL_SHADOW_READY` | 5–7 months | `SHOP-INSTRUMENT-001` + `EVAL-CORPUS-001` + provider access, partly parallel |
-| `G2_PUBLIC_ASSISTED_ENTRY` | 9–13 months | Zalo verification, public policy bundle, §5.2 in full |
+| Milestone | 08-14 estimate | 08-18 estimate | Why |
+|---|---|---|---|
+| Domain command surface usable by staff (§5.1) | 5–7 weeks | **Substantially delivered** | `QUOTE-COMMAND-001` and `SETTLEMENT-001` both landed; remaining §5.1 items (`EVAL-PUBLISH-001`, `SIGNER-VERIFIER-LAND-001`) are evidence/release plumbing, not staff-facing command surface. |
+| `G1_INTERNAL_SHADOW_READY` | 5–7 months | **5–7 months, unchanged** | The binding constraints — `SHOP-INSTRUMENT-001`, `EVAL-CORPUS-001`, provider access — are all calendar- or evidence-bound and none moved today. Decisions closing does not compress a 4–6 week physical measurement or a 0/1,300 eval corpus. |
+| `G2_PUBLIC_ASSISTED_ENTRY` | 9–13 months | **9–13 months, unchanged** | Same reasoning — Zalo verification (2–8 weeks, not started), the public policy bundle, and §5.2's now-decision-clear-but-unbuilt items all still gate on calendar time or enqueued engineering, neither of which today's session changed. |
 
-The 2026-08-12 figure of 20–26 weeks to G2 assumed the missing pieces were the channel and the
-corpus. It did not count 49 absent aggregates. **9–13 months is the defensible number**, and most of
-the added time is §5.2 work that no external party gates — it gates on decisions the owner can make
-in an afternoon.
+The honest statement this cycle is that **a large, real amount of decision work happened today and it
+does not show up in the timeline**, because none of the timeline's binding constraints are decisions
+anymore except `DEC-006` and `DEC-HOSTING`. The remaining distance is measurement weeks, verification
+weeks, and engineering that has not been asked for yet.
 
 ## 7. The structural observation, updated
 
-August's observation was that effort had gone into delivery machinery rather than the product. That
-has begun to correct: this week wired the runtime, built the Shadow console, landed store scoping,
-consent and the channel envelope, and made the test suite tell the truth about itself.
+08-14's observation was that the system is a governance layer wrapped around an empty middle, with the
+connective tissue — commands that write a quote, take a payment, record a handover — mostly absent.
+Two of those commands now exist: quote and exact-payment settlement. The observation should narrow to
+match: **the connective tissue for the single most common transaction (walk-in, pay in full, collect
+in person) is built and tested. The connective tissue for every other transaction shape — partial
+payment, delivery legs, custody handoff, remedies — is still absent, and three of those four are now
+explicitly decision-clear rather than decision-blocked.**
 
-The sharper observation now is different. **The system is a governance layer wrapped around an empty
-middle.** Both ends are excellent — the deterministic engines below, the audit/approval/outbox spine
-above — and the connective tissue between them, the commands that write a quote, take a payment,
-record a handover, dispatch a leg, is absent. That tissue is ordinary engineering. It is also, at
-14/63, the majority of the specification.
-
-The right next quarter is §5.1 in full, `DEC-010` and `DEC-011` opened, and one real channel token
-obtained.
+The newer observation is about decision velocity versus engineering velocity. Nine decisions closed in
+one working session; two engineering commands took roughly a week each. That ratio will invert as the
+project moves further from "the owner has an opinion" work and further into "someone has to write and
+test the code" work — §5.2's now-unblocked-but-unbuilt items are exactly that inversion point.
 
 ## 8. What would change this assessment
 
-- `QUOTE-COMMAND-001` complete → the domain authority is reachable for the first time; domain
-  persistence moves ~25% → ~40%.
-- `EVAL-PUBLISH-001` complete → the gated corpus goes 0 → 669 of 1,300 in one change, and the first
-  of the five layer minima is satisfied (669 ≥ 500).
-- First PRIMARY provider eval run recorded → the evidence base leaves zero.
-- `FINANCE-001` and `FULFILMENT-001` complete → an order can be truthfully described as finished.
-- `DECISION-HOSTING-001` resolved → five infrastructure items unblock at once.
+- `EVAL-PUBLISH-001` complete → the gated corpus goes 0 → 669 of 1,300 in one change, and the first of
+  the five layer minima is satisfied (669 ≥ 500). Still the single fastest evidence-base move
+  available.
+- Any of `FULFILMENT-001`, `REMEDY-001`, `CATALOG-PRICEBOOK-001` actually enqueued and built → moves
+  the §2.2 aggregate count for the first time since this document started measuring it, because all
+  three are now decision-clear rather than decision-blocked.
+- `SHOP-INSTRUMENT-001` measurement started → the calendar clock for G1 actually begins; right now it
+  has not, regardless of how many decisions are resolved.
+- `DEC-006` resolved with a verified provider credential → the evidence base leaves zero for the first
+  time.
+- `DEC-HOSTING` resolved with a named, verified candidate → `DEPLOY-TARGET-001` and four other
+  infrastructure items unblock at once.
 
-Re-run after §5.1, not after `AGENT-002`. §5.1 is what the previous re-run condition missed.
+Re-run after §5.1's remaining two items or after any §5.2 item is actually enqueued — not on a fixed
+calendar. Decisions resolving without corresponding queue entries, as happened today, will not move
+this document's numbers again.

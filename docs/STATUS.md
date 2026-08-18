@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-18
 **Authoritative machine status:** [`delivery/CAPABILITY_STATUS.yaml`](../delivery/CAPABILITY_STATUS.yaml)
 **Measured distance to production:** [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)
 then [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md)
@@ -17,8 +17,8 @@ public channel, automated send, autonomous quote, booking, delivery decision, or
 | `FOUNDATION` | Complete locally | workspace, contracts, context/delivery harness, PostgreSQL transaction and configuration primitives |
 | `IDENTITY_CONTROL` | Complete locally | named staff, DB-authoritative RBAC, MFA/session boundaries, audit/outbox, and negative authorization evidence |
 | `DOMAIN_CORE` | Complete locally | canonical registry, exact pricebook import, pricing, promotion/delivery/SLA boundaries, immutable quote snapshots and calculation traces |
-| `OPERATIONS_CONTROL` | In progress | Staff PWA slice, approvals, inbox/outbox, idempotency, audit and operational workflows are built. The command surface is not: no route creates a quote, and no path records payment or collection, so no order can reach `COMPLETED` — `QUOTE-COMMAND-001`, `SETTLEMENT-001` |
-| `AGENT_SHADOW` | In progress | bounded Responses runtime, fixed Tool Facade, short-lived Runner bridge and durable run/tool ledger exist, and `AGENT-PIPELINE-001` wired the runtime into the worker — a job now travels queue to persisted evidence. The Facade's production backend is still `UnavailableAgentToolBackend` (`TOOL-BACKEND-001`). The OpenClaw evidence track is frozen by ADR-0004; `AGENT-002` carries G1 agent evidence and is blocked on `DEC-006` |
+| `OPERATIONS_CONTROL` | In progress | `QUOTE-COMMAND-001` and `SETTLEMENT-001` are both now Complete. `POST /internal/v1/stores/{store_id}/quotes` creates an immutable priced quote revision, and `POST /internal/v1/orders/{order_id}/settlement` records the exact-payment, self-collection case — `packages/db/tests/test_settlement.py::test_an_order_reaches_completed_after_settlement` proves an order reaches `COMPLETED` end to end. **Every other settlement shape (partial payment, deposits, `ON_ACCOUNT` B2B credit) stays `NOT_SUPPORTED` by decision** — `DEC-010`, resolved 2026-08-18 as deliberately deferred, not an oversight. The staff console was rebuilt the same day around a "today" view (`GET /internal/v1/stores/{id}/settlements/today`) and picks services by name rather than typed code |
+| `AGENT_SHADOW` | In progress | bounded Responses runtime, fixed Tool Facade, short-lived Runner bridge and durable run/tool ledger exist, and `AGENT-PIPELINE-001` wired the runtime into the worker — a job now travels queue to persisted evidence. `TOOL-BACKEND-001` (Complete) built a real deterministic backend, but **the production wiring still defaults to `UnavailableAgentToolBackend`** (`apps/public-agent-tools/src/nha_trang_laundry_agent_tools/facade.py:153`, verified 2026-08-18) — by design, gated behind capability flags that are all `NOT_AUTHORIZED`, not a gap. The OpenClaw evidence track is frozen by ADR-0004; `AGENT-002` carries G1 agent evidence and is blocked on `DEC-006`, the one decision that did not resolve in the 2026-08-18 session |
 | `PRODUCTION_HARDENING` | In progress | CI, observability, policy, container, supply-chain, worker hosting, staff workflows, HTTP security, telemetry and private staging are complete. Remaining: the channel envelope, the Shadow console, retention, runbooks, SLO verification, and everything behind the hosting decision |
 | `REAL_SHADOW_READINESS` | Not authorized | `G1_INTERNAL_SHADOW_READY` evidence absent |
 | `PUBLIC_ASSISTED` | Not authorized | G1/G2 and capability-specific evidence absent |
@@ -40,33 +40,49 @@ release decision is driven by evidence and a signed gate manifest, never by this
 
 ## Next controlled task
 
-`DEMO-STACK-001`, selected by the controller. On 2026-08-14 the owner authorized four build items
-that the 2026-08-14 readiness re-measurement identified as buildable without any open decision:
-`DEMO-STACK-001`, `QUOTE-COMMAND-001`, `SETTLEMENT-001` and `TOOL-BACKEND-001`. Before they were
-enqueued the controller selected nothing, and the queue read as fully decision-bound — which was
-true of the items in it and false of the work the specification still requires.
+`RETENTION-001`, selected by `uv run python scripts/run_delivery_loop.py` as of 2026-08-18 —
+verified fresh, not carried forward. `DEC-008` (the retention schedule) resolved the same day and
+was its sole blocker; the control mechanism (`packages/db/src/nha_trang_laundry_db/retention.py`)
+already exists and is tested, so this item is purge targets and schedule publication, not new
+architecture.
 
-`OPERATIONS_CONTROL` returned to `IN_PROGRESS` as a consequence. It had been marked `COMPLETE` while
-no route in the system could create a quote.
+`DEMO-STACK-001`, `QUOTE-COMMAND-001`, `SETTLEMENT-001` and `TOOL-BACKEND-001` — the four items the
+2026-08-14 readiness re-measurement found buildable without any open decision — are all `Complete`.
+`OPERATIONS_CONTROL` returned to `IN_PROGRESS` when that work started (it had been marked `COMPLETE`
+while no route in the system could create a quote) and stays `IN_PROGRESS` today: the settlement
+path only covers exact-payment self-collection, per `DEC-010`'s deliberate deferral above.
 
 ## What is actually holding the customer-facing path
 
-Engineering is not the binding constraint on any *customer-facing* milestone. Six of the ten
-highest-priority externally-gated items need an owner action, and three of those are calendar-bound
-and independent of each other:
+Engineering is not the binding constraint on any *customer-facing* milestone. As of 2026-08-18, nine
+of the ten decisions that used to sit on this list resolved in one session — `DEC-001` through
+`DEC-005`, `DEC-009` through `DEC-012` — leaving three genuinely calendar-bound or external items and
+one real remaining decision:
 
 - `SHOP-INSTRUMENT-001` — 4–6 weeks of real shop measurement. Without it `SHADOW-001` has no
   denominator and G1 cannot be evaluated at all.
-- `CHANNEL-ZALO-APPLY-001` — 2–8 weeks of external OA verification that no code shortens.
-- `PROVIDER-ACCESS-001` / `DEC-006` — days once decided, and until then the model has never been
+- `CHANNEL-ZALO-APPLY-001` — 2–8 weeks of external OA verification that no code shortens. `DEC-005`
+  (resolved) names Telegram for Shadow validation in parallel — a bot token costs minutes and needs
+  no verification, but no token has been created yet.
+- `PROVIDER-ACCESS-001` / `DEC-006` — the one decision left on the AGENT_SHADOW critical path. A
+  stance toward proceeding is recorded (`docs/DECISION_REQUEST_PROVIDER_DATA_2026-08.md`), but real
+  resolution needs a verified OpenAI account setting (`store:false`, Zero Data Retention approval)
+  and a legal check on cross-border customer PII — neither exists yet, so the model has never been
   invoked and the evidence base stays at zero.
 
-One further decision costs minutes and unblocks retention: `DEC-008` (the retention schedule).
-`EVIDENCE-REPIN-001` was the other; the owner chose re-derivation on 2026-08-13 and it is complete,
-so the six items behind the pin no longer wait on it, each retaining its own remaining blocker.
+`DEC-008` (the retention schedule) was the decision that used to be called out here as "costs
+minutes" — it is resolved now, and `RETENTION-001` above is the direct result. There is no longer a
+decision on this board that costs minutes; what remains is either calendar-bound or the DEC-006
+verification-and-legal-check pair.
+
+Two new decisions opened 2026-08-18, surfaced by the console rebuild rather than by a specification
+gap, and block nothing today: `DEC-013` (how a walk-in customer with no prior channel message is
+identified) and `DEC-014` (which staff roles may see the day's takings). See
+[`docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md`](DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md).
 
 Each has a task packet under `context/tasks/` written to be actionable without an engineer present.
-[`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 is the full owner action table.
+[`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 is the full owner action table
+(pre-dates the 2026-08-18 resolutions; read its structure, not its decision-status claims).
 
 Read the [engineering continuation brief](../context/PROJECT_CONTINUATION.md) before resuming and run
 `uv run python scripts/run_delivery_loop.py` for the authoritative work brief.

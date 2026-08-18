@@ -133,9 +133,51 @@ hold customer-facing text and are named by **no** retention class. A sweep of ev
 `channel_send_receipts.resolution_note`, `staff_users.display_name`/`email`,
 `contact_channel_bindings.provider_user_ref` and four `jsonb` payload columns. That is `DEC-019`.
 
+### Both spec-governance items built and complete
+
+`SPEC-ROUTE-SURFACE-001` and `DISCLOSURE-CONTRACT-001` were enqueued (owner-authorized), built,
+adversarially reviewed and completed. Queue **44 → 46 `COMPLETE`**; suite **972 → 1009 passing**.
+
+**`SPEC-ROUTE-SURFACE-001`.** `specs/contracts/internal-api-v1.openapi.yaml` holds all 38 served
+operations, generated from `app.routes` and re-generated in memory by `verify_contracts.py` on every
+run, which fails on any difference. Generated from `app.routes` and **not** `app.openapi()` because
+four operations carry `include_in_schema=False` and three are the authentication surface. Each
+operation records its authorization dependency chain, so a route losing `require_operations_staff`
+is now a contract diff.
+
+Three fresh-context reviewers attacked it; two refuted the first implementation. It silently skipped
+every non-`APIRoute` entry, which they proved false two ways: a real `@app.websocket` route landed
+uncontracted with every check green, and the app **already serves a `Mount`** — `/staff`, the
+unauthenticated PWA shell — that the contract never mentioned. Unknown route types are now a hard
+failure against a named allowlist and the mount is disclosed. They also caught a scope error: I had
+invented a `staff_console` context domain to work around a drift failure for the *other* item.
+Reverted; the minimal fix was three sources the `platform` domain already needed.
+
+**`DISCLOSURE-CONTRACT-001`.** `specs/contracts/console-disclosures-v1.yaml` registers **87**
+disclosure slots — 15 `SERVER_GATE`, 4 `ABSENT_TABLE`, 1 `MODEL_SEAM`, 1 `POLICY_BOUND`, 66
+`DESCRIPTIVE`. Identity includes the text hash, so rewording forces a re-read. All four binding kinds
+were proved by mutation with the tree restored after each.
+
+The `MODEL_SEAM` binding is the one the item existed for: `assistant.js` tells operators the streamed
+text is not a model generating words, and that now fails a test if `AssistantService` stops falling
+back to `DeterministicAssistantBrain`.
+
+**Two of my own errors, recorded rather than tidied.** Bindings were briefly *derived* from the
+disclosure text, producing bindings against `bound_contact_id`, `occurred_at` and `session_id` —
+columns that exist — asserting the opposite of the truth. And the first extractor keyed only on
+object properties, so it **missed the assistant disclosure this item was opened for**, which is
+rendered positionally inside a `notice`. Both fixed; the registry went 59 → 87 slots.
+
+**Verification asymmetry worth knowing:** the route item got a real three-reviewer fresh-context
+pass. The disclosure item got none — both its reviewer agents died on provider API errors — so its
+four mutation experiments were run in-session, which is weaker, and its evidence record says so.
+
+`verify_contracts.py` now validates two more surfaces on every run: 38 served operations and 87
+console disclosures.
+
 ### The queue is now exhausted of agent-movable work
 
-`run_delivery_loop.py` selects **nothing**: 44 `COMPLETE`, 18 `PENDING`, 15 `BLOCKED`, and every
+`run_delivery_loop.py` selects **nothing**: 46 `COMPLETE`, 18 `PENDING`, 15 `BLOCKED`, and every
 pending item waits on a dependency or a decision. The next move in this repository is an owner's, and
 the highest-leverage one is `CORPUS-CONSENT-001` — it gates 700 of the 800 remaining eval cases.
 

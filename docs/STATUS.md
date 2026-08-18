@@ -131,8 +131,13 @@ schema. `DEC-018`, `DEC-019` and `DEC-020` were opened
 **the registry now holds 20 decisions, 9 `OPEN`.** `DEC-008` signs a 30-day purge for raw webhook
 payload and indefinite retention for consent evidence, and those land on the same row; the assistant
 answer is stored a second time in a permanently immutable idempotency record; and no database identity
-holds `DELETE`, so no purge can execute at all. **The controller now selects nothing** — 44 `COMPLETE`,
-18 `PENDING`, 15 `BLOCKED`, every pending item waiting on a dependency or a decision.
+holds `DELETE`, so no purge can execute at all. Two governance items were then enqueued and built:
+**`SPEC-ROUTE-SURFACE-001`**, which gives all 38 served internal routes a generated contract plus a
+check that fails when a route lands without one, and **`DISCLOSURE-CONTRACT-001`**, which registers
+all 87 staff-console disclosures and binds 21 of them to the code facts that make them true —
+including the assistant's streaming disclosure, which now fails a test if the deterministic brain is
+swapped out. **The controller again selects nothing** — 46 `COMPLETE`, 18 `PENDING`, 15 `BLOCKED`,
+every pending item waiting on a dependency or a decision. Suite at 1009 passing.
 
 Read the [engineering continuation brief](../context/PROJECT_CONTINUATION.md) before resuming and run
 `uv run python scripts/run_delivery_loop.py` for the authoritative work brief.

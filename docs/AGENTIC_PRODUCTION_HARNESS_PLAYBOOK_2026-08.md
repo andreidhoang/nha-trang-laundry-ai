@@ -659,15 +659,21 @@ the owner's. The `Actor` column is the point of the table.
 | # | Move | Actor | What it changes | Blocked by |
 |---:|---|---|---|---|
 | 1 | ~~Enqueue `EVAL-PUBLISH-001`~~ — **done 2026-08-18 as `EVAL-SYNTHETIC-COMBINATORIAL-001`** | **Agent, via controller unblock** | 0/1,300 → 669/1,300; first of five suite minima satisfied. No release blocker removed. | ~~nothing~~ done |
-| 2 | `SPEC-ROUTE-SURFACE-001` — contract **all 38** internal routes, not the two §6 first named | **Owner enqueues → agent builds** | Closes 37 ungoverned surfaces, incl. money and identity routes | nothing |
+| 2 | ~~`SPEC-ROUTE-SURFACE-001`~~ — **done 2026-08-18** | **Agent, after the owner authorized the queue row** | All 38 operations contracted; a new route without an entry now fails the build | ~~nothing~~ done |
 | 3 | Reconcile `AGENT-PIPELINE-001` with `main.py` — see the note below | **Owner decides: corrective item or narrowed evidence** | The pipeline becomes reachable in a running process for the first time | owner's call |
-| 4 | `DISCLOSURE-CONTRACT-001` — bind and test **all 58** disclosure slots, not the one §5.5 first named | **Owner enqueues → agent builds** | Makes live compliance claims un-breakable in silence | nothing |
+| 4 | ~~`DISCLOSURE-CONTRACT-001`~~ — **done 2026-08-18**, and the population was **87**, not 58 | **Agent, after the owner authorized the queue row** | 21 slots bound to code facts; the assistant disclosure now fails a test if the brain is swapped | ~~nothing~~ done |
 | 5 | Sign `DEC-013` (walk-in identity) | **Owner only** | The system can record its first customer | owner's answer |
 | 6 | Sign `DEC-015` (what a customer record is) | **Owner only** | Sets the boundary the acquisition work runs into on success | owner's answer |
 | 7 | Supply a Telegram bot token | **Owner only** | Proves inbound → envelope → runtime → draft → approval → outbound → receipt against a real provider | owner's account |
 | 8 | Resolve `DEC-006` + provision a dedicated credential | **Owner only** | The first provider-backed model run; evidence base leaves zero | legal check + provider account |
 | 9 | Start `SHOP-INSTRUMENT-001` measurement | **Owner only, 4–6 weeks** | Starts the calendar clock that G1 cannot compress | physical measurement |
 | 10 | Build `PARTY-001` / `FULFILMENT-001` / `CATALOG-PRICEBOOK-001` | **Owner enqueues → agent builds** | First movement in the 14-of-63 aggregate count since measurement began | 5, 6 for the first |
+
+**Rows 1, 2 and 4 are now done, and row 4's number was wrong too.** The disclosure population was
+measured at 58 by counting keyed properties; the real figure is **87**, because the example this
+document used to motivate the row — the assistant's streaming disclosure — is rendered *positionally*
+inside a `notice` and no key names it. The first registry covered 59 slots and not that one. Counting
+the set was the right instinct; counting only the shape of set I had already found was not.
 
 **Row 3 needs the same correction §8a applies to row 1, and it was found the same way.**
 `AGENT-PIPELINE-001` is `COMPLETE` and one of its declared `required_evidence` entries is

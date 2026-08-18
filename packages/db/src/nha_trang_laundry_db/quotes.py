@@ -35,6 +35,17 @@ class QuoteRevisionCommand:
     created_by: UUID
     correlation_id: UUID
     occurred_at: datetime | None = None
+    # The staff command path audits as STAFF; the agent tool path must not impersonate it.
+    actor_type: str = "STAFF"
+
+
+@dataclass(frozen=True, slots=True)
+class QuoteContainerBinding:
+    """The mutable container pointer for one bound order request's quote."""
+
+    quote_id: UUID
+    current_revision: int
+    row_version: int
 
 
 @dataclass(frozen=True)
@@ -175,7 +186,7 @@ class QuoteRepository:
                     "finality": data.finality.value,
                 },
                 audit_action="QUOTE_CALCULATE",
-                actor_type="STAFF",
+                actor_type=command.actor_type,
                 actor_id=command.created_by,
                 correlation_id=command.correlation_id,
                 outbox_events=(
@@ -193,6 +204,24 @@ class QuoteRepository:
             ),
             mutation,
         )
+
+    @staticmethod
+    def find_container(
+        cursor: Any, *, store_id: UUID, bound_order_request_id: UUID
+    ) -> QuoteContainerBinding | None:
+        """Locate the one quote container a bound order request may have, if it exists."""
+        cursor.execute(
+            """
+            SELECT id, current_revision, row_version FROM quotes
+            WHERE store_id = %s AND bound_order_request_id = %s
+            """,
+            (store_id, bound_order_request_id),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        identifier = row[0] if isinstance(row[0], UUID) else UUID(str(row[0]))
+        return QuoteContainerBinding(identifier, int(row[1]), int(row[2]))
 
     @staticmethod
     def get_revision(cursor: Any, quote_id: UUID, revision: int) -> StoredQuoteRevision | None:

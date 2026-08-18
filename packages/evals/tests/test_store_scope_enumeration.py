@@ -89,6 +89,28 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("GET", "/internal/v1/stores/{store_id}/shadow/drafts"): store_scoped(
         "shadow_console", "ShadowConsoleRepository.list_pending_drafts"
     ),
+    ("POST", "/internal/v1/stores/{store_id}/assistant/turns"): store_scoped(
+        "assistant", "AssistantTurnRepository.record_turn"
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/assistant/turns"): store_scoped(
+        "assistant", "AssistantTurnRepository.list_recent"
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/assistant/turns/{turn_id}/stream"): store_scoped(
+        "assistant", "AssistantTurnRepository.get_scoped"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/order-requests"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "membership enforced in OperationsService.create_order_request before any write, and "
+        "outside the idempotency wrapper so a revoked member cannot replay a key; asserted "
+        "behaviourally in apps/api/tests/test_intake_order_requests.py",
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/order-requests"): store_scoped(
+        "intake", "OrderRequestRepository.list_for_store"
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/order-requests/{order_request_id}"): store_scoped(
+        "intake", "OrderRequestRepository.get_for_store"
+    ),
     # --- deliberately not membership-checked, each owned by something ------------------------
     ("GET", "/internal/v1/stores/{store_id}/shadow/audit/{aggregate_id}"): RouteScope(
         "KNOWN_GAP",

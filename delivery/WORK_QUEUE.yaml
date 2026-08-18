@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-14'
+last_updated: '2026-08-16'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -2445,7 +2445,7 @@ items:
 - id: TOOL-BACKEND-001
   phase: AGENT_SHADOW
   title: Deterministic backend for the ten fixed Tool Facade operations
-  status: IN_PROGRESS
+  status: COMPLETE
   priority: 233
   depends_on:
   - QUOTE-COMMAND-001
@@ -2542,5 +2542,43 @@ items:
   - owner_is_not_implicitly_a_member_of_every_store
   - cross_store_grant_authority_question_answered_and_tested
   - console_unsupported_entry_replaced_by_the_real_control
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: ASSISTANT-001
+  phase: OPERATIONS_CONTROL
+  title: Owner-directed internal assistant with deterministic brain and append-only
+    transcript
+  status: COMPLETE
+  priority: 234
+  depends_on:
+  - OPERATIONS-001
+  - STORE-SCOPING-001
+  context_domains:
+  - orders_audit
+  - privacy_consent
+  - agent_tools
+  normative_sources:
+  - AGENTS.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/ENGINEERING_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks:
+  - uv run pytest apps/api/tests/test_assistant.py apps/api/tests/test_assistant_brain.py
+    apps/api/tests/test_assistant_postgres.py
+  - uv run pytest --require-postgres-integration
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - deterministic_brain_no_model_call
+  - atomic_turn_event_audit_outbox
+  - append_only_trigger_and_retention
+  - redaction_before_persistence
+  - negative_authorization
+  - interaction_and_live_demo_verification
   - rollback_assessment
   blocked_by_decisions: []

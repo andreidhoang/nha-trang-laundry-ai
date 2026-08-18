@@ -1,0 +1,91 @@
+schema_version: 1
+work_item: ASSISTANT-001
+recorded_at: '2026-08-16T09:52:15.614755+00:00'
+requirement_contract: >-
+  Owner-directed work, outside the delivery queue's milestone plan, registered after the fact so
+  the machine state matches the tree. The slice is the internal owner-assistant "Trợ lý AI": a
+  deterministic, staff-internal question-answering surface over data the server already governs.
+  The boundary constraints are absolute: no model call anywhere on the path (the
+  DeterministicAssistantBrain is pure string matching over a fixed first-match-wins intent table,
+  and AssistantBrain is a one-method protocol that is the only seam for a future provider-backed
+  brain, which stays gated on INTERNAL_SHADOW authorization plus a provider credential per
+  docs/runbooks/provider-credentials.md); the brain never calculates money, policy, SLA or order
+  state and answers REVENUE questions with a static honest refusal by design; every turn persists
+  through commit_material_change as an atomic row + domain event assistant.turn_recorded.v1 +
+  audit + outbox; assistant_turns is append-only by trigger and enrolled in retention as
+  RetentionClass.ASSISTANT_TRANSCRIPT; question and answer are redacted through
+  nha_trang_laundry_observability.redact_text before persistence; access requires OWNER_ADMIN or
+  OPERATIONS_STAFF plus repository-level store membership with an opaque 403; and the SSE stream
+  endpoint replays an already-persisted answer in paced word-sized frames — it is transport
+  pacing, never token generation. The transcript is deliberately separate from the future
+  customer conversation-turn-v1 contract in specs/CUSTOMER_MEMORY_SPEC_V1.md, which remains
+  SPEC_DRAFT_AWAITING_OWNER_APPROVAL. No capability becomes authorized;
+  delivery/CAPABILITY_STATUS.yaml is untouched.
+rollback_impact: >-
+  Rollback is dropping the three routes, the screen, and two forward-only migrations that touch
+  nothing pre-existing: 0026 creates the new assistant_turns table and its reject-update/delete
+  trigger, 0027 wires retention for the new class only. No existing table, route, signature or
+  behaviour changed; the retention change is an additive enum member and schedule row for a class
+  no other code reads. Removing the slice leaves the console at ten screens and the API without
+  the /assistant/ prefix, which nothing else references.
+unresolved_assumptions: >-
+  The SLA_RISK intent evaluates against STANDARD_WASH_SLA only, because choosing a policy per
+  order is an open business decision; the answer names the rule it used rather than pretending to
+  know each order's policy. REVENUE_UNAVAILABLE is a deliberate static refusal, not a missing
+  read model — the assistant does not estimate money the governed data does not state. The
+  assistant is staff-internal Tier-2-style memory; whether any of it ever informs the customer
+  conversation-turn contract waits on the owner's review of specs/CUSTOMER_MEMORY_SPEC_V1.md.
+  A live model behind the AssistantBrain protocol remains unauthorized and unbuilt.
+evidence:
+  deterministic_brain_no_model_call: >-
+    apps/api/src/nha_trang_laundry_api/assistant.py contains no provider import and no network
+    call; intent matching is lowercase + Vietnamese-diacritic stripping against a fixed table
+    (GREETING, TODAY_OVERVIEW, SLA_RISK, PENDING_APPROVALS, ORDER_LOOKUP by UUID,
+    REVENUE_UNAVAILABLE, UNSUPPORTED fallback that lists capabilities).
+    apps/api/tests/test_assistant_brain.py pins that matching never rewrites the stored question
+    and that the table is total. The module docstring states the AssistantBrain protocol is the
+    only seam and that a provider-backed brain requires capability authorization plus a
+    credential.
+  atomic_turn_event_audit_outbox: >-
+    AssistantTurnRepository.record_turn in packages/db/src/nha_trang_laundry_db/assistant.py goes
+    through commit_material_change: one transaction writes the turn row, the domain event
+    assistant.turn_recorded.v1, the audit entry and the outbox record.
+    apps/api/tests/test_assistant_postgres.py proves atomicity (a failing audit write rolls the
+    turn back) against real PostgreSQL.
+  append_only_trigger_and_retention: >-
+    Migration 0026 creates assistant_turns with a trigger rejecting UPDATE and DELETE; the
+    postgres suite asserts both are refused. Migration 0027 enrolls the transcript in the section
+    15 retention schedule as RetentionClass.ASSISTANT_TRANSCRIPT
+    (packages/db/src/nha_trang_laundry_db/retention.py), and the suite covers purge and legal-hold
+    suspension for the class.
+  redaction_before_persistence: >-
+    Both question and answer pass through nha_trang_laundry_observability.redact_text before the
+    row is written; the postgres suite asserts the stored text is the redacted form.
+  negative_authorization: >-
+    apps/api/tests/test_assistant.py (17 tests) covers role refusal, cross-store refusal
+    indistinguishable from a role failure (opaque 403), idempotent replay and conflict on
+    Idempotency-Key, history scoping, and stream visibility matching list visibility.
+  interaction_and_live_demo_verification: >-
+    scripts/verify_console_interaction.py section 4 drives the real console in a browser that
+    types: keystroke-level composer behaviour and progressive streaming over a drip-fed SSE
+    endpoint, 28 checks total, all passing. The slice was also live-verified on the local demo
+    stack with a real sign-in and real SSE, with screenshots. The full guarded suite passed 941
+    tests with DATABASE_URL=postgresql://app:app@localhost:5433/nha_trang_laundry_tooltest.
+  rollback_assessment: >-
+    See rollback_impact. Two additive forward-only migrations, one new table, one new retention
+    class, three new routes, one new screen; nothing pre-existing is modified.
+checks:
+- command: uv run pytest apps/api/tests/test_assistant.py apps/api/tests/test_assistant_brain.py apps/api/tests/test_assistant_postgres.py
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

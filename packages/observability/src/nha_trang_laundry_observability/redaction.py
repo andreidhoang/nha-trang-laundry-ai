@@ -66,10 +66,20 @@ def _contains_sensitive_text(value: str) -> bool:
     return bool(_BEARER.search(value) or _API_KEY.search(value) or _VIETNAMESE_PHONE.search(value))
 
 
-def _safe_text(value: str) -> str:
+def redact_text(value: str) -> str:
+    """Substitute credentials and personal contact details out of free text, without a length cap.
+
+    This is the same substitution pipeline `_safe_text` applies, exposed for callers that persist
+    text rather than log it: a stored record may not be silently truncated the way a log field may.
+    """
+
     redacted = _BEARER.sub(REDACTED, value)
     redacted = _API_KEY.sub(REDACTED, redacted)
-    redacted = _VIETNAMESE_PHONE.sub(REDACTED, redacted)
+    return _VIETNAMESE_PHONE.sub(REDACTED, redacted)
+
+
+def _safe_text(value: str) -> str:
+    redacted = redact_text(value)
     if len(redacted) > _MAX_TEXT:
         return f"{redacted[:_MAX_TEXT]}[TRUNCATED]"
     return redacted

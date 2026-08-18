@@ -37,6 +37,28 @@ class AgentToolUnavailable(RuntimeError):
     """No production domain adapter is registered for a valid tool invocation."""
 
 
+class AgentToolRefusal(RuntimeError):
+    """The deterministic backend refused a valid invocation with a contract error code.
+
+    Unlike `AgentToolUnavailable`, the adapter was reached and the domain gave a real answer:
+    a stale version, an idempotency conflict, or an engine refusal such as
+    `RANGE_PRICE_REQUIRES_HUMAN`. The facade serializes it as the contract's error envelope.
+    """
+
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        status_code: int,
+        reason_codes: tuple[str, ...] = (),
+    ) -> None:
+        self.code = code
+        self.status_code = status_code
+        self.reason_codes = reason_codes or (code,)
+        super().__init__(message)
+
+
 @dataclass(frozen=True, slots=True)
 class AgentToolCall:
     operation: AgentToolOperation
@@ -200,6 +222,29 @@ async def _invoke_fixed_route(
             message="The bound runner context does not authorize this operation.",
             status_code=status.HTTP_403_FORBIDDEN,
         )
+    except AgentToolRefusal as error:
+        # The refusal is serialized through the same contract validation as a success
+        # response; a refusal that drifted from the contract degrades to TOOL_UNAVAILABLE.
+        refusal_payload = {
+            "ok": False,
+            "trace_id": trace_id,
+            "error": {
+                "code": error.code,
+                "message": str(error)[:300],
+                "reason_codes": list(error.reason_codes),
+                "field_errors": [],
+            },
+        }
+        try:
+            validated_refusal = contract.validate_error_response(refusal_payload)
+        except ToolArgumentsInvalid:
+            return _error_response(
+                trace_id=trace_id,
+                code="TOOL_UNAVAILABLE",
+                message="The deterministic tool adapter is unavailable; hand off to staff.",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return JSONResponse(status_code=error.status_code, content=validated_refusal)
     except AgentToolUnavailable:
         return _error_response(
             trace_id=trace_id,

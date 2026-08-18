@@ -25,7 +25,17 @@ TARGET_PATHS = (
 
 def _copied_workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
-    for directory in ("context", "delivery", "docs", "evidence", "scripts", "specs", "templates"):
+    for directory in (
+        "apps",
+        "context",
+        "delivery",
+        "docs",
+        "evidence",
+        "packages",
+        "scripts",
+        "specs",
+        "templates",
+    ):
         source = ROOT / directory
         destination = workspace / directory
         destination.mkdir(parents=True, exist_ok=True)

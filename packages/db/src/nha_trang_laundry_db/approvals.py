@@ -48,6 +48,8 @@ class ApprovalRequestCommand:
     idempotency_key: str
     correlation_id: UUID
     requested_at: datetime | None = None
+    # The staff command path audits as STAFF; the agent tool path must not impersonate it.
+    actor_type: str = "STAFF"
 
 
 @dataclass(frozen=True)
@@ -181,7 +183,7 @@ class ApprovalRepository:
                         "envelope_hash": envelope.document.snapshot_hash,
                     },
                     audit_action="APPROVAL_REQUEST",
-                    actor_type="STAFF",
+                    actor_type=command.actor_type,
                     actor_id=data.requested_by,
                     correlation_id=command.correlation_id,
                     outbox_events=(

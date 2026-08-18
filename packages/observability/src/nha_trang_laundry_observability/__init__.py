@@ -12,7 +12,7 @@ from .correlation import (
     current_correlation,
 )
 from .events import EventSeverity, SafeStructuredLogger, StructuredEvent
-from .redaction import REDACTED, sanitize
+from .redaction import REDACTED, redact_text, sanitize
 from .telemetry import (
     METRIC_CONTRACTS,
     MetricContract,
@@ -36,6 +36,7 @@ __all__ = [
     "current_correlation",
     "current_trace_id",
     "load_telemetry_contracts",
+    "redact_text",
     "safe_attributes",
     "sanitize",
     "validate_telemetry_contracts",

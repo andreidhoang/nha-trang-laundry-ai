@@ -39,6 +39,7 @@ class RetentionClass(StrEnum):
     INCIDENT_EVIDENCE = "INCIDENT_EVIDENCE"
     DEBUG_LOG = "DEBUG_LOG"
     SECURITY_AUDIT_EVENT = "SECURITY_AUDIT_EVENT"
+    ASSISTANT_TRANSCRIPT = "ASSISTANT_TRANSCRIPT"
 
 
 class RetentionDisposition(StrEnum):
@@ -69,6 +70,10 @@ LEDGER_BACKED_CLASSES = frozenset(
         RetentionClass.AGENT_RUN_PAYLOAD,
         RetentionClass.SECURITY_AUDIT_EVENT,
         RetentionClass.INCIDENT_EVIDENCE,
+        # `assistant_turns` carries `reject_ledger_mutation`, so the transcript gets the same
+        # honest refusal as every other ledger: a published, enabled schedule runs, is refused by
+        # the store, and the refusal is what the run record shows.
+        RetentionClass.ASSISTANT_TRANSCRIPT,
     }
 )
 

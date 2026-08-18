@@ -54,6 +54,23 @@ class ResolvedContactBinding:
 class ContactChannelBindingRepository:
     """Resolve provider identity to a server-owned contact binding, never the reverse."""
 
+    @staticmethod
+    def binding_exists(cursor: Any, *, contact_binding_id: UUID) -> bool:
+        """Whether a binding id names a row the server itself recorded.
+
+        The staff intake path receives a contact binding id from a person, not from a verified
+        channel envelope, so the id must be proven against this table before an order request may
+        name it. Existence is all this answers — an `UNVERIFIED` binding exists, and creating a
+        draft that names it grants the contact nothing.
+        """
+        cursor.execute(
+            """
+            SELECT 1 FROM contact_channel_bindings WHERE contact_binding_id = %s
+            """,
+            (contact_binding_id,),
+        )
+        return cursor.fetchone() is not None
+
     def resolve_or_create(
         self,
         connection: Any,

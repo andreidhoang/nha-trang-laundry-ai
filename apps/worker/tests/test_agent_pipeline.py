@@ -1,13 +1,19 @@
-"""AGENT-PIPELINE-001: a queued job runs end to end through the assembled runtime."""
+"""AGENT-PIPELINE-001: a queued job runs end to end through the assembled runtime.
+
+The final section (TOOL-BACKEND-001) runs the same pipeline against the real Tool Facade backed
+by `DomainAgentToolBackend`, through an in-process loopback transport that drives the actual
+ASGI app — authentication, the policy point, bound-path, header and schema gates all execute.
+"""
 
 from __future__ import annotations
 
 import json
 import os
 import threading
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -15,6 +21,15 @@ import psycopg
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi.testclient import TestClient
+from nha_trang_laundry_agent_tools.auth import AgentAuthSettings, AgentRunnerTokenVerifier
+from nha_trang_laundry_agent_tools.backend import DomainAgentToolBackend
+from nha_trang_laundry_agent_tools.facade import (
+    AgentFacadeService,
+    get_agent_facade_service,
+    get_agent_verifier,
+)
+from nha_trang_laundry_agent_tools.main import app as facade_app
 from nha_trang_laundry_contracts import (
     AgentDataClassification,
     AgentDeploymentStage,
@@ -22,12 +37,14 @@ from nha_trang_laundry_contracts import (
 )
 from nha_trang_laundry_db.agent_runs import AgentRunEnqueueCommand, AgentRunRepository
 from nha_trang_laundry_db.migrations import apply_migrations
+from nha_trang_laundry_db.pricebook import publish_pricebook
 from nha_trang_laundry_worker.agent_runner import (
     AgentRunner,
     AgentRunnerTokenIssuer,
     AgentRuntimeInvocation,
     AgentToolForwardRequest,
     AgentToolForwardResponse,
+    AgentToolTransport,
 )
 from nha_trang_laundry_worker.host import WorkerSettings, WorkerSupervisor
 from nha_trang_laundry_worker.pipeline import (
@@ -47,6 +64,7 @@ from nha_trang_laundry_worker.responses_runtime import (
     ScriptedResponsesTransport,
 )
 
+ROOT = Path(__file__).resolve().parents[3]
 NOW = datetime.now(UTC)
 INSTRUCTIONS = "Bạn chỉ soạn bản nháp. Không tính tiền, không gửi, không quyết định chính sách."
 REGISTRY_HASH = f"sha256:{'a' * 64}"
@@ -158,15 +176,23 @@ def pipeline(
     )
 
 
-def enqueue(connection: psycopg.Connection[Any]) -> AgentRunEnqueueCommand:
+def enqueue(
+    connection: psycopg.Connection[Any],
+    *,
+    store_id: UUID | None = None,
+    contact_binding_id: UUID | None = None,
+    conversation_binding_id: UUID | None = None,
+    order_request_id: UUID | None = None,
+    bound_row_version: int = 0,
+) -> AgentRunEnqueueCommand:
     command = AgentRunEnqueueCommand(
         agent_run_id=uuid4(),
         source_webhook_event_id=None,
         organization_id=uuid4(),
-        store_id=uuid4(),
+        store_id=store_id or uuid4(),
         channel="INTERNAL_TEST",
-        conversation_binding_id=uuid4(),
-        contact_binding_id=uuid4(),
+        conversation_binding_id=conversation_binding_id or uuid4(),
+        contact_binding_id=contact_binding_id or uuid4(),
         capability=ReleaseCapability.INTERNAL_SHADOW,
         deployment_stage=AgentDeploymentStage.SHADOW,
         data_classification=AgentDataClassification.SYNTHETIC,
@@ -176,6 +202,8 @@ def enqueue(connection: psycopg.Connection[Any]) -> AgentRunEnqueueCommand:
         prompt_bundle_hash=PROMPT_HASH,
         tool_contract_hash=CURRENT_TOOL_CONTRACT_HASH,
         correlation_id=uuid4(),
+        order_request_id=order_request_id,
+        bound_row_version=bound_row_version,
         created_at=_before_pending(connection),
     )
     AgentRunRepository().enqueue(connection, command)
@@ -563,3 +591,360 @@ def test_the_full_shadow_loop_reaches_a_human_review_queue(
         repository.list_pending_drafts(postgres_connection, store_id=store_id, principal=approver)
         == ()
     )
+
+
+# --- TOOL-BACKEND-001: the same pipeline against the real domain backend ---------------------
+#
+# Every other transport in this file is a test double. `LoopbackFacadeTransport` is not a double
+# of the facade: it drives the facade's real ASGI app, so the runner's minted bearer is verified,
+# the policy point, bound-path, header and schema gates all execute, and only then does
+# `DomainAgentToolBackend` dispatch to the domain. The dependency overrides swap wiring, never
+# gates — the same override mechanism test_facade.py uses.
+
+FREE_TEXT_MARKER = "CUSTOMER-FREE-TEXT-7f3a9c1e"
+CHAIN_OF_THOUGHT_MARKER = "ENCRYPTED-REASONING-b28d4f06"
+
+
+class LoopbackFacadeTransport(AgentToolTransport):
+    """Forward the bridge's request through the real facade app, in process."""
+
+    def __init__(self, client: TestClient) -> None:
+        self._client = client
+        self.requests: list[AgentToolForwardRequest] = []
+
+    def send(self, request: AgentToolForwardRequest) -> AgentToolForwardResponse:
+        self.requests.append(request)
+        headers = dict(request.headers)
+        if request.method == "GET":
+            response = self._client.get(request.path, headers=headers)
+        else:
+            response = self._client.post(request.path, headers=headers, json=dict(request.body))
+        return AgentToolForwardResponse(
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            body=response.json(),
+        )
+
+
+def _domain_wired_runner_and_transport(
+    database_url: str,
+) -> tuple[AgentRunner, LoopbackFacadeTransport]:
+    """Wire the facade to the domain backend with a fresh runner key pair.
+
+    The runner mints real Ed25519 bearers; the facade verifies them with the matching public
+    key. Nothing here bypasses a gate — the only substitutions are the two dependency-injection
+    points the facade itself declares.
+    """
+    private = Ed25519PrivateKey.generate()
+    private_pem = private.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode("ascii")
+    public_pem = (
+        private.public_key()
+        .public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("ascii")
+    )
+    runner = AgentRunner(
+        AgentRunnerTokenIssuer(
+            issuer="https://control-plane.test",
+            audience="agent-tool-facade",
+            private_key=private_pem,
+        )
+    )
+    verifier = AgentRunnerTokenVerifier(
+        AgentAuthSettings(
+            agent_runner_jwt_issuer="https://control-plane.test",
+            agent_runner_jwt_audience="agent-tool-facade",
+            agent_runner_jwt_public_key=public_pem,
+        )
+    )
+    facade_app.dependency_overrides[get_agent_verifier] = lambda: verifier
+    facade_app.dependency_overrides[get_agent_facade_service] = lambda: AgentFacadeService(
+        DomainAgentToolBackend(database_url=database_url)
+    )
+    return runner, LoopbackFacadeTransport(TestClient(facade_app))
+
+
+def _backend_pipeline(
+    script: list[Any], runner: AgentRunner, transport: LoopbackFacadeTransport
+) -> AgentPipeline:
+    return build_agent_pipeline(
+        config=config(),
+        provider_transport=ScriptedResponsesTransport(script),
+        tool_transport=transport,
+        runner=runner,
+        instructions=INSTRUCTIONS,
+        input_text_for=lambda invocation: f"run {invocation.run_id}",
+    )
+
+
+def _tool_call_response(
+    call_id: str,
+    operation: str,
+    arguments: Mapping[str, Any],
+    *,
+    with_reasoning: bool = False,
+) -> dict[str, Any]:
+    output: list[dict[str, Any]] = []
+    if with_reasoning:
+        # Encrypted reasoning stays in process memory; the marker proves it never persists.
+        output.append(
+            {
+                "type": "reasoning",
+                "id": f"rs-{call_id}",
+                "encrypted_content": CHAIN_OF_THOUGHT_MARKER,
+            }
+        )
+    output.append(
+        {
+            "type": "function_call",
+            "call_id": call_id,
+            "name": operation,
+            "arguments": json.dumps(arguments, ensure_ascii=False),
+        }
+    )
+    return {
+        "status": "completed",
+        "parallel_tool_calls": False,
+        "output": output,
+        "usage": {"input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 20},
+    }
+
+
+def _publish_pricebook(database_url: str) -> None:
+    # The facade backend reads through its own connection, so the publication must be committed
+    # — the harness fixture connection is deliberately not autocommit, and an uncommitted
+    # publish would be invisible to the code under test (the API suite documents this trap).
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        publish_pricebook(
+            connection,
+            actor_id=uuid4(),
+            source=(ROOT / "templates/services-pricebook.csv").read_bytes(),
+        )
+
+
+def _tool_call_rows(
+    connection: psycopg.Connection[Any], agent_run_id: str
+) -> list[tuple[Any, ...]]:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT operation_id, request_fingerprint, result_status_code, result_code,
+                   safe_summary
+            FROM agent_tool_calls WHERE agent_run_id = %s ORDER BY sequence_number
+            """,
+            (agent_run_id,),
+        )
+        return [tuple(row) for row in cursor.fetchall()]
+
+
+def test_a_full_pipeline_run_with_the_domain_backend_executes_real_tools(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """Queue to draft, with the tool calls answered by the domain rather than a double.
+
+    Run 1 resolves the catalog and creates the intake draft (one mutation — the Shadow budget
+    allows exactly one). Run 2 is enqueued already bound to the request run 1 created, and its
+    advisory operations travel the bound-path gate with the run's own claims.
+    """
+    database_url = os.environ["DATABASE_URL"]
+    _publish_pricebook(database_url)
+    store_id, contact_id, conversation_id = uuid4(), uuid4(), uuid4()
+    runner, transport = _domain_wired_runner_and_transport(database_url)
+    try:
+        first = enqueue(
+            postgres_connection,
+            store_id=store_id,
+            contact_binding_id=contact_id,
+            conversation_binding_id=conversation_id,
+        )
+        first_result = _backend_pipeline(
+            [
+                _tool_call_response(
+                    "call-catalog-1",
+                    "catalogResolve",
+                    {
+                        "query": f"giặt chăn {FREE_TEXT_MARKER}",
+                        "locale": "vi-VN",
+                        "known_attributes": None,
+                    },
+                ),
+                _tool_call_response(
+                    "call-create-1",
+                    "orderRequestCreate",
+                    {
+                        "customer_intent": f"Giặt chăn, {FREE_TEXT_MARKER}",
+                        "locale": "vi-VN",
+                        "source_provider_message_ids": ["msg-1"],
+                    },
+                ),
+                draft_response(),
+            ],
+            runner,
+            transport,
+        ).run_cycle(postgres_connection, lambda: True)
+
+        assert first_result.status == "DRAFT_REQUIRES_HUMAN"
+        assert first_result.agent_run_id == str(first.agent_run_id)
+        first_calls = _tool_call_rows(postgres_connection, first_result.agent_run_id or "")
+        assert [row[0] for row in first_calls] == ["catalogResolve", "orderRequestCreate"]
+        assert [row[2] for row in first_calls] == [200, 201]
+
+        with postgres_connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, store_id, contact_binding_id, conversation_binding_id, status,
+                       row_version
+                FROM order_requests
+                """
+            )
+            created_row = _row(cursor)
+        assert created_row[1:] == (store_id, contact_id, conversation_id, "DRAFT", 1)
+        created_request_id = UUID(str(created_row[0]))
+
+        # Run 2 starts bound to the request run 1 created; both advisories are read-only, so
+        # the Shadow mutation budget is untouched while the bound-path gate is exercised.
+        second = enqueue(
+            postgres_connection,
+            store_id=store_id,
+            contact_binding_id=contact_id,
+            conversation_binding_id=conversation_id,
+            order_request_id=created_request_id,
+            bound_row_version=1,
+        )
+        second_result = _backend_pipeline(
+            [
+                _tool_call_response(
+                    "call-delivery-1",
+                    "deliveryEvaluate",
+                    {
+                        "fulfillment_mode": "PICKUP_AND_RETURN",
+                        "planned_transport_weight_kg": "5",
+                    },
+                ),
+                _tool_call_response(
+                    "call-capacity-1", "capacityCheck", {"requested_ready_at": None}
+                ),
+                draft_response("Phí giao nhận cần nhân viên xác nhận trước khi báo khách."),
+            ],
+            runner,
+            transport,
+        ).run_cycle(postgres_connection, lambda: True)
+
+        assert second_result.status == "DRAFT_REQUIRES_HUMAN"
+        assert second_result.agent_run_id == str(second.agent_run_id)
+        second_calls = _tool_call_rows(postgres_connection, second_result.agent_run_id or "")
+        assert [row[0] for row in second_calls] == ["deliveryEvaluate", "capacityCheck"]
+        # The delivery engine's unresolved-distance outcome reaches the ledger verbatim.
+        assert [row[3] for row in second_calls] == ["REQUIRE_HUMAN", "REQUIRE_HUMAN"]
+        with postgres_connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT draft_text FROM agent_drafts WHERE agent_run_id = %s",
+                (second_result.agent_run_id,),
+            )
+            assert "nhân viên xác nhận" in str(_row(cursor)[0])
+    finally:
+        facade_app.dependency_overrides.clear()
+
+
+def test_a_backend_backed_run_records_only_redacted_tool_ledger_and_pure_artifacts(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """The ledger keeps fingerprints and bounded summaries; nothing else may persist.
+
+    Markers ride in the model-visible tool arguments and in the provider's encrypted reasoning.
+    After the run, every table the run could have touched is scanned for them: the tool ledger,
+    the run summary, the persisted draft, the domain rows the backend wrote, and the
+    event/audit/outbox/idempotency ledgers.
+    """
+    database_url = os.environ["DATABASE_URL"]
+    _publish_pricebook(database_url)
+    runner, transport = _domain_wired_runner_and_transport(database_url)
+    try:
+        command = enqueue(postgres_connection)
+        result = _backend_pipeline(
+            [
+                _tool_call_response(
+                    "call-catalog-1",
+                    "catalogResolve",
+                    {
+                        "query": f"giặt chăn {FREE_TEXT_MARKER}",
+                        "locale": "vi-VN",
+                        "known_attributes": None,
+                    },
+                    with_reasoning=True,
+                ),
+                _tool_call_response(
+                    "call-create-1",
+                    "orderRequestCreate",
+                    {
+                        "customer_intent": f"Giặt chăn, {FREE_TEXT_MARKER}",
+                        "locale": "vi-VN",
+                        "source_provider_message_ids": ["msg-1"],
+                    },
+                    with_reasoning=True,
+                ),
+                draft_response(),
+            ],
+            runner,
+            transport,
+        ).run_cycle(postgres_connection, lambda: True)
+    finally:
+        facade_app.dependency_overrides.clear()
+
+    assert result.status == "DRAFT_REQUIRES_HUMAN"
+    assert result.agent_run_id == str(command.agent_run_id)
+    rows = _tool_call_rows(postgres_connection, result.agent_run_id or "")
+    assert [row[0] for row in rows] == ["catalogResolve", "orderRequestCreate"]
+    for _operation, fingerprint, status_code, result_code, safe_summary in rows:
+        # The arguments live only inside a one-way fingerprint; the summary is exactly the
+        # three bounded fields `_DatabaseToolCallObserver` is allowed to write.
+        assert str(fingerprint).startswith("sha256:")
+        assert set(safe_summary) == {"result_code", "status_code", "top_level_keys"}
+        assert safe_summary["result_code"] == result_code
+        assert safe_summary["status_code"] == status_code
+        assert set(safe_summary["top_level_keys"]) <= {
+            "ok",
+            "trace_id",
+            "decision",
+            "data",
+            "error",
+        }
+
+    with postgres_connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT result_safe_summary FROM agent_runs WHERE id = %s",
+            (result.agent_run_id,),
+        )
+        summary = _row(cursor)[0]
+    evidence = summary["runtime_evidence"]
+    assert evidence["chain_of_thought_persisted"] is False
+    assert evidence["provider_response_id_persisted"] is False
+    assert evidence["tool_call_count"] == 2
+
+    prohibited = (
+        FREE_TEXT_MARKER,
+        CHAIN_OF_THOUGHT_MARKER,
+        "call-catalog-1",  # a provider-issued call id is not server evidence either
+        "call-create-1",
+    )
+    with postgres_connection.cursor() as cursor:
+        for table in (
+            "agent_runs",
+            "agent_tool_calls",
+            "agent_drafts",
+            "order_requests",
+            "domain_events",
+            "audit_events",
+            "outbox_events",
+            "command_idempotency_records",
+        ):
+            cursor.execute(f"SELECT row_to_json(t)::text FROM {table} AS t")
+            for stored in cursor.fetchall():
+                for marker in prohibited:
+                    assert marker not in str(stored[0]), f"{table} persisted {marker}"

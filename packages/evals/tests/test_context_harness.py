@@ -50,8 +50,9 @@ def test_context_drift_check_passes() -> None:
     # 2026-08-14 staff-console work found by reading the route table against the repositories:
     # STORE-SCOPING-002, the order-transition route that STORE-SCOPING-001's URL-shape enumeration
     # could not see because it is keyed by order_id, and STORE-ASSIGNMENT-001, membership having no
-    # write path at all.
-    assert "76 work items" in result.stdout
+    # write path at all, plus ASSISTANT-001, the owner-directed internal assistant registered after
+    # the fact on 2026-08-16.
+    assert "77 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

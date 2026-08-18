@@ -18,8 +18,11 @@ from nha_trang_laundry_db.approvals import (
     ApprovalStateError,
     StoredApproval,
 )
+from nha_trang_laundry_db.assistant import AssistantAuthorizationError
+from nha_trang_laundry_db.channel import ChannelBindingError
 from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import IdentityStateError, StaffPrincipal, StaffRole
+from nha_trang_laundry_db.intake import OrderRequestSummary
 from nha_trang_laundry_db.manual_sends import (
     ManualSendAuthorizationError,
     ManualSendStateError,
@@ -56,7 +59,13 @@ from nha_trang_laundry_observability import (
 from opentelemetry import metrics, trace
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.responses import StreamingResponse
 
+from nha_trang_laundry_api.assistant import (
+    AssistantService,
+    AssistantUnavailable,
+    answer_sse_frames,
+)
 from nha_trang_laundry_api.auth import (
     AuthenticationAttemptLimiter,
     AuthenticationError,
@@ -1037,6 +1046,150 @@ def list_quotes(
         _raise_operations_error(error)
 
 
+# --- INTAKE-UI-001: staff counter intake onto the order-request aggregate ----------------------
+#
+# The Báo giá screen used to demand a pasted order-request UUID. These three routes are the staff
+# half of the intake aggregate the agent tool path already writes: create a draft bound to an
+# existing contact, list a store's drafts, fetch one for the quote prefill. The role gate is the
+# quote gate, because pricing one of these is the very next thing the same person does.
+
+
+class OrderRequestCreateRequest(StrictRequest):
+    # The one field a counter intake may name. The binding must already exist — the domain's only
+    # source of contact bindings is the verified channel envelope, and this surface creates none.
+    # There is deliberately no free-text field: the aggregate has no column for customer words,
+    # and an intake request body is not a place to smuggle them.
+    contact_binding_id: UUID
+
+
+class OrderRequestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_request_id: UUID
+    store_id: UUID
+    contact_binding_id: UUID
+    status: str
+    row_version: int
+    created_at: datetime
+    replayed: bool
+
+
+class OrderRequestSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_request_id: UUID
+    contact_binding_id: UUID
+    status: str
+    row_version: int
+    created_at: datetime
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/order-requests",
+    response_model=OrderRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_order_request(
+    store_id: UUID,
+    request: OrderRequestCreateRequest,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> OrderRequestResponse:
+    """Record that a customer is at the counter, bound to a contact the server already knows.
+
+    The handler holds no intake rule: membership and contact existence are checked in the service,
+    the write is `OrderRequestRepository.create` auditing as STAFF, and the idempotency ledger
+    decides what a repeated key means. A contact binding nobody recorded fails closed — a human
+    establishes one through a channel first; this route never invents one.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        stored = service.create_order_request(
+            store_id=store_id,
+            contact_binding_id=request.contact_binding_id,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except ChannelBindingError as error:
+        # Same shape as the quote engine's refusal: the domain cannot proceed and a person must,
+        # with the reason code intact rather than paraphrased.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "REQUIRE_HUMAN", "reason_codes": ["CONTACT_BINDING_UNKNOWN"]},
+        ) from error
+    except (StoreAccessError, ValueError, IdempotencyConflictError) as error:
+        _raise_operations_error(error)
+    return OrderRequestResponse(
+        order_request_id=stored.order_request_id,
+        store_id=stored.store_id,
+        contact_binding_id=stored.contact_binding_id,
+        status=stored.status,
+        row_version=stored.row_version,
+        created_at=stored.created_at,
+        replayed=stored.replayed,
+    )
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/order-requests",
+    response_model=list[OrderRequestSummaryResponse],
+)
+def list_order_requests(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+    limit: int = 100,
+) -> list[OrderRequestSummaryResponse]:
+    """Newest first, capped at 100 server-side. No customer text exists on this aggregate."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        return [
+            _order_request_summary_response(item)
+            for item in service.list_order_requests(
+                store_id=store_id, principal=principal, limit=limit
+            )
+        ]
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/order-requests/{order_request_id}",
+    response_model=OrderRequestSummaryResponse,
+)
+def get_order_request(
+    store_id: UUID,
+    order_request_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> OrderRequestSummaryResponse:
+    """One intake draft for the quote prefill. Another store's id is this store's 404."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        stored = service.get_order_request(
+            store_id=store_id, order_request_id=order_request_id, principal=principal
+        )
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+    if stored is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order request not found")
+    return _order_request_summary_response(stored)
+
+
+def _order_request_summary_response(item: OrderRequestSummary) -> OrderRequestSummaryResponse:
+    return OrderRequestSummaryResponse(
+        order_request_id=item.order_request_id,
+        contact_binding_id=item.contact_binding_id,
+        status=item.status,
+        row_version=item.row_version,
+        created_at=item.created_at,
+    )
+
+
 @app.post(
     "/internal/v1/approvals/{approval_id}/manual-send",
     response_model=ManualSendResponse,
@@ -1458,6 +1611,163 @@ def _raise_shadow_error(error: Exception) -> NoReturn:
         # Same response for an unauthorized role and an unassigned store: probing identifiers
         # teaches a caller nothing about which stores exist.
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="shadow access denied") from error
+    raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+# --- ASSISTANT-001: the internal owner-assistant ---------------------------------------------
+
+
+class AssistantTurnRequest(StrictRequest):
+    question: str = Field(min_length=1, max_length=4000)
+
+
+class AssistantLinkResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    href: str
+
+
+class AssistantTurnResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    turn_id: UUID
+    intent: str
+    answer: str
+    links: list[AssistantLinkResponse]
+    reason_codes: list[str]
+    created_at: datetime
+    replayed: bool
+
+
+class AssistantHistoryItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    turn_id: UUID
+    question: str
+    intent: str
+    answer: str
+    links: list[AssistantLinkResponse]
+    reason_codes: list[str]
+    created_at: datetime
+
+
+def get_assistant_service() -> AssistantService:
+    try:
+        return AssistantService(AuthSettings())
+    except AssistantUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="assistant unavailable"
+        ) from error
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/assistant/turns",
+    response_model=AssistantTurnResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def post_assistant_turn(
+    store_id: UUID,
+    request: AssistantTurnRequest,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[AssistantService | None, Depends(get_assistant_service)] = None,
+) -> AssistantTurnResponse:
+    """Ask the deterministic assistant one question and record the answered turn.
+
+    The role gate is the operations gate; the repository re-checks store membership, and both
+    failures surface as the one opaque 403 every other store refusal produces. The brain never
+    calls a model and never computes money — it answers from governed reads or says it cannot.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="assistant unavailable")
+    try:
+        stored = service.post_turn(
+            principal=principal,
+            store_id=store_id,
+            question=request.question,
+            idempotency_key=idempotency_key,
+            correlation_id=(current_correlation() or CorrelationContext.new()).correlation_id,
+        )
+    except (AssistantAuthorizationError, StoreAccessError, ValueError) as error:
+        _raise_assistant_error(error)
+    return AssistantTurnResponse(
+        turn_id=stored.turn_id,
+        intent=stored.intent,
+        answer=stored.answer,
+        links=[AssistantLinkResponse(label=link.label, href=link.href) for link in stored.links],
+        reason_codes=list(stored.reason_codes),
+        created_at=stored.created_at,
+        replayed=stored.replayed,
+    )
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/assistant/turns",
+    response_model=list[AssistantHistoryItemResponse],
+)
+def list_assistant_turns(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[AssistantService | None, Depends(get_assistant_service)] = None,
+    limit: int = 50,
+) -> list[AssistantHistoryItemResponse]:
+    """Newest first. An owner sees the store's turns; anyone else sees only their own."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="assistant unavailable")
+    try:
+        turns = service.list_turns(principal=principal, store_id=store_id, limit=limit)
+    except (AssistantAuthorizationError, StoreAccessError, ValueError) as error:
+        _raise_assistant_error(error)
+    return [
+        AssistantHistoryItemResponse(
+            turn_id=turn.turn_id,
+            question=turn.question,
+            intent=turn.intent,
+            answer=turn.answer,
+            links=[AssistantLinkResponse(label=link.label, href=link.href) for link in turn.links],
+            reason_codes=list(turn.reason_codes),
+            created_at=turn.created_at,
+        )
+        for turn in turns
+    ]
+
+
+@app.get("/internal/v1/stores/{store_id}/assistant/turns/{turn_id}/stream")
+def stream_assistant_turn(
+    store_id: UUID,
+    turn_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[AssistantService | None, Depends(get_assistant_service)] = None,
+) -> StreamingResponse:
+    """Replay one already-persisted turn's answer as server-sent events.
+
+    This is transport pacing of a durable, deterministic answer, not generation: the turn row is
+    read back through the same scoping as the history list, and its stored answer is chunked into
+    word-sized frames. A turn the caller may not see is indistinguishable from one that does not
+    exist — both are the same 404.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="assistant unavailable")
+    try:
+        turn = service.get_turn(principal=principal, store_id=store_id, turn_id=turn_id)
+    except (AssistantAuthorizationError, StoreAccessError, ValueError) as error:
+        _raise_assistant_error(error)
+    if turn is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="assistant turn not found")
+    return StreamingResponse(
+        answer_sse_frames(turn.answer),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+def _raise_assistant_error(error: Exception) -> NoReturn:
+    if isinstance(error, (AssistantAuthorizationError, StoreAccessError)):
+        # One refusal body for a wrong role and an unassigned store, as on every other surface.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    if isinstance(error, IdempotencyConflictError):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
     raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
 
 

@@ -1,0 +1,115 @@
+schema_version: 1
+work_item: TOOL-BACKEND-001
+recorded_at: '2026-08-15T00:45:04+07:00'
+requirement_contract: >-
+  context/tasks/TASK-tool-backend-001.md requires that the ten fixed Tool Facade operations execute
+  against the deterministic domain instead of returning TOOL_UNAVAILABLE, behind the capability
+  flags that already exist. The boundary constraints are absolute: ten operations, not eleven, with
+  the hash-pinned OpenAPI contract untouched; settlement, payment and order closure never agent
+  tools; the backend computes nothing and dispatches to packages/domain engines and packages/db
+  repositories, carrying their outcomes verbatim including REQUIRE_HUMAN and NOT_SUPPORTED; the
+  default wiring remains UnavailableAgentToolBackend with a real backend selected only by explicit
+  configuration; the nine validation gates and the WorkerSettings release-capability validator are
+  not touched; no capability becomes authorized; writes go through commit_material_change; and no
+  persisted artefact contains chain-of-thought, a provider response id, or customer free text.
+rollback_impact: >-
+  Rollback is reverting one dependency wiring, which returns every operation to TOOL_UNAVAILABLE -
+  the behaviour the system has shipped since the facade existed, not a broken state. Nothing depends
+  on the new backend because the default wiring is unchanged: get_agent_facade_service() still
+  returns the unavailable backend, and DomainAgentToolBackend is constructed only by explicit
+  configuration through build_domain_backend(), which refuses to assemble without an explicit
+  database URL. The facade's single additive change is the AgentToolRefusal error-envelope mapping
+  in the route handler; with the unavailable backend that path is unreachable. The repository
+  additions (OrderRequestRepository.record_customer_facts, QuoteRepository.find_container, defaulted
+  actor_type on two commands) are new or defaulted surface - no existing signature, guard, route or
+  behaviour changed.
+unresolved_assumptions: >-
+  Four operations return typed unavailability rather than fabricated success, and each names its
+  gap in a code comment: messageDraftCreate (no message_drafts table, template store, or fact_ref
+  builder - the eleven-field response would be invention), publicOrderStatusGet (public_code exists
+  only on agent_runs per migration 0010; there is no public status read model), incidentOpen
+  (IncidentRepository.open requires a real order_id and a two-value category, the tool is bound to
+  an order_request, and the seven-value allegation enum has no honest mapping), and four of the
+  seven approval actions (CONFIRM_SLOT, SET_DELIVERY_FEE, SEND_MESSAGE have no slot/fee-proposal/
+  draft stores to verify a resource against; ACCEPT_ORDER binds ORDER while the tool binds
+  ORDER_REQUEST, and bridging would invent an order). approvalRequestCreate executes for the three
+  QUOTE_REVISION actions only, with the resource verified as the current revision of the bound
+  request's quote container.
+
+  orderRequestRecordCustomerFacts writes a non-allowlisted outbox event type, following the shipped
+  precedent of order_request.draft_created.v1, incident.opened.v1 and
+  customer.correction_review_opened.v1: a non-allowlisted type is never claimed, never errored and
+  never dead-lettered - it remains a durable PENDING evidence row, which is the intended shape for
+  an event with no dispatcher. Allowlisting it would make the worker dead-letter it as
+  HANDLER_NOT_CONFIGURED, a false failure signal.
+
+  quoteRevisionId is a deterministic uuid5 derivation from the real (quote_id, revision) key because
+  quote_revisions has no surrogate UUID - the same pattern as the domain's service_version_id.
+  Decision.policy_version carries the real PDP value and Decision.snapshot_hash always carries a
+  real digest (pricebook payload, quote snapshot, or engine trace), re-spelled JCS-SHA256-V1: to
+  sha256: per the contract; nothing is invented.
+evidence:
+  ten_operations_only_and_contract_unchanged: >-
+    specs/contracts/agent-tools-v1.openapi.yaml is untouched (git diff confirms), and
+    scripts/verify_contracts.py validates the pinned artifact set including it. The tool registry
+    still loads exactly ten operations from that contract, and the unknown-operation fail-closed
+    path in AgentFacadeService.invoke is covered by the existing facade tests, which all pass
+    unchanged.
+  backend_delegates_and_computes_nothing: >-
+    quoteEstimate through the facade is asserted equal to a direct compose_quote_revision call for
+    the same input - same price lines, same totals (test_domain_backend.py). deliveryEvaluate and
+    capacityCheck return the engines' outcomes verbatim, including REQUIRE_HUMAN with
+    DELIVERY_DISTANCE_UNVERIFIED and DELIVERY_FEE_REQUIRES_HUMAN for the unresolved-distance input,
+    and the capacity consts UNKNOWN / slot_confirmed=false / SLOT_CONFIRMATION. catalogResolve
+    resolves against the published pricebook through ServiceRegistry only - exact code/alias, or
+    bounded exact-substring matching with AMBIGUOUS_SERVICE on multiple hits; there is no model
+    interpretation anywhere in the dispatch. Every write goes through repositories that route
+    commit_material_change; the backend contains no SQL and no arithmetic on money.
+  default_wiring_remains_unavailable: >-
+    get_agent_facade_service() at facade.py still returns
+    AgentFacadeService(UnavailableAgentToolBackend()), asserted by test in
+    apps/public-agent-tools/tests/test_domain_backend.py. build_domain_backend() returns the
+    unavailable backend unless an explicit database URL is supplied - assembling is not enabling,
+    the same shape AGENT-PIPELINE-001 established for the pipeline.
+  nine_validation_gates_intact: >-
+    AgentFacadeService.invoke is byte-untouched: registry lookup, PDP authorization, bound-path
+    HMAC comparison, required-header validation, model-argument schema validation with
+    server-owned-field rejection, backend invocation, success-response validation. The facade's only
+    change is an additive AgentToolRefusal except-clause in the route handler, which serializes
+    domain refusals (STALE_VERSION, IDEMPOTENCY_CONFLICT, RANGE_PRICE_REQUIRES_HUMAN) through
+    contract.validate_error_response and degrades to TOOL_UNAVAILABLE on drift. The pre-existing
+    gate tests in test_facade.py all pass unmodified. The bound-path IDOR test asserts a call whose
+    claims name a different order request is refused 403 POLICY_DENIED, indistinguishable from a
+    capability denial.
+  no_settlement_or_balance_reachable_by_an_agent: >-
+    The settlement boundary guard packages/evals/tests/test_settlement_is_unreachable_by_agents.py
+    passes unchanged, and the new backend imports nothing from settlement modules and exposes no
+    money-moving operation. The full packages/evals suite (319 passed) and apps/api suite
+    (61 passed) pass with the backend present.
+  redaction_holds_for_recorded_tool_calls: >-
+    apps/worker/tests/test_agent_pipeline.py now runs a full pipeline in deterministic-degraded mode
+    against the real facade ASGI app backed by DomainAgentToolBackend - real Ed25519 bearer minted
+    by the runner, verified by the facade, all nine gates executed. The agent_tool_calls rows carry
+    only operation_id, a sha256: request_fingerprint, and a safe_summary limited to
+    result_code/status_code/top_level_keys. A full-artefact scan over agent_runs, agent_tool_calls,
+    agent_drafts, order_requests, domain_events, audit_events, outbox_events and
+    command_idempotency_records finds no customer free text, no chain-of-thought and no provider
+    response id, and the runtime evidence asserts chain_of_thought_persisted is False and
+    provider_response_id_persisted is False.
+  rollback_assessment: >-
+    See rollback_impact. Reverting the wiring returns all ten operations to TOOL_UNAVAILABLE - the
+    current shipped behaviour. No migration was added; the repository additions are new methods and
+    defaulted parameters only.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

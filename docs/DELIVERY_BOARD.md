@@ -1,6 +1,6 @@
 # Delivery board
 
-Generated from `delivery/WORK_QUEUE.yaml` on **2026-08-13**. It goes stale the moment the queue
+Generated from `delivery/WORK_QUEUE.yaml` on **2026-08-16**. It goes stale the moment the queue
 moves; when the two disagree, the queue is right. Run `uv run python scripts/run_delivery_loop.py`
 for the authoritative next item and `uv run python scripts/report_delivery_status.py` for
 machine-readable capability status.
@@ -10,18 +10,20 @@ machine-readable capability status.
 [`delivery/CAPABILITY_STATUS.yaml`](../delivery/CAPABILITY_STATUS.yaml) is the production-
 authorization source. A code status never authorizes a release.
 
-**70 items: 33 complete, 16 blocked, 21 pending.**
+**77 items: 42 complete, 15 blocked, 20 pending.**
 Every capability reads `NOT_AUTHORIZED`.
 
-**Exactly one pending item is buildable: `TEST-ISOLATION-001`**, which the controller selects. Its
-only dependency, `ENV-INTEGRITY-001`, is complete and it carries no decision blocker. The other 20
-pending items each trace to an owner decision or an external party; see
-[`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md) §5 and §6a. Earlier revisions of this
-board said no item was buildable; that was wrong, and `uv run python scripts/run_delivery_loop.py`
-is the authority.
+**No pending item is currently buildable.** Each of the 20 pending items traces to an owner
+decision or an external party; see [`PATH_TO_PRODUCTION_REVIEW.md`](PATH_TO_PRODUCTION_REVIEW.md)
+§5 and §6a. `uv run python scripts/run_delivery_loop.py` is the authority and selects nothing.
+Since 2026-08-14 the queue recorded `TEST-ISOLATION-001`, `DEMO-STACK-001`, `QUOTE-COMMAND-001`,
+`STORE-SCOPING-002`, `STORE-ASSIGNMENT-001`, `SETTLEMENT-001` and `TOOL-BACKEND-001` complete, and
+on 2026-08-16 the owner-directed internal assistant was registered after the fact as
+`ASSISTANT-001` (deterministic brain, no model call, append-only transcript; no capability
+authorized).
 
-The two newest items, `MODEL-ROUTE-001` and `MULTIMODAL-PERCEPTION-001`, enter `Blocked` by
-construction: they specify the tiered-inference and perception direction assessed in
+`MODEL-ROUTE-001` and `MULTIMODAL-PERCEPTION-001` entered `Blocked` by construction: they specify
+the tiered-inference and perception direction assessed in
 [`TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md`](TIERED_INFERENCE_AND_MULTIMODAL_ASSESSMENT.md)
 and proposed in [ADR-0008](adr/0008-inference-topology-and-multimodal-scope.md). `EVIDENCE-REPIN-001`
 stood in front of both and was completed 2026-08-13, so what remains for them is decisions: ADR-0008
@@ -56,6 +58,9 @@ acceptance and `DEC-009`.
 | ID | Task | Depends on | Status | Open decisions |
 |---|---|---|---|---|
 | `OPERATIONS-001` | Orders, approvals, inbox/outbox, idempotency, audit, and Staff PWA slice | `IDENTITY-001`, `DOMAIN-004`, `DOMAIN-005` | Complete | — |
+| `QUOTE-COMMAND-001` | Create-quote command path from staff request to immutable quote revision | `DOMAIN-005`, `OPERATIONS-001`, `STORE-SCOPING-001` | Complete | — |
+| `SETTLEMENT-001` | Exact-payment and self-collection attestation so an order can reach COMPLETED | `QUOTE-COMMAND-001` | Complete | — |
+| `ASSISTANT-001` | Owner-directed internal assistant with deterministic brain and append-only transcript | `OPERATIONS-001`, `STORE-SCOPING-001` | Complete | — |
 
 ### AGENT_SHADOW
 
@@ -78,6 +83,7 @@ acceptance and `DEC-009`.
 | `EVAL-CORPUS-001` | Frozen Vietnamese regression corpus raised toward the manifest minimum | `CORPUS-CONSENT-001`, `EVIDENCE-REPIN-001` | Pending | — |
 | `AGENT-002` | Custom-runtime Shadow evidence and P0 provider-backed evaluation | `AGENT-PIPELINE-001`, `EVAL-CORPUS-001`, `MODEL-PIN-001`, `PROVIDER-TRANSPORT-001`, `RUNTIME-FREEZE-001`, `EVAL-SYNTHETIC-COMBINATORIAL-001`, `EVAL-LANGUAGE-CORPUS-001` | Pending | DEC-006 |
 | `EVAL-LANGUAGE-CORPUS-001` | Normal-language Vietnamese suite at the manifest distribution | `CORPUS-CONSENT-001`, `EVIDENCE-REPIN-001` | Pending | — |
+| `TOOL-BACKEND-001` | Deterministic backend for the ten fixed Tool Facade operations | `QUOTE-COMMAND-001`, `AGENT-PIPELINE-001` | Complete | — |
 
 ### PRODUCTION_HARDENING
 
@@ -107,7 +113,10 @@ acceptance and `DEC-009`.
 | `SHADOW-CONSOLE-001` | Staff Shadow console: draft review, exception queue, audit timeline | `STAFF-OPS-001`, `CHANNEL-ENVELOPE-001` | Complete | — |
 | `CONSENT-STOP-001` | Consent capture, STOP suppression, and opt-out versus in-flight send race | `CHANNEL-ENVELOPE-001` | Complete | — |
 | `STORE-SCOPING-001` | Enforce staff store membership on the pre-existing console routes | `SHADOW-CONSOLE-001` | Complete | — |
-| `TEST-ISOLATION-001` | Isolate database integration tests from each other | `ENV-INTEGRITY-001` | Pending | — |
+| `TEST-ISOLATION-001` | Isolate database integration tests from each other | `ENV-INTEGRITY-001` | Complete | — |
+| `DEMO-STACK-001` | Runnable local demo topology with a real OIDC issuer and synthetic seeds | `STAGING-001`, `CONTAINER-001`, `HTTP-SECURITY-001` | Complete | — |
+| `STORE-SCOPING-002` | Enforce store membership on the order transition route the first pass missed | `STORE-SCOPING-001` | Complete | — |
+| `STORE-ASSIGNMENT-001` | A governed, audited write path for staff store membership | `IDENTITY-001`, `STORE-SCOPING-001` | Complete | — |
 | `DEPLOY-TARGET-001` | Production topology, isolated agent cell host, and closed capability flags | `DECISION-HOSTING-001` | Pending | — |
 | `MONITORING-001` | Telemetry collector, retention, and paging alert contracts | `DEPLOY-TARGET-001` | Pending | — |
 | `SIGNER-REGISTRY-001` | Two-party release schema, verifier enforcement, and signer key ceremony | `EVIDENCE-REPIN-001` | Blocked | — |

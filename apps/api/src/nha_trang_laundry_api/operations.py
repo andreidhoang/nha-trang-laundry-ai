@@ -20,6 +20,10 @@ from nha_trang_laundry_db.approvals import (
     ApprovalStateError,
     StoredApproval,
 )
+from nha_trang_laundry_db.channel import (
+    ChannelBindingError,
+    ContactChannelBindingRepository,
+)
 from nha_trang_laundry_db.configurations import ConfigurationRepository, snapshot_hash
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal
@@ -27,6 +31,11 @@ from nha_trang_laundry_db.incidents import (
     IncidentOpenCommand,
     IncidentRepository,
     IncidentSummary,
+)
+from nha_trang_laundry_db.intake import (
+    CreateOrderRequestCommand,
+    OrderRequestRepository,
+    OrderRequestSummary,
 )
 from nha_trang_laundry_db.manual_sends import (
     ManualSendAttestationCommand,
@@ -146,6 +155,19 @@ class StoredIncidentResult:
     status: str
     fault_decided: bool
     remedy_decided: bool
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StoredOrderRequestResult:
+    """A committed intake draft, described by what the repository persisted."""
+
+    order_request_id: UUID
+    store_id: UUID
+    contact_binding_id: UUID
+    status: str
+    row_version: int
+    created_at: datetime
     replayed: bool
 
 
@@ -843,6 +865,108 @@ class OperationsService:
                 cursor, store_id=store_id, principal=principal, limit=limit
             )
 
+    # --- INTAKE-UI-001 ------------------------------------------------------------------
+    #
+    # The staff counter path onto the same `order_requests` aggregate the agent tool path writes.
+    # There is no intake business rule here on purpose: creation is `OrderRequestRepository.create`
+    # with a STAFF actor, and the only staff-specific decision is what a counter intake may name —
+    # a contact binding that already exists, and nothing else.
+
+    def create_order_request(
+        self,
+        *,
+        store_id: UUID,
+        contact_binding_id: UUID,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> StoredOrderRequestResult:
+        """Open an intake draft bound to a contact the server already knows.
+
+        Two checks run before the idempotency wrapper, as on `create_quote`: membership, because a
+        staff member who has lost this store must not replay a key into a fresh write, and contact
+        existence, because the domain's only source of contact bindings is the verified channel
+        envelope and this path invents none. A counter intake has no channel conversation, so the
+        conversation binding is a freshly minted opaque id — no table joins on it anywhere, and the
+        agent bound-read path, which demands the full four-id tuple, can never match a request it
+        did not create. Contact bindings are never hard-deleted, so the existence answer cannot
+        change between the preflight and the commit.
+        """
+        created_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            with connection.cursor() as cursor:
+                require_store_membership(
+                    cursor,
+                    staff_user_id=principal.staff_user_id,
+                    store_id=store_id,
+                    error=StoreAccessError,
+                )
+                if not ContactChannelBindingRepository.binding_exists(
+                    cursor, contact_binding_id=contact_binding_id
+                ):
+                    raise ChannelBindingError("contact binding is not available")
+
+            def commit() -> dict[str, object]:
+                stored = OrderRequestRepository().create(
+                    connection,
+                    CreateOrderRequestCommand(
+                        store_id=store_id,
+                        contact_binding_id=contact_binding_id,
+                        conversation_binding_id=uuid4(),
+                        actor_id=principal.staff_user_id,
+                        correlation_id=uuid4(),
+                        created_at=created_at,
+                        actor_type="STAFF",
+                    ),
+                )
+                return {
+                    "order_request_id": str(stored.order_request_id),
+                    "store_id": str(store_id),
+                    "contact_binding_id": str(contact_binding_id),
+                    "status": stored.status,
+                    "row_version": stored.row_version,
+                    "created_at": created_at.isoformat(),
+                }
+
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-order-request-create:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={
+                        "store_id": str(store_id),
+                        "contact_binding_id": str(contact_binding_id),
+                    },
+                    occurred_at=created_at,
+                ),
+                commit,
+            )
+        return _stored_order_request_result(result.response, replayed=result.replayed)
+
+    def list_order_requests(
+        self, *, store_id: UUID, principal: StaffPrincipal, limit: int
+    ) -> tuple[OrderRequestSummary, ...]:
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return OrderRequestRepository.list_for_store(
+                cursor, store_id=store_id, principal=principal, limit=limit
+            )
+
+    def get_order_request(
+        self, *, store_id: UUID, order_request_id: UUID, principal: StaffPrincipal
+    ) -> OrderRequestSummary | None:
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return OrderRequestRepository.get_for_store(
+                cursor,
+                order_request_id=order_request_id,
+                store_id=store_id,
+                principal=principal,
+            )
+
     def queue_recovery_summary(self, *, principal: StaffPrincipal) -> QueueRecoverySummary:
         del principal
         with (
@@ -920,6 +1044,20 @@ def _stored_incident_result(value: dict[str, object], *, replayed: bool) -> Stor
         bool(value["fault_decided"]),
         bool(value["remedy_decided"]),
         replayed,
+    )
+
+
+def _stored_order_request_result(
+    value: dict[str, object], *, replayed: bool
+) -> StoredOrderRequestResult:
+    return StoredOrderRequestResult(
+        order_request_id=UUID(str(value["order_request_id"])),
+        store_id=UUID(str(value["store_id"])),
+        contact_binding_id=UUID(str(value["contact_binding_id"])),
+        status=str(value["status"]),
+        row_version=int(str(value["row_version"])),
+        created_at=datetime.fromisoformat(str(value["created_at"])),
+        replayed=replayed,
     )
 
 

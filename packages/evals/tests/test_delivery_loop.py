@@ -28,10 +28,12 @@ def _copied_workspace(tmp_path: Path) -> Path:
             workspace.mkdir(parents=True, exist_ok=True)
             (workspace / root_file.name).write_bytes(root_file.read_bytes())
     for directory in (
+        "apps",
         "context",
         "delivery",
         "docs",
         "evidence",
+        "packages",
         "scripts",
         "specs",
         "templates",

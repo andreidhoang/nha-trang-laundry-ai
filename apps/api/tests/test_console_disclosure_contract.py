@@ -1,0 +1,225 @@
+"""A disclosure may not outlive the fact that made it true.
+
+`docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md` §1 calls the console's honesty chrome "spec-mandated and
+contract-adjacent". Measured before this item: 59 such slots across `apps/web/src`, and not one
+appeared in `test_staff_console_contract.py` or `verify_console_interaction.py` — the console's
+whole safety net, since `apps/web` has no unit tests at 12,830 lines. Coverage was zero.
+
+Registration alone is the weaker half: it guarantees a reworded disclosure changes its slot id and
+fails the check until someone re-reads the sentence. The stronger half is here — the bound entries,
+where a *code* change falsifies the sentence and a test says so.
+
+Two binding kinds carry that weight today.
+
+`SERVER_GATE` asserts the direction that matters. The console must never claim a capability is open
+to someone the server refuses, because that renders an enabled control that then 403s. Stricter is
+fail-safe and allowed: `SHADOW_READ` lists four roles where `current_principal` admits six.
+
+`ABSENT_TABLE` binds the gap notices, which are the most falsifiable claims on the console — "there
+is no `delivery_bundles`" stops being true the moment somebody writes the migration, and that is
+exactly the day the screen must stop saying it.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import inspect
+import re
+import sys
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+import nha_trang_laundry_api.main as api_main
+import pytest
+import yaml
+from fastapi import HTTPException
+from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+
+ROOT = Path(__file__).resolve().parents[3]
+REGISTRY = ROOT / "specs/contracts/console-disclosures-v1.yaml"
+MIGRATIONS = ROOT / "packages/db/migrations"
+RBAC = ROOT / "apps/web/src/core/rbac.js"
+
+#: The console writes role names in its own vocabulary; the server uses `StaffRole`.
+CONSOLE_ROLE_ALIASES = {
+    "OWNER": "OWNER_ADMIN",
+    "APPROVER": "OPS_APPROVER",
+    "OPERATOR": "OPERATOR",
+    "AUDITOR": "AUDITOR",
+    "DRIVER": "DRIVER",
+    "ACCOUNTANT": "ACCOUNTANT",
+}
+
+
+def _module(name: str, path: Path) -> Any:
+    """Load a `scripts/` module by path, registering it before execution.
+
+    Registration is not optional here: `DisclosureSlot` is a `slots=True` dataclass, and dataclass
+    field resolution looks its own module up in `sys.modules`. A module executed without being
+    registered resolves to `None` there and raises inside the standard library rather than in
+    anything this test wrote.
+    """
+    if name in sys.modules:
+        return sys.modules[name]
+    sys.path.insert(0, str(ROOT / "scripts"))
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _registry() -> dict[str, Any]:
+    loaded = yaml.safe_load(REGISTRY.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def _entries(kind: str) -> list[dict[str, Any]]:
+    return [e for e in _registry()["disclosures"] if e["binding"]["kind"] == kind]
+
+
+def _probe_gate(gate_name: str) -> tuple[set[str], bool]:
+    """What the server gate actually admits, established behaviourally rather than by parsing.
+
+    Probing survives a refactor that changes how the gate is written; a source-text assertion does
+    not, and would give a false green exactly when the rule moved.
+    """
+    if gate_name == "current_principal":
+        return {role.value for role in StaffRole}, False
+
+    gate = getattr(api_main, gate_name)
+    admitted: set[str] = set()
+    admits_without_mfa = False
+    for role in StaffRole:
+        for mfa_verified in (True, False):
+            principal = StaffPrincipal(
+                staff_user_id=uuid4(),
+                oidc_subject="probe",
+                roles=frozenset({role}),
+                mfa_verified=mfa_verified,
+                session_id=uuid4(),
+            )
+            try:
+                gate(principal)
+            except HTTPException:
+                continue
+            admitted.add(role.value)
+            admits_without_mfa = admits_without_mfa or not mfa_verified
+    return admitted, not admits_without_mfa
+
+
+def _console_capabilities() -> dict[str, tuple[set[str], bool]]:
+    source = RBAC.read_text(encoding="utf-8")
+    declared: dict[str, tuple[set[str], bool]] = {}
+    for match in re.finditer(r"(\w+):\s*\{\s*roles:\s*\[([^\]]*)\],\s*mfa:\s*(true|false)", source):
+        roles = {
+            CONSOLE_ROLE_ALIASES[token.strip().strip('"')]
+            for token in match.group(2).split(",")
+            if token.strip()
+        }
+        declared[match.group(1)] = (roles, match.group(3) == "true")
+    return declared
+
+
+def test_every_disclosure_slot_is_registered() -> None:
+    """Enumerated from source, so a new disclosure cannot be added without an entry."""
+    disclosures = _module("console_disclosures", ROOT / "scripts/console_disclosures.py")
+    source_ids = {slot.slot_id for slot in disclosures.enumerate_slots()}
+    registered = {entry["slot_id"] for entry in _registry()["disclosures"]}
+    assert source_ids == registered
+
+
+def test_the_committed_registry_matches_a_fresh_generation() -> None:
+    generator = _module(
+        "generate_console_disclosure_registry",
+        ROOT / "scripts/generate_console_disclosure_registry.py",
+    )
+    assert REGISTRY.read_text(encoding="utf-8") == generator.generate()
+
+
+def test_rewording_a_disclosure_changes_its_identity() -> None:
+    """Identity includes the text hash, which is what forces a re-read rather than a silent edit."""
+    disclosures = _module("console_disclosures", ROOT / "scripts/console_disclosures.py")
+    slot = disclosures.enumerate_slots()[0]
+    reworded = disclosures.DisclosureSlot(
+        module=slot.module, line=slot.line, key=slot.key, text=slot.text + " Và thêm một câu."
+    )
+    assert reworded.slot_id != slot.slot_id
+
+    reflowed = disclosures.DisclosureSlot(
+        module=slot.module, line=slot.line + 3, key=slot.key, text="  ".join(slot.text.split())
+    )
+    assert reflowed.slot_id == slot.slot_id, "reformatting is not a content change"
+
+
+@pytest.mark.parametrize("entry", _entries("SERVER_GATE"), ids=lambda e: e["binding"]["capability"])
+def test_the_console_is_never_more_permissive_than_the_server(entry: dict[str, Any]) -> None:
+    """The dangerous direction: an enabled control the server would refuse.
+
+    A console stricter than the server merely hides something; a console looser than the server
+    promises an operator an action that 403s in front of a waiting customer.
+    """
+    capability = entry["binding"]["capability"]
+    console_roles, console_mfa = _console_capabilities()[capability]
+    server_roles, server_requires_mfa = _probe_gate(entry["binding"]["gate"])
+
+    assert console_roles <= server_roles, (
+        f"{capability}: the console offers {sorted(console_roles - server_roles)} "
+        f"which {entry['binding']['gate']} refuses"
+    )
+    if server_requires_mfa:
+        assert console_mfa, f"{capability}: the server demands MFA and the console does not say so"
+
+
+@pytest.mark.parametrize("entry", _entries("ABSENT_TABLE"), ids=lambda e: e["slot_id"])
+def test_a_disclosure_claiming_a_table_is_absent_is_still_true(entry: dict[str, Any]) -> None:
+    """The gap notices are the most falsifiable claims the console makes; hold them to it."""
+    migrations = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(MIGRATIONS.glob("*.sql"))
+    )
+    for table in entry["binding"]["tables"]:
+        assert not re.search(rf"CREATE TABLE\s+{re.escape(table)}\b", migrations), (
+            f"{entry['module']} still tells operators {table} does not exist, "
+            "but a migration now creates it. The disclosure is false and must change."
+        )
+
+
+def test_bound_entries_are_not_a_rounding_error() -> None:
+    """Guard the honest framing: most slots are descriptive, and that is stated rather than hidden.
+
+    This fails if bindings are silently dropped, which is the cheap way to make a red suite green.
+    """
+    counts = _registry()["counts"]
+    assert counts.get("SERVER_GATE") == 15
+    assert counts.get("ABSENT_TABLE") == 4
+    assert counts.get("MODEL_SEAM") == 1
+    assert sum(counts.values()) == _registry()["total"] == 87
+
+
+@pytest.mark.parametrize("entry", _entries("MODEL_SEAM"), ids=lambda e: e["slot_id"])
+def test_the_assistant_streaming_disclosure_still_matches_the_seam(entry: dict[str, Any]) -> None:
+    """The disclosure this item exists for, bound to the one line that can falsify it.
+
+    `assistant.js` tells operators the streamed text is display pacing of an already-saved answer,
+    "không phải mô hình đang sinh từ". True only while `AssistantService` defaults to the
+    deterministic brain. Handing it a provider-backed brain is a one-line change at a seam that
+    exists so the swap can happen; before this test nothing in the repository would have noticed
+    the sentence going false.
+    """
+    from nha_trang_laundry_api.assistant import AssistantService
+
+    signature = inspect.signature(AssistantService.__init__)
+    assert signature.parameters["brain"].default is None, (
+        "the brain is injected, so the default the disclosure relies on is the fallback below"
+    )
+
+    source = inspect.getsource(AssistantService.__init__)
+    expected = entry["binding"]["default_brain"]
+    assert f"brain or {expected}()" in source, (
+        f"{entry['module']} tells operators no language model is called. That holds because "
+        f"{entry['binding']['service']} falls back to {expected}. The fallback changed, so either "
+        "the disclosure is now false or this binding is stale — resolve it, do not relax the test."
+    )

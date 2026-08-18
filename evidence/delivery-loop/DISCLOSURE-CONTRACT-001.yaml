@@ -1,0 +1,106 @@
+schema_version: 1
+work_item: DISCLOSURE-CONTRACT-001
+recorded_at: '2026-08-19T00:20:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-disclosure-contract-001.md requires the staff console's honesty chrome to become
+  a tested contract: a machine-readable registry binding each rendered claim to the code fact that
+  makes it true, a check that fails when the fact changes and the string does not, classification of
+  every slot as bindable, policy-bound or descriptive, and no disclosure deleted or weakened.
+  docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md section 1 is the authority: the honesty chrome is
+  "spec-mandated and contract-adjacent". Measured before this item, coverage was zero - no disclosure
+  string appeared in apps/api/tests/test_staff_console_contract.py or in
+  scripts/verify_console_interaction.py, which are the console's entire safety net because apps/web
+  has no unit tests at 12,830 lines.
+rollback_impact: >-
+  Additive. Three new files under scripts/ and apps/api/tests/, one new registry at
+  specs/contracts/console-disclosures-v1.yaml, and a strictly additive check in
+  scripts/verify_contracts.py. apps/web is byte-identical to baseline, verified by an empty git diff:
+  no disclosure was added, removed, reworded or reclassified, and sw.js therefore needed no
+  regeneration. Rollback is deleting the four new files and reverting one function, which removes a
+  control rather than breaking a flow. No migration, database content, route, credential or
+  capability state is involved; all 13 capabilities remain NOT_AUTHORIZED.
+unresolved_assumptions: >-
+  The registry holds 87 slots: 15 SERVER_GATE, 4 ABSENT_TABLE, 1 MODEL_SEAM, 1 POLICY_BOUND and 66
+  DESCRIPTIVE. That 66 is stated plainly rather than dressed up. A DESCRIPTIVE entry is prose about
+  how a screen behaves that no single code fact governs; registering it still buys something real,
+  because a slot's identity includes the sha256 of its NFC-normalized text, so rewording one changes
+  its id and fails the check until a human re-reads the sentence. What it does not buy is a test that
+  fires when the code changes. Claiming otherwise would be the defect this item exists to remove.
+
+  Two mistakes were made and corrected, and both belong in the record because each would have
+  produced a registry that looked more complete than it was.
+
+  First, bindings were briefly derived from the disclosure text by extracting snake_case identifiers.
+  That produced bindings against bound_contact_id, occurred_at and session_id - all columns that
+  exist - which would have asserted the opposite of the truth inside a file that reads as
+  authoritative. Bindings are now authored per slot and verified against the schema or the route
+  contract, and a binding keyed to a slot id that no disclosure has is a hard generation failure
+  rather than a silent no-op.
+
+  Second, and more seriously, the first extractor keyed only on object properties and therefore
+  missed the example this item was opened for. The assistant's streaming disclosure is rendered
+  positionally as h("p", null, "...") inside a notice element, so no key names it. The registry
+  covered 59 slots and not that one. Notice bodies are now enumerated as well, the population is 87,
+  and the disclosure carries a MODEL_SEAM binding asserting that AssistantService still falls back to
+  DeterministicAssistantBrain.
+
+  The SERVER_GATE assertion is deliberately one-directional and that choice should not be mistaken
+  for laxity. The console must never claim a capability is open to someone the server refuses,
+  because that renders an enabled control that 403s in front of a waiting customer. The console being
+  stricter is fail-safe and is allowed: SHADOW_READ lists four roles where current_principal admits
+  six, which the route contract confirms, and that is a UX choice rather than a defect.
+
+  Verification honesty: this item has NO fresh-context adversarial pass. Two reviewer agents were
+  launched and both terminated on provider API errors after roughly ten minutes, returning nothing.
+  Their file mutations left no residue - apps/web, the migrations and apps/api are byte-identical to
+  baseline and rbac.js was diffed against a pre-run backup. Rather than assert the claim unverified,
+  the four mutation experiments the reviewers had been asked to run were performed in-session and are
+  recorded under bindable_entry_fails_when_its_code_fact_changes. That is weaker than an independent
+  reviewer and is stated as such.
+evidence:
+  every_disclosure_slot_is_registered: >-
+    87 slots enumerated from apps/web/src by scripts/console_disclosures.py, across two populations:
+    keyed honesty-chrome properties (guardrail, missing, why, caveat, note, lede) and positionally
+    rendered notice bodies. test_every_disclosure_slot_is_registered enumerates from source and
+    requires exact set equality with the registry, so a disclosure cannot be added without an entry.
+    Identity is module plus key plus the sha256 of the NFC-normalized text;
+    test_rewording_a_disclosure_changes_its_identity proves a reworded string gets a new id while a
+    reflowed one does not, which is what makes reformatting free and rewording deliberate.
+  bindable_entry_fails_when_its_code_fact_changes: >-
+    Proved by mutation, not by reading, with the tree restored and diffed after each. (1) Adding
+    DRIVER to ORDERS_WRITE in rbac.js failed with "ORDERS_WRITE: the console offers ['DRIVER'] which
+    require_operations_staff refuses". (2) A migration creating delivery_bundles failed the
+    ABSENT_TABLE binding for the gap notice that says it does not exist. (3) Changing
+    AssistantService's fallback from DeterministicAssistantBrain failed the MODEL_SEAM binding - the
+    headline case, and the one nothing in the repository would previously have caught. (4) Adding an
+    unregistered guardrail string to a screen made scripts/verify_contracts.py raise. Server gates
+    are probed behaviourally, calling each gate with every role and MFA combination, so the binding
+    survives a refactor of how the rule is written instead of giving a false green when it moves.
+  unregistered_slot_fails_the_check: >-
+    validate_console_disclosures() in scripts/verify_contracts.py regenerates the registry in memory
+    and raises when it differs from the committed bytes. It is called bare in main() with no flag and
+    no exception swallowing, the same shape as the internal API surface check landed alongside it.
+    Mutation (4) above is the empirical proof; test_the_committed_registry_matches_a_fresh_generation
+    is the pytest-layer equivalent.
+  no_disclosure_deleted_or_weakened: >-
+    apps/web is byte-identical to baseline, verified by an empty git diff over the whole directory
+    after every mutation experiment was reverted, and rbac.js additionally diffed against a
+    pre-experiment copy. This item added bindings and changed no copy. Had a binding proved a
+    disclosure already false, the packet requires reporting it rather than editing the sentence; none
+    did.
+  rollback_assessment: >-
+    See rollback_impact. Additive throughout, no console behaviour change, and the deliverable is a
+    control whose removal removes the control rather than breaking a flow.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

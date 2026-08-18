@@ -2608,7 +2608,7 @@ items:
 - id: DISCLOSURE-CONTRACT-001
   phase: PRODUCTION_HARDENING
   title: Bind the staff console's honesty chrome to the code facts that make it true
-  status: PENDING
+  status: COMPLETE
   priority: 236
   depends_on:
   - OPERATIONS-001

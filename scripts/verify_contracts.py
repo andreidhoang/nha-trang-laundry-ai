@@ -245,6 +245,30 @@ def verify_synthetic_combinatorial_corpus() -> int:
     return len(cases)
 
 
+def validate_console_disclosures() -> int:
+    """Fail when the console's honesty chrome disagrees with its registry.
+
+    Same shape as the API-surface check and for the same reason: the registry is regenerated in
+    memory and compared to the committed bytes, so a new disclosure cannot land unregistered and a
+    reworded one changes its slot id and fails until someone reads the sentence again.
+    """
+    from console_disclosures import REGISTRY_PATH
+    from generate_console_disclosure_registry import generate
+
+    expected = generate()
+    if not REGISTRY_PATH.is_file():
+        raise ValueError(
+            "specs/contracts/console-disclosures-v1.yaml is missing; "
+            "run uv run python scripts/generate_console_disclosure_registry.py"
+        )
+    if REGISTRY_PATH.read_text(encoding="utf-8") != expected:
+        raise ValueError(
+            "the console disclosure registry does not match the disclosures the console renders; "
+            "run uv run python scripts/generate_console_disclosure_registry.py and review the diff"
+        )
+    return int(yaml.safe_load(expected)["total"])
+
+
 def validate_internal_api_surface() -> int:
     """Fail when the committed internal-API contract disagrees with what the app actually serves.
 
@@ -281,12 +305,14 @@ def main() -> None:
     validate_channel_contracts()
     corpus_cases = verify_synthetic_combinatorial_corpus()
     served_operations = validate_internal_api_surface()
+    disclosures = validate_console_disclosures()
     load_agent_tool_registry(ROOT / "specs/contracts/agent-tools-v1.openapi.yaml")
     runtime_registry = load_public_runtime_registry(ROOT / "runtime/model-registry-v1.yaml")
     runtime_artifacts = verify_public_runtime_artifacts(ROOT, runtime_registry)
     print(f"Validated {len(JSON_CONTRACTS)} JSON and {len(YAML_CONTRACTS)} YAML contracts.")
     print(f"Validated {corpus_cases} synthetic combinatorial cases against the domain engines.")
     print(f"Validated {served_operations} served internal API operations against their contract.")
+    print(f"Validated {disclosures} staff-console disclosures against their registry.")
     print(
         f"Validated {len(runtime_artifacts)} pinned public-runtime artifacts; "
         f"release blockers={len(runtime_registry.release_blockers())}."

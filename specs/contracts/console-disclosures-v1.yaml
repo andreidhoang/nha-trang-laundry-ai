@@ -1,0 +1,846 @@
+schema_version: 1
+purpose: 'Every honesty-chrome disclosure the staff console renders, with what holds it true. Generated
+  by scripts/generate_console_disclosure_registry.py and verified by scripts/verify_contracts.py against
+  a fresh generation, so a new disclosure cannot land unregistered and a reworded one cannot pass unnoticed:
+  a slot''s identity includes the hash of its text.'
+counts:
+  ABSENT_TABLE: 4
+  DESCRIPTIVE: 66
+  MODEL_SEAM: 1
+  POLICY_BOUND: 1
+  SERVER_GATE: 15
+total: 87
+disclosures:
+- slot_id: core/rbac.js#why:f1857f4fe905
+  module: core/rbac.js
+  key: why
+  text: Bất kỳ phiên hợp lệ nào cũng đọc được danh sách cửa hàng của chính mình.
+  binding:
+    kind: SERVER_GATE
+    capability: STORES_READ
+    gate: current_principal
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:5a6260e93bad
+  module: core/rbac.js
+  key: why
+  text: Kho dữ liệu đơn hàng cho phép bốn vai trò này đọc.
+  binding:
+    kind: SERVER_GATE
+    capability: ORDERS_READ
+    gate: current_principal
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:e64ecdbabe78
+  module: core/rbac.js
+  key: why
+  text: Tạo và chuyển trạng thái đơn cần vai trò vận hành và đã xác thực hai bước.
+  binding:
+    kind: SERVER_GATE
+    capability: ORDERS_WRITE
+    gate: require_operations_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:995cc17e3773
+  module: core/rbac.js
+  key: why
+  text: Danh sách báo giá dùng cổng vận hành; AUDITOR bị từ chối ở đây dù đọc được đơn hàng.
+  binding:
+    kind: SERVER_GATE
+    capability: QUOTES_READ
+    gate: require_operations_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:129b1f2f9218
+  module: core/rbac.js
+  key: why
+  text: Tính giá cần vai trò vận hành và đã xác thực hai bước.
+  binding:
+    kind: SERVER_GATE
+    capability: QUOTES_WRITE
+    gate: require_operations_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:b866fb76adad
+  module: core/rbac.js
+  key: why
+  text: Tiền đã thu hôm nay dùng cùng cổng vận hành với báo giá.
+  binding:
+    kind: SERVER_GATE
+    capability: SETTLEMENTS_READ
+    gate: require_operations_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:e511e6509b25
+  module: core/rbac.js
+  key: why
+  text: Sự cố dùng cổng vận hành.
+  binding:
+    kind: SERVER_GATE
+    capability: INCIDENTS_READ
+    gate: require_operations_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:ce7a54293201
+  module: core/rbac.js
+  key: why
+  text: Mở sự cố cần vai trò vận hành và đã xác thực hai bước.
+  binding:
+    kind: SERVER_GATE
+    capability: INCIDENTS_WRITE
+    gate: require_operations_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:31cf6ac1ce23
+  module: core/rbac.js
+  key: why
+  text: Hàng chờ duyệt chỉ dành cho người có quyền duyệt.
+  binding:
+    kind: SERVER_GATE
+    capability: APPROVALS_READ
+    gate: require_approval_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:13a623d045d0
+  module: core/rbac.js
+  key: why
+  text: Tình trạng hàng đợi dùng cùng cổng với hàng chờ duyệt.
+  binding:
+    kind: SERVER_GATE
+    capability: QUEUE_READ
+    gate: require_approval_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:f0bdf0cf51e3
+  module: core/rbac.js
+  key: why
+  text: Đọc bản nháp, ngoại lệ và dòng thời gian kiểm toán mở cho bốn vai trò.
+  binding:
+    kind: SERVER_GATE
+    capability: SHADOW_READ
+    gate: current_principal
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:8326f683066c
+  module: core/rbac.js
+  key: why
+  text: Quyết định bản nháp và đối soát chỉ dành cho chủ hoặc người duyệt — OPERATOR qua được cổng truy
+    cập nhưng bị từ chối ở tầng dữ liệu.
+  binding:
+    kind: SERVER_GATE
+    capability: SHADOW_DECIDE
+    gate: require_operations_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:8554c8780029
+  module: core/rbac.js
+  key: why
+  text: Khoá và chứng thực gửi thủ công cần vai trò vận hành và đã xác thực hai bước.
+  binding:
+    kind: SERVER_GATE
+    capability: MANUAL_SEND
+    gate: require_operations_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:3d864b158f0c
+  module: core/rbac.js
+  key: why
+  text: Quản lý nhân sự chỉ dành cho chủ.
+  binding:
+    kind: SERVER_GATE
+    capability: STAFF_ADMIN
+    gate: require_owner
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:c2476af7e68f
+  module: core/rbac.js
+  key: why
+  text: 'Trợ lý AI dùng cổng vận hành: vai trò vận hành, đã xác thực hai bước, và được gán cửa hàng.'
+  binding:
+    kind: SERVER_GATE
+    capability: ASSISTANT
+    gate: require_operations_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: screens/approvals.js#notice:53e222b57566
+  module: screens/approvals.js
+  key: notice
+  text: Máy chủ tìm hàng chờ theo đơn hàng, nên việc chờ duyệt nào không gắn với một đơn — một bản báo
+    giá, một tin nhắn soạn sẵn, một khung giờ hay một mức phí giao đề xuất — sẽ không hiện ở đây. Chúng
+    vẫn đang chờ và vẫn đang đếm ngược; chỉ là danh sách này không thấy chúng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#guardrail:2807c7bbd43b
+  module: screens/approvals.js
+  key: guardrail
+  text: Đây là màn hình chỉ đọc. Không có thao tác nào ở đây ghi vào máy chủ, kể cả khi một việc sắp hết
+    hạn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:2d352ae01c8f
+  module: screens/approvals.js
+  key: notice
+  text: Việc đã duyệt, đã từ chối hoặc đã hết hạn không nằm trong danh sách này và không tra cứu lại được
+    từ đây.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:2ebfcb11400a
+  module: screens/approvals.js
+  key: notice
+  text: Để duyệt, máy chủ đòi ba mã niêm phong chứng minh bạn đã xem đúng nội dung đó. Danh sách trên
+    không trả về mã nào trong ba mã ấy — nó chỉ có mã của chính phong bì, là một giá trị khác và không
+    thay được. Nên từ những gì màn hình này thấy, không dựng nổi một quyết định hợp lệ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:85921adfdc91
+  module: screens/approvals.js
+  key: notice
+  text: 'Cùng một lý do: mở một yêu cầu duyệt cần đúng loại việc theo bảng của máy chủ, cộng hai mã niêm
+    phong và phiên bản chính sách đang áp dụng. Không giá trị nào trong số đó nhân viên gõ tay ra được,
+    nên màn hình không mời bạn thử.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/assistant.js#notice:a9d4b5d99812
+  module: screens/assistant.js
+  key: notice
+  text: Viết câu hỏi rồi bấm Gửi. Không có gì được ghi lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/assistant.js#notice:383d2d025f90
+  module: screens/assistant.js
+  key: notice
+  text: Trợ lý này không gọi mô hình ngôn ngữ và không tính tiền. Mỗi câu trả lời được máy chủ quyết định
+    và ghi lại trước, rồi hiện dần trên màn hình — chữ chạy là nhịp hiển thị của câu trả lời đã lưu, không
+    phải mô hình đang sinh từ. Mọi lượt hỏi đều được ghi lại kèm người hỏi.
+  binding:
+    kind: MODEL_SEAM
+    service: AssistantService
+    default_brain: DeterministicAssistantBrain
+    why: The disclosure this item exists for. It tells operators the streamed text is display pacing of
+      an already-saved answer, not a model generating words. That holds only while AssistantService defaults
+      to the deterministic brain. Passing a provider-backed brain to AssistantService(brain=...) is a
+      one-line change at a seam that exists so the swap can happen, and it makes the sentence false with
+      nothing else in the repository noticing. The test asserts the default.
+- slot_id: screens/exceptions.js#guardrail:c542174e4775
+  module: screens/exceptions.js
+  key: guardrail
+  text: Tự động gửi lại một tin không rõ đã đi hay chưa chính là cách khách nhận hai lần cùng một tin
+    nhắn. Việc đó bị cấm, không phải là không khuyến khích. Bảng điều khiển này không gửi lại và không
+    có nút gửi lại; lối ra duy nhất khỏi trạng thái này là một người có tên xác nhận điều đã thực sự xảy
+    ra, bằng cách mở cuộc hội thoại bên phía nhà cung cấp và nhìn tận mắt.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/exceptions.js#notice:d7e95d96d102
+  module: screens/exceptions.js
+  key: notice
+  text: Route trả biên nhận của mọi cửa hàng trong hệ thống, không lọc theo cửa hàng bạn đang chọn ở thanh
+    trên. Một biên nhận ở đây có thể thuộc cửa hàng khác, và người bên đó có thể đang xử lý nó cùng lúc
+    với bạn — nên hãy đọc lại danh sách trước khi quyết định.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#lede:62259933f062
+  module: screens/gaps.js
+  key: lede
+  text: 'Bảng vận hành hôm nay dừng lại ở chiều thương mại của một đơn: tạo, xác nhận, huỷ. Các chiều
+    còn lại của cùng một đơn — nhận đồ, sản xuất, giao, thu tiền — không có bề mặt nào.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:f7a8008bea67
+  module: screens/gaps.js
+  key: missing
+  text: Màn hình Tiếp nhận cần một mã liên hệ đã tồn tại, và nguồn duy nhất sinh ra mã đó là một tin nhắn
+    khách đã gửi qua kênh chính thức rồi được máy chủ xác minh. Không có đường nào tạo liên hệ tại quầy,
+    nên khách vãng lai chưa tiếp nhận được trong hệ thống.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#note:dfaae43959ca
+  module: screens/gaps.js
+  key: note
+  text: Khi mở, quyết định phải nêu rõ lưu gì (tên? số điện thoại? không gì cả?), giữ bao lâu, và khách
+    đồng ý bằng cách nào — trước khi có ô nhập nào được thêm vào màn hình Tiếp nhận.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:c4f99531cea6
+  module: screens/gaps.js
+  key: missing
+  text: 'Không tồn tại aggregate parties, contact_points hay addresses nào. Không có gì để đọc và không
+    có gì để ghi. Hệ quả rộng hơn: không có nguồn nào sinh ra bound_contact_id, nên hiện tại hệ thống
+    không ghi nhận được khách hàng từ bất kỳ nguồn nào.'
+  binding:
+    kind: ABSENT_TABLE
+    tables:
+    - parties
+    - contact_points
+    - addresses
+    why: The party/CRM aggregates. This is the disclosure DEC-015 is about, and it must change the day
+      a customer record exists.
+- slot_id: screens/gaps.js#missing:6bc3b51a36d1
+  module: screens/gaps.js
+  key: missing
+  text: Các chuyển trạng thái intake không có route HTTP nào. Route /transition chỉ mở ra chiều thương
+    mại của đơn, nên IntakeStatus hiển thị được nhưng không đổi được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:0621c03d85a6
+  module: screens/gaps.js
+  key: missing
+  text: 'Giống hệt intake: trạng thái sản xuất không có route nào. ProductionStatus chỉ đọc được.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:0dcee188fd27
+  module: screens/gaps.js
+  key: missing
+  text: Không có delivery_bundles, delivery_legs hay distance_measurements.
+  binding:
+    kind: ABSENT_TABLE
+    tables:
+    - delivery_bundles
+    - delivery_legs
+    - distance_measurements
+    why: The disclosure names three aggregates as absent; the binding asserts the schema still lacks them.
+      Building any of them makes the sentence false.
+- slot_id: screens/gaps.js#missing:9834ff94fcd7
+  module: screens/gaps.js
+  key: missing
+  text: 'Trả đủ đúng số khi khách tự lấy đã có: khối tất toán trong màn hình chi tiết đơn (SETTLEMENT-001,
+    đã hoàn thành). Còn thiếu charges, payments và payment_allocations tổng quát, nên trả một phần, trả
+    thừa và ghi nợ vẫn không biểu diễn được.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:af635d639b65
+  module: screens/gaps.js
+  key: missing
+  text: Không có custody_units, custody_events hay batches.
+  binding:
+    kind: ABSENT_TABLE
+    tables:
+    - custody_units
+    - custody_events
+    - batches
+    why: 'Same shape: the custody context is measured empty and the disclosure says so.'
+- slot_id: screens/gaps.js#missing:4c53a8d9d8b5
+  module: screens/gaps.js
+  key: missing
+  text: Không có remedies, credit_grants hay credit_ledger_entries. Bồi hoàn là một lệnh có duyệt, không
+    phải một trạng thái tự do, nên không thể thay bằng một ô ghi chú.
+  binding:
+    kind: ABSENT_TABLE
+    tables:
+    - remedies
+    - credit_grants
+    - credit_ledger_entries
+    why: Remedy and credit aggregates. The sentence also states that compensation is an approved command
+      rather than a screen action, which stays true while these are absent.
+- slot_id: screens/gaps.js#lede:8defef7ab744
+  module: screens/gaps.js
+  key: lede
+  text: Mọi chỉ số vận hành đều cần một read model có phiên bản đứng sau. Chưa có cái nào, nên bảng vận
+    hành không hiển thị KPI — đếm tạm vài con số rồi gọi là KPI là cách nhanh nhất để một quyết định kinh
+    doanh dựa trên số bịa.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:fadf099317cc
+  module: screens/gaps.js
+  key: missing
+  text: Không có kho dữ liệu nào ghi nhận máy, mẻ giặt hay phút công.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:85d107d2368c
+  module: screens/gaps.js
+  key: missing
+  text: Không có kho dữ liệu nào ghi nhận chi phí của một chuyến giao.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:5a963448822b
+  module: screens/gaps.js
+  key: missing
+  text: Không có read model nào tính funnel, on-time, rewash hay doanh thu. FR-RPT-005 buộc mọi KPI phải
+    có tử số, mẫu số, khung thời gian và trạng thái chất lượng dữ liệu — và không có gì cung cấp bốn thứ
+    đó.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:bd91192345d1
+  module: screens/gaps.js
+  key: missing
+  text: Không có endpoint xuất dữ liệu nào.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#note:e568b1ae84c4
+  module: screens/gaps.js
+  key: note
+  text: 'Khi làm: CSV phải chống chèn công thức bảng tính — một ô bắt đầu bằng =, +, - hay @ là mã chạy
+    được khi khách hàng mở tệp.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:105c0b3b7972
+  module: screens/gaps.js
+  key: missing
+  text: Read model đã tồn tại trong kho dữ liệu nhưng chưa có route nào phơi nó ra. Ngoài ra nó cần một
+    ProductionSlaPolicy cho mỗi đơn, và đó là một quyết định kinh doanh chứ không phải một mặc định kỹ
+    thuật để lấp vào.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#lede:89406ac4c070
+  module: screens/gaps.js
+  key: lede
+  text: Chưa có kênh nào nối vào hệ thống, nên chưa có tin nhắn nào để hợp nhất và chưa có gì để AI tóm
+    tắt.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:7d917294ff92
+  module: screens/gaps.js
+  key: missing
+  text: Chưa có channel adapter nào, và chưa có nhà cung cấp nào ở đầu bên kia.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:19ed1c651bfb
+  module: screens/gaps.js
+  key: missing
+  text: Chưa có metric có phiên bản nào để AI trích dẫn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#note:f427b5746cb8
+  module: screens/gaps.js
+  key: note
+  text: Theo đặc tả, AI chỉ được trích dẫn read model có phiên bản. Nó không được tự tính chỉ số, không
+    được sinh SQL, không được chọn định danh và không được thay đổi trạng thái.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#lede:46bbf570458c
+  module: screens/gaps.js
+  key: lede
+  text: Bốn mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API không
+    trả về, và một bề mặt đoán bừa các trường đó sẽ là duyệt mù hoặc thao tác nhầm người.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:f1ffb6c9f038
+  module: screens/gaps.js
+  key: missing
+  text: Hàng chờ trả về envelope_hash nhưng không trả resource_version, snapshot_hash hay rendered_hash,
+    nên không dựng được một quyết định hợp lệ. Và duyệt theo mã băm mà không xem được nội dung đứng sau
+    nó là duyệt mù.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:8845cac26dd4
+  module: screens/gaps.js
+  key: missing
+  text: Cần một resource_type khớp đúng ánh xạ hành động của máy chủ, cùng hai mã băm JCS và một policy_version.
+    Nhân viên không tạo được các giá trị đó bằng tay.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:5f121897a2aa
+  module: screens/gaps.js
+  key: missing
+  text: /internal/v1/session không trả session_id, nên bảng vận hành không biết định danh nào để gửi tới
+    route thu hồi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:7569f9e7a62c
+  module: screens/gaps.js
+  key: missing
+  text: Không có route GET cho một revision, và không endpoint nào trả các dòng của báo giá, nên không
+    dựng lại được chính thứ vừa tạo ra.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#notice:a7dddda2c256
+  module: screens/gaps.js
+  key: notice
+  text: 'Mỗi mục nêu đúng thứ đang thiếu: một aggregate, một route, một quyết định hoặc một hạng mục công
+    việc. Không mục nào hẹn ngày — một lời hẹn ở đây sẽ cũ đi và làm mất tin vào phần còn lại.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/incidents.js#notice:bdcdfb355ef5
+  module: screens/incidents.js
+  key: notice
+  text: Mở sự cố chỉ ghi lại rằng có chuyện xảy ra. Máy chủ luôn trả về fault_decided = false và remedy_decided
+    = false, và trong API này không có route nào đặt hai giá trị đó. Ai chịu lỗi và khách được bù gì là
+    quyết định của con người, ở nơi khác.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/incidents.js#guardrail:8bba1e7a67ac
+  module: screens/incidents.js
+  key: guardrail
+  text: Sự cố mở ở đây luôn là SERVICE_QUALITY do nhân viên ghi, luôn ở trạng thái OPEN, và luôn chưa
+    quyết định lỗi lẫn bồi hoàn. Không có route nào trong API này thay đổi ba điều đó.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#notice:cb979668590b
+  module: screens/manualSend.js
+  key: notice
+  text: Trạng thái này chỉ nói rằng một người đã chứng thực chính họ gửi tin đó bằng tay. Nó không phải
+    bằng chứng nhà cung cấp đã chuyển tin và không phải xác nhận của khách. Không được trả lời khách hay
+    ghi vào đơn rằng tin đã tới nơi chỉ vì dòng này tồn tại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#guardrail:2758a9929d25
+  module: screens/manualSend.js
+  key: guardrail
+  text: Hai bước bên dưới là cách duy nhất một tin đã duyệt rời khỏi hệ thống hôm nay, và cả hai đều ghi
+    tên bạn. Khoá phong bì xong thì tiến trình gửi tự động không còn được phép chạy lệnh gửi đó nữa, nên
+    đừng khoá một phong bì bạn không định tự gửi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#guardrail:91c046d0c7ed
+  module: screens/orderDetail.js
+  key: guardrail
+  text: 'Chỉ một trường hợp được hỗ trợ: khách trả đúng tổng đã báo, đủ một lần, tại quầy, và tự lấy đồ
+    về. Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định đang mở — không
+    làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.'
+  binding:
+    kind: POLICY_BOUND
+    decision: DEC-010
+    why: True because a registered decision says so, not because of a code fact.
+- slot_id: screens/orderDetail.js#notice:3723193c7b25
+  module: screens/orderDetail.js
+  key: notice
+  text: Mã đơn phải là một UUID. Không có yêu cầu nào được gửi đi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#guardrail:561748165de4
+  module: screens/orderDetail.js
+  key: guardrail
+  text: Máy chủ chưa có cách đọc một đơn riêng lẻ. Màn hình này gọi lại bảng đơn của cửa hàng và lọc theo
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#guardrail:f9986e40a9fa
+  module: screens/orderDetail.js
+  key: guardrail
+  text: Đây là bản ghi kiểm toán theo định danh, không phải lịch sử đơn hàng được biên tập. Thứ tự do
+    máy chủ quyết định (occurred_at, id) — cũ nhất trước — và màn hình này không sắp xếp lại. Định danh
+    không tồn tại cũng trả về danh sách rỗng chứ không phải lỗi 404.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderRequests.js#notice:0cb2a0fd9969
+  module: screens/orderRequests.js
+  key: notice
+  text: Chỉ cần khi bạn báo lỗi cho kỹ thuật. Thao tác thường ngày không dùng tới nó — nút “Báo giá ngay”
+    ở trên đã mang sẵn mã này sang màn hình Báo giá.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderRequests.js#guardrail:ea2ce1bbb4e5
+  module: screens/orderRequests.js
+  key: guardrail
+  text: 'Bước này chỉ mở một phiếu nháp: chưa có giá, chưa hẹn giờ, chưa hứa gì với khách. Giá tính ở
+    màn hình Báo giá và do máy chủ quyết.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orders.js#notice:81fcdba8cd13
+  module: screens/orders.js
+  key: notice
+  text: Vì máy chủ chưa lưu những thứ đó cho một đơn. Không phải màn hình này giấu đi — chúng chưa tồn
+    tại. Hiện một cột “Khách” lấy từ chỗ khác là bịa ra một điều máy chủ chưa từng nói, nên bảng để trống
+    và ghi nhận đây là việc chưa làm được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orders.js#guardrail:fbf408806822
+  module: screens/orders.js
+  key: guardrail
+  text: Bốn phần của một đơn — bán hàng, nhận đồ, làm đồ, tiền — chạy riêng với nhau. Đơn đã xác nhận
+    vẫn có thể chưa bắt đầu giặt và chưa thu tiền. Đọc bốn nhãn như bốn câu trả lời riêng, không phải
+    một chuỗi nối tiếp.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orders.js#guardrail:06a4b6c85d26
+  module: screens/orders.js
+  key: guardrail
+  text: Màn hình này cố ý không biết bước nào là hợp lệ — quy tắc đó thuộc về máy chủ, và chép nó sang
+    trình duyệt là tạo bản thứ hai không ai giữ cho khớp được. Cả tám đích đều được chào; máy chủ từ chối
+    cái nào không hợp lệ và nói rõ vướng ở đâu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orders.js#guardrail:f46bada3c1f7
+  module: screens/orders.js
+  key: guardrail
+  text: Đơn chỉ được tạo từ một báo giá khách đã chốt và đã duyệt giá chính xác. Máy chủ kiểm lại toàn
+    bộ điều kiện; màn hình này chỉ bắt lỗi gõ trước khi gửi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#notice:138760e6c1ca
+  module: screens/quotes.js
+  key: notice
+  text: Máy chủ trả về một bảng giá rỗng, nên không có dịch vụ nào để chọn và không thể tính giá. Đây
+    là vấn đề của bảng giá đã công bố, không phải của thao tác này.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#notice:be0adcdc34b4
+  module: screens/quotes.js
+  key: notice
+  text: Chưa có lượt tiếp nhận nào trong cửa hàng này. Tạo một lượt ở màn hình
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#notice:7c81144140bd
+  module: screens/quotes.js
+  key: notice
+  text: Không có dữ kiện nào được điền sẵn; hãy chọn từ danh sách bên dưới.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#notice:580264d6aa9f
+  module: screens/quotes.js
+  key: notice
+  text: Mã có thể thuộc cửa hàng khác hoặc đã bị gõ sai — máy chủ trả lời cùng một cách cho cả hai, nên
+    màn hình này cũng không đoán. Không có dữ kiện nào được điền sẵn; hãy chọn từ danh sách bên dưới.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#guardrail:473650fae3a4
+  module: screens/quotes.js
+  key: guardrail
+  text: Thiếu dữ kiện thì máy chủ từ chối đoán và không ghi gì cả — người quyết, không phải máy.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/shadow.js#notice:f0ce709a4a3f
+  module: screens/shadow.js
+  key: notice
+  text: Hàng chờ này chỉ hiện những bản nháp chưa ai quyết định. Nếu bản nháp biến mất sau khi tải lại,
+    đã có một quyết định được ghi cho lượt chạy đó. Nếu nó vẫn còn sau khi bạn tải lại cả màn hình, chưa
+    có gì được ghi và bạn quyết định lại được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/shadow.js#notice:7f035d90f7b2
+  module: screens/shadow.js
+  key: notice
+  text: Mỗi tin nhắn gửi ra ngoài đều cần một người có tên quyết định. Hệ thống không tự gửi bất cứ thứ
+    gì, và bấm APPROVE ở đây cũng chưa gửi gì cả — nó chỉ ghi rằng bạn đồng ý với nội dung.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/shadow.js#guardrail:add42213ce89
+  module: screens/shadow.js
+  key: guardrail
+  text: Duyệt ở đây không phải là gửi. Một bản nháp rời khỏi hàng chờ này ngay khi có người quyết định,
+    và mỗi lượt chạy chỉ nhận đúng một quyết định.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#guardrail:5a17bb3bc1fc
+  module: screens/staff.js
+  key: guardrail
+  text: Tạo xong là có danh tính, chưa có vai trò và chưa có cửa hàng. Người này chưa làm được gì cho
+    tới khi được gán vai trò và được gán cửa hàng — cả hai việc đó làm ngay trên màn hình này, ở các bảng
+    Gán vai trò và Gán cửa hàng bên dưới, và chỉ chủ mới thực hiện được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#notice:14c7ff28b9f3
+  module: screens/staff.js
+  key: notice
+  text: Máy chủ chưa có cách đọc lại vai trò của một nhân viên, nên bảng vận hành không thể xác nhận danh
+    sách vai trò hiện tại của người này. Chỉ biết lệnh vừa rồi đã được nhận.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#guardrail:304eee7a5f54
+  module: screens/staff.js
+  key: guardrail
+  text: 'Gán vai trò là cộng thêm, không phải thay thế: lệnh này không gỡ vai trò nào đang có. Bảng vận
+    hành không đọc được vai trò hiện có và máy chủ chưa có cách thu hồi vai trò, nên hãy chắc chắn trước
+    khi gửi.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#notice:fbe05be31e9a
+  module: screens/staff.js
+  key: notice
+  text: Máy chủ chưa có cách bật lại một nhân viên đã vô hiệu hoá. Nếu cần người này làm việc lại, phải
+    xử lý trực tiếp ở cơ sở dữ liệu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#notice:aeb3d72b4c8d
+  module: screens/staff.js
+  key: notice
+  text: Người này sẽ bị chuyển sang DISABLED và mọi phiên đang mở của họ bị thu hồi ngay lập tức, kể cả
+    khi đang đứng ở quầy. Máy chủ từ chối nếu đây là chủ đang hoạt động cuối cùng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#guardrail:7fd8cda5fa06
+  module: screens/staff.js
+  key: guardrail
+  text: Lệnh này cũng thu hồi toàn bộ phiên đăng nhập của người đó trong cùng một giao dịch. Không có
+    đường quay lại từ bảng vận hành.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#notice:f78020c49fd6
+  module: screens/staff.js
+  key: notice
+  text: Máy chủ chưa có cách đọc lại danh sách cửa hàng của người khác, nên bảng vận hành không xác nhận
+    được trạng thái hiện tại của họ. Người đó đăng nhập rồi xem thanh trên cùng là cách kiểm tra chắc
+    chắn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#guardrail:964c82c63c46
+  module: screens/staff.js
+  key: guardrail
+  text: Không có dòng gán thì mọi màn hình theo cửa hàng đều từ chối người đó, kể cả khi vai trò đã đúng.
+    Thu hồi có hiệu lực ngay ở yêu cầu kế tiếp; dòng gán vẫn được giữ lại để biết ai đã cấp và ai đã thu
+    hồi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/system.js#notice:d6ee2eb7a0df
+  module: screens/system.js
+  key: notice
+  text: Máy chủ chỉ trả về mã nhân viên, vai trò và trạng thái xác thực hai bước cho phiên đang dùng;
+    nó không trả về mã phiên. Thu hồi một phiên cần đúng mã phiên đó, nên bảng vận hành không thể liệt
+    kê các phiên đang mở, cũng không thể đóng phiên trên máy khác. Nút “Thoát” trên thanh phía trên chỉ
+    kết thúc phiên này.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/system.js#guardrail:cb8f55ac1fcf
+  module: screens/system.js
+  key: guardrail
+  text: Màn hình này chỉ để nhìn. Không phát lại, không thử lại, không xếp lại — và các con số đếm trên
+    mọi cửa hàng của hệ thống, không theo cửa hàng đang chọn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/today.js#notice:520eb5e2587a
+  module: screens/today.js
+  key: notice
+  text: Không đếm được, và hiển thị số 0 ở đây sẽ là sai sự thật. Báo cho kỹ thuật.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/components.js#notice:b2539cf37219
+  module: ui/components.js
+  key: notice
+  text: 'Dưới 6kg và từ 6kg trở lên là hai bậc đơn giá khác nhau, và bậc dưới tính tối thiểu 1kg. Hệ quả:
+    một đơn 5,9kg có thể đắt hơn một đơn 6,0kg. Đây là quy tắc chủ đã xác nhận, không phải lỗi, và không
+    được làm trơn.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/components.js#notice:9525c4bc0839
+  module: ui/components.js
+  key: notice
+  text: Không có API phía sau. Hiển thị một biểu mẫu ở đây sẽ tạo cảm giác dữ liệu đã được lưu
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/components.js#notice:f34c6be68acb
+  module: ui/components.js
+  key: notice
+  text: Không có API phía sau. Hiển thị một biểu mẫu ở đây sẽ tạo cảm giác dữ liệu đã được lưu trong khi
+    không có gì được lưu cả.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.

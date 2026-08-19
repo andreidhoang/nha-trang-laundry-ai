@@ -48,6 +48,20 @@ NOTICE_KEY = "notice"
 #: A notice shorter than this is an inline status line, not a disclosure.
 NOTICE_MINIMUM_LENGTH = 40
 
+#: Element classes that carry a rendered claim. Keying only on object properties and the first
+#: `null,` paragraph of a notice left roughly sixty claims invisible, including two that mattered
+#: more than their count: the `notice__title` carrying "MANUAL_SEND_RECORDED không có nghĩa là khách
+#: đã nhận" -- one of the four chrome examples the UX spec names -- and a second model-seam claim in
+#: `assistant.js` rendered as a `screen__lede`, falsified by the same one-line brain swap as the
+#: registered one. A string passed after a props object is not less of a disclosure for it.
+CLAIM_CLASSES = ("notice__title", "screen__lede", "hint", "eyebrow", "notice")
+
+#: Object literals in `core/` that are pure claim vocabulary rather than screen prose.
+CLAIM_TABLES = (
+    ("core/errors.js", "MESSAGES"),
+    ("core/i18n.js", "REASON_NOTE"),
+)
+
 #: Below this length a string is a label, not a disclosure. Measured: the shortest genuine
 #: disclosure on the console is 46 characters.
 MINIMUM_LENGTH = 25
@@ -59,6 +73,12 @@ _SLOT = re.compile(
 _LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
 _NOTICE = re.compile(r'class:\s*"notice[^"]*"')
 _NOTICE_BODY = re.compile(r'null,\s*((?:\s*"(?:[^"\\]|\\.)*"\s*\+?)+)')
+
+_CLASSED = re.compile(
+    r'h\(\s*"[a-z0-9]+"\s*,\s*\{[^{}]*class:\s*"([a-z_]+(?:__[a-z-]+)?)[^"]*"[^{}]*\}\s*,\s*'
+    r'((?:\s*"(?:[^"\\]|\\.)*"\s*\+?)+)'
+)
+_TABLE_ENTRY = re.compile(r'(\w+)\s*:\s*((?:\s*"(?:[^"\\]|\\.)*"\s*\+?)+)')
 
 #: How far past a `notice` marker to look for its body. Measured: the longest gap in this console is
 #: under 900 characters; 2500 is slack without reaching the next notice.
@@ -117,6 +137,35 @@ def enumerate_slots(source_root: Path = WEB_SOURCE) -> list[DisclosureSlot]:
             text = "".join(_LITERAL.findall(match.group("value")))
             if len(text) >= MINIMUM_LENGTH:
                 add(module, source[: match.start()].count("\n") + 1, match.group("key"), text)
+
+        for classed in _CLASSED.finditer(source):
+            if classed.group(1) not in CLAIM_CLASSES:
+                continue
+            text = "".join(_LITERAL.findall(classed.group(2)))
+            if len(text) >= NOTICE_MINIMUM_LENGTH:
+                add(
+                    module,
+                    source[: classed.start()].count("\n") + 1,
+                    classed.group(1),
+                    text,
+                )
+
+        for table_module, table_name in CLAIM_TABLES:
+            if module != table_module:
+                continue
+            start = source.find(f"{table_name} =")
+            if start == -1:
+                continue
+            body = source[start : source.find("\n};", start) + 1]
+            for item in _TABLE_ENTRY.finditer(body):
+                text = "".join(_LITERAL.findall(item.group(2)))
+                if len(text) >= NOTICE_MINIMUM_LENGTH:
+                    add(
+                        module,
+                        source[: start + item.start()].count("\n") + 1,
+                        f"{table_name}.{item.group(1)}",
+                        text,
+                    )
 
         for marker in _NOTICE.finditer(source):
             window = source[marker.end() : marker.end() + _NOTICE_WINDOW]

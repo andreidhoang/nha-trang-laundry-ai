@@ -54,8 +54,11 @@ def test_context_drift_check_passes() -> None:
     # the fact on 2026-08-16, plus the two the 2026-08-18 harness session enqueued after measuring
     # the gaps they close: SPEC-ROUTE-SURFACE-001, because 38 operations were served and exactly one
     # was named anywhere in specs/, and DISCLOSURE-CONTRACT-001, because 58 disclosure slots in
-    # apps/web make factual claims about system behaviour and none appears in any test.
-    assert "79 work items" in result.stdout
+    # apps/web make factual claims about system behaviour and none appears in any test. The
+    # eightieth is DISCLOSURE-BIND-002, a corrective item: DISCLOSURE-CONTRACT-001 was completed
+    # with four SERVER_GATE bindings that could not fail, proven by mutation, so the corrective
+    # route CONTINUATION_PROTOCOL.md requires for an immutable COMPLETE item was opened.
+    assert "80 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

@@ -1,0 +1,103 @@
+schema_version: 1
+work_item: DISCLOSURE-BIND-002
+recorded_at: '2026-08-19T13:20:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-disclosure-bind-002.md requires the console disclosure registry's own claims to
+  become true: no binding may pass vacuously, the registry's stated purpose must be true of what it
+  contains, the DEC-010 disclosure must be bound and its falsity recorded without editing the copy,
+  and no console string may change. This is a corrective item under
+  context/CONTINUATION_PROTOCOL.md, which makes a COMPLETE item immutable planning history unless
+  one is created. DISCLOSURE-CONTRACT-001 stays COMPLETE and untouched.
+rollback_impact: >-
+  Additive and reversible. Three scripts and one test file changed, one generated registry
+  regenerated, one pinned count updated with its justification. No console string, route, schema,
+  migration or capability changed. Rolling back restores the previous registry and the previous
+  bindings, which reinstates the vacuous ones - so the rollback is safe but strictly worse, and that
+  is worth knowing before choosing it. All 13 capabilities remain NOT_AUTHORIZED.
+unresolved_assumptions: >-
+  What this item does not finish, stated rather than implied. The registry now holds 154 slots of
+  which 27 are bound and 127 are DESCRIPTIVE. The reviewer estimated roughly twenty DESCRIPTIVE
+  entries are bindable with machinery already in the repository; six of the highest-value ones were
+  bound here and the rest were not. The uniform rationale on a DESCRIPTIVE entry has been left in
+  place, so for those remaining entries it is still an overstatement, and a further corrective item
+  would be the honest way to close it rather than another pass under this one.
+
+  The enumerator now reads six object keys, strings rendered with a props object under the claim
+  classes, notice bodies, and the MESSAGES and REASON_NOTE tables in core/. A string rendered some
+  other way is still outside it, and the registry's purpose field now says so instead of claiming
+  "every". That is the second half of the fix and the more important one: the original defect was
+  not that coverage was incomplete but that an incomplete registry asserted completeness.
+
+  A fourth vacuous binding was found by the generation guard rather than by the review. The three
+  lenses named ORDERS_READ, SHADOW_READ and SHADOW_DECIDE; refusing to generate any SERVER_GATE
+  binding on current_principal immediately surfaced STORES_READ as well. Its claim genuinely is
+  "any valid session", so it was not a wrong truthmaker but a wrong assertion, and it became
+  ALL_AUTHENTICATED with an equality check that also fails if a new StaffRole is added and the
+  console is not updated - a direction no subset check would ever have caught.
+
+  Concurrency: a peer session was editing apps/web during this work - router.js, assistant.js,
+  components.css and sw.js. Those four files are theirs and were neither staged nor reverted here.
+  verify_contracts.py was re-run with their changes in the tree and passes, so the new disclosure
+  check does not collide with their work; they were notified that HEAD moved and that a console
+  disclosure change now requires regenerating the registry.
+
+  Verification honesty: the adversarial pass for this item is the one that produced it. Three
+  fresh-context lenses refuted DISCLOSURE-CONTRACT-001 and this item is the response to what they
+  proved. It has not itself been independently reviewed, and every claim below is instead backed by
+  a mutation run in-session with the tree diffed and restored afterwards.
+evidence:
+  no_binding_can_pass_vacuously: >-
+    The defect and its fix are both empirical. Before: adding DRIVER to ORDERS_READ in rbac.js - a
+    false claim about who may read the order board - left all 24 tests green and verify_contracts.py
+    passing, which I reproduced before accepting the review. After: the same mutation fails with
+    "ORDERS_READ: the console says [...DRIVER...] and _require_order_read enforces [...]". The four
+    capabilities that bound to a gate admitting every role were rebound: ORDERS_READ, SHADOW_READ
+    and SHADOW_DECIDE to REPOSITORY_ROLES with an equality assertion against the exact sets in
+    orders.py and shadow_console.py, and STORES_READ to ALL_AUTHENTICATED. Two structural guards
+    prevent recurrence: the generator refuses to emit a SERVER_GATE binding on current_principal,
+    and test_no_server_gate_binding_can_pass_vacuously probes every remaining gate and fails any
+    that admits the full StaffRole enumeration.
+  registry_purpose_is_true_of_its_contents: >-
+    The enumerator missed roughly sixty rendered claims because it read only object keys and the
+    first paragraph of a notice. Two of the misses mattered beyond their count: manualSend.js
+    renders "MANUAL_SEND_RECORDED không có nghĩa là khách đã nhận" as a notice__title, one of the
+    four chrome examples the UX spec names by name; and assistant.js renders a second model-seam
+    claim as a screen__lede, in the same file as the registered one and falsified by the same
+    one-line brain swap. Both are now captured and the second assistant claim carries a MODEL_SEAM
+    binding. The population went 87 to 154, and the purpose field states what is covered instead of
+    claiming everything.
+  dec_010_disclosure_bound_and_its_falsity_recorded: >-
+    orderDetail.js tells operators partial payment, deposits and credit are refused "kèm mã quyết
+    định đang mở" - with an OPEN decision code. DEC-010 is RESOLVED, decided 2026-08-18 as
+    deliberately deferred. The console is telling the shop owner a decision is still open that was
+    decided. POLICY_BOUND entries now record the decision's live status regenerated from the
+    register, so a decision resolving after a sentence was written appears as a registry diff, and
+    the contradiction is encoded as a strict xfail carrying the full explanation. strict=True means
+    that when the wording is corrected the test starts passing, the xfail fails the build, and
+    whoever fixed it must delete the marker. The copy is untouched, because
+    TASK-disclosure-contract-001.md is explicit that a string found false today is an incident to
+    report and this is customer-facing text about the owner's own decision.
+  console_copy_unchanged: >-
+    No console string was added, removed or reworded by this item. The four apps/web files modified
+    in the working tree belong to a concurrent peer session and were neither staged nor reverted;
+    every file this item staged is under scripts/, specs/contracts/, apps/api/tests/,
+    packages/evals/tests/ and delivery/.
+  rollback_assessment: >-
+    See rollback_impact. Each of the five new binding kinds was proved to fail by mutation, with the
+    tree diffed clean afterwards: ALL_AUTHENTICATED by dropping a role from STORES_READ,
+    READ_ONLY_MODULE by adding a POST to approvals.js, RESPONSE_SHAPE by adding session_id to
+    SessionResponse, ABSENT_ROUTE by inserting an intake path into the route contract, and
+    REPOSITORY_ROLES by the ORDERS_READ mutation above.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-18'
+last_updated: '2026-08-19'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -2633,5 +2633,36 @@ items:
   - bindable_entry_fails_when_its_code_fact_changes
   - unregistered_slot_fails_the_check
   - no_disclosure_deleted_or_weakened
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: DISCLOSURE-BIND-002
+  phase: PRODUCTION_HARDENING
+  title: Correct the vacuous bindings and false completeness claim in the disclosure
+    registry
+  status: COMPLETE
+  priority: 237
+  depends_on:
+  - DISCLOSURE-CONTRACT-001
+  - SPEC-ROUTE-SURFACE-001
+  context_domains:
+  - platform
+  - privacy_consent
+  normative_sources:
+  - docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-disclosure-bind-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - no_binding_can_pass_vacuously
+  - registry_purpose_is_true_of_its_contents
+  - dec_010_disclosure_bound_and_its_falsity_recorded
+  - console_copy_unchanged
   - rollback_assessment
   blocked_by_decisions: []

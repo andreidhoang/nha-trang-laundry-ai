@@ -2666,3 +2666,59 @@ items:
   - console_copy_unchanged
   - rollback_assessment
   blocked_by_decisions: []
+- id: CONSOLE-ORDER-GAP-001
+  phase: PRODUCTION_HARDENING
+  title: Disclose that no order can be created, and bind the disclosure to the fact
+  status: PENDING
+  priority: 238
+  depends_on:
+  - DISCLOSURE-CONTRACT-001
+  - SPEC-ROUTE-SURFACE-001
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-console-order-gap-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_refusal_is_disclosed_where_it_happens
+  - disclosure_is_bound_to_the_absence_of_a_promotion_path
+  - no_existing_disclosure_reworded
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: ASSISTANT-BRAIN-002
+  phase: PRODUCTION_HARDENING
+  title: Money questions are answered with an order count and a suggestion chip misroutes
+  status: PENDING
+  priority: 239
+  depends_on:
+  - ASSISTANT-001
+  context_domains:
+  - agent_tools
+  - platform
+  normative_sources:
+  - specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-assistant-brain-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - money_question_refuses_rather_than_reporting_a_count
+  - every_suggestion_chip_resolves_to_its_documented_intent
+  - first_match_wins_and_totality_preserved
+  - rollback_assessment
+  blocked_by_decisions: []

@@ -201,7 +201,8 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     assert counts.get("RESPONSE_SHAPE") == 1
     assert counts.get("READ_ONLY_MODULE") == 1
     assert counts.get("MODEL_SEAM") == 2
-    assert sum(counts.values()) == _registry()["total"] == 154
+    assert counts.get("ABSENT_WRITER") == 2
+    assert sum(counts.values()) == _registry()["total"] == 164
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -388,4 +389,45 @@ def test_a_screen_claiming_to_be_read_only_issues_no_write(entry: dict[str, Any]
     assert not mutating, (
         f"{entry['module']} tells operators nothing here writes to the server, but the module "
         f"issues {sorted(set(mutating))}."
+    )
+
+
+@pytest.mark.parametrize("entry", _entries("ABSENT_WRITER"), ids=lambda e: e["slot_id"])
+def test_a_disclosure_claiming_no_writer_exists_is_still_true(entry: dict[str, Any]) -> None:
+    """No production module may write the symbol the disclosure says nothing writes.
+
+    The order path is refused because `quote_composition.py` hardcodes ESTIMATE/REVIEW_REQUIRED,
+    `quotes.py` holds the only INSERT and there is no UPDATE anywhere, and `orders.py` demands
+    APPROVED_EXACT. Two screens now say so. The day someone builds the promotion path this test
+    fails, which is exactly when both sentences must come down — the failure is the feature.
+
+    Reads and evals are excluded deliberately: `orders.py` compares against the value and the eval
+    fixtures generate corpora, neither of which is a production writer.
+    """
+    symbol = entry["binding"]["symbol"]
+
+    # Half one: the producer still emits the non-orderable state. A concurrent session pointed out
+    # that the live 409 alone is a symptom, not the claim -- the same refusal would appear for a
+    # merely expired quote -- so the binding asserts the cause on both sides.
+    producer = ROOT / "packages/domain/src/nha_trang_laundry_domain/quote_composition.py"
+    composition = producer.read_text(encoding="utf-8")
+    assert "finality=QuoteFinality.ESTIMATE" in composition, (
+        "the only quote producer no longer hardcodes ESTIMATE; if it can now emit an orderable "
+        "finality, the disclosure is false"
+    )
+
+    # Half two: nothing in production writes the orderable state.
+    writers: list[str] = []
+    for path in sorted((ROOT / "packages").rglob("*.py")) + sorted((ROOT / "apps").rglob("*.py")):
+        parts = path.parts
+        if "tests" in parts or "evals" in parts or path.name == "catalog.py":
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if symbol not in line or "!=" in line or "is not" in line:
+                continue
+            if re.search(rf"=\s*\w*\.?{symbol}\b|{symbol}\s*,", line):
+                writers.append(f"{path.relative_to(ROOT)}:{number}")
+    assert not writers, (
+        f"{entry['module']} tells operators nothing sets {symbol}, but production code now does: "
+        f"{writers}. The refusal it describes may no longer happen — take the disclosure down."
     )

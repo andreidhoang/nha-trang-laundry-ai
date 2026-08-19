@@ -105,6 +105,21 @@ BINDINGS: dict[str, dict[str, Any]] = {
         "why": "The party/CRM aggregates. This is the disclosure DEC-015 is about, and it must "
         "change the day a customer record exists.",
     },
+    "screens/gaps.js#missing:b80e8491e577": {
+        "kind": "ABSENT_WRITER",
+        "symbol": "APPROVED_EXACT",
+        "why": "Claims no path raises a quote revision to APPROVED_EXACT, which is why every "
+        "order-creation command is refused. Bound to the absence of a production writer: "
+        "the day a promotion path lands, this test fails and the disclosure must change, because "
+        "that is the day it stops being true.",
+    },
+    "screens/orders.js#guardrail:8174ea237631": {
+        "kind": "ABSENT_WRITER",
+        "symbol": "APPROVED_EXACT",
+        "why": "The same fact, said at the point of use. The sentence tells an operator the "
+        "command will be refused and that it is not their typo, so it must come down the moment "
+        "the refusal does.",
+    },
     "screens/assistant.js#screen__lede:96537d9c63dd": {
         "kind": "MODEL_SEAM",
         "service": "AssistantService",

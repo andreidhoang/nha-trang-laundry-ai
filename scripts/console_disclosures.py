@@ -36,7 +36,13 @@ REGISTRY_PATH = ROOT / "specs/contracts/console-disclosures-v1.yaml"
 #: The object keys that carry honesty chrome. `guardrail` and `missing` are the spec's gap notices;
 #: `why` is the capability-refusal reason a disabled control shows; `caveat`, `note` and `lede` are
 #: the screen-level disclosures. A key added here without a registry entry fails the check.
-DISCLOSURE_KEYS = ("guardrail", "missing", "why", "caveat", "note", "lede")
+DISCLOSURE_KEYS = ("guardrail", "missing", "why", "caveat", "note", "lede", "today")
+
+#: `today` was missing from that tuple until CONSOLE-ORDER-GAP-001, found by noticing the slot count
+#: rose by two when three strings were added. It is the key on every `#/gaps` entry that tells an
+#: operator what to do *instead* -- "ghi tay như trước" -- which makes
+#: it the most operationally load-bearing string there, and the one most likely to go stale
+#: silently when the gap it describes closes.
 
 #: Keyed slots are not the whole population, and assuming they were would have missed the example
 #: this item exists for. The assistant's streaming disclosure - the sentence that becomes false the

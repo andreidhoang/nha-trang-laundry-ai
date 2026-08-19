@@ -10,15 +10,16 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_ROUTE: 2
   ABSENT_TABLE: 5
+  ABSENT_WRITER: 2
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 127
+  DESCRIPTIVE: 135
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   READ_ONLY_MODULE: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 11
-total: 154
+total: 164
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -522,11 +523,51 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:13bf8c5f2c7c
+  module: screens/gaps.js
+  key: today
+  text: 'Nhận đồ và ghi tay như trước. Đây là khoảng trống quy trình thật, không phải lỗi giao diện: tạo
+    liên hệ tại quầy đồng nghĩa với lưu thông tin cá nhân của khách mà chưa có cơ sở đồng ý nào, nên hệ
+    thống từ chối thay vì tự làm.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/gaps.js#note:dfaae43959ca
   module: screens/gaps.js
   key: note
   text: Khi mở, quyết định phải nêu rõ lưu gì (tên? số điện thoại? không gì cả?), giữ bao lâu, và khách
     đồng ý bằng cách nào — trước khi có ô nhập nào được thêm vào màn hình Tiếp nhận.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:b80e8491e577
+  module: screens/gaps.js
+  key: missing
+  text: Máy chủ chỉ nhận báo giá ở trạng thái APPROVED_EXACT / ACCEPTED_FINAL kèm approval_id. Bộ định
+    giá chỉ sinh ra được ESTIMATE / REVIEW_REQUIRED, và không có đường nào trong hệ thống nâng một bản
+    báo giá lên trạng thái đó. Nên hôm nay mọi lệnh tạo đơn đều bị từ chối.
+  binding:
+    kind: ABSENT_WRITER
+    symbol: APPROVED_EXACT
+    why: 'Claims no path raises a quote revision to APPROVED_EXACT, which is why every order-creation
+      command is refused. Bound to the absence of a production writer: the day a promotion path lands,
+      this test fails and the disclosure must change, because that is the day it stops being true.'
+- slot_id: screens/gaps.js#today:cb1903d75561
+  module: screens/gaps.js
+  key: today
+  text: 'Báo giá vẫn tạo và tra cứu được. Đơn hàng thì ghi tay như trước. Đây là mục thứ hai chặn cùng
+    một việc: kể cả khi khách vãng lai nhận diện được, đơn vẫn chưa tạo được.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#note:1a107c1735b7
+  module: screens/gaps.js
+  key: note
+  text: Khi mở, quyết định phải nêu rõ lúc nào một báo giá ràng buộc tiệm — ai duyệt, duyệt cái gì, và
+    khách chốt bằng cách nào — chứ không chỉ thêm một route.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -545,6 +586,14 @@ disclosures:
     - addresses
     why: The party/CRM aggregates. This is the disclosure DEC-015 is about, and it must change the day
       a customer record exists.
+- slot_id: screens/gaps.js#today:b318a605cd96
+  module: screens/gaps.js
+  key: today
+  text: Liên hệ được nhận diện phía máy chủ qua contact binding; bảng vận hành không tạo khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/gaps.js#missing:6bc3b51a36d1
   module: screens/gaps.js
   key: missing
@@ -652,6 +701,15 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:37f4e66fb029
+  module: screens/gaps.js
+  key: today
+  text: Màn hình Hôm nay chỉ có số bản ghi đang chờ. Đó là số đếm, không phải KPI, và không được đọc như
+    KPI.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/gaps.js#missing:bd91192345d1
   module: screens/gaps.js
   key: missing
@@ -732,11 +790,28 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:484ca555c5e8
+  module: screens/gaps.js
+  key: today
+  text: Màn hình Duyệt hiển thị hàng chờ và thời gian còn lại; các nút quyết định hiện ra nhưng bị vô
+    hiệu hoá kèm lý do.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/gaps.js#missing:8845cac26dd4
   module: screens/gaps.js
   key: missing
   text: Cần một resource_type khớp đúng ánh xạ hành động của máy chủ, cùng hai mã băm JCS và một policy_version.
     Nhân viên không tạo được các giá trị đó bằng tay.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:6ba6584bc95b
+  module: screens/gaps.js
+  key: today
+  text: Yêu cầu duyệt do máy chủ tự mở khi một lệnh chạm vào ngưỡng cần duyệt.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -754,11 +829,29 @@ disclosures:
     why: 'Claims /internal/v1/session does not return session_id, which is why the operations table cannot
       name a session to revoke. Verified: the model declares staff_user_id, roles and mfa_verified and
       nothing else.'
+- slot_id: screens/gaps.js#today:ef2617528ca9
+  module: screens/gaps.js
+  key: today
+  text: Nút Thoát chỉ kết thúc phiên đang dùng. Muốn cắt mọi phiên của một người thì vô hiệu hoá người
+    đó ở màn hình Nhân sự — lệnh ấy thu hồi tất cả phiên của họ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/gaps.js#missing:7569f9e7a62c
   module: screens/gaps.js
   key: missing
   text: Không có route GET cho một revision, và không endpoint nào trả các dòng của báo giá, nên không
     dựng lại được chính thứ vừa tạo ra.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:5c44d1dc8bdf
+  module: screens/gaps.js
+  key: today
+  text: Danh sách báo giá của cửa hàng trả về bản mới nhất kèm tổng, trạng thái giá và mã băm ảnh chụp
+    — nhưng không có dòng chi tiết nào.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1058,15 +1151,17 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#guardrail:f46bada3c1f7
+- slot_id: screens/orders.js#guardrail:8174ea237631
   module: screens/orders.js
   key: guardrail
   text: Đơn chỉ được tạo từ một báo giá khách đã chốt và đã duyệt giá chính xác. Máy chủ kiểm lại toàn
-    bộ điều kiện; màn hình này chỉ bắt lỗi gõ trước khi gửi.
+    bộ điều kiện; màn hình này chỉ bắt lỗi gõ trước khi gửi. Hôm nay chưa có báo giá nào trong hệ thống
+    đạt được trạng thái đó, nên lệnh này sẽ bị máy chủ từ chối — đó không phải lỗi bạn gõ sai.
   binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
+    kind: ABSENT_WRITER
+    symbol: APPROVED_EXACT
+    why: The same fact, said at the point of use. The sentence tells an operator the command will be refused
+      and that it is not their typo, so it must come down the moment the refusal does.
 - slot_id: screens/quotes.js#notice:759d8966ea11
   module: screens/quotes.js
   key: notice

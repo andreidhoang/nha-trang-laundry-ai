@@ -1,0 +1,95 @@
+schema_version: 1
+work_item: CONSOLE-ORDER-GAP-001
+recorded_at: '2026-08-19T14:05:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-console-order-gap-001.md requires the console to disclose, where an operator
+  meets it, that the running system refuses every order-creation command, and to bind that
+  disclosure to the code fact that makes it true so it stops being shown the day that changes. The
+  packet forbids building the quote-promotion path under this item: disclosing a gap and closing it
+  are different acts with different authority, and when a quote becomes binding on the shop is an
+  owner sequencing decision.
+rollback_impact: >-
+  Additive disclosure only. Two console strings added - a #/gaps entry and one sentence on the
+  orders.js create-order guardrail - plus one new binding kind and its test, and the regenerated
+  registry. No existing string was reworded, no route, schema, migration or behaviour changed.
+  Rolling back removes a disclosure and restores a screen that silently refuses, which is worse but
+  safe. All 13 capabilities remain NOT_AUTHORIZED.
+unresolved_assumptions: >-
+  The finding is not mine. A concurrent session drove the live stack and found that
+  POST /internal/v1/stores/{id}/orders returns 409 for a quote the engine had just priced. I verified
+  every link before acting rather than taking it on trust: quote_composition.py:232-233,255 hardcodes
+  finality=ESTIMATE, status=REVIEW_REQUIRED, approval_id=None and is the only producer; quotes.py:133
+  is the sole INSERT INTO quote_revisions and there is no UPDATE quote_revisions anywhere in
+  production; orders.py:126-137 requires APPROVED_EXACT and ACCEPTED_FINAL and a non-null
+  approval_id; every write of those states outside tests is a fixture generator in packages/evals.
+
+  That session also corrected the binding I first wrote. My initial plan was to bind against the live
+  409, and they pointed out it is a symptom rather than the claim - the same 409 would appear for a
+  merely expired quote. The binding now asserts the cause on both sides: that the producer still
+  emits ESTIMATE, and that no production module writes APPROVED_EXACT. Both halves were proved to
+  fail by mutation.
+
+  This is the second of three independent blockers on walk-in to settled, and the count matters
+  because I gave the owner a two-step answer earlier today that was wrong. The first is that
+  resolve_or_create, the only writer of contact_channel_bindings, has no production caller, so no
+  bound_contact_id exists - DEC-013. The third, also verified here, is that
+  POST /orders/{id}/transition accepts only CommercialTransitionRequest, which carries a commercial
+  target and no intake dimension, so intake never reaches ACCEPTED and domain/orders.py:119-120
+  refuses CONFIRMED to ACTIVE. That third one is already disclosed at #/gaps "M3 · MÀN 7". Closing
+  any one of the three changes nothing on its own.
+
+  Scope not taken: the Tiếp nhận screen still gives no pointer to CONTACT_BINDING_UNKNOWN at the
+  moment of refusal, which the packet listed as fold-in-if-cheap. It is a different screen and a
+  different refusal path, so it is left for a later pass rather than bundled in here.
+
+  Environment: scripts/verify_console_interaction.py could not run - playwright is not installed in
+  this environment. It is not one of this item's declared acceptance checks, and
+  test_staff_console_contract.py (11 passed) covers the contract assertions over the same files, but
+  the interaction verifier is genuinely unrun and that is recorded rather than glossed.
+
+  Concurrency: apps/web/sw.js is deliberately NOT part of this commit. Its cache name is a sha256
+  over the bytes of every shell file, so the copy I regenerated encodes a peer session's uncommitted
+  router.js, assistant.js, components.css and layout.css. Committing it would place a fingerprint in
+  the repository for a tree state that has never existed there. It is left regenerated in the working
+  tree for whoever commits apps/web last, and the peer has been told.
+evidence:
+  the_refusal_is_disclosed_where_it_happens: >-
+    Two additions. A #/gaps entry in the "Vòng đời đơn hàng" group, placed immediately after the
+    DEC-013 walk-in entry so the two independent order-creation blockers read together, naming the
+    exact condition - the server accepts only APPROVED_EXACT / ACCEPTED_FINAL with an approval_id,
+    the pricer emits only ESTIMATE / REVIEW_REQUIRED, and nothing raises a revision between them. And
+    one sentence on the orders.js create-order guardrail at the point of use: the command will be
+    refused and it is not the operator's typo. The pre-existing guardrail ended "màn hình này chỉ bắt
+    lỗi gõ trước khi gửi", which is precisely the sentence that made a 409 read as a typo.
+  disclosure_is_bound_to_the_absence_of_a_promotion_path: >-
+    Both new strings carry an ABSENT_WRITER binding asserting two halves: that
+    quote_composition.py still hardcodes finality=QuoteFinality.ESTIMATE, and that no module under
+    apps/ or packages/ outside tests and evals writes APPROVED_EXACT. Proved by mutation with the
+    tree diffed clean afterwards - adding a production writer fails it, and changing the producer's
+    hardcoded finality fails it. The day a promotion path lands, both disclosures fail their test and
+    must come down, which is the entire point of binding them.
+  no_existing_disclosure_reworded: >-
+    The orders.js guardrail was extended, not rewritten - the original two sentences are byte-
+    identical and one sentence follows them. Because slot identity is the hash of the normalized
+    text, extending it produced a new slot id, so the registry records it as a new claim and the old
+    id is gone; that is the mechanism working, not a silent edit. No other string changed, proven by
+    diff over apps/web.
+  rollback_assessment: >-
+    See rollback_impact. One further improvement fell out of checking arithmetic rather than
+    assuming: adding three strings raised the slot count by two, and the missing one was the `today`
+    key - the string on every #/gaps entry that tells an operator what to do instead. It was absent
+    from DISCLOSURE_KEYS, so all eight of them were invisible to the registry. Added; the population
+    went 154 to 164.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

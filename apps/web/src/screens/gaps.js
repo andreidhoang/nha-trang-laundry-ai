@@ -79,6 +79,24 @@ const GROUPS = [
         link: { href: "#/order-requests", label: "Mở màn hình Tiếp nhận" },
       },
       {
+        ref: "CONSOLE",
+        title: "Tạo đơn từ một báo giá",
+        what: "Mở một đơn hàng từ báo giá khách đã chốt.",
+        missing:
+          "Máy chủ chỉ nhận báo giá ở trạng thái APPROVED_EXACT / ACCEPTED_FINAL kèm approval_id. " +
+          "Bộ định giá chỉ sinh ra được ESTIMATE / REVIEW_REQUIRED, và không có đường nào trong " +
+          "hệ thống nâng một bản báo giá lên trạng thái đó. Nên hôm nay mọi lệnh tạo đơn đều bị " +
+          "từ chối.",
+        blockedBy: "Chưa có nguồn nào đặt quote_revisions.finality = APPROVED_EXACT",
+        today:
+          "Báo giá vẫn tạo và tra cứu được. Đơn hàng thì ghi tay như trước. Đây là mục thứ hai " +
+          "chặn cùng một việc: kể cả khi khách vãng lai nhận diện được, đơn vẫn chưa tạo được.",
+        note:
+          "Khi mở, quyết định phải nêu rõ lúc nào một báo giá ràng buộc tiệm — ai duyệt, duyệt " +
+          "cái gì, và khách chốt bằng cách nào — chứ không chỉ thêm một route.",
+        link: { href: "#/quotes", label: "Mở màn hình Báo giá" },
+      },
+      {
         ref: "M3 · MÀN 2",
         title: "Khách hàng / hỏi mới",
         what:

@@ -2669,7 +2669,7 @@ items:
 - id: CONSOLE-ORDER-GAP-001
   phase: PRODUCTION_HARDENING
   title: Disclose that no order can be created, and bind the disclosure to the fact
-  status: PENDING
+  status: COMPLETE
   priority: 238
   depends_on:
   - DISCLOSURE-CONTRACT-001

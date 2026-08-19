@@ -57,8 +57,12 @@ def test_context_drift_check_passes() -> None:
     # apps/web make factual claims about system behaviour and none appears in any test. The
     # eightieth is DISCLOSURE-BIND-002, a corrective item: DISCLOSURE-CONTRACT-001 was completed
     # with four SERVER_GATE bindings that could not fail, proven by mutation, so the corrective
-    # route CONTINUATION_PROTOCOL.md requires for an immutable COMPLETE item was opened.
-    assert "80 work items" in result.stdout
+    # route CONTINUATION_PROTOCOL.md requires for an immutable COMPLETE item was opened. The
+    # eighty-first and eighty-second are CONSOLE-ORDER-GAP-001 and ASSISTANT-BRAIN-002, both
+    # corrective: a concurrent session driving the live stack proved no order can be created at all
+    # because no quote can reach APPROVED_EXACT, and that a money question naming a timeframe is
+    # answered with an order count instead of refused.
+    assert "82 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

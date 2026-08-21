@@ -343,3 +343,29 @@ decisions:
       No purge can execute regardless of schedule, which is fail-closed and correct. It also means
       RETENTION-STORE-001 cannot be completed by engineering alone, which is why it is recorded as a
       blocker rather than worked around.
+  - id: DEC-021
+    title: When a quote becomes final, who may make it so, and how that is recorded
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_QUOTE_APPROVAL_2026-08.md
+    opened_at: '2026-08-21'
+    question: >-
+      No command path in this system can produce a quote revision that order creation will accept.
+      OrderRepository.create requires finality APPROVED_EXACT and status ACCEPTED_FINAL with a
+      non-null approval_id (orders.py:126-137); compose_quote_revision hardcodes ESTIMATE,
+      REVIEW_REQUIRED and approval_id None on every path (quote_composition.py:232-233, 254-255);
+      quotes.py:133 is the sole INSERT and a trigger forbids UPDATE, so a revision must be born
+      orderable rather than promoted; and approving an envelope never touches a quote row. Verified
+      live 2026-08-21: POST orders returns 409 for every quote the engine can produce, and three
+      independent attempts to refute the chain failed. The owner decides what "chốt giá" means at
+      the counter, who may do it, and whether the unresolved delivery fee (DEC-003) or the
+      TAX_TREATMENT_UNVERIFIED flag must clear first.
+    blocking_today: >-
+      Every order in the business. No order can be created by any route, screen or operator action,
+      so the order board, the transition command and the settlement command are all reachable code
+      over a table nothing can put a row into. SHADOW-001, the G1 evidence carrier, requires thirty
+      real orders and its task packet does not list order creation among the conditions before the
+      first order; no work item among the 82 in the queue owns this. The console discloses the
+      refusal under CONSOLE-ORDER-GAP-001 and no code routes around it.

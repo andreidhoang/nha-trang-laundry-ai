@@ -38,7 +38,7 @@
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { dateTime, shortId } from "../core/format.js";
-import { NAV, enumVi } from "../core/i18n.js";
+import { NAV, enumLabel } from "../core/i18n.js";
 import { storeId } from "../core/session.js";
 import { badge, errorNotice, icon, reasonCodeList, skeleton } from "../ui/components.js";
 
@@ -57,13 +57,46 @@ const SUGGESTIONS = [
 ];
 
 /**
- * The intent token as a badge: Vietnamese gloss leading, the verbatim token beside it.
+ * The two intents the brain emits when it is declining rather than answering.
+ *
+ * Both sentences the server sends for these hand the next move back to a person:
+ * `REVENUE_UNAVAILABLE` names an owner policy decision that has not been ratified, and
+ * `UNSUPPORTED` returns the question with the list of what would have worked. That is what `warn`
+ * means in `tokens.css` — "a thing waiting on a named human" — and it is already the state
+ * `ui/components.js` gives a `REQUIRE_HUMAN` refusal. Rendering these `info`, the state reserved
+ * for "true but not final", made a refusal and an answer look identical on the one screen whose
+ * job is telling those apart.
+ *
+ * `ORDER_LOOKUP` is deliberately absent. The brain emits it whether the order was found or not,
+ * so separating the two here would mean reading the answer text — client-side intent logic by
+ * another name. The badge reports the server's decision; it never forms one.
+ */
+const DECLINED_INTENTS = new Set(["REVENUE_UNAVAILABLE", "UNSUPPORTED"]);
+
+/**
+ * How the server read the question, labelled as a claim the operator can disagree with.
+ *
+ * Two changes from the bare badge this replaced. The token renders `Gloss (TOKEN)` through
+ * `enumLabel`, the dual-language rule every other server enum on this console follows; the earlier
+ * form passed the gloss as `token` with an empty `gloss`, which pushed the verbatim token into a
+ * `title` tooltip — unreachable on touch, and this console is used on a phone at a counter. And
+ * the chip is introduced by a word, because an unlabelled chip beside an answer reads as
+ * decoration rather than as the machine stating how it understood the question.
  *
  * @param {string} intent
  * @returns {HTMLElement}
  */
-function intentBadge(intent) {
-  return badge({ token: enumVi(intent), gloss: "", state: "info", title: intent });
+function intentRow(intent) {
+  return h(
+    "div",
+    { class: "row" },
+    h("span", { class: "hint" }, "Hiểu là"),
+    badge({
+      token: enumLabel(intent),
+      gloss: "",
+      state: DECLINED_INTENTS.has(intent) ? "warn" : "info",
+    }),
+  );
 }
 
 /**
@@ -140,7 +173,7 @@ function answerBlock(item) {
       "div",
       { class: "spread" },
       h("p", { class: "eyebrow" }, "Trợ lý AI"),
-      intentBadge(String(item.intent || "")),
+      intentRow(String(item.intent || "")),
     ),
     h("div", { class: "chat__answer stack stack--tight" }, paragraphs(item.answer || "")),
     reasonCodeList(Array.isArray(item.reason_codes) ? item.reason_codes : []),
@@ -160,7 +193,7 @@ function answerBlock(item) {
  * @param {string} store
  * @returns {{card: HTMLElement, begin: (turn: any) => void}}
  */
-function liveAnswer(store) {
+function liveAnswer(store, clearance) {
   const badgeHost = h("div");
   const dots = h(
     "span",
@@ -183,12 +216,38 @@ function liveAnswer(store) {
   );
 
   /**
+   * Scroll this card into view with the composer's real height held clear beneath it.
+   *
+   * `scrollIntoView` reasons about the scrollport, which does not know that the composer is
+   * `position: sticky; bottom` and paints over its foot. `components.css` declares a static
+   * `scroll-margin-block-end` as the floor; the composer's height is not static — it grows with
+   * the textarea — and at 390×844 the static value was four pixels short, which is enough to put
+   * the last line of an answer behind the box the operator just typed into. Measuring at the
+   * moment of the scroll is the only value that is right for the composer as it actually is.
+   */
+  function reveal() {
+    card.style.scrollMarginBlockEnd = `${clearance()}px`;
+    card.scrollIntoView({ block: "end" });
+    // And again once the frame has been laid out. The first pass measures a composer that is
+    // still moving: sending clears the textarea and shrinks it, the banner row above can appear
+    // or go, and either shifts the composer's top after the clearance has been read from it.
+    // Measured against the running stack at 390×844, that left the newest line 11px behind the
+    // composer for about a second while the answer streamed — correct once it settled, wrong
+    // exactly while it was being read. The second pass reads the settled layout, and is a no-op
+    // when nothing moved.
+    requestAnimationFrame(() => {
+      card.style.scrollMarginBlockEnd = `${clearance()}px`;
+      card.scrollIntoView({ block: "end" });
+    });
+  }
+
+  /**
    * The finishing chrome every complete answer gets, however the text arrived.
    *
    * @param {any} turn
    */
   function finishChrome(turn) {
-    render(badgeHost, intentBadge(String(turn.intent || "")));
+    render(badgeHost, intentRow(String(turn.intent || "")));
     render(
       footer,
       reasonCodeList(Array.isArray(turn.reason_codes) ? turn.reason_codes : []),
@@ -225,16 +284,42 @@ function liveAnswer(store) {
       `/internal/v1/stores/${encodeURIComponent(store)}/assistant/turns/${encodeURIComponent(String(turn.turn_id))}/stream`,
     );
     let settled = false;
+    // The card was scrolled clear of the composer while it was two typing dots tall. It then grows
+    // downward as frames arrive, so without following it the newest words walk straight back under
+    // the composer — measured at 390×844, the whole of a refusal ended up below the fold while the
+    // operator watched the top of it. Following is what a person reading a chat expects.
+    //
+    // A wheel or a finger is an unambiguous statement that they would rather be looking somewhere
+    // else, so either one ends the following for this turn and nothing puts it back. That test is
+    // used instead of comparing scroll positions because the only scrolling here is ours, and a
+    // position check cannot tell our scroll from theirs.
+    let following = true;
+    const release = () => {
+      following = false;
+    };
+    window.addEventListener("wheel", release, { passive: true });
+    window.addEventListener("touchmove", release, { passive: true });
+    const stopFollowing = () => {
+      window.removeEventListener("wheel", release);
+      window.removeEventListener("touchmove", release);
+    };
+    /** Keep the newest text above the composer, measured against the composer as it now is. */
+    const follow = () => {
+      if (following) reveal();
+    };
     source.onmessage = (event) => {
       if (event.data === "[DONE]") {
         settled = true;
         source.close();
         caret.remove();
         finishChrome(turn);
+        follow();
+        stopFollowing();
         return;
       }
       try {
         answerNode.appendChild(document.createTextNode(JSON.parse(event.data)));
+        follow();
       } catch {
         // A frame that is not a JSON string carries nothing worth keeping; the full answer is
         // still one fallback away if the stream later breaks.
@@ -245,10 +330,12 @@ function liveAnswer(store) {
       settled = true;
       source.close();
       renderWhole(turn);
+      follow();
+      stopFollowing();
     };
   }
 
-  return { card, begin };
+  return { card, begin, reveal };
 }
 
 /**
@@ -375,9 +462,12 @@ export function render_() {
     // land while the server records the turn.
     if (transcriptHost.querySelector(".chat__empty")) render(transcriptHost);
     const bubble = questionBubble(question);
-    const live = liveAnswer(store);
+    const live = liveAnswer(store, composerClearance);
     transcriptHost.append(bubble, live.card);
-    live.card.scrollIntoView({ block: "nearest" });
+    // `end`, not `nearest`. `nearest` counted the new card as "in view" while the sticky composer
+    // covered it, so the operator watched their answer arrive underneath the box they had just
+    // typed into. `end` plus the measured clearance lands it above the composer instead.
+    live.reveal();
     try {
       const turn = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/assistant/turns`,
@@ -420,6 +510,27 @@ export function render_() {
       `Enter để gửi · Shift+Enter xuống dòng · Tối đa ${MAX_QUESTION} ký tự.`,
     ),
   );
+
+  /**
+   * How much room to hold clear at the foot of the scrollport for the composer.
+   *
+   * Read from where the composer actually is, not from what it is made of. Two things move it and
+   * neither is a constant this file could hold: the textarea grows to about eight rows with what
+   * the operator has typed, and below 64rem the composer floats above the bottom navigation bar by
+   * that bar's own measured height. An earlier version added its height to a fixed 24px and was
+   * right at one width and 81px short at the other.
+   *
+   * The scrollport's bottom edge is the viewport's at both breakpoints — below 64rem the document
+   * scrolls, and above it `.main` scrolls but still reaches the viewport foot — so the distance
+   * from the composer's top to `innerHeight` is exactly the room the composer occupies, plus one
+   * `--space-3` so an answer never ends flush against it.
+   *
+   * @returns {number} pixels
+   */
+  function composerClearance() {
+    const gap = 12; // var(--space-3)
+    return Math.max(0, window.innerHeight - form.getBoundingClientRect().top) + gap;
+  }
 
   /**
    * Load the recorded history. The server returns newest first; the transcript renders

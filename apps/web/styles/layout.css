@@ -62,7 +62,14 @@
 }
 
 /* A phone's appbar is tight: the eyebrow shrinks and truncates rather than wrapping, because a
- * two-line eyebrow pushes the session chip and sign-out control onto their own row. */
+ * two-line eyebrow pushes the session chip and sign-out control onto their own row.
+ *
+ * Truncating the eyebrow was necessary and not sufficient. The chip and Thoát live in a `.row`,
+ * which wraps by default, and together they are wider than what a 390px bar leaves beside the
+ * identity — so they took a second row anyway and the header stood at 230 of 844 pixels, a quarter
+ * of the screen spent on chrome, on the device this console is used on all shift. The row is told
+ * not to wrap and to shrink instead; the identity beside it already carries `min-width: 0` and
+ * ellipsises, which is where the give should come from. */
 @media (max-width: 47.99rem) {
   .appbar__eyebrow {
     font-size: 0.625rem;
@@ -70,6 +77,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .appbar > .row {
+    flex-wrap: nowrap;
+    min-width: 0;
   }
 }
 
@@ -210,14 +222,24 @@
   color: var(--brand-700);
 }
 
-/* The sheet floats above the bottom bar as a fixed overlay: anchoring it inside `.nav` would clip
- * it, because the bar scrolls horizontally on narrow widths. It closes on the next route change —
- * the shell re-renders the nav — so it can never strand the operator on a stale menu. */
+/* The sheet sits directly on top of the bottom bar, and `bottom: 100%` is what says so: the bar's
+ * own top edge, whatever the bar turns out to be. It was previously a viewport-fixed overlay
+ * offset by a hand-added sum of `--tap-min` and two paddings, on the reasoning that anchoring
+ * inside `.nav` would clip it because the bar scrolls horizontally at narrow widths. That reason
+ * stopped being true when the bar became six equal flex shares — nothing scrolls — and the sum was
+ * 4px short of the bar's real height, so the open sheet covered the middle of the "Thêm" control
+ * that opens it. Measured at 390×844: summary 756–804, sheet 362–784, and `elementFromPoint` at
+ * the summary's centre returned the sheet. Tapping "Thêm" again did not close it, which is the one
+ * thing a person tries first. `.nav` is `position: sticky` and therefore already the containing
+ * block, and it clips nothing at this width.
+ *
+ * It also closes on the next route change — the shell re-renders the nav — so it can never strand
+ * the operator on a stale menu. */
 .nav__more__list {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg, 0.75rem);
-  bottom: calc(var(--tap-min) + (2 * var(--space-1)) + env(safe-area-inset-bottom) + var(--space-2));
+  bottom: calc(100% + var(--space-2));
   box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 0.18);
   display: grid;
   gap: 2px;
@@ -225,7 +247,7 @@
   max-height: 60dvh;
   overflow-y: auto;
   padding: var(--space-2);
-  position: fixed;
+  position: absolute;
   right: var(--space-2);
   z-index: calc(var(--layer-sticky) + 1);
 }

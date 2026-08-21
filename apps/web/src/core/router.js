@@ -92,6 +92,28 @@ export function current() {
 }
 
 /**
+ * Enter a freshly rendered screen: top of the new content, focus on the container.
+ *
+ * Focus alone was not enough, and `preventScroll: true` in `focusContainer` is why — it is there
+ * deliberately, so that moving focus does not yank the viewport, but it also meant the scroll
+ * offset of the screen being left survived into the screen arriving. Leaving the order board
+ * halfway down and opening Hôm nay dropped the operator into the middle of a screen they had
+ * never seen, with the header above them off-screen.
+ *
+ * Two elements can hold that offset and which one does depends on the viewport: from 64rem up
+ * `.app` is `height: 100dvh; overflow: hidden` and `#main` scrolls by itself, while below that the
+ * document scrolls and `#main` does not. Resetting both is one real reset and one no-op either
+ * way, which is cheaper and steadier than reading the breakpoint back out in JavaScript.
+ *
+ * @param {HTMLElement} element the routing outlet, which is also the desktop scroll container
+ */
+function enter(element) {
+  element.scrollTop = 0;
+  window.scrollTo(0, 0);
+  focusContainer(element);
+}
+
+/**
  * Render the screen for the current hash.
  *
  * An in-flight render is aborted when the operator navigates away, so a slow list arriving after
@@ -113,7 +135,7 @@ export async function render() {
   if (blocked) {
     if (controller.signal.aborted) return;
     outlet.replaceChildren(blocked);
-    focusContainer(outlet);
+    enter(outlet);
     onChange?.();
     return;
   }
@@ -121,7 +143,7 @@ export async function render() {
   if (!route) {
     if (controller.signal.aborted) return;
     outlet.replaceChildren(notFound(path));
-    focusContainer(outlet);
+    enter(outlet);
     onChange?.();
     return;
   }
@@ -135,7 +157,7 @@ export async function render() {
   }
   if (controller.signal.aborted) return;
   outlet.replaceChildren(view);
-  focusContainer(outlet);
+  enter(outlet);
   onChange?.();
 }
 

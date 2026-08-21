@@ -219,6 +219,27 @@ function renderNav() {
     ),
   );
   render(navList, children);
+  publishNavHeight();
+}
+
+/**
+ * Publish the bottom bar's real height, so a control that sticks to the viewport can sit above it.
+ *
+ * Below 64rem the navigation is a bar pinned to the bottom of the viewport and the document is
+ * what scrolls, so anything `position: sticky; bottom` pins to the same edge the bar occupies and
+ * the two land on top of each other. Measured at 390×844 with a real transcript on Trợ lý AI: the
+ * composer ran 719–832 and the bar 751–844, which put **the Gửi button underneath the bar** —
+ * `elementFromPoint` at its centre returned `nav__list`. Enter still sent, and a thumb could not.
+ *
+ * The bar's height is not a constant that CSS could hold: it carries a role-dependent set of
+ * entries, wraps at some label lengths, and adds `env(safe-area-inset-bottom)` on the phones that
+ * have one. So it is measured here, once per nav render and on resize, and read by
+ * `components.css`. Presentation only — it publishes a number, and nothing else observes it.
+ */
+function publishNavHeight() {
+  const bar = navList.closest(".nav");
+  if (!bar) return;
+  document.documentElement.style.setProperty("--nav-height", `${bar.offsetHeight}px`);
 }
 
 function renderAppbar() {
@@ -516,6 +537,8 @@ async function boot() {
   });
 
   router.start({ outlet, routes: ROUTES, guard, onChange: syncChrome });
+  // A rotation or a soft keyboard changes the bar's height without re-rendering it.
+  window.addEventListener("resize", publishNavHeight, { passive: true });
 
   try {
     await session.refresh();

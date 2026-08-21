@@ -512,6 +512,27 @@ th.numeric {
   width: 100%;
 }
 
+/* Scroll room below the composer, and it is load-bearing rather than cosmetic.
+ *
+ * The composer is the last thing in this column, so when the newest answer is scrolled to the end
+ * of the scrollport there is nothing underneath it to scroll into: the browser clamps at maximum
+ * scroll and the `scroll-margin-block-end` that keeps the answer clear of the composer is honoured
+ * only as far as the remaining scroll allows. Measured at 390×844 against a streaming answer, the
+ * card ran 11px under the composer at its worst while the text was still arriving, and only came
+ * clear once the finished card grew tall enough to supply the missing height itself.
+ *
+ * Padding here is document height that nothing paints on, which is exactly the missing scroll. It
+ * matches the composer's own sticky offset, so the room available is the room needed. */
+.chat__col {
+  padding-block-end: var(--space-3);
+}
+
+@media (max-width: 63.99rem) {
+  .chat__col {
+    padding-block-end: calc(var(--nav-height, 5.8rem) + var(--space-3));
+  }
+}
+
 .chat__transcript {
   display: grid;
   gap: var(--space-5);
@@ -519,6 +540,24 @@ th.numeric {
 
 .chat__transcript:empty {
   display: none;
+}
+
+/* Both voices reserve room under themselves when something scrolls them into view. The composer
+ * below is `position: sticky; bottom` and therefore paints over the foot of the scrollport; a
+ * scroll that stopped at the true bottom edge would park the newest turn behind it. The value
+ * clears the composer at its tallest ordinary height — 44px field, its padding, and the hint line
+ * — with slack, because scrolling a little too far costs nothing and scrolling too little hides
+ * the answer. */
+.chat__user,
+.chat__assistant {
+  scroll-margin-block-end: 9rem;
+}
+
+/* The answer header carries a longer claim than a status chip: the intent the server matched,
+ * glossed and tokenised, introduced by a word. At 360px that pair cannot share a line with the
+ * eyebrow, and `.spread` alone would squeeze it rather than break it. */
+.chat__assistant .spread {
+  flex-wrap: wrap;
 }
 
 /* The operator's own words: a right-aligned bubble, visually distinct from the assistant's
@@ -701,4 +740,20 @@ th.numeric {
   margin: 0;
   padding: 0 var(--space-2);
   text-align: center;
+}
+
+/* Below 64rem the navigation is a bar pinned to the bottom of the viewport and the document is
+ * what scrolls, so the composer's own `bottom` pins it to the same edge and the two overlap. That
+ * is not a near miss: measured at 390×844 with a real transcript, 81 of the composer's 113 pixels
+ * sat behind the bar and `elementFromPoint` at the centre of the Gửi button returned `nav__list`.
+ * Enter still sent the question; a thumb had nothing to press.
+ *
+ * `--nav-height` is published by `app.js` from the bar's measured height, because the bar carries a
+ * role-dependent set of entries and adds `env(safe-area-inset-bottom)` on the phones that have one,
+ * so no constant here would be right for every session. The fallback is the height measured on a
+ * 390px phone, used only in the instant before the first nav render. */
+@media (max-width: 63.99rem) {
+  .chat__composer {
+    bottom: calc(var(--nav-height, 5.8rem) + var(--space-3));
+  }
 }

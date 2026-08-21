@@ -538,6 +538,14 @@ th.numeric {
   gap: var(--space-5);
 }
 
+/* The older-turns control sits above the transcript, where the history it fetches will appear. */
+.chat__older {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: center;
+  text-align: center;
+}
+
 .chat__transcript:empty {
   display: none;
 }

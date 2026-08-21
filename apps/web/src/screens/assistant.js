@@ -35,7 +35,7 @@
  * @module screens/assistant
  */
 
-import { Submission, request } from "../core/api.js";
+import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { dateTime, shortId } from "../core/format.js";
 import { NAV, enumLabel } from "../core/i18n.js";
@@ -532,6 +532,112 @@ export function render_() {
     return Math.max(0, window.innerHeight - form.getBoundingClientRect().top) + gap;
   }
 
+  /** The oldest turn on screen, and therefore where the next page backwards starts. */
+  let oldestTurnId = null;
+
+  /** Where the "older turns" control and its failures render, above the transcript. */
+  const olderHost = h("div");
+
+  /**
+   * Both containers that can hold the reader's position, and by how much the content above them
+   * grew. Which one actually scrolls depends on the viewport — the document below 64rem, `#main`
+   * above it — so both are measured and both restored; one is a real correction and the other a
+   * no-op either way. Prepending without this is the classic transcript defect: the reader is
+   * looking at a sentence, older turns arrive above it, and the sentence walks off the screen.
+   *
+   * @returns {() => void} call after the prepend to put the reader back where they were
+   */
+  function holdScrollPosition() {
+    const pane = document.querySelector("#main");
+    const doc = document.scrollingElement || document.documentElement;
+    const before = {
+      paneHeight: pane ? pane.scrollHeight : 0,
+      paneTop: pane ? pane.scrollTop : 0,
+      docHeight: doc.scrollHeight,
+      docTop: doc.scrollTop,
+    };
+    return () => {
+      if (pane) pane.scrollTop = before.paneTop + (pane.scrollHeight - before.paneHeight);
+      doc.scrollTop = before.docTop + (doc.scrollHeight - before.docHeight);
+    };
+  }
+
+  /**
+   * Say whether there is more history than this, and offer to fetch it.
+   *
+   * A page carrying exactly the limit means the server had at least that many, so the transcript
+   * is truncated and the console is not allowed to end it without saying so — hidden truncation is
+   * forbidden by the same rule that forbids a hidden unsupported default. Fetching more is a read,
+   * so a control that repeats it is honest in a way no write control here would be.
+   *
+   * @param {boolean} more
+   */
+  function renderOlder(more) {
+    if (!more) {
+      render(olderHost);
+      return;
+    }
+    render(
+      olderHost,
+      h(
+        "div",
+        { class: "chat__older" },
+        h(
+          "button",
+          {
+            type: "button",
+            dataVariant: "quiet",
+            dataRequiresNetwork: "true",
+            onClick: (event) => void loadOlder(event.currentTarget),
+          },
+          "Xem thêm lượt cũ hơn",
+        ),
+        h(
+          "p",
+          { class: "hint" },
+          `Đang hiện ${HISTORY_LIMIT} lượt gần nhất. Còn lượt cũ hơn chưa hiện ở đây.`,
+        ),
+      ),
+    );
+  }
+
+  /**
+   * Fetch the page before the oldest turn on screen and put it above what is already there.
+   *
+   * The transcript is the record of every question anyone asked the assistant, and an owner sees
+   * the whole store's. Ending it at the newest page would make the older half unreachable from the
+   * one surface that shows it.
+   *
+   * @param {HTMLElement|null} control
+   */
+  async function loadOlder(control) {
+    if (!store || !oldestTurnId) return;
+    if (control) control.disabled = true;
+    const restore = holdScrollPosition();
+    try {
+      const body = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/assistant/turns` +
+          `?limit=${HISTORY_LIMIT}&before=${encodeURIComponent(oldestTurnId)}`,
+      );
+      const items = Array.isArray(body) ? body : [];
+      if (items.length > 0) {
+        oldestTurnId = String(items[items.length - 1].turn_id || "");
+        // `prepend` rather than a re-render: the turns already on screen keep their nodes, so
+        // nothing the reader is looking at is rebuilt underneath them.
+        transcriptHost.prepend(
+          ...[...items]
+            .reverse()
+            .flatMap((item) => [questionBubble(item.question), answerBlock(item)]),
+        );
+      }
+      renderOlder(isTruncated(items, HISTORY_LIMIT));
+      restore();
+    } catch (error) {
+      if (control) control.disabled = false;
+      render(olderHost, errorNotice(error, { onRetry: () => void loadOlder(null) }));
+    }
+  }
+
   /**
    * Load the recorded history. The server returns newest first; the transcript renders
    * oldest-first so it reads like a conversation. History answers render whole — the typewriter
@@ -546,11 +652,13 @@ export function render_() {
       return;
     }
     render(transcriptHost, skeleton(2));
+    render(olderHost);
     try {
       const body = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/assistant/turns?limit=${HISTORY_LIMIT}`,
       );
       const items = Array.isArray(body) ? body : [];
+      oldestTurnId = items.length > 0 ? String(items[items.length - 1].turn_id || "") : null;
       render(
         transcriptHost,
         items.length === 0
@@ -564,6 +672,7 @@ export function render_() {
               .reverse()
               .map((item) => [questionBubble(item.question), answerBlock(item)]),
       );
+      renderOlder(isTruncated(items, HISTORY_LIMIT));
     } catch (error) {
       render(transcriptHost, errorNotice(error, { onRetry: () => void loadHistory() }));
     }
@@ -602,7 +711,7 @@ export function render_() {
     h(
       "div",
       { class: "chat" },
-      h("div", { class: "chat__col" }, noticeHost, transcriptHost, form),
+      h("div", { class: "chat__col" }, noticeHost, olderHost, transcriptHost, form),
     ),
   );
 }

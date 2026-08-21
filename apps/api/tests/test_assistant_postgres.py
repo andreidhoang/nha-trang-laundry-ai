@@ -461,3 +461,105 @@ def test_the_transcript_retention_class_refuses_ledger_purge_and_records_every_r
             ([run.run_id, held.run_id],),
         )
         assert cursor.fetchone() == (2,)
+
+
+def test_paging_backwards_is_exact_across_a_shared_timestamp(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """No duplicate, no gap, and a tie on `created_at` split the same way both times.
+
+    The sort is `created_at DESC, turn_id` ASC. Those directions differ, so the keyset predicate
+    cannot be a row comparison, and the case that catches a wrong one is two turns sharing a
+    timestamp: a tuple compare orders the tie the other way and either repeats one of them on the
+    next page or drops it.
+
+    Recording turns does not produce that tie -- each one takes its own clock reading, and they
+    differ by microseconds -- so the pair sharing a timestamp is inserted directly. The insert is a
+    fixture manufacturing a condition the clock will not, not a claim about the write path; the
+    ledger trigger it bypasses guards UPDATE and DELETE, which this does neither of, and
+    `record_turn` has its own test above.
+    """
+
+    store_id = uuid4()
+    owner = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OWNER_ADMIN}))
+    repository = AssistantTurnRepository()
+    recorded = [
+        repository.record_turn(postgres_connection, _command(owner, store_id, f"Câu hỏi {index}"))
+        for index in range(5)
+    ]
+    shared_at = recorded[0].created_at
+    tied = [uuid4(), uuid4()]
+    with postgres_connection.cursor() as cursor:
+        for index, turn_id in enumerate(tied):
+            cursor.execute(
+                """
+                INSERT INTO assistant_turns (turn_id, store_id, staff_user_id, question, intent,
+                                             answer, links, reason_codes, correlation_id,
+                                             created_at)
+                VALUES (%s, %s, %s, %s, 'GREETING', 'xin chào', '[]', '[]', %s, %s)
+                """,
+                (
+                    turn_id,
+                    store_id,
+                    owner.staff_user_id,
+                    f"Cùng mốc thời gian {index}",
+                    str(uuid4()),
+                    shared_at,
+                ),
+            )
+
+    whole = repository.list_recent(
+        postgres_connection, store_id=store_id, principal=owner, limit=50
+    )
+    assert len(whole) == len(recorded) + len(tied)
+    timestamps = [turn.created_at for turn in whole]
+    assert len(set(timestamps)) < len(timestamps), "the fixture did not produce a shared timestamp"
+
+    paged: list[UUID] = []
+    anchor: UUID | None = None
+    for _ in range(len(whole) + 1):
+        page = repository.list_recent(
+            postgres_connection, store_id=store_id, principal=owner, limit=2, before=anchor
+        )
+        if not page:
+            break
+        paged.extend(turn.turn_id for turn in page)
+        anchor = page[-1].turn_id
+
+    assert paged == [turn.turn_id for turn in whole]
+    assert len(paged) == len(set(paged)), "a turn was returned on two pages"
+
+
+def test_a_cursor_the_caller_may_not_see_is_refused_rather_than_restarting_them(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """A bad anchor must not silently answer with the newest page.
+
+    To a reader paging backwards, a restart at the top is indistinguishable from reaching the end
+    of the history, which is the quiet kind of wrong this transcript exists to avoid.
+    """
+
+    store_id = uuid4()
+    owner = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OWNER_ADMIN}))
+    operator = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPERATOR}))
+    repository = AssistantTurnRepository()
+    owners_turn = repository.record_turn(
+        postgres_connection, _command(owner, store_id, "Chỉ chủ thấy câu này")
+    )
+    repository.record_turn(postgres_connection, _command(operator, store_id, "Câu của nhân viên"))
+
+    # The operator holds a turn id that exists in this store and is not theirs to read.
+    with pytest.raises(AssistantAuthorizationError):
+        repository.list_recent(
+            postgres_connection,
+            store_id=store_id,
+            principal=operator,
+            limit=50,
+            before=owners_turn.turn_id,
+        )
+
+    # And an id belonging to no turn at all is refused the same way, so the two are alike.
+    with pytest.raises(AssistantAuthorizationError):
+        repository.list_recent(
+            postgres_connection, store_id=store_id, principal=owner, limit=50, before=uuid4()
+        )

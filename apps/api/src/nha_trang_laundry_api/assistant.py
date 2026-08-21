@@ -544,11 +544,11 @@ class AssistantService:
         return _stored_turn(result.response, replayed=result.replayed)
 
     def list_turns(
-        self, *, principal: StaffPrincipal, store_id: UUID, limit: int
+        self, *, principal: StaffPrincipal, store_id: UUID, limit: int, before: UUID | None = None
     ) -> tuple[AssistantTurn, ...]:
         with self._connection_factory(self._database_url) as connection:
             return self._turns.list_recent(
-                connection, store_id=store_id, principal=principal, limit=limit
+                connection, store_id=store_id, principal=principal, limit=limit, before=before
             )
 
     def get_turn(

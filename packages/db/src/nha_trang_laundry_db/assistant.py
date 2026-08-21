@@ -172,8 +172,23 @@ class AssistantTurnRepository:
         store_id: UUID,
         principal: StaffPrincipal,
         limit: int = 50,
+        before: UUID | None = None,
     ) -> tuple[AssistantTurn, ...]:
-        """Newest first. An owner sees the store's turns; anyone else sees only their own."""
+        """Newest first. An owner sees the store's turns; anyone else sees only their own.
+
+        `before` is the oldest turn the caller already holds, and the page returned is the one that
+        continues after it. A turn id is the cursor rather than an encoded position because the
+        caller already has one, it is opaque without being invented, and resolving it goes through
+        the same visibility rule as everything else here — so an id naming a turn this caller may
+        not see is refused rather than quietly restarting them at the newest page. A silent restart
+        would look like the end of the history to a reader paging backwards.
+
+        The anchor is read in a second statement rather than folded into a subselect, because that
+        read is where the visibility check on the anchor happens and it is a security property, not
+        a round trip worth saving. Both statements run on the same connection; the table is
+        append-only (`assistant_turns_append_only`), so no row the anchor depends on can change
+        between them.
+        """
         if not 1 <= limit <= LIST_LIMIT_MAX:
             raise ValueError(f"assistant history limit must be between 1 and {LIST_LIMIT_MAX}")
         with connection.cursor() as cursor:
@@ -184,16 +199,50 @@ class AssistantTurnRepository:
                 error=AssistantAuthorizationError,
             )
             owner = StaffRole.OWNER_ADMIN in principal.roles
+            anchor: tuple[Any, Any] | None = None
+            if before is not None:
+                cursor.execute(
+                    """
+                    SELECT created_at, turn_id
+                    FROM assistant_turns
+                    WHERE store_id = %s AND turn_id = %s AND (%s OR staff_user_id = %s)
+                    """,
+                    (store_id, before, owner, principal.staff_user_id),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise AssistantAuthorizationError("assistant history cursor is not visible")
+                anchor = (row[0], row[1])
+            # The sort is `created_at DESC, turn_id` ASC, so the row after `(c, t)` is one with an
+            # older `created_at`, or the same `created_at` and a larger `turn_id`. The directions
+            # differ, which is why this is written out rather than as a row comparison: a tuple
+            # compare would order the tie the wrong way and silently drop or repeat turns that
+            # share a timestamp. `assistant_turns_store_idx` is `(store_id, created_at DESC,
+            # turn_id)`, so this reads as a range on that index rather than a sort.
             cursor.execute(
                 """
                 SELECT turn_id, store_id, staff_user_id, question, intent, answer, links,
                        reason_codes, correlation_id, created_at
                 FROM assistant_turns
                 WHERE store_id = %s AND (%s OR staff_user_id = %s)
+                  AND (
+                    %s::timestamptz IS NULL
+                    OR created_at < %s
+                    OR (created_at = %s AND turn_id > %s)
+                  )
                 ORDER BY created_at DESC, turn_id
                 LIMIT %s
                 """,
-                (store_id, owner, principal.staff_user_id, limit),
+                (
+                    store_id,
+                    owner,
+                    principal.staff_user_id,
+                    anchor[0] if anchor else None,
+                    anchor[0] if anchor else None,
+                    anchor[0] if anchor else None,
+                    anchor[1] if anchor else None,
+                    limit,
+                ),
             )
             return tuple(_turn(row) for row in cursor.fetchall())
 

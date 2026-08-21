@@ -1807,12 +1807,26 @@ def list_assistant_turns(
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[AssistantService | None, Depends(get_assistant_service)] = None,
     limit: int = 50,
+    before: UUID | None = None,
 ) -> list[AssistantHistoryItemResponse]:
-    """Newest first. An owner sees the store's turns; anyone else sees only their own."""
+    """Newest first. An owner sees the store's turns; anyone else sees only their own.
+
+    `before` is the oldest turn the caller already holds and pages backwards from it. The cursor is
+    a turn id rather than an encoded offset: the caller already has one, and resolving it runs the
+    same visibility rule as the page itself, so a cursor naming a turn this caller may not read is
+    refused with the one opaque refusal every other assistant scope failure produces — never
+    silently answered with the newest page, which to a reader paging backwards is indistinguishable
+    from reaching the end of the history.
+
+    A page carrying exactly `limit` items means there may be more; the console says so rather than
+    ending the transcript without comment.
+    """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="assistant unavailable")
     try:
-        turns = service.list_turns(principal=principal, store_id=store_id, limit=limit)
+        turns = service.list_turns(
+            principal=principal, store_id=store_id, limit=limit, before=before
+        )
     except (AssistantAuthorizationError, StoreAccessError, ValueError) as error:
         _raise_assistant_error(error)
     return [

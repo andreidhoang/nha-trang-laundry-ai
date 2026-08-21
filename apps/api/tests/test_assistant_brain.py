@@ -136,3 +136,69 @@ def test_the_fallback_names_capabilities_and_fabricates_nothing() -> None:
     # Rendered from the same capability table the greeting uses: the cues are present.
     for cue in ("hôm nay", "SLA", "phê duyệt", "UUID"):
         assert cue in answer.answer
+
+
+def test_a_money_question_that_names_a_timeframe_is_still_refused() -> None:
+    """The regression that motivated the precedence rule, in the owner's own phrasings.
+
+    Every one of these came back `TODAY_OVERVIEW` against the running stack — an order count in
+    answer to a question about money, with nothing on screen saying the money part had been
+    dropped. The table is first-match-wins and the money rule sat last, so any money question that
+    also named a timeframe matched a topic first. Not computing money is necessary and was never
+    the whole promise; saying so is the rest of it.
+    """
+    for question in (
+        "Doanh thu hôm nay bao nhiêu?",
+        "Hôm nay thu được bao nhiêu tiền?",
+        "Tình hình doanh thu thế nào?",
+        "Doanh thu tuần này?",
+    ):
+        assert BRAIN.answer(question, _reads()).intent == "REVENUE_UNAVAILABLE", question
+
+
+def test_ordinary_words_that_merely_contain_a_cue_are_not_money_questions() -> None:
+    """Diacritic folding turns three money words into four extremely common ordinary ones.
+
+    `lãi`→`lai` collides with `lại` (again), and `lỗ`→`lo` sits inside `lỗi` (error), `lọc`
+    (filter) and `lớn` (big). Matched as substrings of the folded text, those cues refused a
+    laundry question as if it had asked about revenue. The first case below is the sharpest: it is
+    one of the four suggestion chips `screens/assistant.js` ships on the empty transcript, and that
+    module documents each chip as mapping to a documented intent of this brain.
+    """
+    for question in (
+        "Bạn trả lời được gì?",
+        "Đơn này giặt lại được không?",
+        "Máy giặt bị lỗi thì ghi vào đâu?",
+        "Làm sao lọc đơn theo trạng thái?",
+        "Đơn nào lớn nhất hôm qua?",
+    ):
+        assert BRAIN.answer(question, _reads()).intent != "REVENUE_UNAVAILABLE", question
+
+
+def test_a_cue_is_a_whole_word_and_an_accent_can_be_the_whole_word() -> None:
+    """`tre` lived inside `trên`, and `chao` inside `cháo`. Neither is a question about laundry."""
+    assert BRAIN.answer("Đơn ở trên bảng có gì?", _reads()).intent == "UNSUPPORTED"
+    assert BRAIN.answer("Trẻ em có giảm giá không?", _reads()).intent == "UNSUPPORTED"
+    assert BRAIN.answer("Cháo lòng có giặt không?", _reads()).intent == "UNSUPPORTED"
+    # And the words those collided with still match, accented and bare alike.
+    assert BRAIN.answer("Đơn nào sắp trễ hẹn?", _reads()).intent == "SLA_RISK"
+    assert BRAIN.answer("don nao sap tre hen", _reads()).intent == "SLA_RISK"
+    assert BRAIN.answer("chao ban", _reads()).intent == "GREETING"
+
+
+def test_every_suggestion_chip_the_console_ships_reaches_its_documented_intent() -> None:
+    """`screens/assistant.js` SUGGESTIONS, verbatim, with the intent each one is offered for.
+
+    The chips are the first thing an operator with an empty transcript can do, so a chip that
+    lands on the wrong intent is the console's own demonstration of itself going wrong. Keeping
+    them here means the list and the brain cannot drift apart silently.
+    """
+    assert BRAIN.answer("Hôm nay thế nào?", _reads()).intent == "TODAY_OVERVIEW"
+    assert BRAIN.answer("Đơn nào sắp trễ hẹn?", _reads()).intent == "SLA_RISK"
+    assert BRAIN.answer("Có gì chờ duyệt không?", _reads()).intent == "PENDING_APPROVALS"
+    # "What can you answer?" is a question about capability, and the fallback is the answer that
+    # lists them. It reached REVENUE_UNAVAILABLE for as long as `lo` was matched as a substring.
+    answer = BRAIN.answer("Bạn trả lời được gì?", _reads())
+    assert answer.intent == "UNSUPPORTED"
+    for cue in ("hôm nay", "SLA", "phê duyệt", "UUID"):
+        assert cue in answer.answer

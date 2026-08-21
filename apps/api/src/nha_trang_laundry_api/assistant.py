@@ -17,6 +17,21 @@ Two properties are pinned by unit tests:
 * **The intent table is first-match-wins and total.** Every question gets exactly one intent, and
   the fallback names what the assistant can do rather than guessing an answer.
 
+Two rules govern any change to that table, and both exist because breaking them produced a live
+defect rather than because they read well:
+
+* **A refusal outranks a partial topical match.** Money is tested before every topic. While it sat
+  last, "doanh thu hôm nay bao nhiêu?" — how an owner actually asks — matched `hom nay` first and
+  came back as a count of orders: not money computed, but not refused either, which is worse than
+  either, because the screen rendering it promises that what the assistant does not know it says it
+  does not know. Anything else that can only ever decline belongs ahead of anything that answers.
+* **A cue is a word, and an accent can be the whole word.** Cues match whole words, never
+  substrings: `tre` lived inside `tren`, and `lo` inside `loi`, `loc` and `lon`. And where folding
+  the diacritics off a word turns it into a different, common word — lãi/lại, lỗ/lỗi, trễ/trẻ,
+  tiền/tiến — the accented form is what is matched, because the accent is the only information that
+  separates them. A question that drops those accents falls to `UNSUPPORTED`, whose text refuses
+  money questions by name: a quieter refusal is an acceptable cost, a confident wrong answer is not.
+
 Streaming (`answer_sse_frames`) is transport pacing of an already-durable deterministic answer,
 not token generation. The turn is looked up after it was persisted, and the stored `answer` string
 is replayed verbatim in word-sized SSE frames so the console can render it progressively. No model
@@ -167,24 +182,111 @@ def _capability_lines() -> str:
     return "\n".join(f"• {cue} — {description}" for cue, description in CAPABILITY_TABLE)
 
 
+def _words(question: str) -> tuple[str, ...]:
+    """The folded question as whole words, punctuation dropped.
+
+    Matching a cue as a substring of the folded text was wrong in a way Vietnamese makes easy to
+    miss and hard to see. `tre` matched inside `tren` (trên), `lo` inside `loi`, `loc` and `lon`
+    (lỗi, lọc, lớn). Every one of those is an ordinary word an operator writes constantly, so the
+    brain answered a routine question with a topic it had no business choosing. Words are the unit
+    the cue table was always describing; this makes that literal.
+    """
+    return tuple(token for token in re.split(r"[^0-9a-z]+", _normalize(question)) if token)
+
+
+def _says(words: tuple[str, ...], phrase: str) -> bool:
+    """Whether the folded question contains `phrase` as a whole word or whole word sequence."""
+    wanted = tuple(phrase.split())
+    span = len(wanted)
+    return any(words[index : index + span] == wanted for index in range(len(words) - span + 1))
+
+
+def _accented(question: str) -> frozenset[str]:
+    """The question's own words, lowercased, with their accents kept. See `_MONEY_ACCENTED`."""
+    return frozenset(re.findall(r"\w+", question.casefold()))
+
+
+def _typed_accents(question: str) -> bool:
+    """Whether the person typed Vietnamese diacritics at all.
+
+    Roughly half of what an operator writes on a phone arrives unaccented, so a cue table that only
+    read accents would answer nothing. Reading them when they are there and falling back to the
+    folded form when they are not is the rule that lets one short cue serve both: if the writer
+    supplied the accent, believe it.
+    """
+    decomposed = unicodedata.normalize("NFD", question)
+    return any(unicodedata.category(character) == "Mn" for character in decomposed)
+
+
+def _names(question: str, *, accented: tuple[str, ...], bare: tuple[str, ...]) -> bool:
+    """Whether the question names one of these words, reading accents when the writer typed them.
+
+    `chào` (hello) and `cháo` (porridge), `trễ` (late) and `trẻ` (young), differ by one mark and by
+    nothing else once the marks come off. Asking the accented question of an accented sentence is
+    exact; asking the folded question of an unaccented one is the best available, and it is a whole
+    word rather than a substring, so it no longer fires from inside `trên` or `cháo lòng`.
+    """
+    if _typed_accents(question):
+        return bool(_accented(question) & set(accented))
+    return any(_says(_words(question), word) for word in bare)
+
+
+#: Money cues whose folded form is still unmistakably about money. Matched against the folded
+#: words, so an operator typing without accents — which is most of them, on a phone — still hits.
+_MONEY_FOLDED: tuple[str, ...] = (
+    "doanh thu",
+    "doanh so",
+    "thu nhap",
+    "loi nhuan",
+    "bao nhieu tien",
+    "so tien",
+    "tong thu",
+    "lai lo",
+    "lai hay lo",
+)
+
+#: Money words whose accent is the *only* thing separating them from a very common ordinary word:
+#: lãi/lại, lỗ/lỗi, tiền/tiến. Folding destroys that distinction, so these are matched with their
+#: accents against the question as written. An operator who drops the accents on exactly these
+#: words falls through to `UNSUPPORTED`, whose text already refuses money questions by name — a
+#: quieter refusal, never a wrong answer.
+_MONEY_ACCENTED: frozenset[str] = frozenset({"tiền", "lãi", "lỗ"})
+
+
+def _asks_about_money(question: str, words: tuple[str, ...]) -> bool:
+    if any(_says(words, cue) for cue in _MONEY_FOLDED):
+        return True
+    return bool(_accented(question) & _MONEY_ACCENTED)
+
+
 class DeterministicAssistantBrain:
     """First-match-wins over a fixed intent table. No model, no arithmetic, no guessing."""
 
     def answer(self, question: str, context_reads: AssistantContextReads) -> AssistantAnswer:
-        normalized = _normalize(question)
-        if any(cue in normalized for cue in ("xin chao", "chao", "hello")):
+        words = _words(question)
+        # Money is tested before every topic, and that ordering is the rule rather than a
+        # preference. The table is first-match-wins, so while this sat last, any money question
+        # that also named a timeframe — "doanh thu hôm nay bao nhiêu?", which is how an owner asks
+        # — matched `hom nay` first and came back as a count of orders. The system neither computed
+        # money nor refused; it answered a different question, and the screen that renders it
+        # promises the opposite. A refusal outranks a partial topical match.
+        if _asks_about_money(question, words):
+            return _revenue_unavailable()
+        if _says(words, "xin chao") or _says(words, "hello"):
             return _greeting()
-        if any(cue in normalized for cue in ("hom nay", "tinh hinh", "don hom nay")):
+        if _names(question, accented=("chào",), bare=("chao",)):
+            return _greeting()
+        if any(_says(words, cue) for cue in ("hom nay", "tinh hinh")):
             return _today_overview(context_reads)
-        if any(cue in normalized for cue in ("tre", "sla", "qua han", "nguy co")):
+        if any(_says(words, cue) for cue in ("sla", "qua han", "nguy co", "tre hen", "tre han")):
             return _sla_risk(context_reads)
-        if any(cue in normalized for cue in ("phe duyet", "cho duyet", "duyet")):
+        if _names(question, accented=("trễ",), bare=("tre",)):
+            return _sla_risk(context_reads)
+        if any(_says(words, cue) for cue in ("phe duyet", "cho duyet", "duyet")):
             return _pending_approvals(context_reads)
         reference = _ORDER_REFERENCE.search(question)
         if reference is not None:
             return _order_lookup(UUID(reference.group(0)), context_reads)
-        if any(cue in normalized for cue in ("doanh thu", "tien", "thu nhap", "lai", "lo")):
-            return _revenue_unavailable()
         return AssistantAnswer(
             intent="UNSUPPORTED",
             answer=(

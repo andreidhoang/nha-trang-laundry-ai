@@ -12,14 +12,14 @@ counts:
   ABSENT_TABLE: 5
   ABSENT_WRITER: 2
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 135
+  DESCRIPTIVE: 136
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   READ_ONLY_MODULE: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 11
-total: 164
+total: 165
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1288,6 +1288,15 @@ disclosures:
   key: guardrail
   text: Duyệt ở đây không phải là gửi. Một bản nháp rời khỏi hàng chờ này ngay khi có người quyết định,
     và mỗi lượt chạy chỉ nhận đúng một quyết định.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/shadow.js#guardrail:4202f9908977
+  module: screens/shadow.js
+  key: guardrail
+  text: Đây là những bản nháp đã có người quyết định. Bản gốc của agent nằm cạnh quyết định để sau này
+    chấm được agent bằng việc thật. Không dòng nào ở đây là một tin nhắn đã gửi đi.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

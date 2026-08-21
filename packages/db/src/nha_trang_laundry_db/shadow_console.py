@@ -62,6 +62,29 @@ class PendingDraft:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewedDraft:
+    """One decision a person made about an agent draft, with the draft it was made about.
+
+    Carries both sides because a decision on its own answers nothing: grading the agent means
+    reading what it proposed next to what a human did with it. `edited_text` is the replacement a
+    reviewer wrote and is null for anything but an EDIT, which the table's own CHECK enforces.
+    """
+
+    review_id: UUID
+    agent_run_id: UUID
+    store_id: UUID
+    decision: str
+    reason_code: str | None
+    edited_text: str | None
+    decided_by_staff_id: UUID
+    decided_at: datetime
+    draft_text: str
+    terminal_outcome: str
+    terminal_code: str
+    produced_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class DraftDecision:
     review_id: UUID
     agent_run_id: UUID
@@ -371,6 +394,98 @@ class ShadowConsoleRepository:
                     terminal_code=str(row[5]),
                     tool_call_count=int(row[6]),
                     produced_at=row[7],
+                )
+                for row in cursor.fetchall()
+            )
+
+    def list_reviewed_drafts(
+        self,
+        connection: Any,
+        *,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        limit: int = 50,
+        before: UUID | None = None,
+    ) -> tuple[ReviewedDraft, ...]:
+        """The decisions already made, newest first, with the draft each one was about.
+
+        The pending queue is undecided-only, so a draft leaves it the moment somebody rules on it
+        and every screen forgets it. That is correct for a queue and wrong for a record: approve,
+        edit and reject are captured precisely so the agent can be graded on them later, and until
+        this read existed nothing in the console ever looked at them again.
+
+        Visibility is the store's, not the reader's. Unlike `assistant_turns`, where a non-owner
+        sees only their own questions, a review is a decision made on the shop's behalf, so anyone
+        holding a Shadow read role sees all of them — including `AUDITOR`, whose whole job is
+        reading decisions it did not make.
+
+        `before` is the oldest review the caller already holds and pages backwards from it. It is
+        resolved through the same gate as the page, so an id naming a review this caller may not
+        read is refused rather than quietly answered with the newest page — a silent restart at the
+        top is indistinguishable, to a reader paging backwards, from reaching the end.
+        """
+        if not 1 <= limit <= 200:
+            raise ShadowStateError("review log limit must be between 1 and 200")
+        with connection.cursor() as cursor:
+            self._require_store_access(
+                cursor, principal=principal, store_id=store_id, roles=SHADOW_READ_ROLES
+            )
+            anchor: tuple[Any, Any] | None = None
+            if before is not None:
+                cursor.execute(
+                    "SELECT decided_at, review_id FROM agent_draft_reviews "
+                    "WHERE store_id = %s AND review_id = %s",
+                    (store_id, before),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise ShadowAuthorizationError("review log cursor is not visible")
+                anchor = (row[0], row[1])
+            # The sort is `decided_at DESC, review_id` ASC, so the row after `(d, r)` is one with an
+            # older `decided_at`, or the same `decided_at` and a larger `review_id`. The directions
+            # differ, which is why this is written out rather than as a row comparison: a tuple
+            # compare orders the tie the wrong way and silently drops or repeats reviews that share
+            # a timestamp. `agent_draft_reviews_store_idx` is `(store_id, decided_at DESC,
+            # review_id)` since migration 0028, so this reads as a range on that index.
+            cursor.execute(
+                """
+                SELECT r.review_id, r.agent_run_id, r.store_id, r.decision, r.reason_code,
+                       r.edited_text, r.decided_by_staff_id, r.decided_at,
+                       d.draft_text, d.terminal_outcome, d.terminal_code, d.produced_at
+                FROM agent_draft_reviews r
+                JOIN agent_drafts d ON d.agent_run_id = r.agent_run_id
+                WHERE r.store_id = %s
+                  AND (
+                    %s::timestamptz IS NULL
+                    OR r.decided_at < %s
+                    OR (r.decided_at = %s AND r.review_id > %s)
+                  )
+                ORDER BY r.decided_at DESC, r.review_id
+                LIMIT %s
+                """,
+                (
+                    store_id,
+                    anchor[0] if anchor else None,
+                    anchor[0] if anchor else None,
+                    anchor[0] if anchor else None,
+                    anchor[1] if anchor else None,
+                    limit,
+                ),
+            )
+            return tuple(
+                ReviewedDraft(
+                    review_id=_uuid(row[0]),
+                    agent_run_id=_uuid(row[1]),
+                    store_id=_uuid(row[2]),
+                    decision=str(row[3]),
+                    reason_code=None if row[4] is None else str(row[4]),
+                    edited_text=None if row[5] is None else str(row[5]),
+                    decided_by_staff_id=_uuid(row[6]),
+                    decided_at=row[7],
+                    draft_text=str(row[8]),
+                    terminal_outcome=str(row[9]),
+                    terminal_code=str(row[10]),
+                    produced_at=row[11],
                 )
                 for row in cursor.fetchall()
             )

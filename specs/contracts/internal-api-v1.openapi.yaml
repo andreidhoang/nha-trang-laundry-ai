@@ -604,6 +604,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/shadow/reviews:
+    get:
+      operationId: list_shadow_reviews
+      summary: The decisions already made about agent drafts, newest first, with the draft each was about.
+      x-authorization-dependencies:
+      - current_principal
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
 x-served-mounts:
   /staff: 'Static staff PWA assets served by StaticFiles (name=staff-pwa). Not an API operation and deliberately
     unauthenticated: it serves the console shell, and every datum the console shows comes from an authorized

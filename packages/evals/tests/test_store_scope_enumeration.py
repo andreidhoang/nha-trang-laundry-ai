@@ -92,6 +92,9 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("GET", "/internal/v1/stores/{store_id}/shadow/drafts"): store_scoped(
         "shadow_console", "ShadowConsoleRepository.list_pending_drafts"
     ),
+    ("GET", "/internal/v1/stores/{store_id}/shadow/reviews"): store_scoped(
+        "shadow_console", "ShadowConsoleRepository.list_reviewed_drafts"
+    ),
     ("POST", "/internal/v1/stores/{store_id}/assistant/turns"): store_scoped(
         "assistant", "AssistantTurnRepository.record_turn"
     ),

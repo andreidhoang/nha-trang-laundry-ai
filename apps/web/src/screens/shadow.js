@@ -30,13 +30,15 @@
  * @module screens/shadow
  */
 
-import { Submission, request } from "../core/api.js";
+import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UNKNOWN, dateTime, integer, shortId } from "../core/format.js";
 import { enumLabel, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
+  badge,
+  empty,
   errorNotice,
   facts,
   gated,
@@ -46,6 +48,7 @@ import {
   resultLine,
   revealError,
   setResult,
+  skeleton,
   warningBadges,
 } from "../ui/components.js";
 
@@ -671,7 +674,134 @@ export function render_() {
     onLoaded: prune,
   });
 
+  /* ---- the review log ---------------------------------------------------------------------
+   *
+   * The queue above is undecided-only, so a draft leaves it the instant somebody rules on it and
+   * the confirmation panel is the last anyone sees of it. That is right for a queue and wrong for
+   * a record: approve, edit and reject are captured so the agent can be graded on them, and until
+   * this panel existed nothing in the console ever read them back.
+   *
+   * Placed here rather than on a screen of its own, because the question it answers — what has
+   * this thing been drafting, and what did we do about it — is asked in the same breath as the
+   * queue, by the same person, and a separate destination would need an identifier nobody carries.
+   */
+
+  const REVIEW_LIMIT = 50;
+  let oldestReviewId = null;
+  const reviewLogHost = h("div");
+  const reviewMoreHost = h("div");
+
+  /**
+   * One decided draft: what the agent wrote, what a person did about it, and who.
+   *
+   * @param {any} item
+   * @returns {HTMLElement}
+   */
+  function reviewedCard(item) {
+    const decision = String(item.decision || "");
+    return h(
+      "article",
+      { class: "card stack" },
+      h(
+        "div",
+        { class: "spread" },
+        badge({
+          token: enumLabel(decision),
+          gloss: "",
+          state: decision === "REJECT" ? "warn" : "ok",
+        }),
+        h("span", { class: "hint mono" }, dateTime(item.decided_at)),
+      ),
+      draftBody(item.draft_text),
+      item.edited_text
+        ? h(
+            "div",
+            { class: "stack stack--tight" },
+            h("p", { class: "eyebrow" }, "Người sửa đã viết lại"),
+            draftBody(item.edited_text),
+          )
+        : null,
+      facts([
+        ["Lượt chạy agent", h("span", { title: item.agent_run_id || "" }, shortId(item.agent_run_id)), { mono: true }],
+        ["Người quyết định", h("span", { title: item.decided_by_staff_id || "" }, shortId(item.decided_by_staff_id)), { mono: true }],
+        ...(item.reason_code ? [["Mã lý do", item.reason_code, { mono: true }]] : []),
+        ["Agent ghi lúc", dateTime(item.produced_at)],
+      ]),
+    );
+  }
+
+  /**
+   * @param {boolean} more
+   */
+  function renderReviewMore(more) {
+    if (!more) {
+      render(reviewMoreHost);
+      return;
+    }
+    render(
+      reviewMoreHost,
+      h(
+        "button",
+        {
+          type: "button",
+          dataVariant: "quiet",
+          dataRequiresNetwork: "true",
+          onClick: (event) => void loadOlderReviews(event.currentTarget),
+        },
+        "Xem thêm quyết định cũ hơn",
+      ),
+    );
+  }
+
+  /**
+   * @param {HTMLElement|null} control
+   */
+  async function loadOlderReviews(control) {
+    if (!store || !oldestReviewId) return;
+    if (control) control.disabled = true;
+    try {
+      const body = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/shadow/reviews` +
+          `?limit=${REVIEW_LIMIT}&before=${encodeURIComponent(oldestReviewId)}`,
+      );
+      const items = Array.isArray(body) ? body : [];
+      if (items.length > 0) {
+        oldestReviewId = String(items[items.length - 1].review_id || "");
+        // Appended, not re-rendered: this list grows downward and older entries belong below, so
+        // nothing already on screen moves under the reader.
+        reviewLogHost.append(...items.map(reviewedCard));
+      }
+      renderReviewMore(isTruncated(items, REVIEW_LIMIT));
+    } catch (error) {
+      if (control) control.disabled = false;
+      render(reviewMoreHost, errorNotice(error, { onRetry: () => void loadOlderReviews(null) }));
+    }
+  }
+
+  async function loadReviews() {
+    if (!store) return;
+    render(reviewLogHost, skeleton(2));
+    render(reviewMoreHost);
+    try {
+      const body = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/shadow/reviews?limit=${REVIEW_LIMIT}`,
+      );
+      const items = Array.isArray(body) ? body : [];
+      oldestReviewId = items.length > 0 ? String(items[items.length - 1].review_id || "") : null;
+      render(
+        reviewLogHost,
+        items.length === 0
+          ? empty("Chưa có quyết định nào được ghi cho cửa hàng này.")
+          : items.map(reviewedCard),
+      );
+      renderReviewMore(isTruncated(items, REVIEW_LIMIT));
+    } catch (error) {
+      render(reviewLogHost, errorNotice(error, { onRetry: () => void loadReviews() }));
+    }
+  }
+
   void queue.reload();
+  void loadReviews();
 
   return h(
     "section",
@@ -705,6 +835,14 @@ export function render_() {
         queue.truncation,
         queue.host,
       ),
+    }),
+    panel({
+      eyebrow: "Đã ghi",
+      title: "Quyết định đã ghi",
+      guardrail:
+        "Đây là những bản nháp đã có người quyết định. Bản gốc của agent nằm cạnh quyết định để " +
+        "sau này chấm được agent bằng việc thật. Không dòng nào ở đây là một tin nhắn đã gửi đi.",
+      children: h("div", { class: "stack" }, reviewLogHost, reviewMoreHost),
     }),
   );
 }

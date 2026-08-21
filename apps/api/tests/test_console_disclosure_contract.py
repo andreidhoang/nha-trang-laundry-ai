@@ -202,7 +202,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     assert counts.get("READ_ONLY_MODULE") == 1
     assert counts.get("MODEL_SEAM") == 2
     assert counts.get("ABSENT_WRITER") == 2
-    assert sum(counts.values()) == _registry()["total"] == 164
+    # 165 since the review log landed: one new DESCRIPTIVE guardrail on `screens/shadow.js`
+    # telling the reader that nothing in that panel was ever sent to a customer.
+    assert sum(counts.values()) == _registry()["total"] == 165
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

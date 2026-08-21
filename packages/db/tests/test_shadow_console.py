@@ -615,3 +615,153 @@ def test_the_audit_timeline_returns_the_decision_chain(
     assert actions == ["AGENT_DRAFT_RECORD", "AGENT_DRAFT_APPROVE"]
     assert timeline[0].actor_id is None
     assert timeline[1].actor_id == principal.staff_user_id
+
+
+def test_a_decided_draft_leaves_the_queue_and_lands_in_the_review_log(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """The queue forgets a draft the moment it is decided. Something has to remember it.
+
+    Approve, edit and reject are recorded so the agent can be graded on them later, and the pending
+    queue is deliberately undecided-only. Before this read existed the two facts together meant no
+    screen in the console could ever show a decision again.
+    """
+
+    store_id = uuid4()
+    approver = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPS_APPROVER}))
+    repository = ShadowConsoleRepository()
+    agent_run_id = _draft(postgres_connection, store_id)
+
+    before = repository.list_pending_drafts(
+        postgres_connection, store_id=store_id, principal=approver
+    )
+    assert agent_run_id in {draft.agent_run_id for draft in before}
+
+    repository.decide_draft(
+        postgres_connection,
+        agent_run_id=agent_run_id,
+        decision="EDIT",
+        principal=approver,
+        correlation_id=uuid4(),
+        reason_code="OPERATOR_REWROTE",
+        edited_text="Dạ bên em xin phép nhắn lại cho rõ hơn ạ.",
+    )
+
+    after = repository.list_pending_drafts(
+        postgres_connection, store_id=store_id, principal=approver
+    )
+    assert agent_run_id not in {draft.agent_run_id for draft in after}
+
+    reviewed = repository.list_reviewed_drafts(
+        postgres_connection, store_id=store_id, principal=approver
+    )
+    entry = next(item for item in reviewed if item.agent_run_id == agent_run_id)
+    assert entry.decision == "EDIT"
+    assert entry.reason_code == "OPERATOR_REWROTE"
+    assert entry.edited_text == "Dạ bên em xin phép nhắn lại cho rõ hơn ạ."
+    assert entry.decided_by_staff_id == approver.staff_user_id
+    # The agent's own words travel with the decision: a verdict without the thing it was a verdict
+    # on grades nothing.
+    assert entry.draft_text
+    assert entry.terminal_outcome in {"DRAFT", "REQUIRE_HUMAN"}
+
+
+def test_an_auditor_reads_the_review_log_it_did_not_write(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """Reviews are the store's record, not the reader's.
+
+    `assistant_turns` scopes a non-owner to their own questions. A draft decision is made on the
+    shop's behalf, so every Shadow read role sees all of them — and an auditor, which may never
+    decide anything, is exactly the role that has to be able to read decisions other people made.
+    """
+
+    store_id = uuid4()
+    approver = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPS_APPROVER}))
+    auditor = _member(postgres_connection, store_id, roles=frozenset({StaffRole.AUDITOR}))
+    repository = ShadowConsoleRepository()
+    agent_run_id = _draft(postgres_connection, store_id)
+    repository.decide_draft(
+        postgres_connection,
+        agent_run_id=agent_run_id,
+        decision="APPROVE",
+        principal=approver,
+        correlation_id=uuid4(),
+        reason_code=None,
+        edited_text=None,
+    )
+
+    seen = repository.list_reviewed_drafts(
+        postgres_connection, store_id=store_id, principal=auditor
+    )
+    assert agent_run_id in {item.agent_run_id for item in seen}
+
+    outsider = _staff(postgres_connection, roles=frozenset({StaffRole.AUDITOR}))
+    with pytest.raises(ShadowAuthorizationError):
+        repository.list_reviewed_drafts(postgres_connection, store_id=store_id, principal=outsider)
+
+
+def test_paging_the_review_log_is_exact_across_a_shared_timestamp(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """The sort is `decided_at DESC, review_id` ASC — mixed directions, so no tuple compare.
+
+    Deciding drafts will not produce a tie: each decision takes its own clock reading. The pair
+    sharing a timestamp is therefore inserted directly, as a fixture manufacturing a condition the
+    clock will not. `decide_draft` has its own tests above; this one is about ordering.
+    """
+
+    store_id = uuid4()
+    approver = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPS_APPROVER}))
+    repository = ShadowConsoleRepository()
+    for _ in range(3):
+        repository.decide_draft(
+            postgres_connection,
+            agent_run_id=_draft(postgres_connection, store_id),
+            decision="APPROVE",
+            principal=approver,
+            correlation_id=uuid4(),
+            reason_code=None,
+            edited_text=None,
+        )
+    existing = repository.list_reviewed_drafts(
+        postgres_connection, store_id=store_id, principal=approver
+    )
+    shared_at = existing[0].decided_at
+    for _ in range(2):
+        run_id = _draft(postgres_connection, store_id)
+        with postgres_connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO agent_draft_reviews (review_id, agent_run_id, store_id, decision,
+                                                 reason_code, edited_text, decided_by_staff_id,
+                                                 decided_at)
+                VALUES (%s, %s, %s, 'APPROVE', NULL, NULL, %s, %s)
+                """,
+                (uuid4(), run_id, store_id, approver.staff_user_id, shared_at),
+            )
+
+    whole = repository.list_reviewed_drafts(
+        postgres_connection, store_id=store_id, principal=approver, limit=50
+    )
+    stamps = [item.decided_at for item in whole]
+    assert len(set(stamps)) < len(stamps), "the fixture did not produce a shared timestamp"
+
+    paged: list[UUID] = []
+    anchor: UUID | None = None
+    for _ in range(len(whole) + 1):
+        page = repository.list_reviewed_drafts(
+            postgres_connection, store_id=store_id, principal=approver, limit=2, before=anchor
+        )
+        if not page:
+            break
+        paged.extend(item.review_id for item in page)
+        anchor = page[-1].review_id
+
+    assert paged == [item.review_id for item in whole]
+    assert len(paged) == len(set(paged)), "a review was returned on two pages"
+
+    with pytest.raises(ShadowAuthorizationError):
+        repository.list_reviewed_drafts(
+            postgres_connection, store_id=store_id, principal=approver, before=uuid4()
+        )

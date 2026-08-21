@@ -65,6 +65,7 @@ from nha_trang_laundry_db.shadow_console import (
     AuditEntry,
     DraftDecision,
     PendingDraft,
+    ReviewedDraft,
     ShadowConsoleRepository,
     UnknownSend,
 )
@@ -278,6 +279,19 @@ class OperationsService:
         with self._connection_factory(self._database_url) as connection:
             return ShadowConsoleRepository().list_pending_drafts(
                 connection, store_id=store_id, principal=principal, limit=limit
+            )
+
+    def shadow_reviewed_drafts(
+        self,
+        *,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        limit: int = 50,
+        before: UUID | None = None,
+    ) -> tuple[ReviewedDraft, ...]:
+        with self._connection_factory(self._database_url) as connection:
+            return ShadowConsoleRepository().list_reviewed_drafts(
+                connection, store_id=store_id, principal=principal, limit=limit, before=before
             )
 
     def shadow_decide_draft(

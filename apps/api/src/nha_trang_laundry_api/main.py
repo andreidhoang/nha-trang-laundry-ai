@@ -1516,6 +1516,22 @@ class PendingDraftResponse(BaseModel):
     produced_at: datetime
 
 
+class ReviewedDraftResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_id: UUID
+    agent_run_id: UUID
+    decision: str
+    reason_code: str | None
+    edited_text: str | None
+    decided_by_staff_id: UUID
+    decided_at: datetime
+    draft_text: str
+    terminal_outcome: str
+    terminal_code: str
+    produced_at: datetime
+
+
 class DraftDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1562,6 +1578,54 @@ class AuditEntryResponse(BaseModel):
     actor_id: UUID | None
     aggregate_type: str
     aggregate_id: UUID
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/shadow/reviews",
+    response_model=list[ReviewedDraftResponse],
+)
+def list_shadow_reviews(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+    limit: int = 50,
+    before: UUID | None = None,
+) -> list[ReviewedDraftResponse]:
+    """The decisions already made about agent drafts, newest first, with the draft each was about.
+
+    The pending queue is undecided-only, so a draft leaves it the instant somebody rules on it.
+    That is right for a queue and wrong for a record: approve, edit and reject are captured so the
+    agent can be graded on them, and without this read nothing in the console looked at them again.
+
+    Visibility is the store's rather than the reader's — a review is a decision made on the shop's
+    behalf, so every Shadow read role sees all of them, `AUDITOR` included. `before` pages
+    backwards from the oldest review the caller holds and is refused if it names one they may not
+    read, rather than answering with the newest page.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        reviews = service.shadow_reviewed_drafts(
+            store_id=store_id, principal=principal, limit=limit, before=before
+        )
+    except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
+        _raise_shadow_error(error)
+    return [
+        ReviewedDraftResponse(
+            review_id=item.review_id,
+            agent_run_id=item.agent_run_id,
+            decision=item.decision,
+            reason_code=item.reason_code,
+            edited_text=item.edited_text,
+            decided_by_staff_id=item.decided_by_staff_id,
+            decided_at=item.decided_at,
+            draft_text=item.draft_text,
+            terminal_outcome=item.terminal_outcome,
+            terminal_code=item.terminal_code,
+            produced_at=item.produced_at,
+        )
+        for item in reviews
+    ]
 
 
 @app.get("/internal/v1/stores/{store_id}/shadow/drafts", response_model=list[PendingDraftResponse])

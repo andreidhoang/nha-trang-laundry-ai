@@ -206,6 +206,13 @@ export const ENUM_GLOSS = {
   // Incident categories — `IncidentRepository` admits exactly these two
   SERVICE_QUALITY: "chất lượng dịch vụ",
   AUTOMATED_MESSAGE_ERROR: "lỗi tin nhắn tự động",
+  // Shadow draft review decisions — `agent_draft_reviews.decision`. Deliberately kept apart from
+  // the approval-envelope vocabulary above (`APPROVED`/`REJECTED`), which decides a different
+  // aggregate entirely; `screens/shadow.js` explains why the two must never be mixed. These are
+  // the imperative a reviewer presses, not the state a request ends in.
+  APPROVE: "dùng được",
+  EDIT: "sửa lại",
+  REJECT: "không dùng được",
   // Agent run terminal outcome — `agent_drafts.terminal_outcome IN ('DRAFT','REQUIRE_HUMAN')`;
   // DRAFT shares the order-status gloss "nháp" above, which is what it means here too
   REQUIRE_HUMAN: "cần người quyết định",

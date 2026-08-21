@@ -33,7 +33,7 @@
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UNKNOWN, dateTime, integer, shortId } from "../core/format.js";
-import { enumLabel } from "../core/i18n.js";
+import { enumLabel, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
@@ -560,6 +560,13 @@ export function render_() {
 
     // Three plain buttons, deliberately of equal weight. Making APPROVE the big coloured one would
     // put a thumb on the scale of a review whose whole point is that a person chose.
+    //
+    // Labelled `Gloss (TOKEN)`, like every other server enum on this console. They read `APPROVE`,
+    // `EDIT` and `REJECT` and nothing else, with the Vietnamese only in a `title` — so the three
+    // most consequential controls in the whole supervision loop were English words to a counter
+    // worker, explained by a tooltip that a touch device cannot reach. The token stays verbatim
+    // because these are audit values and because the approval-envelope vocabulary is a different
+    // one that must never be confused with this; the gloss is what makes them operable.
     const buttons = DECISIONS.map((decision) => {
       const button = h(
         "button",
@@ -569,11 +576,21 @@ export function render_() {
           title: DECISION_HINT[decision],
           onClick: () => void decide(item, decision),
         },
-        decision,
+        enumLabel(decision),
       );
       entry.controls.push(button);
       return gated(button, verdict);
     });
+
+    // And what each one writes, in words, next to the buttons rather than inside them. Which of
+    // the three a reviewer means is a point-of-action distinction on an outbound customer
+    // message, and `STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md` §4 keeps those uncollapsed and out of
+    // tooltips.
+    const decisionMeanings = h(
+      "p",
+      { class: "hint" },
+      DECISIONS.map((decision) => `${enumVi(decision)}: ${DECISION_HINT[decision]}`).join(" · "),
+    );
 
     return h(
       "article",
@@ -610,6 +627,7 @@ export function render_() {
           control: editedInput,
         }),
         h("div", { class: "form__actions" }, buttons),
+        decisionMeanings,
         line,
         failureHost,
       ),

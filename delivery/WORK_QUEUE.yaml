@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-19'
+last_updated: '2026-08-21'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -2698,7 +2698,7 @@ items:
 - id: ASSISTANT-BRAIN-002
   phase: PRODUCTION_HARDENING
   title: Money questions are answered with an order count and a suggestion chip misroutes
-  status: PENDING
+  status: COMPLETE
   priority: 239
   depends_on:
   - ASSISTANT-001

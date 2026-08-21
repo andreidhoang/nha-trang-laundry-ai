@@ -1,0 +1,128 @@
+schema_version: 1
+work_item: ASSISTANT-BRAIN-002
+recorded_at: '2026-08-21T12:20:00+07:00'
+requirement_contract: >-
+  The item requires that a question about money is refused rather than answered with something else,
+  that every suggestion chip the console ships reaches the intent it is documented to reach, and that
+  the table stays first-match-wins and total while both are made true. The governing rule is the
+  repository's first non-negotiable: the model never computes money, and unknown means stop. This
+  item is a corrective one against ASSISTANT-001, which is COMPLETE and therefore immutable planning
+  history; the defect is in code that item shipped, not in its record.
+
+  The boundary matters as much as the requirement. Nothing here changes what the assistant can
+  answer, adds a capability, widens a read, or touches the seam where a provider-backed brain would
+  enter. `AssistantService(brain=...)` still defaults to `DeterministicAssistantBrain`, no model is
+  called on this path, and the two disclosures `screens/assistant.js` renders about that seam are
+  unchanged, so their registry bindings continue to hold.
+rollback_impact: >-
+  Reverting returns the brain to matching cues as substrings of a diacritic-folded question, with the
+  money rule tested last. That restores two measured behaviours: a money question that also names a
+  timeframe is answered with a count of orders and never refused, and four ordinary Vietnamese words
+  - `lỗi`, `lọc`, `lớn`, `lại` - are read as the money cues `lo` and `lai`, so routine questions come
+  back as a revenue refusal. One of the four suggestion chips the console ships returns to reaching
+  REVENUE_UNAVAILABLE.
+
+  The change is confined to one module and its test file. No route, request model, response shape,
+  database table, migration, contract or console string is touched, and `_normalize` keeps its old
+  behaviour for every caller - the whole-word and accent-aware matching is added beside it rather
+  than inside it. There is no persisted state that a revert would leave inconsistent: intents are
+  computed per question and the stored `assistant_turns.intent` of a past turn is history, not a
+  cache. Rolling back is therefore a single-file revert with no data migration and no coordination.
+unresolved_assumptions: >-
+  A question that names money using only the three homograph-prone words, with the accents dropped -
+  `lai`, `lo`, `tien` typed bare - no longer reaches REVENUE_UNAVAILABLE. It falls to UNSUPPORTED,
+  whose own text refuses money questions by name and points at `#/gaps`. That is a deliberate trade
+  and the reason is that folding destroys the only information separating `lãi` from `lại`, `lỗ` from
+  `lỗi` and `tiền` from `tiến`. A quieter refusal was judged an acceptable cost; a confident wrong
+  answer was not. If a real operator is later observed asking about profit without accents, the
+  answer is a new unambiguous folded phrase in `_MONEY_FOLDED`, not the return of a two-letter cue.
+
+  `ORDER_LOOKUP` is deliberately excluded from the declined set that renders `warn` on the console:
+  the brain emits it whether the order was found or not, and separating the two in the browser would
+  mean reading the answer text, which is client-side intent logic by another name.
+
+  The greeting cue `chao` keeps one known imprecision. A question containing `chào giá` - "to quote a
+  price" - is greeted rather than refused. It is accepted because GREETING's answer is the capability
+  list, which invents nothing and is a reasonable reply to an off-topic question, and because the
+  alternative is a cue table that special-cases a business phrase.
+
+  Not claimed by this item: that the assistant's cue table is complete, or that first-match-wins is
+  the right architecture for it. Both remain as ASSISTANT-001 left them. What is claimed is that the
+  two defects named above are fixed and cannot silently return.
+evidence:
+  money_question_refuses_rather_than_reporting_a_count: >-
+    Reproduced against the running stack before the change, through
+    `POST /internal/v1/stores/{id}/assistant/turns` with a real RS256 session, not against a stub.
+    Three phrasings, each returning intent TODAY_OVERVIEW and the answer "Hôm nay cửa hàng này chưa
+    có đơn nào (theo giờ Việt Nam)": "Doanh thu hôm nay bao nhiêu?", "Hôm nay thu được bao nhiêu
+    tiền?", "Tình hình doanh thu thế nào?". A fourth, "Doanh thu tuần này?", refused correctly, which
+    is what identified the cause: the table is first-match-wins and the money rule sat last, so a
+    money question that also names a timeframe matched the timeframe rule first.
+
+    The system never computed money, which is the rule it was built to keep. It also never said it
+    could not answer, which is the rest of the promise and is printed on the screen that renders it -
+    `screens/assistant.js` tells the operator that what the assistant does not know, it says it does
+    not know.
+
+    Fixed by a precedence rule rather than by moving a line: a refusal outranks a partial topical
+    match, so anything that can only ever decline is tested before anything that answers. The rule is
+    stated in the module docstring because it governs the next intent added, not just this fix.
+    Verified live through a restarted API: all three phrasings now return REVENUE_UNAVAILABLE with
+    the answer that names the unratified owner decision. Pinned by
+    `test_a_money_question_that_names_a_timeframe_is_still_refused`.
+  every_suggestion_chip_resolves_to_its_documented_intent: >-
+    `screens/assistant.js:52` documents the four SUGGESTIONS chips as each mapping to a documented
+    intent of the brain. Measured against the live brain before the change, the fourth did not:
+    "Bạn trả lời được gì?" returned REVENUE_UNAVAILABLE. It is the first thing an operator with an
+    empty transcript can press.
+
+    Cause: `_normalize` strips Vietnamese diacritics and cues were matched as substrings, so the
+    two-letter money cue `lo` matched inside `loi` - the folded form of `lỗi`. The same defect
+    matched `lo` inside `lọc` and `lớn`, could not tell `lãi` from `lại`, and reached beyond money:
+    `tre` matched inside `tren` so "Đơn ở trên bảng có gì?" returned SLA_RISK, and `chao` matched
+    inside `cháo`.
+
+    A cue is now a whole word, and where folding turns a money word into a common one the accented
+    form is matched instead, falling back to the folded whole word when the writer typed no accents
+    at all so "chao ban" still greets. Verified live through the API: all four shipped chips reach
+    their documented intent, and five ordinary operational questions no longer return a money
+    refusal. Pinned by `test_every_suggestion_chip_the_console_ships_reaches_its_documented_intent`,
+    `test_ordinary_words_that_merely_contain_a_cue_are_not_money_questions` and
+    `test_a_cue_is_a_whole_word_and_an_accent_can_be_the_whole_word`.
+  first_match_wins_and_totality_preserved: >-
+    Both properties are the ones `test_assistant_brain.py` already pinned and both still hold. The
+    table remains first-match-wins - one intent per question, evaluated in a fixed order with money
+    moved to the front - and remains total, with UNSUPPORTED as the fallback that names what the
+    assistant can do rather than guessing.
+
+    The two pre-existing tests that would have caught a lazy fix both pass unmodified:
+    `test_greeting_matches_with_and_without_diacritics` pins "chao ban" to GREETING, and
+    `test_the_revenue_refusal_contains_no_number_at_all` pins "tháng này lãi hay lỗ" to
+    REVENUE_UNAVAILABLE. Keeping both is what forced the accented-form-with-folded-fallback rule
+    rather than simply deleting the ambiguous cues, which would have broken the first, or reordering
+    alone, which would have left the second's collisions in place.
+    `test_the_intent_table_is_first_match_wins` also passes unmodified.
+
+    Measured over a 25-case table covering every intent, accented and unaccented variants of each,
+    and every previously pinned phrasing: 25 of 25 correct, 0 failures. Each of the four new tests
+    was run against the pre-fix module - checked out from HEAD, executed, restored - and each failed,
+    so they are regression coverage rather than assertions written to fit.
+  rollback_assessment: >-
+    See rollback_impact. Two files, both additive in effect: `apps/api/.../assistant.py` gains four
+    helpers, two cue constants and a reordered matcher; `apps/api/tests/test_assistant_brain.py`
+    gains four tests. No route, model, table, migration, contract or console string changes, so a
+    revert is a single-file revert that restores the previous behaviour exactly, including its two
+    defects. Nothing depends on the new behaviour, and no persisted row encodes it.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

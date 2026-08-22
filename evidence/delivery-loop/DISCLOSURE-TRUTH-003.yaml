@@ -1,0 +1,107 @@
+schema_version: 1
+work_item: DISCLOSURE-TRUTH-003
+recorded_at: '2026-08-22T19:40:00+07:00'
+requirement_contract: >-
+  A `POLICY_BOUND` console disclosure states something whose truth rests on a decision rather than on
+  a code fact, and the registry records the decision so a reader can check the sentence against the
+  register. The requirement is that the sentence agrees with the register. One did not:
+  `screens/orderDetail.js`'s settlement guardrail told operators that partial payment, deposits,
+  instalments and credit are refused *kèm mã quyết định đang mở* -- with a decision code that is
+  still open -- while `DEC-010` has been `RESOLVED` since 2026-08-18, decided as deliberately
+  deferred.
+
+  The assertion already existed and already failed. It was carried as
+  `xfail(strict=True)` on `test_no_policy_bound_disclosure_describes_a_resolved_decision_as_open`,
+  whose reason names the incident and states that `TASK-disclosure-contract-001.md` treats a string
+  found false today as an incident to report rather than a refactor. This item is the fix that marker
+  was written to wait for, and deleting the marker is part of the contract rather than a side effect.
+
+  The boundary: `DEC-010` is already resolved, so reporting its status accurately decides nothing. No
+  route, request model, response shape, reason code or refusal path changes. The settlement endpoint
+  refuses exactly what it refused before, for the same reason, with the same code.
+rollback_impact: >-
+  Reverting restores a sentence that tells the shop owner, in Vietnamese, on the screen where they
+  take money, that a decision they made on 2026-08-18 is still pending. It also restores the
+  `xfail(strict=True)` marker, so the build would again carry the incident as a known failure.
+
+  The change is one Vietnamese string, its content-hashed slot id in the authored `POLICY_BOUND`
+  binding, the regenerated registry, the regenerated `sw.js` fingerprint, and the deleted marker. No
+  JavaScript logic, no route, no schema, no migration, no persisted state. A revert is a file revert
+  plus re-running the two generators; nothing depends on the new wording and no row encodes it.
+unresolved_assumptions: >-
+  The new wording names a date -- *chủ tiệm đã chốt ngày 18/08/2026* -- which is `DEC-010`'s
+  `resolved_at`. If that decision is ever superseded, this sentence becomes false again in a way the
+  existing test cannot catch, because the test compares status rather than dates. The class it does
+  catch is the one that was actually wrong. Naming the limit rather than implying the guard is
+  broader than it is.
+
+  Not claimed: that every console string is true. This item audited the `POLICY_BOUND` class -- the
+  slots whose truth rests on a decision -- across all 165 registered disclosures and found exactly
+  one violation. The other 164 slots carry different binding kinds with their own tests, and
+  `test_a_disclosure_claiming_no_route_exists_is_still_true` already notes that two `ABSENT_ROUTE`
+  disclosures become false the day `FULFILMENT-001` lands.
+
+  Also not claimed: that the operator will read it. This corrects what the screen says, not whether
+  the sentence is noticed.
+evidence:
+  no_resolved_decision_is_described_as_open: >-
+    Audited across the whole registry rather than the one slot the marker named. A scan of all 165
+    entries in `specs/contracts/console-disclosures-v1.yaml` for the three open-markers the test
+    uses -- *đang mở*, *chưa chốt*, *chưa quyết* -- against each entry's recorded
+    `binding.decision_status` found exactly one violation:
+    `screens/orderDetail.js#guardrail:91c046d0c7ed`, bound to `DEC-010`, status `RESOLVED`. Zero
+    entries bound to an `OPEN` decision used any marker, so there was no correct usage to preserve.
+
+    The sentence now reads *"…đều bị từ chối kèm mã quyết định — chủ tiệm đã chốt ngày 18/08/2026 là
+    tạm thời không nhận các hình thức này…"*: refused with a decision code, and the owner decided on
+    that date to not accept these forms for now. That matches `DEC-010`'s own resolution text, which
+    says the shapes stay `NOT_SUPPORTED` "by decision, not by omission".
+
+    The distinction is the point. "A decision is still open" invites the owner to wait for an answer
+    already given; "the owner decided to defer this" tells them the refusal is intended and nothing
+    is pending. Same refusal, opposite instruction to the reader.
+
+    Slot ids are content hashes, so the registry was regenerated rather than hand-edited and the
+    authored `POLICY_BOUND` binding was rekeyed from `91c046d0c7ed` to `d58009f5dc6c` in the same
+    change. The generator refuses a binding keyed to a slot no disclosure has, which is what forced
+    the rekey rather than leaving an inert binding behind -- it failed loudly on the first attempt
+    and that failure is why the two halves are consistent.
+
+    `verify_contracts.py` reports 165 disclosures validated, unchanged in count.
+  the_reported_incident_marker_is_deleted: >-
+    `apps/api/tests/test_console_disclosure_contract.py` no longer contains any `xfail`. The marker's
+    own reason predicted this: "strict=True means that when the wording is corrected this test starts
+    passing, the xfail fails the build, and whoever fixed it is forced to delete this marker." It
+    did, and it was.
+
+    The test's docstring now records what it guards and what it used to carry, so the history is not
+    lost with the marker. 35 tests in that module pass, and the previously-xfailed test passes on its
+    own assertion rather than by exception.
+  no_behaviour_changed_only_what_the_operator_is_told: >-
+    The server is not touched and was never wrong about the substance.
+    `SettlementNotSupported.decision` (`packages/domain/src/.../settlement.py:87-95`) genuinely
+    carries a decision code to the client, so the console was right that a code accompanies the
+    refusal; only the word *đang mở* was false. No route, request model, response shape, refusal
+    path, reason code, database table or migration is in this change.
+
+    `apps/web/sw.js` was regenerated and its fingerprint moved, which is the evidence the corrected
+    string actually reaches a returning operator rather than sitting behind a cached shell. A console
+    string that changes without its fingerprint changing is a string nobody sees.
+  rollback_assessment: >-
+    See rollback_impact. Five files: one Vietnamese string, one authored binding key, one regenerated
+    registry, one regenerated service-worker fingerprint, one deleted test marker, plus the queue and
+    census entries. No logic, schema or persisted state. Revert is a file revert and two generator
+    runs.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

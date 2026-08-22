@@ -325,24 +325,16 @@ def test_a_policy_bound_disclosure_cites_a_real_decision(entry: dict[str, Any]) 
     assert entry["binding"]["decision_status"] == statuses[decision]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN FALSE DISCLOSURE, reported not fixed. orderDetail.js tells operators that partial "
-        "payment, deposits and credit are refused with an OPEN decision code -- 'ma quyet dinh "
-        "dang "
-        "mo'. DEC-010 is RESOLVED, decided 2026-08-18 as deliberately deferred, so the console is "
-        "telling the shop owner a decision is still open that was decided. "
-        "TASK-disclosure-contract-001.md is explicit that a string found false today is an "
-        "incident "
-        "to report, not a refactor, and this is customer-facing copy about the owner's own "
-        "decision. "
-        "strict=True means that when the wording is corrected this test starts passing, the xfail "
-        "fails the build, and whoever fixed it is forced to delete this marker."
-    ),
-)
 def test_no_policy_bound_disclosure_describes_a_resolved_decision_as_open() -> None:
-    """The assertion the incident above would satisfy, kept executable rather than written down."""
+    """A sentence about a decision must agree with the register, not with when it was written.
+
+    This was `xfail(strict=True)` from the day it was written until 2026-08-22: `orderDetail.js`
+    told operators that partial payment, deposits and credit are refused with a decision code that
+    was *still open*, when `DEC-010` had been resolved on 2026-08-18 as deliberately deferred. The
+    console was telling the shop owner their own decision was unmade. The wording now says the
+    decision was taken, so the marker is gone and this guards the class rather than recording one
+    instance of it.
+    """
     open_markers = ("đang mở", "chưa chốt", "chưa quyết")
     for entry in _entries("POLICY_BOUND"):
         if entry["binding"]["decision_status"] != "RESOLVED":

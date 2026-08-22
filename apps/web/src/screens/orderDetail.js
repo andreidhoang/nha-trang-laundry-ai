@@ -205,7 +205,8 @@ function settlementPanel(spec) {
     guardrail:
       "Chỉ một trường hợp được hỗ trợ: khách trả đúng tổng đã báo, đủ một lần, tại quầy, và tự " +
       "lấy đồ về. Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết " +
-      "định đang mở — không làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.",
+      "định — chủ tiệm đã chốt ngày 18/08/2026 là tạm thời không nhận các hình thức này — " +
+      "không làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.",
     children: h(
       "form",
       { class: "form", onSubmit: submit },

@@ -2750,3 +2750,32 @@ items:
   - dec_021_is_not_decided_by_this_item
   - rollback_assessment
   blocked_by_decisions: []
+- id: DISCLOSURE-TRUTH-003
+  phase: PRODUCTION_HARDENING
+  title: The settlement screen describes a resolved decision as still open
+  status: COMPLETE
+  priority: 241
+  depends_on:
+  - DISCLOSURE-CONTRACT-001
+  - SETTLEMENT-001
+  context_domains:
+  - platform
+  - privacy_consent
+  normative_sources:
+  - docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-disclosure-truth-003.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - no_resolved_decision_is_described_as_open
+  - the_reported_incident_marker_is_deleted
+  - no_behaviour_changed_only_what_the_operator_is_told
+  - rollback_assessment
+  blocked_by_decisions: []

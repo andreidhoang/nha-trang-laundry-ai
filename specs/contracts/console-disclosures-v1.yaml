@@ -988,12 +988,13 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#guardrail:91c046d0c7ed
+- slot_id: screens/orderDetail.js#guardrail:d58009f5dc6c
   module: screens/orderDetail.js
   key: guardrail
   text: 'Chỉ một trường hợp được hỗ trợ: khách trả đúng tổng đã báo, đủ một lần, tại quầy, và tự lấy đồ
-    về. Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định đang mở — không
-    làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.'
+    về. Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định — chủ tiệm đã
+    chốt ngày 18/08/2026 là tạm thời không nhận các hình thức này — không làm tròn và không ghi nhận một
+    phần. Bản ghi tất toán không sửa được.'
   binding:
     kind: POLICY_BOUND
     decision: DEC-010

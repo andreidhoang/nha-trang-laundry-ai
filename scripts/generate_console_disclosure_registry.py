@@ -181,7 +181,7 @@ BINDINGS: dict[str, dict[str, Any]] = {
 #: Slots whose truth rests on a decision rather than on a code fact. Recorded with the decision so a
 #: reader can check the sentence against the register instead of against the code.
 POLICY_BOUND: dict[str, str] = {
-    "screens/orderDetail.js#guardrail:91c046d0c7ed": "DEC-010",
+    "screens/orderDetail.js#guardrail:d58009f5dc6c": "DEC-010",
 }
 
 

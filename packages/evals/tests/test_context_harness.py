@@ -67,7 +67,11 @@ def test_context_drift_check_passes() -> None:
     # shipped eval fixture generator wrote a completed order citing an approval envelope that had
     # never been requested. It is the part of DEC-021 the decision packet itself classifies as a
     # schema correction rather than a policy question, which is why it lands before the decision.
-    assert "83 work items" in result.stdout
+    # The eighty-fourth is DISCLOSURE-TRUTH-003, the fix an xfail(strict=True) marker had been
+    # carrying as a reported-not-fixed incident: the settlement screen told the shop owner that
+    # partial payment and credit are refused with a decision code that was still open, when DEC-010
+    # had been resolved four days earlier as deliberately deferred.
+    assert "84 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

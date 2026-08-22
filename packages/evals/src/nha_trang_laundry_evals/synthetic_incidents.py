@@ -10,6 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 import rfc8785
+from nha_trang_laundry_db.approvals import ApprovalRepository, ApprovalRequestCommand
 from nha_trang_laundry_db.incidents import (
     CorrectionOpenCommand,
     IncidentOpenCommand,
@@ -18,6 +19,7 @@ from nha_trang_laundry_db.incidents import (
 from nha_trang_laundry_db.quotes import QuoteRepository, QuoteRevisionCommand
 from nha_trang_laundry_domain.canonical import canonical_document
 from nha_trang_laundry_domain.catalog import (
+    ApprovalAction,
     QuantityBasis,
     QuoteFinality,
     QuoteRevisionStatus,
@@ -156,13 +158,39 @@ def _seed_completed_order(connection: Any, timestamp: datetime) -> tuple[Any, An
         pricebook_version_id=uuid4(),
         service_version_id=uuid4(),
     )
+    # This fixture needs an order that is already finished, so it has to produce the
+    # `APPROVED_EXACT` state no command path can reach (`DEC-021`). It used to reach it by putting
+    # `uuid4()` in `approval_id`, which -- because the column carried no foreign key -- wrote a
+    # completed order backed by an approval nobody had ever requested, into whatever database
+    # `DATABASE_URL` named. Migration `0029` closed that. The envelope is now requested for real, so
+    # the fixture asserts one fewer thing than it did and the row it writes is one a human touched.
+    approval_id = (
+        ApprovalRepository()
+        .request(
+            connection,
+            ApprovalRequestCommand(
+                ApprovalAction.PRESENT_QUOTE,
+                "QUOTE_REVISION",
+                quote_id,
+                1,
+                _envelope_hash("synthetic-completed-order-snapshot"),
+                _envelope_hash("synthetic-completed-order-rendered"),
+                "synthetic-incident-fixture-v1",
+                actor_id,
+                f"synthetic-completed-order-{quote_id}",
+                uuid4(),
+                timestamp - timedelta(hours=13),
+            ),
+        )
+        .approval_request_id
+    )
     final = build_quote_snapshot(
         replace(
             estimate.data,
             finality=QuoteFinality.APPROVED_EXACT,
             status=QuoteRevisionStatus.ACCEPTED_FINAL,
             required_approvals=(),
-            approval_id=uuid4(),
+            approval_id=approval_id,
         )
     )
     QuoteRepository().create_revision(
@@ -209,6 +237,17 @@ def _seed_completed_order(connection: Any, timestamp: datetime) -> tuple[Any, An
 
 def _hash(value: str) -> str:
     return f"sha256:{sha256(value.encode('ascii')).hexdigest()}"
+
+
+def _envelope_hash(value: str) -> str:
+    """Approval envelopes take the JCS form, which `_hash` does not produce.
+
+    `_hash` returns `sha256:<hex>` and the approval binding requires `JCS-SHA256-V1:<hex>`
+    (`approvals.py` HASH_PATTERN). Keeping both rather than widening `_hash`, because its existing
+    callers are incident evidence hashes and those are a different contract.
+    """
+
+    return canonical_document({"fixture": value}).snapshot_hash
 
 
 def _tool_trace(arguments: dict[str, Any], trace_id: str) -> Mapping[str, object]:

@@ -61,8 +61,13 @@ def test_context_drift_check_passes() -> None:
     # eighty-first and eighty-second are CONSOLE-ORDER-GAP-001 and ASSISTANT-BRAIN-002, both
     # corrective: a concurrent session driving the live stack proved no order can be created at all
     # because no quote can reach APPROVED_EXACT, and that a money question naming a timeframe is
-    # answered with an order count instead of refused.
-    assert "82 work items" in result.stdout
+    # answered with an order count instead of refused. The eighty-third is
+    # QUOTE-APPROVAL-INTEGRITY-001, opened by the owner on 2026-08-22: quote_revisions.approval_id
+    # was required to be non-null for an approved exact price and carried no foreign key, so the
+    # shipped eval fixture generator wrote a completed order citing an approval envelope that had
+    # never been requested. It is the part of DEC-021 the decision packet itself classifies as a
+    # schema correction rather than a policy question, which is why it lands before the decision.
+    assert "83 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

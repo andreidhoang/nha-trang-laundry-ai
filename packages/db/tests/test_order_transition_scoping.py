@@ -36,7 +36,7 @@ from nha_trang_laundry_domain.catalog import (
     QuoteRevisionStatus,
 )
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, build_quote_snapshot
-from quote_test_data import make_quote_snapshot
+from quote_test_data import create_approval_envelope, make_quote_snapshot
 
 # Inside the test quote's validity window (PRICED_AT 2026-08-01, valid one day), because
 # OrderRepository.create refuses an accepted quote that has expired.
@@ -79,7 +79,7 @@ def _staff(connection: Any, store_id: UUID | None) -> StaffPrincipal:
     return StaffPrincipal(staff_id, f"oidc-{staff_id}", frozenset({StaffRole.OWNER_ADMIN}), True)
 
 
-def _approved_final_quote(quote_id: UUID) -> ImmutableQuoteSnapshot:
+def _approved_final_quote(quote_id: UUID, approval_id: UUID) -> ImmutableQuoteSnapshot:
     estimate = make_quote_snapshot(quote_id, 1)
     return build_quote_snapshot(
         replace(
@@ -91,14 +91,17 @@ def _approved_final_quote(quote_id: UUID) -> ImmutableQuoteSnapshot:
                 for line in estimate.data.lines
             ),
             required_approvals=(),
-            approval_id=uuid4(),
+            approval_id=approval_id,
         )
     )
 
 
 def _order_in_store(connection: Any, store_id: UUID, owner: StaffPrincipal) -> UUID:
     quote_id = uuid4()
-    quote = _approved_final_quote(quote_id)
+    # The revision cites an approval envelope, and migration 0029 checks that it exists.
+    quote = _approved_final_quote(
+        quote_id, create_approval_envelope(connection, requested_by=owner.staff_user_id)
+    )
     QuoteRepository().create_revision(
         connection,
         QuoteRevisionCommand(store_id, uuid4(), quote, 0, 0, owner.staff_user_id, uuid4(), NOW),

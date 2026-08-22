@@ -1,0 +1,44 @@
+-- Make `quote_revisions.approval_id` name an approval envelope that actually exists.
+--
+-- `0005_quote_snapshots.sql` requires the column to be filled for an exact price:
+--
+--     CHECK (finality <> 'APPROVED_EXACT' OR approval_id IS NOT NULL)
+--
+-- and then never checks that what fills it is real. The column has carried no foreign key since it
+-- was created. So the constraint reads as "an approved exact price cites its approval" and enforces
+-- only "an approved exact price cites something shaped like a UUID".
+--
+-- That gap is not theoretical. `packages/evals/src/nha_trang_laundry_evals/synthetic_incidents.py`
+-- builds a revision with `approval_id=uuid4()` and writes it through the real repository. It is
+-- shipped source, not a test: it lives in a workspace package and is reachable from
+-- `runner.py --mode synthetic-incidents`, which connects to whatever `DATABASE_URL` names. Run
+-- against a migrated database on 2026-08-22 it produced one `APPROVED_EXACT` revision, one order at
+-- `COMPLETED`, and zero rows in `approval_requests` -- an order that no human had approved, backed
+-- by an envelope that was never requested and never decided.
+--
+-- This matters more than the fixture that exposed it, because `orders.py:126-137` treats
+-- `approval_id IS NOT NULL` as one of the four conditions that make a quote orderable. Whatever
+-- `DEC-021` decides about when a price becomes final, every option in
+-- `docs/DECISION_REQUEST_QUOTE_APPROVAL_2026-08.md` routes through an approval envelope, and all of
+-- them are weaker than they read while the reference is unchecked. The packet says so itself and
+-- calls the foreign key a schema correction rather than a policy question. That is why this lands
+-- before the decision rather than with it.
+--
+-- No `ON DELETE` clause: `approval_requests` carries a `BEFORE UPDATE OR DELETE` trigger that
+-- rejects both, so a referenced envelope cannot be removed and the default NO ACTION never fires.
+--
+-- **If this migration fails, that is the point.** It fails only on a row whose `approval_id` names
+-- no envelope, and no command path in this system can produce one -- `compose_quote_revision`
+-- hardcodes `approval_id=None` on every path. A failure here therefore means the database holds a
+-- fabricated row, which is a finding to investigate rather than an obstacle to route around. Do not
+-- convert this to NOT VALID to get past it.
+--
+-- What this does NOT establish: that the envelope approved *this* quote. The foreign key proves the
+-- referenced row exists; it does not constrain the envelope's `action`, `resource_type` or
+-- `resource_id` to match the citing revision. Binding those requires knowing which approval action
+-- finalises a quote, which is exactly the open question in `DEC-021`. Naming the residual gap here
+-- rather than guessing at it.
+
+ALTER TABLE quote_revisions
+    ADD CONSTRAINT quote_revisions_approval_id_fkey
+    FOREIGN KEY (approval_id) REFERENCES approval_requests (id);

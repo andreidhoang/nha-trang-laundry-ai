@@ -411,3 +411,49 @@ test the code" work — §5.2's now-unblocked-but-unbuilt items are exactly that
 Re-run after §5.1's remaining two items or after any §5.2 item is actually enqueued — not on a fixed
 calendar. Decisions resolving without corresponding queue entries, as happened today, will not move
 this document's numbers again.
+
+---
+
+## 9. Corrections to this document — measured 2026-08-22
+
+Four of this assessment's findings are stale or misprescribed, found while planning work against it.
+They are appended rather than edited in place, per this document's own convention. Three of them
+would have misdirected engineering effort, which is the reason for writing them down rather than
+quietly building the right thing.
+
+Measured on `main` at `2752dcf` plus this session's branch. Queue is now **83 items: 50 COMPLETE, 18
+PENDING, 15 BLOCKED**; registry **21 decisions, 11 RESOLVED, 10 OPEN**.
+
+| Finding as written | Correction |
+|---|---|
+| §1 F2 and §5.1 — "the five gated layers total 1,300 required cases (…) every one of them stands at **0**", and `EVAL-PUBLISH-001` is "still proposed, still not enqueued (…) the fastest remaining move on the evidence base" | **Both stale. The count was published.** `specs/evals/eval-manifest-v1.yaml` reads `SYNTHETIC_COMBINATORIAL: 669`, and `verify_contracts.py:200-243` checks the declared inventory against the corpus and the corpus against the domain engines on every run. The gated corpus is **669 of 1,300**, not 0, and the largest single minimum (500) is already satisfied. `EVAL-PUBLISH-001` is not available work — `EVAL-SYNTHETIC-COMBINATORIAL-001` did it. The four layers still at zero are `FROZEN_REGRESSION` (200), `ADVERSARIAL` (200), `NORMAL_LANGUAGE` (300) and `PUBLIC_CORPUS` (100). **All four are queue-gated**: the first three are carried by `EVAL-CORPUS-001` and `EVAL-LANGUAGE-CORPUS-001`, both of which depend on `CORPUS-CONSENT-001` (BLOCKED, legal basis); the fourth is carried by `EVAL-PUBLIC-CORPUS-001`, which depends on `PUBLIC-POLICY-001`. Worth noting for sequencing rather than acting on unilaterally: the *content* of the adversarial layer — prompt injection, cross-contact IDOR, approval and hash tamper, consent bypass, tool-schema abuse, resource exhaustion — tests deterministic guardrails and has no intrinsic need for consented customer messages, unlike the normal-language layer sharing its carrier. Splitting it out would be a queue change and the owner's call, not an assessment's. |
+| §3 G4 — "Changing a price is still a file change and a redeploy" | **False on the redeploy half.** `OperationsService._resolve_published_pricebook` (`operations.py:561-575`) calls `ConfigurationRepository.latest_published(cursor, "PRICEBOOK")` **per request**, verifies the stored payload against the digest recorded at publication, and refuses rather than degrades on any mismatch. `scripts/publish_pricebook.py` publishes a new version against a running database, attributed to a named staff member. Changing a price is a CSV and one command; no process restarts. What remains true is narrower and should be stated that way: the normalized §4.6 aggregates (`pricebooks`, `pricebook_versions`, `price_rules`, `price_tiers`) still do not exist, publication is a CLI with no console screen, and the CSV lives in the repository by default. **`CATALOG-PRICEBOOK-001` as scoped in §5.2 is largely already delivered** — by `CONFIG-001`, `DOMAIN-002` and `QUOTE-COMMAND-001` — and should not be enqueued as written. |
+| §1 F1 — "the runtime is assembled and testable; it is not reachable in a running system", read as a wiring gap to close | **The observation holds; the prescription is wrong.** `main.py:19` does still construct `WorkerSupervisor(effective_settings)` with no `agent_cycle=`. But `build_agent_pipeline` (`pipeline.py:166-170`) raises `PipelineConfigurationError` for any `provider_backed` transport, so the only cycle constructible today carries `ScriptedResponsesTransport`. Wiring the deployed worker now would put a script-replaying transport into a production entry point and let `WORKER_AGENT_QUEUE_ENABLED=true` report a running agent that never calls a model — the substitution `AGENTS.md` forbids. `AGENT_RUNTIME_UNAVAILABLE` is therefore **correct fail-closed behaviour, not a defect**. The fix for F1 is `PROVIDER-TRANSPORT-001`, which is blocked on `PROVIDER-ACCESS-001`, which is blocked on a credential and `DEC-006`. |
+| §3 G3 — "the order pipeline is reachable end to end (create → quote → settle → `COMPLETED`) but has no legitimate way to acquire the `bound_contact_id`" | **False in its first clause, and the reason is worse than the one given.** `DEC-021` (opened 2026-08-21, `docs/DECISION_REQUEST_QUOTE_APPROVAL_2026-08.md`) establishes that **no command path can produce a quote revision order creation will accept** — `compose_quote_revision` hardcodes `ESTIMATE`/`REVIEW_REQUIRED`/`approval_id=None` on every path, and a trigger forbids promoting a revision afterwards. So the pipeline is not reachable end to end for a *second*, independent reason, and the customer-identity gap is not the binding constraint it is described as here; it is one of two. |
+
+### One repair landed against these findings
+
+`QUOTE-APPROVAL-INTEGRITY-001` (complete, this session, migration `0029`). It is the part of
+`DEC-021` that is not a policy question, and the decision packet identifies it as such. Before it,
+`quote_revisions.approval_id` carried no foreign key, and the shipped eval fixture generator
+`synthetic_incidents.py` — reachable from a CLI that connects to whatever `DATABASE_URL` names —
+wrote an order at `COMPLETED` citing an approval envelope that had never been requested. Measured
+before the change: 1 `APPROVED_EXACT` revision, 1 completed order, **0 rows in
+`approval_requests`**. Measured after: 0 orphan references, and the migration itself refuses to apply
+to a database holding one.
+
+It decides nothing. `DEC-021` remains `OPEN`, no producer of `APPROVED_EXACT` was added, and
+`POST /internal/v1/stores/{store_id}/orders` still returns 409 for every quote this system can
+produce.
+
+### What this changes about §5 and §8
+
+- §8's first bullet — "`EVAL-PUBLISH-001` complete → the gated corpus goes 0 → 669" — has already
+  happened and should be struck. No equivalent unblocked move replaces it: every remaining
+  layer is carried by an item that depends on `CORPUS-CONSENT-001` or `PUBLIC-POLICY-001`. The
+  evidence base's next movement is an owner action, not an engineering one.
+- §5.2's `CATALOG-PRICEBOOK-001` row should be rescoped to what is actually missing (a console
+  publication surface, and the normalized aggregates if they are wanted at all) rather than
+  enqueued as "persist and version the price list", which is done.
+- Neither correction moves the G1 or G2 timelines. Both binding constraints — the 4–6 week shop
+  measurement and a provider credential — are exactly where §6 left them, and neither has started.

@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-21'
+last_updated: '2026-08-22'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -2720,5 +2720,33 @@ items:
   - money_question_refuses_rather_than_reporting_a_count
   - every_suggestion_chip_resolves_to_its_documented_intent
   - first_match_wins_and_totality_preserved
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: QUOTE-APPROVAL-INTEGRITY-001
+  phase: PRODUCTION_HARDENING
+  title: An approved exact quote cites an approval envelope that need not exist
+  status: COMPLETE
+  priority: 240
+  depends_on:
+  - QUOTE-COMMAND-001
+  context_domains:
+  - orders_audit
+  - platform
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-quote-approval-integrity-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_fabricated_approval_reference_is_rejected_by_the_database
+  - a_real_approval_envelope_is_still_accepted
+  - the_shipped_fixture_generator_earns_its_envelope
+  - dec_021_is_not_decided_by_this_item
   - rollback_assessment
   blocked_by_decisions: []

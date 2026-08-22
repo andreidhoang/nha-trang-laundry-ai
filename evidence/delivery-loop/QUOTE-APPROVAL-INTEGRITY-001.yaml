@@ -1,0 +1,154 @@
+schema_version: 1
+work_item: QUOTE-APPROVAL-INTEGRITY-001
+recorded_at: '2026-08-22T18:20:00+07:00'
+requirement_contract: >-
+  `0005_quote_snapshots.sql:68` requires `approval_id IS NOT NULL` whenever a quote revision is
+  `APPROVED_EXACT`, and `0005_quote_snapshots.sql:48` declares the column as a bare `UUID NULL` with
+  no reference. The constraint therefore reads as "an approved exact price cites its approval" and
+  enforces only "an approved exact price cites something shaped like a UUID". This item closes that
+  distance with a foreign key to `approval_requests(id)` and nothing else.
+
+  It is load-bearing because `orders.py:126-137` treats a non-null `approval_id` as one of the four
+  conditions that make a quote orderable, and every option in
+  `docs/DECISION_REQUEST_QUOTE_APPROVAL_2026-08.md` routes the authority to finalise a price through
+  an approval envelope. All of them are weaker than they read while the reference is unchecked. The
+  packet identifies this repair itself and classifies it as a schema correction rather than a policy
+  question, which is why it lands before `DEC-021` rather than with it.
+
+  The boundary is as much of the contract as the requirement. No producer of an `APPROVED_EXACT`
+  revision is added, no route changes, `POST /internal/v1/stores/{store_id}/orders` still returns 409
+  for every quote this system can produce, and `CONSOLE-ORDER-GAP-001`'s `#/gaps` disclosure stays
+  true.
+rollback_impact: >-
+  Reverting drops the foreign key and returns `quote_revisions.approval_id` to an unchecked UUID.
+  That restores the measured behaviour below: `runner.py --mode synthetic-incidents`, pointed at any
+  database, writes one `APPROVED_EXACT` revision and one order at `COMPLETED` while
+  `approval_requests` stays empty.
+
+  The change is a forward-only migration plus four fixture call sites and one shipped fixture
+  generator. No route, request model, response shape, contract, console string or disclosure is
+  touched, and no existing row is rewritten -- `ALTER TABLE ... ADD CONSTRAINT` validates in place
+  and writes nothing. A revert is `ALTER TABLE quote_revisions DROP CONSTRAINT
+  quote_revisions_approval_id_fkey` plus reverting the fixtures, with no data migration and nothing
+  persisted that would be left inconsistent.
+
+  One property does not survive a revert cleanly: any envelope the corrected fixtures created stays
+  in `approval_requests`, because that table is append-only by trigger. Those rows are correct
+  records of a request that was actually made; they are not orphaned by the revert and nothing reads
+  them expecting the constraint.
+unresolved_assumptions: >-
+  **This does not decide `DEC-021` and must not be read as doing so.** The foreign key proves the
+  referenced envelope exists. It does not constrain the envelope's `action`, `resource_type` or
+  `resource_id` to match the citing revision, so a revision could in principle cite a real envelope
+  that approved something else. Binding those three requires knowing which approval action finalises
+  a quote, which is exactly the open question. The residual gap is named in the migration comment, in
+  `create_approval_envelope`'s docstring and here, rather than closed by guessing. When `DEC-021` is
+  signed, the shared helper is where the real binding belongs.
+
+  The fixtures use `PRESENT_QUOTE` because `APPROVAL_RESOURCE_TYPES` binds that action to
+  `QUOTE_REVISION`, making it the only pair a caller can form about a quote without inventing a
+  resource type. That is a fixture convenience, not a claim that presenting a quote finalises it.
+
+  **CẦN XÁC MINH:** whether any database outside this machine already holds a row whose `approval_id`
+  names no envelope. If one does, migration `0029` will refuse to apply there, which is the intended
+  behaviour and a finding to investigate rather than an obstacle to route around. The migration says
+  so and explicitly rules out converting it to `NOT VALID`. Nothing in `scripts/` or `deploy/` writes
+  quote data, but source cannot establish what someone did at a terminal.
+
+  Not claimed: that the eval fixture generator should be able to reach `APPROVED_EXACT` at all. It
+  still asserts a state no command path can produce; it now does so with an envelope it earned rather
+  than one it invented. Whether a fixture generator in shipped source should be able to write to a
+  database named by `DATABASE_URL` is a separate question this item does not answer.
+evidence:
+  a_fabricated_approval_reference_is_rejected_by_the_database: >-
+    Measured against live PostgreSQL 16.10 on 2026-08-22, on a database created for this purpose so
+    that no demo or development data was involved.
+
+    Before the change, at migrations 0001-0028, one run of
+    `python -m nha_trang_laundry_evals.runner --manifest specs/evals/eval-manifest-v1.yaml --mode
+    synthetic-incidents` produced:
+
+        quote_revisions APPROVED_EXACT: 1
+        orders COMPLETED:               1
+        approval_requests total:        0
+        orphan approval_id refs:        1
+
+    An order recorded as finished, backed by an approval envelope that was never requested, never
+    decided, and does not exist. The command is shipped source, not a test, and connects to whatever
+    `DATABASE_URL` names.
+
+    Applying migration `0029` to that same database failed, which is the proof the constraint catches
+    exactly this row:
+
+        psycopg.errors.ForeignKeyViolation: insert or update on table "quote_revisions" violates
+        foreign key constraint "quote_revisions_approval_id_fkey"
+        DETAIL: Key (approval_id)=(1b84a9bd-e77f-48e8-a104-eeb6eba7d550) is not present in table
+        "approval_requests".
+
+    Pinned by `test_an_exact_quote_cannot_cite_an_approval_that_does_not_exist`. That test was
+    verified to be real rather than vacuous: with the constraint dropped from a live database it
+    fails with `DID NOT RAISE <class 'psycopg.errors.ForeignKeyViolation'>`, and with the constraint
+    present it passes.
+  a_real_approval_envelope_is_still_accepted: >-
+    The negative test alone would also pass against a migration that rejected every exact quote
+    outright, which would be a different and much worse change. So the positive case is pinned
+    separately by `test_an_exact_quote_is_accepted_when_its_approval_envelope_is_real`: the same
+    revision, with an `approval_id` returned by `ApprovalRepository.request`, is written and read
+    back with its `approval_id` intact.
+
+    Two domain guards rejected the first version of this fixture and both were correct, which is
+    itself evidence that the layer above the constraint is doing its job:
+    `APPROVAL_RESOURCE_TYPES` binds `ACCEPT_ORDER` to resource type `ORDER`, not `QUOTE_REVISION`,
+    and `quotes.py:500` refuses an `APPROVED_EXACT` revision that carries a line still priced on a
+    `CUSTOMER_ESTIMATE` quantity. The fixture was corrected to satisfy the domain rather than the
+    domain relaxed to satisfy the fixture.
+  the_shipped_fixture_generator_earns_its_envelope: >-
+    `synthetic_incidents.py:_seed_completed_order` now requests a real envelope through
+    `ApprovalRepository.request` and cites the returned id. Re-running the same command against a
+    freshly migrated database at 0001-0029:
+
+        approval_requests total:        1
+        quote_revisions APPROVED_EXACT: 1
+        orphan approval_id refs:        0
+
+    The suites that depend on this generator pass without any assertion being weakened or any status
+    relabelled: `packages/evals/tests/test_synthetic_incidents.py` and
+    `packages/evals/tests/test_manifest_runner.py`, 29 tests, all passing. Their earlier failures
+    were a genuine defect in this change -- `_hash` returns `sha256:<hex>` and the approval binding
+    requires `JCS-SHA256-V1:<hex>` -- fixed by adding `_envelope_hash` rather than by widening
+    `_hash`, whose existing callers are incident evidence hashes under a different contract.
+
+    Four fixture sites manufactured `approval_id=uuid4()` and now route through one shared helper,
+    `quote_test_data.create_approval_envelope`: `test_settlement.py`,
+    `test_order_transition_scoping.py`, `test_operations_repository.py`, and the two new tests. The
+    generator is the fifth and is fixed in place because it lives in shipped source, not under
+    `tests/`. Consolidating them is what stops the next fixture quietly reintroducing the invention.
+  dec_021_is_not_decided_by_this_item: >-
+    No producer of an `APPROVED_EXACT` revision was added. `compose_quote_revision` still hardcodes
+    `finality=ESTIMATE`, `status=REVIEW_REQUIRED`, `approval_id=None` on every path; the quote
+    immutability trigger is untouched; no route, service method or console control was added.
+    `POST /internal/v1/stores/{store_id}/orders` still returns 409 for every quote this system can
+    produce, so `CONSOLE-ORDER-GAP-001`'s `#/gaps` disclosure and its binding test remain true.
+
+    `DEC-021` remains `OPEN` in `context/DECISION_REGISTRY.yaml` and its four questions are unanswered.
+    `verify_contracts.py` reports 165 console disclosures unchanged and `check_context_drift.py`
+    reports 21 decisions, confirming no decision status moved.
+  rollback_assessment: >-
+    See rollback_impact. One forward-only migration, one shared test helper, four fixture call sites,
+    one shipped fixture generator, two new tests, one migration registry row. No route, model,
+    contract, disclosure or console string changes. The revert is a `DROP CONSTRAINT` plus a file
+    revert, with no data migration; append-only envelope rows created by the corrected fixtures
+    survive it harmlessly.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

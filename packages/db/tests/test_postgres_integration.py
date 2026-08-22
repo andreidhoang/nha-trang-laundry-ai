@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -18,7 +19,13 @@ from nha_trang_laundry_db.configurations import (
 from nha_trang_laundry_db.identity import IdentityRepository, IdentityStateError, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.quotes import QuoteRepository, QuoteRevisionCommand, QuoteStateError
-from quote_test_data import make_quote_snapshot
+from nha_trang_laundry_domain.catalog import (
+    QuantityBasis,
+    QuoteFinality,
+    QuoteRevisionStatus,
+)
+from nha_trang_laundry_domain.quotes import build_quote_snapshot
+from quote_test_data import create_approval_envelope, make_quote_snapshot
 
 
 @pytest.fixture
@@ -368,3 +375,96 @@ def _active_or_bootstrapped_owner(
 
 def _uuid(value: object) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))
+
+
+def _measured(lines: Any) -> Any:
+    """An exact price may not rest on a quantity the customer guessed (`quotes.py:500`)."""
+
+    return tuple(replace(line, quantity_basis=QuantityBasis.STAFF_MEASUREMENT) for line in lines)
+
+
+def test_an_exact_quote_cannot_cite_an_approval_that_does_not_exist(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """The check that an exact price is approved has to mean the approval is real.
+
+    `0005_quote_snapshots.sql` requires `approval_id IS NOT NULL` for `APPROVED_EXACT` and, until
+    migration `0029`, checked nothing about what filled it. This is the case that proves the
+    difference: a well-formed UUID that names no envelope. `orders.py` treats that same column as
+    one of the four conditions that make a quote orderable, so the gap was load-bearing.
+    """
+
+    quote_id = uuid4()
+    estimate = make_quote_snapshot(quote_id, 1)
+    invented = replace(
+        estimate.data,
+        finality=QuoteFinality.APPROVED_EXACT,
+        status=QuoteRevisionStatus.ACCEPTED_FINAL,
+        lines=_measured(estimate.data.lines),
+        required_approvals=(),
+        approval_id=uuid4(),
+    )
+
+    with pytest.raises(psycopg.errors.ForeignKeyViolation), postgres_connection.transaction():
+        QuoteRepository().create_revision(
+            postgres_connection,
+            QuoteRevisionCommand(
+                uuid4(),
+                uuid4(),
+                build_quote_snapshot(invented),
+                0,
+                0,
+                uuid4(),
+                uuid4(),
+                datetime.now(UTC),
+            ),
+        )
+
+
+def test_an_exact_quote_is_accepted_when_its_approval_envelope_is_real(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """The same revision, with an envelope that was actually requested, still lands.
+
+    Without this, the test above would also pass against a migration that rejected every exact
+    quote outright, which would be a different and much worse change.
+    """
+
+    quote_id = uuid4()
+    actor_id = uuid4()
+    approval_id = create_approval_envelope(
+        postgres_connection, requested_by=actor_id, resource_id=quote_id
+    )
+    estimate = make_quote_snapshot(quote_id, 1)
+    earned = replace(
+        estimate.data,
+        finality=QuoteFinality.APPROVED_EXACT,
+        status=QuoteRevisionStatus.ACCEPTED_FINAL,
+        lines=_measured(estimate.data.lines),
+        required_approvals=(),
+        approval_id=approval_id,
+    )
+
+    with postgres_connection.transaction():
+        QuoteRepository().create_revision(
+            postgres_connection,
+            QuoteRevisionCommand(
+                uuid4(),
+                uuid4(),
+                build_quote_snapshot(earned),
+                0,
+                0,
+                actor_id,
+                uuid4(),
+                datetime.now(UTC),
+            ),
+        )
+
+    with postgres_connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT approval_id FROM quote_revisions WHERE quote_id = %s AND revision = 1",
+            (quote_id,),
+        )
+        row = cursor.fetchone()
+    assert row is not None
+    assert row[0] == approval_id

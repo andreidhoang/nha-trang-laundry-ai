@@ -70,8 +70,12 @@ def test_context_drift_check_passes() -> None:
     # The eighty-fourth is DISCLOSURE-TRUTH-003, the fix an xfail(strict=True) marker had been
     # carrying as a reported-not-fixed incident: the settlement screen told the shop owner that
     # partial payment and credit are refused with a decision code that was still open, when DEC-010
-    # had been resolved four days earlier as deliberately deferred.
-    assert "84 work items" in result.stdout
+    # had been resolved four days earlier as deliberately deferred. The eighty-fifth is
+    # DECISION-GATE-TRUTH-001, found while triaging which open decisions actually cost anything:
+    # six non-complete items were gated on decisions already resolved, and RETENTION-STORE-001 named
+    # only a resolved one while its own prose named two open ones, leaving a hand-set BLOCKED status
+    # as the only thing between the controller and work two open decisions forbid.
+    assert "85 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

@@ -495,6 +495,55 @@ def validate_capability_status(gate_requirements: dict[str, list[str]]) -> int:
     return len(allowed)
 
 
+def validate_decision_gates() -> int:
+    """A live decision gate must name a decision that is actually open.
+
+    `blocked_by_decisions` is not documentation. `run_delivery_loop.py:136` refuses to select an
+    item while any decision it names is unresolved, and `record_delivery_evidence.py:233` reads the
+    same field. A resolved decision left in the list is therefore a gate that no longer gates, and
+    the reverse mistake is worse: `RETENTION-STORE-001` named only `DEC-008`, which had resolved,
+    while its own `blocking_condition` prose named `DEC-018` and `DEC-020`, both open. It had no
+    unmet dependencies, so the single thing standing between the controller and work that two open
+    decisions forbid was a hand-set `BLOCKED` status rather than the gate meant to enforce it.
+
+    Only the resolved-but-still-listed half is machine-checkable -- prose cannot be compared to a
+    field -- but that half is what makes the list drift, because nothing else forces a review when a
+    decision closes. Resolving a decision now fails this check until every item citing it is
+    revisited, which is the moment to notice a blocker that should have taken its place.
+
+    No status is exempt, `COMPLETE` included. That was the first shape of this check and
+    `test_delivery_state.py` refuted it: its fixtures demote completed hardening items to `PENDING`
+    to reconstruct historical queue scenarios, so a completed item's gate becomes a live one and the
+    exemption evaporates exactly when it is needed. `RETENTION-001` was the case -- `COMPLETE`
+    in the queue, `PENDING` in the fixture, still naming the resolved `DEC-008`.
+
+    Pruning a completed item's gate is not rewriting its history. `blocked_by_decisions` is the
+    operational field the selector reads; the historical record of what gated an item lives in its
+    evidence, and `evidence/delivery-loop/RETENTION-001.yaml` names `DEC-008` nine times. Status,
+    evidence and dependencies are untouched by that pruning.
+    """
+
+    registry = load_yaml("context/DECISION_REGISTRY.yaml")
+    statuses = {decision["id"]: decision["status"] for decision in registry["decisions"]}
+    queue = load_yaml("delivery/WORK_QUEUE.yaml")
+    gated = 0
+    for item in queue["items"]:
+        cited = item.get("blocked_by_decisions") or []
+        for decision_id in cited:
+            if decision_id not in statuses:
+                raise ValueError(
+                    f"Work item {item['id']} is gated on {decision_id}, "
+                    "which is not in the decision registry"
+                )
+            if statuses[decision_id] == "RESOLVED":
+                raise ValueError(
+                    f"Work item {item['id']} is gated on {decision_id}, which is RESOLVED. "
+                    "Remove it, and check whether an open decision should have replaced it."
+                )
+        gated += bool(cited)
+    return gated
+
+
 def validate_all() -> dict[str, int]:
     """Validate every control artifact while the caller holds delivery mutex."""
 
@@ -503,6 +552,7 @@ def validate_all() -> dict[str, int]:
     gate_count, gate_requirements = validate_gate_registry()
     phase_count, work_item_count = validate_program_plan()
     capability_count = validate_capability_status(gate_requirements)
+    gated_count = validate_decision_gates()
     return {
         "source_references": source_count,
         "decisions": decision_count,
@@ -510,6 +560,7 @@ def validate_all() -> dict[str, int]:
         "phases": phase_count,
         "work_items": work_item_count,
         "capabilities": capability_count,
+        "decision_gated_items": gated_count,
     }
 
 
@@ -523,7 +574,8 @@ def main() -> None:
         f"{counts['decisions']} decisions, "
         f"{counts['gates']} gates, {counts['phases']} phases, "
         f"{counts['work_items']} work items, "
-        f"{counts['capabilities']} capabilities."
+        f"{counts['capabilities']} capabilities, "
+        f"{counts['decision_gated_items']} decision-gated items."
     )
 
 

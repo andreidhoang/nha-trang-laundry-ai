@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-22'
+last_updated: '2026-08-24'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -806,7 +806,6 @@ items:
   - g2_manifest
   - rollback_drill
   blocked_by_decisions:
-  - DEC-005
   - DEC-006
   task_packet: context/tasks/TASK-channel-001.md
 - id: AUTONOMY-001
@@ -838,11 +837,7 @@ items:
   - zero_tolerance_results
   - canary
   - correction_and_rollback_drills
-  blocked_by_decisions:
-  - DEC-001
-  - DEC-002
-  - DEC-003
-  - DEC-004
+  blocked_by_decisions: []
   task_packet: context/tasks/TASK-autonomy-001.md
 - id: HARDEN-PORTABILITY-001
   phase: PRODUCTION_HARDENING
@@ -1640,9 +1635,7 @@ items:
   - perception_call_counted_against_budget
   - rollback_assessment
   blocked_by_decisions:
-  - DEC-009
   - DEC-006
-  - DEC-008
   task_packet: context/tasks/TASK-multimodal-perception-001.md
   blocking_condition: Three open decisions and one absent corpus. DEC-009 asks whether
     customer-supplied media may be fetched from a channel provider and submitted to
@@ -1843,8 +1836,7 @@ items:
   - unknown_outcome_reconciliation
   - no_credential_reachable_from_agent_cell
   - rollback_assessment
-  blocked_by_decisions:
-  - DEC-005
+  blocked_by_decisions: []
   task_packet: context/tasks/TASK-channel-zalo-001.md
 - id: PUBLIC-POLICY-001
   phase: PUBLIC_ASSISTED
@@ -2083,8 +2075,7 @@ items:
   - expired_bundle_case_requires_human
   - manifest_inventory_updated
   - rollback_assessment
-  blocked_by_decisions:
-  - DEC-005
+  blocked_by_decisions: []
 - id: RETENTION-001
   phase: PRODUCTION_HARDENING
   title: Customer data retention, redaction, and deletion jobs
@@ -2118,8 +2109,7 @@ items:
   - purge_is_audited_and_reversible_only_through_backup
   - unset_schedule_fails_closed
   - rollback_assessment
-  blocked_by_decisions:
-  - DEC-008
+  blocked_by_decisions: []
 - id: OPS-RUNBOOK-001
   phase: PRODUCTION_HARDENING
   title: The five G1 runbooks, each executed once by its operator
@@ -2260,7 +2250,8 @@ items:
   - payload_migration_loses_nothing
   - rollback_assessment
   blocked_by_decisions:
-  - DEC-008
+  - DEC-018
+  - DEC-020
   blocking_condition: 'Blocked on DEC-018 and DEC-020 (docs/DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md).
     Not the ledger trigger the packet anticipated: DROP COLUMN was probed live in
     a rolled-back transaction and succeeds under an append-only trigger, which stays
@@ -2777,5 +2768,33 @@ items:
   - no_resolved_decision_is_described_as_open
   - the_reported_incident_marker_is_deleted
   - no_behaviour_changed_only_what_the_operator_is_told
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: DECISION-GATE-TRUTH-001
+  phase: PRODUCTION_HARDENING
+  title: Six items are gated on decisions the owner has already made
+  status: COMPLETE
+  priority: 242
+  depends_on:
+  - FOUNDATION-001
+  context_domains:
+  - platform
+  - business_truth
+  normative_sources:
+  - specs/IMPLEMENTATION_ROADMAP_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-decision-gate-truth-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - no_live_gate_names_a_resolved_decision
+  - the_omitted_blockers_are_restored_from_the_items_own_prose
+  - the_guard_is_proven_by_reintroducing_the_defect
+  - nothing_became_selectable_and_no_decision_moved
   - rollback_assessment
   blocked_by_decisions: []

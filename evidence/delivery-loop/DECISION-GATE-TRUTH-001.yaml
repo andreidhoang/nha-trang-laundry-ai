@@ -1,0 +1,130 @@
+schema_version: 1
+work_item: DECISION-GATE-TRUTH-001
+recorded_at: '2026-08-24T11:30:00+07:00'
+requirement_contract: >-
+  `blocked_by_decisions` is machine truth, not documentation. `run_delivery_loop.py:136` refuses to
+  select an item while any decision it names is unresolved, and `record_delivery_evidence.py:233`
+  reads the same field. The requirement is that the field names the decisions that actually gate the
+  item -- all of them, and only them.
+
+  Six non-complete items named decisions that had since resolved. Five of those are misleading
+  rather than dangerous: they overstate how decision-blocked the project is. The sixth,
+  `RETENTION-STORE-001`, is a live fail-closed hole in the opposite direction: it has no unmet
+  dependencies, the only decision it named had resolved, and its own `blocking_condition` prose names
+  `DEC-018` and `DEC-020`, both open and neither in the field. Its decision gate was open and the
+  only thing holding the item back was a hand-set `BLOCKED` status.
+
+  The boundary: no decision is resolved, opened or re-statused, and no item's `status` changes. This
+  edits which decisions each item cites and adds a guard. Nothing becomes selectable.
+rollback_impact: >-
+  Reverting restores five overstated gates and one absent one. The consequence that matters is the
+  sixth: `RETENTION-STORE-001` returns to naming a resolved decision as its only gate, so anything
+  that lifted its `BLOCKED` status -- an unblock, a hand edit, a future item that inherits the
+  pattern -- would make it selectable while `DEC-018` and `DEC-020` remain open.
+
+  The change is one field on six items in `delivery/WORK_QUEUE.yaml`, one new validator in
+  `scripts/check_context_drift.py`, and one census line. No source module, route, schema, migration,
+  contract or console string is touched. No persisted state encodes it. A revert is a file revert.
+
+  The guard is the half worth keeping under any revert of the data: without it, resolving a decision
+  silently leaves stale gates behind, which is how all six arose.
+unresolved_assumptions: >-
+  **Only half the invariant is machine-checkable, and the guard says so.** It catches a resolved
+  decision left in a live gate. It cannot catch the reverse -- an open decision that should be in the
+  field and is not -- because that requires comparing prose to a field. `RETENTION-STORE-001` had
+  both faults and only the first would have been caught.
+
+  The mitigation is indirect rather than complete: resolving a decision now fails the drift check
+  until every item citing it is revisited, and that revisit is the moment someone would notice a
+  blocker that should have taken its place. That is a prompt, not a proof. An item whose real blocker
+  was never recorded in either place stays invisible to both.
+
+  **CẦN XÁC MINH:** whether any of the five items with over-stated gates has an unrecorded live
+  blocker, as `RETENTION-STORE-001` did. Four of them (`AUTONOMY-001`, `CHANNEL-ZALO-001`,
+  `EVAL-PUBLIC-CORPUS-001`, and the DEC-005 half of `CHANNEL-001`) carry no `blocking_condition`
+  prose at all, so there is no second source to compare against. Their gates are now empty or
+  reduced, which is what the register supports and may still be incomplete.
+
+  Not claimed: that any of this unblocks work. All six items still have unmet dependencies or open
+  decisions. The controller returned nothing before this change and returns nothing after it.
+evidence:
+  no_live_gate_names_a_resolved_decision: >-
+    Measured across all 85 queue items against `context/DECISION_REGISTRY.yaml`. Before: six
+    non-complete items named a resolved decision -- `AUTONOMY-001` (DEC-001, 002, 003, 004, all
+    four), `CHANNEL-001` (DEC-005), `CHANNEL-ZALO-001` (DEC-005), `EVAL-PUBLIC-CORPUS-001` (DEC-005),
+    `MULTIMODAL-PERCEPTION-001` (DEC-009 and DEC-008), `RETENTION-STORE-001` (DEC-008). After: none.
+
+    The live gates that remain are the ones the register supports: `DEC-006` on `SECURITY-001`,
+    `CHANNEL-001`, `RUNTIME-PARITY-001`, `MULTIMODAL-PERCEPTION-001` and `AGENT-002`; `DEC-018` and
+    `DEC-020` on `RETENTION-STORE-001`.
+
+    `RETENTION-001` was pruned too, and that was a correction forced by evidence rather than a choice.
+    The guard first exempted `COMPLETE` items, reasoning that their gates are historical record. The
+    full suite refuted it: `test_delivery_state.py` fixtures demote completed hardening items to
+    `PENDING` to reconstruct historical queue scenarios, so `RETENTION-001` arrived at the drift check
+    as a `PENDING` item naming the resolved `DEC-008`, and three tests failed on it. The exemption
+    evaporates exactly where it is needed, so it was removed and the guard now applies to every
+    status. Pruning that field is not rewriting history: `blocked_by_decisions` is what the selector
+    reads, while the record of what gated the item lives in
+    `evidence/delivery-loop/RETENTION-001.yaml`, which names `DEC-008` nine times. Its status,
+    evidence and dependencies are untouched.
+  the_omitted_blockers_are_restored_from_the_items_own_prose: >-
+    `RETENTION-STORE-001` now names `DEC-018` and `DEC-020`. Both were transcribed from the item's own
+    `blocking_condition`, whose first sentence reads "Blocked on DEC-018 and DEC-020
+    (docs/DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md)". Nothing was inferred: where the prose and
+    the field disagreed, the prose was treated as the finding and the field as the defect.
+
+    This is the half that mattered. The item has **no unmet dependencies** -- verified against the
+    queue -- so with a resolved decision as its only gate, its `BLOCKED` status was the sole thing
+    preventing selection. A status is set by hand; a gate is enforced by the selector. The item was
+    one manual edit away from being handed to an agent as legal work.
+  the_guard_is_proven_by_reintroducing_the_defect: >-
+    `validate_decision_gates()` in `scripts/check_context_drift.py`, called from `validate_all()`, so
+    it fails `uv run python scripts/check_context_drift.py` -- a declared acceptance check on most
+    items in the queue and part of the repository gates.
+
+    Proven rather than asserted. With the corrections in place the check passes and reports "6
+    decision-gated items". Reverting `RETENTION-STORE-001` to its original `blocked_by_decisions:
+    [DEC-008]` and re-running fails:
+
+        ValueError: Work item RETENTION-STORE-001 is gated on DEC-008, which is RESOLVED.
+        Remove it, and check whether an open decision should have replaced it.
+
+    The file was restored from a copy and the check re-run clean. The error text deliberately names
+    the second question rather than only the first, because removing the stale gate without asking
+    what replaced it is exactly how this item lost `DEC-018` and `DEC-020`.
+
+    The second branch was mutation-tested the same way rather than asserted: replacing the gate with
+    `DEC-999` fails with "is gated on DEC-999, which is not in the decision registry". Nothing in the
+    queue does that today; without the check it would be a silently inert gate.
+  nothing_became_selectable_and_no_decision_moved: >-
+    The corrections made exactly one item selectable, and it is this one: with
+    `DECISION-GATE-TRUTH-001` enqueued at 51 COMPLETE / 19 PENDING / 15 BLOCKED the controller selects
+    it, which is how it is recorded at all. After `--complete` the controller returns nothing again at
+    52 COMPLETE / 18 PENDING / 15 BLOCKED — verified after recording, not assumed. None of the six
+    corrected items became selectable: each still has unmet dependencies or an open decision -- `AUTONOMY-001` on `CHANNEL-001`,
+    `CHANNEL-ZALO-001` on `CHANNEL-ZALO-APPLY-001`, `EVAL-PUBLIC-CORPUS-001` on `PUBLIC-POLICY-001`,
+    `MULTIMODAL-PERCEPTION-001` on `MODEL-ROUTE-001` and `DEC-006`, `CHANNEL-001` on four items and
+    `DEC-006`, `RETENTION-STORE-001` on `DEC-018` and `DEC-020`.
+
+    `check_context_drift.py` reports 21 decisions, unchanged, and `context/DECISION_REGISTRY.yaml` is
+    not in this change: 11 RESOLVED, 10 OPEN before and after. `verify_contracts.py` reports 165
+    disclosures and 10 release blockers, unchanged. All 13 capabilities remain `NOT_AUTHORIZED`.
+  rollback_assessment: >-
+    See rollback_impact. Three files plus the queue and census entries: six `blocked_by_decisions`
+    fields, one new validator, one census line. No source module, route, schema, migration, contract
+    or console string. Revert is a file revert with no data migration and nothing persisted that
+    would be left inconsistent.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

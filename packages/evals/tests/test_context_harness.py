@@ -74,8 +74,12 @@ def test_context_drift_check_passes() -> None:
     # DECISION-GATE-TRUTH-001, found while triaging which open decisions actually cost anything:
     # six non-complete items were gated on decisions already resolved, and RETENTION-STORE-001 named
     # only a resolved one while its own prose named two open ones, leaving a hand-set BLOCKED status
-    # as the only thing between the controller and work two open decisions forbid.
-    assert "85 work items" in result.stdout
+    # as the only thing between the controller and work two open decisions forbid. The eighty-sixth
+    # is QUOTE-DELIVERY-FEE-001: every quote the shop could produce carried no delivery fee and
+    # therefore no total, because compose_quote_revision never called evaluate_delivery, whose
+    # answers the owner had already ratified. The shop could price laundry and not tell a customer
+    # the price.
+    assert "86 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

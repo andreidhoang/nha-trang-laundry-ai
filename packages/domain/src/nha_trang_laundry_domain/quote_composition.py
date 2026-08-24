@@ -35,12 +35,16 @@ from uuid import UUID, uuid5
 
 from nha_trang_laundry_domain.canonical import canonical_document
 from nha_trang_laundry_domain.catalog import (
+    AdjustmentDirection,
     ErrorCode,
+    FulfillmentMode,
+    PolicyOutcome,
     QuantityBasis,
     QuoteFinality,
     QuoteRevisionStatus,
     Unit,
 )
+from nha_trang_laundry_domain.delivery import DeliveryError, DeliveryResult, evaluate_delivery
 from nha_trang_laundry_domain.pricing import (
     PriceLine,
     PriceResult,
@@ -53,6 +57,8 @@ from nha_trang_laundry_domain.quotes import (
     ConfigurationSnapshotReference,
     ExactLineAmounts,
     ImmutableQuoteSnapshot,
+    QuoteAdjustmentKind,
+    QuoteAdjustmentSnapshot,
     QuoteLineSnapshot,
     QuoteRevisionData,
     QuoteSnapshotError,
@@ -72,16 +78,23 @@ QUOTE_VALIDITY: Final = timedelta(days=1)
 #
 #   TAX_TREATMENT_UNVERIFIED   the snapshot validator refuses any other tax treatment; tax policy
 #                              is not published, so no revision may claim one.
-#   DELIVERY_FEE_UNRESOLVED    DEC-003 (delivery beyond 6 km) is open. A quote composed here has no
-#                              delivery fee, and therefore no display total — see below.
-#   PROMOTION_NOT_EVALUATED    DEC-002 (promotion eligibility event) is open. No promotion is
-#                              applied, so the discount is zero because none was evaluated, not
-#                              because none applies.
+#   DELIVERY_FEE_UNRESOLVED    Emitted only when `evaluate_delivery` actually returns
+#                              REQUIRE_HUMAN for the fee -- an unverified distance, a one-leg job,
+#                              or a >6km route whose negotiated fee is not yet recorded and
+#                              acknowledged. It used to be stamped on every quote, which was false
+#                              for the commonest case in the shop and is why no quote ever carried
+#                              a total. `DEC-003` resolved 2026-08-18 and the <=6km schedule is
+#                              owner-confirmed, so the fee is decided; only the wiring was missing.
+#   PROMOTION_NOT_EVALUATED    No promotion is evaluated here, so the discount is zero because
+#                              nothing was assessed rather than because nothing applies. `DEC-002`
+#                              resolved 2026-08-18; evaluating promotions is unbuilt work, not an
+#                              open decision, and this code says so until that work lands.
 BASE_REASON_CODES: Final = (
     "TAX_TREATMENT_UNVERIFIED",
-    "DELIVERY_FEE_UNRESOLVED",
     "PROMOTION_NOT_EVALUATED",
 )
+DELIVERY_FEE_UNRESOLVED: Final = "DELIVERY_FEE_UNRESOLVED"
+DELIVERY_COMPONENT_VERSION: Final = "delivery-v1"
 BASE_REQUIRED_APPROVALS: Final = ("TAX_TREATMENT_UNVERIFIED",)
 
 # A service version identity has to be stable: the same pricebook version and the same service must
@@ -148,8 +161,18 @@ def compose_quote_revision(
     requested: tuple[RequestedLine, ...],
     pricebook: PricebookProvenance,
     priced_at: datetime,
+    fulfillment_mode: FulfillmentMode,
+    verified_distance_m: int | None = None,
+    planned_transport_weight_kg: str | None = None,
+    approved_manual_fee_vnd: int | None = None,
+    customer_acknowledged_manual_fee: bool = False,
 ) -> QuoteComposition:
-    """Price the requested lines and assemble one immutable revision, or refuse with reasons."""
+    """Price the requested lines and assemble one immutable revision, or refuse with reasons.
+
+    `fulfillment_mode` has no default on purpose. Whether the shop is carrying this laundry decides
+    whether a delivery fee exists at all, and guessing it would be this code deciding a fact about
+    the customer's order. A caller that does not know must ask rather than assume.
+    """
     if not requested:
         return UnresolvedQuote((ErrorCode.MISSING_REQUIRED_FACT.value,))
     try:
@@ -207,6 +230,22 @@ def compose_quote_revision(
     # The one place a subtotal is computed. `build_quote_snapshot` recomputes the same sum from the
     # line snapshots and refuses the revision if the two disagree, so this arithmetic is checked by
     # an independent implementation before anything is persisted.
+    try:
+        delivery = evaluate_delivery(
+            fulfillment_mode,
+            verified_distance_m=verified_distance_m,
+            planned_transport_weight_kg=planned_transport_weight_kg,
+            approved_manual_fee_vnd=approved_manual_fee_vnd,
+            customer_acknowledged_manual_fee=customer_acknowledged_manual_fee,
+        )
+    except DeliveryError as error:
+        # The engine's own code, verbatim, exactly as the pricing branch above does.
+        return UnresolvedQuote((error.code.value,))
+    fee, delivery_adjustments, delivery_reasons = _delivery_outcome(delivery)
+    traces.append(
+        capture_calculation_trace("DELIVERY", DELIVERY_COMPONENT_VERSION, _delivery_trace(delivery))
+    )
+
     subtotal = sum(net_amounts)
     totals = QuoteTotalsSnapshot(
         list_service_subtotal_min_vnd=subtotal,
@@ -215,13 +254,14 @@ def compose_quote_revision(
         discount_amount_max_vnd=0,
         net_service_subtotal_min_vnd=subtotal,
         net_service_subtotal_max_vnd=subtotal,
-        # No delivery fee, and therefore no display total. The snapshot validator enforces that
-        # pairing, which is the behaviour we want: a quote with an unresolved delivery fee must not
-        # present a total that looks like the amount a customer will pay.
-        delivery_fee_vnd=None,
+        # An unresolved fee still means no display total: the snapshot validator enforces the
+        # pairing, and a quote whose fee needs a human must not present a number that looks like
+        # the amount a customer will pay. A resolved fee -- including the zero the engine returns
+        # for self-drop/self-collect -- produces the total the customer is actually quoted.
+        delivery_fee_vnd=fee,
         approved_surcharge_vnd=0,
-        display_total_min_vnd=None,
-        display_total_max_vnd=None,
+        display_total_min_vnd=None if fee is None else subtotal + fee,
+        display_total_max_vnd=None if fee is None else subtotal + fee,
     )
     try:
         snapshot = build_quote_snapshot(
@@ -243,14 +283,14 @@ def compose_quote_revision(
                     ),
                 ),
                 lines=tuple(lines),
-                adjustments=(),
+                adjustments=delivery_adjustments,
                 totals=totals,
                 calculation_traces=tuple(traces),
                 calculation_engine_version=QUOTE_ENGINE_VERSION,
                 calculation_engine_hash=QUOTE_ENGINE_HASH,
                 promotion_eligibility_event=None,
                 promotion_eligibility_at=None,
-                reason_codes=BASE_REASON_CODES,
+                reason_codes=BASE_REASON_CODES + delivery_reasons,
                 required_approvals=BASE_REQUIRED_APPROVALS,
                 approval_id=None,
             )
@@ -270,6 +310,71 @@ def _engine_line(line: RequestedLine) -> PriceLine:
         unit=line.unit,
         quantity_basis=line.quantity_basis,
     )
+
+
+def _delivery_outcome(
+    delivery: DeliveryResult,
+) -> tuple[int | None, tuple[QuoteAdjustmentSnapshot, ...], tuple[str, ...]]:
+    """Project the engine's delivery result onto the three things a revision needs.
+
+    The fee is taken only when the engine allows it. `REQUIRE_HUMAN` keeps the fee `None`, which
+    keeps the display total `None`, which is the whole reason the pairing exists: a quote nobody has
+    priced the transport for must not show a number that reads like a final amount.
+
+    A zero fee produces no adjustment row. `_validate_adjustments` compares the summed debits with
+    `totals.delivery_fee_vnd or 0`, so zero and absent agree, and a zero-amount adjustment would be
+    a line item for something the customer is not being charged for.
+    """
+
+    reasons = tuple(str(code) for code in delivery.reason_codes)
+    if delivery.fee_outcome is not PolicyOutcome.ALLOW or delivery.delivery_fee_vnd is None:
+        return None, (), (DELIVERY_FEE_UNRESOLVED, *reasons)
+    fee = delivery.delivery_fee_vnd
+    if fee == 0:
+        return fee, (), reasons
+    return (
+        fee,
+        (
+            QuoteAdjustmentSnapshot(
+                adjustment_id="delivery",
+                kind=QuoteAdjustmentKind.DELIVERY,
+                direction=AdjustmentDirection.DEBIT,
+                amount_min_vnd=fee,
+                amount_max_vnd=fee,
+                # `fee_resolution`, not `fee_rule`: the rule name can begin with a digit
+                # (`2000_LT_DISTANCE_M_LE_6000`) and `CODE_PATTERN` requires a leading letter, and
+                # the more useful thing on a money line is who set the number -- `AUTO_FIXED` for
+                # the zone table, `HUMAN_APPROVED` for a fee a person negotiated. The rule itself
+                # is in the calculation trace, where it can carry any shape.
+                reason_code=str(delivery.fee_resolution),
+            ),
+        ),
+        reasons,
+    )
+
+
+def _delivery_trace(delivery: DeliveryResult) -> dict[str, object]:
+    """The engine's own trace, canonicalised, so a reader can see which rule produced the fee.
+
+    Recorded for the same reason the pricing trace is: six months from now the question is not what
+    the fee was but which zone and rule decided it, and an immutable revision that carries the
+    amount without the rule cannot answer that.
+    """
+
+    trace = delivery.trace
+    return {
+        "fulfillment_mode": str(trace.fulfillment_mode),
+        "verified_distance_m": trace.verified_distance_m,
+        "distance_zone": trace.distance_zone,
+        "fee_rule": trace.fee_rule,
+        "fee_resolution": str(delivery.fee_resolution),
+        "fee_outcome": str(delivery.fee_outcome),
+        "delivery_fee_vnd": delivery.delivery_fee_vnd,
+        "manual_fee_candidate_vnd": trace.manual_fee_candidate_vnd,
+        "customer_acknowledged_manual_fee": trace.customer_acknowledged_manual_fee,
+        "delivery_job_required": trace.delivery_job_required,
+        "dispatch_authorized": trace.dispatch_authorized,
+    }
 
 
 def _unresolved_reasons(results: dict[str, PriceResult]) -> tuple[str, ...]:

@@ -31,7 +31,7 @@ from nha_trang_laundry_db.pricebook import publish_pricebook
 from nha_trang_laundry_db.quotes import QuoteRepository, QuoteStateError
 from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_domain.canonical import canonical_document
-from nha_trang_laundry_domain.catalog import QuantityBasis, Unit
+from nha_trang_laundry_domain.catalog import FulfillmentMode, QuantityBasis, Unit
 from nha_trang_laundry_domain.pricebook_import import (
     EXPECTED_SERVICE_COUNT,
     import_pricebook_csv,
@@ -146,6 +146,7 @@ def test_the_command_path_price_equals_a_direct_engine_call(
     )[STANDARD]
 
     result = service.create_quote(
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
         store_id=store_id,
         bound_order_request_id=uuid4(),
         lines=_lines(quantity),
@@ -155,9 +156,11 @@ def test_the_command_path_price_equals_a_direct_engine_call(
     assert isinstance(result, QuoteRevisionResult)
     assert result.net_service_subtotal_vnd == expected.list_amount_vnd
     assert result.list_service_subtotal_vnd == expected.list_amount_vnd
-    # No delivery fee is resolved, so nothing may present a total a customer would read as final.
-    assert result.display_total_min_vnd is None
-    assert result.display_total_max_vnd is None
+    # A walk-in has no delivery job, so the fee is a resolved zero and the customer is quoted the
+    # total they will actually pay. Before the delivery engine was wired in, this was None on every
+    # quote the shop could produce.
+    assert result.display_total_min_vnd == expected.list_amount_vnd
+    assert result.display_total_max_vnd == expected.list_amount_vnd
 
 
 def test_the_six_kilogram_cliff_survives_the_whole_command_path(
@@ -169,6 +172,7 @@ def test_the_six_kilogram_cliff_survives_the_whole_command_path(
     totals = {}
     for quantity in ("5.999", "6"):
         result = service.create_quote(
+            fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
             store_id=store_id,
             bound_order_request_id=uuid4(),
             lines=_lines(quantity),
@@ -192,6 +196,7 @@ def test_an_unresolved_quote_returns_reason_codes_and_writes_no_row(
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
 
     result = service.create_quote(
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
         store_id=store_id,
         bound_order_request_id=uuid4(),
         lines=_lines("not-a-weight"),
@@ -221,6 +226,7 @@ def test_a_range_priced_service_refuses_through_the_command_path(
     store_id = uuid4()
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     result = service.create_quote(
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
         store_id=store_id,
         bound_order_request_id=uuid4(),
         lines=_lines("1", service_code="BED_PILLOW", unit=Unit.ITEM),
@@ -237,6 +243,7 @@ def test_no_published_pricebook_means_no_price(connection: Any, service: Operati
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     with pytest.raises(QuotePricingUnavailable):
         service.create_quote(
+            fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
             store_id=store_id,
             bound_order_request_id=uuid4(),
             lines=_lines("6"),
@@ -329,6 +336,7 @@ def test_a_pricebook_whose_payload_disagrees_with_its_digest_prices_nothing(
         )
     with pytest.raises(QuotePricingUnavailable):
         service.create_quote(
+            fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
             store_id=store_id,
             bound_order_request_id=uuid4(),
             lines=_lines("6"),
@@ -347,6 +355,7 @@ def test_the_stored_snapshot_recomputes_to_its_persisted_hash(
     store_id = uuid4()
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     result = service.create_quote(
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
         store_id=store_id,
         bound_order_request_id=uuid4(),
         lines=_lines("6"),
@@ -383,6 +392,7 @@ def test_a_correction_is_a_new_revision_and_a_stale_one_is_refused(
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
 
     first = service.create_quote(
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
         store_id=store_id,
         bound_order_request_id=request_id,
         lines=_lines("5"),
@@ -392,6 +402,7 @@ def test_a_correction_is_a_new_revision_and_a_stale_one_is_refused(
     assert isinstance(first, QuoteRevisionResult) and first.revision == 1
 
     second = service.create_quote(
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
         store_id=store_id,
         bound_order_request_id=request_id,
         lines=_lines("7"),
@@ -405,6 +416,7 @@ def test_a_correction_is_a_new_revision_and_a_stale_one_is_refused(
 
     with pytest.raises(QuoteStateError):
         service.create_quote(
+            fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
             store_id=store_id,
             bound_order_request_id=request_id,
             lines=_lines("9"),
@@ -441,6 +453,7 @@ def test_a_second_quote_for_one_order_request_is_a_conflict_not_a_crash(
     request_id = uuid4()
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     first = service.create_quote(
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
         store_id=store_id,
         bound_order_request_id=request_id,
         lines=_lines("6"),
@@ -451,6 +464,7 @@ def test_a_second_quote_for_one_order_request_is_a_conflict_not_a_crash(
 
     with pytest.raises(QuoteStateError, match="already has a quote"):
         service.create_quote(
+            fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
             store_id=store_id,
             bound_order_request_id=request_id,
             lines=_lines("7"),
@@ -474,6 +488,7 @@ def test_a_second_quote_for_one_order_request_is_a_conflict_not_a_crash(
                             "quantity_basis": "STAFF_MEASUREMENT",
                         }
                     ],
+                    "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
                 },
                 headers={"Idempotency-Key": "quote-conflict-http", "Origin": ORIGIN},
             )
@@ -492,6 +507,7 @@ def test_replaying_an_idempotency_key_returns_the_original_and_writes_once(
 
     def submit() -> QuoteRevisionResult | UnresolvedQuoteResult:
         return service.create_quote(
+            fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
             store_id=store_id,
             bound_order_request_id=request_id,
             lines=_lines("6"),
@@ -517,6 +533,7 @@ def test_row_event_audit_and_outbox_all_exist_after_a_success(
     store_id = uuid4()
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     result = service.create_quote(
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
         store_id=store_id,
         bound_order_request_id=uuid4(),
         lines=_lines("6"),
@@ -542,6 +559,7 @@ def test_nothing_is_written_when_the_revision_is_refused(
     store_id = uuid4()
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     first = service.create_quote(
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
         store_id=store_id,
         bound_order_request_id=uuid4(),
         lines=_lines("6"),
@@ -553,6 +571,7 @@ def test_nothing_is_written_when_the_revision_is_refused(
 
     with pytest.raises(QuoteStateError):
         service.create_quote(
+            fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
             store_id=store_id,
             bound_order_request_id=uuid4(),
             lines=_lines("8"),
@@ -576,6 +595,7 @@ def test_a_staff_member_from_another_store_cannot_price_in_this_one(
     outsider = _staff(connection, uuid4(), StaffRole.OPERATOR)
     with pytest.raises(StoreAccessError):
         service.create_quote(
+            fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
             store_id=store_id,
             bound_order_request_id=uuid4(),
             lines=_lines("6"),
@@ -609,6 +629,7 @@ def test_membership_and_role_refusals_are_indistinguishable_over_http(
                 "quantity_basis": "STAFF_MEASUREMENT",
             }
         ],
+        "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
     }
     responses = {}
     for label, principal in (("membership", outsider), ("role", auditor)):
@@ -651,6 +672,7 @@ def test_an_unresolved_quote_is_a_422_carrying_the_engines_reason_codes(
                             "quantity_basis": "CUSTOMER_ESTIMATE",
                         }
                     ],
+                    "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
                 },
                 headers={
                     "Idempotency-Key": "quote-http-unresolved",
@@ -689,6 +711,7 @@ def test_a_priced_quote_is_created_and_listed_over_http(
                             "quantity_basis": "STAFF_MEASUREMENT",
                         }
                     ],
+                    "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
                 },
                 headers={
                     "Idempotency-Key": "quote-http-created",
@@ -702,10 +725,13 @@ def test_a_priced_quote_is_created_and_listed_over_http(
     assert created.status_code == 201
     payload = created.json()
     assert payload["net_service_subtotal_vnd"] == 120_000
-    assert payload["display_total_min_vnd"] is None
+    # The whole point of wiring the delivery engine in: a walk-in quote reaches the console with the
+    # amount the customer pays, and without a reason code claiming the fee is unresolved when the
+    # engine resolved it to zero.
+    assert payload["display_total_min_vnd"] == 120_000
     assert payload["reason_codes"] == [
-        "DELIVERY_FEE_UNRESOLVED",
         "PROMOTION_NOT_EVALUATED",
+        "SELF_SERVICE_NO_DELIVERY_JOB",
         "TAX_TREATMENT_UNVERIFIED",
     ]
     assert listed.status_code == 200

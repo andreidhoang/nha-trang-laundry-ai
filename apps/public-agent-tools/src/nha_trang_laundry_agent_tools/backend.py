@@ -458,6 +458,7 @@ class DomainAgentToolBackend:
             for line in call.arguments["lines"]
         )
         priced_at = self._now()
+        fulfillment = call.arguments["fulfillment"]
 
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -480,6 +481,17 @@ class DomainAgentToolBackend:
                 requested=lines,
                 pricebook=pricebook.provenance,
                 priced_at=priced_at,
+                # The tool contract already requires `fulfillment.mode`; it simply was not being
+                # passed on, so every agent estimate carried DELIVERY_FEE_UNRESOLVED even for a
+                # customer collecting in person. `verified_distance_m` stays None for the same
+                # reason `_delivery_evaluate` gives: no distance-evidence store exists, so a
+                # delivery mode still resolves to REQUIRE_HUMAN rather than an invented distance.
+                fulfillment_mode=FulfillmentMode(str(fulfillment["mode"])),
+                planned_transport_weight_kg=(
+                    None
+                    if fulfillment.get("planned_transport_weight_kg") is None
+                    else str(fulfillment["planned_transport_weight_kg"])
+                ),
             )
             if isinstance(composition, UnresolvedQuote):
                 # The engine's own reason codes, nothing persisted, no idempotency key

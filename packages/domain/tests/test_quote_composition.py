@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 import pytest
 from nha_trang_laundry_domain.canonical import canonical_document
 from nha_trang_laundry_domain.catalog import (
+    FulfillmentMode,
     PriceRuleType,
     QuantityBasis,
     QuoteFinality,
@@ -30,7 +31,11 @@ from nha_trang_laundry_domain.quote_composition import (
     UnresolvedQuote,
     compose_quote_revision,
 )
-from nha_trang_laundry_domain.quotes import ExactLineAmounts, verify_quote_snapshot
+from nha_trang_laundry_domain.quotes import (
+    ExactLineAmounts,
+    QuoteAdjustmentKind,
+    verify_quote_snapshot,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 PRICEBOOK_ID = UUID("00000000-0000-0000-0000-0000000004a1")
@@ -49,8 +54,15 @@ def provenance() -> PricebookProvenance:
 
 
 def compose(
-    *lines: RequestedLine, revision: int = 1, quote_id: UUID | None = None
+    *lines: RequestedLine,
+    revision: int = 1,
+    quote_id: UUID | None = None,
+    fulfillment_mode: FulfillmentMode = FulfillmentMode.SELF_DROP_SELF_COLLECT,
+    verified_distance_m: int | None = None,
 ) -> ComposedQuote | UnresolvedQuote:
+    """Compose one revision. Delivery defaults to the walk-in case because most tests here are
+    about pricing, and the walk-in case is the one that resolves without any delivery fact. Tests
+    that care about delivery pass the mode explicitly."""
     return compose_quote_revision(
         quote_id=quote_id or uuid4(),
         revision=revision,
@@ -58,6 +70,8 @@ def compose(
         requested=lines,
         pricebook=provenance(),
         priced_at=NOW,
+        fulfillment_mode=fulfillment_mode,
+        verified_distance_m=verified_distance_m,
     )
 
 
@@ -113,7 +127,13 @@ def test_billable_minimum_applies_below_one_kilogram() -> None:
     assert isinstance(line.amounts, ExactLineAmounts)
     assert line.quantity == "0.5"
     assert line.amounts.net_amount_vnd == 25_000
-    trace = result.snapshot.data.calculation_traces[0]
+    # Selected by component rather than by index: the snapshot sorts its traces, and a revision
+    # now carries a DELIVERY trace alongside the pricing one.
+    trace = next(
+        item
+        for item in result.snapshot.data.calculation_traces
+        if item.component.startswith("PRICING_")
+    )
     assert b'"billable_quantity":"1"' in trace.trace.canonical_json
 
 
@@ -181,8 +201,13 @@ def test_same_service_lines_aggregate_before_the_tier_is_chosen() -> None:
 
 
 def test_no_display_total_is_presented_while_delivery_is_unresolved() -> None:
-    """A number a customer would read as "what I pay" must not exist until delivery is decided."""
-    result = compose(standard("8"))
+    """A number a customer would read as "what I pay" must not exist until delivery is decided.
+
+    Still the invariant; it is now conditional on the facts rather than universal. A pickup-and-
+    return job with no verified distance is the case where the fee genuinely needs a human, and the
+    engine says so -- so no total is presented, exactly as before.
+    """
+    result = compose(standard("8"), fulfillment_mode=FulfillmentMode.PICKUP_AND_RETURN)
     assert isinstance(result, ComposedQuote)
     totals = result.snapshot.data.totals
     assert totals.delivery_fee_vnd is None
@@ -190,6 +215,90 @@ def test_no_display_total_is_presented_while_delivery_is_unresolved() -> None:
     assert totals.display_total_max_vnd is None
     assert "DELIVERY_FEE_UNRESOLVED" in result.snapshot.data.reason_codes
     assert "PROMOTION_NOT_EVALUATED" in result.snapshot.data.reason_codes
+
+
+def test_a_walk_in_quote_carries_the_total_the_customer_actually_pays() -> None:
+    """The commonest transaction in the shop, and until now it produced no total at all.
+
+    `evaluate_delivery` returns fee 0 and ALLOW for SELF_DROP_SELF_COLLECT -- there is no delivery
+    job, so there is nothing to price. The composer never called it, stamped DELIVERY_FEE_UNRESOLVED
+    on every revision, and the snapshot validator then correctly refused to present a total. The
+    customer could be quoted a subtotal and never a price.
+    """
+    result = compose(standard("8"), fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT)
+    assert isinstance(result, ComposedQuote)
+    totals = result.snapshot.data.totals
+    assert totals.delivery_fee_vnd == 0
+    assert totals.display_total_min_vnd == totals.net_service_subtotal_min_vnd
+    assert totals.display_total_max_vnd == totals.net_service_subtotal_max_vnd
+    assert "DELIVERY_FEE_UNRESOLVED" not in result.snapshot.data.reason_codes
+    # A zero fee is not a line item: nothing is being charged for, so nothing is shown.
+    assert result.snapshot.data.adjustments == ()
+
+
+def test_the_owner_confirmed_zone_schedule_reaches_the_quote() -> None:
+    """0đ under 2km and 10,000đ from 2 to 6km, owner-confirmed and previously unreachable.
+
+    The amounts are the engine's; this asserts they arrive in the revision the customer is shown,
+    as an exact debit adjustment that reconciles with the total.
+    """
+    near = compose(
+        standard("8"), fulfillment_mode=FulfillmentMode.PICKUP_AND_RETURN, verified_distance_m=1_500
+    )
+    mid = compose(
+        standard("8"), fulfillment_mode=FulfillmentMode.PICKUP_AND_RETURN, verified_distance_m=4_000
+    )
+    assert isinstance(near, ComposedQuote)
+    assert isinstance(mid, ComposedQuote)
+    assert near.snapshot.data.totals.delivery_fee_vnd == 0
+    assert near.snapshot.data.adjustments == ()
+    assert mid.snapshot.data.totals.delivery_fee_vnd == 10_000
+    assert mid.snapshot.data.totals.display_total_min_vnd == (
+        mid.snapshot.data.totals.net_service_subtotal_min_vnd + 10_000
+    )
+    adjustment = mid.snapshot.data.adjustments[0]
+    assert adjustment.kind is QuoteAdjustmentKind.DELIVERY
+    assert adjustment.amount_min_vnd == adjustment.amount_max_vnd == 10_000
+    # Who set the number, not which zone produced it -- the zone is in the calculation trace.
+    assert adjustment.reason_code == "AUTO_FIXED"
+
+
+def test_a_negotiated_fee_over_six_kilometres_needs_the_customer_to_have_agreed() -> None:
+    """DEC-003 ratified staff negotiation over 6km, and it requires the customer to accept.
+
+    Recording a fee without the acknowledgement leaves the quote unresolved, which is the decision's
+    own condition rather than an extra one invented here.
+    """
+    unacknowledged = compose_quote_revision(
+        quote_id=uuid4(),
+        revision=1,
+        rules=rules(),
+        requested=(standard("8"),),
+        pricebook=provenance(),
+        priced_at=NOW,
+        fulfillment_mode=FulfillmentMode.PICKUP_AND_RETURN,
+        verified_distance_m=9_000,
+        approved_manual_fee_vnd=45_000,
+        customer_acknowledged_manual_fee=False,
+    )
+    agreed = compose_quote_revision(
+        quote_id=uuid4(),
+        revision=1,
+        rules=rules(),
+        requested=(standard("8"),),
+        pricebook=provenance(),
+        priced_at=NOW,
+        fulfillment_mode=FulfillmentMode.PICKUP_AND_RETURN,
+        verified_distance_m=9_000,
+        approved_manual_fee_vnd=45_000,
+        customer_acknowledged_manual_fee=True,
+    )
+    assert isinstance(unacknowledged, ComposedQuote)
+    assert unacknowledged.snapshot.data.totals.display_total_min_vnd is None
+    assert "DELIVERY_FEE_UNRESOLVED" in unacknowledged.snapshot.data.reason_codes
+    assert isinstance(agreed, ComposedQuote)
+    assert agreed.snapshot.data.totals.delivery_fee_vnd == 45_000
+    assert agreed.snapshot.data.adjustments[0].reason_code == "HUMAN_APPROVED"
 
 
 def test_a_composed_revision_is_an_estimate_that_cannot_be_final() -> None:
@@ -222,6 +331,7 @@ def test_a_service_version_identity_is_bound_to_the_pricebook_it_was_priced_agai
         requested=(standard("6"),),
         pricebook=PricebookProvenance(uuid4(), 2, provenance().snapshot_hash),
         priced_at=NOW,
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
     )
     assert isinstance(first, ComposedQuote) and isinstance(other_book, ComposedQuote)
     assert (

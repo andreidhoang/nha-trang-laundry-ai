@@ -451,8 +451,13 @@ class OperationsService:
         store_id: UUID,
         bound_order_request_id: UUID,
         lines: tuple[RequestedLine, ...],
+        fulfillment_mode: FulfillmentMode,
         idempotency_key: str,
         principal: StaffPrincipal,
+        verified_distance_m: int | None = None,
+        planned_transport_weight_kg: str | None = None,
+        approved_manual_fee_vnd: int | None = None,
+        customer_acknowledged_manual_fee: bool = False,
         quote_id: UUID | None = None,
         expected_current_revision: int = 0,
         expected_row_version: int = 0,
@@ -479,6 +484,11 @@ class OperationsService:
                 requested=lines,
                 pricebook=pricebook[1],
                 priced_at=priced_at,
+                fulfillment_mode=fulfillment_mode,
+                verified_distance_m=verified_distance_m,
+                planned_transport_weight_kg=planned_transport_weight_kg,
+                approved_manual_fee_vnd=approved_manual_fee_vnd,
+                customer_acknowledged_manual_fee=customer_acknowledged_manual_fee,
             )
             if isinstance(composition, UnresolvedQuote):
                 # Nothing is written and no idempotency record is claimed: an unresolved quote is

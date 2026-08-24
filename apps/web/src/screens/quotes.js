@@ -57,6 +57,14 @@ import {
 } from "../ui/components.js";
 
 const BASES = ["STAFF_MEASUREMENT", "CUSTOMER_ESTIMATE", "APPROVED_MANUAL"];
+// The server's FulfillmentMode enum, in the order an operator meets them: the walk-in case is
+// the commonest and the only one that resolves a fee without a measured distance.
+const FULFILLMENT_MODES = [
+  "SELF_DROP_SELF_COLLECT",
+  "PICKUP_AND_RETURN",
+  "PICKUP_ONLY",
+  "RETURN_ONLY",
+];
 const LIST_LIMIT = 100;
 const MAX_LINES = 20;
 
@@ -328,7 +336,7 @@ function revisionResult(result) {
           min: result.display_total_min_vnd,
           max: result.display_total_max_vnd,
           finality: result.finality,
-          unknownLabel: "chưa có — phí giao hàng chưa chốt",
+          unknownLabel: "chưa có — cần quãng đường đã đo hoặc phí giao khách đã đồng ý",
         }),
         { span: true },
       ],
@@ -436,15 +444,24 @@ export function render_(context) {
   // it — `prefill` below resolves it before the form is allowed to rely on it.
   const prefillId = String(context?.query?.get("request") || "").trim();
 
-  /** @type {{lines: Line[], orderRequestId: string, quoteId: string, expectedRevision: string, rowVersion: string, requestSummary: any|null}} */
+  /** @type {{lines: Line[], fulfillmentMode: string, orderRequestId: string, quoteId: string, expectedRevision: string, rowVersion: string, requestSummary: any|null}} */
   const draft = {
     lines: [blankLine()],
+    fulfillmentMode: "SELF_DROP_SELF_COLLECT",
     orderRequestId: "",
     quoteId: "",
     expectedRevision: "0",
     rowVersion: "",
     requestSummary: null,
   };
+
+  // The four modes the server's FulfillmentMode enum accepts. Changing it invalidates the
+  // idempotency key for the same reason a line edit does: the server hashes the payload with it.
+  const fulfillmentSelect = enumSelect("fulfillment_mode", FULFILLMENT_MODES, draft.fulfillmentMode);
+  fulfillmentSelect.addEventListener("change", (event) => {
+    draft.fulfillmentMode = /** @type {HTMLSelectElement} */ (event.target).value;
+    invalidateKey();
+  });
 
   const builderBody = h("div");
   const resultHost = h("div", { class: "stack" });
@@ -787,6 +804,7 @@ export function render_(context) {
         unit: line.unit,
         quantity_basis: line.basis,
       })),
+      fulfillment_mode: draft.fulfillmentMode,
       ...(revisionMode
         ? {
             quote_id: draft.quoteId,
@@ -895,6 +913,18 @@ export function render_(context) {
             control: orderRequestInput,
           }),
         ),
+      ),
+      h(
+        "div",
+        { class: "stack stack--tight" },
+        labelled({
+          id: "quote-fulfillment",
+          label: "Khách nhận đồ thế nào?",
+          hint:
+            "Khách tự mang đến và tự lấy về thì không có phí giao, và báo giá ra tổng tiền ngay. " +
+            "Có giao hàng thì cần quãng đường đã đo; trên 6km phí do nhân viên và khách thỏa thuận.",
+          control: fulfillmentSelect,
+        }),
       ),
       lineEditor({
         catalog,

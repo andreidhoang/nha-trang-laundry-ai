@@ -324,6 +324,17 @@ class QuoteLineRequest(StrictRequest):
 class QuoteCreateRequest(StrictRequest):
     bound_order_request_id: UUID
     lines: list[QuoteLineRequest] = Field(min_length=1, max_length=20)
+    # Required, with no default. Whether the shop carries this laundry decides whether a delivery
+    # fee exists, and a default would be the server deciding a fact about the customer's order.
+    # `evaluate_delivery` answers the rest: 0 for self-collect, the owner-confirmed zone table
+    # under 6km, and a staff-negotiated fee above it (DEC-003).
+    fulfillment_mode: FulfillmentMode
+    # Delivery facts. Absent is not zero -- an absent distance makes the fee REQUIRE_HUMAN, which
+    # is why the quote then carries no total rather than a total that understates the price.
+    verified_distance_m: int | None = Field(default=None, ge=0, le=100_000)
+    planned_transport_weight_kg: str | None = Field(default=None, max_length=32)
+    approved_manual_fee_vnd: int | None = Field(default=None, ge=0)
+    customer_acknowledged_manual_fee: bool = False
     # Absent means "open a new quote". Present means "add a revision to this one", and then
     # expected_current_revision plus If-Match carry the compare-and-swap: a correction is always a
     # new revision, never an update to an existing one.
@@ -989,6 +1000,11 @@ def create_quote(
                 )
                 for line in request.lines
             ),
+            fulfillment_mode=request.fulfillment_mode,
+            verified_distance_m=request.verified_distance_m,
+            planned_transport_weight_kg=request.planned_transport_weight_kg,
+            approved_manual_fee_vnd=request.approved_manual_fee_vnd,
+            customer_acknowledged_manual_fee=request.customer_acknowledged_manual_fee,
             idempotency_key=idempotency_key,
             principal=principal,
             quote_id=request.quote_id,

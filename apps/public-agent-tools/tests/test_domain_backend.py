@@ -46,7 +46,7 @@ from nha_trang_laundry_db.configurations import ConfigurationRepository
 from nha_trang_laundry_db.intake import CreateOrderRequestCommand, OrderRequestRepository
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.pricebook import publish_pricebook
-from nha_trang_laundry_domain.catalog import QuantityBasis, Unit
+from nha_trang_laundry_domain.catalog import FulfillmentMode, QuantityBasis, Unit
 from nha_trang_laundry_domain.pricebook_import import published_price_rules
 from nha_trang_laundry_domain.quote_composition import (
     ComposedQuote,
@@ -552,6 +552,10 @@ def _direct_engine_composition(connection: Any, quantity: str) -> ComposedQuote:
             f"JCS-SHA256-V1:{published.snapshot_hash}",
         ),
         priced_at=datetime.now(UTC),
+        # The same mode the facade call in this test sends, because the point of the comparison is
+        # that the two paths agree on the number. A different mode here would compare two quotes of
+        # two different orders and prove nothing.
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
     )
     assert isinstance(composition, ComposedQuote)
     return composition
@@ -597,7 +601,11 @@ def test_quote_estimate_through_the_facade_equals_a_direct_engine_call(
     assert data["list_service_subtotal_vnd"] == direct_totals.list_service_subtotal_max_vnd
     assert data["net_service_subtotal_vnd"] == direct_totals.net_service_subtotal_max_vnd
     assert data["discount_amount_vnd"] == direct_totals.discount_amount_max_vnd
-    assert data["delivery_fee_vnd"] is None and data["display_total_vnd"] is None
+    # Compared against the engine rather than pinned to None. This asserted `is None` back when
+    # the composer never called `evaluate_delivery` and every quote lacked a fee; the parity this
+    # test is named for is what actually matters, and it holds at whatever value the engine returns.
+    assert data["delivery_fee_vnd"] == direct_totals.delivery_fee_vnd
+    assert data["display_total_vnd"] == direct_totals.display_total_max_vnd
     assert payload["decision"]["outcome"] == "REQUIRE_HUMAN"
     assert payload["decision"]["reason_codes"] == list(direct.snapshot.data.reason_codes)
 

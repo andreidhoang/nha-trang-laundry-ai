@@ -2798,3 +2798,33 @@ items:
   - nothing_became_selectable_and_no_decision_moved
   - rollback_assessment
   blocked_by_decisions: []
+- id: QUOTE-DELIVERY-FEE-001
+  phase: PRODUCTION_HARDENING
+  title: No quote this shop can produce shows a customer the price they pay
+  status: COMPLETE
+  priority: 243
+  depends_on:
+  - QUOTE-COMMAND-001
+  - DOMAIN-004
+  context_domains:
+  - pricing
+  - promotion_delivery_sla
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - DELIVERY_POLICY_DRAFT.md
+  contracts: []
+  task_packet: context/tasks/TASK-quote-delivery-fee-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_walk_in_quote_carries_the_total_the_customer_pays
+  - the_owner_confirmed_schedule_reaches_the_revision
+  - an_unresolved_fee_still_presents_no_total
+  - no_policy_was_decided_and_dec_021_is_untouched
+  - rollback_assessment
+  blocked_by_decisions: []

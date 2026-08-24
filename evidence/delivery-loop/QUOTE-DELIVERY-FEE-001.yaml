@@ -1,0 +1,145 @@
+schema_version: 1
+work_item: QUOTE-DELIVERY-FEE-001
+recorded_at: '2026-08-24T16:10:00+07:00'
+requirement_contract: >-
+  A quote must carry the amount the customer pays. Measured on 2026-08-24, none did: all five quote
+  revisions in the live demo database had `delivery_fee_vnd = NULL` and therefore
+  `display_total_min_vnd = NULL`. The shop could price laundry and could not tell a customer the
+  price.
+
+  The cause was not an open decision. `evaluate_delivery` already resolves every case -- 0 and ALLOW
+  for self-drop/self-collect, 0 under 2km, 10,000d from 2 to 6km, staff-negotiated above it -- and
+  the whole schedule is decided: `DEC-003` ratified the >6km behaviour on 2026-08-18, and
+  `docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md:34-35` records the <=6km schedule as
+  owner-confirmed. `compose_quote_revision` simply never called the engine. It hardcoded
+  `delivery_fee_vnd=None` and stamped `DELIVERY_FEE_UNRESOLVED` on every revision, including the
+  walk-in case where the engine returns a resolved zero.
+
+  The boundary is the requirement's other half. Every amount is the engine's; the composer selects,
+  defaults and rounds nothing. Where the engine returns REQUIRE_HUMAN the quote still presents no
+  total, which is the invariant the snapshot validator has always enforced -- it stops being
+  unconditional, not enforced.
+rollback_impact: >-
+  Reverting returns every quote to carrying no delivery fee and no total, and restores
+  `DELIVERY_FEE_UNRESOLVED` on revisions where the engine resolved the fee. It would also restore the
+  state in which no quote can ever reach `APPROVED_EXACT`, because `quotes.py:500` refuses that
+  finality while `delivery_fee_vnd` is None -- so a revert re-closes the order path under every
+  `DEC-021` option.
+
+  Revisions already written keep their totals. `quote_revisions` is append-only by trigger and a
+  revert changes no stored row; it changes what the next composition produces. There is no migration,
+  no schema change and no backfill.
+
+  `fulfillment_mode` becomes a required request field, so a revert must also revert the console and
+  the generated internal API contract together. Reverting the composer alone would leave `quotes.js`
+  sending a field the request model rejects.
+unresolved_assumptions: >-
+  **This removes one of three independent reasons no order can be created, not all three.** The other
+  two are unchanged: `DEC-021` is `OPEN` and no command path produces `APPROVED_EXACT`, and
+  `TAX_TREATMENT_UNVERIFIED` sits in `required_approvals`, which `quotes.py:500` also refuses. The
+  tax flag has **no registered decision anywhere in `context/DECISION_REGISTRY.yaml`** -- verified by
+  searching every entry -- so it is an unregistered blocker, surfaced as question 4 of the `DEC-021`
+  packet rather than resolved here.
+
+  `planned_transport_weight_kg` is accepted and passed through but the console does not collect it,
+  so a delivery quote carries `TRANSPORT_WEIGHT_REQUIRES_HUMAN` and an advisory vehicle of None. That
+  is the engine's honest output for a fact nobody supplied; it does not block the fee.
+
+  The console initialises the mode picker to `SELF_DROP_SELF_COLLECT`. That is a visible starting
+  position an operator can change before submitting, not a server default -- the request model has no
+  default and rejects an absent mode. The distinction matters: the server never invents the mode, and
+  the operator can always see which one is selected.
+
+  **CẦN XÁC MINH:** whether `>2-6km = 10,000đ` is still the shop's intended price. It is recorded as
+  owner-confirmed in the pricing packet and matches the engine, and this item changed neither -- it
+  made an already-decided number reachable. If the number is stale, that is a pricing decision, not a
+  defect in this wiring.
+evidence:
+  a_walk_in_quote_carries_the_total_the_customer_pays: >-
+    Proven against the live demo database through `OperationsService.create_quote` -- the real
+    service path with real PostgreSQL, not a stub -- on 2026-08-24, using a real staff principal and
+    store membership read from the database.
+
+        khach tu mang tu lay   subtotal= 120000  total= 120000
+        giao hang 4km          subtotal= 120000  total= 130000
+
+    Both rows are now in `quote_revisions` alongside the five that came before, and the contrast is
+    visible in one query: 7 revisions, 2 with a customer-facing total. The five older rows read
+    `total=CHUA CO`.
+
+    The walk-in row is the important one. `evaluate_delivery` returns fee 0 and ALLOW for
+    `SELF_DROP_SELF_COLLECT` because there is no delivery job to price, and that answer had been
+    sitting in shipped, corpus-validated domain code with no caller on the staff command path.
+
+    Pinned by `test_a_walk_in_quote_carries_the_total_the_customer_actually_pays` and, over HTTP, by
+    the route test that now asserts `display_total_min_vnd == 120_000` where it previously asserted
+    `is None`.
+  the_owner_confirmed_schedule_reaches_the_revision: >-
+    0d under 2km and 10,000d from 2 to 6km, both arriving in the revision the customer is shown.
+    Pinned by `test_the_owner_confirmed_zone_schedule_reaches_the_quote`, which also asserts the
+    10,000d case emits an exact `DELIVERY` debit adjustment reconciling against the display total.
+
+    A zero fee emits no adjustment row. `_validate_adjustments` compares summed debits against
+    `totals.delivery_fee_vnd or 0`, so zero and absent agree, and a zero-amount line item would name
+    a charge the customer is not paying.
+
+    The adjustment's `reason_code` is the engine's `fee_resolution` -- `AUTO_FIXED` or
+    `HUMAN_APPROVED` -- rather than its `fee_rule`. Two reasons, one forced and one chosen: the rule
+    name can begin with a digit (`2000_LT_DISTANCE_M_LE_6000`) and `CODE_PATTERN` requires a leading
+    letter, and on a money line the more useful fact is who set the number. The rule itself is in the
+    `DELIVERY` calculation trace, which also carries the zone, the distance and whether the customer
+    acknowledged a negotiated fee.
+
+    The >6km path is pinned separately by
+    `test_a_negotiated_fee_over_six_kilometres_needs_the_customer_to_have_agreed`: a recorded fee
+    without the acknowledgement leaves the quote unresolved, which is `DEC-003`'s own condition
+    rather than one invented here.
+  an_unresolved_fee_still_presents_no_total: >-
+    The invariant is preserved and its test kept, with the mode that makes it true.
+    `test_no_display_total_is_presented_while_delivery_is_unresolved` now composes a pickup-and-return
+    job with no verified distance -- the case where the fee genuinely needs a human -- and still
+    asserts no fee, no display total, and `DELIVERY_FEE_UNRESOLVED` present.
+
+    Measured across all seven delivery shapes before any test was written: walk-in and <=2km resolve
+    to 0; 2-6km to 10,000; >6km resolves only with a recorded and acknowledged fee; >6km without
+    acknowledgement, an unverified distance, and a one-leg job each stay unresolved with no total.
+
+    `DELIVERY_FEE_UNRESOLVED` is no longer a constant in `BASE_REASON_CODES`. It is appended only
+    when `evaluate_delivery` returns a fee outcome other than ALLOW, so its presence on a revision
+    now means what it says.
+  no_policy_was_decided_and_dec_021_is_untouched: >-
+    Every amount in this change comes from `evaluate_delivery`. No threshold, zone boundary, fee or
+    rounding is written here, and where the engine returns REQUIRE_HUMAN the composer produces no
+    number rather than a default.
+
+    `fulfillment_mode` is required on `QuoteCreateRequest` with no default, because whether the shop
+    is carrying this laundry is a fact about the customer's order and a default would be the server
+    inventing it. The agent tool path needed no contract change: `QuoteEstimateRequest` in the
+    hash-pinned `agent-tools-v1.openapi.yaml` already requires `fulfillment.mode`, and the backend
+    simply was not passing it on.
+
+    `DEC-021` remains `OPEN`, no producer of `APPROVED_EXACT` was added, and
+    `POST /internal/v1/stores/{store_id}/orders` still returns 409. `check_context_drift.py` reports
+    21 decisions and `verify_contracts.py` reports 165 disclosures and 10 release blockers, all
+    unchanged. All 13 capabilities remain `NOT_AUTHORIZED`.
+
+    Two stale comments were corrected in the same file: `quote_composition.py` claimed `DEC-003` and
+    `DEC-002` were open, six days after both resolved.
+  rollback_assessment: >-
+    See rollback_impact. Domain composer, internal API request model and route, service method, agent
+    tool backend, console quote screen, three regenerated artifacts (internal API contract, console
+    disclosure registry, `sw.js`) and the tests. No migration, no schema change, no backfill, and no
+    stored row rewritten. The composer, the request model and the console must revert together.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

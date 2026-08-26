@@ -1,7 +1,7 @@
 """Staff-only API entry point. Public customer endpoints are intentionally absent."""
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import date, datetime
 from hashlib import sha256
 from pathlib import Path
 from secrets import token_urlsafe
@@ -20,6 +20,7 @@ from nha_trang_laundry_db.approvals import (
 )
 from nha_trang_laundry_db.assistant import AssistantAuthorizationError
 from nha_trang_laundry_db.channel import ChannelBindingError
+from nha_trang_laundry_db.counter_tickets import CounterTicketError
 from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import IdentityStateError, StaffPrincipal, StaffRole
 from nha_trang_laundry_db.intake import OrderRequestSummary
@@ -1039,6 +1040,43 @@ def create_quote(
         reason_codes=list(result.reason_codes),
         required_approvals=list(result.required_approvals),
         replayed=result.replayed,
+    )
+
+
+class CounterTicketResponse(BaseModel):
+    """What the counter hands over. There is no customer field, and that is deliberate."""
+
+    ticket_id: UUID
+    ticket_number: int
+    issued_on: date
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/counter-tickets",
+    response_model=CounterTicketResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def issue_counter_ticket(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> CounterTicketResponse:
+    """Issue the number a walk-in customer's order is tracked by.
+
+    `DEC-013`, resolved 2026-08-26. No request body: nothing about the person is collected, so
+    there is nothing to send. `ticket_id` is what an order carries as its customer reference; it
+    identifies an order's customer, not a customer.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        issued = service.issue_counter_ticket(store_id=store_id, principal=principal)
+    except (StoreAccessError, CounterTicketError) as error:
+        _raise_operations_error(error)
+    return CounterTicketResponse(
+        ticket_id=issued.ticket_id,
+        ticket_number=issued.ticket_number,
+        issued_on=issued.issued_on,
     )
 
 

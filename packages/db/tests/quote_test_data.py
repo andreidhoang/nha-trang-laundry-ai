@@ -4,6 +4,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_db.approvals import ApprovalRepository, ApprovalRequestCommand
+from nha_trang_laundry_db.counter_tickets import CounterTicketRepository
+from nha_trang_laundry_db.identity import StaffPrincipal
 from nha_trang_laundry_db.quotes import (
     QuoteAcceptanceCommand,
     QuoteAcceptanceRepository,
@@ -200,3 +202,19 @@ def accepted_quote(
         ),
     )
     return identifier, 2, composition.snapshot
+
+
+def counter_ticket(connection: Any, *, store_id: UUID, principal: StaffPrincipal) -> UUID:
+    """Issue a walk-in ticket and return the reference an order carries.
+
+    Since `COUNTER-TICKET-001` an order's `bound_contact_id` must name a ticket this store
+    issued or a channel binding that exists. Fixtures used to pass `uuid4()`, which the schema
+    accepted because the column had no foreign key and the guard never looked -- the same hole
+    `approval_id` carried until 0029.
+    """
+
+    return (
+        CounterTicketRepository()
+        .issue(connection, store_id=store_id, principal=principal, correlation_id=uuid4())
+        .ticket_id
+    )

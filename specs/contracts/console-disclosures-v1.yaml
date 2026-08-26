@@ -11,14 +11,14 @@ counts:
   ABSENT_ROUTE: 2
   ABSENT_TABLE: 5
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 137
+  DESCRIPTIVE: 134
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   READ_ONLY_MODULE: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 11
-total: 164
+total: 161
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -508,35 +508,6 @@ disclosures:
   key: lede
   text: 'Bảng vận hành hôm nay dừng lại ở chiều thương mại của một đơn: tạo, xác nhận, huỷ. Các chiều
     còn lại của cùng một đơn — nhận đồ, sản xuất, giao, thu tiền — không có bề mặt nào.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:f7a8008bea67
-  module: screens/gaps.js
-  key: missing
-  text: Màn hình Tiếp nhận cần một mã liên hệ đã tồn tại, và nguồn duy nhất sinh ra mã đó là một tin nhắn
-    khách đã gửi qua kênh chính thức rồi được máy chủ xác minh. Không có đường nào tạo liên hệ tại quầy,
-    nên khách vãng lai chưa tiếp nhận được trong hệ thống.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:13bf8c5f2c7c
-  module: screens/gaps.js
-  key: today
-  text: 'Nhận đồ và ghi tay như trước. Đây là khoảng trống quy trình thật, không phải lỗi giao diện: tạo
-    liên hệ tại quầy đồng nghĩa với lưu thông tin cá nhân của khách mà chưa có cơ sở đồng ý nào, nên hệ
-    thống từ chối thay vì tự làm.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#note:dfaae43959ca
-  module: screens/gaps.js
-  key: note
-  text: Khi mở, quyết định phải nêu rõ lưu gì (tên? số điện thoại? không gì cả?), giữ bao lâu, và khách
-    đồng ý bằng cách nào — trước khi có ô nhập nào được thêm vào màn hình Tiếp nhận.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

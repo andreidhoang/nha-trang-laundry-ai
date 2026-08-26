@@ -47,7 +47,7 @@ from nha_trang_laundry_domain.catalog import (
 )
 from nha_trang_laundry_domain.consent import OptOutDisposition, SuppressionState
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, build_quote_snapshot
-from quote_test_data import PRICED_AT, accepted_quote, make_quote_snapshot
+from quote_test_data import PRICED_AT, accepted_quote, counter_ticket, make_quote_snapshot
 
 HASH_A = "JCS-SHA256-V1:" + "a" * 64
 HASH_B = "JCS-SHA256-V1:" + "b" * 64
@@ -380,7 +380,7 @@ def test_order_creation_transition_replay_authorization_and_atomic_audit(
     repository = OrderRepository()
     create = CreateOrderCommand(
         store_id,
-        uuid4(),
+        counter_ticket(postgres_connection, store_id=store_id, principal=owner),
         quote_id,
         quote_revision,
         quote.document.snapshot_hash,

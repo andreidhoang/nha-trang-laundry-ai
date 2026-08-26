@@ -134,6 +134,31 @@ class OrderRepository:
                     (command.accepted_quote_id, command.accepted_quote_revision),
                 )
                 quote = cursor.fetchone()
+            with connection.cursor() as cursor:
+                # `bound_contact_id` has been required since this table existed and nothing ever
+                # checked it -- the same shape of hole `approval_id` carried until 0029. It has two
+                # legitimate sources and `DEC-015` deliberately declines to unify them behind a
+                # party layer, because unifying them is the customer-record layer that decision
+                # says not to build. So it is checked against both rather than by one foreign key.
+                cursor.execute(
+                    """
+                    SELECT
+                        EXISTS (
+                            SELECT 1 FROM counter_tickets t
+                            WHERE t.id = %s AND t.store_id = %s
+                        )
+                        OR EXISTS (
+                            SELECT 1 FROM contact_channel_bindings b
+                            WHERE b.contact_binding_id = %s
+                        )
+                    """,
+                    (command.bound_contact_id, command.store_id, command.bound_contact_id),
+                )
+                known_customer = bool(cursor.fetchone()[0])
+            if not known_customer:
+                raise OrderStateError(
+                    "the order names a customer reference this store has never issued or bound"
+                )
             if (
                 quote is None
                 or _uuid(quote[0]) != command.store_id

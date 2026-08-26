@@ -4,12 +4,12 @@
  * This screen exists because the quote screen used to demand a pasted order-request UUID, which
  * is not something a person at a counter has. Its restraint matters as much as its existence:
  *
- *   - **It creates no contact.** The one field is a contact binding that must already exist,
- *     because the domain's only source of contact bindings is the verified channel envelope
- *     (`ContactChannelBindingRepository`). A name or a phone number typed here would be PII with
- *     no consent record behind it, so the form has no such fields and never will; an unknown
- *     binding comes back `CONTACT_BINDING_UNKNOWN` as a `REQUIRE_HUMAN` refusal, not as a quiet
- *     creation.
+ *   - **It stores nothing about the person, and now never has to.** `DEC-013` (2026-08-26)
+ *     settled the walk-in case the way that needs no consent record: the counter issues a number
+ *     and nothing about the customer is kept. "Phát phiếu" below calls that route and fills the
+ *     field with the reference it returns. A name or a phone number typed here would be PII with
+ *     no consent behind it, so the form still has no such fields and never will; an unknown code
+ *     comes back `CONTACT_BINDING_UNKNOWN` as a `REQUIRE_HUMAN` refusal, not as a quiet creation.
  *   - **It records no customer words.** The aggregate has no column for what the customer said,
  *     so there is no note field. What the customer asked for is priced on the next screen, from
  *     the catalog, by the server.
@@ -303,6 +303,40 @@ export function render_() {
       },
     });
 
+    // "Phát phiếu" — DEC-013. The route takes no body because nothing about the customer is
+    // collected; it hands back a number to say out loud and a reference to carry on the order.
+    const ticketNote = h("span", { class: "hint" });
+    const ticketButton = h(
+      "button",
+      {
+        type: "button",
+        class: "button button--quiet",
+        onClick: async () => {
+          ticketButton.disabled = true;
+          ticketNote.textContent = "Đang phát phiếu…";
+          try {
+            const issued = await request(
+              `/internal/v1/stores/${encodeURIComponent(store)}/counter-tickets`,
+              { method: "POST", body: {} },
+            );
+            draft.contactId = issued.ticket_id;
+            contactInput.value = issued.ticket_id;
+            contactInput.setAttribute("aria-invalid", "false");
+            submission.reset();
+            ticketNote.textContent = `Phiếu số ${issued.ticket_number} — đọc số này cho khách.`;
+          } catch (error) {
+            ticketNote.textContent = "Không phát được phiếu.";
+            render(resultHost, errorNotice(error));
+            revealError(resultHost);
+          } finally {
+            ticketButton.disabled = false;
+          }
+        },
+      },
+      "Phát phiếu (khách vãng lai)",
+    );
+    const ticketRow = h("div", { class: "row" }, ticketButton, ticketNote);
+
     return h(
       "form",
       { class: "form", onSubmit: submit },
@@ -310,11 +344,10 @@ export function render_() {
         id: "intake-contact",
         label: "Mã khách",
         hint:
-          "Khách phải đã từng nhắn tin cho tiệm qua kênh chính thức — mã này sinh ra từ lần " +
-          "nhắn đó. Màn hình này không tạo khách mới và không lưu tên hay số điện thoại; mã lạ " +
-          "sẽ bị từ chối chứ không được tự tạo. Khách vãng lai chưa nhắn tin thì chưa tiếp nhận " +
-          "được ở đây — xem mục bên dưới.",
-        control: contactInput,
+          "Khách vãng lai: bấm \u201cPhát phiếu\u201d để lấy mã — không lưu tên, số điện thoại " +
+          "hay địa chỉ của khách. Khách đã từng nhắn tin qua kênh chính thức thì dùng mã sinh ra " +
+          "từ lần nhắn đó. Mã lạ sẽ bị từ chối chứ không được tự tạo.",
+        control: h("div", { class: "stack stack--tight" }, contactInput, ticketRow),
       }),
       // The question every counter shift asks on its first day. It is answered here, next to the
       // field that raises it, because sending somebody to a register of unsupported capabilities

@@ -172,7 +172,7 @@ decisions:
       SBOM) ahead of any framework code, for no sooner UX benefit.
   - id: DEC-013
     title: How a walk-in customer is identified at the counter
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW, QUOTE_ESTIMATE]
     fail_closed_behavior: REQUIRE_HUMAN
@@ -189,9 +189,27 @@ decisions:
       Walk-in customers are handled on paper. The console states this on the intake screen and in
       the unsupported-capability register rather than offering a field that would quietly create
       the record the decision has not authorized.
+    resolved_at: '2026-08-26'
+    decision_record: docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record — the ticket-only option — in
+      Vietnamese on 2026-08-26: "Khách vãng lai được ghi nhận bằng một số phiếu do quầy phát. Hệ
+      thống không lưu tên, số điện thoại hay địa chỉ của khách vãng lai. Khi nào tiệm cần nhắn tin
+      cho khách, đó là một quyết định mới kèm lời đồng ý."
+
+      No personal data is stored for a walk-in, so there is no consent question to answer, no
+      retention schedule to write, and nothing that Decree 13/2023 obliges the shop over. The
+      counter issues a number and the order is tracked by it.
+
+      The reason this option rather than name-and-phone is asymmetry of reversibility, and it is
+      worth recording because it is the argument that decided it. Starting with a ticket and later
+      adding a name is an additive change made when consent exists. Starting with a name and later
+      deciding not to hold one is not reversible: the data was already taken. Choosing the ticket
+      also costs nothing today, because the only thing a phone number buys is messaging a customer
+      about their order, and no channel is connected.
   - id: DEC-014
     title: Which staff roles may see the day's counter takings
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW]
     fail_closed_behavior: NOT_SUPPORTED
@@ -208,9 +226,21 @@ decisions:
       inventing a stricter client-side rule, because a console that hides what the API would
       answer teaches staff a permission boundary that does not exist. If the owner wants the
       figure restricted, the change belongs in the server gate and the console follows it.
+    resolved_at: '2026-08-26'
+    decision_record: docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record — leave the existing gate — in
+      Vietnamese on 2026-08-26: "Nhân viên vận hành (OWNER_ADMIN, OPS_APPROVER, OPERATOR) xem được
+      tiền thu trong ngày của cửa hàng mình."
+
+      The people who take the money already know what they took, so hiding the day's total from
+      them protects nothing. No code changes: the inherited gate is now the chosen one, and this
+      entry is what makes that a decision rather than an accident. If the shop later wants the
+      figure restricted, the change is one role set on the server and the console follows it
+      automatically.
   - id: DEC-015
     title: What a customer record is, and when a person becomes one
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW, QUOTE_ESTIMATE, BOOKING, MARKETING_FOLLOWUP]
     fail_closed_behavior: REQUIRE_HUMAN
@@ -235,6 +265,27 @@ decisions:
       enqueued. The researched prospect list ships as templates/accounts.csv holding organisations
       only, with no individual's name, personal mobile or personal email, because storing those
       would create a personal-data processing record for parties who have not been asked.
+    resolved_at: '2026-08-26'
+    decision_record: docs/DECISION_REQUEST_ACQUISITION_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record — not yet — in Vietnamese on
+      2026-08-26: "Chưa xây lớp hồ sơ khách hàng. Khách vãng lai dùng số phiếu (DEC-013); khách nhắn
+      tin dùng ràng buộc kênh đã có. Danh sách khách tiềm năng chỉ lưu tổ chức. Quyết định này mở
+      lại khi có kênh liên lạc chính thức."
+
+      No `parties` aggregate, no contact points, no addresses. A customer record should exist when
+      there is both a use for it and a lawful basis, and today there is neither: no channel is
+      connected and nobody has been asked. The prospect list stays organisations-only.
+
+      This is "not yet", not "never". It reopens the day `CHANNEL-TELEGRAM-001` or an official Zalo
+      OA carries a real conversation, because that is the day a customer record has both a purpose
+      and a consent event to rest on.
+
+      Consequence for order creation, decided here rather than left implicit: `bound_contact_id` has
+      two legitimate sources — a counter ticket under DEC-013 and a channel binding — and they are
+      deliberately not unified behind a party layer, because unifying them is the CRM this decision
+      declines to build. `OrderRepository.create` therefore checks the reference against both
+      sources rather than through one foreign key.
   - id: DEC-016
     title: Who staffs the inbound channel, and whose account it is
     status: OPEN

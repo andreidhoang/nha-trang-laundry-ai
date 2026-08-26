@@ -394,6 +394,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/counter-tickets:
+    post:
+      operationId: issue_counter_ticket
+      summary: Issue the number a walk-in customer's order is tracked by.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/incidents:
     get:
       operationId: list_incidents

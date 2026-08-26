@@ -59,26 +59,6 @@ const GROUPS = [
       "chiều còn lại của cùng một đơn — nhận đồ, sản xuất, giao, thu tiền — không có bề mặt nào.",
     entries: [
       {
-        ref: "DEC-013 · QUẦY",
-        title: "Khách vãng lai (chưa từng nhắn tin)",
-        what:
-          "Tiếp nhận một người đi thẳng vào tiệm, chưa từng nhắn tin qua Zalo hay Telegram, và " +
-          "vẫn báo giá được cho họ.",
-        missing:
-          "Màn hình Tiếp nhận cần một mã liên hệ đã tồn tại, và nguồn duy nhất sinh ra mã đó là " +
-          "một tin nhắn khách đã gửi qua kênh chính thức rồi được máy chủ xác minh. Không có " +
-          "đường nào tạo liên hệ tại quầy, nên khách vãng lai chưa tiếp nhận được trong hệ thống.",
-        blockedBy: "DEC-013 — chủ tiệm quyết cách nhận diện khách tại quầy",
-        today:
-          "Nhận đồ và ghi tay như trước. Đây là khoảng trống quy trình thật, không phải lỗi giao " +
-          "diện: tạo liên hệ tại quầy đồng nghĩa với lưu thông tin cá nhân của khách mà chưa có " +
-          "cơ sở đồng ý nào, nên hệ thống từ chối thay vì tự làm.",
-        note:
-          "Khi mở, quyết định phải nêu rõ lưu gì (tên? số điện thoại? không gì cả?), giữ bao lâu, " +
-          "và khách đồng ý bằng cách nào — trước khi có ô nhập nào được thêm vào màn hình Tiếp nhận.",
-        link: { href: "#/order-requests", label: "Mở màn hình Tiếp nhận" },
-      },
-      {
         ref: "M3 · MÀN 2",
         title: "Khách hàng / hỏi mới",
         what:

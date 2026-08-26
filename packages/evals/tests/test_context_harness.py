@@ -81,7 +81,11 @@ def test_context_drift_check_passes() -> None:
     # the price. The eighty-seventh is QUOTE-ACCEPT-001, which implements DEC-021 and DEC-022 as
     # the owner ratified them on 2026-08-25 and produces the first quote revision order creation
     # will accept -- the first order in this system's history was created on that day.
-    assert "87 work items" in result.stdout
+    # The eighty-eighth is COUNTER-TICKET-001: DEC-013 and DEC-015, ratified 2026-08-26, let a
+    # walk-in be served by issuing a number and storing nothing about the person -- and closed the
+    # last of four conditions that refused every order. It also found that orders.bound_contact_id
+    # had never been checked at all.
+    assert "88 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

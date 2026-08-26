@@ -26,6 +26,7 @@ from nha_trang_laundry_db.channel import (
     ContactChannelBindingRepository,
 )
 from nha_trang_laundry_db.configurations import ConfigurationRepository, snapshot_hash
+from nha_trang_laundry_db.counter_tickets import CounterTicketRepository, IssuedTicket
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.incidents import (
@@ -451,6 +452,24 @@ class OperationsService:
             connection.cursor() as cursor,
         ):
             return self._approvals.list_pending(cursor, principal=principal, limit=limit)
+
+    # --- COUNTER-TICKET-001 (DEC-013) -------------------------------------------------------
+
+    def issue_counter_ticket(self, *, store_id: UUID, principal: StaffPrincipal) -> IssuedTicket:
+        """Hand a walk-in customer the number their order is known by.
+
+        `DEC-013`, resolved 2026-08-26: a walk-in is identified by a counter-issued number and
+        nothing about the person is stored. There is no request body for the same reason -- there is
+        nothing to send. A field here would be the privacy policy the decision declined to write.
+        """
+
+        with self._connection_factory(self._database_url) as connection:
+            return CounterTicketRepository().issue(
+                connection,
+                store_id=store_id,
+                principal=principal,
+                correlation_id=uuid4(),
+            )
 
     # --- QUOTE-ACCEPT-001 (DEC-021) ---------------------------------------------------------
     #

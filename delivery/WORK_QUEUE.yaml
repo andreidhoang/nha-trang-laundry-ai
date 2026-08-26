@@ -2859,3 +2859,32 @@ items:
   - the_false_disclosures_came_down
   - rollback_assessment
   blocked_by_decisions: []
+- id: COUNTER-TICKET-001
+  phase: PRODUCTION_HARDENING
+  title: A person who walks in off the street can be served
+  status: COMPLETE
+  priority: 245
+  depends_on:
+  - QUOTE-ACCEPT-001
+  context_domains:
+  - orders_audit
+  - privacy_consent
+  normative_sources:
+  - AGENTS.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-counter-ticket-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - nothing_that_identifies_a_person_is_stored
+  - a_walk_in_is_served_end_to_end
+  - an_invented_customer_reference_is_now_refused
+  - no_customer_record_layer_was_built
+  - rollback_assessment
+  blocked_by_decisions: []

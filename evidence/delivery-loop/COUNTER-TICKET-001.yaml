@@ -1,0 +1,129 @@
+schema_version: 1
+work_item: COUNTER-TICKET-001
+recorded_at: '2026-08-26T14:40:00+07:00'
+requirement_contract: >-
+  `DEC-013`, `DEC-014` and `DEC-015`, ratified by the owner on 2026-08-26 and recorded verbatim. A
+  walk-in customer is identified by a number the counter issues; no name, phone number or address is
+  stored. No customer-record layer is built. The existing takings gate is the chosen one.
+
+  Before this, the shop could price laundry, agree a price and create an order -- but only for a
+  customer who had already messaged it through a channel, and no channel is connected. A person
+  walking in had no route into the system at all, deliberately: creating a contact at the counter
+  meant recording personal data with no consent behind it.
+
+  The boundary is the requirement. No personal data on this path, and no party layer smuggled in
+  behind a ticket table.
+rollback_impact: >-
+  Reverting closes the walk-in path again and returns the shop to paper for anyone who has not
+  messaged it.
+
+  It also removes the check on `orders.bound_contact_id`, which is the more consequential half: that
+  column would go back to accepting any UUID, as it had since the table existed. A revert that keeps
+  the check and drops the ticket table would refuse every order, since a ticket is currently the only
+  reference a store can issue -- the two must revert together or not at all.
+
+  `counter_tickets` rows survive a revert and stay meaningful: each is a true record that the counter
+  handed somebody a number. Nothing in them identifies a person, so nothing about a revert creates a
+  data-protection question.
+unresolved_assumptions: >-
+  **A ticket identifies an order's customer, not a customer.** Two visits by the same person are two
+  tickets and the system cannot tell they are the same person. That is the decision working as
+  intended, not a limitation to route around: recognising a returning customer is exactly what
+  `DEC-015` declines to build until there is a lawful basis and a purpose.
+
+  Ticket numbers are allocated by `max + 1` in a single INSERT ... SELECT. Two counters serving two
+  customers in the same instant can still collide, and the UNIQUE rejects the second rather than
+  issuing a duplicate. The caller sees an error and re-issues. This is correct but not seamless, and
+  at a single-counter shop it will not be observed; a busier shop wants a sequence per store-day.
+
+  **CẦN XÁC MINH:** whether staff will read the ticket number aloud and write it on the bag, which is
+  the entire mechanism for reuniting laundry with its owner. The software cannot verify that, and
+  nothing here is safe if it does not happen. It belongs in the counter runbook, which does not yet
+  exist -- `OPS-RUNBOOK-001` is blocked on the hosting decision.
+
+  Not claimed: that this is the right identity model once a channel is connected. It is the right one
+  while none is.
+evidence:
+  nothing_that_identifies_a_person_is_stored: >-
+    `counter_tickets` has exactly seven columns -- `id`, `store_id`, `issued_on`, `ticket_number`,
+    `issued_by`, `issued_at`, `correlation_id` -- and `issued_by` is the staff member who handed the
+    ticket over, not the customer. There is no column a name, phone number or address could go in.
+
+    Asserted against `information_schema` rather than against the migration text, by
+    `test_the_ticket_table_holds_nothing_that_identifies_a_person`, so a future column has to argue
+    with a failing test rather than slip in. The same test rejects any column whose name contains
+    `name`, `phone`, `email`, `address` or `contact`.
+
+    The route takes no request body, because there is nothing to send. The domain event carries the
+    ticket id and the date and nothing else.
+
+    The owner's reasoning is recorded in the registry and repeated in the migration, because it is
+    the argument that decided the shape: adding a name later is additive and needs consent;
+    un-collecting a name already taken is impossible. Ticket-only also costs nothing today, since the
+    only thing a phone number buys is messaging a customer and no channel is connected.
+  a_walk_in_is_served_end_to_end: >-
+    Measured against the live demo database on 2026-08-26, through the real service and repository
+    path:
+
+        1. PHAT PHIEU  so 1 ngay 2026-08-26   (khong luu ten, dien thoai, dia chi)
+        2. BAO GIA     rev1 ESTIMATE                       tong=120000d
+        3. CHOT GIA    rev2 APPROVED_EXACT/ACCEPTED_FINAL  tong=120000d
+        4. TAO DON     don 3dcbb6a2 cho KHACH VANG LAI so 1
+
+    That is the whole counter transaction for a stranger: hand them a number, weigh and price, read
+    the price and record their agreement, take the order. Four conditions refused every order in this
+    system as recently as 2026-08-23; this was the last of them.
+
+    Numbering is per store per day, asserted by `test_numbers_restart_each_day_and_never_repeat_within_one`
+    (1, 2, 3 today; 1 again tomorrow) and `test_two_stores_do_not_share_a_counter`. Issuing is
+    membership-checked and role-gated on the same cursor as the insert, asserted by
+    `test_a_non_member_cannot_issue_a_ticket_for_a_store` and `test_a_read_only_role_cannot_issue_a_ticket`.
+  an_invented_customer_reference_is_now_refused: >-
+    Found while implementing, not by looking for it. `orders.bound_contact_id` has been required
+    since the table existed, has no foreign key, and **nothing ever checked it** -- any UUID was
+    accepted. It is the same shape of hole `approval_id` carried until migration `0029`, and it was
+    invisible because until 2026-08-25 no order had ever been created.
+
+    Proven on the live database in the same run as the walk-in above:
+
+        5. MA KHACH BIA -> bi tu choi: the order names a customer reference this store has never
+           issued or bound
+
+    The check reads both legitimate sources -- a ticket this store issued, or a channel binding that
+    exists. Deliberately not one foreign key: there are two sources and `DEC-015` declines to unify
+    them behind a party layer, because unifying them is the customer-record layer that decision says
+    not to build. That reasoning is recorded in `DEC-015`'s resolution so the shape is not mistaken
+    for an oversight.
+  no_customer_record_layer_was_built: >-
+    No `parties`, `contact_points` or `addresses` table exists after this change; the §4.3 context of
+    `specs/DOMAIN_DATA_API_SPEC_V1.md` is still 0/5. `templates/accounts.csv` is untouched and still
+    holds organisations only.
+
+    The intake screen gained one button and no fields. It still has no name box and no phone box, and
+    its module note says so and now says why it never has to.
+
+    The `#/gaps` entry "Khách vãng lai (chưa từng nhắn tin)" was deleted rather than reworded,
+    because the gap it described is closed -- the second gaps entry retired in two days. Registry
+    disclosures went 164 to 161 and were regenerated, not hand-edited, with `sw.js` regenerated so
+    the corrected screens reach a returning operator.
+
+    `DEC-014` required no code: the inherited gate is now the chosen one, and the registry entry is
+    what makes that a decision rather than an accident.
+  rollback_assessment: >-
+    See rollback_impact. One migration (`0032`), one new repository module, one service method, one
+    route, the order guard, the intake screen, one deleted gaps entry, three regenerated artifacts
+    and the tests. The ticket table and the `bound_contact_id` check must revert together: keeping
+    the check without the table would refuse every order.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

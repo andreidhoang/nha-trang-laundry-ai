@@ -35,7 +35,7 @@ from nha_trang_laundry_domain.catalog import (
     QuoteRevisionStatus,
 )
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, build_quote_snapshot
-from quote_test_data import accepted_quote, make_quote_snapshot
+from quote_test_data import accepted_quote, counter_ticket, make_quote_snapshot
 
 # Inside the test quote's validity window (PRICED_AT 2026-08-01, valid one day), because
 # OrderRepository.create refuses an accepted quote that has expired.
@@ -104,7 +104,7 @@ def _order_in_store(connection: Any, store_id: UUID, owner: StaffPrincipal) -> U
         connection,
         CreateOrderCommand(
             store_id,
-            uuid4(),
+            counter_ticket(connection, store_id=store_id, principal=owner),
             quote_id,
             revision,
             quote.document.snapshot_hash,

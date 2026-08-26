@@ -48,7 +48,7 @@ from nha_trang_laundry_domain.catalog import (
 )
 from nha_trang_laundry_domain.orders import IntakeReadiness
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, build_quote_snapshot
-from quote_test_data import accepted_quote, make_quote_snapshot
+from quote_test_data import accepted_quote, counter_ticket, make_quote_snapshot
 
 NOW = datetime(2026, 8, 1, 3, tzinfo=UTC)
 #: Every intake blocker cleared. Intake acceptance is gated on six separate facts; this test is
@@ -120,7 +120,7 @@ def _order(connection: Any, store_id: UUID, staff: StaffPrincipal) -> UUID:
         connection,
         CreateOrderCommand(
             store_id,
-            uuid4(),
+            counter_ticket(connection, store_id=store_id, principal=staff),
             quote_id,
             revision,
             quote.document.snapshot_hash,

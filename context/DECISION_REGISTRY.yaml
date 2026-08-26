@@ -478,3 +478,32 @@ decisions:
       Not decided here: what the correct tax treatment is. That stays unverified, is still stamped on
       every revision, and is the accountant's to settle. This decision says only that settling it is
       not a precondition of accepting an order.
+  - id: DEC-023
+    title: When and how a delivery order is paid for, and who records that it arrived
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, DELIVERY_ADVISORY, BOOKING]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_DELIVERY_COMPLETION_2026-08.md
+    opened_at: '2026-08-26'
+    question: >-
+      Measured on 2026-08-26 by running the full lifecycle against the live database for both
+      fulfilment modes. Self-collection completes end to end. A delivery order is priced, agreed,
+      taken and washed, then stops at two refusals: `settlement shape is not supported`, because
+      `evaluate_settlement` accepts only goods handed back at the counter (DEC-010, resolved
+      2026-08-18 as deliberately deferred, when delivery was not in view); and
+      `INVALID_STATE_TRANSITION: fulfillment is incomplete`, because
+      `orders.required_delivery_legs_succeeded` is read in three places, defaults FALSE and is
+      written nowhere.
+
+      The two are coupled, which is why they are one decision. Building the delivery-leg writer
+      (FULFILMENT-001, decision-clear on DEC-003 since 2026-08-18 and never enqueued) without
+      deciding the settlement question ships a delivery order that reaches "delivered, unpaid,
+      permanently ACTIVE" -- worse than today, because it looks finished. And the coupling runs both
+      ways: whether the driver collects cash decides what a delivery leg must record, so the record
+      cannot be designed before the answer. The owner decides when a delivery customer pays, who
+      confirms the goods arrived, and what happens when delivery fails.
+    blocking_today: >-
+      Delivery orders. They can be taken, priced, agreed and worked, and then cannot be settled or
+      closed. The walk-in path is unaffected and complete. FULFILMENT-001 stays unenqueued rather
+      than being built against a guess.

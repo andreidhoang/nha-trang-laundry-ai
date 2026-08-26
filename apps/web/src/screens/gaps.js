@@ -59,6 +59,24 @@ const GROUPS = [
       "chiều còn lại của cùng một đơn — nhận đồ, sản xuất, giao, thu tiền — không có bề mặt nào.",
     entries: [
       {
+        ref: "DEC-023 · GIAO HÀNG",
+        title: "Đơn giao hàng chưa kết thúc được",
+        what: "Nhận, báo giá, chốt giá và giặt xong một đơn có giao hàng — rồi thu tiền và đóng đơn.",
+        missing:
+          "Đơn giao hàng đi được đến bước giặt xong, rồi dừng ở hai chỗ. Máy chủ từ chối tất " +
+          "toán vì hiện chỉ hỗ trợ khách trả đủ tại quầy và tự lấy đồ về (DEC-010). Và chưa có " +
+          "đường nào ghi nhận một chuyến giao đã xong, nên đơn không đóng được.",
+        blockedBy: "DEC-023 — chủ tiệm quyết khách giao hàng trả tiền lúc nào và ai xác nhận đã giao",
+        today:
+          "Đơn khách tự mang tự lấy chạy trọn vẹn, đã đo ngày 26/08. Đơn giao hàng thì ghi tay " +
+          "phần thu tiền và giao nhận như trước.",
+        note:
+          "Hai chỗ dừng này dính nhau nên hỏi cùng lúc: nếu shipper thu tiền thì bản ghi chuyến " +
+          "giao phải có tiền và người cầm; nếu khách trả trước tại quầy thì không. Xây bản ghi " +
+          "trước khi trả lời là xây theo phỏng đoán.",
+        link: { href: "#/orders", label: "Mở màn hình Đơn hàng" },
+      },
+      {
         ref: "M3 · MÀN 2",
         title: "Khách hàng / hỏi mới",
         what:

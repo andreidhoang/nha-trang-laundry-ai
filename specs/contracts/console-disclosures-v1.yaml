@@ -11,14 +11,14 @@ counts:
   ABSENT_ROUTE: 2
   ABSENT_TABLE: 5
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 134
+  DESCRIPTIVE: 137
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   READ_ONLY_MODULE: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 11
-total: 161
+total: 164
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -508,6 +508,35 @@ disclosures:
   key: lede
   text: 'Bảng vận hành hôm nay dừng lại ở chiều thương mại của một đơn: tạo, xác nhận, huỷ. Các chiều
     còn lại của cùng một đơn — nhận đồ, sản xuất, giao, thu tiền — không có bề mặt nào.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:b93abccc8e39
+  module: screens/gaps.js
+  key: missing
+  text: Đơn giao hàng đi được đến bước giặt xong, rồi dừng ở hai chỗ. Máy chủ từ chối tất toán vì hiện
+    chỉ hỗ trợ khách trả đủ tại quầy và tự lấy đồ về (DEC-010). Và chưa có đường nào ghi nhận một chuyến
+    giao đã xong, nên đơn không đóng được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:01442fa4bc5a
+  module: screens/gaps.js
+  key: today
+  text: Đơn khách tự mang tự lấy chạy trọn vẹn, đã đo ngày 26/08. Đơn giao hàng thì ghi tay phần thu tiền
+    và giao nhận như trước.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#note:f4b8ab8a13a3
+  module: screens/gaps.js
+  key: note
+  text: 'Hai chỗ dừng này dính nhau nên hỏi cùng lúc: nếu shipper thu tiền thì bản ghi chuyến giao phải
+    có tiền và người cầm; nếu khách trả trước tại quầy thì không. Xây bản ghi trước khi trả lời là xây
+    theo phỏng đoán.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

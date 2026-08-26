@@ -5,7 +5,7 @@
 // shared, is often unlocked, and leaves the shop; the console's offline story is therefore "the
 // interface loads and tells you it cannot reach the server", never "your data is still here".
 
-const CACHE = "staff-shell-b4e5c9bcb44e";
+const CACHE = "staff-shell-cc37f8c7964e";
 
 const SHELL = [
   "/staff/",

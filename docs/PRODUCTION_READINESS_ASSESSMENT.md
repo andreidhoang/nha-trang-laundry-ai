@@ -457,3 +457,67 @@ produce.
   enqueued as "persist and version the price list", which is done.
 - Neither correction moves the G1 or G2 timelines. Both binding constraints — the 4–6 week shop
   measurement and a provider credential — are exactly where §6 left them, and neither has started.
+
+---
+
+## 10. The walk-in shop is software-complete — measured 2026-08-26
+
+The 08-24 corrections in §9 are superseded on their central point. Since then the owner ratified six
+decisions (`DEC-013`, `DEC-014`, `DEC-015`, `DEC-021`, `DEC-022`, plus `DEC-003`'s consequences) and
+three items landed: `QUOTE-DELIVERY-FEE-001`, `QUOTE-ACCEPT-001`, `COUNTER-TICKET-001`.
+
+**The whole retail transaction now runs.** Measured by driving the full lifecycle against the live
+database through the real service and repository path — not a stub, not a test double:
+
+```
+KHACH TU MANG TU LAY  *** HOAN TAT ***  COMPLETED  balance=PAID  self_collect=True
+```
+
+Ticket issued → quote priced (120,000đ) → customer's agreement attested → order created → intake
+received and accepted → commercial REQUESTED → STORE_CONFIRMATION_PENDING → CONFIRMED → ACTIVE →
+production QUEUED → IN_PROCESS → QUALITY_CHECK → READY_AT_STORE → RELEASED → settled → **COMPLETED**.
+
+Every finding in §3 that said otherwise is now retired:
+
+| Finding | Status |
+|---|---|
+| **G1** — the deterministic authority has only a partial production write path | **Retired for the staff path.** Quote, acceptance, order, transition and settlement are all reachable commands. The Tool Facade half stands: `get_agent_facade_service()` still returns `UnavailableAgentToolBackend`, by capability design. |
+| **G2** — no order can reach `COMPLETED` except by exact payment and self-collection | **Narrowed to exactly that, and that case is proven.** Delivery is `DEC-023`, opened today. |
+| **G3** — there is no customer | **Resolved by decision, not by building one.** `DEC-013`/`DEC-015`: a walk-in is a counter ticket and nothing about the person is stored. `parties`, `contact_points` and `addresses` remain deliberately unbuilt. |
+| **G4** — the price list is not data | **Already retired in §9.** Prices are a published, digest-checked configuration read per request. |
+| **DEC-021's "no order can be created"** | **False since 2026-08-25.** The first order in this project's history was created that day. |
+
+**Two holes were found and closed in passing, both the same shape:** `quote_revisions.approval_id`
+(migration `0029`) and `orders.bound_contact_id` (`COUNTER-TICKET-001`) were each required columns
+with no foreign key that nothing ever checked. Both were invisible until an order existed to expose
+them.
+
+### What is left, and who owns it
+
+| | | Owner |
+|---|---|---|
+| **Delivery orders cannot be settled or completed** | Two coupled refusals, measured today. `DEC-023` + `FULFILMENT-001`. | **owner decides, then engineering** |
+| **No host** | `DEC-HOSTING` unsigned. `compose.production.yaml` is written and hardened; `docs/runbooks/production-deploy-day.md` is the sequence. | owner |
+| **No tested restore** | `BACKUP-RESTORE-001` needs an off-host repository and a reviewed drill. | owner |
+| **No database role separation** | The production compose declares three database identities; migrations `0001`–`0032` contain no `CREATE ROLE`, `GRANT` or `REVOKE`. `DEC-020`, open. **The largest gap between the runbook and a deployment worth trusting.** | owner decides, then engineering |
+| **No shop measurement** | `SHOP-INSTRUMENT-001`, 4–6 weeks, not started. Nothing shortens it. | owner |
+| **The AI has never run** | No model has ever been invoked. `DEC-006` + a provider credential. | Security/Privacy owner |
+
+### Distance, revised
+
+| Layer | 08-18 | 08-26 | Why |
+|---|---|---|---:|
+| Domain persistence and command surface | ~40% | **~65%** | The retail transaction is complete end to end. Custody, batches, delivery legs, remedies and a payment ledger are still absent. |
+| Control plane / internal API | ~85% | **~90%** | 41 routes. Acceptance and counter tickets landed. |
+| Business readiness | ~35% | **~70%** | 16 of 23 decisions resolved. The six that remain block no counter work. |
+| Agent product path | ~45% | ~45% | Unchanged. Still no provider, still no channel, still `Unavailable` by design. |
+| Evidence base | ~5% | ~5% | Unchanged. 669 of 1,300 corpus cases, zero provider runs. |
+| Production infrastructure | ~15% | **~25%** | Unchanged in substance; the deploy sequence is now written down rather than implicit. |
+
+**To a shop taking walk-in orders on this software: the code is done.** What remains is a host, a
+backup with a tested restore, and the database roles `DEC-020` has not decided. That is the first
+time this document has been able to say the remaining distance for any real workflow is not code.
+
+**To `G1_INTERNAL_SHADOW_READY`: still ~35%.** Unmoved, and the reason is worth stating plainly: G1
+is about the *agent*, and nothing in the last three days touched it. The shop getting closer to
+operating does not move a gate about a model that has never been called.

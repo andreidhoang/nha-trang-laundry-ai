@@ -82,11 +82,13 @@ CAPABILITY_REPOSITORY_ROLES: dict[str, tuple[str, str]] = {
 #: Authored bindings, keyed by slot id. A slot absent from this table is registered `DESCRIPTIVE`.
 #: Every entry here is verified against the schema or the route contract, not against the sentence.
 BINDINGS: dict[str, dict[str, Any]] = {
-    "screens/gaps.js#missing:0dcee188fd27": {
+    "screens/gaps.js#missing:5bb9f3600337": {
         "kind": "ABSENT_TABLE",
-        "tables": ["delivery_bundles", "delivery_legs", "distance_measurements"],
-        "why": "The disclosure names three aggregates as absent; the binding asserts the schema "
-        "still lacks them. Building any of them makes the sentence false.",
+        "tables": ["delivery_bundles", "distance_measurements"],
+        "why": "The disclosure named three aggregates as absent and the binding asserted the "
+        "schema lacked them. `delivery_legs` landed on 2026-08-26 under DEC-023 and this test "
+        "failed the same day, which is what it is for; the sentence and the binding now name the "
+        "two that are still absent. Building either makes the sentence false again.",
     },
     "screens/gaps.js#missing:af635d639b65": {
         "kind": "ABSENT_TABLE",

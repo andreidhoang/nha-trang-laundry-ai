@@ -11,14 +11,14 @@ counts:
   ABSENT_ROUTE: 2
   ABSENT_TABLE: 5
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 137
+  DESCRIPTIVE: 135
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   READ_ONLY_MODULE: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 11
-total: 164
+total: 162
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -512,35 +512,6 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:b93abccc8e39
-  module: screens/gaps.js
-  key: missing
-  text: Đơn giao hàng đi được đến bước giặt xong, rồi dừng ở hai chỗ. Máy chủ từ chối tất toán vì hiện
-    chỉ hỗ trợ khách trả đủ tại quầy và tự lấy đồ về (DEC-010). Và chưa có đường nào ghi nhận một chuyến
-    giao đã xong, nên đơn không đóng được.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:01442fa4bc5a
-  module: screens/gaps.js
-  key: today
-  text: Đơn khách tự mang tự lấy chạy trọn vẹn, đã đo ngày 26/08. Đơn giao hàng thì ghi tay phần thu tiền
-    và giao nhận như trước.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#note:f4b8ab8a13a3
-  module: screens/gaps.js
-  key: note
-  text: 'Hai chỗ dừng này dính nhau nên hỏi cùng lúc: nếu shipper thu tiền thì bản ghi chuyến giao phải
-    có tiền và người cầm; nếu khách trả trước tại quầy thì không. Xây bản ghi trước khi trả lời là xây
-    theo phỏng đoán.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/gaps.js#missing:c4f99531cea6
   module: screens/gaps.js
   key: missing
@@ -584,18 +555,22 @@ disclosures:
     - production
     why: Same shape for production status. Both become false the day FULFILMENT-001 lands, which is decision-clear
       and unenqueued - exactly when a disclosure needs to notice.
-- slot_id: screens/gaps.js#missing:0dcee188fd27
+- slot_id: screens/gaps.js#missing:5bb9f3600337
   module: screens/gaps.js
   key: missing
-  text: Không có delivery_bundles, delivery_legs hay distance_measurements.
+  text: 'Ghi nhận chuyến giao đã có: delivery_legs (DEC-023, 26/08) — ghi đồ đã đến tay khách hay chưa,
+    và chuyến trả thành công thì đóng được đơn. Còn thiếu delivery_bundles để gom nhiều đơn vào một chuyến,
+    và distance_measurements để lưu quãng đường đã đo — hiện quãng đường do nhân viên nhập từng lần báo
+    giá.'
   binding:
     kind: ABSENT_TABLE
     tables:
     - delivery_bundles
-    - delivery_legs
     - distance_measurements
-    why: The disclosure names three aggregates as absent; the binding asserts the schema still lacks them.
-      Building any of them makes the sentence false.
+    why: The disclosure named three aggregates as absent and the binding asserted the schema lacked them.
+      `delivery_legs` landed on 2026-08-26 under DEC-023 and this test failed the same day, which is what
+      it is for; the sentence and the binding now name the two that are still absent. Building either
+      makes the sentence false again.
 - slot_id: screens/gaps.js#missing:9834ff94fcd7
   module: screens/gaps.js
   key: missing
@@ -1117,6 +1092,16 @@ disclosures:
   text: Màn hình này cố ý không biết bước nào là hợp lệ — quy tắc đó thuộc về máy chủ, và chép nó sang
     trình duyệt là tạo bản thứ hai không ai giữ cho khớp được. Cả tám đích đều được chào; máy chủ từ chối
     cái nào không hợp lệ và nói rõ vướng ở đâu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orders.js#guardrail:e14089d6d5db
+  module: screens/orders.js
+  key: guardrail
+  text: Khách đã trả đủ tại quầy trước khi đồ rời tiệm, nên ghi nhận ở đây không có tiền — chỉ ghi đồ
+    đã đến tay khách hay chưa. Giao hụt thì ghi thất bại, không tính thêm phí, và lần giao sau là một
+    dòng mới. Chỉ chuyến TRẢ ĐỒ thành công mới cho phép đóng đơn.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

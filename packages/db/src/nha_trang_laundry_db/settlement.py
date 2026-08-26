@@ -21,10 +21,12 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from nha_trang_laundry_domain.catalog import FulfillmentMode
 from nha_trang_laundry_domain.settlement import (
     QuotedTotal,
     SettlementAccepted,
     SettlementNotSupported,
+    SettlementShape,
     evaluate_settlement,
 )
 
@@ -104,7 +106,8 @@ class SettlementRepository:
                 SELECT o.store_id, o.commercial_status, o.production_status, o.balance_status,
                        o.self_collection_recorded, o.row_version,
                        o.current_quote_id, o.current_quote_revision, o.current_quote_snapshot_hash,
-                       r.display_total_min_vnd, r.display_total_max_vnd
+                       r.display_total_min_vnd, r.display_total_max_vnd,
+                       o.fulfillment_mode
                 FROM orders o
                 JOIN quote_revisions r
                   ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
@@ -143,6 +146,9 @@ class SettlementRepository:
             quoted=QuotedTotal(_optional_int(row[9]), _optional_int(row[10])),
             tendered_vnd=command.paid_amount_vnd,
             collected_by_customer=command.collected_by_customer,
+            # The order's own field. `DEC-023` made prepaid delivery a supported shape, and which
+            # shape this is depends on where the laundry goes -- a fact the order already holds.
+            fulfillment_mode=FulfillmentMode(str(row[11])),
         )
         if isinstance(outcome, SettlementNotSupported):
             raise SettlementStateError(
@@ -156,6 +162,8 @@ class SettlementRepository:
         next_version = int(row[5]) + 1
         quote_id, quote_revision, snapshot_hash = _uuid(row[6]), int(row[7]), str(row[8])
 
+        collected = outcome.shape is SettlementShape.EXACT_PAYMENT_SELF_COLLECTION
+
         def mutation(cursor: Any) -> None:
             cursor.execute(
                 """
@@ -163,7 +171,7 @@ class SettlementRepository:
                     id, order_id, store_id, settled_quote_id, settled_quote_revision,
                     settled_quote_snapshot_hash, expected_total_vnd, paid_amount_vnd,
                     settlement_shape, collected_by, attested_by_staff_id, attested_at, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'CUSTOMER', %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     settlement_id,
@@ -175,6 +183,9 @@ class SettlementRepository:
                     outcome.expected_total_vnd,
                     command.paid_amount_vnd,
                     outcome.shape.value,
+                    # Who took the laundry away when the money was attested. For a prepaid delivery
+                    # that is nobody yet; a delivery leg attests arrival later.
+                    "CUSTOMER" if collected else "PENDING_DELIVERY",
                     command.principal.staff_user_id,
                     attested_at,
                     attested_at,
@@ -182,16 +193,22 @@ class SettlementRepository:
             )
             # The balance and the collection fact move with the attestation, never apart from it.
             # `order_projection_guard` requires row_version to advance by exactly one.
+            #
+            # `self_collection_recorded` moves only for the shape that earned it. A prepaid delivery
+            # is paid in full and the laundry has not reached anyone yet; setting the flag would
+            # complete the order at the counter and the customer would never be recorded as having
+            # received anything. A delivery leg attests that, and until one does,
+            # `transition_commercial` keeps refusing.
             cursor.execute(
                 """
                 UPDATE orders
                 SET balance_status = 'PAID',
-                    self_collection_recorded = TRUE,
+                    self_collection_recorded = %s,
                     row_version = row_version + 1
                 WHERE id = %s AND row_version = %s AND balance_status = 'UNPAID'
                 RETURNING id
                 """,
-                (command.order_id, int(row[5])),
+                (collected, command.order_id, int(row[5])),
             )
             if cursor.fetchone() is None:
                 raise SettlementStateError(

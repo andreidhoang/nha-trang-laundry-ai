@@ -112,6 +112,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}/delivery-legs:
+    post:
+      operationId: record_delivery_leg
+      summary: Record that laundry went out, and whether the customer received it.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/orders/{order_id}/settlement:
     post:
       operationId: record_settlement

@@ -80,6 +80,13 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "outside the idempotency wrapper so a revoked member cannot replay a key; asserted "
         "behaviourally in apps/api/tests/test_quote_command.py",
     ),
+    ("POST", "/internal/v1/orders/{order_id}/delivery-legs"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "keyed by order_id, so a URL-shape enumeration would miss it. Membership is enforced "
+        "inside DeliveryLegRepository.record on the same cursor that locks the order row, "
+        "against the store_id read from that row",
+    ),
     ("POST", "/internal/v1/stores/{store_id}/counter-tickets"): RouteScope(
         "STORE_SCOPED",
         None,

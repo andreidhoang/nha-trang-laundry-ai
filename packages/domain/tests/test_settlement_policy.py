@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from nha_trang_laundry_domain.catalog import FulfillmentMode
 from nha_trang_laundry_domain.settlement import (
     QuotedTotal,
     SettlementAccepted,
@@ -21,11 +22,13 @@ def evaluate(
     maximum: int | None = TOTAL,
     paid: int = TOTAL,
     collected: bool = True,
+    mode: FulfillmentMode = FulfillmentMode.SELF_DROP_SELF_COLLECT,
 ) -> SettlementAccepted | SettlementNotSupported:
     return evaluate_settlement(
         quoted=QuotedTotal(minimum, maximum),
         tendered_vnd=paid,
         collected_by_customer=collected,
+        fulfillment_mode=mode,
     )
 
 
@@ -101,6 +104,53 @@ def test_every_refusal_names_an_open_decision() -> None:
     assert all(value.startswith("DEC-") for value in REFUSAL_DECISIONS.values())
 
 
-def test_exactly_one_shape_exists() -> None:
-    """Adding a second must be a visible decision, not a new string somewhere."""
-    assert [shape.value for shape in SettlementShape] == ["EXACT_PAYMENT_SELF_COLLECTION"]
+def test_every_shape_traces_to_a_signed_decision() -> None:
+    """Adding a shape must be a visible decision, not a new string somewhere.
+
+    This asserted a list of one until 2026-08-26 and failed the day a second was added, which is
+    what it is for. `DEC-023` is that visible decision: the owner chose that a delivery customer
+    pays the exact total at the counter before the laundry leaves. Both shapes are the same money
+    -- the full total in one payment -- which is why `DEC-010`, deferring partial payment, deposits,
+    instalments and credit, is untouched by either.
+    """
+
+    assert [shape.value for shape in SettlementShape] == [
+        "EXACT_PAYMENT_SELF_COLLECTION",  # the original, DEC-010
+        "EXACT_PAYMENT_PREPAID_DELIVERY",  # DEC-023, 2026-08-26
+    ]
+
+
+def test_a_delivery_order_paid_in_full_at_the_counter_is_a_supported_shape() -> None:
+    """`DEC-023`: the customer pays before the laundry leaves, and a leg attests arrival later.
+
+    Same money as the self-collection shape -- the exact total, in full, in one payment -- so
+    `DEC-010`, which deferred partial payment, deposits, instalments and credit, is untouched.
+    """
+
+    outcome = evaluate(collected=False, mode=FulfillmentMode.PICKUP_AND_RETURN)
+    assert isinstance(outcome, SettlementAccepted)
+    assert outcome.shape is SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY
+
+
+def test_a_walk_in_that_nobody_collected_is_still_refused() -> None:
+    """Nothing travelled and nobody took it, so no settlement can attest anything."""
+
+    outcome = evaluate(collected=False, mode=FulfillmentMode.SELF_DROP_SELF_COLLECT)
+    assert isinstance(outcome, SettlementNotSupported)
+    assert outcome.refusal is SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER
+
+
+def test_a_delivery_order_collected_at_the_counter_is_refused_as_contradictory() -> None:
+    """The order says the laundry travels, the settlement says it was handed over. One is wrong."""
+
+    outcome = evaluate(collected=True, mode=FulfillmentMode.PICKUP_AND_RETURN)
+    assert isinstance(outcome, SettlementNotSupported)
+    assert outcome.refusal is SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER
+
+
+def test_a_delivery_order_still_cannot_be_part_paid() -> None:
+    """DEC-010 is untouched: the amount rule is the same for both shapes."""
+
+    outcome = evaluate(paid=TOTAL - 1, collected=False, mode=FulfillmentMode.PICKUP_AND_RETURN)
+    assert isinstance(outcome, SettlementNotSupported)
+    assert outcome.refusal is SettlementRefusal.AMOUNT_IS_NOT_THE_EXACT_TOTAL

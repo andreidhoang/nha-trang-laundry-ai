@@ -85,7 +85,11 @@ def test_context_drift_check_passes() -> None:
     # walk-in be served by issuing a number and storing nothing about the person -- and closed the
     # last of four conditions that refused every order. It also found that orders.bound_contact_id
     # had never been checked at all.
-    assert "88 work items" in result.stdout
+    # The eighty-ninth is FULFILMENT-001: DEC-023, ratified 2026-08-26, made a delivery order
+    # payable and closable. It was decision-clear on DEC-003 since 08-18 and deliberately not
+    # built, because the leg writer without the payment answer produces an order that reads as
+    # finished and is not.
+    assert "89 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

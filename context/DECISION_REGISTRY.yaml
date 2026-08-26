@@ -480,7 +480,7 @@ decisions:
       not a precondition of accepting an order.
   - id: DEC-023
     title: When and how a delivery order is paid for, and who records that it arrived
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW, DELIVERY_ADVISORY, BOOKING]
     fail_closed_behavior: NOT_SUPPORTED
@@ -507,3 +507,40 @@ decisions:
       Delivery orders. They can be taken, priced, agreed and worked, and then cannot be settled or
       closed. The walk-in path is unaffected and complete. FULFILMENT-001 stays unenqueued rather
       than being built against a guess.
+    resolved_at: '2026-08-26'
+    decision_record: docs/DECISION_REQUEST_DELIVERY_COMPLETION_2026-08.md
+    resolution: >-
+      **Question 1 — owner's choice.** The owner ratified the engineering recommendation on record,
+      option A: khách giao hàng trả trước tại quầy. The customer pays the exact quoted total at the
+      counter when the laundry is handed over, before it leaves the shop. No driver carries money,
+      no cash is reconciled at the end of a day, and the shop is never owed money by somebody
+      holding its laundry.
+
+      This adds a second settlement shape, `EXACT_PAYMENT_PREPAID_DELIVERY`, and that is the change
+      the code itself asked to be deliberate about: `SettlementShape` carries the comment "An enum
+      of one, so adding a second is a visible decision." This entry is that visible decision.
+
+      It reopens nothing. `DEC-010` deferred partial payment, deposits, instalments and ON_ACCOUNT
+      credit — all shapes about *amount* or *credit*, none of which this is. Exact payment in full
+      is precisely the shape `DEC-010` kept. The refusal that blocked delivery,
+      `COLLECTION_WAS_NOT_BY_THE_CUSTOMER`, is attributed in `REFUSAL_DECISIONS` to `DEC-003`, not
+      to `DEC-010` — it was always waiting on the delivery work rather than on a money decision.
+
+      **Questions 2 and 3 — engineering consequences, not the owner's words.** Both follow from
+      question 1 plus this system's own precedent, and are recorded here as derived so a later
+      reader can tell them apart from what was ratified.
+
+      *Who confirms the goods arrived:* a named staff member records it, exactly as settlement,
+      quote acceptance and counter tickets are recorded. With payment already taken at the counter,
+      a delivery leg carries no money and no financial risk, so it is an ordinary attributed
+      attestation. A driver-facing surface — a mobile app, a roadside login, a driver identity —
+      is a separate decision nobody has asked for, and no such surface exists.
+
+      *A delivery that fails:* the attempt is recorded as a failed leg, nothing is charged, and the
+      order stays `ACTIVE` with the goods back at the shop. A retry is a new leg row rather than an
+      edit, because legs are append-only. Charging a second delivery fee automatically would be
+      this system deciding money, which it must not; if the shop wants to charge for a second
+      attempt, staff negotiate it as they do any fee over 6km under `DEC-003`.
+
+      If either derived answer is wrong about how the shop actually works, it is a correction to
+      make, not a decision to re-run.

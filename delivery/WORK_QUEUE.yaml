@@ -2888,3 +2888,33 @@ items:
   - no_customer_record_layer_was_built
   - rollback_assessment
   blocked_by_decisions: []
+- id: FULFILMENT-001
+  phase: PRODUCTION_HARDENING
+  title: A delivery order can be paid for and closed
+  status: COMPLETE
+  priority: 246
+  depends_on:
+  - QUOTE-ACCEPT-001
+  - SETTLEMENT-001
+  context_domains:
+  - promotion_delivery_sla
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - DELIVERY_POLICY_DRAFT.md
+  contracts: []
+  task_packet: context/tasks/TASK-fulfilment-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_delivery_order_reaches_completed_end_to_end
+  - the_second_settlement_shape_is_the_same_money
+  - only_the_leg_that_means_arrival_completes_fulfilment
+  - no_money_crosses_a_delivery_leg
+  - rollback_assessment
+  blocked_by_decisions: []

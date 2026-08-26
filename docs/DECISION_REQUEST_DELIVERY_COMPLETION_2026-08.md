@@ -35,10 +35,18 @@ The two refusals have different causes and they are **coupled**, which is why th
 together rather than fixed one at a time.
 
 **The first is a decision.** `evaluate_settlement` refuses any settlement where the goods did not go
-back to the customer at the counter. That is `DEC-010`, resolved 2026-08-18 as *deliberately
-deferred*: partial payment, deposits, instalments and credit stay `NOT_SUPPORTED` "because no B2B
-credit relationship exists yet and the built exact-payment self-collection path already covers the
-ordinary retail case." That was true when it was signed. Delivery was not in view.
+back to the customer at the counter.
+
+**Corrected 2026-08-26, after this packet was written.** That refusal was attributed here to
+`DEC-010`. It is not: `REFUSAL_DECISIONS` maps `COLLECTION_WAS_NOT_BY_THE_CUSTOMER` to **`DEC-003`**,
+the delivery decision, which is resolved. `DEC-010` governs the *amount* refusal — partial payment,
+deposits, over-payment, credit — and none of those is what a delivery order needs. So the settlement
+half was never waiting on a money decision; it was waiting on the delivery work, which is this
+packet.
+
+What it does need is a second `SettlementShape`, and the code asks for that to be deliberate in as
+many words: *"An enum of one, so adding a second is a visible decision."* Signing this packet is that
+visible decision. `DEC-010` stays exactly where the owner left it on 2026-08-18.
 
 **The second is unbuilt.** `orders.required_delivery_legs_succeeded` is read in three places, defaults
 `FALSE`, and **nothing anywhere writes it** — `FULFILMENT-001` is the item that would, and `DEC-003`

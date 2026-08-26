@@ -205,6 +205,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # quote revision to APPROVED_EXACT; DEC-021 resolved on 2026-08-25 and the acceptance path
     # landed, so both claims became false on the same day and were retired together.
     assert "ABSENT_WRITER" not in counts
+    # 162 since DEC-023 was resolved and FULFILMENT-001 landed: the entry saying delivery
+    # orders cannot be settled or closed was deleted, because they now can. The M3 delivery
+    # entry was narrowed rather than deleted -- delivery_legs exists, delivery_bundles and
+    # distance_measurements still do not.
     # 164 since DEC-023 was opened: a `#/gaps` entry says delivery orders cannot be settled or
     # closed, which the 2026-08-26 lifecycle measurement found by running both fulfilment modes
     # end to end. Two gaps closed and one opened in three days; the register tracks reality.
@@ -217,7 +221,7 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # caught this is CONSOLE-ORDER-GAP-001's, which was written to fail on exactly this day.
     # 165 since the review log landed: one new DESCRIPTIVE guardrail on `screens/shadow.js`
     # telling the reader that nothing in that panel was ever sent to a customer.
-    assert sum(counts.values()) == _registry()["total"] == 164
+    assert sum(counts.values()) == _registry()["total"] == 162
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

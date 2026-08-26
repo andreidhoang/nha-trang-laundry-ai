@@ -27,6 +27,13 @@ from nha_trang_laundry_db.channel import (
 )
 from nha_trang_laundry_db.configurations import ConfigurationRepository, snapshot_hash
 from nha_trang_laundry_db.counter_tickets import CounterTicketRepository, IssuedTicket
+from nha_trang_laundry_db.delivery_legs import (
+    DeliveryLegKind,
+    DeliveryLegOutcome,
+    DeliveryLegRepository,
+    RecordDeliveryLegCommand,
+    StoredDeliveryLeg,
+)
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.incidents import (
@@ -452,6 +459,34 @@ class OperationsService:
             connection.cursor() as cursor,
         ):
             return self._approvals.list_pending(cursor, principal=principal, limit=limit)
+
+    # --- FULFILMENT-001 (DEC-023) -----------------------------------------------------------
+
+    def record_delivery_leg(
+        self,
+        *,
+        order_id: UUID,
+        leg_kind: DeliveryLegKind,
+        outcome: DeliveryLegOutcome,
+        principal: StaffPrincipal,
+    ) -> StoredDeliveryLeg:
+        """Record that the courier took laundry out, and whether it reached the customer.
+
+        `DEC-023`, resolved 2026-08-26. No amount crosses this method: the customer paid the exact
+        total at the counter before the laundry left, so a leg attests arrival and nothing else.
+        """
+
+        with self._connection_factory(self._database_url) as connection:
+            return DeliveryLegRepository().record(
+                connection,
+                RecordDeliveryLegCommand(
+                    order_id=order_id,
+                    leg_kind=leg_kind,
+                    outcome=outcome,
+                    principal=principal,
+                    correlation_id=uuid4(),
+                ),
+            )
 
     # --- COUNTER-TICKET-001 (DEC-013) -------------------------------------------------------
 

@@ -1,0 +1,136 @@
+schema_version: 1
+work_item: FULFILMENT-001
+recorded_at: '2026-08-26T20:10:00+07:00'
+requirement_contract: >-
+  `DEC-023`, ratified by the owner on 2026-08-26: khách giao hàng trả trước tại quầy. The customer
+  pays the exact quoted total at the counter before the laundry leaves, and a named staff member
+  records whether it arrived.
+
+  The requirement was measured, not assumed. Running the full lifecycle for both fulfilment modes
+  against the live database showed self-collection completing and a delivery order stopping at two
+  refusals: `settlement shape is not supported` and `INVALID_STATE_TRANSITION: fulfillment is
+  incomplete`.
+
+  The boundary is as much of the contract as the feature. No money crosses a delivery leg, no
+  driver identity or driver-facing surface exists, and no `delivery_bundles` or
+  `distance_measurements` were built.
+rollback_impact: >-
+  Reverting returns delivery orders to being takeable, priceable, workable and impossible to close
+  or pay for.
+
+  It is not a clean revert. Migration `0033` widens two CHECK constraints on `order_settlements`,
+  and any settlement row written as `EXACT_PAYMENT_PREPAID_DELIVERY` would violate the narrower
+  originals if they were restored -- `order_settlements` is append-only, so those rows cannot be
+  removed. A revert needs a forward migration that restores the constraints as `NOT VALID`, the same
+  shape `QUOTE-ACCEPT-001` recorded for `0031`.
+
+  The settlement domain change and the repository change must revert together: `evaluate_settlement`
+  gained a required `fulfillment_mode` argument, and reverting only the caller leaves a signature
+  mismatch. Reverting only the domain leaves the repository passing an argument nothing accepts.
+
+  `delivery_legs` rows survive and stay meaningful: each is a true record of an attempt a named
+  person made.
+unresolved_assumptions: >-
+  **Questions 2 and 3 of `DEC-023` were answered by engineering, not by the owner**, and the registry
+  entry says so explicitly. Staff record the leg because with money out of the picture it is an
+  ordinary attributed attestation like settlement and quote acceptance, and because no driver-facing
+  surface exists in this system. A failed delivery records the attempt, charges nothing and leaves
+  the order `ACTIVE`. If either is wrong about how the shop works, it is a correction to make rather
+  than a decision to re-run.
+
+  **CẦN XÁC MINH:** whether the shop takes payment before delivery in practice. The packet asked and
+  the owner ratified the recommendation; nothing here verifies the shop's current habit, and a shop
+  that actually runs COD would find this shape unusable and work around it on paper.
+
+  Ticket numbering aside, one operational fact the software cannot enforce: nothing checks that the
+  staff member recording a successful return actually saw the laundry handed over. It is an
+  attestation, exactly like settlement, and carries the same trust assumption.
+
+  Not claimed: that one return leg is the right model for an order delivered in two trips, or that
+  `PICKUP_ONLY` orders behave sensibly beyond falling back to self-collection. Both are shapes the
+  first real delivery orders will test.
+evidence:
+  a_delivery_order_reaches_completed_end_to_end: >-
+    Measured against a clean database through the real service and repository path on 2026-08-26,
+    including a failed attempt and a retry:
+
+        GIAO HANG 4KM   phieu#1   bao gia=130000d  chot=130000d
+           tra tien tai quay      -> EXACT_PAYMENT_PREPAID_DELIVERY  collected_by=PENDING_DELIVERY
+           giat xong
+           giao lan 1 THAT BAI    -> hoan tat fulfilment=False
+           giao lan 2 THANH CONG  -> hoan tat fulfilment=True
+           *** HOAN TAT ***  COMPLETED  balance=PAID  legs_ok=True  self_collect=False  so chuyen=2
+
+    Both fulfilment modes now complete. The walk-in path was proven on 2026-08-25 and is unchanged.
+
+    `self_collection_recorded` stays FALSE throughout, which is the point: the customer paid at the
+    counter and nobody collected anything. Setting it at settlement time would have completed the
+    order before the laundry moved, and the customer would never have been recorded as receiving it.
+  the_second_settlement_shape_is_the_same_money: >-
+    `SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY` joins an enum whose comment read "The one
+    supported shape. An enum of one, so adding a second is a visible decision." `DEC-023` is that
+    visible decision, and `test_every_shape_traces_to_a_signed_decision` -- which asserted a list of
+    one and failed the day a second appeared, exactly as designed -- now pins both with the decision
+    each traces to.
+
+    Both shapes are the exact total, in full, in one payment. `DEC-010` deferred partial payment,
+    deposits, instalments and `ON_ACCOUNT` credit, none of which this is, and
+    `test_a_delivery_order_still_cannot_be_part_paid` proves the amount rule is unchanged for the
+    new shape.
+
+    A correction to the record: the packet originally told the owner the settlement refusal was
+    `DEC-010`. It is not. `REFUSAL_DECISIONS` maps `COLLECTION_WAS_NOT_BY_THE_CUSTOMER` to
+    `DEC-003`, resolved -- so the settlement half was always waiting on the delivery work rather
+    than on a money decision. The packet file was corrected in the same change.
+
+    `evaluate_settlement` takes the order's `fulfillment_mode` rather than a second boolean, because
+    two ways to state one fact can disagree and then something has to decide which is right. The
+    contradictory combination -- an order that says the laundry travels, settled as collected at the
+    counter -- is refused rather than resolved, pinned by
+    `test_a_delivery_order_collected_at_the_counter_is_refused_as_contradictory`.
+  only_the_leg_that_means_arrival_completes_fulfilment: >-
+    `required_delivery_legs_succeeded` moves on a succeeded `RETURN` leg and on nothing else. A
+    succeeded `PICKUP` is the shop collecting laundry and completes nothing; a failed return
+    completes nothing. Pinned by `test_only_a_succeeded_return_leg_lets_the_order_be_completed`,
+    which records all three on one order and asserts the flag moves once.
+
+    `PICKUP_ONLY` has no return leg and is refused one, because that order is completed by
+    self-collection at the counter exactly as a walk-in is. A walk-in order cannot have a delivery
+    recorded at all -- `test_a_walk_in_order_cannot_have_a_delivery_recorded`.
+
+    One success per leg kind, enforced by a partial unique index on succeeded rows only. Failures
+    are unlimited because a retry is a new row, which is `DEC-023`'s question-3 answer expressed in
+    schema rather than in code. `test_the_same_return_cannot_succeed_twice` pins it.
+
+    A leg keys its domain event on the leg id, not the order id. Keying on the order was the first
+    version and it made the second attempt on any order impossible to record, because
+    `domain_events` is unique on `(type, id, version, event)`. The live probe caught it.
+  no_money_crosses_a_delivery_leg: >-
+    `delivery_legs` has no amount column, no payment method and no reconciliation field. That is the
+    owner's decision showing in the schema: had the answer to question 1 been "the driver collects
+    cash", the table would need all three plus a driver identity and an end-of-day process.
+
+    It also has no free-text note. "Khách không có nhà" is an operational sentence about a real
+    person and no retention class covers it (`DEC-019`, open), so the outcome is the record.
+
+    The route takes `leg_kind` and `outcome` and nothing else. The console control says in Vietnamese
+    that no money is involved and that a failed delivery charges nothing.
+  rollback_assessment: >-
+    See rollback_impact. One migration (`0033`), the settlement domain and repository, one new
+    repository module, one service method, one route, the orders screen, two `#/gaps` corrections
+    and the tests. The revert is not clean: restoring the narrowed settlement CHECK constraints
+    requires a forward migration marked NOT VALID, because rows written under this item cannot be
+    deleted from an append-only table.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

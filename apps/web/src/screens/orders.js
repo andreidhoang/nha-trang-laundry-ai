@@ -625,6 +625,71 @@ export function render_(_context) {
   render(moveBody, moveForm());
   void board.reload();
 
+  // FULFILMENT-001 / DEC-023. No amount field, deliberately: the money was taken at the counter.
+  const legDraft = { orderId: "", kind: "RETURN", outcome: "SUCCEEDED" };
+  const legResultHost = h("div", { class: "stack" });
+  const legResult = resultLine();
+  const legSubmission = new Submission("delivery-leg");
+  const legOrderInput = h("input", {
+    type: "text",
+    autocomplete: "off",
+    dataFormat: "id",
+    placeholder: "00000000-0000-0000-0000-000000000000",
+    onInput: (event) => {
+      legDraft.orderId = event.target.value;
+      legSubmission.reset();
+    },
+  });
+  const legKindSelect = enumSelect("leg_kind", ["RETURN", "PICKUP"], legDraft.kind);
+  legKindSelect.addEventListener("change", (event) => {
+    legDraft.kind = event.target.value;
+    legSubmission.reset();
+  });
+  const legOutcomeSelect = enumSelect("outcome", ["SUCCEEDED", "FAILED"], legDraft.outcome);
+  legOutcomeSelect.addEventListener("change", (event) => {
+    legDraft.outcome = event.target.value;
+    legSubmission.reset();
+  });
+  const legBody = h(
+    "form",
+    {
+      class: "form",
+      onSubmit: async (event) => {
+        event.preventDefault();
+        if (!UUID.test(legDraft.orderId.trim())) {
+          setResult(legResult, "danger", "Mã đơn chưa đúng dạng.");
+          render(legResultHost, legResult);
+          return;
+        }
+        setResult(legResult, "warn", "Đang ghi nhận…");
+        render(legResultHost, legResult);
+        try {
+          const recorded = await request(
+            `/internal/v1/orders/${encodeURIComponent(legDraft.orderId.trim())}/delivery-legs`,
+            { method: "POST", body: { leg_kind: legDraft.kind, outcome: legDraft.outcome } },
+          );
+          legSubmission.reset();
+          setResult(
+            legResult,
+            "ok",
+            recorded.completes_fulfillment
+              ? "Đã ghi. Khách đã nhận đồ — đơn này đóng được rồi."
+              : "Đã ghi chuyến giao.",
+          );
+          render(legResultHost, legResult);
+        } catch (error) {
+          setResult(legResult, error.kind === "REQUIRE_HUMAN" ? "warn" : "danger", "Không ghi được chuyến giao.");
+          render(legResultHost, legResult, errorNotice(error));
+          revealError(legResultHost);
+        }
+      },
+    },
+    labelled({ id: "leg-order", label: "Mã đơn hàng", control: legOrderInput }),
+    labelled({ id: "leg-kind", label: "Chuyến", control: legKindSelect }),
+    labelled({ id: "leg-outcome", label: "Kết quả", control: legOutcomeSelect }),
+    h("div", { class: "form__actions" }, h("button", { type: "submit", class: "button" }, "Ghi nhận")),
+  );
+
   return h(
     "section",
     { class: "screen" },
@@ -666,6 +731,15 @@ export function render_(_context) {
         "nó sang trình duyệt là tạo bản thứ hai không ai giữ cho khớp được. Cả tám đích đều được " +
         "chào; máy chủ từ chối cái nào không hợp lệ và nói rõ vướng ở đâu.",
       children: h("div", { class: "stack" }, moveBody, moveResultHost),
+    }),
+    panel({
+      eyebrow: "Lệnh · POST /internal/v1/orders/{id}/delivery-legs",
+      title: "Ghi nhận chuyến giao",
+      guardrail:
+        "Khách đã trả đủ tại quầy trước khi đồ rời tiệm, nên ghi nhận ở đây không có tiền — chỉ " +
+        "ghi đồ đã đến tay khách hay chưa. Giao hụt thì ghi thất bại, không tính thêm phí, và " +
+        "lần giao sau là một dòng mới. Chỉ chuyến TRẢ ĐỒ thành công mới cho phép đóng đơn.",
+      children: h("div", { class: "stack" }, legBody, legResultHost),
     }),
     panel({
       eyebrow: "Lệnh",

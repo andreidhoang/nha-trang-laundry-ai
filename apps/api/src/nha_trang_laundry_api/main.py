@@ -21,6 +21,11 @@ from nha_trang_laundry_db.approvals import (
 from nha_trang_laundry_db.assistant import AssistantAuthorizationError
 from nha_trang_laundry_db.channel import ChannelBindingError
 from nha_trang_laundry_db.counter_tickets import CounterTicketError
+from nha_trang_laundry_db.delivery_legs import (
+    DeliveryLegError,
+    DeliveryLegKind,
+    DeliveryLegOutcome,
+)
 from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import IdentityStateError, StaffPrincipal, StaffRole
 from nha_trang_laundry_db.intake import OrderRequestSummary
@@ -1077,6 +1082,58 @@ def issue_counter_ticket(
         ticket_id=issued.ticket_id,
         ticket_number=issued.ticket_number,
         issued_on=issued.issued_on,
+    )
+
+
+class DeliveryLegRequest(StrictRequest):
+    """One delivery attempt. There is no amount field: the customer already paid at the counter."""
+
+    leg_kind: DeliveryLegKind
+    outcome: DeliveryLegOutcome
+
+
+class DeliveryLegResponse(BaseModel):
+    leg_id: UUID
+    order_id: UUID
+    leg_kind: str
+    outcome: str
+    completes_fulfillment: bool
+
+
+@app.post(
+    "/internal/v1/orders/{order_id}/delivery-legs",
+    response_model=DeliveryLegResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_delivery_leg(
+    order_id: UUID,
+    request: DeliveryLegRequest,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> DeliveryLegResponse:
+    """Record that laundry went out, and whether the customer received it.
+
+    `DEC-023`, resolved 2026-08-26. A failed attempt is recorded and charges nothing; a retry is a
+    new leg. Only a succeeded return leg lets the order be completed, and the order transition still
+    enforces that separately.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        stored = service.record_delivery_leg(
+            order_id=order_id,
+            leg_kind=request.leg_kind,
+            outcome=request.outcome,
+            principal=principal,
+        )
+    except (StoreAccessError, DeliveryLegError) as error:
+        _raise_operations_error(error)
+    return DeliveryLegResponse(
+        leg_id=stored.leg_id,
+        order_id=stored.order_id,
+        leg_kind=stored.leg_kind,
+        outcome=stored.outcome,
+        completes_fulfillment=stored.completes_fulfillment,
     )
 
 

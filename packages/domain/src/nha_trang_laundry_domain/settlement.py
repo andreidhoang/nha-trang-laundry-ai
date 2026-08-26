@@ -28,13 +28,25 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
+from nha_trang_laundry_domain.catalog import FulfillmentMode
+
 MAX_SETTLEMENT_VND: Final = 9_007_199_254_740_991
 
 
 class SettlementShape(StrEnum):
-    """The one supported shape. An enum of one, so adding a second is a visible decision."""
+    """The supported shapes. Adding one is a visible decision, and the second was `DEC-023`.
 
+    Both are the same money: the exact quoted total, in full, in one payment. They differ only in
+    where the laundry goes afterwards, which is why `DEC-010` -- partial payment, deposits,
+    instalments, credit -- is untouched by the second.
+    """
+
+    #: Paid at the counter and carried home by the customer. The original and the common case.
     EXACT_PAYMENT_SELF_COLLECTION = "EXACT_PAYMENT_SELF_COLLECTION"
+    #: Paid at the counter when the laundry was dropped off, to be delivered afterwards. `DEC-023`
+    #: (2026-08-26): the shop is never owed money by somebody holding its laundry, and no driver
+    #: carries cash. Arrival is attested by a delivery leg, not by this settlement.
+    EXACT_PAYMENT_PREPAID_DELIVERY = "EXACT_PAYMENT_PREPAID_DELIVERY"
 
 
 class SettlementRefusal(StrEnum):
@@ -103,8 +115,13 @@ def evaluate_settlement(
     quoted: QuotedTotal,
     tendered_vnd: int,
     collected_by_customer: bool,
+    fulfillment_mode: FulfillmentMode,
 ) -> SettlementOutcome:
-    """Decide whether this is the one supported settlement shape.
+    """Decide whether this is a supported settlement shape.
+
+    `fulfillment_mode` is the order's own field rather than a second boolean saying the same thing,
+    because two ways to state one fact can disagree and then something has to decide which is
+    right.
 
     There is no tolerance and no rounding. `tendered_vnd` must equal the quoted total exactly: VND
     has no minor unit, the quote's total is an integer the engine already rounded once, and
@@ -123,9 +140,20 @@ def evaluate_settlement(
     if tendered_vnd != quoted.minimum_vnd:
         # Under, over, or a deposit: all DEC-010, and all refused rather than partially recorded.
         return _refuse(SettlementRefusal.AMOUNT_IS_NOT_THE_EXACT_TOTAL)
-    if not collected_by_customer:
+    if collected_by_customer:
+        if fulfillment_mode is not FulfillmentMode.SELF_DROP_SELF_COLLECT:
+            # The goods were handed back at the counter on an order that says they travel. One of
+            # the two is wrong and this module will not guess which.
+            return _refuse(SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER)
+        return SettlementAccepted(SettlementShape.EXACT_PAYMENT_SELF_COLLECTION, quoted.minimum_vnd)
+    if fulfillment_mode is FulfillmentMode.SELF_DROP_SELF_COLLECT:
+        # Nobody collected, and no delivery is expected either. Nothing has happened that a
+        # settlement could attest.
         return _refuse(SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER)
-    return SettlementAccepted(SettlementShape.EXACT_PAYMENT_SELF_COLLECTION, quoted.minimum_vnd)
+    # `DEC-023`: paid in full at the counter, laundry still to travel. Arrival is a delivery leg's
+    # fact, not this one's, and `transition_commercial` still refuses to complete the order until a
+    # leg says the customer has their laundry.
+    return SettlementAccepted(SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY, quoted.minimum_vnd)
 
 
 def _refuse(refusal: SettlementRefusal) -> SettlementNotSupported:

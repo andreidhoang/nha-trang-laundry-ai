@@ -80,6 +80,13 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "outside the idempotency wrapper so a revoked member cannot replay a key; asserted "
         "behaviourally in apps/api/tests/test_quote_command.py",
     ),
+    ("POST", "/internal/v1/stores/{store_id}/quotes/{quote_id}/acceptance"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "membership enforced in OperationsService.accept_quote before the revision is read, "
+        "and the quote row is selected with store_id in the predicate so a quote in another "
+        "store cannot be accepted even by a member of this one",
+    ),
     ("GET", "/internal/v1/stores/{store_id}/quotes"): store_scoped(
         "quotes", "QuoteRepository.list_for_store"
     ),

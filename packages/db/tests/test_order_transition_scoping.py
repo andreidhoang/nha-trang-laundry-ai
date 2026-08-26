@@ -27,7 +27,6 @@ from nha_trang_laundry_db.orders import (
     OrderRepository,
     OrderTransitionCommand,
 )
-from nha_trang_laundry_db.quotes import QuoteRepository, QuoteRevisionCommand
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     FulfillmentMode,
@@ -36,7 +35,7 @@ from nha_trang_laundry_domain.catalog import (
     QuoteRevisionStatus,
 )
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, build_quote_snapshot
-from quote_test_data import create_approval_envelope, make_quote_snapshot
+from quote_test_data import accepted_quote, make_quote_snapshot
 
 # Inside the test quote's validity window (PRICED_AT 2026-08-01, valid one day), because
 # OrderRepository.create refuses an accepted quote that has expired.
@@ -97,14 +96,9 @@ def _approved_final_quote(quote_id: UUID, approval_id: UUID) -> ImmutableQuoteSn
 
 
 def _order_in_store(connection: Any, store_id: UUID, owner: StaffPrincipal) -> UUID:
-    quote_id = uuid4()
-    # The revision cites an approval envelope, and migration 0029 checks that it exists.
-    quote = _approved_final_quote(
-        quote_id, create_approval_envelope(connection, requested_by=owner.staff_user_id)
-    )
-    QuoteRepository().create_revision(
-        connection,
-        QuoteRevisionCommand(store_id, uuid4(), quote, 0, 0, owner.staff_user_id, uuid4(), NOW),
+    # Priced, then accepted, then ordered -- the shape production produces since QUOTE-ACCEPT-001.
+    quote_id, revision, quote = accepted_quote(
+        connection, store_id=store_id, staff_user_id=owner.staff_user_id
     )
     stored = OrderRepository().create(
         connection,
@@ -112,7 +106,7 @@ def _order_in_store(connection: Any, store_id: UUID, owner: StaffPrincipal) -> U
             store_id,
             uuid4(),
             quote_id,
-            1,
+            revision,
             quote.document.snapshot_hash,
             FulfillmentMode.SELF_DROP_SELF_COLLECT,
             owner,

@@ -36,7 +36,6 @@ from nha_trang_laundry_db.orders import (
     OrderStateError,
     OrderTransitionCommand,
 )
-from nha_trang_laundry_db.quotes import QuoteRepository, QuoteRevisionCommand
 from nha_trang_laundry_domain.catalog import (
     ActorRole,
     ApprovalAction,
@@ -48,7 +47,7 @@ from nha_trang_laundry_domain.catalog import (
 )
 from nha_trang_laundry_domain.consent import OptOutDisposition, SuppressionState
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, build_quote_snapshot
-from quote_test_data import PRICED_AT, create_approval_envelope, make_quote_snapshot
+from quote_test_data import PRICED_AT, accepted_quote, make_quote_snapshot
 
 HASH_A = "JCS-SHA256-V1:" + "a" * 64
 HASH_B = "JCS-SHA256-V1:" + "b" * 64
@@ -374,31 +373,16 @@ def test_order_creation_transition_replay_authorization_and_atomic_audit(
     # Store membership is now required to create or read an order. OWNER_ADMIN is not implicitly a
     # member of every store, so the owner is assigned explicitly.
     _assign_store(postgres_connection, owner, store_id)
-    quote_id = uuid4()
-    # The revision cites an approval envelope, and migration 0029 checks that it exists.
-    quote = _approved_final_quote(
-        quote_id,
-        create_approval_envelope(postgres_connection, requested_by=owner.staff_user_id),
-    )
-    QuoteRepository().create_revision(
-        postgres_connection,
-        QuoteRevisionCommand(
-            store_id,
-            uuid4(),
-            quote,
-            0,
-            0,
-            owner.staff_user_id,
-            uuid4(),
-            NOW,
-        ),
+    # Priced, then accepted, then ordered -- the shape production produces since QUOTE-ACCEPT-001.
+    quote_id, quote_revision, quote = accepted_quote(
+        postgres_connection, store_id=store_id, staff_user_id=owner.staff_user_id
     )
     repository = OrderRepository()
     create = CreateOrderCommand(
         store_id,
         uuid4(),
         quote_id,
-        1,
+        quote_revision,
         quote.document.snapshot_hash,
         FulfillmentMode.PICKUP_AND_RETURN,
         owner,

@@ -78,8 +78,10 @@ def test_context_drift_check_passes() -> None:
     # is QUOTE-DELIVERY-FEE-001: every quote the shop could produce carried no delivery fee and
     # therefore no total, because compose_quote_revision never called evaluate_delivery, whose
     # answers the owner had already ratified. The shop could price laundry and not tell a customer
-    # the price.
-    assert "86 work items" in result.stdout
+    # the price. The eighty-seventh is QUOTE-ACCEPT-001, which implements DEC-021 and DEC-022 as
+    # the owner ratified them on 2026-08-25 and produces the first quote revision order creation
+    # will accept -- the first order in this system's history was created on that day.
+    assert "87 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

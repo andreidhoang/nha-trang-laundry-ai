@@ -185,6 +185,9 @@ class OrderBalanceStatus(StrEnum):
 
 class ApprovalAction(StrEnum):
     PRESENT_QUOTE = "PRESENT_QUOTE"
+    # DEC-021: the staff attestation that a customer accepted an exact price. Distinct from
+    # PRESENT_QUOTE, which authorises showing a price; this records that one was agreed.
+    FINALIZE_QUOTE = "FINALIZE_QUOTE"
     CONFIRM_SLOT = "CONFIRM_SLOT"
     SET_RANGE_PRICE = "SET_RANGE_PRICE"
     SET_DELIVERY_FEE = "SET_DELIVERY_FEE"

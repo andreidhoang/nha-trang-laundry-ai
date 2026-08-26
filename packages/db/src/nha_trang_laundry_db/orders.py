@@ -112,8 +112,20 @@ class OrderRepository:
         def create_once() -> dict[str, object]:
             with connection.cursor() as cursor:
                 cursor.execute(
+                    # `accepted` replaces the old `approval_id IS NOT NULL` check. Under DEC-021
+                    # (2026-08-25) an exact price is authorised by a staff acceptance attestation in
+                    # `quote_acceptances`, not by an approval envelope -- an envelope is two parties
+                    # and an attestation is one. The attestation names this exact revision and its
+                    # digest, and names the revision it produced -- which is the one an order is
+                    # created against, because a revision cannot be promoted in place. An order
+                    # still cannot be created against a price nobody accepted.
                     """
-                    SELECT q.store_id, r.finality, r.status, r.snapshot_hash, r.approval_id,
+                    SELECT q.store_id, r.finality, r.status, r.snapshot_hash,
+                           EXISTS (
+                               SELECT 1 FROM quote_acceptances a
+                               WHERE a.quote_id = r.quote_id
+                                 AND a.final_revision = r.revision
+                           ) AS accepted,
                            r.valid_until
                     FROM quotes q
                     JOIN quote_revisions r ON r.quote_id = q.id
@@ -128,7 +140,7 @@ class OrderRepository:
                 or str(quote[1]) != "APPROVED_EXACT"
                 or str(quote[2]) != "ACCEPTED_FINAL"
                 or str(quote[3]) != command.accepted_quote_snapshot_hash
-                or quote[4] is None
+                or not quote[4]
                 or (
                     quote[5] is not None
                     and command.customer_final_quote_accepted_at >= _datetime(quote[5])

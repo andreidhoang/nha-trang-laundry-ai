@@ -671,10 +671,9 @@ export function render_(_context) {
       eyebrow: "Lệnh",
       title: "Tạo đơn từ báo giá đã chốt",
       guardrail:
-        "Đơn chỉ được tạo từ một báo giá khách đã chốt và đã duyệt giá chính xác. Máy chủ kiểm " +
-        "lại toàn bộ điều kiện; màn hình này chỉ bắt lỗi gõ trước khi gửi. " +
-        "Hôm nay chưa có báo giá nào trong hệ thống đạt được trạng thái đó, nên lệnh này sẽ bị " +
-        "máy chủ từ chối — đó không phải lỗi bạn gõ sai.",
+        "Đơn chỉ được tạo từ một báo giá khách đã chốt. Bấm \u201cKhách đã chốt giá\u201d ở màn " +
+        "hình Báo giá trước, rồi mới tạo đơn ở đây. Máy chủ kiểm lại toàn bộ điều kiện; màn hình " +
+        "này chỉ bắt lỗi gõ trước khi gửi.",
       children: h("div", { class: "stack" }, createBody, createResultHost),
     }),
   );

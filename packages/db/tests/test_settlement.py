@@ -29,7 +29,6 @@ from nha_trang_laundry_db.orders import (
     OrderStateError,
     OrderTransitionCommand,
 )
-from nha_trang_laundry_db.quotes import QuoteRepository, QuoteRevisionCommand
 from nha_trang_laundry_db.settlement import (
     CollectedToday,
     SettlementAuthorizationError,
@@ -49,7 +48,7 @@ from nha_trang_laundry_domain.catalog import (
 )
 from nha_trang_laundry_domain.orders import IntakeReadiness
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, build_quote_snapshot
-from quote_test_data import create_approval_envelope, make_quote_snapshot
+from quote_test_data import accepted_quote, make_quote_snapshot
 
 NOW = datetime(2026, 8, 1, 3, tzinfo=UTC)
 #: Every intake blocker cleared. Intake acceptance is gated on six separate facts; this test is
@@ -113,14 +112,9 @@ def _approved_quote(
 
 
 def _order(connection: Any, store_id: UUID, staff: StaffPrincipal) -> UUID:
-    quote_id = uuid4()
-    # The revision cites an approval envelope, and migration 0029 checks that it exists.
-    quote = _approved_quote(
-        quote_id, create_approval_envelope(connection, requested_by=staff.staff_user_id)
-    )
-    QuoteRepository().create_revision(
-        connection,
-        QuoteRevisionCommand(store_id, uuid4(), quote, 0, 0, staff.staff_user_id, uuid4(), NOW),
+    # Priced, then accepted, then ordered -- the shape production produces since QUOTE-ACCEPT-001.
+    quote_id, revision, quote = accepted_quote(
+        connection, store_id=store_id, staff_user_id=staff.staff_user_id
     )
     stored = OrderRepository().create(
         connection,
@@ -128,7 +122,7 @@ def _order(connection: Any, store_id: UUID, staff: StaffPrincipal) -> UUID:
             store_id,
             uuid4(),
             quote_id,
-            1,
+            revision,
             quote.document.snapshot_hash,
             FulfillmentMode.SELF_DROP_SELF_COLLECT,
             staff,

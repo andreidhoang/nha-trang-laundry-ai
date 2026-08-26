@@ -28,7 +28,7 @@ a quantity is carry it verbatim and refuse when it cannot.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Final
 from uuid import UUID, uuid5
@@ -95,7 +95,14 @@ BASE_REASON_CODES: Final = (
 )
 DELIVERY_FEE_UNRESOLVED: Final = "DELIVERY_FEE_UNRESOLVED"
 DELIVERY_COMPONENT_VERSION: Final = "delivery-v1"
-BASE_REQUIRED_APPROVALS: Final = ("TAX_TREATMENT_UNVERIFIED",)
+# Empty since `DEC-022` (2026-08-25). The owner decided that tax treatment is settled by the
+# accountant after an order completes rather than being a condition of accepting one, so
+# TAX_TREATMENT_UNVERIFIED leaves this gate and stays in `BASE_REASON_CODES`. The distinction is the
+# decision's whole content: a reason code is a fact recorded on the immutable revision for whoever
+# reads it later; `required_approvals` is a gate `quotes.py:500` enforces against APPROVED_EXACT.
+# The flag is still true and still stamped on every revision. It is no longer a precondition of
+# taking the customer's laundry.
+BASE_REQUIRED_APPROVALS: Final[tuple[str, ...]] = ()
 
 # A service version identity has to be stable: the same pricebook version and the same service must
 # produce the same UUID on every host and every replay, or two revisions of one quote would appear
@@ -310,6 +317,73 @@ def _engine_line(line: RequestedLine) -> PriceLine:
         unit=line.unit,
         quantity_basis=line.quantity_basis,
     )
+
+
+ACCEPTANCE_REFUSALS: Final = {
+    "QUOTE_QUANTITY_NOT_MEASURED": (
+        "an exact price may not rest on a quantity the customer estimated"
+    ),
+    "QUOTE_DELIVERY_FEE_UNRESOLVED": "the delivery fee is not resolved, so there is no total",
+    "QUOTE_PROMOTION_NOT_EVALUATED": "a promotion was priced against but never evaluated",
+    "QUOTE_ALREADY_FINAL": "this quote has already been accepted",
+}
+
+
+def accept_quote_revision(
+    *,
+    priced: ImmutableQuoteSnapshot,
+    revision: int,
+) -> ComposedQuote | UnresolvedQuote:
+    """Derive the accepted revision from the priced one. `DEC-021`, resolved 2026-08-25.
+
+    **This never re-prices.** It takes the stored revision the customer was actually read -- the
+    same lines, totals, traces and pricebook reference -- and changes only what acceptance
+    changes:
+    finality, status, and the approval envelope behind it. Re-running the pricing engine here would
+    mean a pricebook republished between reading the price aloud and the customer saying yes could
+    silently bind them to a different number than they heard, and they would have agreed to a price
+    this system then did not honour.
+
+    A revision cannot be promoted in place -- `quote_revisions` is immutable by trigger -- so
+    acceptance is a new revision born accepted, which is also why the record shows both what was
+    quoted and what was agreed rather than overwriting one with the other.
+
+    The attestation is the authority, not this function and not the snapshot. It is written to
+    `quote_acceptances` in the same transaction, naming the staff member, the revision and its
+    digest, and `OrderRepository.create` reads it. `approval_id` stays `None`: an approval envelope
+    is two parties, and what the owner ratified is one.
+    """
+
+    data = priced.data
+    if data.finality is not QuoteFinality.ESTIMATE:
+        return UnresolvedQuote(("QUOTE_ALREADY_FINAL",))
+    if any(line.quantity_basis is QuantityBasis.CUSTOMER_ESTIMATE for line in data.lines):
+        # `quotes.py` refuses this too. Checked here so the operator is told which fact is missing
+        # rather than being handed one message for every possible refusal, because the person
+        # reading it has a customer standing in front of them.
+        return UnresolvedQuote(("QUOTE_QUANTITY_NOT_MEASURED",))
+    if data.totals.delivery_fee_vnd is None:
+        return UnresolvedQuote(("QUOTE_DELIVERY_FEE_UNRESOLVED",))
+    if (
+        any(item.config_type == "PROMOTION" for item in data.configuration_snapshots)
+        and data.promotion_eligibility_event is None
+    ):
+        return UnresolvedQuote(("QUOTE_PROMOTION_NOT_EVALUATED",))
+    try:
+        snapshot = build_quote_snapshot(
+            replace(
+                data,
+                revision=revision,
+                finality=QuoteFinality.APPROVED_EXACT,
+                status=QuoteRevisionStatus.ACCEPTED_FINAL,
+                required_approvals=(),
+            )
+        )
+    except QuoteSnapshotError:
+        # The validator refused an assembly the checks above did not anticipate. Refusing with a
+        # generic code is correct: presenting it as an accepted price would be worse than refusing.
+        return UnresolvedQuote((ErrorCode.VALIDATION_ERROR.value,))
+    return ComposedQuote(snapshot)
 
 
 def _delivery_outcome(

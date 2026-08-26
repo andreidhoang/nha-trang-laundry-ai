@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,7 +27,7 @@ from nha_trang_laundry_db.channel import (
 )
 from nha_trang_laundry_db.configurations import ConfigurationRepository, snapshot_hash
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
-from nha_trang_laundry_db.identity import StaffPrincipal
+from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.incidents import (
     IncidentOpenCommand,
     IncidentRepository,
@@ -50,6 +51,8 @@ from nha_trang_laundry_db.orders import (
     StoredOrder,
 )
 from nha_trang_laundry_db.quotes import (
+    QuoteAcceptanceCommand,
+    QuoteAcceptanceRepository,
     QuoteRepository,
     QuoteRevisionCommand,
     QuoteStateError,
@@ -87,11 +90,21 @@ from nha_trang_laundry_domain.quote_composition import (
     PricebookProvenance,
     RequestedLine,
     UnresolvedQuote,
+    accept_quote_revision,
     compose_quote_revision,
 )
-from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot
+from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, parse_quote_revision
 
 from nha_trang_laundry_api.auth import AuthSettings
+
+# The rule an acceptance is stamped with. `DEC-021` is the policy; the version moves when the
+# rule changes, so an attestation always names the rule in force when it was signed.
+QUOTE_ACCEPTANCE_POLICY_VERSION = "quote-acceptance-dec-021-v1"
+# "Nhân viên đang trực quầy được chốt giá" -- the owner's words. OWNER_ADMIN is included because
+# a supervisor is never locked out of what their staff may do.
+QUOTE_ACCEPTANCE_ROLES = frozenset(
+    {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.OPERATOR}
+)
 
 
 class OperationsUnavailable(RuntimeError):
@@ -438,6 +451,124 @@ class OperationsService:
             connection.cursor() as cursor,
         ):
             return self._approvals.list_pending(cursor, principal=principal, limit=limit)
+
+    # --- QUOTE-ACCEPT-001 (DEC-021) ---------------------------------------------------------
+    #
+    # The staff attestation that a customer agreed to an exact price, ratified by the owner on
+    # 2026-08-25: a named staff member on duty confirms it, one person suffices, and the control is
+    # attribution plus immutability plus owner review rather than a second signature.
+    #
+    # The attestation is written to `quote_acceptances`, not to an approval envelope. An envelope is
+    # two parties and `approvals.py:542` refuses to let one person be both; forcing an attestation
+    # through it would have meant relaxing a control that protects sends, cancellations and every
+    # financial action. `SETTLEMENT-001` records money received the same way, and the owner's own
+    # resolution names it as the precedent.
+
+    def accept_quote(
+        self,
+        *,
+        store_id: UUID,
+        quote_id: UUID,
+        expected_current_revision: int,
+        expected_snapshot_hash: str,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> QuoteRevisionResult | UnresolvedQuoteResult:
+        """Record the attestation and derive the accepted revision from the priced one."""
+
+        if not principal.roles & QUOTE_ACCEPTANCE_ROLES or not principal.mfa_verified:
+            raise StoreAccessError("accepting a quote requires an operations role with MFA")
+        accepted_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            with connection.cursor() as cursor:
+                require_store_membership(
+                    cursor,
+                    staff_user_id=principal.staff_user_id,
+                    store_id=store_id,
+                    error=StoreAccessError,
+                )
+                cursor.execute(
+                    """
+                    SELECT current_revision, row_version, bound_order_request_id
+                    FROM quotes WHERE id = %s AND store_id = %s AND lifecycle = 'OPEN'
+                    """,
+                    (quote_id, store_id),
+                )
+                container = cursor.fetchone()
+                if container is None:
+                    raise QuoteStateError("quote is missing, closed, or not in this store")
+                current_revision = int(container[0])
+                row_version = int(container[1])
+                bound_order_request_id = container[2]
+                if current_revision != expected_current_revision:
+                    # Someone repriced between the operator reading the screen and pressing the
+                    # button. Refusing is the point: an attestation must name the revision the
+                    # customer actually agreed to, not whichever one is newest.
+                    raise QuoteStateError(
+                        "quote moved since it was read; read it to the customer again"
+                    )
+                stored = QuoteRepository.get_revision(cursor, quote_id, current_revision)
+            if stored is None:
+                raise QuoteStateError("quote revision is missing")
+            if not hmac.compare_digest(stored.document.snapshot_hash, expected_snapshot_hash):
+                raise QuoteStateError("quote content changed since it was read")
+
+            priced = parse_quote_revision(json.loads(stored.document.canonical_json))
+            composition = accept_quote_revision(priced=priced, revision=current_revision + 1)
+            if isinstance(composition, UnresolvedQuote):
+                # Refused before anything is written. The reason codes name which fact is missing --
+                # most often that the quantity was the customer's estimate rather than a weighing.
+                return UnresolvedQuoteResult(composition.reason_codes)
+
+            total = priced.data.totals.display_total_min_vnd
+            if total is None:
+                return UnresolvedQuoteResult(("QUOTE_DELIVERY_FEE_UNRESOLVED",))
+            correlation_id = uuid4()
+            QuoteAcceptanceRepository().record(
+                connection,
+                QuoteAcceptanceCommand(
+                    store_id=store_id,
+                    quote_id=quote_id,
+                    accepted_revision=current_revision,
+                    accepted_snapshot_hash=stored.document.snapshot_hash,
+                    final_revision=current_revision + 1,
+                    display_total_vnd=total,
+                    accepted_by=principal.staff_user_id,
+                    correlation_id=correlation_id,
+                    policy_version=QUOTE_ACCEPTANCE_POLICY_VERSION,
+                    accepted_at=accepted_at,
+                ),
+            )
+            QuoteRepository().create_revision(
+                connection,
+                QuoteRevisionCommand(
+                    store_id=store_id,
+                    bound_order_request_id=bound_order_request_id,
+                    snapshot=composition.snapshot,
+                    expected_current_revision=current_revision,
+                    expected_row_version=row_version,
+                    created_by=principal.staff_user_id,
+                    correlation_id=correlation_id,
+                    occurred_at=accepted_at,
+                ),
+            )
+            accepted = composition.snapshot
+            totals = accepted.data.totals
+            return QuoteRevisionResult(
+                quote_id=accepted.data.quote_id,
+                revision=accepted.data.revision,
+                row_version=row_version + 1,
+                finality=accepted.data.finality.value,
+                status=accepted.data.status.value,
+                snapshot_hash=accepted.document.snapshot_hash,
+                list_service_subtotal_vnd=totals.list_service_subtotal_max_vnd,
+                net_service_subtotal_vnd=totals.net_service_subtotal_max_vnd,
+                display_total_min_vnd=totals.display_total_min_vnd,
+                display_total_max_vnd=totals.display_total_max_vnd,
+                reason_codes=accepted.data.reason_codes,
+                required_approvals=accepted.data.required_approvals,
+                replayed=False,
+            )
 
     # --- QUOTE-COMMAND-001 ------------------------------------------------------------------
     #

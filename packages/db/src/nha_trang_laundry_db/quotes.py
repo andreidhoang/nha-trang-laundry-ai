@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from nha_trang_laundry_domain.canonical import CanonicalDocument, canonical_document
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, verify_quote_snapshot
@@ -302,3 +302,101 @@ def _optional_timestamp(value: object) -> datetime | None:
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise QuoteIntegrityError("stored quote timestamp is invalid")
     return value
+
+
+@dataclass(frozen=True)
+class QuoteAcceptanceCommand:
+    """One staff member's record that a customer accepted this exact revision.
+
+    `DEC-021`, resolved 2026-08-25. The shape follows `order_settlements`: a fact a named person
+    witnessed at the counter, written once, never edited. It names the revision *and* its digest, so
+    the attestation cannot later be read as being about different content.
+    """
+
+    store_id: UUID
+    quote_id: UUID
+    accepted_revision: int
+    accepted_snapshot_hash: str
+    final_revision: int
+    display_total_vnd: int
+    accepted_by: UUID
+    correlation_id: UUID
+    policy_version: str
+    accepted_at: datetime | None = None
+
+
+class QuoteAcceptanceRepository:
+    """Write and read the attestation that stands behind an exact price."""
+
+    def record(self, connection: Any, command: QuoteAcceptanceCommand) -> UUID:
+        """Write the attestation, or refuse because this revision was already accepted.
+
+        The UNIQUE on `(quote_id, accepted_revision)` makes acceptance single-shot. A second attempt
+        is a conflict rather than a second attestation, which matters because two rows would leave
+        no answer to "who chốt this" -- the question the owner's decision exists to make answerable.
+        """
+
+        acceptance_id = uuid4()
+        occurred_at = command.accepted_at or datetime.now(UTC)
+
+        def mutation(cursor: Any) -> None:
+            cursor.execute(
+                """
+                INSERT INTO quote_acceptances (
+                    id, store_id, quote_id, accepted_revision, accepted_snapshot_hash,
+                    final_revision, display_total_vnd, accepted_by, accepted_at, correlation_id,
+                    policy_version
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (quote_id, accepted_revision) DO NOTHING
+                RETURNING id
+                """,
+                (
+                    acceptance_id,
+                    command.store_id,
+                    command.quote_id,
+                    command.accepted_revision,
+                    command.accepted_snapshot_hash,
+                    command.final_revision,
+                    command.display_total_vnd,
+                    command.accepted_by,
+                    occurred_at,
+                    command.correlation_id,
+                    command.policy_version,
+                ),
+            )
+            if cursor.fetchone() is None:
+                raise QuoteStateError("this quote revision has already been accepted")
+
+        commit_material_change(
+            connection,
+            MaterialChange(
+                aggregate_type="QUOTE_ACCEPTANCE",
+                aggregate_id=command.quote_id,
+                aggregate_version=command.accepted_revision,
+                event_type="QUOTE_ACCEPTED_BY_CUSTOMER",
+                event_payload={
+                    "acceptance_id": str(acceptance_id),
+                    "accepted_revision": command.accepted_revision,
+                    "accepted_snapshot_hash": command.accepted_snapshot_hash,
+                    "display_total_vnd": command.display_total_vnd,
+                    "policy_version": command.policy_version,
+                },
+                audit_action="QUOTE_ACCEPT",
+                actor_type="STAFF",
+                actor_id=command.accepted_by,
+                correlation_id=command.correlation_id,
+                outbox_events=(
+                    OutboxEvent(
+                        "quote.accepted.v1",
+                        {
+                            "quote_id": str(command.quote_id),
+                            "acceptance_id": str(acceptance_id),
+                        },
+                        f"quote:{command.quote_id}:acceptance",
+                    ),
+                ),
+                occurred_at=occurred_at,
+            ),
+            mutation,
+        )
+        return acceptance_id

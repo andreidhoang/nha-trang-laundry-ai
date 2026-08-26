@@ -345,7 +345,7 @@ decisions:
       blocker rather than worked around.
   - id: DEC-021
     title: When a quote becomes final, who may make it so, and how that is recorded
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW]
     fail_closed_behavior: NOT_SUPPORTED
@@ -369,3 +369,61 @@ decisions:
       real orders and its task packet does not list order creation among the conditions before the
       first order; no work item among the 82 in the queue owns this. The console discloses the
       refusal under CONSOLE-ORDER-GAP-001 and no code routes around it.
+    resolved_at: '2026-08-25'
+    decision_record: docs/DECISION_REQUEST_QUOTE_APPROVAL_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record — questions 1 and 2 of the packet,
+      option A, staff attestation — in Vietnamese on 2026-08-25: "Một bản báo giá được coi là đã
+      chốt khi nhân viên có tên xác nhận rằng khách đã đồng ý với mức giá đã đọc. Hệ thống ghi lại
+      lời xác nhận đó kèm tên người xác nhận, không tự suy ra." and "Nhân viên đang trực quầy được
+      chốt giá. Mỗi lần chốt ghi tên người chốt, không sửa được, và chủ tiệm xem lại được toàn bộ."
+
+      The authority is recorded rather than inferred, following the precedent SETTLEMENT-001 set: a
+      fact a named staff member witnesses at the counter, written as an attributed append-only
+      attestation. One person suffices. The control is attribution, immutability and owner review
+      rather than a second signature, because a shift with one person on duty is a real shift and a
+      system that blocks it would be worked around on paper — which would cost the shop both the
+      control and the record.
+
+      Question 3 needed no decision: the delivery fee schedule was already decided (DEC-003 for over
+      6km, plus the owner-confirmed schedule under it) and QUOTE-DELIVERY-FEE-001 wired the engine
+      into the quote path on 2026-08-24. Question 4 was answered in the same message and is
+      registered separately as DEC-022, because it is a distinct policy about tax rather than about
+      when a price becomes final.
+  - id: DEC-022
+    title: Whether unverified tax treatment blocks accepting an order
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_QUOTE_APPROVAL_2026-08.md
+    opened_at: '2026-08-25'
+    question: >-
+      Every quote revision carries TAX_TREATMENT_UNVERIFIED in required_approvals
+      (quote_composition.py BASE_REQUIRED_APPROVALS), and quotes.py:500 refuses APPROVED_EXACT while
+      required_approvals is non-empty. So the flag is a third independent reason no order can be
+      created, alongside DEC-021 and the delivery fee. Searching every entry of this registry on
+      2026-08-24 found no decision about tax at all: it was an unregistered blocker, surfaced as
+      question 4 of the DEC-021 packet rather than as an entry here. The owner decides whether tax
+      treatment is a condition of accepting an order or an accounting matter handled afterwards.
+    blocking_today: >-
+      Registered and resolved in the same change, so it blocked nothing between opening and
+      resolution. Before it was registered it was blocking every order in the business as one of
+      three independent causes.
+    resolved_at: '2026-08-25'
+    decision_record: docs/DECISION_REQUEST_QUOTE_APPROVAL_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record — question 4 of the packet — in
+      Vietnamese on 2026-08-25: "Cách xử lý thuế là việc kế toán làm sau khi đơn hoàn tất, không phải
+      điều kiện để nhận đơn. Cờ TAX_TREATMENT_UNVERIFIED được gỡ khỏi điều kiện chốt giá và ghi lại
+      như một ghi chú kế toán."
+
+      TAX_TREATMENT_UNVERIFIED therefore leaves required_approvals and stays in reason_codes. The
+      distinction is deliberate and is the whole content of the decision: a reason code is a fact
+      recorded on the immutable revision for whoever reads it later, while required_approvals is a
+      gate the machine enforces. The flag remains true and remains visible; it stops being a
+      condition of taking the customer's laundry.
+
+      Not decided here: what the correct tax treatment is. That stays unverified, is still stamped on
+      every revision, and is the accountant's to settle. This decision says only that settling it is
+      not a precondition of accepting an order.

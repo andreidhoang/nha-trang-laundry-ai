@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
-from typing import Final
+from typing import Any, Final
 from uuid import UUID
 
 from nha_trang_laundry_domain.canonical import (
@@ -480,9 +481,15 @@ def _validate_finality(data: QuoteRevisionData) -> None:
         _aware(acknowledged)
         if data.finality is not QuoteFinality.ESTIMATE or acknowledged < data.priced_at:
             raise QuoteSnapshotError("estimate acknowledgment evidence is invalid")
+    # `approval_id` is deliberately not required here. Under `DEC-021` (resolved 2026-08-25) the
+    # authority behind an exact price is a staff acceptance attestation recorded in
+    # `quote_acceptances`, not an approval envelope -- an envelope is two parties and an attestation
+    # is one, and `approvals.py:542` refuses to let one person be both. The attestation is a fact
+    # about the world that a snapshot cannot see, so it is enforced where it is visible:
+    # `OrderRepository.create` will not create an order against a revision with no acceptance row.
+    # The column and its foreign key remain for a genuine two-party approval.
     if data.finality is QuoteFinality.APPROVED_EXACT and (
-        not isinstance(data.approval_id, UUID)
-        or data.required_approvals
+        data.required_approvals
         or data.totals.delivery_fee_vnd is None
         or any(line.quantity_basis is QuantityBasis.CUSTOMER_ESTIMATE for line in data.lines)
         or (
@@ -531,3 +538,130 @@ def _aware(value: datetime) -> None:
 
 def _positive_int(value: int) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+class QuoteRevisionParseError(ValueError):
+    """A stored revision payload could not be read back as the revision it claims to be."""
+
+
+def parse_quote_revision(payload: Mapping[str, Any]) -> ImmutableQuoteSnapshot:
+    """Read a stored revision payload back into the snapshot it was written from.
+
+    Nothing else in this package deserialises a revision, because until now nothing needed to: a
+    revision was written and read as columns. Accepting a quote (`DEC-021`) needs the whole of the
+    priced revision back, because the accepted revision is *derived* from it rather than
+    re-priced -- re-pricing would let a pricebook republished between reading a price aloud and
+    the customer
+    agreeing bind them to a number they never heard.
+
+    **The parse proves itself.** Whatever this function reconstructs is passed back through
+    `build_quote_snapshot`, which recomputes the canonical document and every total from the
+    parts; the caller then compares that digest with the one stored beside the payload. A field
+    this parser
+    dropped, mistyped or silently defaulted changes the digest, so a wrong parse cannot be used;
+    it can only fail. That is why the reconstruction below is allowed to be mechanical.
+    """
+
+    try:
+        data = QuoteRevisionData(
+            schema_version=int(payload["schema_version"]),
+            quote_id=_uuid(payload["quote_id"]),
+            revision=int(payload["revision"]),
+            finality=QuoteFinality(str(payload["finality"])),
+            status=QuoteRevisionStatus(str(payload["status"])),
+            priced_at=_moment(payload["priced_at"]),
+            valid_until=_optional_moment(payload.get("valid_until")),
+            currency=str(payload["currency"]),
+            configuration_snapshots=tuple(
+                ConfigurationSnapshotReference(
+                    config_type=str(item["config_type"]),
+                    version_id=_uuid(item["version_id"]),
+                    version=int(item["version"]),
+                    snapshot_hash=str(item["snapshot_hash"]),
+                )
+                for item in payload["configuration_snapshots"]
+            ),
+            lines=tuple(_line(item) for item in payload["lines"]),
+            adjustments=tuple(_adjustment(item) for item in payload["adjustments"]),
+            totals=QuoteTotalsSnapshot(
+                **{key: payload["totals"][key] for key in payload["totals"]}
+            ),
+            calculation_traces=tuple(
+                CalculationTraceSnapshot(
+                    component=str(item["component"]),
+                    engine_version=str(item["engine_version"]),
+                    trace=canonical_document(item["trace"]),
+                )
+                for item in payload["calculation_traces"]
+            ),
+            calculation_engine_version=str(payload["calculation_engine_version"]),
+            calculation_engine_hash=str(payload["calculation_engine_hash"]),
+            promotion_eligibility_event=(
+                None
+                if payload.get("promotion_eligibility_event") is None
+                else PromotionEligibilityEvent(str(payload["promotion_eligibility_event"]))
+            ),
+            promotion_eligibility_at=_optional_moment(payload.get("promotion_eligibility_at")),
+            reason_codes=tuple(str(code) for code in payload["reason_codes"]),
+            required_approvals=tuple(str(code) for code in payload["required_approvals"]),
+            approval_id=(
+                None if payload.get("approval_id") is None else _uuid(payload["approval_id"])
+            ),
+            tax_treatment=str(payload.get("tax_treatment", "UNVERIFIED")),
+            customer_estimate_acknowledged_at=_optional_moment(
+                payload.get("customer_estimate_acknowledged_at")
+            ),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise QuoteRevisionParseError("stored quote revision is not readable") from error
+    try:
+        return build_quote_snapshot(data)
+    except QuoteSnapshotError as error:
+        raise QuoteRevisionParseError("stored quote revision does not rebuild") from error
+
+
+def _line(item: Mapping[str, Any]) -> QuoteLineSnapshot:
+    amounts = item["amounts"]
+    return QuoteLineSnapshot(
+        line_id=str(item["line_id"]),
+        service_code=str(item["service_code"]),
+        service_version_id=_uuid(item["service_version_id"]),
+        quantity_basis=QuantityBasis(str(item["quantity_basis"])),
+        quantity=str(item["quantity"]),
+        unit=Unit(str(item["unit"])),
+        amounts=(
+            ExactLineAmounts(**{key: amounts[key] for key in amounts})
+            if str(amounts["kind"]) == "EXACT"
+            else RangeLineAmounts(**{key: amounts[key] for key in amounts})
+        ),
+        price_trace_hash=str(item["price_trace_hash"]),
+    )
+
+
+def _adjustment(item: Mapping[str, Any]) -> QuoteAdjustmentSnapshot:
+    return QuoteAdjustmentSnapshot(
+        adjustment_id=str(item["adjustment_id"]),
+        kind=QuoteAdjustmentKind(str(item["kind"])),
+        direction=AdjustmentDirection(str(item["direction"])),
+        amount_min_vnd=int(item["amount_min_vnd"]),
+        amount_max_vnd=int(item["amount_max_vnd"]),
+        reason_code=str(item["reason_code"]),
+        source_version_id=(
+            None if item.get("source_version_id") is None else _uuid(item["source_version_id"])
+        ),
+        approval_id=(None if item.get("approval_id") is None else _uuid(item["approval_id"])),
+    )
+
+
+def _uuid(value: object) -> UUID:
+    return value if isinstance(value, UUID) else UUID(str(value))
+
+
+def _moment(value: object) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def _optional_moment(value: object) -> datetime | None:
+    return None if value is None else _moment(value)

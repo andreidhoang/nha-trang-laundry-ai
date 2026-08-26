@@ -1,0 +1,157 @@
+schema_version: 1
+work_item: QUOTE-ACCEPT-001
+recorded_at: '2026-08-25T17:20:00+07:00'
+requirement_contract: >-
+  `DEC-021` and `DEC-022`, ratified by the owner on 2026-08-25 in Vietnamese and recorded verbatim in
+  `context/DECISION_REGISTRY.yaml`. A quote is chốt when a named staff member confirms the customer
+  agreed to the price read to them; the staff member on duty at the counter may do it; the control is
+  attribution, immutability and owner review rather than a second signature. Tax treatment is
+  settled by the accountant afterwards and is not a condition of accepting an order.
+
+  Three independent conditions refused every order before this item and had to clear together: no
+  path produced `APPROVED_EXACT`; `delivery_fee_vnd` was NULL so no revision carried a total
+  (cleared by `QUOTE-DELIVERY-FEE-001` on 2026-08-24); and `TAX_TREATMENT_UNVERIFIED` sat in
+  `required_approvals`, which `quotes.py` refuses against `APPROVED_EXACT`.
+
+  The boundary is part of the contract. Separation of duty is not weakened anywhere, no price is
+  recomputed on the acceptance path, and this does not make the shop able to serve a walk-in
+  customer.
+rollback_impact: >-
+  Reverting returns the system to a state where no order can be created at all, because acceptance
+  is the only producer of a revision `OrderRepository.create` accepts.
+
+  It is not a clean revert. Migration `0031` drops the CHECK requiring `approval_id` on
+  `APPROVED_EXACT`, and any revision written while it was absent would violate that CHECK if it were
+  restored -- `quote_revisions` is append-only, so those rows cannot be removed. A revert therefore
+  needs a forward migration that restores the CHECK as `NOT VALID`, plus reverting the domain
+  validator, the order guard, the service, the route and the console together. Reverting the order
+  guard alone would leave orders creatable against revisions with no attestation, which is worse than
+  either state.
+
+  Data written by this path survives a revert and stays meaningful: `quote_acceptances` rows are true
+  records of what a named person attested, and the orders created from them remain valid orders.
+
+  The `#/gaps` entry deleted here would have to be restored by hand; it was removed rather than
+  reworded because the gap it described is closed.
+unresolved_assumptions: >-
+  **The shop still cannot serve a walk-in customer.** `CreateOrderCommand.bound_contact_id` is
+  required and the only writer of a contact binding is keyed on a channel identity, so an order can
+  be created for a customer who already has one and a walk-in has no way to get one. That is
+  `DEC-013`/`DEC-015`, both still `OPEN`. The live order proven below used a binding that already
+  existed in seeded data. This item removes three of four reasons no order could be created; the
+  fourth is a decision, not code.
+
+  **The first design was wrong and the record should say so.** Routing the attestation through an
+  approval envelope failed at `approvals.py:542` -- `requester cannot approve their own action`.
+  The rule is right, and the resolution's own reference to `SETTLEMENT-001` pointed at the correct
+  primitive. The wrong turn cost a migration (`0030`, which added the `FINALIZE_QUOTE` action) that
+  is retained because the action is a coherent name for a two-party quote approval if one is ever
+  wanted, and removing an applied migration is worse than keeping an unused enum member. Nothing
+  uses it today.
+
+  **CẦN XÁC MINH:** whether thirty minutes is the right window for an acceptance to remain valid.
+  `_COUNTER_ATTESTATION` declares it and nothing enforces it on this path, because the attestation is
+  recorded at the moment of agreement rather than raised and later executed. It becomes load-bearing
+  only if acceptance ever becomes a two-step flow.
+
+  Not claimed: that `quote_acceptances` is the right home for a future two-party quote approval, or
+  that the accepted revision's `valid_until` (inherited from the priced revision) is the right expiry
+  for an accepted price. Both are live questions the first real orders will answer.
+evidence:
+  a_named_staff_member_accepts_and_the_attestation_is_recorded: >-
+    Proven against the live demo database through `OperationsService.accept_quote` -- the real
+    service path with real PostgreSQL -- on 2026-08-25:
+
+        1. BAO GIA   rev1 ESTIMATE                      total=120000
+        2. CHOT GIA  rev2 APPROVED_EXACT/ACCEPTED_FINAL total=120000
+           ghi nhan: nguoi chot=4c055b87  luc=09:37  tong=120000
+
+    `quote_acceptances` holds one row naming the staff member, the revision they accepted, that
+    revision's digest, the revision it produced, the displayed total and the policy version. It is
+    append-only by the shared ledger trigger and UNIQUE on `(quote_id, accepted_revision)` and on
+    `(quote_id, final_revision)`, so acceptance is single-shot.
+
+    Pinned by `test_a_named_staff_member_accepts_a_quote_and_the_attestation_is_recorded`,
+    `test_a_quote_priced_from_the_customers_own_estimate_cannot_be_accepted` (refused with
+    `QUOTE_QUANTITY_NOT_MEASURED` and no row written), and
+    `test_accepting_a_quote_twice_is_a_conflict_not_a_second_attestation`.
+  the_accepted_revision_is_derived_not_repriced: >-
+    The accepted revision carries the priced revision's exact lines, totals, adjustments and traces;
+    only finality, status and `required_approvals` change. Nothing on this path calls the pricing
+    engine. Re-pricing would let a pricebook republished between reading a price aloud and the
+    customer's answer bind them to a number they never heard.
+
+    Deriving requires reading a stored revision back, which nothing in this repository could do.
+    `parse_quote_revision` does, and it proves itself rather than being trusted: whatever it
+    reconstructs is rebuilt through `build_quote_snapshot` and compared with the digest stored beside
+    the payload, so a field dropped, mistyped or silently defaulted changes the digest and the parse
+    fails instead of being used.
+
+    Measured against every stored revision in the live database, including five written before the
+    delivery-fee change and therefore of a different shape (no adjustments, no delivery trace, null
+    fee): **7 of 7 round-tripped to an identical digest, 0 mismatched.**
+
+    The service also refuses if the revision or its digest moved between the operator reading the
+    screen and pressing the button, so an attestation cannot name content the customer never saw.
+  an_order_can_now_be_created_and_still_cannot_without_an_acceptance: >-
+    The first order in this system's history, created against the live database on 2026-08-25:
+
+        order d1c7d545  REQUESTED/AWAITING_HANDOFF/NOT_STARTED  SELF_DROP_SELF_COLLECT
+
+    `OrderRepository.create` no longer tests `approval_id IS NOT NULL`. It tests that an acceptance
+    row exists whose `final_revision` is the revision being ordered against. The two-number link is
+    deliberate and was a correction: the first version matched on `accepted_revision`, which is the
+    revision the customer heard, while an order is created against the derived revision. Matching by
+    arithmetic (`revision - 1`) would have been implicit; the attestation records both numbers so the
+    guard reads the link instead of inferring it.
+
+    A revision with no acceptance is still refused, which is the same 409 the console has disclosed
+    since `CONSOLE-ORDER-GAP-001` -- it is now the exception rather than the rule.
+  separation_of_duty_was_not_weakened: >-
+    `packages/db/src/nha_trang_laundry_db/approvals.py` is untouched. `_authorize_decision` still
+    refuses to let one person request and decide an approval, for every action, and that is why the
+    attestation is not an approval: it is one party recording a witnessed fact, which the envelope
+    was never meant to express.
+
+    The alternative -- exempting `FINALIZE_QUOTE` from the rule -- was rejected because it would have
+    relaxed a control protecting sends, cancellations, remedies and every financial action, and
+    because the owner's own resolution named `SETTLEMENT-001` as its precedent, which does not use
+    an envelope either.
+
+    `DEC-022` removes `TAX_TREATMENT_UNVERIFIED` from `required_approvals` and keeps it in
+    `reason_codes`. The flag is still true and still stamped on every revision; it stops being a
+    gate. What the correct tax treatment is remains unverified and unregistered, and is the
+    accountant's.
+  the_false_disclosures_came_down: >-
+    `CONSOLE-ORDER-GAP-001` bound two disclosures to a test that fails when a production writer for
+    `APPROVED_EXACT` appears. It fired on this change, naming
+    `quote_composition.py:377` as the writer. That is the guard working exactly as designed, on
+    exactly the day it was built for.
+
+    The `#/gaps` entry "Tạo đơn từ một báo giá" was deleted rather than reworded, because the gap it
+    described is closed. The order screen's guardrail no longer tells operators the command will be
+    refused; it tells them to accept the quote first. The `ABSENT_WRITER` binding class is gone
+    entirely -- both its slots made the same claim and both became false together.
+
+    The registry was regenerated, not hand-edited, and `sw.js` regenerated so the corrected strings
+    reach a returning operator. `verify_contracts.py` reports 164 disclosures and 40 served
+    operations, both changed deliberately and both re-pinned.
+  rollback_assessment: >-
+    See rollback_impact. Two migrations (`0030`, `0031`), the domain validator and composer, the
+    quote and order repositories, the service, one new route, the console quote screen, three
+    regenerated artifacts, and the tests. The revert is not clean -- restoring the dropped CHECK
+    requires a forward migration marked NOT VALID, because rows written under this item cannot be
+    deleted from an append-only table.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

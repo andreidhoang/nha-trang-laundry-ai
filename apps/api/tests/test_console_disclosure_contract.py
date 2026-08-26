@@ -201,10 +201,17 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     assert counts.get("RESPONSE_SHAPE") == 1
     assert counts.get("READ_ONLY_MODULE") == 1
     assert counts.get("MODEL_SEAM") == 2
-    assert counts.get("ABSENT_WRITER") == 2
+    # ABSENT_WRITER is gone entirely, not reduced. Both slots claimed that nothing raises a
+    # quote revision to APPROVED_EXACT; DEC-021 resolved on 2026-08-25 and the acceptance path
+    # landed, so both claims became false on the same day and were retired together.
+    assert "ABSENT_WRITER" not in counts
+    # 164 since QUOTE-ACCEPT-001: the `#/gaps` entry claiming no path raises a quote to
+    # APPROVED_EXACT was deleted rather than reworded, because the gap it described is closed --
+    # DEC-021 resolved and the acceptance path landed. Its slots went with it. The guard that
+    # caught this is CONSOLE-ORDER-GAP-001's, which was written to fail on exactly this day.
     # 165 since the review log landed: one new DESCRIPTIVE guardrail on `screens/shadow.js`
     # telling the reader that nothing in that panel was ever sent to a customer.
-    assert sum(counts.values()) == _registry()["total"] == 165
+    assert sum(counts.values()) == _registry()["total"] == 164
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

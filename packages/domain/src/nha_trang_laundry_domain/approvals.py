@@ -69,6 +69,22 @@ _OPS_15_MIN = ApprovalPolicy(
     ("RECHECK_RESOURCE_VERSION", "RECHECK_CAPACITY_AT_EXECUTION"),
     "HUMAN_APPROVED_ACTION",
 )
+# DEC-021, resolved 2026-08-25: the staff member on duty at the counter may finalise a quote, and
+# the control is attribution rather than a second signature. OPERATOR is the transcription of the
+# owner's words ("nhân viên đang trực quầy"), not a relaxation chosen here -- and
+# `_authorize_decision` admits OWNER_ADMIN for every action regardless, so a supervisor is never
+# locked out.
+#
+# Thirty minutes, matching a presented quote: the window is the time between reading a price to a
+# customer and their answer, and a longer one would let a price agreed this morning be attested this
+# afternoon against a pricebook that has since moved.
+_COUNTER_ATTESTATION = ApprovalPolicy(
+    ActorRole.OPERATOR,
+    timedelta(minutes=30),
+    ("CUSTOMER_FACING_COMMITMENT",),
+    ("RECHECK_RESOURCE_VERSION",),
+    "STAFF_ATTESTED_ACTION",
+)
 _OWNER_FINANCIAL = ApprovalPolicy(
     ActorRole.OWNER_ADMIN,
     timedelta(minutes=10),
@@ -80,6 +96,7 @@ _OWNER_FINANCIAL = ApprovalPolicy(
 APPROVAL_POLICIES: Final = MappingProxyType(
     {
         ApprovalAction.PRESENT_QUOTE: _OPS_30_MIN,
+        ApprovalAction.FINALIZE_QUOTE: _COUNTER_ATTESTATION,
         ApprovalAction.SEND_MESSAGE: _OPS_30_MIN,
         ApprovalAction.CONFIRM_SLOT: _OPS_15_MIN,
         ApprovalAction.ACCEPT_ORDER: _OPS_15_MIN,
@@ -97,6 +114,7 @@ APPROVAL_POLICIES: Final = MappingProxyType(
 APPROVAL_RESOURCE_TYPES: Final = MappingProxyType(
     {
         ApprovalAction.PRESENT_QUOTE: "QUOTE_REVISION",
+        ApprovalAction.FINALIZE_QUOTE: "QUOTE_REVISION",
         ApprovalAction.CONFIRM_SLOT: "SLOT_PROPOSAL",
         ApprovalAction.SET_RANGE_PRICE: "QUOTE_REVISION",
         ApprovalAction.SET_DELIVERY_FEE: "DELIVERY_FEE_PROPOSAL",

@@ -10,16 +10,15 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_ROUTE: 2
   ABSENT_TABLE: 5
-  ABSENT_WRITER: 2
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 136
+  DESCRIPTIVE: 137
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   READ_ONLY_MODULE: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 11
-total: 165
+total: 164
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -538,36 +537,6 @@ disclosures:
   key: note
   text: Khi mở, quyết định phải nêu rõ lưu gì (tên? số điện thoại? không gì cả?), giữ bao lâu, và khách
     đồng ý bằng cách nào — trước khi có ô nhập nào được thêm vào màn hình Tiếp nhận.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:b80e8491e577
-  module: screens/gaps.js
-  key: missing
-  text: Máy chủ chỉ nhận báo giá ở trạng thái APPROVED_EXACT / ACCEPTED_FINAL kèm approval_id. Bộ định
-    giá chỉ sinh ra được ESTIMATE / REVIEW_REQUIRED, và không có đường nào trong hệ thống nâng một bản
-    báo giá lên trạng thái đó. Nên hôm nay mọi lệnh tạo đơn đều bị từ chối.
-  binding:
-    kind: ABSENT_WRITER
-    symbol: APPROVED_EXACT
-    why: 'Claims no path raises a quote revision to APPROVED_EXACT, which is why every order-creation
-      command is refused. Bound to the absence of a production writer: the day a promotion path lands,
-      this test fails and the disclosure must change, because that is the day it stops being true.'
-- slot_id: screens/gaps.js#today:cb1903d75561
-  module: screens/gaps.js
-  key: today
-  text: 'Báo giá vẫn tạo và tra cứu được. Đơn hàng thì ghi tay như trước. Đây là mục thứ hai chặn cùng
-    một việc: kể cả khi khách vãng lai nhận diện được, đơn vẫn chưa tạo được.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#note:1a107c1735b7
-  module: screens/gaps.js
-  key: note
-  text: Khi mở, quyết định phải nêu rõ lúc nào một báo giá ràng buộc tiệm — ai duyệt, duyệt cái gì, và
-    khách chốt bằng cách nào — chứ không chỉ thêm một route.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1152,17 +1121,32 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#guardrail:8174ea237631
+- slot_id: screens/orders.js#guardrail:a0b69d4833f1
   module: screens/orders.js
   key: guardrail
-  text: Đơn chỉ được tạo từ một báo giá khách đã chốt và đã duyệt giá chính xác. Máy chủ kiểm lại toàn
-    bộ điều kiện; màn hình này chỉ bắt lỗi gõ trước khi gửi. Hôm nay chưa có báo giá nào trong hệ thống
-    đạt được trạng thái đó, nên lệnh này sẽ bị máy chủ từ chối — đó không phải lỗi bạn gõ sai.
+  text: Đơn chỉ được tạo từ một báo giá khách đã chốt. Bấm \u201cKhách đã chốt giá\u201d ở màn hình Báo
+    giá trước, rồi mới tạo đơn ở đây. Máy chủ kiểm lại toàn bộ điều kiện; màn hình này chỉ bắt lỗi gõ
+    trước khi gửi.
   binding:
-    kind: ABSENT_WRITER
-    symbol: APPROVED_EXACT
-    why: The same fact, said at the point of use. The sentence tells an operator the command will be refused
-      and that it is not their typo, so it must come down the moment the refusal does.
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#hint:2aceac798e0c
+  module: screens/quotes.js
+  key: hint
+  text: Đã chốt. Bản này không sửa được nữa, và người chốt đã được ghi lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#hint:20b051f8212b
+  module: screens/quotes.js
+  key: hint
+  text: Bấm khi khách đã nghe giá và đồng ý. Tên bạn sẽ được ghi lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/quotes.js#notice:759d8966ea11
   module: screens/quotes.js
   key: notice

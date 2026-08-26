@@ -736,3 +736,125 @@ def test_a_priced_quote_is_created_and_listed_over_http(
     ]
     assert listed.status_code == 200
     assert [item["quote_id"] for item in listed.json()] == [payload["quote_id"]]
+
+
+def test_a_named_staff_member_accepts_a_quote_and_the_attestation_is_recorded(
+    connection: Any, service: OperationsService
+) -> None:
+    """`DEC-021`: the customer agreed, a named person says so, and an order rests on that."""
+
+    _publish(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    priced = service.create_quote(
+        store_id=store_id,
+        bound_order_request_id=uuid4(),
+        lines=_lines("6"),
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
+        idempotency_key=f"quote-{uuid4().hex}",
+        principal=staff,
+    )
+    assert isinstance(priced, QuoteRevisionResult)
+    assert priced.finality == "ESTIMATE"
+
+    accepted = service.accept_quote(
+        store_id=store_id,
+        quote_id=priced.quote_id,
+        expected_current_revision=priced.revision,
+        expected_snapshot_hash=priced.snapshot_hash,
+        idempotency_key=f"accept-{uuid4().hex}",
+        principal=staff,
+    )
+    assert isinstance(accepted, QuoteRevisionResult)
+    assert accepted.finality == "APPROVED_EXACT"
+    assert accepted.status == "ACCEPTED_FINAL"
+    assert accepted.revision == priced.revision + 1
+    # Derived, not re-priced: the customer pays exactly what they were read.
+    assert accepted.display_total_min_vnd == priced.display_total_min_vnd
+    assert accepted.net_service_subtotal_vnd == priced.net_service_subtotal_vnd
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT accepted_by, accepted_revision, final_revision, accepted_snapshot_hash
+            FROM quote_acceptances WHERE quote_id = %s
+            """,
+            (priced.quote_id,),
+        )
+        rows = cursor.fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == staff.staff_user_id
+    assert (rows[0][1], rows[0][2]) == (priced.revision, accepted.revision)
+    assert rows[0][3] == priced.snapshot_hash
+
+
+def test_a_quote_priced_from_the_customers_own_estimate_cannot_be_accepted(
+    connection: Any, service: OperationsService
+) -> None:
+    """An exact price may not rest on a quantity nobody weighed, and the refusal says which fact."""
+
+    _publish(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    priced = service.create_quote(
+        store_id=store_id,
+        bound_order_request_id=uuid4(),
+        lines=(RequestedLine(STANDARD, "6", Unit.KG, QuantityBasis.CUSTOMER_ESTIMATE),),
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
+        idempotency_key=f"quote-{uuid4().hex}",
+        principal=staff,
+    )
+    assert isinstance(priced, QuoteRevisionResult)
+
+    refused = service.accept_quote(
+        store_id=store_id,
+        quote_id=priced.quote_id,
+        expected_current_revision=priced.revision,
+        expected_snapshot_hash=priced.snapshot_hash,
+        idempotency_key=f"accept-{uuid4().hex}",
+        principal=staff,
+    )
+    assert isinstance(refused, UnresolvedQuoteResult)
+    assert refused.reason_codes == ("QUOTE_QUANTITY_NOT_MEASURED",)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM quote_acceptances WHERE quote_id = %s", (priced.quote_id,)
+        )
+        assert cursor.fetchone()[0] == 0
+
+
+def test_accepting_a_quote_twice_is_a_conflict_not_a_second_attestation(
+    connection: Any, service: OperationsService
+) -> None:
+    """Two attestations leave no answer to "who chốt this", which is the point of recording."""
+
+    _publish(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    priced = service.create_quote(
+        store_id=store_id,
+        bound_order_request_id=uuid4(),
+        lines=_lines("6"),
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
+        idempotency_key=f"quote-{uuid4().hex}",
+        principal=staff,
+    )
+    assert isinstance(priced, QuoteRevisionResult)
+    service.accept_quote(
+        store_id=store_id,
+        quote_id=priced.quote_id,
+        expected_current_revision=priced.revision,
+        expected_snapshot_hash=priced.snapshot_hash,
+        idempotency_key=f"accept-{uuid4().hex}",
+        principal=staff,
+    )
+    with pytest.raises(QuoteStateError):
+        # The revision moved to 2, so the second attempt names a revision that is no longer current.
+        service.accept_quote(
+            store_id=store_id,
+            quote_id=priced.quote_id,
+            expected_current_revision=priced.revision,
+            expected_snapshot_hash=priced.snapshot_hash,
+            idempotency_key=f"accept-{uuid4().hex}",
+            principal=staff,
+        )

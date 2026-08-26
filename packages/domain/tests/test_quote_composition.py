@@ -309,7 +309,10 @@ def test_a_composed_revision_is_an_estimate_that_cannot_be_final() -> None:
     assert data.status is QuoteRevisionStatus.REVIEW_REQUIRED
     assert data.approval_id is None
     assert data.tax_treatment == "UNVERIFIED" and data.tax_vnd is None
-    assert "TAX_TREATMENT_UNVERIFIED" in data.required_approvals
+    # DEC-022 (2026-08-25): tax is settled by the accountant afterwards, so the flag is a
+    # recorded fact rather than a gate. It stays in reason_codes and leaves required_approvals.
+    assert data.required_approvals == ()
+    assert "TAX_TREATMENT_UNVERIFIED" in data.reason_codes
 
 
 def test_the_snapshot_verifies_and_is_reproducible_from_its_own_data() -> None:

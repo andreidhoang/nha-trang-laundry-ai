@@ -1042,6 +1042,76 @@ def create_quote(
     )
 
 
+class QuoteAcceptRequest(StrictRequest):
+    """The revision the customer agreed to, named exactly.
+
+    Both fields are the operator's evidence that the price on their screen is the price the customer
+    heard. The server refuses if either has moved, because an attestation naming the wrong revision
+    would record a customer agreeing to something they never saw.
+    """
+
+    expected_current_revision: int = Field(ge=1)
+    expected_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/quotes/{quote_id}/acceptance",
+    response_model=QuoteRevisionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def accept_quote(
+    store_id: UUID,
+    quote_id: UUID,
+    request: QuoteAcceptRequest,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> QuoteRevisionResponse:
+    """Record that a named staff member witnessed the customer accept this exact price.
+
+    `DEC-021`, resolved 2026-08-25. This function decides nothing: it carries an attestation to the
+    service, which writes it to `quote_acceptances` and derives the accepted revision from the
+    priced one. No price is recomputed on this path -- the accepted revision carries the same lines,
+    totals and traces as the revision the customer was read.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.accept_quote(
+            store_id=store_id,
+            quote_id=quote_id,
+            expected_current_revision=request.expected_current_revision,
+            expected_snapshot_hash=request.expected_snapshot_hash,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (StoreAccessError, QuoteStateError, QuoteIntegrityError, ValueError) as error:
+        _raise_operations_error(error)
+    if isinstance(result, UnresolvedQuoteResult):
+        # The engine refused to derive an accepted revision. Its reason codes travel intact so the
+        # console can name the missing fact while the customer is still standing there -- most often
+        # that the quantity was the customer's estimate rather than a weighing.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "REQUIRE_HUMAN", "reason_codes": list(result.reason_codes)},
+        )
+    return QuoteRevisionResponse(
+        quote_id=result.quote_id,
+        revision=result.revision,
+        row_version=result.row_version,
+        finality=result.finality,
+        status=result.status,
+        snapshot_hash=result.snapshot_hash,
+        list_service_subtotal_vnd=result.list_service_subtotal_vnd,
+        net_service_subtotal_vnd=result.net_service_subtotal_vnd,
+        display_total_min_vnd=result.display_total_min_vnd,
+        display_total_max_vnd=result.display_total_max_vnd,
+        reason_codes=list(result.reason_codes),
+        required_approvals=list(result.required_approvals),
+        replayed=result.replayed,
+    )
+
+
 @app.get("/internal/v1/stores/{store_id}/quotes", response_model=list[QuoteSummaryResponse])
 def list_quotes(
     store_id: UUID,

@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-24'
+last_updated: '2026-08-26'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -2826,5 +2826,36 @@ items:
   - the_owner_confirmed_schedule_reaches_the_revision
   - an_unresolved_fee_still_presents_no_total
   - no_policy_was_decided_and_dec_021_is_untouched
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: QUOTE-ACCEPT-001
+  phase: PRODUCTION_HARDENING
+  title: A customer can agree to a price, and the shop can take the order
+  status: COMPLETE
+  priority: 244
+  depends_on:
+  - QUOTE-DELIVERY-FEE-001
+  - QUOTE-APPROVAL-INTEGRITY-001
+  context_domains:
+  - pricing
+  - orders_audit
+  normative_sources:
+  - AGENTS.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-quote-accept-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_named_staff_member_accepts_and_the_attestation_is_recorded
+  - the_accepted_revision_is_derived_not_repriced
+  - an_order_can_now_be_created_and_still_cannot_without_an_acceptance
+  - separation_of_duty_was_not_weakened
+  - the_false_disclosures_came_down
   - rollback_assessment
   blocked_by_decisions: []

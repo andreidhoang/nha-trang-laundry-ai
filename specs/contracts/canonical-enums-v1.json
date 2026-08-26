@@ -271,6 +271,7 @@
     ],
     "ApprovalAction": [
       "PRESENT_QUOTE",
+      "FINALIZE_QUOTE",
       "CONFIRM_SLOT",
       "SET_RANGE_PRICE",
       "SET_DELIVERY_FEE",

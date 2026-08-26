@@ -307,7 +307,80 @@ function lineEditor({ catalog, lines, onStructuralChange, onValueChange, onAddLi
  * @param {any} result
  * @returns {HTMLElement}
  */
-function revisionResult(result) {
+/**
+ * "Khách đã chốt giá" — the attestation control. `DEC-021`, resolved by the owner 2026-08-25.
+ *
+ * Shown only on a revision that can still be accepted. An already-accepted revision shows what was
+ * recorded instead of a button, because the record is what the owner asked to be able to review and
+ * because offering the action twice invites a second press the server would only refuse.
+ *
+ * The button sends the revision and its digest back. The operator is confirming a specific price on
+ * their screen, and the server refuses if either has moved — a quote reprised while the customer was
+ * deciding must be read to them again, not silently accepted.
+ */
+function acceptControl(result, store, onAccepted) {
+  if (result.finality === "APPROVED_EXACT") {
+    return h(
+      "p",
+      { class: "hint" },
+      "Đã chốt. Bản này không sửa được nữa, và người chốt đã được ghi lại.",
+    );
+  }
+  const accepting = new Submission(`quote-accept-${result.quote_id}-${result.revision}`);
+  const host = resultLine();
+  const button = h(
+    "button",
+    {
+      type: "button",
+      class: "button",
+      onClick: async () => {
+        button.disabled = true;
+        setResult(host, "warn", "Đang ghi lời xác nhận…");
+        render(host.parentElement || host);
+        try {
+          const accepted = await request(
+            // One template literal on purpose: `test_every_path_the_console_calls_is_a_route`
+            // normalises `${...}` to `{}` and reads the string it finds, so splitting the path
+            // across a concatenation hides half the route from the check.
+            `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${encodeURIComponent(result.quote_id)}/acceptance`,
+            {
+              method: "POST",
+              body: {
+                expected_current_revision: result.revision,
+                expected_snapshot_hash: result.snapshot_hash,
+              },
+              idempotencyKey: accepting.key(),
+            },
+          );
+          accepting.reset();
+          setResult(host, "ok", `Đã chốt. Bản sửa đổi ${accepted.revision} là giá cuối.`);
+          if (onAccepted) await onAccepted(accepted);
+        } catch (error) {
+          button.disabled = false;
+          setResult(
+            host,
+            error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
+            error.kind === "REQUIRE_HUMAN"
+              ? "Chưa chốt được. Máy chủ nêu lý do bên dưới — thường là khối lượng mới là khách " +
+                "ước lượng, cần cân lại rồi báo giá lại."
+              : "Không ghi được lời xác nhận.",
+          );
+          render(host.parentElement || host, errorNotice(error));
+        }
+      },
+    },
+    "Khách đã chốt giá",
+  );
+  return h(
+    "div",
+    { class: "stack stack--tight" },
+    h("p", { class: "hint" }, "Bấm khi khách đã nghe giá và đồng ý. Tên bạn sẽ được ghi lại."),
+    button,
+    host,
+  );
+}
+
+function revisionResult(result, store, onAccepted) {
   return h(
     "div",
     { class: "card stack" },
@@ -317,6 +390,7 @@ function revisionResult(result) {
       h("h3", null, `Bản sửa đổi ${result.revision}`),
       h("div", { class: "row" }, priceStateBadge(result.finality)),
     ),
+    acceptControl(result, store, onAccepted),
     result.replayed
       ? h(
           "div",
@@ -826,7 +900,16 @@ export function render_(context) {
       // Confirmed exactly once, in one place. The next submission is a new intent.
       submission.reset();
       setResult(result, "ok", `Đã ghi bản sửa đổi ${created.revision}.`);
-      render(resultHost, revisionResult(created));
+      render(
+        resultHost,
+        revisionResult(created, store, async (accepted) => {
+          // Repaint from the accepted revision so the screen shows the final price and the
+          // control is replaced by the record, rather than leaving a button that would only
+          // be refused a second time.
+          render(resultHost, revisionResult(accepted, store, null));
+          await list.reload();
+        }),
+      );
       await list.reload();
     } catch (error) {
       setResult(

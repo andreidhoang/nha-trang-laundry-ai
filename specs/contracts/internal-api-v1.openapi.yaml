@@ -548,6 +548,28 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/quotes/{quote_id}/acceptance:
+    post:
+      operationId: accept_quote
+      summary: Record that a named staff member witnessed the customer accept this exact price.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: quote_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/settlements/today:
     get:
       operationId: collected_today

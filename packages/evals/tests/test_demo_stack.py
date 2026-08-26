@@ -278,12 +278,39 @@ def test_the_seed_subjects_match_the_identity_provider_accounts() -> None:
 
 
 def test_application_roles_receive_no_ddl_or_destructive_grants() -> None:
+    """What an application role is *granted* is what matters, not what words the script contains.
+
+    This asserted on substrings of the whole script until 2026-08-26, when `ALTER DEFAULT
+    PRIVILEGES` was added to close the one-shot-snapshot defect -- a statement that grants nothing
+    to a role and is executed by the schema owner, but which contains the word `ALTER`. The old
+    check would have failed it, correctly refusing a change it could not tell apart from a real
+    privilege escalation. The assertion is now about the grants themselves.
+    """
+
     grants = _load_script("apply_demo_grants")
-    statement = grants.GRANTS.format(role="laundry_api")
-    assert "GRANT SELECT, INSERT, UPDATE" in statement
-    assert "REVOKE DELETE, TRUNCATE" in statement
-    for forbidden in ("CREATE", "ALTER", "DROP", "SUPERUSER"):
-        assert forbidden not in statement.upper().replace("REVOKE", "")
+    script = grants.GRANTS.format(role="laundry_api", owner=grants.MIGRATION_ROLE)
+    statements = [part.strip() for part in script.split(";") if part.strip()]
+
+    granted_to_role = [
+        statement
+        for statement in statements
+        if statement.upper().startswith(("GRANT", "ALTER DEFAULT PRIVILEGES"))
+        and "TO LAUNDRY_API" in statement.upper()
+    ]
+    assert granted_to_role, "the script must grant the application role something"
+    allowed = {"SELECT", "INSERT", "UPDATE", "USAGE"}
+    for statement in granted_to_role:
+        privileges = statement.upper().split("GRANT", 1)[1].split(" ON ")[0]
+        named = {word.strip(" ,\n") for word in privileges.split(",") if word.strip(" ,\n")}
+        assert named <= allowed, f"unexpected privilege granted to the role: {named - allowed}"
+
+    revokes = [s for s in statements if s.upper().startswith("REVOKE")]
+    assert any("DELETE" in s.upper() and "TRUNCATE" in s.upper() for s in revokes)
+
+    # No statement may hand the role DDL or superuser, however it is spelled.
+    for statement in granted_to_role:
+        for forbidden in ("CREATE", "DROP", "SUPERUSER", "TRIGGER", "REFERENCES"):
+            assert forbidden not in statement.upper()
 
 
 def test_compose_overlay_is_valid_for_the_installed_docker_compose() -> None:

@@ -40,11 +40,32 @@ docker secret create staging_tls_private_key  ./privkey.pem
 ```
 
 **Three database URLs, deliberately.** The migration identity owns the schema; the API and worker
-identities should not. **The migrations do not create those roles.** No `CREATE ROLE`, `GRANT` or
-`REVOKE` exists anywhere in `0001`–`0032` — that is `DEC-020`, still open. Until it is decided, the
-honest options are to point all three at one role (and accept that the API can drop tables) or to
-create the roles by hand outside the migration set and record what you granted. Neither is good.
-This is the largest known gap between this runbook and a deployment worth trusting.
+identities do not. The migrations still do not create the roles — that part of `DEC-020` is open —
+so create them once, by hand, before step 2:
+
+```sql
+CREATE ROLE laundry_migrate LOGIN PASSWORD '...';
+CREATE ROLE laundry_api     LOGIN PASSWORD '...';
+CREATE ROLE laundry_worker  LOGIN PASSWORD '...';
+CREATE DATABASE nha_trang_laundry OWNER laundry_migrate;
+```
+
+Then, **after** the migration in step 2 and again after every future migration:
+
+```bash
+SUPERUSER_DATABASE_URL=... uv run python scripts/apply_demo_grants.py
+DATABASE_URL=...           uv run python scripts/verify_database_grants.py
+```
+
+The second command is not optional and is the reason the first is safe to forget. `GRANT ... ON ALL
+TABLES` is a one-shot snapshot: before 2026-08-26 every migration that added a table left the
+application roles with **no privileges on it**, and the first symptom was `permission denied` on a
+write path in production long after the deploy that caused it. `ALTER DEFAULT PRIVILEGES` now closes
+that for new tables, and the verifier proves the result across every table rather than trusting it.
+
+What stays open in `DEC-020` is who may execute a purge. DELETE is granted to nobody, which is the
+fail-closed state that decision exists to change, and the verifier fails if that ever stops being
+true.
 
 ## 2. Bring the stack up
 
@@ -88,6 +109,7 @@ per request and verifies its digest.
 
 ```bash
 uv run python scripts/staging_smoke.py            # TLS-verifying operator-boundary check
+uv run python scripts/verify_database_grants.py   # role separation actually enforced
 uv run python scripts/verify_contracts.py
 uv run python scripts/report_delivery_status.py   # every capability must read NOT_AUTHORIZED
 ```

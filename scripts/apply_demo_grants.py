@@ -26,21 +26,44 @@ import psycopg
 import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 
 APPLICATION_ROLES = ("laundry_api", "laundry_worker")
+#: The identity that owns the schema and therefore creates every future table. Default
+#: privileges are granted *for* this role, because they apply to what it creates.
+MIGRATION_ROLE = "laundry_migrate"
 
 # Written as one statement per role rather than a loop over information_schema, so the grant set is
 # readable in a review and in the demo evidence.
+# `GRANT ... ON ALL TABLES` is a one-shot snapshot: it covers the tables that exist when it runs and
+# nothing a later migration creates. That is a silent trap -- the first symptom is `permission
+# denied` on a write path in production, long after the deploy that caused it. Migrations 0031 and
+# 0032 added two tables and reproduced it exactly on a role-separated database, which is how it was
+# found. `ALTER DEFAULT PRIVILEGES` closes the class: tables the migration identity creates from now
+# on carry these privileges without anyone remembering to re-run this script.
+#
+# The snapshot statements stay, because default privileges are not retroactive -- they do nothing
+# for the tables that already exist. Both halves are needed, and `verify_database_grants.py`
+# proves the result rather than trusting it.
 GRANTS = """
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO {role};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {role};
 REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM {role};
+ALTER DEFAULT PRIVILEGES FOR ROLE {owner} IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE ON TABLES TO {role};
+ALTER DEFAULT PRIVILEGES FOR ROLE {owner} IN SCHEMA public
+    GRANT USAGE, SELECT ON SEQUENCES TO {role};
 """
 
 
-def apply_grants(connection: psycopg.Connection) -> list[str]:
+def _statements(script: str) -> list[str]:
+    """Split on semicolons, because a default-privileges statement spans two lines."""
+
+    return [part.strip() for part in script.split(";") if part.strip()]
+
+
+def apply_grants(connection: psycopg.Connection, owner: str = MIGRATION_ROLE) -> list[str]:
     applied: list[str] = []
     with connection.cursor() as cursor:
         for role in APPLICATION_ROLES:
-            for statement in GRANTS.format(role=role).strip().splitlines():
+            for statement in _statements(GRANTS.format(role=role, owner=owner)):
                 cursor.execute(statement)
                 applied.append(statement)
     connection.commit()

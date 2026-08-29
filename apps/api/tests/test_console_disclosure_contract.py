@@ -197,7 +197,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     assert counts.get("REPOSITORY_ROLES") == 3
     assert counts.get("ALL_AUTHENTICATED") == 1
     assert counts.get("ABSENT_TABLE") == 5
-    assert counts.get("ABSENT_ROUTE") == 2
+    # ABSENT_ROUTE is gone entirely: both slots claimed the intake and production transitions
+    # had no route, and both became false on 2026-08-29 when the routes were added.
+    assert "ABSENT_ROUTE" not in counts
     assert counts.get("RESPONSE_SHAPE") == 1
     assert counts.get("READ_ONLY_MODULE") == 1
     assert counts.get("MODEL_SEAM") == 2
@@ -205,6 +207,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # quote revision to APPROVED_EXACT; DEC-021 resolved on 2026-08-25 and the acceptance path
     # landed, so both claims became false on the same day and were retired together.
     assert "ABSENT_WRITER" not in counts
+    # 160 since the intake and production routes landed on 2026-08-29: two ABSENT_ROUTE entries
+    # said those transitions had no HTTP route, a nine-lens verification pass found that this
+    # made every order stop dead at CONFIRMED, and the routes were built. The class is now empty.
     # 162 since DEC-023 was resolved and FULFILMENT-001 landed: the entry saying delivery
     # orders cannot be settled or closed was deleted, because they now can. The M3 delivery
     # entry was narrowed rather than deleted -- delivery_legs exists, delivery_bundles and
@@ -221,7 +226,7 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # caught this is CONSOLE-ORDER-GAP-001's, which was written to fail on exactly this day.
     # 165 since the review log landed: one new DESCRIPTIVE guardrail on `screens/shadow.js`
     # telling the reader that nothing in that panel was ever sent to a customer.
-    assert sum(counts.values()) == _registry()["total"] == 162
+    assert sum(counts.values()) == _registry()["total"] == 160
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

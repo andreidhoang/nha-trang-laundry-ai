@@ -41,6 +41,25 @@ class IssuedTicket:
 class CounterTicketRepository:
     """Issue tickets. There is no read-by-person, because there is no person to read by."""
 
+    @staticmethod
+    def ticket_exists(cursor: Any, *, ticket_id: UUID, store_id: UUID) -> bool:
+        """Whether this store itself issued this ticket.
+
+        Scoped to the store, never global. A ticket is a customer reference, so answering across
+        stores would let one counter name another counter's customer -- the cross-store shape
+        `STORE-SCOPING-002` closed for writes, arriving through an identifier instead of a route.
+
+        Existence is all this answers. A ticket grants nothing: it is a number on a slip of paper
+        that says a stranger is standing at this counter today.
+        """
+        cursor.execute(
+            """
+            SELECT 1 FROM counter_tickets WHERE id = %s AND store_id = %s
+            """,
+            (ticket_id, store_id),
+        )
+        return cursor.fetchone() is not None
+
     def issue(
         self,
         connection: Any,

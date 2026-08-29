@@ -126,7 +126,22 @@ class OrderRepository:
                                WHERE a.quote_id = r.quote_id
                                  AND a.final_revision = r.revision
                            ) AS accepted,
-                           r.valid_until
+                           r.valid_until,
+                           -- The customer this quote was priced for, reached through the intake
+                           -- request it is bound to. NULL when the quote names a request that does
+                           -- not exist, which the guard below refuses.
+                           (
+                               SELECT req.contact_binding_id FROM order_requests req
+                               WHERE req.id = q.bound_order_request_id
+                           ) AS quoted_customer,
+                           -- The fulfilment mode the price was computed under, read from the
+                           -- delivery engine's own trace inside the immutable snapshot.
+                           (
+                               SELECT t -> 'trace' ->> 'fulfillment_mode'
+                               FROM jsonb_array_elements(r.snapshot -> 'calculation_traces') AS t
+                               WHERE t ->> 'component' = 'DELIVERY'
+                               LIMIT 1
+                           ) AS priced_mode
                     FROM quotes q
                     JOIN quote_revisions r ON r.quote_id = q.id
                     WHERE q.id = %s AND r.revision = %s
@@ -158,6 +173,23 @@ class OrderRepository:
             if not known_customer:
                 raise OrderStateError(
                     "the order names a customer reference this store has never issued or bound"
+                )
+            # The order's customer must be the customer the quote was priced for. Until 2026-08-29
+            # nothing checked this: a verification pass issued two counter tickets, quoted only the
+            # first, and created an order for the second against the first's accepted quote. It
+            # succeeded and settled at the stranger's price. The order screen builds this request
+            # from free-text fields an operator pastes, so one mis-paste at a busy counter charged
+            # one customer another's total, with the settlement and the immutable snapshot agreeing.
+            if quote is not None and _uuid_or_none(quote[6]) != command.bound_contact_id:
+                raise OrderStateError(
+                    "the quote was priced for a different customer than this order names"
+                )
+            # And the order must be fulfilled the way it was priced. Quoting a delivery at +10,000d
+            # and then creating the order as self-collect kept the fee for transport the system
+            # would afterwards refuse to record; the reverse drove two legs for nothing.
+            if quote is not None and str(quote[7]) != command.fulfillment_mode.value:
+                raise OrderStateError(
+                    "the order's fulfilment mode is not the one the quote was priced under"
                 )
             if (
                 quote is None
@@ -523,3 +555,11 @@ def _datetime(value: object) -> datetime:
 
 def _optional_datetime(value: object) -> datetime | None:
     return None if value is None else _datetime(value)
+
+
+def _uuid_or_none(value: object) -> UUID | None:
+    """A customer reference read back from the database, or nothing when the join found no row."""
+
+    if value is None:
+        return None
+    return value if isinstance(value, UUID) else UUID(str(value))

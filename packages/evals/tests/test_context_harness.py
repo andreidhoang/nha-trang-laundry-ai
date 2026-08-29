@@ -89,7 +89,14 @@ def test_context_drift_check_passes() -> None:
     # payable and closable. It was decision-clear on DEC-003 since 08-18 and deliberately not
     # built, because the leg writer without the payment answer produces an order that reads as
     # finished and is not.
-    assert "89 work items" in result.stdout
+    # The ninetieth is ORDER-LIFECYCLE-001, which took no decision at all and exists because two
+    # items above recorded evidence "through the real service and repository path" -- honestly, and
+    # one layer below the product. Driven over HTTP instead, the walk-in stopped at its second
+    # request (a counter ticket was not a customer reference to the intake route, so DEC-013's
+    # customer could not be served at all) and every order that got past it stopped at CONFIRMED
+    # (nothing could move intake or production). It also bound an order to its quote's customer and
+    # fulfilment mode, closing two ways one customer could be charged another's price.
+    assert "90 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

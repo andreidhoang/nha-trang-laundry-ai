@@ -51,6 +51,8 @@ from nha_trang_laundry_domain.catalog import (
     ApprovalAction,
     CommercialOrderStatus,
     FulfillmentMode,
+    IntakeStatus,
+    ProductionStatus,
     QuantityBasis,
     Unit,
 )
@@ -220,6 +222,20 @@ class OrderCreateRequest(StrictRequest):
 
 class CommercialTransitionRequest(StrictRequest):
     target: CommercialOrderStatus
+
+
+class IntakeTransitionRequest(StrictRequest):
+    """Intake carries one attested fact; the rest the server reads for itself."""
+
+    target: IntakeStatus
+    #: Whether a human has confirmed the shop has capacity for this order. The system never decides
+    #: this: `evaluate_delivery` returns REQUIRE_HUMAN for every slot because Shadow stage has no
+    #: auto-confirmable capacity, so it is the operator's word or nothing.
+    slot_approved: bool = False
+
+
+class ProductionTransitionRequest(StrictRequest):
+    target: ProductionStatus
 
 
 class ApprovalRequest(StrictRequest):
@@ -826,6 +842,74 @@ def transition_order(
     expected = _parse_if_match(if_match)
     try:
         stored = service.transition_commercial(
+            order_id=order_id,
+            target=request.target,
+            expected_row_version=expected,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (OrderStateError, OrderAuthorizationError, IdempotencyConflictError) as error:
+        _raise_operations_error(error)
+    return _order_response(stored)
+
+
+@app.post("/internal/v1/orders/{order_id}/intake-transition", response_model=OrderResponse)
+def transition_order_intake(
+    order_id: UUID,
+    request: IntakeTransitionRequest,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> OrderResponse:
+    """Move the order's intake: the laundry arrived, was inspected, and was accepted for work.
+
+    Until 2026-08-29 this route did not exist, and neither did the production one. A verification
+    pass drove the whole lifecycle over HTTP and found every order stopping dead at CONFIRMED --
+    `transition_commercial` refuses ACTIVE while intake is not ACCEPTED, and nothing could move
+    intake. The domain and the repository had always supported it; the product had no way to ask.
+
+    `slot_approved` is the only readiness fact the caller supplies. The other five are read from the
+    order and its bound quote by the service, because a client asserting "an exact price was
+    approved" would be a client asserting server state.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    expected = _parse_if_match(if_match)
+    try:
+        stored = service.transition_intake(
+            order_id=order_id,
+            target=request.target,
+            expected_row_version=expected,
+            idempotency_key=idempotency_key,
+            principal=principal,
+            slot_approved=request.slot_approved,
+        )
+    except (OrderStateError, OrderAuthorizationError, IdempotencyConflictError) as error:
+        _raise_operations_error(error)
+    return _order_response(stored)
+
+
+@app.post("/internal/v1/orders/{order_id}/production-transition", response_model=OrderResponse)
+def transition_order_production(
+    order_id: UUID,
+    request: ProductionTransitionRequest,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> OrderResponse:
+    """Move the order through washing: queued, in process, checked, ready, released.
+
+    The screen offers every target and the server refuses the illegal ones, exactly as the
+    commercial transition does. Copying the sequence into the browser would make a second rulebook
+    nobody keeps in step with the first.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    expected = _parse_if_match(if_match)
+    try:
+        stored = service.transition_production(
             order_id=order_id,
             target=request.target,
             expected_row_version=expected,

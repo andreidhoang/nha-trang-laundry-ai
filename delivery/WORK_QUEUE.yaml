@@ -2918,3 +2918,34 @@ items:
   - no_money_crosses_a_delivery_leg
   - rollback_assessment
   blocked_by_decisions: []
+- id: ORDER-LIFECYCLE-001
+  phase: PRODUCTION_HARDENING
+  title: An order can be moved through its whole life, only by its own store
+  status: COMPLETE
+  priority: 247
+  depends_on:
+  - FULFILMENT-001
+  - QUOTE-ACCEPT-001
+  - COUNTER-TICKET-001
+  context_domains:
+  - orders_audit
+  - promotion_delivery_sla
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-order-lifecycle-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - an_order_is_completed_over_http_only
+  - the_order_cannot_be_bound_to_another_customers_price
+  - intake_readiness_is_derived_not_asserted
+  - the_new_routes_are_store_scoped_and_teach_nothing
+  - what_this_item_did_not_fix
+  - rollback_assessment
+  blocked_by_decisions: []

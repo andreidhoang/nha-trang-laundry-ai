@@ -67,6 +67,16 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/orders/{order_id}/transition"): store_scoped(
         "orders", "OrderRepository.transition"
     ),
+    # Intake and production move through the same locked row and the same guard as the
+    # commercial transition above; `OperationsService` only chooses which target it carries. They
+    # are keyed by `order_id` for the same reason and would have gone unclassified for the same
+    # reason -- which is what this module's enumeration exists to make impossible.
+    ("POST", "/internal/v1/orders/{order_id}/intake-transition"): store_scoped(
+        "orders", "OrderRepository.transition"
+    ),
+    ("POST", "/internal/v1/orders/{order_id}/production-transition"): store_scoped(
+        "orders", "OrderRepository.transition"
+    ),
     ("POST", "/internal/v1/orders/{order_id}/settlement"): store_scoped(
         "settlement", "SettlementRepository.record"
     ),

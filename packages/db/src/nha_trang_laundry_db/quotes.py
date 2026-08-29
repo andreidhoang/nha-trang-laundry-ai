@@ -392,7 +392,13 @@ class QuoteAcceptanceRepository:
                             "quote_id": str(command.quote_id),
                             "acceptance_id": str(acceptance_id),
                         },
-                        f"quote:{command.quote_id}:acceptance",
+                        # Revision-scoped. Keyed on the quote alone until 2026-08-29, which made
+                        # the *second* acceptance of any quote a permanent 500: outbox_events'
+                        # idempotency_key is UNIQUE, so "thêm cái áo này nữa" -- reprice, customer
+                        # agrees again -- collided with the first acceptance forever. The
+                        # acceptance row itself was always unique per (quote, revision); only this
+                        # key disagreed.
+                        f"quote:{command.quote_id}:acceptance:{command.accepted_revision}",
                     ),
                 ),
                 occurred_at=occurred_at,

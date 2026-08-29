@@ -47,7 +47,7 @@ from nha_trang_laundry_domain.catalog import (
 )
 from nha_trang_laundry_domain.consent import OptOutDisposition, SuppressionState
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, build_quote_snapshot
-from quote_test_data import PRICED_AT, accepted_quote, counter_ticket, make_quote_snapshot
+from quote_test_data import PRICED_AT, accepted_quote, make_quote_snapshot
 
 HASH_A = "JCS-SHA256-V1:" + "a" * 64
 HASH_B = "JCS-SHA256-V1:" + "b" * 64
@@ -374,13 +374,16 @@ def test_order_creation_transition_replay_authorization_and_atomic_audit(
     # member of every store, so the owner is assigned explicitly.
     _assign_store(postgres_connection, owner, store_id)
     # Priced, then accepted, then ordered -- the shape production produces since QUOTE-ACCEPT-001.
-    quote_id, quote_revision, quote = accepted_quote(
-        postgres_connection, store_id=store_id, staff_user_id=owner.staff_user_id
+    quote_id, quote_revision, quote, contact_id = accepted_quote(
+        postgres_connection,
+        store_id=store_id,
+        principal=owner,
+        fulfillment_mode=FulfillmentMode.PICKUP_AND_RETURN,
     )
     repository = OrderRepository()
     create = CreateOrderCommand(
         store_id,
-        counter_ticket(postgres_connection, store_id=store_id, principal=owner),
+        contact_id,
         quote_id,
         quote_revision,
         quote.document.snapshot_hash,

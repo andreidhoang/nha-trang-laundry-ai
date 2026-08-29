@@ -1,0 +1,196 @@
+schema_version: 1
+work_item: ORDER-LIFECYCLE-001
+recorded_at: '2026-08-29T16:40:00+07:00'
+requirement_contract: >-
+  Close the defects a nine-lens adversarial verification pass found on 2026-08-27 against the walk-in
+  and delivery paths, and prove the result at the layer a user touches rather than the layer below it.
+
+  The requirement was measured, not assumed. `FULFILMENT-001` and `COUNTER-TICKET-001` both recorded
+  their evidence "through the real service and repository path", which was stated honestly and was
+  the whole problem: driving the same flows over HTTP found two separate walls, either of which
+  stops every order.
+
+  No new decision is taken. Every refusal added names an existing rule or an already-ratified
+  decision; nothing is authorized, no policy widened, no gate moved.
+rollback_impact: >-
+  Reverting returns the system to a state where no order can be moved past `CONFIRMED` by any HTTP
+  caller and no walk-in customer can be taken at all through the console.
+
+  It is a clean revert. **No migration is involved** -- every change is application code, tests, one
+  disclosure-registry regeneration, and the OpenAPI contract. No table, column or constraint changed,
+  so no written row can become invalid.
+
+  Two couplings must revert together: `_derive_intake_readiness` gained a required `staff_user_id`
+  argument and its one caller passes it; `OperationsService.create_order_request` calls
+  `CounterTicketRepository.ticket_exists`, added in the same change. Reverting either half alone
+  leaves a signature mismatch or a missing attribute.
+
+  Rows written under this item stay valid: they are ordinary orders, intake and production
+  transitions, and order requests, all in shapes that existed before it.
+unresolved_assumptions: >-
+  **`slot_approved` is an operator's word and nothing verifies it.** The route asks a human whether
+  the shop has capacity and records the answer. That is the same trust assumption settlement, quote
+  acceptance and delivery legs carry, and it is deliberate -- `evaluate_delivery` returns
+  `REQUIRE_HUMAN` for every slot because Shadow stage has no auto-confirmable capacity. A staff
+  member who clicks it without looking at the shop floor produces a true record of a false statement.
+
+  **The other five readiness facts are derived from state, not from the world.** "Custody recorded"
+  means the order left `AWAITING_HANDOFF`, not that anyone saw a bag of laundry. This is stricter
+  than asking the client, which is the point, but it is still bookkeeping.
+
+  **CẦN XÁC MINH:** whether staff will drive intake through its five named states or skip to
+  `ACCEPTED`. The sequence permits skipping when readiness is proven, and the console offers every
+  target. Which one people actually use is a fact about the shop that no test here establishes.
+
+  Not claimed: that the intake and production screens are usable at a busy counter. The routes exist
+  and are proven; the console work that puts them in front of a person is a separate concern, and
+  the lifecycle below was driven by a script, not by clicking.
+evidence:
+  an_order_is_completed_over_http_only: >-
+    Measured on 2026-08-29 against a clean database. Setup -- store, staff, assignment, pricebook --
+    is SQL because no route creates a store or publishes a pricebook. **Every step a counter
+    performs is an HTTP request; no repository call appears after the setup block.**
+
+        1. phat phieu so 1
+        2. mo yeu cau eacb38f1
+        3. bao gia rev1 = 100000d  ESTIMATE
+        4. chot rev2 APPROVED_EXACT/ACCEPTED_FINAL
+        5. tao don a61fc283 REQUESTED/AWAITING_HANDOFF
+        6. nhan hang QUA HTTP -> intake=ACCEPTED
+        7. giat xong QUA HTTP -> production=RELEASED
+        8. tat toan 100000d  shape=EXACT_PAYMENT_SELF_COLLECTION  tu lay=True
+
+        *** COMPLETED ***  balance=PAID  20 buoc, tat ca qua HTTP
+
+    Two walls stood in the way and both are recorded below. Before this item the run stopped at step
+    2; before the routes existed it stopped at `CONFIRMED`.
+
+    A correction to my own record: an earlier session reported a "full lifecycle over HTTP". The
+    *state transitions* in that run were HTTP and the ticket-to-quote chain was seeded by the SQL
+    fixture, so the claim was broader than the measurement. That overstatement is exactly what this
+    item exists to stop being possible, and re-measuring rather than citing it is what found the
+    walk-in wall below.
+  the_walk_in_path_was_unreachable_through_the_console: >-
+    **Found by re-measuring a claim rather than by looking for it, and the more serious of the two
+    walls.** `POST /internal/v1/stores/{id}/order-requests` checked `contact_channel_bindings`
+    alone. A counter ticket is not one, so the console's own walk-in flow broke at its second step:
+    `orderRequests.js:319-323` calls `POST /counter-tickets` and puts the returned `ticket_id` into
+    the contact field exactly as its docstring says it does, and the submit at `orderRequests.js:264`
+    came back `422 CONTACT_BINDING_UNKNOWN`.
+
+    So `DEC-013`'s ratified walk-in path -- the stranger who walks in off the street, the shop's most
+    common customer -- **could not be served by the product at all**, while
+    `COUNTER-TICKET-001`'s evidence correctly recorded it working. Both are true: that measurement
+    ran through `OrderRepository.create`, which has accepted either a ticket or a channel binding
+    since it was hardened. Only this route, which nothing had ever driven over HTTP, did not.
+
+    The fix follows the precedent the order guard already set rather than inventing one: checked
+    against both sources, not unified behind a party layer, because `DEC-015` says the customer-record
+    layer that would unify them is not to be built. The ticket half is store-scoped and the binding
+    half is not, because a channel binding is not a store's to own.
+
+    Pinned by `test_a_counter_ticket_is_a_customer_reference_the_walk_in_path_accepts` and
+    `test_another_stores_counter_ticket_is_not_a_customer_reference_here`.
+  the_order_cannot_be_bound_to_another_customers_price: >-
+    Two money-misdirection paths, both reachable from the orders screen, which builds its request
+    from free-text fields an operator pastes at a busy counter.
+
+    **Wrong customer.** `orders.bound_contact_id` was checked for existence but never against the
+    quote. A verification pass issued two counter tickets, quoted only the first, created an order
+    for the second against the first's accepted quote -- it succeeded and settled at the stranger's
+    price, with the settlement and the immutable snapshot agreeing with each other. The guard now
+    reaches the priced-for customer through `quotes -> order_requests -> contact_binding_id`, a
+    chain that existed and that nothing read.
+
+    **Wrong mode.** Quoting a delivery at +10,000d and creating the order as self-collect kept the
+    fee for transport the system would afterwards refuse to record; the reverse drove two legs for
+    an order that paid for none. The order's `fulfillment_mode` is now reconciled against the mode
+    inside the quote's own `DELIVERY` calculation trace -- read from the immutable snapshot, not
+    from a second field that could disagree with it.
+  intake_readiness_is_derived_not_asserted: >-
+    `IntakeReadiness` carries six facts. Five are things this system holds -- custody, weighed rather
+    than guessed, services from the published pricebook, an exact price approved, the customer
+    reconfirmed -- and are read from the order and its bound quote. Letting a client send six
+    booleans would let a caller assert server state: "an exact price was approved" for a quote that
+    is still an estimate, and the order would accept it.
+
+    The operator attests `slot_approved` and only that, because capacity is the judgement this
+    system deliberately never makes.
+
+    Pinned positively by `test_deriving_intake_readiness_still_works_for_a_member`, which asserts the
+    derived facts are true for an order created against an accepted APPROVED_EXACT quote. A guard
+    that refuses everyone would satisfy the scoping test below and break the counter, so the positive
+    case is pinned next to the negative one.
+  the_new_routes_are_store_scoped_and_teach_nothing: >-
+    Both new routes are keyed by `order_id` -- the shape that hid `STORE-SCOPING-002`, which was
+    found by a person reading the route table rather than by a test. The full suite caught them:
+    `test_every_internal_route_is_classified_for_store_scope` refused to let them ship unclassified.
+    That is the enumeration working as designed, on the first routes added since it was written.
+
+    Chasing it found a second hole the enumeration could not see. `_derive_intake_readiness` runs
+    *before* `OrderRepository.transition` authorizes anything, because the transition needs the
+    readiness to decide. Unscoped, it answered "order is missing" for an identifier nobody issued and
+    a different refusal for one another store holds -- an existence oracle across stores, and
+    `store_access.py` opens by promising the opposite in as many words: the two failures are
+    "deliberately indistinguishable to the caller, so probing identifiers teaches nobody which stores
+    exist". The derivation now carries a membership predicate, so both produce the same empty row.
+
+    Four tests: two refusal-mapping (`403 {"detail": "operation denied"}`, the same opaque refusal
+    every store refusal produces) and two against real PostgreSQL. Both routes shipped on 2026-08-29
+    with no test of their own; that is now false.
+  what_this_item_did_not_fix: >-
+    Recorded rather than silently closed. All were confirmed against the current tree on 2026-08-29.
+
+    **`PICKUP_ONLY` takes money and can never close (HIGH).** Three files each look correct.
+    `evaluate_settlement:143` accepts such an order as `EXACT_PAYMENT_PREPAID_DELIVERY` and sets
+    `balance_status='PAID'`; completion then needs `required_delivery_legs_succeeded`, which needs a
+    succeeded `RETURN` leg, which `delivery_legs.py:115` refuses for `PICKUP_ONLY`. Migration
+    `0033`'s own text already says such an order "is completed by self-collection at the counter,
+    exactly as a walk-in is", so the settlement guard contradicts a decision already written down.
+    `FULFILMENT-001` explicitly did not claim this case. Left out because the fix is a
+    settlement-shape question and this item touches no settlement policy.
+
+    **An expired quote is orderable by backdating (MEDIUM).** `orders.py:203` compares `valid_until`
+    against a client-supplied timestamp. `quote_acceptances.accepted_at` is server-recorded and that
+    table is already joined two lines above.
+
+    **The acceptance route declares idempotency it does not provide (MEDIUM).** `Idempotency-Key` is
+    a required header, is never passed to the repository and never wraps the command, unlike every
+    other write in the service. A double-click at the counter hits `UNIQUE (quote_id,
+    accepted_revision)` and errors on a request that succeeded.
+
+    **One accepted revision spawns unlimited orders (MEDIUM).** No unique index on
+    `orders (current_quote_id, current_quote_revision)`. Whether a cancelled order may be re-ordered
+    is a policy call to raise, not to decide.
+
+    **An active order can never be cancelled (MEDIUM).** `cancellation_approved` and
+    `custody_and_financial_resolution_recorded` are supplied by exactly one domain unit test and by
+    nothing else in the system. Cancellation before `ACTIVE` works and is unaffected.
+
+    **MFA is skipped on six read routes bound to `current_principal` (LOW).**
+
+    **The promotion engine is wired to nothing.** `PROMO_WET30_DRY40_20260717_20260831` is built and
+    tested and referenced nowhere in `packages/db`, `apps/api` or `apps/web`. `DEC-002` resolved
+    2026-08-18; the window closes 2026-08-31. Surfaced to the owner as a scheduling question.
+  rollback_assessment: >-
+    See rollback_impact. No migration. Two routes, one service method plus a readiness derivation,
+    one repository read helper, the order-creation guard, the acceptance outbox key, the settlement
+    response field, one typed error, the quote screen's delivery fields, two retired `#/gaps`
+    entries, the store-scope classification, and the tests.
+
+    The revert is clean because nothing written under this item is a shape that did not exist before
+    it. The risk of reverting is not data corruption; it is that the shop goes back to being unable
+    to serve a walk-in customer or complete an order.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

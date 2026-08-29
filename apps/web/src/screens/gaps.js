@@ -73,26 +73,6 @@ const GROUPS = [
           "Liên hệ được nhận diện phía máy chủ qua contact binding; bảng vận hành không tạo khách.",
       },
       {
-        ref: "M3 · MÀN 7",
-        title: "Nhận đồ / cân đo (intake)",
-        what:
-          "Ghi nhận việc nhận đồ tại quầy, cân đo thật, và đưa đơn đi qua các trạng thái intake " +
-          "cho tới khi được chấp nhận hoặc từ chối.",
-        missing:
-          "Các chuyển trạng thái intake không có route HTTP nào. Route /transition chỉ mở ra chiều " +
-          "thương mại của đơn, nên IntakeStatus hiển thị được nhưng không đổi được.",
-        blockedBy: "Chưa có lệnh advance-intake",
-      },
-      {
-        ref: "M3 · MÀN 8",
-        title: "Sản xuất / sẵn sàng",
-        what:
-          "Đưa đơn qua hàng đợi giặt, kiểm tra chất lượng và trạng thái sẵn sàng tại cửa hàng.",
-        missing:
-          "Giống hệt intake: trạng thái sản xuất không có route nào. ProductionStatus chỉ đọc được.",
-        blockedBy: "Chưa có route chuyển trạng thái sản xuất (cùng nguyên nhân với intake)",
-      },
-      {
         ref: "M3 · MÀN 9",
         title: "Chặng giao hàng",
         what:

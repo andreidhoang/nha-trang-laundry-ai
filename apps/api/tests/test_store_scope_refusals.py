@@ -75,6 +75,16 @@ class RefusingOperationsService:
         # row it locks and requires membership, raising the same error `create` does.
         raise OrderAuthorizationError("store access is not authorized")
 
+    def transition_intake(self, **_: Any) -> None:
+        # Intake and production reach the same `OrderRepository.transition`, so they refuse with
+        # the same error. They are stubbed separately because the routes are separate: a route that
+        # forgets to catch `OrderAuthorizationError` returns 500, which is the whole defect this
+        # module was written for, and two new routes are two new chances to make it again.
+        raise OrderAuthorizationError("store access is not authorized")
+
+    def transition_production(self, **_: Any) -> None:
+        raise OrderAuthorizationError("store access is not authorized")
+
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
@@ -173,6 +183,36 @@ def test_transitioning_an_order_in_an_unassigned_store_is_refused(client: TestCl
         f"/internal/v1/orders/{ORDER_ID}/transition",
         headers=_write_headers({"If-Match": '"1"'}),
         json={"target": "STORE_CONFIRMATION_PENDING"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "operation denied"}
+
+
+def test_moving_intake_on_an_order_in_an_unassigned_store_is_refused(client: TestClient) -> None:
+    """Added with the route, not after it.
+
+    `POST /orders/{id}/intake-transition` is keyed by `order_id` and changes state -- the exact
+    shape `STORE-SCOPING-002` closed for the commercial transition. It shipped on 2026-08-29 with
+    no test of its own; this is that test.
+    """
+    response = client.post(
+        f"/internal/v1/orders/{ORDER_ID}/intake-transition",
+        headers=_write_headers({"If-Match": '"1"'}),
+        json={"target": "RECEIVED_PENDING_INSPECTION"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "operation denied"}
+
+
+def test_moving_production_on_an_order_in_an_unassigned_store_is_refused(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        f"/internal/v1/orders/{ORDER_ID}/production-transition",
+        headers=_write_headers({"If-Match": '"1"'}),
+        json={"target": "QUEUED"},
     )
 
     assert response.status_code == 403

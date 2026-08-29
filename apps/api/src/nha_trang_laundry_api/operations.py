@@ -55,6 +55,7 @@ from nha_trang_laundry_db.manual_sends import (
 from nha_trang_laundry_db.orders import (
     CreateOrderCommand,
     OrderRepository,
+    OrderStateError,
     OrderTransitionCommand,
     StoredOrder,
 )
@@ -90,9 +91,12 @@ from nha_trang_laundry_domain.catalog import (
     ApprovalAction,
     CommercialOrderStatus,
     FulfillmentMode,
+    IntakeStatus,
+    ProductionStatus,
     ServiceDefinition,
     Unit,
 )
+from nha_trang_laundry_domain.orders import IntakeReadiness
 from nha_trang_laundry_domain.pricebook_import import PricebookImportError, published_price_rules
 from nha_trang_laundry_domain.quote_composition import (
     PricebookProvenance,
@@ -277,6 +281,139 @@ class OperationsService:
                     commercial_target=target,
                 ),
             )
+
+    def transition_intake(
+        self,
+        *,
+        order_id: UUID,
+        target: IntakeStatus,
+        expected_row_version: int,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+        slot_approved: bool = False,
+    ) -> StoredOrder:
+        """Move intake, deriving the readiness the server already knows.
+
+        `IntakeReadiness` carries six facts and five of them are things this system holds: whether
+        custody was recorded, whether the quantity was weighed rather than estimated, whether the
+        services came from the published pricebook, whether an exact price was approved, and whether
+        the customer reconfirmed it. Letting a client assert those would let a client assert server
+        state -- a caller could claim an exact price was approved for a quote that is still an
+        estimate, and the order would accept it.
+
+        So they are read, not received. The one fact left is `slot_approved`: capacity is a human
+        judgement this system deliberately never makes -- `evaluate_delivery` returns
+        `slot_outcome=REQUIRE_HUMAN` for every order because Shadow stage has no auto-confirmable
+        capacity -- so the operator attests it and only it.
+        """
+
+        with self._connection_factory(self._database_url) as connection:
+            readiness: IntakeReadiness | None = None
+            accepted_at: datetime | None = None
+            if target is IntakeStatus.ACCEPTED:
+                with connection.cursor() as cursor:
+                    readiness = self._derive_intake_readiness(
+                        cursor,
+                        order_id=order_id,
+                        staff_user_id=principal.staff_user_id,
+                        slot_approved=slot_approved,
+                    )
+                accepted_at = datetime.now(UTC)
+            return self._orders.transition(
+                connection,
+                OrderTransitionCommand(
+                    order_id,
+                    expected_row_version,
+                    principal,
+                    idempotency_key,
+                    uuid4(),
+                    intake_target=target,
+                    intake_readiness=readiness,
+                    production_accepted_at=accepted_at,
+                ),
+            )
+
+    def transition_production(
+        self,
+        *,
+        order_id: UUID,
+        target: ProductionStatus,
+        expected_row_version: int,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> StoredOrder:
+        """Move production. The sequence and its legality are the domain's, not this method's."""
+
+        with self._connection_factory(self._database_url) as connection:
+            return self._orders.transition(
+                connection,
+                OrderTransitionCommand(
+                    order_id,
+                    expected_row_version,
+                    principal,
+                    idempotency_key,
+                    uuid4(),
+                    production_target=target,
+                ),
+            )
+
+    @staticmethod
+    def _derive_intake_readiness(
+        cursor: Any, *, order_id: UUID, staff_user_id: UUID, slot_approved: bool
+    ) -> IntakeReadiness:
+        """Read the five facts the system holds, and take the sixth from the operator.
+
+        Scoped to the caller's own stores. `OrderRepository.transition` is what actually authorizes
+        the write, and it refuses a non-member -- but it runs after this, so without the membership
+        predicate below a non-member probing `order_id` would get "order is missing" for an
+        identifier that does not exist and a different refusal for one that does. That is an
+        existence oracle across stores, and `store_access` promises the opposite in as many words:
+        the two failures are "deliberately indistinguishable to the caller, so probing identifiers
+        teaches nobody which stores exist". Filtering here rather than raising a second error keeps
+        that promise -- a non-member and a stranger's identifier produce the same empty row.
+        """
+
+        cursor.execute(
+            """
+            SELECT o.intake_status, r.finality, r.status, r.snapshot,
+                   EXISTS (
+                       SELECT 1 FROM quote_acceptances a
+                       WHERE a.quote_id = r.quote_id AND a.final_revision = r.revision
+                   ) AS customer_agreed
+            FROM orders o
+            JOIN quote_revisions r
+              ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
+            WHERE o.id = %s
+              AND EXISTS (
+                  SELECT 1 FROM staff_store_assignments s
+                  WHERE s.staff_user_id = %s
+                    AND s.store_id = o.store_id
+                    AND s.revoked_at IS NULL
+              )
+            """,
+            (order_id, staff_user_id),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise OrderStateError("order is missing")
+        snapshot = row[3] if isinstance(row[3], dict) else {}
+        lines = snapshot.get("lines") or []
+        return IntakeReadiness(
+            # Custody: the laundry is physically here, which is what leaving AWAITING_HANDOFF means.
+            custody_recorded=str(row[0]) != IntakeStatus.AWAITING_HANDOFF.value,
+            # The accepted revision may not rest on a quantity the customer guessed. Acceptance
+            # already refuses that, so this reads the stored snapshot rather than re-deciding it.
+            quantity_basis_approved=bool(lines)
+            and all(str(line.get("quantity_basis")) != "CUSTOMER_ESTIMATE" for line in lines),
+            # Every line names a service the published pricebook priced; a quote cannot exist
+            # otherwise.
+            service_classified=bool(lines) and all(line.get("service_code") for line in lines),
+            exact_price_approved=str(row[1]) == "APPROVED_EXACT"
+            and str(row[2]) == "ACCEPTED_FINAL",
+            # The attestation a named staff member wrote when the customer agreed (`DEC-021`).
+            customer_reconfirmation_satisfied=bool(row[4]),
+            slot_approved=slot_approved,
+        )
 
     def list_orders(
         self, *, store_id: UUID, principal: StaffPrincipal, limit: int
@@ -1150,12 +1287,30 @@ class OperationsService:
 
         Two checks run before the idempotency wrapper, as on `create_quote`: membership, because a
         staff member who has lost this store must not replay a key into a fresh write, and contact
-        existence, because the domain's only source of contact bindings is the verified channel
-        envelope and this path invents none. A counter intake has no channel conversation, so the
-        conversation binding is a freshly minted opaque id — no table joins on it anywhere, and the
-        agent bound-read path, which demands the full four-id tuple, can never match a request it
-        did not create. Contact bindings are never hard-deleted, so the existence answer cannot
-        change between the preflight and the commit.
+        existence, because this path invents no customer reference of its own. A counter intake has
+        no channel conversation, so the conversation binding is a freshly minted opaque id — no
+        table joins on it anywhere, and the agent bound-read path, which demands the full four-id
+        tuple, can never match a request it did not create.
+
+        **A walk-in reference is a counter ticket, and until 2026-08-29 this route refused one.**
+        The check read `contact_channel_bindings` alone, so the console's own walk-in flow broke at
+        its second step: `orderRequests.js` calls `POST /counter-tickets`, puts the returned
+        `ticket_id` into the contact field exactly as its docstring says, and the submit that
+        follows came back `CONTACT_BINDING_UNKNOWN`. `DEC-013` ratified the walk-in path and
+        `COUNTER-TICKET-001` built it, but its evidence was measured "through the real service and
+        repository path" — and `OrderRepository.create`, which that measurement went through,
+        already accepts either source. Only this route, which nothing had driven over HTTP, did not.
+        So the stranger at the counter — the shop's most common customer — could not be served by
+        the product at all.
+
+        Checked against both sources rather than one foreign key, which is the shape
+        `OrderRepository.create` established: `DEC-015` declines to unify a ticket and a channel
+        binding behind a party layer, because unifying them is the customer-record layer that
+        decision says not to build. The ticket check is store-scoped; the binding check is not,
+        because a channel binding is not a store's to own.
+
+        Neither source is ever hard-deleted, so the existence answer cannot change between the
+        preflight and the commit.
         """
         created_at = datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
@@ -1166,9 +1321,12 @@ class OperationsService:
                     store_id=store_id,
                     error=StoreAccessError,
                 )
-                if not ContactChannelBindingRepository.binding_exists(
+                known = ContactChannelBindingRepository.binding_exists(
                     cursor, contact_binding_id=contact_binding_id
-                ):
+                ) or CounterTicketRepository.ticket_exists(
+                    cursor, ticket_id=contact_binding_id, store_id=store_id
+                )
+                if not known:
                     raise ChannelBindingError("contact binding is not available")
 
             def commit() -> dict[str, object]:

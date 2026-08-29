@@ -8,7 +8,6 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
   and verified by scripts/verify_contracts.py against a fresh generation, so a new disclosure cannot land
   unregistered and a reworded one cannot pass unnoticed: a slot''s identity includes the hash of its text.'
 counts:
-  ABSENT_ROUTE: 2
   ABSENT_TABLE: 5
   ALL_AUTHENTICATED: 1
   DESCRIPTIVE: 135
@@ -18,7 +17,7 @@ counts:
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 11
-total: 162
+total: 160
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -534,27 +533,6 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:6bc3b51a36d1
-  module: screens/gaps.js
-  key: missing
-  text: Các chuyển trạng thái intake không có route HTTP nào. Route /transition chỉ mở ra chiều thương
-    mại của đơn, nên IntakeStatus hiển thị được nhưng không đổi được.
-  binding:
-    kind: ABSENT_ROUTE
-    patterns:
-    - intake
-    why: Claims the intake transitions have no HTTP route. Checked against the generated internal API
-      contract rather than the source, so it reads the same governed artifact a reviewer would.
-- slot_id: screens/gaps.js#missing:0621c03d85a6
-  module: screens/gaps.js
-  key: missing
-  text: 'Giống hệt intake: trạng thái sản xuất không có route nào. ProductionStatus chỉ đọc được.'
-  binding:
-    kind: ABSENT_ROUTE
-    patterns:
-    - production
-    why: Same shape for production status. Both become false the day FULFILMENT-001 lands, which is decision-clear
-      and unenqueued - exactly when a disclosure needs to notice.
 - slot_id: screens/gaps.js#missing:5bb9f3600337
   module: screens/gaps.js
   key: missing

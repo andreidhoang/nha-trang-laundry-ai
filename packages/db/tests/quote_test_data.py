@@ -16,6 +16,7 @@ from nha_trang_laundry_domain.canonical import canonical_document
 from nha_trang_laundry_domain.catalog import (
     AdjustmentDirection,
     ApprovalAction,
+    FulfillmentMode,
     QuantityBasis,
     QuoteFinality,
     QuoteRevisionStatus,
@@ -149,9 +150,10 @@ def accepted_quote(
     connection: Any,
     *,
     store_id: UUID,
-    staff_user_id: UUID,
+    principal: StaffPrincipal,
     quote_id: UUID | None = None,
-) -> tuple[UUID, int, ImmutableQuoteSnapshot]:
+    fulfillment_mode: FulfillmentMode = FulfillmentMode.SELF_DROP_SELF_COLLECT,
+) -> tuple[UUID, int, ImmutableQuoteSnapshot, UUID]:
     """Price a revision and accept it the way production does, returning the orderable revision.
 
     Fixtures used to mint an `APPROVED_EXACT` revision 1 directly. Since `QUOTE-ACCEPT-001` an
@@ -163,6 +165,21 @@ def accepted_quote(
     """
 
     identifier = quote_id or uuid4()
+    # A real intake request bound to a real counter ticket. `OrderRepository.create` checks that the
+    # order's customer is the customer the quote was priced for, reached through this request, so a
+    # fixture that invents a `bound_order_request_id` builds a chain no customer could walk.
+    contact_id = counter_ticket(connection, store_id=store_id, principal=principal)
+    request_id = uuid4()
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO order_requests (
+                id, store_id, contact_binding_id, conversation_binding_id, status, row_version,
+                created_at
+            ) VALUES (%s, %s, %s, %s, 'SUBMITTED', 1, %s)
+            """,
+            (request_id, store_id, contact_id, uuid4(), PRICED_AT),
+        )
     estimate = make_quote_snapshot(identifier, 1)
     priced = build_quote_snapshot(
         replace(
@@ -171,12 +188,27 @@ def accepted_quote(
                 replace(line, quantity_basis=QuantityBasis.STAFF_MEASUREMENT)
                 for line in estimate.data.lines
             ),
+            # A DELIVERY trace, because every revision the composer produces has one and
+            # `OrderRepository.create` reads the priced fulfilment mode out of it. A fixture without
+            # one reads as "priced under no mode at all" and is refused -- correctly, since no real
+            # quote can be in that state. Only the field the guard reads is populated; this is not a
+            # substitute for the engine's own trace.
+            calculation_traces=(
+                *estimate.data.calculation_traces,
+                capture_calculation_trace(
+                    "DELIVERY",
+                    "delivery-v1",
+                    {"fulfillment_mode": str(fulfillment_mode), "fee_rule": "FIXTURE"},
+                ),
+            ),
         )
     )
     repository = QuoteRepository()
     repository.create_revision(
         connection,
-        QuoteRevisionCommand(store_id, uuid4(), priced, 0, 0, staff_user_id, uuid4(), PRICED_AT),
+        QuoteRevisionCommand(
+            store_id, request_id, priced, 0, 0, principal.staff_user_id, uuid4(), PRICED_AT
+        ),
     )
     QuoteAcceptanceRepository().record(
         connection,
@@ -187,7 +219,7 @@ def accepted_quote(
             accepted_snapshot_hash=priced.document.snapshot_hash,
             final_revision=2,
             display_total_vnd=priced.data.totals.display_total_min_vnd or 0,
-            accepted_by=staff_user_id,
+            accepted_by=principal.staff_user_id,
             correlation_id=uuid4(),
             policy_version="quote-acceptance-dec-021-v1",
             accepted_at=PRICED_AT,
@@ -198,10 +230,17 @@ def accepted_quote(
     repository.create_revision(
         connection,
         QuoteRevisionCommand(
-            store_id, uuid4(), composition.snapshot, 1, 1, staff_user_id, uuid4(), PRICED_AT
+            store_id,
+            request_id,
+            composition.snapshot,
+            1,
+            1,
+            principal.staff_user_id,
+            uuid4(),
+            PRICED_AT,
         ),
     )
-    return identifier, 2, composition.snapshot
+    return identifier, 2, composition.snapshot, contact_id
 
 
 def counter_ticket(connection: Any, *, store_id: UUID, principal: StaffPrincipal) -> UUID:

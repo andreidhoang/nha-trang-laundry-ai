@@ -31,7 +31,7 @@ from nha_trang_laundry_domain.catalog import (
     IntakeStatus,
 )
 from nha_trang_laundry_domain.orders import IntakeReadiness
-from quote_test_data import accepted_quote, counter_ticket
+from quote_test_data import accepted_quote
 
 # Inside the fixture quote's validity window: `quote_test_data` prices at 2026-08-01 and the
 # order guard refuses a quote that expired before the customer accepted it.
@@ -88,14 +88,14 @@ def _active_order(
 ) -> UUID:
     """An order taken, accepted and made ACTIVE, which is where a delivery can be recorded."""
 
-    quote_id, revision, quote = accepted_quote(
-        connection, store_id=store_id, staff_user_id=staff.staff_user_id
+    quote_id, revision, quote, contact_id = accepted_quote(
+        connection, store_id=store_id, principal=staff, fulfillment_mode=mode
     )
     stored = OrderRepository().create(
         connection,
         CreateOrderCommand(
             store_id,
-            counter_ticket(connection, store_id=store_id, principal=staff),
+            contact_id,
             quote_id,
             revision,
             quote.document.snapshot_hash,
@@ -201,7 +201,12 @@ def test_a_walk_in_order_cannot_have_a_delivery_recorded(
 def test_the_same_return_cannot_succeed_twice(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    """One delivery, one success. A second would be a second handover that did not happen."""
+    """One delivery, one success. A second would be a second handover that did not happen.
+
+    It must refuse as a typed domain error, not as a raw `psycopg.errors.UniqueViolation`. It did
+    the latter until 2026-08-29, and the route turned it into HTTP 500 -- so an operator recording
+    a delivery twice saw a crash instead of being told it was already recorded.
+    """
 
     store_id = uuid4()
     staff = _member(postgres_connection, store_id, StaffRole.OPERATOR)
@@ -215,7 +220,7 @@ def test_the_same_return_cannot_succeed_twice(
             order_id, DeliveryLegKind.RETURN, DeliveryLegOutcome.SUCCEEDED, staff, uuid4(), NOW
         ),
     )
-    with pytest.raises(psycopg.errors.UniqueViolation):
+    with pytest.raises(DeliveryLegError):
         repository.record(
             postgres_connection,
             RecordDeliveryLegCommand(

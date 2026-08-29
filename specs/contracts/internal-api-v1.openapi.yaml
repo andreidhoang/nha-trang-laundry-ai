@@ -129,6 +129,40 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}/intake-transition:
+    post:
+      operationId: transition_order_intake
+      summary: 'Move the order''s intake: the laundry arrived, was inspected, and was accepted for work.'
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/orders/{order_id}/production-transition:
+    post:
+      operationId: transition_order_production
+      summary: 'Move the order through washing: queued, in process, checked, ready, released.'
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/orders/{order_id}/settlement:
     post:
       operationId: record_settlement

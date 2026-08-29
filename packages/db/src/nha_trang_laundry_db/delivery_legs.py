@@ -18,6 +18,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_domain.catalog import FulfillmentMode
+from psycopg.errors import UniqueViolation
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
@@ -113,24 +114,36 @@ class DeliveryLegRepository:
                 )
             if command.leg_kind is DeliveryLegKind.RETURN and mode not in MODES_EXPECTING_RETURN:
                 raise DeliveryLegError("this order's fulfilment mode has no return leg")
-            cursor.execute(
-                """
+            # The partial unique index refuses a second success per leg kind, which is right --
+            # two successful returns would be two handovers that did not both happen. It escaped
+            # as a raw psycopg error and the route turned it into HTTP 500 until 2026-08-29, so
+            # the operator saw a crash instead of being told the delivery was already recorded.
+            cursor.execute("SAVEPOINT record_leg")
+            try:
+                cursor.execute(
+                    """
                 INSERT INTO delivery_legs (
                     id, store_id, order_id, leg_kind, outcome, recorded_by, recorded_at,
                     correlation_id
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (
-                    leg_id,
-                    store_id,
-                    command.order_id,
-                    command.leg_kind.value,
-                    command.outcome.value,
-                    command.principal.staff_user_id,
-                    moment,
-                    command.correlation_id,
-                ),
-            )
+                    (
+                        leg_id,
+                        store_id,
+                        command.order_id,
+                        command.leg_kind.value,
+                        command.outcome.value,
+                        command.principal.staff_user_id,
+                        moment,
+                        command.correlation_id,
+                    ),
+                )
+            except UniqueViolation as error:
+                cursor.execute("ROLLBACK TO SAVEPOINT record_leg")
+                raise DeliveryLegError(
+                    "this delivery was already recorded as successful"
+                ) from error
+            cursor.execute("RELEASE SAVEPOINT record_leg")
             # The flag moves only on a succeeded return, and only once. `order_projection_guard`
             # requires row_version to advance by exactly one, so a leg that changes nothing must not
             # touch the order row at all.

@@ -238,6 +238,65 @@ def test_an_unknown_contact_binding_fails_closed_before_any_record(
         assert cursor.fetchone() == (0,)
 
 
+def test_a_counter_ticket_is_a_customer_reference_the_walk_in_path_accepts(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """`DEC-013`'s walk-in path, over the route the console actually calls.
+
+    Until 2026-08-29 this route checked `contact_channel_bindings` alone, so the console's own flow
+    broke at its second step: `orderRequests.js` calls `POST /counter-tickets`, puts the returned
+    `ticket_id` into the contact field exactly as its docstring describes, and the submit came back
+    `CONTACT_BINDING_UNKNOWN`. The stranger at the counter -- the shop's most common customer --
+    could not be served by the product at all.
+
+    It was invisible because `COUNTER-TICKET-001` measured the walk-in "through the real service
+    and repository path", and `OrderRepository.create` already accepted either source. Only this
+    route, which nothing had driven over HTTP, did not.
+    """
+    database_url = os.environ["DATABASE_URL"]
+    store_id = uuid4()
+    member = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPERATOR}))
+    postgres_connection.commit()
+    service = OperationsService(AuthSettings(database_url=database_url))
+
+    ticket = service.issue_counter_ticket(store_id=store_id, principal=member)
+    stored = service.create_order_request(
+        store_id=store_id,
+        contact_binding_id=ticket.ticket_id,
+        idempotency_key=f"intake-{uuid4().hex}",
+        principal=member,
+    )
+
+    assert stored.contact_binding_id == ticket.ticket_id
+
+
+def test_another_stores_counter_ticket_is_not_a_customer_reference_here(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """The ticket check is store-scoped: a number is only a customer at the counter that issued it.
+
+    A global lookup would let one counter open an intake naming another counter's customer -- the
+    cross-store shape `STORE-SCOPING-002` closed for writes, arriving through an identifier rather
+    than through a route.
+    """
+    database_url = os.environ["DATABASE_URL"]
+    issuing_store, other_store = uuid4(), uuid4()
+    issuer = _member(postgres_connection, issuing_store, roles=frozenset({StaffRole.OPERATOR}))
+    outsider = _member(postgres_connection, other_store, roles=frozenset({StaffRole.OPERATOR}))
+    postgres_connection.commit()
+    service = OperationsService(AuthSettings(database_url=database_url))
+
+    ticket = service.issue_counter_ticket(store_id=issuing_store, principal=issuer)
+
+    with pytest.raises(ChannelBindingError, match="contact binding is not available"):
+        service.create_order_request(
+            store_id=other_store,
+            contact_binding_id=ticket.ticket_id,
+            idempotency_key=f"intake-{uuid4().hex}",
+            principal=outsider,
+        )
+
+
 def test_list_scopes_to_the_store_newest_first(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:

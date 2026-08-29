@@ -123,19 +123,6 @@ BINDINGS: dict[str, dict[str, Any]] = {
         "already bound. It was parked DESCRIPTIVE, which is the misclassification this item exists "
         "to correct.",
     },
-    "screens/gaps.js#missing:6bc3b51a36d1": {
-        "kind": "ABSENT_ROUTE",
-        "patterns": ["intake"],
-        "why": "Claims the intake transitions have no HTTP route. Checked against the generated "
-        "internal API contract rather than the source, so it reads the same governed artifact a "
-        "reviewer would.",
-    },
-    "screens/gaps.js#missing:0621c03d85a6": {
-        "kind": "ABSENT_ROUTE",
-        "patterns": ["production"],
-        "why": "Same shape for production status. Both become false the day FULFILMENT-001 lands, "
-        "which is decision-clear and unenqueued - exactly when a disclosure needs to notice.",
-    },
     "screens/gaps.js#missing:5f121897a2aa": {
         "kind": "RESPONSE_SHAPE",
         "module": "nha_trang_laundry_api.main",

@@ -251,7 +251,11 @@ class SettlementRepository:
             paid_amount_vnd=command.paid_amount_vnd,
             settlement_shape=outcome.shape.value,
             balance_status="PAID",
-            self_collection_recorded=True,
+            # `collected`, not True. Hardcoded until 2026-08-29, so a prepaid delivery settlement
+            # answered the operator "the customer has their laundry" while the database correctly
+            # recorded that nobody had collected anything -- and the reply was frozen into the
+            # idempotency ledger, so every replay repeated the same false statement.
+            self_collection_recorded=collected,
             row_version=next_version,
         )
 

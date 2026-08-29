@@ -518,10 +518,13 @@ export function render_(context) {
   // it — `prefill` below resolves it before the form is allowed to rely on it.
   const prefillId = String(context?.query?.get("request") || "").trim();
 
-  /** @type {{lines: Line[], fulfillmentMode: string, orderRequestId: string, quoteId: string, expectedRevision: string, rowVersion: string, requestSummary: any|null}} */
+  /** @type {{lines: Line[], fulfillmentMode: string, verifiedDistanceM: string, manualFeeVnd: string, customerAcknowledgedFee: boolean, orderRequestId: string, quoteId: string, expectedRevision: string, rowVersion: string, requestSummary: any|null}} */
   const draft = {
     lines: [blankLine()],
     fulfillmentMode: "SELF_DROP_SELF_COLLECT",
+    verifiedDistanceM: "",
+    manualFeeVnd: "",
+    customerAcknowledgedFee: false,
     orderRequestId: "",
     quoteId: "",
     expectedRevision: "0",
@@ -534,8 +537,75 @@ export function render_(context) {
   const fulfillmentSelect = enumSelect("fulfillment_mode", FULFILLMENT_MODES, draft.fulfillmentMode);
   fulfillmentSelect.addEventListener("change", (event) => {
     draft.fulfillmentMode = /** @type {HTMLSelectElement} */ (event.target).value;
+    syncDistance();
     invalidateKey();
   });
+
+  // Distance, for the three modes that have a delivery job. Without it `evaluate_delivery` returns
+  // REQUIRE_HUMAN, the quote carries no total, and the quote can then never be accepted -- so
+  // shipping the mode picker without this field made three of its four options dead ends. Hidden
+  // for the walk-in case because there is no journey to measure.
+  const distanceInput = h("input", {
+    type: "number",
+    min: "0",
+    max: "100000",
+    step: "1",
+    inputmode: "numeric",
+    placeholder: "4000",
+    value: draft.verifiedDistanceM,
+    onInput: (event) => {
+      draft.verifiedDistanceM = /** @type {HTMLInputElement} */ (event.target).value;
+      invalidateKey();
+    },
+  });
+  const distanceField = labelled({
+    id: "quote-distance",
+    label: "Quãng đường đã đo (mét)",
+    hint:
+      "Đo thật, không ước lượng. Dưới 2km miễn phí, 2–6km 10.000đ, trên 6km nhân viên và khách " +
+      "thỏa thuận rồi nhập ở ô dưới. Bỏ trống thì báo giá không ra tổng tiền và không chốt được.",
+    control: distanceInput,
+  });
+
+  // Over 6km the fee is negotiated (DEC-003), and the customer must have agreed to it before the
+  // shop proceeds. Both facts travel together or the engine keeps refusing.
+  const manualFeeInput = h("input", {
+    type: "number",
+    min: "0",
+    step: "1",
+    inputmode: "numeric",
+    placeholder: "45000",
+    value: draft.manualFeeVnd,
+    onInput: (event) => {
+      draft.manualFeeVnd = /** @type {HTMLInputElement} */ (event.target).value;
+      invalidateKey();
+    },
+  });
+  const manualAckInput = h("input", {
+    type: "checkbox",
+    checked: draft.customerAcknowledgedFee,
+    onChange: (event) => {
+      draft.customerAcknowledgedFee = /** @type {HTMLInputElement} */ (event.target).checked;
+      invalidateKey();
+    },
+  });
+  const manualFeeField = labelled({
+    id: "quote-manual-fee",
+    label: "Phí giao đã thỏa thuận (₫) — chỉ khi trên 6km",
+    hint: "Nhập số hai bên đã đồng ý, và tích ô bên dưới xác nhận khách đã đồng ý.",
+    control: manualFeeInput,
+  });
+  const manualAckField = labelled({
+    id: "quote-manual-ack",
+    label: "Khách đã đồng ý mức phí giao này",
+    control: manualAckInput,
+  });
+
+  function syncDistance() {
+    const carries = draft.fulfillmentMode !== "SELF_DROP_SELF_COLLECT";
+    for (const node of [distanceField, manualFeeField, manualAckField]) node.hidden = !carries;
+  }
+  syncDistance();
 
   const builderBody = h("div");
   const resultHost = h("div", { class: "stack" });
@@ -879,6 +949,15 @@ export function render_(context) {
         quantity_basis: line.basis,
       })),
       fulfillment_mode: draft.fulfillmentMode,
+      // Absent is not zero: the server treats a missing distance as REQUIRE_HUMAN rather than as
+      // a free delivery, so an empty box must stay empty rather than become 0.
+      ...(draft.verifiedDistanceM.trim()
+        ? { verified_distance_m: Number.parseInt(draft.verifiedDistanceM, 10) }
+        : {}),
+      ...(draft.manualFeeVnd.trim()
+        ? { approved_manual_fee_vnd: Number.parseInt(draft.manualFeeVnd, 10) }
+        : {}),
+      ...(draft.customerAcknowledgedFee ? { customer_acknowledged_manual_fee: true } : {}),
       ...(revisionMode
         ? {
             quote_id: draft.quoteId,
@@ -1008,6 +1087,9 @@ export function render_(context) {
             "Có giao hàng thì cần quãng đường đã đo; trên 6km phí do nhân viên và khách thỏa thuận.",
           control: fulfillmentSelect,
         }),
+        distanceField,
+        manualFeeField,
+        manualAckField,
       ),
       lineEditor({
         catalog,

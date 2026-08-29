@@ -148,6 +148,79 @@ def test_a_delivery_order_collected_at_the_counter_is_refused_as_contradictory()
     assert outcome.refusal is SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER
 
 
+#: The whole of the mode/collection decision, stated once. Four modes times "did the customer take
+#: it at the counter", and the shape each pair produces or the refusal it earns.
+#:
+#: `PICKUP_ONLY` is the row this table was written for. Until 2026-08-29 it was refused when the
+#: customer collected -- the only way such an order can ever end -- and *accepted* as a prepaid
+#: delivery when they did not, which took the money into an order no leg this system permits could
+#: close. Both halves were wrong and both are fixed here; the rest of the table is unchanged
+#: behaviour, pinned so the next mode added has to argue with a failing test.
+MODE_TRUTH_TABLE = (
+    (FulfillmentMode.SELF_DROP_SELF_COLLECT, True, SettlementShape.EXACT_PAYMENT_SELF_COLLECTION),
+    (
+        FulfillmentMode.SELF_DROP_SELF_COLLECT,
+        False,
+        SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER,
+    ),
+    (FulfillmentMode.PICKUP_ONLY, True, SettlementShape.EXACT_PAYMENT_SELF_COLLECTION),
+    (FulfillmentMode.PICKUP_ONLY, False, SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER),
+    (FulfillmentMode.PICKUP_AND_RETURN, True, SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER),
+    (FulfillmentMode.PICKUP_AND_RETURN, False, SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY),
+    (FulfillmentMode.RETURN_ONLY, True, SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER),
+    (FulfillmentMode.RETURN_ONLY, False, SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY),
+)
+
+
+@pytest.mark.parametrize(("mode", "collected", "expected"), MODE_TRUTH_TABLE)
+def test_every_mode_and_collection_pair_has_one_settled_answer(
+    mode: FulfillmentMode, collected: bool, expected: object
+) -> None:
+    """Eight cases, no gaps. A mode is accepted for exactly one side of the counter."""
+
+    outcome = evaluate(collected=collected, mode=mode)
+    if isinstance(expected, SettlementShape):
+        assert isinstance(outcome, SettlementAccepted)
+        assert outcome.shape is expected
+        assert outcome.expected_total_vnd == TOTAL
+    else:
+        assert isinstance(outcome, SettlementNotSupported)
+        assert outcome.refusal is expected
+
+
+def test_a_pickup_only_order_is_closed_by_the_customer_at_the_counter() -> None:
+    """The case that stranded money, stated on its own because it is why the table exists.
+
+    The shop fetched the laundry and the customer comes in for it. Migration `0033` says so in as
+    many words -- `PICKUP_ONLY` "has no return leg at all and is completed by self-collection at the
+    counter, exactly as a walk-in is" -- and `delivery_legs` enforces that half by refusing such an
+    order a `RETURN` leg. Settlement compared against `SELF_DROP_SELF_COLLECT` alone and so refused
+    the handover, while accepting the prepayment that had no way to be closed afterwards.
+
+    No new shape and no new refusal: this is the same money as a walk-in, paid at the counter, with
+    the goods handed over there. `DEC-010` and `DEC-023` are both untouched.
+    """
+
+    outcome = evaluate(collected=True, mode=FulfillmentMode.PICKUP_ONLY)
+
+    assert isinstance(outcome, SettlementAccepted)
+    assert outcome.shape is SettlementShape.EXACT_PAYMENT_SELF_COLLECTION
+
+
+def test_a_pickup_only_order_cannot_be_prepaid_for_a_delivery_that_never_comes() -> None:
+    """The other half, and the one that was actually taking money.
+
+    Accepting this was worse than refusing the handover: it set `balance_status='PAID'` on an order
+    whose completion needs `required_delivery_legs_succeeded`, which needs a succeeded `RETURN` leg,
+    which `delivery_legs` refuses for this mode. Paid in full, permanently `ACTIVE`.
+    """
+
+    outcome = evaluate(collected=False, mode=FulfillmentMode.PICKUP_ONLY)
+
+    assert isinstance(outcome, SettlementNotSupported)
+    assert outcome.refusal is SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER
+
+
 def test_a_delivery_order_still_cannot_be_part_paid() -> None:
     """DEC-010 is untouched: the amount rule is the same for both shapes."""
 

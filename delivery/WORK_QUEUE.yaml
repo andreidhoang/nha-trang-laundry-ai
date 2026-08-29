@@ -2949,3 +2949,34 @@ items:
   - what_this_item_did_not_fix
   - rollback_assessment
   blocked_by_decisions: []
+- id: PICKUP-ONLY-001
+  phase: PRODUCTION_HARDENING
+  title: The order that took money and could never be closed
+  status: COMPLETE
+  priority: 248
+  depends_on:
+  - FULFILMENT-001
+  - ORDER-LIFECYCLE-001
+  context_domains:
+  - orders_audit
+  - promotion_delivery_sla
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - DELIVERY_POLICY_DRAFT.md
+  contracts: []
+  task_packet: context/tasks/TASK-pickup-only-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_pickup_only_order_reaches_completed_over_http
+  - the_money_half_that_was_stranding_orders_is_refused
+  - one_rule_read_by_both_modules
+  - the_refusals_around_the_widened_branch_did_not_move
+  - no_new_shape_and_no_new_decision
+  - rollback_assessment
+  blocked_by_decisions: []

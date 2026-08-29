@@ -111,10 +111,17 @@ def _approved_quote(
     return build_quote_snapshot(data)
 
 
-def _order(connection: Any, store_id: UUID, staff: StaffPrincipal) -> UUID:
+def _order(
+    connection: Any,
+    store_id: UUID,
+    staff: StaffPrincipal,
+    mode: FulfillmentMode = FulfillmentMode.SELF_DROP_SELF_COLLECT,
+) -> UUID:
     # Priced, then accepted, then ordered -- the shape production produces since QUOTE-ACCEPT-001.
+    # The mode is threaded through the quote as well as the order because `OrderRepository.create`
+    # reconciles the two: a quote priced under one mode cannot carry an order under another.
     quote_id, revision, quote, contact_id = accepted_quote(
-        connection, store_id=store_id, principal=staff
+        connection, store_id=store_id, principal=staff, fulfillment_mode=mode
     )
     stored = OrderRepository().create(
         connection,
@@ -124,7 +131,7 @@ def _order(connection: Any, store_id: UUID, staff: StaffPrincipal) -> UUID:
             quote_id,
             revision,
             quote.document.snapshot_hash,
-            FulfillmentMode.SELF_DROP_SELF_COLLECT,
+            mode,
             staff,
             f"order-{uuid4().hex}",
             uuid4(),
@@ -145,9 +152,14 @@ def _advance(
     )
 
 
-def _ready_active_order(connection: Any, store_id: UUID, staff: StaffPrincipal) -> tuple[UUID, int]:
+def _ready_active_order(
+    connection: Any,
+    store_id: UUID,
+    staff: StaffPrincipal,
+    mode: FulfillmentMode = FulfillmentMode.SELF_DROP_SELF_COLLECT,
+) -> tuple[UUID, int]:
     """Drive an order to ACTIVE with production RELEASED, through every real transition."""
-    order_id = _order(connection, store_id, staff)
+    order_id = _order(connection, store_id, staff, mode)
     version = 1
     for step in (
         {"intake_target": IntakeStatus.RECEIVED_PENDING_INSPECTION},
@@ -553,3 +565,62 @@ def test_a_non_member_is_refused_the_takings(connection: psycopg.Connection[Any]
         pytest.raises((SettlementAuthorizationError, StoreAccessError)),
     ):
         SettlementRepository.collected_today(cursor, store_id=store_id, principal=outsider)
+
+
+def test_a_pickup_only_order_is_settled_and_closed_at_the_counter(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The database half of the `PICKUP_ONLY` fix: the shape must set the flag that completes it.
+
+    The shop's courier fetched the laundry; the customer comes to the counter for it. Migration
+    `0033` says such an order "is completed by self-collection at the counter, exactly as a walk-in
+    is", and `delivery_legs` enforces that half by refusing it a `RETURN` leg. Settlement refused
+    the counter handover -- so `self_collection_recorded` could never become TRUE, and
+    `transition_commercial` kept refusing `COMPLETED` for want of a fulfilment fact that no
+    permitted action could produce.
+
+    Asserting the flag rather than only the shape is the point: the shape is a domain answer, and
+    what strands an order is the column.
+    """
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OWNER_ADMIN)
+    order_id, version = _ready_active_order(
+        connection, store_id, staff, FulfillmentMode.PICKUP_ONLY
+    )
+
+    stored = _settle(connection, order_id, staff, collected=True)
+
+    assert stored.settlement_shape == "EXACT_PAYMENT_SELF_COLLECTION"
+    assert stored.self_collection_recorded
+    _, balance, collected, version = _order_row(connection, order_id)
+    assert balance == "PAID"
+    assert collected
+
+    completed = _advance(
+        connection,
+        order_id,
+        staff,
+        version,
+        commercial_target=CommercialOrderStatus.COMPLETED,
+    )
+    assert completed.commercial is CommercialOrderStatus.COMPLETED
+
+
+def test_a_pickup_only_order_cannot_be_prepaid_like_a_delivery(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """Taking the money without a handover is what stranded these orders, so it is refused.
+
+    There is no `RETURN` leg for this mode, so `required_delivery_legs_succeeded` can never become
+    true. A prepaid settlement would mark the order PAID with no reachable path to `COMPLETED`.
+    """
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OWNER_ADMIN)
+    order_id, _ = _ready_active_order(connection, store_id, staff, FulfillmentMode.PICKUP_ONLY)
+
+    with pytest.raises(SettlementStateError, match="settlement shape is not supported"):
+        _settle(connection, order_id, staff, collected=False)
+
+    _, balance, collected, _ = _order_row(connection, order_id)
+    assert balance == "UNPAID"
+    assert not collected

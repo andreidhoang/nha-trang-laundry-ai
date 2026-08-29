@@ -17,7 +17,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from nha_trang_laundry_domain.catalog import FulfillmentMode
+from nha_trang_laundry_domain.catalog import MODES_EXPECTING_RETURN, FulfillmentMode
 from psycopg.errors import UniqueViolation
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
@@ -38,12 +38,6 @@ class DeliveryLegKind(StrEnum):
 class DeliveryLegOutcome(StrEnum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
-
-
-#: Which fulfilment modes expect a return leg at all. `PICKUP_ONLY` does not: the shop collects the
-#: laundry and the customer comes to the counter for it, so self-collection completes that order
-#: exactly as it completes a walk-in.
-MODES_EXPECTING_RETURN = frozenset({FulfillmentMode.PICKUP_AND_RETURN, FulfillmentMode.RETURN_ONLY})
 
 
 class DeliveryLegError(ValueError):

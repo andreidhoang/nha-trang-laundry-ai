@@ -96,7 +96,14 @@ def test_context_drift_check_passes() -> None:
     # customer could not be served at all) and every order that got past it stopped at CONFIRMED
     # (nothing could move intake or production). It also bound an order to its quote's customer and
     # fulfilment mode, closing two ways one customer could be charged another's price.
-    assert "90 work items" in result.stdout
+    # The ninety-first is PICKUP-ONLY-001, which decides nothing and implements what migration 0033
+    # and delivery_legs.py both already said under DEC-023: the shop fetches the laundry, the
+    # customer comes to the counter for it. Settlement compared the mode against
+    # SELF_DROP_SELF_COLLECT alone, so it refused that handover and accepted a prepayment for a
+    # delivery no permitted leg could ever attest -- paid in full, permanently ACTIVE. The rule now
+    # lives once, in catalog.py: a mode expects a return leg exactly when the customer does not
+    # collect in person.
+    assert "91 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

@@ -127,6 +127,22 @@ class FulfillmentMode(StrEnum):
     RETURN_ONLY = "RETURN_ONLY"
 
 
+#: Which modes end with the shop's courier handing laundry to the customer, rather than with the
+#: customer at the counter. It is the same fact twice: **a mode expects a return leg exactly when
+#: the customer does not collect in person.** `PICKUP_ONLY` is the case that makes the symmetry
+#: worth stating -- the shop fetches the laundry and the customer comes in for it, so that order is
+#: completed by self-collection exactly as a walk-in is.
+#:
+#: It lives here, next to the enum, because two modules need it and they disagreed while each held
+#: half of it. `delivery_legs` refused a `RETURN` leg for `PICKUP_ONLY` on this rule; settlement
+#: instead compared against `SELF_DROP_SELF_COLLECT` alone and so refused the counter handover that
+#: is the only way such an order can ever end. Between them a `PICKUP_ONLY` order could be paid in
+#: full and never closed. One definition, two readers.
+MODES_EXPECTING_RETURN: Final = frozenset(
+    {FulfillmentMode.PICKUP_AND_RETURN, FulfillmentMode.RETURN_ONLY}
+)
+
+
 class CommercialOrderStatus(StrEnum):
     DRAFT = "DRAFT"
     REQUESTED = "REQUESTED"

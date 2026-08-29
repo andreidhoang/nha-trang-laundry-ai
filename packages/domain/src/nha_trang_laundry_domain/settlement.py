@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
-from nha_trang_laundry_domain.catalog import FulfillmentMode
+from nha_trang_laundry_domain.catalog import MODES_EXPECTING_RETURN, FulfillmentMode
 
 MAX_SETTLEMENT_VND: Final = 9_007_199_254_740_991
 
@@ -141,14 +141,15 @@ def evaluate_settlement(
         # Under, over, or a deposit: all DEC-010, and all refused rather than partially recorded.
         return _refuse(SettlementRefusal.AMOUNT_IS_NOT_THE_EXACT_TOTAL)
     if collected_by_customer:
-        if fulfillment_mode is not FulfillmentMode.SELF_DROP_SELF_COLLECT:
+        if fulfillment_mode in MODES_EXPECTING_RETURN:
             # The goods were handed back at the counter on an order that says they travel. One of
             # the two is wrong and this module will not guess which.
             return _refuse(SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER)
         return SettlementAccepted(SettlementShape.EXACT_PAYMENT_SELF_COLLECTION, quoted.minimum_vnd)
-    if fulfillment_mode is FulfillmentMode.SELF_DROP_SELF_COLLECT:
-        # Nobody collected, and no delivery is expected either. Nothing has happened that a
-        # settlement could attest.
+    if fulfillment_mode not in MODES_EXPECTING_RETURN:
+        # Nobody collected, and no return leg is expected either -- so nothing has happened that a
+        # settlement could attest, and nothing ever will. Taking the money here is what stranded
+        # `PICKUP_ONLY`: paid in full, and no leg this system permits could close it.
         return _refuse(SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER)
     # `DEC-023`: paid in full at the counter, laundry still to travel. Arrival is a delivery leg's
     # fact, not this one's, and `transition_commercial` still refuses to complete the order until a

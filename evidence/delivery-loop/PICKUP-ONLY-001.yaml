@@ -1,0 +1,148 @@
+schema_version: 1
+work_item: PICKUP-ONLY-001
+recorded_at: '2026-08-29T18:20:00+07:00'
+requirement_contract: >-
+  Make a `PICKUP_ONLY` order completable, the way two artifacts ratified under `DEC-023` already say
+  it should behave: the shop's courier collects the laundry, the customer comes to the counter for
+  it, and self-collection closes the order exactly as it closes a walk-in.
+
+  **No decision is taken here and none was needed.** Migration `0033` states the intended behaviour
+  in as many words -- `PICKUP_ONLY` "has no return leg at all and is completed by self-collection at
+  the counter, exactly as a walk-in is" -- and `delivery_legs.py` enforces its half. Only
+  `evaluate_settlement` disagreed, by comparing the mode against `SELF_DROP_SELF_COLLECT` alone.
+
+  No new `SettlementShape` and no new `SettlementRefusal`: either would have been a new decision.
+  This case is literally `EXACT_PAYMENT_SELF_COLLECTION` -- the exact total, in full, one payment,
+  goods handed over at the counter -- and the refusal of its opposite reuses
+  `COLLECTION_WAS_NOT_BY_THE_CUSTOMER` with the reasoning the `SELF_DROP` branch already carries.
+  `DEC-010` and `DEC-023` are both untouched.
+rollback_impact: >-
+  Reverting returns `PICKUP_ONLY` orders to being takeable, priceable, payable and impossible to
+  close, and re-opens the branch that accepted the money on the way in.
+
+  It is a clean revert. **No migration.** The change is one domain constant relocated, one settlement
+  branch, one import, and tests. Nothing written under this item is a shape that did not exist
+  before it: a `PICKUP_ONLY` settlement is recorded as `EXACT_PAYMENT_SELF_COLLECTION`, which
+  `order_settlements` has accepted since `SETTLEMENT-001`, so no row becomes invalid.
+
+  Two couplings must revert together: `MODES_EXPECTING_RETURN` moved from
+  `nha_trang_laundry_db.delivery_legs` to `nha_trang_laundry_domain.catalog`, and both
+  `delivery_legs` and `settlement` now import it from there. Reverting one file alone leaves an
+  undefined name.
+
+  The real cost of reverting is not data: it is that an order type the shop can sell goes back to
+  being unclosable after the customer has paid.
+unresolved_assumptions: >-
+  **CẦN XÁC MINH:** whether the shop actually sells a pickup-only service, and whether a customer
+  who had their laundry fetched genuinely comes to the counter to collect it. The mode exists in the
+  enum and the delivery engine prices it (`ONE_LEG_HUMAN_PRICE`), but nothing here establishes that
+  a real customer has ever asked for one. If in practice a fetched order is always delivered back,
+  the right shape is `PICKUP_AND_RETURN` and this mode is dead weight rather than a fixed feature.
+
+  **The pickup fee is a staff-negotiated number and this item does not check it.** One-leg orders
+  take `ONE_LEG_PRICE_UNRESOLVED` and require an approved manual fee with the customer's
+  acknowledgement -- `DEC-003`. Nothing verifies the fee is reasonable, and nothing should: that is
+  the negotiation the owner reserved to people.
+
+  **Not claimed:** that `RETURN_ONLY` has been exercised end to end. Its settlement path is
+  unchanged and pinned by the truth table, but no probe drove one through a real return leg. Of the
+  four modes, three are now proven end to end over HTTP and `RETURN_ONLY` is proven only at the
+  policy level.
+
+  **Not claimed:** that a `PICKUP_ONLY` order whose pickup leg *failed* behaves sensibly. A failed
+  pickup means the shop never got the laundry, and nothing in this system prevents the order
+  proceeding to production on laundry that is still in the customer's house.
+evidence:
+  a_pickup_only_order_reaches_completed_over_http: >-
+    Measured on 2026-08-29 against a clean database, every counter step an HTTP request:
+
+        1. phat phieu so 2  (chi lay tan nha, khach den quay nhan)
+        2. bao gia rev1 = 115000d (co phi lay 15.000d)
+        3. chot rev2 + tao don c25f4550
+        4. tai xe lay do ve: PICKUP SUCCEEDED, hoan tat fulfilment=False
+        5. thu ghi chuyen TRA -> 409 this order's fulfilment mode has no return leg
+        6. khach den quay tra 115000d -> EXACT_PAYMENT_SELF_COLLECTION
+
+        *** COMPLETED ***  balance=PAID  chi lay: dong duoc
+
+    The pickup leg is real and it completes nothing -- `completes_fulfillment=False` -- which is the
+    behaviour `FULFILMENT-001` established and this item did not change. Step 5 shows the other half
+    still holds: a `RETURN` leg is refused for this mode, so the order is closed by the counter or
+    not at all.
+
+    Three of the four fulfilment modes are now proven end to end over HTTP. `RETURN_ONLY` is proven
+    at the policy level only, and that is recorded above rather than implied.
+  the_money_half_that_was_stranding_orders_is_refused: >-
+    `PICKUP_ONLY` with `collected_by_customer=False` was **accepted** as
+    `EXACT_PAYMENT_PREPAID_DELIVERY` and is now refused. This is the half that actually took money:
+    it set `balance_status='PAID'` on an order whose completion needs
+    `required_delivery_legs_succeeded`, which needs a succeeded `RETURN` leg, which
+    `delivery_legs.py:109` refuses for this mode. Paid in full, permanently `ACTIVE`, with every
+    individual guard behaving correctly.
+
+    Pinned at both layers, because the shape is a domain answer and what strands an order is a
+    column: `test_a_pickup_only_order_cannot_be_prepaid_for_a_delivery_that_never_comes` in the
+    domain, and `test_a_pickup_only_order_cannot_be_prepaid_like_a_delivery` against PostgreSQL,
+    which additionally asserts the order is left `UNPAID` with `self_collection_recorded` false.
+
+    The accepting half is pinned the same way, and the database test carries the order through to
+    `COMPLETED` rather than stopping at the shape.
+  one_rule_read_by_both_modules: >-
+    The two modules disagreed while each held half of one rule. `MODES_EXPECTING_RETURN` now lives
+    in `catalog.py` beside the enum it describes, and says the fact once:
+
+        a mode expects a return leg exactly when the customer does not collect in person.
+
+    `delivery_legs` reads it to decide which leg is legal; `settlement` reads it to decide which side
+    of the counter the order ends on. `delivery_legs` previously owned the only copy -- in the
+    database layer, where the domain cannot import it, which is why settlement had its own
+    half-version of the same idea.
+
+    `test_every_mode_and_collection_pair_has_one_settled_answer` pins the whole 4x2 table -- four
+    modes times "did the customer take it at the counter" -- so the next mode added has to argue with
+    a failing test rather than inherit whichever branch it happens to fall into.
+  the_refusals_around_the_widened_branch_did_not_move: >-
+    This item widens an acceptance branch, so the refusals bordering it were measured rather than
+    assumed.
+
+    A `PICKUP_ONLY` quote with no negotiated fee still presents no total:
+
+        c. chi lay, chua thoa thuan phi -> HTTP 201, tong tien = None,
+           ly do = ['DELIVERY_FEE_REQUIRES_HUMAN', 'DELIVERY_FEE_UNRESOLVED',
+                    'ONE_LEG_PRICE_UNRESOLVED', 'PROMOTION_NOT_EVALUATED',
+                    'SLOT_APPROVAL_REQUIRED', 'TAX_TREATMENT_UNVERIFIED',
+                    'TRANSPORT_WEIGHT_REQUIRES_HUMAN']
+
+    The quote exists and carries no price, which is `DEC-003` working: a one-leg fee is a
+    negotiation, and a settlement against such a quote refuses with `NO_PRESENTABLE_TOTAL`.
+
+    The other three modes are unchanged in behaviour and pinned by the same truth table.
+    `test_a_delivery_order_collected_at_the_counter_is_refused_as_contradictory` -- named in
+    `FULFILMENT-001`'s evidence -- still passes unmodified, because it uses `PICKUP_AND_RETURN`,
+    which is on the unchanged side of the rule.
+  no_new_shape_and_no_new_decision: >-
+    `SettlementShape` still has exactly two members and
+    `test_every_shape_traces_to_a_signed_decision` still passes with both traced to `SETTLEMENT-001`
+    and `DEC-023`. `SettlementRefusal` and `REFUSAL_DECISIONS` are unchanged.
+
+    That restraint is the check on this item. A `PICKUP_ONLY` settlement is the same money as a
+    walk-in -- the exact quoted total, in full, in one payment, with the goods handed over at the
+    counter -- so inventing a third shape for it would have created a decision the owner never made
+    in order to fix a defect. `DEC-010` (part payment, deposits, instalments, credit) is untouched.
+  rollback_assessment: >-
+    See rollback_impact. No migration, no schema change, no new enum member. One constant relocated
+    from the database layer to the domain, one settlement branch rewritten in terms of it, two
+    imports, and tests at both layers plus the 4x2 truth table.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

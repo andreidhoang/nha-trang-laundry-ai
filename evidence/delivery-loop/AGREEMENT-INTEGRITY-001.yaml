@@ -1,0 +1,185 @@
+schema_version: 1
+work_item: AGREEMENT-INTEGRITY-001
+recorded_at: '2026-08-30T14:05:00+07:00'
+requirement_contract: >-
+  One agreement, one price, one order. Close the three money defects a 62-agent adversarial
+  verification found on 2026-08-29 -- nine independent lenses, then two skeptics per finding who
+  defaulted to `refuted` unless they personally reran the reproduction. 25 of 26 findings survived;
+  these are the three that let the shop collect the wrong amount.
+
+  **The first of them this repository introduced the day before**, in `ORDER-LIFECYCLE-001`. That is
+  recorded here in full rather than repaired quietly, because the mechanism is the most useful thing
+  this session produced.
+
+  No decision is taken. `CONVERTED` was already in the `quotes.lifecycle` CHECK; the acceptance
+  route already demanded the header it ignored; the order guard already claimed to refuse a stale
+  quote. Each fix makes an existing promise true.
+rollback_impact: >-
+  Reverting restores three ways for the shop to collect an amount the customer did not agree to.
+
+  It is a clean revert. **No migration.** The `CONVERTED` lifecycle value has existed since
+  migration `0005` and this item is the first writer of it; no column, constraint or table changed.
+
+  Rows written under this item are ordinary: orders, acceptances, and `command_idempotency_records`
+  in a new scope (`staff-quote-accept:{staff_id}`). Reverting leaves those records orphaned but
+  harmless -- nothing reads a scope that no longer exists.
+
+  One coupling: quotes moved to `CONVERTED` by this code stay `CONVERTED` after a revert, and the
+  reverted guard does not read `lifecycle`, so those quotes become orderable again rather than
+  stuck. The failure direction of a revert is permissive, which is worth knowing before choosing it.
+unresolved_assumptions: >-
+  **Spending the quote means a cancelled order's quote cannot be re-ordered.** The customer needs a
+  fresh quote. That is the honest reading of `CONVERTED` -- the agreement did become an order -- and
+  it is recoverable, since re-quoting is always available. The alternative is a partial unique index
+  excluding cancelled orders, mirroring `delivery_legs_one_success_per_kind`, and it is one line
+  away if the owner prefers it. **CẦN XÁC MINH** with the shop: how often an order is cancelled and
+  immediately re-made, because if that is routine this choice adds a re-quote to a common flow.
+
+  **Not claimed:** that the acceptance race is now correct under every interleaving. Two concurrent
+  acceptances were driven and produced `[201, 409]` where they previously produced `[201, 500]`.
+  Three or more, or a race between an acceptance and a reprice, were not exercised.
+
+  **Not claimed:** that `staff-quote-accept` is the right idempotency scope granularity. It follows
+  `staff-quote-create` and is keyed per staff member, so two staff members using the same key string
+  do not collide. Whether that is what the console actually does was not verified against the client.
+
+  **The load-bearing-bug lesson generalises and was not acted on.** Nothing in this repository
+  distinguishes a constraint that is deliberately load-bearing from one that is incidental. The next
+  incidental guard removed will fail the same way and the suite will stay green.
+evidence:
+  the_regression_this_repository_introduced_is_closed: >-
+    Reproduced by the verification pass, then by me directly, on my own database:
+
+        chot #1: rev2 = 100000d
+        chot #2: rev4 =  50000d   <- the customer's live agreement
+        order against superseded rev2  -> 201 Created
+        pay the agreed      50000d     -> 422 AMOUNT_IS_NOT_THE_EXACT_TOTAL
+        pay the superseded 100000d     -> 201 PAID
+        *** COMPLETED ***
+
+    The shop collects 100.000đ for a quote re-agreed at 50.000đ, and the system actively refuses the
+    amount the customer agreed to. Order, settlement and immutable snapshot all agree with each
+    other on the stale number, so nothing internally looks wrong.
+
+    After the fix, the attacker's own probe run unmodified:
+
+        order against superseded rev2 -> 409 "the customer agreed a newer price for this quote;
+                                              read the current one to them"
+
+    The guard now refuses any revision with a later acceptance on the same quote. Pinned by
+    `test_an_order_cannot_cite_a_price_the_customer_has_moved_on_from`.
+  an_agreement_authorises_exactly_one_order: >-
+    Three `POST /orders` with three fresh idempotency keys produced three orders against one
+    attestation, each independently settleable: 100.000đ agreed once, 300.000đ recorded as
+    collected. The replay control was never broken -- it keys on the caller's header, so a
+    double-submit or a retry with a regenerated key is a genuinely new order.
+
+    After the fix, the same probe:
+
+        order #1 -> HTTP 201
+        order #2 -> HTTP 409 "this quote has already been converted into an order"
+        order #3 -> HTTP 409
+        orders bound to that ONE accepted revision: 1
+        quote lifecycle after conversion          : CONVERTED
+        SETTLEMENTS citing that one quote: 1, tong tien thu: 100000d
+
+    `CONVERTED` has been in the `quotes.lifecycle` CHECK since migration `0005` and nothing ever
+    wrote it. Spending the agreement is what that value was for, so this needed no schema change.
+
+    The `UPDATE ... WHERE lifecycle = 'OPEN' RETURNING id` runs inside the order's own transaction,
+    which is what makes the read binding under concurrency: two simultaneous creates both pass the
+    guard and only one can move the row. Without it the check would be advisory. Pinned by
+    `test_an_agreement_authorises_exactly_one_order`, which asserts the lifecycle and the order
+    count, not just the refusal.
+  the_acceptance_key_is_honoured: >-
+    The header was accepted at the route and never reached `self._idempotency.execute`, so nothing
+    was claimed. Measured before and after:
+
+        1. REPLAY cung mot key
+           lan 1 -> 201 rev=2 replayed=False
+           lan 2 -> 201 rev=2 replayed=True
+           idempotency rows for that key: 1  (was 0 before the fix)
+           attestations written        : 1
+        2. HAI NGUOI CHOT CUNG LUC -> [201, 409]        (was [201, 500])
+        3. CHOT khi khach uoc luong can nang -> 422 ['QUOTE_QUANTITY_NOT_MEASURED']
+           key da bi tieu thu chua? 0
+
+    Before, a retry of a timed-out acceptance re-executed from scratch, tripped the
+    `expected_current_revision` guard, and told the operator "quote moved since it was read; read it
+    to the customer again" -- when their own first attempt is what moved it. At a counter with a
+    customer waiting that reads as the system losing the agreement it just recorded.
+
+    The 500 came from `(quote_id, final_revision)`, which the INSERT did not guard while it did
+    guard `(quote_id, accepted_revision)`. Losing a race is now a 409 naming the conflict.
+
+    Point 3 is the part worth stating: an unresolved acceptance raises rather than returns, so the
+    idempotency claim rolls back with it and the key survives. Staff put the bag the customer
+    estimated on the scale and press chốt again -- with the same key, because that is what a retry
+    is. Had the refusal claimed the key, the corrected acceptance would replay the refusal forever.
+    Pinned by `test_a_replayed_acceptance_returns_the_stored_attestation` and
+    `test_an_unresolved_acceptance_does_not_consume_the_key`.
+  a_bug_can_be_load_bearing: >-
+    The mechanism, because it is the transferable part.
+
+    `outbox_events.idempotency_key` is `UNIQUE` (migration `0001`). The acceptance outbox key was
+    `quote:{quote_id}:acceptance` -- the same string for every acceptance of a quote. A second
+    acceptance therefore always collided and rolled back, so **a quote could never have two accepted
+    revisions and a superseded one could not exist.**
+
+    That collision was accidentally the only thing guarding order-creation against a stale
+    agreement. It presented as a defect -- "thêm cái áo này nữa" genuinely returned 500 and the
+    normal counter conversation was blocked -- and fixing it was correct. Revision-scoping the key
+    removed the accident with it, and the guard at `orders.py` had only ever asked that *some*
+    acceptance named the revision, never that it was still the current one.
+
+    So a real fix to a real bug opened a money defect, and 1067 passing tests saw neither. Nothing
+    in this repository marks a constraint as deliberately load-bearing versus incidental, which is
+    recorded above as unresolved rather than solved here.
+  what_this_item_did_not_fix: >-
+    22 of the 25 surviving findings are untouched and open.
+
+    **Authorization, four HIGHs.** Approval decisions (`approvals.py:535`), manual send
+    prepare/attest (`manual_sends.py:286`) and the shadow audit timeline
+    (`shadow_console.py:767`) carry no store membership check at all: a non-member can decide
+    another store's approval and consume its one-time SEND_MESSAGE authorization. The store-scoping
+    work to date covered order routes; these were never in scope and nothing had looked.
+
+    **Two live console commands throw client-side and never reach the server** --
+    `orderRequests.js:318` ("Phát phiếu") and the delivery-leg control. So the walk-in path fixed in
+    `ORDER-LIFECYCLE-001` is still unusable from the console, for a second and unrelated reason.
+
+    **The settlement panel's Vietnamese guardrail, checkbox hint and success line all state the
+    opposite of what the server does for delivery orders** (`orderDetail.js:205`).
+
+    **Four routes return HTTP 500 on integers >= 2^53**, including the settlement money field.
+
+    **The owner-confirmed 30% promotion is structurally unreachable** and the acceptance gate meant
+    to stop a full-price acceptance can never fire (`quote_composition.py:368`).
+
+    **`CONFIRMED -> CANCELLED` is unguarded** while `ACTIVE -> CANCELLED` is unreachable -- an order
+    can be cancelled after the laundry is washed and released, and the money then never recorded.
+
+    Also newly found and open: a `PICKUP` leg is accepted on a `RETURN_ONLY` order, because
+    `MODES_EXPECTING_RETURN` has no `MODES_EXPECTING_PICKUP` counterpart -- the symmetric half of
+    the rule `PICKUP-ONLY-001` consolidated still has no home. And `RETURN_ONLY` *does* complete end
+    to end over HTTP, so that item's "not claimed" caveat is now out of date rather than wrong.
+  rollback_assessment: >-
+    See rollback_impact. No migration. One order-creation guard extended by two conditions and one
+    atomic `UPDATE quotes`, one service method restructured to run inside the idempotency wrapper it
+    already demanded a key for, one new private exception, and four regression tests at two layers.
+
+    The revert direction is permissive rather than destructive, which is the unusual risk here and
+    is stated in rollback_impact rather than left to be discovered.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

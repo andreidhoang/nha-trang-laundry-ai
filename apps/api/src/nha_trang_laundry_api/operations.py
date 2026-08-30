@@ -212,6 +212,19 @@ class QueueRecoverySummary:
     failed_agent: int
 
 
+class _AcceptanceUnresolved(Exception):
+    """The acceptance engine refused, raised so the idempotency claim rolls back with it.
+
+    An unresolved acceptance writes nothing, so it must not consume the caller's key: the operator
+    weighs the laundry the customer had estimated, presses chốt again with the same key, and that
+    retry has to reach the engine rather than replay a refusal.
+    """
+
+    def __init__(self, reason_codes: tuple[str, ...]) -> None:
+        super().__init__("acceptance is unresolved")
+        self.reason_codes = reason_codes
+
+
 class OperationsService:
     """Own connection lifetimes while repositories own transactional semantics."""
 
@@ -672,94 +685,127 @@ class OperationsService:
         accepted_at = datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
             with connection.cursor() as cursor:
+                # Outside the idempotency wrapper, as on `create_quote`: a staff member who has
+                # lost this store must not replay a held key into a fresh write.
                 require_store_membership(
                     cursor,
                     staff_user_id=principal.staff_user_id,
                     store_id=store_id,
                     error=StoreAccessError,
                 )
-                cursor.execute(
-                    """
-                    SELECT current_revision, row_version, bound_order_request_id
-                    FROM quotes WHERE id = %s AND store_id = %s AND lifecycle = 'OPEN'
-                    """,
-                    (quote_id, store_id),
-                )
-                container = cursor.fetchone()
-                if container is None:
-                    raise QuoteStateError("quote is missing, closed, or not in this store")
-                current_revision = int(container[0])
-                row_version = int(container[1])
-                bound_order_request_id = container[2]
-                if current_revision != expected_current_revision:
-                    # Someone repriced between the operator reading the screen and pressing the
-                    # button. Refusing is the point: an attestation must name the revision the
-                    # customer actually agreed to, not whichever one is newest.
-                    raise QuoteStateError(
-                        "quote moved since it was read; read it to the customer again"
+
+            def commit() -> dict[str, object]:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT current_revision, row_version, bound_order_request_id
+                        FROM quotes WHERE id = %s AND store_id = %s AND lifecycle = 'OPEN'
+                        """,
+                        (quote_id, store_id),
                     )
-                stored = QuoteRepository.get_revision(cursor, quote_id, current_revision)
-            if stored is None:
-                raise QuoteStateError("quote revision is missing")
-            if not hmac.compare_digest(stored.document.snapshot_hash, expected_snapshot_hash):
-                raise QuoteStateError("quote content changed since it was read")
+                    container = cursor.fetchone()
+                    if container is None:
+                        raise QuoteStateError("quote is missing, closed, or not in this store")
+                    current_revision = int(container[0])
+                    row_version = int(container[1])
+                    bound_order_request_id = container[2]
+                    if current_revision != expected_current_revision:
+                        # Someone repriced between the operator reading the screen and pressing the
+                        # button. Refusing is the point: an attestation must name the revision the
+                        # customer actually agreed to, not whichever one is newest.
+                        raise QuoteStateError(
+                            "quote moved since it was read; read it to the customer again"
+                        )
+                    stored = QuoteRepository.get_revision(cursor, quote_id, current_revision)
+                if stored is None:
+                    raise QuoteStateError("quote revision is missing")
+                if not hmac.compare_digest(stored.document.snapshot_hash, expected_snapshot_hash):
+                    raise QuoteStateError("quote content changed since it was read")
 
-            priced = parse_quote_revision(json.loads(stored.document.canonical_json))
-            composition = accept_quote_revision(priced=priced, revision=current_revision + 1)
-            if isinstance(composition, UnresolvedQuote):
-                # Refused before anything is written. The reason codes name which fact is missing --
-                # most often that the quantity was the customer's estimate rather than a weighing.
-                return UnresolvedQuoteResult(composition.reason_codes)
+                priced = parse_quote_revision(json.loads(stored.document.canonical_json))
+                composition = accept_quote_revision(priced=priced, revision=current_revision + 1)
+                if isinstance(composition, UnresolvedQuote):
+                    # Refused before anything is written. The reason codes name the missing
+                    # fact -- most often a quantity the customer estimated, never weighed.
+                    # Raised rather than returned so the idempotency claim rolls back with it: the
+                    # operator fixes the missing fact and retries, and the same key must still work.
+                    raise _AcceptanceUnresolved(composition.reason_codes)
 
-            total = priced.data.totals.display_total_min_vnd
-            if total is None:
-                return UnresolvedQuoteResult(("QUOTE_DELIVERY_FEE_UNRESOLVED",))
-            correlation_id = uuid4()
-            QuoteAcceptanceRepository().record(
-                connection,
-                QuoteAcceptanceCommand(
-                    store_id=store_id,
-                    quote_id=quote_id,
-                    accepted_revision=current_revision,
-                    accepted_snapshot_hash=stored.document.snapshot_hash,
-                    final_revision=current_revision + 1,
-                    display_total_vnd=total,
-                    accepted_by=principal.staff_user_id,
-                    correlation_id=correlation_id,
-                    policy_version=QUOTE_ACCEPTANCE_POLICY_VERSION,
-                    accepted_at=accepted_at,
-                ),
-            )
-            QuoteRepository().create_revision(
-                connection,
-                QuoteRevisionCommand(
-                    store_id=store_id,
-                    bound_order_request_id=bound_order_request_id,
-                    snapshot=composition.snapshot,
-                    expected_current_revision=current_revision,
-                    expected_row_version=row_version,
-                    created_by=principal.staff_user_id,
-                    correlation_id=correlation_id,
-                    occurred_at=accepted_at,
-                ),
-            )
-            accepted = composition.snapshot
-            totals = accepted.data.totals
-            return QuoteRevisionResult(
-                quote_id=accepted.data.quote_id,
-                revision=accepted.data.revision,
-                row_version=row_version + 1,
-                finality=accepted.data.finality.value,
-                status=accepted.data.status.value,
-                snapshot_hash=accepted.document.snapshot_hash,
-                list_service_subtotal_vnd=totals.list_service_subtotal_max_vnd,
-                net_service_subtotal_vnd=totals.net_service_subtotal_max_vnd,
-                display_total_min_vnd=totals.display_total_min_vnd,
-                display_total_max_vnd=totals.display_total_max_vnd,
-                reason_codes=accepted.data.reason_codes,
-                required_approvals=accepted.data.required_approvals,
-                replayed=False,
-            )
+                total = priced.data.totals.display_total_min_vnd
+                if total is None:
+                    raise _AcceptanceUnresolved(("QUOTE_DELIVERY_FEE_UNRESOLVED",))
+                correlation_id = uuid4()
+                QuoteAcceptanceRepository().record(
+                    connection,
+                    QuoteAcceptanceCommand(
+                        store_id=store_id,
+                        quote_id=quote_id,
+                        accepted_revision=current_revision,
+                        accepted_snapshot_hash=stored.document.snapshot_hash,
+                        final_revision=current_revision + 1,
+                        display_total_vnd=total,
+                        accepted_by=principal.staff_user_id,
+                        correlation_id=correlation_id,
+                        policy_version=QUOTE_ACCEPTANCE_POLICY_VERSION,
+                        accepted_at=accepted_at,
+                    ),
+                )
+                QuoteRepository().create_revision(
+                    connection,
+                    QuoteRevisionCommand(
+                        store_id=store_id,
+                        bound_order_request_id=bound_order_request_id,
+                        snapshot=composition.snapshot,
+                        expected_current_revision=current_revision,
+                        expected_row_version=row_version,
+                        created_by=principal.staff_user_id,
+                        correlation_id=correlation_id,
+                        occurred_at=accepted_at,
+                    ),
+                )
+                accepted = composition.snapshot
+                totals = accepted.data.totals
+                return {
+                    "quote_id": str(accepted.data.quote_id),
+                    "revision": accepted.data.revision,
+                    "row_version": row_version + 1,
+                    "finality": accepted.data.finality.value,
+                    "status": accepted.data.status.value,
+                    "snapshot_hash": accepted.document.snapshot_hash,
+                    "list_service_subtotal_vnd": totals.list_service_subtotal_max_vnd,
+                    "net_service_subtotal_vnd": totals.net_service_subtotal_max_vnd,
+                    "display_total_min_vnd": totals.display_total_min_vnd,
+                    "display_total_max_vnd": totals.display_total_max_vnd,
+                    "reason_codes": list(accepted.data.reason_codes),
+                    "required_approvals": list(accepted.data.required_approvals),
+                }
+
+            try:
+                result = self._idempotency.execute(
+                    connection,
+                    IdempotentCommand(
+                        scope=f"staff-quote-accept:{principal.staff_user_id}",
+                        key=idempotency_key,
+                        payload={
+                            "store_id": str(store_id),
+                            "quote_id": str(quote_id),
+                            "expected_current_revision": expected_current_revision,
+                            "expected_snapshot_hash": expected_snapshot_hash,
+                        },
+                        occurred_at=accepted_at,
+                    ),
+                    commit,
+                )
+            except _AcceptanceUnresolved as unresolved:
+                return UnresolvedQuoteResult(unresolved.reason_codes)
+            except psycopg.errors.UniqueViolation as error:
+                # `quote_acceptances` is UNIQUE on both (quote_id, accepted_revision) and
+                # (quote_id, final_revision). The INSERT guards the first with ON CONFLICT DO
+                # NOTHING and nothing guarded the second, so two operators pressing "chốt" at the
+                # same instant produced one 201 and one HTTP 500. Losing a race is a conflict the
+                # loser can act on, not a crash.
+                raise QuoteStateError("this quote revision has already been accepted") from error
+            return _quote_revision_result(result.response, replayed=result.replayed)
 
     # --- QUOTE-COMMAND-001 ------------------------------------------------------------------
     #

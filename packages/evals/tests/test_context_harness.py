@@ -103,7 +103,15 @@ def test_context_drift_check_passes() -> None:
     # delivery no permitted leg could ever attest -- paid in full, permanently ACTIVE. The rule now
     # lives once, in catalog.py: a mode expects a return leg exactly when the customer does not
     # collect in person.
-    assert "91 work items" in result.stdout
+    # The ninety-second is AGREEMENT-INTEGRITY-001, and its first finding is one this repository
+    # created the day before: revision-scoping the acceptance outbox key fixed a real 500 on the
+    # reprice path and removed, with it, a UNIQUE collision that had been the only thing preventing
+    # a quote from having two accepted revisions. An order could then cite the superseded one and
+    # settle at the old price while the system refused the price the customer had just agreed to.
+    # A bug can be load-bearing. The other two are the same shape of hole: one agreement backed
+    # unlimited orders because nothing spent it, and the acceptance route demanded an
+    # Idempotency-Key it never passed to the idempotency layer.
+    assert "92 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

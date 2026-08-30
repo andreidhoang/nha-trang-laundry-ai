@@ -858,3 +858,105 @@ def test_accepting_a_quote_twice_is_a_conflict_not_a_second_attestation(
             idempotency_key=f"accept-{uuid4().hex}",
             principal=staff,
         )
+
+
+def _priced_quote(connection: Any, service: OperationsService, staff: Any, store_id: UUID) -> Any:
+    priced = service.create_quote(
+        store_id=store_id,
+        bound_order_request_id=uuid4(),
+        lines=_lines("6"),
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
+        idempotency_key=f"quote-{uuid4().hex}",
+        principal=staff,
+    )
+    assert isinstance(priced, QuoteRevisionResult)
+    return priced
+
+
+def test_a_replayed_acceptance_returns_the_stored_attestation(
+    connection: Any, service: OperationsService
+) -> None:
+    """The route demanded an Idempotency-Key and threw it away. Found 2026-08-29.
+
+    The header was accepted and never reached `self._idempotency.execute`, so nothing was claimed
+    and a retry re-executed from scratch -- tripping the `expected_current_revision` guard and
+    telling the operator "quote moved since it was read; read it to the customer again" when their
+    own timed-out first attempt is what moved it. At a counter with a customer waiting, that reads
+    as the system losing the agreement it just recorded.
+    """
+
+    _publish(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    priced = _priced_quote(connection, service, staff, store_id)
+    key = f"accept-{uuid4().hex}"
+
+    first = service.accept_quote(
+        store_id=store_id,
+        quote_id=priced.quote_id,
+        expected_current_revision=priced.revision,
+        expected_snapshot_hash=priced.snapshot_hash,
+        idempotency_key=key,
+        principal=staff,
+    )
+    replay = service.accept_quote(
+        store_id=store_id,
+        quote_id=priced.quote_id,
+        expected_current_revision=priced.revision,
+        expected_snapshot_hash=priced.snapshot_hash,
+        idempotency_key=key,
+        principal=staff,
+    )
+
+    assert isinstance(first, QuoteRevisionResult)
+    assert isinstance(replay, QuoteRevisionResult)
+    assert not first.replayed
+    assert replay.replayed
+    assert replay.revision == first.revision
+    assert replay.snapshot_hash == first.snapshot_hash
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM quote_acceptances WHERE quote_id = %s", (priced.quote_id,)
+        )
+        assert cursor.fetchone()[0] == 1
+
+
+def test_an_unresolved_acceptance_does_not_consume_the_key(
+    connection: Any, service: OperationsService
+) -> None:
+    """A refusal writes nothing, so the operator's key must survive it.
+
+    The customer estimated the weight; the engine refuses. Staff put the bag on the scale and press
+    chốt again -- with the same key, because that is what a retry is. If the refusal had claimed
+    the key, the corrected acceptance would replay the refusal forever.
+    """
+
+    _publish(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    priced = service.create_quote(
+        store_id=store_id,
+        bound_order_request_id=uuid4(),
+        lines=(RequestedLine(STANDARD, "6", Unit.KG, QuantityBasis.CUSTOMER_ESTIMATE),),
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
+        idempotency_key=f"quote-{uuid4().hex}",
+        principal=staff,
+    )
+    assert isinstance(priced, QuoteRevisionResult)
+    key = f"accept-{uuid4().hex}"
+
+    refused = service.accept_quote(
+        store_id=store_id,
+        quote_id=priced.quote_id,
+        expected_current_revision=priced.revision,
+        expected_snapshot_hash=priced.snapshot_hash,
+        idempotency_key=key,
+        principal=staff,
+    )
+
+    assert isinstance(refused, UnresolvedQuoteResult)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM command_idempotency_records WHERE idempotency_key = %s", (key,)
+        )
+        assert cursor.fetchone()[0] == 0

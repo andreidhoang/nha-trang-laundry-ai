@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-29'
+last_updated: '2026-08-30'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -2978,5 +2978,34 @@ items:
   - one_rule_read_by_both_modules
   - the_refusals_around_the_widened_branch_did_not_move
   - no_new_shape_and_no_new_decision
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: AGREEMENT-INTEGRITY-001
+  phase: PRODUCTION_HARDENING
+  title: One agreement, one price, one order
+  status: COMPLETE
+  priority: 249
+  depends_on:
+  - ORDER-LIFECYCLE-001
+  - PICKUP-ONLY-001
+  context_domains:
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-agreement-integrity-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_regression_this_repository_introduced_is_closed
+  - an_agreement_authorises_exactly_one_order
+  - the_acceptance_key_is_honoured
+  - a_bug_can_be_load_bearing
+  - what_this_item_did_not_fix
   - rollback_assessment
   blocked_by_decisions: []

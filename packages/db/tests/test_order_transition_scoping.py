@@ -313,3 +313,125 @@ def test_deriving_intake_readiness_still_works_for_a_member(
     assert readiness.customer_reconfirmation_satisfied
     assert readiness.quantity_basis_approved
     assert readiness.slot_approved
+
+
+def test_an_agreement_authorises_exactly_one_order(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """One chốt, one order. Found by adversarial verification on 2026-08-29.
+
+    `quote_acceptances` is UNIQUE on `(quote_id, accepted_revision)` so "who chốt this" has one
+    answer. Converting that answer into an order was not single-shot: three POSTs with three fresh
+    idempotency keys produced three orders against one attestation, each independently settleable,
+    turning 100.000đ agreed once into 300.000đ recorded as collected. The idempotency scope keys on
+    the caller's header, so a double-submit or a retry with a regenerated key is a new order.
+
+    `CONVERTED` has been in the `quotes.lifecycle` CHECK since migration `0005` and nothing ever
+    wrote it. Spending the agreement is what that value was for.
+    """
+    store_id = uuid4()
+    owner = _staff(connection, store_id)
+    quote_id, revision, quote, contact_id = accepted_quote(
+        connection, store_id=store_id, principal=owner
+    )
+
+    def create() -> Any:
+        return OrderRepository().create(
+            connection,
+            CreateOrderCommand(
+                store_id,
+                contact_id,
+                quote_id,
+                revision,
+                quote.document.snapshot_hash,
+                FulfillmentMode.SELF_DROP_SELF_COLLECT,
+                owner,
+                f"order-{uuid4().hex}",
+                uuid4(),
+                NOW,
+            ),
+        )
+
+    first = create()
+    assert first.order_id is not None
+
+    with pytest.raises(OrderStateError, match="already been converted"):
+        create()
+
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT lifecycle FROM quotes WHERE id = %s", (quote_id,))
+        lifecycle = cursor.fetchone()
+        assert lifecycle is not None and str(lifecycle[0]) == "CONVERTED"
+        cursor.execute(
+            "SELECT count(*) FROM orders"
+            " WHERE current_quote_id = %s AND current_quote_revision = %s",
+            (quote_id, revision),
+        )
+        counted = cursor.fetchone()
+        assert counted is not None and counted[0] == 1
+
+
+def test_an_order_cannot_cite_a_price_the_customer_has_moved_on_from(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The regression this repository introduced on 2026-08-29 and closed on 2026-08-30.
+
+    A quote may be re-priced after chốt -- "thêm cái áo này nữa" -- and accepted again. The guard
+    asked only that *some* acceptance named the revision, never that it was still the current one,
+    so an order could be created against the superseded agreement. It then settled at the old price
+    while the system refused the price the customer had just agreed to, with the order, the
+    settlement and the immutable snapshot all agreeing with each other on the stale number.
+
+    It was reachable only because revision-scoping the acceptance outbox key removed a UNIQUE
+    collision that had been accidentally preventing a second acceptance. The 500 that fixed was
+    real; the accident it removed was load-bearing and nothing replaced it.
+    """
+    store_id = uuid4()
+    owner = _staff(connection, store_id)
+    quote_id, superseded_revision, quote, contact_id = accepted_quote(
+        connection, store_id=store_id, principal=owner
+    )
+
+    # The customer adds a shirt: a later acceptance on the same quote.
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO quote_acceptances (
+                id, store_id, quote_id, accepted_revision, accepted_snapshot_hash,
+                final_revision, display_total_vnd, accepted_by, accepted_at, correlation_id,
+                policy_version
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'quote-acceptance-v1')
+            """,
+            (
+                uuid4(),
+                store_id,
+                quote_id,
+                # The later agreement names the revision the fixture accepted and produces the
+                # next one, which is the shape a real reprice-and-re-chốt leaves behind. The FK is
+                # on (quote_id, accepted_revision), so this must cite a revision that exists.
+                superseded_revision,
+                quote.document.snapshot_hash,
+                superseded_revision + 1,
+                50_000,
+                owner.staff_user_id,
+                NOW,
+                uuid4(),
+            ),
+        )
+
+    with pytest.raises(OrderStateError, match="newer price"):
+        OrderRepository().create(
+            connection,
+            CreateOrderCommand(
+                store_id,
+                contact_id,
+                quote_id,
+                superseded_revision,
+                quote.document.snapshot_hash,
+                FulfillmentMode.SELF_DROP_SELF_COLLECT,
+                owner,
+                f"order-{uuid4().hex}",
+                uuid4(),
+                NOW,
+            ),
+        )

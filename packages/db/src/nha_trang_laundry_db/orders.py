@@ -141,7 +141,19 @@ class OrderRepository:
                                FROM jsonb_array_elements(r.snapshot -> 'calculation_traces') AS t
                                WHERE t ->> 'component' = 'DELIVERY'
                                LIMIT 1
-                           ) AS priced_mode
+                           ) AS priced_mode,
+                           -- Has this agreement already been turned into an order? `CONVERTED` has
+                           -- been in this column's CHECK since migration 0005 and nothing ever
+                           -- wrote it, so one acceptance could back unlimited orders.
+                           q.lifecycle,
+                           -- Did the customer agree a newer price afterwards? An acceptance is
+                           -- single-shot per revision, but a quote may be re-priced and accepted
+                           -- again -- and then the earlier agreement is history, not an order.
+                           EXISTS (
+                               SELECT 1 FROM quote_acceptances later
+                               WHERE later.quote_id = r.quote_id
+                                 AND later.final_revision > r.revision
+                           ) AS superseded
                     FROM quotes q
                     JOIN quote_revisions r ON r.quote_id = q.id
                     WHERE q.id = %s AND r.revision = %s
@@ -191,6 +203,30 @@ class OrderRepository:
                 raise OrderStateError(
                     "the order's fulfilment mode is not the one the quote was priced under"
                 )
+            # The customer's most recent agreement is the only one an order may cite. Until
+            # 2026-08-30 the guard asked only that *some* acceptance named this revision, never
+            # that it was still the current one -- so after "thêm cái áo này nữa" repriced 100,000d
+            # down to 50,000d and the customer agreed again, an order could still be created
+            # against the superseded 100,000d. It then settled at 100,000d while the system
+            # actively refused the 50,000d the customer had just agreed to, with the order, the
+            # settlement and the immutable snapshot all agreeing with each other on the stale price.
+            #
+            # It became reachable on 2026-08-29. `outbox_events.idempotency_key` is UNIQUE and the
+            # acceptance key was `quote:{id}:acceptance` for every acceptance of a quote, so a
+            # second one always collided and rolled back. That collision was accidentally the only
+            # thing preventing two accepted revisions. Revision-scoping the key fixed a real 500 on
+            # the reprice path and removed the accident with it.
+            if quote is not None and bool(quote[9]):
+                raise OrderStateError(
+                    "the customer agreed a newer price for this quote; read the current one to them"
+                )
+            # And an agreement authorises exactly one order. `quote_acceptances` is UNIQUE on
+            # (quote_id, accepted_revision) so "who chốt this" has one answer; converting that
+            # answer into an order must be single-shot for the same reason. Three POSTs with three
+            # fresh idempotency keys produced three orders and three full-price settlements against
+            # one attestation -- 100,000d agreed once, 300,000d recorded as collected.
+            if quote is not None and str(quote[8]) != "OPEN":
+                raise OrderStateError("this quote has already been converted into an order")
             if (
                 quote is None
                 or _uuid(quote[0]) != command.store_id
@@ -209,6 +245,21 @@ class OrderRepository:
             occurred_at = command.customer_final_quote_accepted_at
 
             def mutation(cursor: Any) -> None:
+                # Spend the agreement in the same transaction that creates the order. The guard
+                # above reads `lifecycle` before the write; this is what makes the read binding
+                # under concurrency, because two simultaneous creates both pass the guard and only
+                # one can move the row out of OPEN. Without it the check is advisory.
+                cursor.execute(
+                    """
+                    UPDATE quotes
+                    SET lifecycle = 'CONVERTED', row_version = row_version + 1
+                    WHERE id = %s AND lifecycle = 'OPEN'
+                    RETURNING id
+                    """,
+                    (command.accepted_quote_id,),
+                )
+                if cursor.fetchone() is None:
+                    raise OrderStateError("this quote has already been converted into an order")
                 cursor.execute(
                     """
                     INSERT INTO orders (

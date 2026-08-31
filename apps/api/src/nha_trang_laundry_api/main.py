@@ -1949,6 +1949,7 @@ def list_shadow_drafts(
 def decide_shadow_draft(
     agent_run_id: UUID,
     request: DraftDecisionRequest,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> DraftDecisionResponse:
@@ -1958,12 +1959,15 @@ def decide_shadow_draft(
         decided = service.shadow_decide_draft(
             agent_run_id=agent_run_id,
             decision=request.decision,
+            idempotency_key=idempotency_key,
             principal=principal,
             reason_code=request.reason_code,
             edited_text=request.edited_text,
         )
     except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
         _raise_shadow_error(error)
+    except IdempotencyConflictError as error:
+        _raise_operations_error(error)
     return DraftDecisionResponse(
         review_id=decided.review_id,
         agent_run_id=decided.agent_run_id,

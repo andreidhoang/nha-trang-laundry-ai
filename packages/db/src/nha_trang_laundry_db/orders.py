@@ -347,6 +347,17 @@ class OrderRepository:
         )
         if dimension_count != 1 or command.expected_row_version < 1:
             raise OrderStateError("exactly one valid order state target is required")
+        # Membership is proven BEFORE the idempotency lookup, not only inside the locked write.
+        # `IdempotencyRepository.execute` short-circuits to the stored response when it finds the
+        # key, so every check living inside the executor is skipped on a replay -- and a staff
+        # member removed from a store still got 200 and that store's full order state from a key
+        # they were holding, where a fresh request was correctly refused 403. `accept_quote` and
+        # `create_quote` already check outside the wrapper for exactly this reason.
+        #
+        # The locked check inside `transition_once` stays: this one answers "may you ask", that one
+        # answers "may you write this row", and only the second can see a revocation that lands
+        # mid-transaction.
+        _require_store_membership_for_order(connection, command.order_id, command.principal)
         occurred_at = command.occurred_at or datetime.now(UTC)
         payload: dict[str, object] = {
             "order_id": str(command.order_id),
@@ -547,6 +558,28 @@ def _order_state(row: tuple[object, ...]) -> OrderState:
         production_accepted_at=_optional_datetime(row[8]),
         production_resume_status=resume,
     )
+
+
+def _require_store_membership_for_order(
+    connection: Any, order_id: UUID, principal: StaffPrincipal
+) -> None:
+    """Refuse a caller who is not a member of the order's store, before any idempotency lookup.
+
+    A missing order is deliberately not an error here: the write path answers that, with the same
+    opaque "order is missing or stale" a non-member would eventually get, so this check cannot be
+    turned into an oracle for which order ids exist.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT store_id FROM orders WHERE id = %s", (order_id,))
+        row = cursor.fetchone()
+        if row is None:
+            return
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=_uuid(row[0]),
+            error=OrderAuthorizationError,
+        )
 
 
 def _require_order_mutation(principal: StaffPrincipal) -> None:

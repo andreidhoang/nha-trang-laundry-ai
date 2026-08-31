@@ -212,6 +212,28 @@ class QueueRecoverySummary:
     failed_agent: int
 
 
+def _require_order_store_membership(
+    connection: Any, order_id: UUID, principal: StaffPrincipal
+) -> None:
+    """Prove membership of an order's store before any idempotency replay can answer for it.
+
+    A missing order returns quietly; the write path refuses it with the same opaque message a
+    non-member gets, so this cannot become an oracle for which order ids exist.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT store_id FROM orders WHERE id = %s", (order_id,))
+        row = cursor.fetchone()
+        if row is None:
+            return
+        store_id = row[0] if isinstance(row[0], UUID) else UUID(str(row[0]))
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=StoreAccessError,
+        )
+
+
 class _AcceptanceUnresolved(Exception):
     """The acceptance engine refused, raised so the idempotency claim rolls back with it.
 
@@ -470,20 +492,68 @@ class OperationsService:
         *,
         agent_run_id: UUID,
         decision: str,
+        idempotency_key: str,
         principal: StaffPrincipal,
         reason_code: str | None,
         edited_text: str | None,
     ) -> DraftDecision:
+        """Record a reviewer's verdict on an agent draft, once.
+
+        `agent_draft_reviews` is UNIQUE on `agent_run_id` -- one verdict per draft, which is
+        right -- and the route declared no `Idempotency-Key` parameter, so FastAPI dropped the
+        console has always sent. A resent decision therefore reached the INSERT a second time and
+        the UNIQUE violation escaped as HTTP 500. The reviewer, having pressed a button and been
+        told the server broke, has no way to know their verdict was in fact recorded.
+        """
+
+        decided_at = datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
-            return ShadowConsoleRepository().decide_draft(
+
+            def commit() -> dict[str, object]:
+                stored = ShadowConsoleRepository().decide_draft(
+                    connection,
+                    agent_run_id=agent_run_id,
+                    decision=decision,
+                    principal=principal,
+                    correlation_id=uuid4(),
+                    reason_code=reason_code,
+                    edited_text=edited_text,
+                )
+                return {
+                    "review_id": str(stored.review_id),
+                    "agent_run_id": str(stored.agent_run_id),
+                    "decision": stored.decision,
+                    "reason_code": stored.reason_code,
+                    "edited_text": stored.edited_text,
+                    "decided_by_staff_id": str(stored.decided_by_staff_id),
+                    "decided_at": stored.decided_at.isoformat(),
+                }
+
+            result = self._idempotency.execute(
                 connection,
-                agent_run_id=agent_run_id,
-                decision=decision,
-                principal=principal,
-                correlation_id=uuid4(),
-                reason_code=reason_code,
-                edited_text=edited_text,
+                IdempotentCommand(
+                    scope=f"staff-shadow-decision:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={
+                        "agent_run_id": str(agent_run_id),
+                        "decision": decision,
+                        "reason_code": reason_code,
+                        "edited_text": edited_text,
+                    },
+                    occurred_at=decided_at,
+                ),
+                commit,
             )
+        value = result.response
+        return DraftDecision(
+            review_id=UUID(str(value["review_id"])),
+            agent_run_id=UUID(str(value["agent_run_id"])),
+            decision=str(value["decision"]),
+            reason_code=None if value["reason_code"] is None else str(value["reason_code"]),
+            edited_text=None if value["edited_text"] is None else str(value["edited_text"]),
+            decided_by_staff_id=UUID(str(value["decided_by_staff_id"])),
+            decided_at=datetime.fromisoformat(str(value["decided_at"])),
+        )
 
     def shadow_unknown_sends(
         self, *, principal: StaffPrincipal, limit: int = 50
@@ -637,6 +707,9 @@ class OperationsService:
 
         recorded_at = datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
+            # Before the idempotency lookup: a replay short-circuits to the stored response, so a
+            # check that lives only inside the executor is skipped for a revoked member.
+            _require_order_store_membership(connection, order_id, principal)
 
             def commit() -> dict[str, object]:
                 leg = DeliveryLegRepository().record(
@@ -700,6 +773,15 @@ class OperationsService:
 
         issued_at = datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
+            with connection.cursor() as cursor:
+                # Outside the wrapper: a replay would otherwise hand a revoked member a ticket
+                # number for a store they no longer belong to.
+                require_store_membership(
+                    cursor,
+                    staff_user_id=principal.staff_user_id,
+                    store_id=store_id,
+                    error=StoreAccessError,
+                )
 
             def commit() -> dict[str, object]:
                 ticket = CounterTicketRepository().issue(
@@ -967,6 +1049,18 @@ class OperationsService:
                             "quote_id": str(quote_id) if quote_id else None,
                             "expected_current_revision": expected_current_revision,
                             "expected_row_version": expected_row_version,
+                            # Every delivery fact belongs here because every one of them moves the
+                            # display total. Omitting them made the ledger hash a request that was
+                            # not the request: correcting a delivery fee and resending the same key
+                            # replayed the stale total, the acceptance derived it, the order bound
+                            # it, and the shop collected less than the price it had quoted -- while
+                            # the *correct* amount was refused as not the exact total. A changed
+                            # quantity already conflicted properly; the asymmetry was the bug.
+                            "fulfillment_mode": fulfillment_mode.value,
+                            "verified_distance_m": verified_distance_m,
+                            "planned_transport_weight_kg": planned_transport_weight_kg,
+                            "approved_manual_fee_vnd": approved_manual_fee_vnd,
+                            "customer_acknowledged_manual_fee": customer_acknowledged_manual_fee,
                             "lines": [
                                 {
                                     "service_code": line.service_code,
@@ -1235,6 +1329,10 @@ class OperationsService:
         """Attest that the customer paid the quoted total and collected their goods."""
         attested_at = datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
+            # Before the idempotency lookup, for the same reason as the delivery-leg path: a
+            # replay answers without running anything inside the executor, and this route moves
+            # money.
+            _require_order_store_membership(connection, order_id, principal)
             result = self._idempotency.execute(
                 connection,
                 IdempotentCommand(

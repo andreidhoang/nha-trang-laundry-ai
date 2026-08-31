@@ -226,7 +226,14 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # caught this is CONSOLE-ORDER-GAP-001's, which was written to fail on exactly this day.
     # 165 since the review log landed: one new DESCRIPTIVE guardrail on `screens/shadow.js`
     # telling the reader that nothing in that panel was ever sent to a customer.
-    assert sum(counts.values()) == _registry()["total"] == 160
+    # 161 since BOUNDS-AND-TRUTH-001 and the 2026-08-31 re-verification: three settlement-panel
+    # sentences were corrected, and two more that had gone false as the system caught up with
+    # them -- the approvals screen saying non-order approvals "never appear here" (the queue reads
+    # the approval's own store since migration 0034, so they all do), and the order form saying
+    # "duong duyet gia chua ton tai" (the acceptance path landed in QUOTE-ACCEPT-001, and orders
+    # are created through it daily). The order-form correction splits into one more slot than the
+    # sentence it replaced, which is the whole of the delta.
+    assert sum(counts.values()) == _registry()["total"] == 161
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

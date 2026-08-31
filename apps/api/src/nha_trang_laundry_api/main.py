@@ -1011,7 +1011,12 @@ def request_approval(
             idempotency_key=idempotency_key,
             principal=principal,
         )
-    except (ApprovalEnvelopeError, ApprovalStateError, IdempotencyConflictError) as error:
+    except (
+        ApprovalEnvelopeError,
+        ApprovalStateError,
+        ApprovalAuthorizationError,
+        IdempotencyConflictError,
+    ) as error:
         _raise_operations_error(error)
     return _approval_response(stored)
 

@@ -173,19 +173,20 @@ function limitsPanel() {
         h(
           "div",
           { class: "notice", dataState: "warn" },
-          h("p", { class: "notice__title" }, "Chỉ hiện phê duyệt gắn với đơn hàng"),
+          h("p", { class: "notice__title" }, "Hiện mọi phê duyệt của cửa hàng bạn thuộc về"),
           h(
             "p",
             null,
-            "Máy chủ tìm hàng chờ theo đơn hàng, nên việc chờ duyệt nào không gắn với một đơn — " +
-              "một bản báo giá, một tin nhắn soạn sẵn, một khung giờ hay một mức phí giao đề " +
-              "xuất — sẽ không hiện ở đây. Chúng vẫn đang chờ và vẫn đang đếm ngược; chỉ là danh " +
-              "sách này không thấy chúng.",
+            "Máy chủ tìm hàng chờ theo cửa hàng ghi trên chính phiếu duyệt, nên mọi loại đều hiện " +
+              "ở đây: đơn hàng, báo giá, tin nhắn soạn sẵn, khung giờ và phí giao đề xuất. Trước " +
+              "ngày 31/08/2026 máy chủ tìm theo đơn hàng, nên toàn bộ hàng chờ gửi tin nhắn — " +
+              "thứ mà chính những người phải xử lý nó cần thấy — không bao giờ hiện ra.",
           ),
           h(
             "p",
             { class: "hint" },
-            "Hệ quả: danh sách trống không có nghĩa là không còn gì chờ duyệt.",
+            "Chỉ hiện phê duyệt của cửa hàng bạn được phân công. Phiếu của cửa hàng khác không " +
+              "hiện ở đây và cũng không duyệt được.",
           ),
         ),
         h(

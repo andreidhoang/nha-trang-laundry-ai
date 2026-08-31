@@ -91,6 +91,17 @@ class CounterTicketRepository:
                 store_id=store_id,
                 error=StoreAccessError,
             )
+            # Serialise the allocation per store per day. `coalesce(max(...))+1` reads under READ
+            # COMMITTED with no lock, so two counters serving two walk-ins in the same moment both
+            # computed the same number and the loser's UNIQUE violation escaped as a bare psycopg
+            # error -- HTTP 500 on the first action of a customer's visit. An advisory lock is the
+            # right shape here rather than a sequence: numbering restarts each day per store
+            # (`test_numbers_restart_each_day_and_never_repeat_within_one`), which a sequence
+            # cannot express, and the lock is released when this transaction ends either way.
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"counter-ticket:{store_id}:{issued_on.isoformat()}",),
+            )
             cursor.execute(
                 """
                 INSERT INTO counter_tickets (

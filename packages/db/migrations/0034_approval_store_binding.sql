@@ -14,15 +14,23 @@
 -- and a capability that is actually built -- are content that lives in the envelope itself. An
 -- inferred store cannot be checked for those, so the store is named and checked instead of guessed.
 --
--- Append-only is unaffected: `ALTER TABLE ... ADD COLUMN` is DDL and does not fire the row-level
--- `reject_ledger_mutation` trigger. Nobody edits an approval after this either.
+-- **The append-only trigger and this migration.** The first version of this file said "ADD COLUMN
+-- is DDL and does not fire `reject_ledger_mutation`" -- true -- and then issued two `UPDATE`
+-- statements, which are DML and do. It applied cleanly to an empty database, which is every test,
+-- and failed on **any** database holding a single approval request, which is every deployment. A
+-- re-verification on 2026-08-31 caught it; the test suite never could, because migrations always
+-- run against a fresh database there.
+--
+-- The trigger is therefore disabled for the backfill and restored immediately. That is not a
+-- loophole in the append-only rule: the rule exists so application code cannot rewrite history, and
+-- this is a schema migration completing a record rather than altering what it says. No existing
+-- column is touched -- every row keeps the action, resource, digests and decision it already had.
 
 ALTER TABLE approval_requests ADD COLUMN store_id UUID;
 
--- Backfill the two resource types whose owner is derivable, then refuse to continue if anything is
--- left. `0029` set this precedent deliberately: a migration that cannot establish the truth for an
--- existing row fails loudly rather than marking the constraint NOT VALID and leaving a hole behind
--- a green schema. On a fresh database there are no rows and both statements are no-ops.
+ALTER TABLE approval_requests DISABLE TRIGGER approval_requests_append_only;
+
+-- The two resource types whose owner is derivable from the resource itself.
 UPDATE approval_requests r
    SET store_id = o.store_id
   FROM orders o
@@ -38,20 +46,40 @@ UPDATE approval_requests r
    AND r.resource_type = 'QUOTE_REVISION'
    AND r.store_id IS NULL;
 
+-- Everything else -- `MESSAGE_DRAFT` and the ten unbuilt types -- has no derivable owner by
+-- construction, so the operator names one or the migration stops.
+--
+-- The first version told the operator to "resolve or delete them deliberately". Deleting was
+-- impossible: the same trigger blocks DELETE, so the remedy the error named could not be carried
+-- out. This one names a setting that works:
+--
+--     psql "$DATABASE_URL" -c "ALTER DATABASE ... SET ntl.legacy_approval_store = '<uuid>'"
+--
+-- or, per-session, `SET ntl.legacy_approval_store = '<uuid>';` before running the migration. It is
+-- deliberately not defaulted. An approval nobody can attribute to a shop is exactly the thing this
+-- migration exists to make impossible, and guessing a store for one would forge the attribution it
+-- is meant to establish.
 DO $$
 DECLARE
+    fallback TEXT := current_setting('ntl.legacy_approval_store', true);
     orphaned INT;
 BEGIN
     SELECT count(*) INTO orphaned FROM approval_requests WHERE store_id IS NULL;
-    IF orphaned > 0 THEN
-        RAISE EXCEPTION
-            'cannot bind % approval request(s) to a store: their resource does not resolve. '
-            'Each one is an envelope asserting an approval nobody can attribute to a shop; '
-            'resolve or delete them deliberately rather than letting this migration guess.',
-            orphaned;
+    IF orphaned = 0 THEN
+        RETURN;
     END IF;
+    IF fallback IS NULL OR fallback = '' THEN
+        RAISE EXCEPTION
+            'cannot bind % approval request(s) to a store: their resource type has no derivable '
+            'owner. Set ntl.legacy_approval_store to the store id these belong to and re-run; it '
+            'is not defaulted because guessing would forge the attribution this migration exists '
+            'to establish.', orphaned;
+    END IF;
+    UPDATE approval_requests SET store_id = fallback::uuid WHERE store_id IS NULL;
 END
 $$;
+
+ALTER TABLE approval_requests ENABLE TRIGGER approval_requests_append_only;
 
 ALTER TABLE approval_requests ALTER COLUMN store_id SET NOT NULL;
 

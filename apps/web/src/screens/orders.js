@@ -413,9 +413,10 @@ export function render_(_context) {
         h(
           "p",
           null,
-          "Hôm nay chưa có báo giá nào do API này tạo ra thoả cả năm điều kiện, vì đường duyệt giá " +
-            "chưa tồn tại. Biểu mẫu vẫn hiện ở đây để lệnh và lý do từ chối là thật, không phải " +
-            "một nút bị giấu đi.",
+          "Báo giá phải là bản đã chốt: khách nghe giá, nhân viên bấm \u201cChốt giá\u201d ở màn " +
+            "hình Báo giá, và bản chốt đó mới tạo được đơn. Một bản ước lượng hoặc một khoảng giá " +
+            "sẽ bị từ chối kèm lý do. Trước ngày 25/08/2026 chưa có đường chốt giá nào nên không " +
+            "đơn nào tạo được; nay màn hình Báo giá làm đúng việc đó.",
         ),
         h("p", null, h("a", { href: "#/gaps" }, "Xem khoảng trống: đường duyệt giá chính xác")),
       ),

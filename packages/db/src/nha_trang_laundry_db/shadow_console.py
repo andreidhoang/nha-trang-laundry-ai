@@ -803,6 +803,13 @@ class ShadowConsoleRepository:
                       UNION ALL
                       SELECT 1 FROM agent_runs t
                        WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+                      UNION ALL
+                      -- Added 2026-08-31. Omitting it made this filter refuse the caller's OWN
+                      -- store's approval trail: an owner reading an approval they had just decided
+                      -- saw nothing. A scoping fix that blinds the people it is meant to serve is
+                      -- a defect in the same way the leak was.
+                      SELECT 1 FROM approval_requests t
+                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
                   )
                 ORDER BY occurred_at, id
                 LIMIT %(limit)s

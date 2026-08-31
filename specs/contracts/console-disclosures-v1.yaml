@@ -10,14 +10,14 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 5
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 135
+  DESCRIPTIVE: 136
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   READ_ONLY_MODULE: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 11
-total: 160
+total: 161
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -346,12 +346,13 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/approvals.js#notice:53e222b57566
+- slot_id: screens/approvals.js#notice:29ca70aabcfa
   module: screens/approvals.js
   key: notice
-  text: Máy chủ tìm hàng chờ theo đơn hàng, nên việc chờ duyệt nào không gắn với một đơn — một bản báo
-    giá, một tin nhắn soạn sẵn, một khung giờ hay một mức phí giao đề xuất — sẽ không hiện ở đây. Chúng
-    vẫn đang chờ và vẫn đang đếm ngược; chỉ là danh sách này không thấy chúng.
+  text: 'Máy chủ tìm hàng chờ theo cửa hàng ghi trên chính phiếu duyệt, nên mọi loại đều hiện ở đây: đơn
+    hàng, báo giá, tin nhắn soạn sẵn, khung giờ và phí giao đề xuất. Trước ngày 31/08/2026 máy chủ tìm
+    theo đơn hàng, nên toàn bộ hàng chờ gửi tin nhắn — thứ mà chính những người phải xử lý nó cần thấy
+    — không bao giờ hiện ra.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -366,10 +367,19 @@ disclosures:
     module: screens/approvals.js
     why: Claims the screen writes nothing to the server. Checked by scanning the module for a mutating
       request; it issues one GET and nothing else.
-- slot_id: screens/approvals.js#hint:c85fe854cb27
+- slot_id: screens/approvals.js#notice__title:6abccb9d7489
+  module: screens/approvals.js
+  key: notice__title
+  text: Hiện mọi phê duyệt của cửa hàng bạn thuộc về
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#hint:3dd82a1bb0dd
   module: screens/approvals.js
   key: hint
-  text: 'Hệ quả: danh sách trống không có nghĩa là không còn gì chờ duyệt.'
+  text: Chỉ hiện phê duyệt của cửa hàng bạn được phân công. Phiếu của cửa hàng khác không hiện ở đây và
+    cũng không duyệt được.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

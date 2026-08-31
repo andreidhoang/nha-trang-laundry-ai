@@ -594,10 +594,13 @@ def _require_resolvable_resource(cursor: Any, command: ApprovalRequestCommand) -
         return
     cursor.execute(query, (command.resource_id,))
     row = cursor.fetchone()
-    if row is None:
+    # One message for both branches, deliberately. Separate strings told a member of any store
+    # whether a UUID was a real resource in somebody else's shop -- the same one-bit leak the
+    # decision path closed two functions away, reintroduced here by the fix that added this check.
+    # `store_access` states the rule: the failures are "deliberately indistinguishable to the
+    # caller, so probing identifiers teaches nobody which stores exist".
+    if row is None or _uuid(row[0]) != command.store_id:
         raise ApprovalStateError("the approval names a resource this store does not have")
-    if _uuid(row[0]) != command.store_id:
-        raise ApprovalStateError("the approval names a resource belonging to a different store")
     if not hmac.compare_digest(str(row[2]), command.snapshot_hash):
         raise ApprovalStateError("the approval names a content digest this resource does not have")
 

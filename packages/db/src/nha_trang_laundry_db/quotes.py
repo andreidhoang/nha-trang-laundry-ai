@@ -110,17 +110,27 @@ class QuoteRepository:
                     (data.quote_id, command.store_id, command.bound_order_request_id, occurred_at),
                 )
             else:
+                # `store_id` is in this WHERE clause because without it the membership check and
+                # the write were about different shops. `OperationsService.create_quote` proves the
+                # caller belongs to the store in the URL path; this statement then found the quote
+                # by id alone, so a member of store B could append a priced revision to store A's
+                # quote and store A's board would show the stranger's price as its own current one.
+                # A confused deputy: authority established over one resource, exercised on another.
+                #
+                # The revision-1 INSERT above never had the hole -- it writes `command.store_id`
+                # into the row -- which is why this only ever bit repricing.
                 cursor.execute(
                     """
                     UPDATE quotes
                     SET current_revision = %s, row_version = row_version + 1
-                    WHERE id = %s AND lifecycle = 'OPEN' AND current_revision = %s
-                        AND row_version = %s
+                    WHERE id = %s AND store_id = %s AND lifecycle = 'OPEN'
+                        AND current_revision = %s AND row_version = %s
                     RETURNING id
                     """,
                     (
                         data.revision,
                         data.quote_id,
+                        command.store_id,
                         command.expected_current_revision,
                         command.expected_row_version,
                     ),

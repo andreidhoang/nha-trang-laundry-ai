@@ -38,7 +38,12 @@ from nha_trang_laundry_domain.quotes import (
 
 PRICEBOOK_ID = UUID("00000000-0000-0000-0000-000000000201")
 SERVICE_VERSION_ID = UUID("00000000-0000-0000-0000-000000000202")
-PRICED_AT = datetime(2026, 8, 1, tzinfo=UTC)
+# COUNTER-DEFECTS-001. This was a fixed calendar date, and `QUOTE_VALIDITY` is one day -- so every
+# quote this module built had expired long before any test ran it. Nothing noticed, because expiry
+# was decided against a timestamp the caller supplied and the fixture supplied one inside the
+# window. Once the server's own clock decides, a fixed past date builds a quote no shop could sell
+# from. It is priced a few minutes ago instead, which is what a quote at a counter is.
+PRICED_AT = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=5)
 
 
 def make_quote_snapshot(

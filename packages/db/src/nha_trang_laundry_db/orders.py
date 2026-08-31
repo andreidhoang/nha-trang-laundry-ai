@@ -84,7 +84,13 @@ class OrderRepository:
     def __init__(self, idempotency: IdempotencyRepository | None = None) -> None:
         self._idempotency = idempotency or IdempotencyRepository()
 
-    def create(self, connection: Any, command: CreateOrderCommand) -> StoredOrder:
+    def create(
+        self,
+        connection: Any,
+        command: CreateOrderCommand,
+        *,
+        evaluated_at: datetime | None = None,
+    ) -> StoredOrder:
         _require_order_mutation(command.principal)
         with connection.cursor() as membership_cursor:
             require_store_membership(
@@ -98,6 +104,14 @@ class OrderRepository:
             or command.customer_final_quote_accepted_at.tzinfo is None
         ):
             raise OrderStateError("invalid accepted quote command")
+        # COUNTER-DEFECTS-001. Expiry used to be decided against
+        # `command.customer_final_quote_accepted_at`, which is a request body field validated only
+        # for timezone-awareness -- so an expired quote became orderable by claiming an earlier
+        # acceptance time, and the shop was held to a price it had already withdrawn. When a quote
+        # stopped being valid is not something the caller may assert. `evaluated_at` exists for
+        # tests to hold the clock still; it is a method parameter rather than a command field
+        # precisely so no request can reach it.
+        moment = evaluated_at or datetime.now(UTC)
         scope = f"store:{command.store_id}:contact:{command.bound_contact_id}:order:create"
         payload: dict[str, object] = {
             "store_id": str(command.store_id),
@@ -234,10 +248,7 @@ class OrderRepository:
                 or str(quote[2]) != "ACCEPTED_FINAL"
                 or str(quote[3]) != command.accepted_quote_snapshot_hash
                 or not quote[4]
-                or (
-                    quote[5] is not None
-                    and command.customer_final_quote_accepted_at >= _datetime(quote[5])
-                )
+                or (quote[5] is not None and moment >= _datetime(quote[5]))
             ):
                 raise OrderStateError("accepted exact quote is missing, stale, or expired")
 
@@ -249,6 +260,21 @@ class OrderRepository:
                 # above reads `lifecycle` before the write; this is what makes the read binding
                 # under concurrency, because two simultaneous creates both pass the guard and only
                 # one can move the row out of OPEN. Without it the check is advisory.
+                # COUNTER-DEFECTS-001. `order_requests.status` was written by nothing: every row
+                # was born `DRAFT` and stayed `DRAFT`, so `SUBMITTED` and `CANCELLED` were
+                # unreachable CHECK values and the intake list showed a request that had already
+                # become an order as though it were still waiting. The request is submitted at the
+                # moment its agreement is spent, in the same transaction, because that is the
+                # moment the fact becomes true.
+                cursor.execute(
+                    """
+                    UPDATE order_requests
+                    SET status = 'SUBMITTED', row_version = row_version + 1
+                    WHERE id = (SELECT bound_order_request_id FROM quotes WHERE id = %s)
+                      AND status = 'DRAFT'
+                    """,
+                    (command.accepted_quote_id,),
+                )
                 cursor.execute(
                     """
                     UPDATE quotes
@@ -463,6 +489,25 @@ class OrderRepository:
                 )
                 if cursor.fetchone() is None:
                     raise OrderStateError("STALE_VERSION: order transition lost concurrency race")
+                # A cancelled order ends its intake request with it. Without this the request stays
+                # `SUBMITTED` in "Tiếp nhận gần đây" and reads as live intake for a customer who
+                # has gone home -- the console cannot tell the difference, because until
+                # COUNTER-DEFECTS-001 no status but `DRAFT` was ever written.
+                if next_state.commercial is CommercialOrderStatus.CANCELLED:
+                    cursor.execute(
+                        """
+                        UPDATE order_requests
+                        SET status = 'CANCELLED', row_version = row_version + 1
+                        WHERE id = (
+                            SELECT q.bound_order_request_id
+                            FROM quotes q
+                            JOIN orders o ON o.current_quote_id = q.id
+                            WHERE o.id = %s
+                        )
+                          AND status <> 'CANCELLED'
+                        """,
+                        (command.order_id,),
+                    )
 
             commit_material_change(
                 connection,

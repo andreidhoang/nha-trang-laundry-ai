@@ -1,0 +1,102 @@
+schema_version: 1
+work_item: REVERIFY-REGRESSIONS-002
+recorded_at: '2026-08-31T22:20:00+07:00'
+requirement_contract: >-
+  Close the four remaining engineering findings of the 2026-08-31 re-verification: an idempotency
+  replay that bypassed authorization on four write paths, a quote whose idempotency payload was not
+  the request, and a shadow draft decision that answered 500 on a second press.
+
+  Recorded late, for the same reason as `REVERIFY-REGRESSIONS-001`: the work was committed as
+  `30bb565` before a work item existed. This record reconciles that.
+rollback_impact: >-
+  A clean revert, and the failure direction of a partial one is a refusal rather than silent
+  permission.
+
+  Reverting restores three defects: a replay of a held key answers a revoked member `200` with the
+  store's order state; correcting a delivery fee and resending the same key replays the stale total;
+  and a second press of a draft decision answers 500. No schema change and no migration.
+
+  The two routes that gained an `Idempotency-Key` parameter must revert together with their console
+  callers, or a client that still sends the header meets a route that no longer declares it -- which
+  is silently ignored rather than an error, and is exactly the defect being fixed.
+unresolved_assumptions: >-
+  **Two checks now exist on each of the four paths, and both are load-bearing.** The pre-check
+  answers "may you ask" before the idempotency lookup; the locked check inside the write answers
+  "may you write this row" and is the only one that sees a revocation landing mid-transaction.
+  Removing either as redundant reopens a hole. That is recorded here because the duplication looks
+  like an oversight and is not.
+
+  **The pre-check returns quietly for a missing order rather than raising**, so it cannot be turned
+  into an oracle for which order ids exist -- the write path answers that with the same opaque
+  message a non-member gets. This means a non-member and a missing order are distinguishable by
+  status code further down the route, which `COUNTER-DEFECTS-001` records as deliberately deferred
+  for a single-store release rather than as closed.
+
+  **Not claimed:** that every idempotent path now checks outside the executor. Four were found by
+  the verification and fixed; `accept_quote` and `create_quote` already did. No systematic sweep of
+  every `IdempotencyRepository.execute` call site was performed.
+
+  **CẦN XÁC MINH:** whether the five delivery facts now in the quote payload are the complete set
+  that moves a displayed total. They are the five the engine reads today; a sixth added later must
+  be added to the payload in the same change, and nothing enforces that.
+evidence:
+  a_replay_skipped_every_check_inside_the_executor: >-
+    `IdempotencyRepository.execute` short-circuits to the stored response when it finds the key, so
+    every check living inside the executor is skipped on a replay.
+
+    Measured: a staff member revoked from a store received `200` and that store's full order state
+    from a key they were still holding, where a fresh request was correctly refused `403`. Order
+    transition, settlement, delivery legs and counter tickets all had that shape.
+
+    What makes this worth recording beyond the fix: **`accept_quote` and `create_quote` already
+    checked outside the wrapper, with comments explaining why.** The correct pattern was in the
+    codebase, written down, and four later paths did not follow it. A convention that lives only in
+    a comment on two of six call sites is not a convention.
+
+    Verified after the fix:
+
+        as a member -> STORE_CONFIRMATION_PENDING
+        membership revoked
+          OK  replay of the held key -> OrderAuthorizationError: store access is not authorized
+  the_quote_hashed_a_request_that_was_not_the_request: >-
+    `create_quote`'s idempotency payload recorded the lines but none of the delivery facts -- mode,
+    verified distance, planned transport weight, approved manual fee, customer acknowledgement --
+    though every one of them moves the display total.
+
+    So correcting a delivery fee and resending the same key replayed the stale total. The acceptance
+    derived it, the order bound it, and **the shop collected less than the price it had quoted,
+    while the correct amount was refused as "not the exact total".**
+
+    A changed quantity conflicted properly, which is what made this a bug rather than a policy: the
+    same request field class was hashed in one case and not the other. An idempotency key means "the
+    same request"; a payload that omits a fact which changes the outcome makes two different
+    requests look the same.
+  a_second_press_answered_five_hundred: >-
+    `agent_draft_reviews` is UNIQUE on `agent_run_id` -- one verdict per draft, which is correct --
+    and the route declared no `Idempotency-Key` parameter, so FastAPI dropped the header
+    `shadow.js` has always sent. The UNIQUE violation escaped as HTTP 500.
+
+    A reviewer who pressed the button twice was told the server broke, with no way to know their
+    verdict had in fact been recorded. The route is now wrapped the way counter tickets and delivery
+    legs were wrapped the day before.
+
+    The mechanism is worth naming because it is silent in both directions: a header a route does not
+    declare is not an error, it is simply absent, so a console can send a key correctly for months
+    against a server that never receives it.
+  rollback_assessment: >-
+    See rollback_impact. Membership checks moved before the idempotency lookup on four paths, five
+    fields added to one hashed payload, one route parameter and its wrapper, and the console callers
+    that pair with them.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

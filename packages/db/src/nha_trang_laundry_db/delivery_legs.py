@@ -17,7 +17,11 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from nha_trang_laundry_domain.catalog import MODES_EXPECTING_RETURN, FulfillmentMode
+from nha_trang_laundry_domain.catalog import (
+    MODES_EXPECTING_PICKUP,
+    MODES_EXPECTING_RETURN,
+    FulfillmentMode,
+)
 from psycopg.errors import UniqueViolation
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
@@ -108,6 +112,8 @@ class DeliveryLegRepository:
                 )
             if command.leg_kind is DeliveryLegKind.RETURN and mode not in MODES_EXPECTING_RETURN:
                 raise DeliveryLegError("this order's fulfilment mode has no return leg")
+            if command.leg_kind is DeliveryLegKind.PICKUP and mode not in MODES_EXPECTING_PICKUP:
+                raise DeliveryLegError("this order's fulfilment mode has no pickup leg")
             # The partial unique index refuses a second success per leg kind, which is right --
             # two successful returns would be two handovers that did not both happen. It escaped
             # as a raw psycopg error and the route turned it into HTTP 500 until 2026-08-29, so

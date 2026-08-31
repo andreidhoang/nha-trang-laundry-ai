@@ -135,3 +135,24 @@ def test_completion_requires_released_fulfillment_and_settled_balance() -> None:
         CommercialOrderStatus.COMPLETED,
     )
     assert complete.commercial is CommercialOrderStatus.COMPLETED
+
+
+def test_a_terminal_commercial_status_freezes_intake_and_production() -> None:
+    # COUNTER-DEFECTS-001. `transition_intake` and `transition_production` read `state.intake` and
+    # `state.production` and never `state.commercial`, so the domain happily returned a next state
+    # for a cancelled order. The `0008` projection trigger then refused the UPDATE -- correctly --
+    # and `psycopg.errors.RaiseException` escaped the route as HTTP 500. The rule the trigger
+    # enforces belongs here, where every other lifecycle rule already lives, so the refusal is a
+    # typed 4xx naming the cause instead of a crash naming nothing.
+    for terminal in (CommercialOrderStatus.CANCELLED, CommercialOrderStatus.COMPLETED):
+        cancelled = state(commercial=terminal, intake=IntakeStatus.RECEIVED_PENDING_INSPECTION)
+        with pytest.raises(OrderTransitionError, match="order is closed"):
+            transition_intake(cancelled, IntakeStatus.WAITING_PRICE_APPROVAL)
+
+        released = state(
+            commercial=terminal,
+            intake=IntakeStatus.ACCEPTED,
+            production=ProductionStatus.QUEUED,
+        )
+        with pytest.raises(OrderTransitionError, match="order is closed"):
+            transition_production(released, ProductionStatus.IN_PROCESS)

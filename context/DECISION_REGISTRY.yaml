@@ -544,3 +544,28 @@ decisions:
 
       If either derived answer is wrong about how the shop actually works, it is a correction to
       make, not a decision to re-run.
+  - id: DEC-024
+    title: How an order leaves the system when the normal path does not apply
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, ORDER_STATUS, BOOKING]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_REQUEST_ORDER_EXIT_2026-08.md
+    opened_at: '2026-08-31'
+    question: >-
+      Two defects in the same family, both measured on 2026-08-31 and both week-one counter events.
+      Production `EXCEPTION` has zero outgoing edges: `transition_production` tests
+      `current in {RELEASED, EXCEPTION}` before any exit is reachable and discards
+      `production_resume_status`, so a paid order interrupted by a stain or a machine fault can
+      never reach any terminal state. And `CONFIRMED -> CANCELLED` has no guard at all, while the
+      one guarded cancellation path is unreachable because `cancellation_approved` and
+      `custody_and_financial_resolution_recorded` default false and no caller ever passes them --
+      so the reviewed path always refuses and the unreviewed path always succeeds. An order can be
+      cancelled after the laundry is washed and released, with the money never recorded. The owner
+      decides whether an exception is resumable, what must be true before a started order may be
+      cancelled, whether the customer is refunded, and who hands the goods back.
+    blocking_today: >-
+      An order that hits a production exception cannot be closed or cancelled by anyone, and a late
+      cancellation loses the money silently. `ORDER-EXIT-001` is written and deliberately not
+      started; `SHOP-CUTOVER-001` does not proceed while this is open, because both cases occur in
+      the first week of real counter operation.

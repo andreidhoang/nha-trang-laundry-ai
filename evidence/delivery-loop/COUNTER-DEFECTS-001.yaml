@@ -1,0 +1,193 @@
+schema_version: 1
+work_item: COUNTER-DEFECTS-001
+recorded_at: '2026-08-31T23:40:00+07:00'
+requirement_contract: >-
+  Close the findings of the 2026-08-31 re-verification that a single shop reaches in an ordinary
+  day of trading and that involve money or a crash, so that the R1 release can put a real counter on
+  this software.
+
+  The triage rule is stated because it decides what is *not* here: cross-store refusal-shape leaks,
+  the read routes that skip MFA, `policy_version` verification and the unwired promotion engine are
+  all real and all deferred, each with its reason recorded below rather than left silent.
+rollback_impact: >-
+  A clean revert. **No migration and no schema change.** Two domain guards, one method parameter,
+  one leg-kind rule, two `UPDATE order_requests` statements, three Vietnamese strings, one re-keyed
+  disclosure binding, one regenerated registry and service-worker manifest, and one test that stops
+  guessing.
+
+  Reverting returns HTTP 500 to two transition routes, makes an expired quote orderable again by
+  claiming an earlier acceptance time, accepts a collection nobody made on a `RETURN_ONLY` order,
+  and returns `order_requests.status` to a column nothing writes.
+
+  Two couplings are worth stating because a partial revert is worse than either state:
+
+  - `quote_test_data.PRICED_AT` and the server-clock expiry check revert **together**. The fixture
+    priced its quotes on a fixed calendar date one day wider than `QUOTE_VALIDITY`, so every fixture
+    quote was already expired; reverting only the fixture leaves 32 tests failing, and reverting
+    only the check restores the defect.
+  - The corrected `gaps.js` text and the re-keyed `DEC-015` binding revert together, or
+    `test_the_committed_registry_matches_a_fresh_generation` fails. That failure is loud and
+    immediate, which is the right direction.
+unresolved_assumptions: >-
+  **`evaluated_at` is a method parameter, not a command field, and that placement is the control.**
+  `OrderRepository.create` now decides expiry against `datetime.now(UTC)` unless a caller passes a
+  moment explicitly. Only tests do. If a future route ever threads a request value into it, the
+  defect returns in full and nothing in the type system would notice; the reason it is not on
+  `CreateOrderCommand` is written beside it.
+
+  **The order-request statuses are mechanical consequences, not a workflow.** `SUBMITTED` is written
+  when the agreement is spent and `CANCELLED` when the order is cancelled, because both are facts
+  about the request's fate. Nothing writes `CANCELLED` for a request that is simply abandoned at the
+  counter without ever becoming an order -- there is no surface for that, and inventing one would be
+  a workflow decision nobody asked for.
+
+  **CẦN XÁC MINH:** whether a `RETURN_ONLY` order ever legitimately carries a pickup leg -- a
+  customer who brings the laundry in but asks the driver to collect a second bag on the way. The
+  mode says no and the code now says no. If the shop works differently, the correction is to the
+  mode, not to the guard.
+
+  **Not claimed:** that the console-contract test now sees every mutating call. It sees every call
+  that names a `method`, and treats an expression it cannot resolve as mutating. A call that builds
+  its whole options object elsewhere and spreads it in would still be invisible; none exists today.
+
+  **Deferred deliberately, with reasons, not overlooked.** Six write routes distinguish "not yours"
+  (403) from "does not exist" (409 or 422), which `store_access.py` promises they do not: R1 deploys
+  one store, so there is no second store to probe, and closing it touches every refusal site.
+  Six read routes bind `current_principal` with no MFA dependency and `OPERATOR` is not in
+  `SENSITIVE_MFA_ROLES`, so an operator-only principal holds an MFA-unverified session -- real, and
+  not money. `policy_version` on an approval envelope is still an unverified client assertion; the
+  console's decision buttons are `disabled: true`, so no operator can reach it. The promotion engine
+  is called by nothing outside tests and synthetic fixtures; its campaign window closed 2026-08-31.
+evidence:
+  a_cancelled_order_refuses_instead_of_crashing: >-
+    `transition_intake` and `transition_production` read `state.intake` and `state.production` and
+    never `state.commercial`, so the domain returned a valid next state for a cancelled order. The
+    `0008` projection trigger then refused the UPDATE -- correctly, that is what it is for -- and
+    `psycopg.errors.RaiseException` is a `psycopg.Error` rather than a `ValueError`, so it fell
+    outside the routes' except tuples and escaped as HTTP 500.
+
+    Measured over the real route on 2026-08-31, with the guard removed and then restored, on a fresh
+    database each time:
+
+        before                                                    after
+        intake-transition on a cancelled order      -> 500        -> 409 order is closed
+        production-transition on a cancelled order  -> 500        -> 409 order is closed
+
+    Both required their own probe shape to reach the trigger, and finding that out is part of the
+    evidence: with intake still open, the production route stops at its own "intake is not accepted"
+    refusal; with intake accepted, the intake route stops at "intake is terminal". Each dimension
+    therefore had to be driven to the state where only the commercial status stood in the way. A
+    single probe would have shown one 500 and missed the other.
+
+    The rule now lives in the domain beside every other lifecycle rule, as
+    `TERMINAL_COMMERCIAL_STATUSES`, rather than in a route's exception handler. The trigger was
+    always right; what was missing was the domain agreeing with it, so the caller is told which rule
+    it broke instead of being told the server is broken -- and a 500 is what tells a client to retry.
+  quote_expiry_is_decided_by_the_server_clock: >-
+    `OrderRepository.create` compared `valid_until` against
+    `command.customer_final_quote_accepted_at`, which arrives in the request body and is validated
+    only for timezone-awareness. **A quote the shop had already withdrawn was orderable by naming an
+    earlier acceptance time**, and the shop was then held to the withdrawn price through acceptance,
+    order and settlement, each agreeing with the others.
+
+    `datetime.now()` was never consulted on this path.
+
+    Expiry is now decided against the server's clock. The acceptance timestamp keeps its real job --
+    an attested fact about when the customer agreed, recorded on the order -- and stops being the
+    guard's only input.
+
+    **The fixtures proved the finding while failing.** Making the change turned 32 tests red at
+    once, all of them order-creation paths, because `quote_test_data.PRICED_AT` was the fixed date
+    2026-08-01 and `QUOTE_VALIDITY` is one day: every quote the fixtures built had expired weeks
+    before any test ran it, and nothing could see that while the caller supplied the clock. The
+    fixture now prices a few minutes ago, which is what a quote at a counter is.
+
+    That is the fourth time in this sequence a fixture has turned out to build something production
+    could not produce, and the first time the fixture's defect and the product's defect were the
+    same defect seen from two sides.
+  a_leg_the_mode_does_not_expect_is_refused: >-
+    `MODES_EXPECTING_RETURN` had no counterpart. The leg-kind check ran on `RETURN` legs only, so a
+    `PICKUP` leg on a `RETURN_ONLY` order -- an order whose customer carries the laundry in -- was
+    accepted, written as a durable append-only row with its outbox event, and closed nothing,
+    because only a `RETURN` leg completes an order. A collection nobody made, recorded permanently.
+
+    `MODES_EXPECTING_PICKUP` now sits beside it in `catalog.py`, for the reason the neighbouring
+    docstring already gives: two modules need the fact and they disagreed while each held half of
+    it. Half a rule refuses half the wrong answers.
+
+    Verified both directions, because a guard that refuses everyone passes an attack test and closes
+    the shop: a `PICKUP` leg on `RETURN_ONLY` is refused, and the `RETURN` leg that mode does expect
+    still succeeds and still completes fulfilment.
+  an_order_request_reaches_a_terminal_status: >-
+    `order_requests.status` was written by nothing. Every row was born `DRAFT` and stayed `DRAFT`
+    for its whole life, so `SUBMITTED` and `CANCELLED` were CHECK values no code path could ever
+    produce.
+
+    The visible cost is at the counter: a request whose order had been created -- or cancelled --
+    sat in "Tiếp nhận gần đây" and in the quote screen's picker indistinguishable from a customer
+    still standing there.
+
+    The request is now submitted in the same transaction that spends its agreement, and cancelled
+    with the order that consumed it. Measured end to end over HTTP: `SUBMITTED` after creation,
+    `CANCELLED` after cancellation.
+  the_catalogue_denies_only_what_is_unbuilt: >-
+    `#/gaps` is the register of what this system does not support, which makes it compliance
+    surface: staff read it to learn what to do on paper instead. Three of its statements were false.
+
+    Its lede said the console "stops at the commercial dimension" and that intake, production,
+    delivery and payment "have no surface". Three of those four ship: `orderRequests.js` takes an
+    order in and issues a counter ticket, `orders.js` records a delivery leg, `orderDetail.js`
+    settles. Production is the one that is genuinely absent -- `/production-transition` exists on
+    the server and no screen calls it -- and the lede now says exactly that.
+
+    The customer entry said "không có nguồn nào sinh ra bound_contact_id, nên hiện tại hệ thống
+    không ghi nhận được khách hàng từ bất kỳ nguồn nào" -- no source produces a contact reference, so
+    no customer can be recorded at all. `COUNTER-TICKET-001` shipped one under `DEC-013` on
+    2026-08-26. What `DEC-015` still declines is a customer *record*, which is a different thing,
+    and is what the entry says now.
+
+    The settlement entry called `DEC-010` "đang mở". It is `RESOLVED`: the owner deliberately
+    deferred partial payment, deposits, instalments and credit on 2026-08-18. "Still being decided"
+    and "decided not to, on purpose" are different things to plan a shop around.
+
+    Correcting the customer entry moved its content digest from `c4f99531cea6` to `e87c11974df5`
+    and the generator refused to build until the authored `DEC-015` binding was re-keyed. That is
+    the mechanism working: a reworded compliance string should force somebody to reconfirm which
+    decision it discloses rather than inheriting the old binding silently. The registry regenerated
+    to 161 slots and `sw.js` with it.
+  the_contract_test_sees_an_expression: >-
+    `test_every_mutating_console_call_carries_an_idempotency_key` classified a call as mutating only
+    when its method was a double-quoted literal. `staff.js:687` writes
+    `method: intent === "grant" ? "POST" : "DELETE"`, so the test read it as a non-mutating call and
+    skipped it.
+
+    **That call is the only writer of `staff_store_assignments`** -- the table every membership
+    check in this system reads. The one route the test most needed to cover was the one it could not
+    see, and it passed by not looking.
+
+    It now resolves the method expression and treats anything it cannot resolve as mutating, because
+    proving a call is a read is the caller's job rather than the reader's guess. Confirmed by
+    enumeration: 19 mutating calls are seen where 18 were before, the ternary among them, and all 19
+    carry a key.
+
+    This is the second time in three days that a test written to catch a class of defect turned out
+    not to see an instance of it. The first was a migration whose backfill only ever ran against an
+    empty database.
+  rollback_assessment: >-
+    See rollback_impact. Two domain guards and one new constant, one keyword-only method parameter,
+    one leg-kind rule and its `MODES_EXPECTING_PICKUP` definition, two `UPDATE order_requests`
+    statements, one fixture constant, three Vietnamese strings, one re-keyed disclosure binding, two
+    regenerated artifacts, and four new tests.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

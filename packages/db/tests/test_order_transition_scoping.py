@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from collections.abc import Generator
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -36,11 +36,14 @@ from nha_trang_laundry_domain.catalog import (
     QuoteFinality,
     QuoteRevisionStatus,
 )
+from nha_trang_laundry_domain.quote_composition import QUOTE_VALIDITY
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, build_quote_snapshot
-from quote_test_data import accepted_quote, make_quote_snapshot
+from quote_test_data import PRICED_AT, accepted_quote, make_quote_snapshot
 
-# Inside the test quote's validity window (PRICED_AT 2026-08-01, valid one day), because
-# OrderRepository.create refuses an accepted quote that has expired.
+# The moment the customer agreed the price, as the caller reports it. Since COUNTER-DEFECTS-001
+# this is an attested fact recorded on the order and no longer decides whether the quote has
+# expired -- the server's own clock does that -- so a fixed date here is honest rather than load
+# bearing.
 NOW = datetime(2026, 8, 1, 3, tzinfo=UTC)
 
 
@@ -435,3 +438,105 @@ def test_an_order_cannot_cite_a_price_the_customer_has_moved_on_from(
                 NOW,
             ),
         )
+
+
+def test_an_expired_quote_is_refused_whatever_the_caller_claims(connection: Any) -> None:
+    """COUNTER-DEFECTS-001: expiry is the server's decision, not a field in the request body.
+
+    `OrderRepository.create` compared `valid_until` against
+    `command.customer_final_quote_accepted_at`, which arrives in the request body and is validated
+    only for timezone-awareness. A quote the shop had already withdrawn was therefore orderable by
+    naming an earlier acceptance time, and the shop was held to the withdrawn price.
+    """
+
+    store_id = uuid4()
+    owner = _staff(connection, store_id)
+    quote_id, revision, quote, contact_id = accepted_quote(
+        connection, store_id=store_id, principal=owner
+    )
+    command = CreateOrderCommand(
+        store_id,
+        contact_id,
+        quote_id,
+        revision,
+        quote.document.snapshot_hash,
+        FulfillmentMode.SELF_DROP_SELF_COLLECT,
+        owner,
+        f"order-create-{uuid4().hex}",
+        uuid4(),
+        # The caller claims the customer agreed well inside the window. Before this fix that claim
+        # was the whole test the guard ran.
+        PRICED_AT,
+    )
+
+    with pytest.raises(OrderStateError, match="missing, stale, or expired"):
+        OrderRepository().create(
+            connection, command, evaluated_at=PRICED_AT + QUOTE_VALIDITY + timedelta(seconds=1)
+        )
+
+    # And the same quote, read a minute after it was priced, is still orderable -- a guard that
+    # refuses everyone would pass this test and close the shop.
+    stored = OrderRepository().create(
+        connection, command, evaluated_at=PRICED_AT + timedelta(minutes=1)
+    )
+    assert stored.commercial is CommercialOrderStatus.REQUESTED
+
+
+def test_an_order_request_reaches_a_terminal_status_with_its_order(connection: Any) -> None:
+    """COUNTER-DEFECTS-001: `order_requests.status` was written by nothing.
+
+    Every row was born `DRAFT` and stayed `DRAFT` for its whole life, so `SUBMITTED` and
+    `CANCELLED` were unreachable CHECK values. A request whose order had been created -- or
+    cancelled -- sat in the intake list indistinguishable from a customer still standing at the
+    counter.
+    """
+
+    store_id = uuid4()
+    owner = _staff(connection, store_id)
+    quote_id, revision, quote, contact_id = accepted_quote(
+        connection, store_id=store_id, principal=owner
+    )
+
+    def request_status() -> str:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT r.status FROM order_requests r
+                JOIN quotes q ON q.bound_order_request_id = r.id
+                WHERE q.id = %s
+                """,
+                (quote_id,),
+            )
+            row = cursor.fetchone()
+        assert row is not None
+        return str(row[0])
+
+    stored = OrderRepository().create(
+        connection,
+        CreateOrderCommand(
+            store_id,
+            contact_id,
+            quote_id,
+            revision,
+            quote.document.snapshot_hash,
+            FulfillmentMode.SELF_DROP_SELF_COLLECT,
+            owner,
+            f"order-create-{uuid4().hex}",
+            uuid4(),
+            NOW,
+        ),
+    )
+    assert request_status() == "SUBMITTED"
+
+    OrderRepository().transition(
+        connection,
+        OrderTransitionCommand(
+            stored.order_id,
+            stored.row_version,
+            owner,
+            f"cancel-{uuid4().hex}",
+            uuid4(),
+            commercial_target=CommercialOrderStatus.CANCELLED,
+        ),
+    )
+    assert request_status() == "CANCELLED"

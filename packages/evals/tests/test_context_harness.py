@@ -128,7 +128,30 @@ def test_context_drift_check_passes() -> None:
     # because it is that function's precondition. It also corrected three sentences on the
     # settlement panel that stated the opposite of what the server does for a delivery order,
     # including a success line that claimed self-collection on every settlement.
-    assert "94 work items" in result.stdout
+    # The ninety-fifth and ninety-sixth are REVERIFY-REGRESSIONS-001 and -002, recorded after the
+    # commits that carried them because they were not enqueued first -- the drift this entry exists
+    # to stop repeating. The first found that migration 0034 could only ever have applied to an
+    # empty database: its own comment noted that ADD COLUMN does not fire the append-only trigger,
+    # and the two UPDATEs beneath it are DML, which do. Every test runs against a fresh database
+    # where the backfill touches zero rows, so nothing could see it. The second found that
+    # IdempotencyRepository.execute short-circuits on a replay, so four write paths whose
+    # authorization lived inside the executor answered a revoked member 200 from a key they were
+    # still holding. accept_quote and create_quote already checked outside the wrapper and said why
+    # in comments: the correct pattern was written down and four later paths did not follow it.
+    # The ninety-seventh through hundred-and-fourth are the R1 release -- putting a real shop on
+    # the deterministic console, which is also the only way the thirty real orders G2 requires can
+    # ever exist. ORDER-EXIT-001 waits on DEC-024, because production EXCEPTION has no outgoing
+    # edge and CONFIRMED -> CANCELLED has no guard, and both are the owner's to decide.
+    # COUNTER-DEFECTS-001 takes the findings a counter day reaches. STORE-REGISTRY-001 gives
+    # store_id a table: sixteen migrations reference it and none creates one, so every membership
+    # check compares an unvalidated value against another. SHOP-DEPLOY-001 gives production a TLS
+    # listener that exists -- compose.production.yaml attaches tls only to an internal network, and
+    # Docker discards the port binding without an error. SHOP-IDENTITY-001 builds the Keycloak
+    # DEC-011 chose in August and nobody built. SHOP-OBSERVABILITY-001 makes the structured log
+    # reach a log; under uvicorn's default configuration every record() call in the API is a no-op.
+    # SHOP-RECOVERY-001 builds the archiving a restore drill will run. SHOP-CUTOVER-001 is the day
+    # itself, and needs a host nobody has chosen.
+    assert "104 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

@@ -250,3 +250,37 @@ def test_a_non_member_cannot_record_a_delivery(
                 NOW,
             ),
         )
+
+
+def test_a_pickup_leg_is_refused_on_an_order_the_customer_brings_in(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """COUNTER-DEFECTS-001: the mirror of the return-leg rule, which did not exist.
+
+    `RETURN_ONLY` means the customer carries the laundry to the shop and the shop delivers it back.
+    There is no collection to record. The mode check ran on `RETURN` legs only, so a `PICKUP` leg
+    was written as a durable append-only row with its outbox event -- a collection nobody made,
+    against an order that closes on a `RETURN` leg and was therefore not advanced by it either.
+    """
+
+    store_id = uuid4()
+    staff = _member(postgres_connection, store_id, StaffRole.OPERATOR)
+    order_id = _active_order(postgres_connection, store_id, staff, FulfillmentMode.RETURN_ONLY)
+    repository = DeliveryLegRepository()
+
+    with pytest.raises(DeliveryLegError, match="no pickup leg"):
+        repository.record(
+            postgres_connection,
+            RecordDeliveryLegCommand(
+                order_id, DeliveryLegKind.PICKUP, DeliveryLegOutcome.SUCCEEDED, staff, uuid4(), NOW
+            ),
+        )
+
+    # The leg the mode does expect is still accepted; a rule that refuses both closes the shop.
+    returned = repository.record(
+        postgres_connection,
+        RecordDeliveryLegCommand(
+            order_id, DeliveryLegKind.RETURN, DeliveryLegOutcome.SUCCEEDED, staff, uuid4(), NOW
+        ),
+    )
+    assert returned.completes_fulfillment is True

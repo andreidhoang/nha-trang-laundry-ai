@@ -3067,3 +3067,252 @@ items:
   - rekeying_a_disclosure_is_the_mechanism_working
   - rollback_assessment
   blocked_by_decisions: []
+- id: REVERIFY-REGRESSIONS-001
+  phase: PRODUCTION_HARDENING
+  title: The fixes that carried their own defects
+  status: COMPLETE
+  priority: 252
+  depends_on:
+  - BOUNDS-AND-TRUTH-001
+  context_domains:
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-reverify-regressions-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_migration_that_only_ever_ran_against_an_empty_database
+  - a_security_fix_that_answered_five_hundred
+  - the_oracle_reintroduced_two_functions_away
+  - the_confused_deputy_on_the_reprice_path
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: REVERIFY-REGRESSIONS-002
+  phase: PRODUCTION_HARDENING
+  title: A replay is still an authenticated request
+  status: COMPLETE
+  priority: 253
+  depends_on:
+  - REVERIFY-REGRESSIONS-001
+  context_domains:
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-reverify-regressions-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_replay_skipped_every_check_inside_the_executor
+  - the_quote_hashed_a_request_that_was_not_the_request
+  - a_second_press_answered_five_hundred
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: ORDER-EXIT-001
+  phase: PRODUCTION_HARDENING
+  title: An order that cannot finish and an order that finishes without paying
+  status: PENDING
+  priority: 254
+  depends_on:
+  - REVERIFY-REGRESSIONS-002
+  context_domains:
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - docs/DECISION_REQUEST_ORDER_EXIT_2026-08.md
+  contracts: []
+  task_packet: context/tasks/TASK-order-exit-001.md
+  acceptance_checks: &id004
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - an_exception_is_an_interruption_not_an_outcome
+  - a_started_order_cannot_be_cancelled_without_resolution
+  - the_guard_that_could_never_fire
+  - rollback_assessment
+  blocked_by_decisions:
+  - DEC-024
+- id: COUNTER-DEFECTS-001
+  phase: PRODUCTION_HARDENING
+  title: The defects a counter day reaches
+  status: COMPLETE
+  priority: 255
+  depends_on:
+  - REVERIFY-REGRESSIONS-002
+  context_domains:
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-counter-defects-001.md
+  acceptance_checks: *id004
+  required_evidence:
+  - a_cancelled_order_refuses_instead_of_crashing
+  - quote_expiry_is_decided_by_the_server_clock
+  - a_leg_the_mode_does_not_expect_is_refused
+  - an_order_request_reaches_a_terminal_status
+  - the_catalogue_denies_only_what_is_unbuilt
+  - the_contract_test_sees_an_expression
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: STORE-REGISTRY-001
+  phase: PRODUCTION_HARDENING
+  title: A store is a row, not a UUID somebody typed
+  status: PENDING
+  priority: 256
+  depends_on:
+  - COUNTER-DEFECTS-001
+  context_domains:
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-store-registry-001.md
+  acceptance_checks: *id004
+  required_evidence:
+  - every_store_id_references_a_store
+  - the_backfill_is_lossless_on_a_populated_database
+  - production_can_create_its_first_store
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-DEPLOY-001
+  phase: PRODUCTION_HARDENING
+  title: A production topology that can actually be reached
+  status: PENDING
+  priority: 257
+  depends_on:
+  - STORE-REGISTRY-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/adr/0007-production-deployment-topology.md
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  - docs/runbooks/container-deployment.md
+  - docs/runbooks/private-staging.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-deploy-001.md
+  acceptance_checks: *id004
+  required_evidence:
+  - the_listener_the_staging_file_only_promised
+  - the_bind_address_fails_closed
+  - the_hardening_invariants_are_unchanged
+  - the_staging_contract_still_describes_what_it_ran
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-IDENTITY-001
+  phase: PRODUCTION_HARDENING
+  title: The identity provider the owner chose, built
+  status: PENDING
+  priority: 258
+  depends_on:
+  - SHOP-DEPLOY-001
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - docs/adr/0007-production-deployment-topology.md
+  - apps/web/README.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-identity-001.md
+  acceptance_checks: *id004
+  required_evidence:
+  - the_issuer_is_same_origin_by_necessity
+  - the_realm_is_a_committed_artifact
+  - the_mfa_claim_is_a_string_the_verifier_can_read
+  - a_token_without_a_second_factor_is_refused
+  - the_jwks_outage_policy_is_decided_and_proven
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-OBSERVABILITY-001
+  phase: PRODUCTION_HARDENING
+  title: A system that can say what happened to it
+  status: PENDING
+  priority: 259
+  depends_on:
+  - SHOP-DEPLOY-001
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-observability-001.md
+  acceptance_checks: *id004
+  required_evidence:
+  - a_structured_event_reaches_stdout_in_the_container
+  - the_telemetry_question_is_answered_not_left_open
+  - four_checks_that_can_actually_fire
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-RECOVERY-001
+  phase: PRODUCTION_HARDENING
+  title: The parts of recovery that can be built before a host exists
+  status: PENDING
+  priority: 260
+  depends_on:
+  - SHOP-DEPLOY-001
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  - docs/adr/0007-production-deployment-topology.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-recovery-001.md
+  acceptance_checks: *id004
+  required_evidence:
+  - the_host_holds_a_key_that_cannot_decrypt_the_archive
+  - the_archive_command_does_not_lie_about_durability
+  - an_idle_afternoon_cannot_produce_a_stale_recovery_point
+  - the_validator_accepts_a_production_drill
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-CUTOVER-001
+  phase: PRODUCTION_HARDENING
+  title: The day the shop starts using it
+  status: PENDING
+  priority: 261
+  depends_on:
+  - SHOP-IDENTITY-001
+  - SHOP-OBSERVABILITY-001
+  - SHOP-RECOVERY-001
+  - ORDER-EXIT-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/adr/0007-production-deployment-topology.md
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  - docs/DECISION_REQUEST_HOSTING_2026-08.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-cutover-001.md
+  acceptance_checks: *id004
+  required_evidence:
+  - the_runbook_describes_what_the_system_does
+  - role_separation_proven_across_every_table
+  - nothing_but_the_console_is_reachable
+  - every_capability_reads_not_authorized_on_a_fresh_instance
+  - one_real_transaction_at_the_counter
+  - rollback_assessment
+  blocked_by_decisions: []

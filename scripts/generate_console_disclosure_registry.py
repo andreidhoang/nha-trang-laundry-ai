@@ -101,7 +101,12 @@ BINDINGS: dict[str, dict[str, Any]] = {
         "why": "Remedy and credit aggregates. The sentence also states that compensation is an "
         "approved command rather than a screen action, which stays true while these are absent.",
     },
-    "screens/gaps.js#missing:c4f99531cea6": {
+    # Re-keyed by COUNTER-DEFECTS-001 from `c4f99531cea6`. The old text also claimed no source
+    # produces a `bound_contact_id`, which stopped being true when COUNTER-TICKET-001 shipped
+    # DEC-013's counter ticket on 26/08. The binding is unchanged in substance -- these three
+    # tables are still absent and DEC-015 is still what governs them -- so it is re-keyed rather
+    # than retired, deliberately and with the reason recorded here.
+    "screens/gaps.js#missing:e87c11974df5": {
         "kind": "ABSENT_TABLE",
         "tables": ["parties", "contact_points", "addresses"],
         "why": "The party/CRM aggregates. This is the disclosure DEC-015 is about, and it must "

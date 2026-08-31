@@ -319,12 +319,25 @@ def test_every_mutating_console_call_carries_an_idempotency_key() -> None:
                         break
                 index += 1
             call = text[match.end() : index]
-            mutating = re.search(r'method:\s*"(POST|PATCH|PUT|DELETE)"', call)
-            if mutating and "idempotencyKey" not in call:
+            method = re.search(r"method:\s*([^,}]+)", call)
+            if method is None:
+                continue
+            expression = method.group(1).strip()
+            literal = re.fullmatch(r"""["'`](GET|POST|PATCH|PUT|DELETE|HEAD)["'`]""", expression)
+            # COUNTER-DEFECTS-001. This used to require the method to be a double-quoted literal
+            # naming a mutating verb, so `method: intent === "grant" ? "POST" : "DELETE"` in
+            # `staff.js` was invisible and the call was silently classified as a read. That call is
+            # the only writer of `staff_store_assignments`, which every membership check in the
+            # system depends on -- so the one route the test most needed to cover was the one it
+            # could not see, and it passed by not looking. An expression this test cannot resolve
+            # is now treated as mutating: proving a call is a read is the caller's job, not the
+            # reader's guess.
+            verb = literal.group(1) if literal else expression
+            if literal and verb in {"GET", "HEAD"}:
+                continue
+            if "idempotencyKey" not in call:
                 line = text[: match.start()].count("\n") + 1
-                offenders.append(
-                    f"{source.relative_to(ROOT)}:{line} issues {mutating.group(1)} with no key"
-                )
+                offenders.append(f"{source.relative_to(ROOT)}:{line} issues {verb} with no key")
 
     assert not offenders, (
         "these console calls would throw in the browser before reaching the server; "

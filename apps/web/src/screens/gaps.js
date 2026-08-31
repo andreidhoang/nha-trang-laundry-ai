@@ -54,9 +54,17 @@ import { facts, panel } from "../ui/components.js";
 const GROUPS = [
   {
     heading: "Vòng đời đơn hàng",
+    // COUNTER-DEFECTS-001. This lede denied four dimensions and three of them had shipped:
+    // "Tiếp nhận" takes an order in and issues a counter ticket, the order screen records a
+    // delivery leg, and the order detail screen settles. A register of what is unsupported is a
+    // compliance surface, so a stale denial here is the same defect as the settlement panel's
+    // false guardrail closed by BOUNDS-AND-TRUTH-001 — it teaches staff the shop cannot do
+    // something it can, and they work around it on paper.
     lede:
-      "Bảng vận hành hôm nay dừng lại ở chiều thương mại của một đơn: tạo, xác nhận, huỷ. Các " +
-      "chiều còn lại của cùng một đơn — nhận đồ, sản xuất, giao, thu tiền — không có bề mặt nào.",
+      "Bảng vận hành hôm nay bao được vòng đời thương mại của một đơn, việc nhận đồ, chặng giao " +
+      "và tất toán tại quầy. Chiều còn thiếu bề mặt là sản xuất: tuyến /production-transition có " +
+      "trên máy chủ nhưng không màn hình nào gọi nó, nên trạng thái giặt sấy được theo dõi ngoài " +
+      "hệ thống.",
     entries: [
       {
         ref: "M3 · MÀN 2",
@@ -64,10 +72,17 @@ const GROUPS = [
         what:
           "Tạo và tra cứu khách hàng cùng số liên hệ và địa chỉ của họ, để một hỏi mới gắn được " +
           "vào đúng người.",
+        // The second half of this used to read "không có nguồn nào sinh ra bound_contact_id, nên
+        // hiện tại hệ thống không ghi nhận được khách hàng từ bất kỳ nguồn nào" — no source
+        // produces a bound_contact_id, so no customer can be recorded at all. COUNTER-TICKET-001
+        // shipped one under DEC-013 on 26/08: the counter issues a number and that number is the
+        // order's customer reference. What DEC-015 still declines is a customer *record*, which is
+        // a different thing and is what this entry now says.
         missing:
-          "Không tồn tại aggregate parties, contact_points hay addresses nào. Không có gì để đọc " +
-          "và không có gì để ghi. Hệ quả rộng hơn: không có nguồn nào sinh ra bound_contact_id, " +
-          "nên hiện tại hệ thống không ghi nhận được khách hàng từ bất kỳ nguồn nào.",
+          "Không tồn tại aggregate parties, contact_points hay addresses nào: hệ thống không lưu " +
+          "tên, số điện thoại hay địa chỉ của khách. Khách vãng lai được nhận diện bằng số phiếu " +
+          "do quầy phát (DEC-013, 26/08), và số phiếu đó là bound_contact_id của đơn — nên đơn " +
+          "tạo được, còn hồ sơ khách thì chưa có.",
         blockedBy: "DEC-015 — chủ tiệm quyết hồ sơ khách hàng là gì và khi nào một người trở thành khách",
         today:
           "Liên hệ được nhận diện phía máy chủ qua contact binding; bảng vận hành không tạo khách.",
@@ -93,12 +108,14 @@ const GROUPS = [
           "Trả đủ đúng số khi khách tự lấy đã có: khối tất toán trong màn hình chi tiết đơn " +
           "(SETTLEMENT-001, đã hoàn thành). Còn thiếu charges, payments và payment_allocations " +
           "tổng quát, nên trả một phần, trả thừa và ghi nợ vẫn không biểu diễn được.",
-        // DEC-010 is registered and OPEN, and its title is "Settlement shapes beyond exact payment
-        // in full at handover". The ordinary case shipped with SETTLEMENT-001; what this entry
-        // still discloses is exactly the shapes that decision gates.
+        // DEC-010 is RESOLVED, not open: the owner deliberately deferred partial payment,
+        // deposits, instalments and ON_ACCOUNT credit on 18/08 rather than leaving them unanswered.
+        // Calling it open told staff a decision was still coming when the answer is "not yet, on
+        // purpose" — which is a different thing to plan around.
         blockedBy:
-          "DEC-010 (đang mở) — chỉ chặn trả một phần, trả thừa và ghi nợ. Trả đủ đúng số không " +
-          "còn bị chặn.",
+          "DEC-010 (đã quyết, hoãn có chủ đích) — trả một phần, đặt cọc, trả góp và ghi nợ không " +
+          "được hỗ trợ vì chủ tiệm quyết như vậy, không phải vì còn thiếu. Trả đủ đúng số không " +
+          "bị chặn.",
       },
       {
         ref: "M3",

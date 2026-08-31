@@ -85,6 +85,15 @@ INTAKE_SEQUENCE: Final = (
     IntakeStatus.ACCEPTED,
 )
 
+# A closed order has no further intake or production. `0008`'s projection trigger already refuses
+# any UPDATE of a row in one of these states, so before COUNTER-DEFECTS-001 the two dimensions that
+# never consulted `commercial` produced a valid next state and met the trigger as an unhandled
+# `RaiseException` -- HTTP 500 on a rule the system had actually decided correctly. The rule lives
+# here now, with the others, so the caller is told which one it broke.
+TERMINAL_COMMERCIAL_STATUSES: Final = frozenset(
+    {CommercialOrderStatus.CANCELLED, CommercialOrderStatus.COMPLETED}
+)
+
 PRODUCTION_SEQUENCE: Final = (
     ProductionStatus.NOT_STARTED,
     ProductionStatus.QUEUED,
@@ -135,6 +144,8 @@ def transition_intake(
     production_accepted_at: datetime | None = None,
 ) -> OrderState:
     """Advance intake; waiting states may be skipped only when final readiness is proven."""
+    if state.commercial in TERMINAL_COMMERCIAL_STATUSES:
+        raise OrderTransitionError("INVALID_STATE_TRANSITION: order is closed")
     if state.intake in {IntakeStatus.ACCEPTED, IntakeStatus.REJECTED}:
         raise OrderTransitionError("INVALID_STATE_TRANSITION: intake is terminal")
     if target is IntakeStatus.REJECTED:
@@ -169,6 +180,8 @@ def transition_intake(
 
 def transition_production(state: OrderState, target: ProductionStatus) -> OrderState:
     """Advance production without allowing work before intake acceptance."""
+    if state.commercial in TERMINAL_COMMERCIAL_STATUSES:
+        raise OrderTransitionError("INVALID_STATE_TRANSITION: order is closed")
     current = state.production
     if target is ProductionStatus.NOT_STARTED or target is current:
         raise OrderTransitionError("INVALID_STATE_TRANSITION: invalid production target")

@@ -142,6 +142,17 @@ MODES_EXPECTING_RETURN: Final = frozenset(
     {FulfillmentMode.PICKUP_AND_RETURN, FulfillmentMode.RETURN_ONLY}
 )
 
+#: And the mirror: which modes begin with the shop's courier collecting laundry from the customer.
+#:
+#: `MODES_EXPECTING_RETURN` had no counterpart until COUNTER-DEFECTS-001, so `delivery_legs`
+#: refused a `RETURN` leg the mode did not expect and accepted a `PICKUP` leg on `RETURN_ONLY` --
+#: an order the customer brings in themselves. That wrote a durable ledger row and an outbox event
+#: recording a collection nobody made, and closed nothing, because only a `RETURN` leg completes an
+#: order. Half a rule refuses half the wrong answers.
+MODES_EXPECTING_PICKUP: Final = frozenset(
+    {FulfillmentMode.PICKUP_AND_RETURN, FulfillmentMode.PICKUP_ONLY}
+)
+
 
 class CommercialOrderStatus(StrEnum):
     DRAFT = "DRAFT"

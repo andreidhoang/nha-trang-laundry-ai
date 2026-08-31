@@ -1,0 +1,109 @@
+schema_version: 1
+work_item: REVERIFY-REGRESSIONS-001
+recorded_at: '2026-08-31T22:10:00+07:00'
+requirement_contract: >-
+  Close the six worst findings of the second nine-lens verification against `f9c5140`, ten of whose
+  twenty-five surviving findings were regressions of fixes made the same day.
+
+  Recorded late. The work was committed as `bd51ac9` before a work item existed for it, which
+  `AGENTS.md` step 7 forbids -- queue, state, evidence and status projections are to stay
+  synchronized. This record reconciles that rather than pretending the sequence was followed.
+rollback_impact: >-
+  **Not a clean revert.** Migration `0034` is rewritten in place, and it had not been applied to any
+  populated database at the time -- which is the whole finding. Reverting the file on a database
+  where the corrected version has run would leave the recorded checksum pointing at bytes that no
+  longer exist, and `migrations.py:74-78` raises `migration 0034 checksum changed after
+  application`. That failure is loud and immediate, which is the right direction.
+
+  The application half reverts cleanly: one route's except tuple, one merged refusal message, one
+  table added to the audit-timeline ownership union, one `AND store_id = %s` on the reprice UPDATE,
+  and one advisory lock around counter-ticket numbering. Reverting the reprice scoping without
+  reverting the membership proof leaves a confused deputy, not a crash, so these revert together or
+  not at all.
+unresolved_assumptions: >-
+  **The `0034` rewrite is verified against synthetic populated databases, not against this shop's
+  data.** Both paths were exercised -- rows with a derivable owner, and rows without, which stop the
+  migration until `ntl.legacy_approval_store` is set. No production database exists yet, so "applies
+  to a populated database" means "applies to databases this session populated".
+
+  **The advisory lock bounds concurrency within one PostgreSQL instance.** `pg_advisory_xact_lock`
+  is instance-scoped, which is correct for the single-instance topology R1 deploys and would not be
+  correct across a future replicated write path. Nothing states that anywhere except here.
+
+  **Not claimed:** that every existence oracle is closed. One was found and merged into a single
+  refusal message; the systematic sweep of refusal shapes across write routes was not done, and
+  `COUNTER-DEFECTS-001` records the remainder as deliberately deferred for a single-store release.
+evidence:
+  a_migration_that_only_ever_ran_against_an_empty_database: >-
+    `0034` added `store_id` to `approval_requests` and backfilled it. Its own comment stated the
+    rule correctly -- "ADD COLUMN is DDL and does not fire `reject_ledger_mutation`" -- and the two
+    statements immediately beneath it were `UPDATE`s, which are DML and do:
+
+        backfill UPDATE BLOCKED: ledger tables are append-only; create a correction event
+
+    It applied cleanly to every test, because migrations there always run against a fresh database
+    where the backfill touches zero rows. It would have failed on **every real deployment**, and the
+    error it raised named a remedy that was also impossible -- "resolve or delete them
+    deliberately" -- since the same trigger blocks `DELETE`.
+
+    The trigger is now disabled for the backfill and restored immediately. That is not a loophole in
+    the append-only rule: the rule exists so application code cannot rewrite history, and this is a
+    schema migration completing a record rather than altering what it says. No existing column is
+    touched. Rows whose resource type has no derivable owner -- `MESSAGE_DRAFT` and the ten unbuilt
+    types -- stop the migration until the operator names a store through
+    `ntl.legacy_approval_store`, deliberately not defaulted, because guessing a store would forge
+    the attribution the migration exists to establish.
+
+    The general lesson, and the reason this is the first evidence entry rather than the last: a test
+    suite that always starts from an empty database cannot see a defect in a backfill.
+  a_security_fix_that_answered_five_hundred: >-
+    `POST /internal/v1/approvals` answered HTTP 500 for a non-member. `ApprovalAuthorizationError`
+    was not in the route's except tuple, so the membership check added that same morning by
+    `CROSS-STORE-INTEGRITY-001` crashed instead of refusing.
+
+    A security fix that 500s is not a security fix. It also inverts the signal an operator gets: a
+    refusal says "not for you", a crash says "we are broken", and the second invites a retry.
+  the_oracle_reintroduced_two_functions_away: >-
+    The resource check added with that membership fix used two distinct refusal strings, so a member
+    of any store could learn whether a UUID was a real resource belonging to somebody else. One bit,
+    leaked on every request.
+
+    That is the same leak the sibling function in the same commit had just closed, reintroduced two
+    functions away. `store_access.py` states the property the system is supposed to have -- refusals
+    "deliberately indistinguishable to the caller, so probing identifiers teaches nobody which
+    stores exist" -- and holding it requires attention at every refusal site rather than once. One
+    message now.
+
+    Also fixed in the same family: the audit-timeline scoping added that morning omitted
+    `approval_requests` from its ownership union, so an owner reading an approval they had just
+    decided saw nothing. A scoping rule blinded its own users, which is the failure mode of a guard
+    written from the attacker's side only.
+  the_confused_deputy_on_the_reprice_path: >-
+    **A member of any store could append a priced revision to another store's quote.** Not that
+    day's regression -- older, and worse than anything the verification found in the new code.
+
+    `create_quote` proved membership against the store named in the URL path, and the reprice
+    `UPDATE` then found the quote by id alone. Authority established over one resource, exercised on
+    another: store A's board showed a stranger's price as its own current one. The `UPDATE` now
+    carries `AND store_id = %s` bound to the store whose membership was proven.
+
+    Counter-ticket numbering was fixed in the same pass: the `coalesce(max(...)) + 1` had no lock,
+    so two tills issuing at the same moment could compute the same number. A
+    `pg_advisory_xact_lock` keyed on store and date now serializes it.
+  rollback_assessment: >-
+    See rollback_impact. One migration rewritten before first application, one route except tuple,
+    one merged refusal message, one table added to an ownership union, one store predicate on an
+    UPDATE, one advisory lock, and the fixture and test updates that follow from them.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

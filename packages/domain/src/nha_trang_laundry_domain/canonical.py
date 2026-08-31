@@ -24,6 +24,18 @@ class CanonicalizationError(ValueError):
     """Raised when a value cannot be represented by the canonical snapshot contract."""
 
 
+#: The largest integer that has a canonical form. JCS follows IEEE-754, so 2**53 and above cannot
+#: be represented exactly and `rfc8785.dumps` refuses them. Python integers have no width, so a
+#: request field with only a lower bound accepted such a number, carried it into an idempotency
+#: payload, and turned a bad input into HTTP 500 -- on the settlement route's money field, on
+#: `If-Match` for all three order transitions, and on approval and manual-send resource versions.
+#:
+#: It lives beside `canonical_document` because it is that function's precondition. Any request
+#: field whose value reaches a canonical document belongs inside this bound, and the API's Pydantic
+#: models cite it rather than repeating the literal.
+MAX_CANONICAL_INT: Final = 2**53 - 1
+
+
 @dataclass(frozen=True)
 class CanonicalDocument:
     canonical_json: bytes

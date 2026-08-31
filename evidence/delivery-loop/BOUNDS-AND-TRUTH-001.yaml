@@ -1,0 +1,144 @@
+schema_version: 1
+work_item: BOUNDS-AND-TRUTH-001
+recorded_at: '2026-08-31T20:15:00+07:00'
+requirement_contract: >-
+  Close the last three HIGH findings from the 2026-08-29 adversarial verification that need no owner
+  decision: two integer-bound defects sharing one cause, and three sentences on the settlement screen
+  that stated the opposite of what the server does.
+
+  Neither is a behaviour change. The integers were never valid -- JCS has no form for them -- so this
+  moves where they are refused, from a crash deep in canonicalisation to a typed 4xx at the edge. The
+  panel text is corrected to describe the system as it has behaved since `DEC-023` was ratified on
+  2026-08-26.
+rollback_impact: >-
+  Reverting returns five routes to answering a malformed number with HTTP 500, and returns the
+  settlement panel to telling staff that the shop cannot deliver and that every settlement recorded
+  self-collection.
+
+  A clean revert. **No migration, no schema change.** One constant, four Pydantic field bounds, one
+  header parser, three strings, one regenerated disclosure registry and service-worker manifest.
+
+  Nothing written under this item is a shape that did not exist before it: the refusals produce no
+  rows, and the corrected strings are display only. The one coupling is the disclosure registry --
+  `console-disclosures-v1.yaml` and the authored binding in
+  `generate_console_disclosure_registry.py` are keyed to the guardrail's content digest, so
+  reverting the text without regenerating the registry fails
+  `test_the_committed_registry_matches_a_fresh_generation`. That failure is loud and immediate,
+  which is the right direction.
+unresolved_assumptions: >-
+  **The bound is `2**53 - 1`, which is smaller than the database columns it guards.**
+  `order_settlements.paid_amount_vnd` is `BIGINT` and `MAX_BIGINT_VND` (2^63-1) appears in the
+  pricing and promotion engines. A settlement between 2^53 and 2^63 is now refused by the API
+  although PostgreSQL would store it. That is intentional -- a value with no canonical form cannot be
+  hashed into an idempotency record or an immutable snapshot, so this system genuinely cannot
+  represent it -- but it means the API's accepted range is narrower than the schema's, and nothing
+  states that anywhere except here.
+
+  **CẦN XÁC MINH:** the largest amount this shop will ever take at a counter. 9,007,199,254,740,991đ
+  is roughly nine thousand billion VND, so the bound is not a practical constraint on laundry. It is
+  recorded because "the limit is far away" is an assumption about the business, not a fact this
+  system checks.
+
+  **Not claimed:** that every integer field in the API is bounded. Four were found by the
+  verification and fixed; no systematic sweep of every `int` field was performed, and a field that
+  never reaches a canonical document would not have shown this symptom anyway.
+
+  **Not claimed:** that the corrected Vietnamese reads well to a native speaker at a counter. It is
+  accurate against the server's behaviour, which is what the finding was about; whether it is *clear*
+  is a question for the people who will read it during a shift.
+evidence:
+  five_routes_answered_a_bad_number_with_a_crash: >-
+    Reproduced on 2026-08-31 over HTTP, then re-run against the fix:
+
+        before                                          after
+        settlement paid_amount_vnd = 2^53   -> 500      -> 422
+        transition If-Match = 2^53          -> 500      -> 400
+        intake-transition If-Match = 2^53   -> 500      -> 400
+        production-transition If-Match      -> 500      -> 400
+        approval resource_version = 2^53    -> 500      -> 422
+
+    The traceback named the mechanism exactly: `main.py record_settlement` ->
+    `operations.py record_settlement` -> `idempotency.py execute` -> `canonical_document` ->
+    `CanonicalizationError: value is not valid JCS-SHA256-V1 input`. JCS follows IEEE-754, so 2^53
+    and above cannot be represented exactly and `rfc8785.dumps` refuses them; Python integers have
+    no width, so a field bounded only below let one through.
+
+    The money field is the one that matters most. An API that answers a malformed amount with "we
+    broke" invites a retry storm on the one route that takes money, and gives an operator no idea
+    which field was wrong.
+
+    A note on the probe: the first run died instead of reporting, because `TestClient` re-raises
+    server exceptions by default. `raise_server_exceptions=False` was needed to observe the status
+    an operator's browser would actually receive. A probe that crashes where the product returns 500
+    is measuring the wrong thing.
+  the_bound_lives_beside_the_rule_it_encodes: >-
+    `MAX_CANONICAL_INT` is defined in `packages/domain/.../canonical.py`, immediately above
+    `CanonicalDocument`, because it is `canonical_document`'s precondition -- not a fact about money,
+    and not a fact about row versions. The API's Pydantic models cite it; `_parse_if_match` cites it.
+
+    Defining it in `main.py` next to the fields would have made it a number somebody could change
+    without knowing which rule it encoded, and would have invited a second, different literal the
+    next time a field needed bounding. There is now one place to look and one place to change.
+
+    `_parse_if_match` gained the upper half of a bound it already had the lower half of: it refused
+    `< 1` and accepted anything above. The asymmetry is what made three transition routes crash on a
+    header rather than on a body.
+  the_settlement_panel_said_three_things_that_were_false: >-
+    Each was true when written and falsified by a decision the owner made afterwards.
+
+    **The guardrail** said "chỉ một trường hợp được hỗ trợ ... và tự lấy đồ về" -- only one
+    settlement shape, ending with the customer carrying the laundry home. `DEC-023` (2026-08-26)
+    added the second, and `SettlementShape` has had two members since. It now describes both and
+    says what distinguishes them: the same money, differing only in where the laundry goes.
+
+    **The checkbox hint** said delivery "thuộc DEC-003 và chưa xây" -- belongs to `DEC-003` and is
+    not built. `DEC-003` is resolved and `FULFILMENT-001` shipped the delivery-leg writer. A staff
+    member reading that sentence concludes the shop cannot deliver. It now tells them to leave the
+    box clear for a delivery order and says the server refuses a mark that contradicts the order's
+    mode -- which `evaluate_settlement` does.
+
+    **The success line** claimed "đã ghi nhận khách tự lấy đồ" on **every** settlement. For a
+    prepaid delivery `self_collection_recorded` stays false on purpose: the customer has paid and
+    nobody has received anything yet. The line now reads the field from the response instead of
+    asserting it, and for a delivery order says a successful leg is still required before the order
+    can close -- true, and actionable at the counter.
+
+    This is the same defect class as `settlement.py` returning a hardcoded
+    `self_collection_recorded=True`, closed in `ORDER-LIFECYCLE-001`: a surface telling an operator
+    what it assumes rather than what happened.
+  rekeying_a_disclosure_is_the_mechanism_working: >-
+    A disclosure slot id is `{module}#{key}:{digest-of-its-text}`, so correcting the guardrail moved
+    it from `d58009f5dc6c` to `e7cdc1e5010d` and the generator refused to build:
+
+        authored bindings reference slot ids that no disclosure has:
+        ['screens/orderDetail.js#guardrail:d58009f5dc6c']. A binding keyed to nothing is silently
+        inert, which is worse than an unbound disclosure because the registry looks more complete
+        than it is.
+
+    That is the design succeeding. A reworded compliance string should force somebody to reconfirm
+    which decision it discloses rather than inheriting the old binding silently. The `DEC-010`
+    binding was re-keyed deliberately, with the reason recorded beside it, and the registry
+    regenerated to 160 slots.
+
+    `apps/web/sw.js` was regenerated for the same reason -- the console has no build step, so its
+    shell manifest is a fingerprint over authored source, and
+    `test_the_service_worker_shell_manifest_is_current` catches an edit that forgets it.
+  rollback_assessment: >-
+    See rollback_impact. One domain constant, four Pydantic bounds, one header parser, three
+    Vietnamese strings, one re-keyed disclosure binding, and two regenerated artifacts.
+
+    Lowest-risk item in this sequence: it refuses inputs that had no valid outcome and corrects text
+    that was false. Nothing that previously succeeded stops succeeding.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

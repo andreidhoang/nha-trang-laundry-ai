@@ -155,7 +155,11 @@ BINDINGS: dict[str, dict[str, Any]] = {
 #: Slots whose truth rests on a decision rather than on a code fact. Recorded with the decision so a
 #: reader can check the sentence against the register instead of against the code.
 POLICY_BOUND: dict[str, str] = {
-    "screens/orderDetail.js#guardrail:d58009f5dc6c": "DEC-010",
+    # Re-keyed 2026-08-31: the text said "chỉ một trường hợp" (only one case) and named delivery
+    # as unbuilt under DEC-003, both false since DEC-023 was ratified on 2026-08-26 and
+    # FULFILMENT-001 shipped the second settlement shape. Slot ids are content digests, so the
+    # correction moves the key -- which is the mechanism working, not fighting it.
+    "screens/orderDetail.js#guardrail:e7cdc1e5010d": "DEC-010",
 }
 
 

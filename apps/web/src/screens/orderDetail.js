@@ -168,7 +168,13 @@ function settlementPanel(spec) {
         result,
         "ok",
         `Đã ghi nhận ${money(recorded.paid_amount_vnd)} đúng bằng tổng đã báo. ` +
-          "Công nợ chuyển sang PAID và đã ghi nhận khách tự lấy đồ.",
+          "Công nợ chuyển sang PAID. " +
+          // Read from the response, not asserted. A prepaid delivery leaves
+          // `self_collection_recorded` false on purpose -- the customer paid and nobody has
+          // received anything yet -- and this line used to claim otherwise for every settlement.
+          (recorded.self_collection_recorded
+            ? "Đã ghi nhận khách tự lấy đồ."
+            : "Chưa ghi nhận giao đồ — cần một chặng giao thành công thì mới đóng được đơn."),
       );
       spec.onRecorded();
     } catch (error) {
@@ -203,10 +209,12 @@ function settlementPanel(spec) {
     eyebrow: "LỆNH · POST /internal/v1/orders/{id}/settlement",
     title: "Tất toán",
     guardrail:
-      "Chỉ một trường hợp được hỗ trợ: khách trả đúng tổng đã báo, đủ một lần, tại quầy, và tự " +
-      "lấy đồ về. Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết " +
-      "định — chủ tiệm đã chốt ngày 18/08/2026 là tạm thời không nhận các hình thức này — " +
-      "không làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.",
+      "Hai trường hợp được hỗ trợ, và cả hai là cùng một khoản tiền: khách trả đúng tổng đã báo, " +
+      "đủ một lần, tại quầy. Khác nhau ở chỗ đồ đi đâu sau đó — khách tự lấy về, hoặc tiệm giao " +
+      "tận nơi và đã thu tiền trước khi đồ rời quầy (chủ tiệm chốt ngày 26/08/2026). Trả thiếu, " +
+      "trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định — chủ tiệm đã chốt " +
+      "ngày 18/08/2026 là tạm thời không nhận các hình thức này — không làm tròn và không ghi " +
+      "nhận một phần. Bản ghi tất toán không sửa được.",
     children: h(
       "form",
       { class: "form", onSubmit: submit },
@@ -222,8 +230,9 @@ function settlementPanel(spec) {
         id: "settlement-collected",
         label: "Khách đã tự lấy đồ về",
         hint:
-          "Đánh dấu chỉ khi chính khách nhận đồ tại quầy. Giao bằng chặng giao hàng thuộc DEC-003 " +
-          "và chưa xây.",
+          "Đánh dấu khi chính khách nhận đồ tại quầy. Đơn giao tận nơi thì để trống: khách trả " +
+          "tiền trước, còn việc đồ đã tới tay khách hay chưa do chặng giao hàng ghi nhận, không " +
+          "phải ô này. Đánh dấu sai với hình thức của đơn sẽ bị máy chủ từ chối.",
         control: collectedInput,
       }),
       h(

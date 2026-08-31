@@ -3039,3 +3039,31 @@ items:
   - what_this_item_did_not_fix
   - rollback_assessment
   blocked_by_decisions: []
+- id: BOUNDS-AND-TRUTH-001
+  phase: PRODUCTION_HARDENING
+  title: A number too large is a refusal, and the settlement panel says what the server
+    does
+  status: COMPLETE
+  priority: 251
+  depends_on:
+  - CROSS-STORE-INTEGRITY-001
+  context_domains:
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-bounds-and-truth-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - five_routes_answered_a_bad_number_with_a_crash
+  - the_bound_lives_beside_the_rule_it_encodes
+  - the_settlement_panel_said_three_things_that_were_false
+  - rekeying_a_disclosure_is_the_mechanism_working
+  - rollback_assessment
+  blocked_by_decisions: []

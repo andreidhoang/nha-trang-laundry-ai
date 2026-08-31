@@ -121,7 +121,14 @@ def test_context_drift_check_passes() -> None:
     # idempotency key that `core/api.js` demands -- without it they threw in the browser and never
     # reached the server, which is why DEC-013's walk-in stayed unreachable a day after its route
     # was fixed.
-    assert "93 work items" in result.stdout
+    # The ninety-fourth is BOUNDS-AND-TRUTH-001. Python integers have no width and JCS follows
+    # IEEE-754, so a request field bounded only below accepted 2**53, carried it into an
+    # idempotency payload, and turned a bad number into HTTP 500 on five entry points -- including
+    # the settlement route's money field. MAX_CANONICAL_INT now lives beside canonical_document
+    # because it is that function's precondition. It also corrected three sentences on the
+    # settlement panel that stated the opposite of what the server does for a delivery order,
+    # including a success line that claimed self-collection on every settlement.
+    assert "94 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

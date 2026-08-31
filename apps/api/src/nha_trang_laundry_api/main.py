@@ -47,6 +47,7 @@ from nha_trang_laundry_db.settlement import (
 from nha_trang_laundry_db.shadow_console import ShadowAuthorizationError, ShadowStateError
 from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_domain.approvals import ApprovalEnvelopeError
+from nha_trang_laundry_domain.canonical import MAX_CANONICAL_INT
 from nha_trang_laundry_domain.catalog import (
     ApprovalAction,
     CommercialOrderStatus,
@@ -246,7 +247,7 @@ class ApprovalRequest(StrictRequest):
     action: ApprovalAction
     resource_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,127}$")
     resource_id: UUID
-    resource_version: int = Field(ge=1)
+    resource_version: int = Field(ge=1, le=MAX_CANONICAL_INT)
     snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     rendered_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     policy_version: str = Field(min_length=1, max_length=200)
@@ -256,13 +257,13 @@ class ApprovalDecisionRequest(StrictRequest):
     decision: ApprovalDecision
     reason_code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,99}$")
     note: str | None = Field(default=None, min_length=1, max_length=500)
-    resource_version: int = Field(ge=1)
+    resource_version: int = Field(ge=1, le=MAX_CANONICAL_INT)
     snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     rendered_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
 
 
 class ManualSendPrepareRequest(StrictRequest):
-    observed_resource_version: int = Field(ge=1)
+    observed_resource_version: int = Field(ge=1, le=MAX_CANONICAL_INT)
     observed_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     observed_rendered_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     recipient_binding_id: UUID
@@ -270,7 +271,7 @@ class ManualSendPrepareRequest(StrictRequest):
 
 
 class ManualSendAttestationRequest(StrictRequest):
-    observed_resource_version: int = Field(ge=1)
+    observed_resource_version: int = Field(ge=1, le=MAX_CANONICAL_INT)
     exact_rendered_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     sent_at: datetime
 
@@ -318,7 +319,7 @@ class ManualSendResponse(BaseModel):
 class SettlementRequest(StrictRequest):
     # An integer of đồng. VND has no minor unit, and a float would introduce a representation the
     # currency does not have on the one field that decides whether a customer paid.
-    paid_amount_vnd: int = Field(ge=0)
+    paid_amount_vnd: int = Field(ge=0, le=MAX_CANONICAL_INT)
     # Explicit rather than defaulted. "The customer took their goods" is the fact being attested,
     # and a default true would let a staff member attest to it by not mentioning it.
     collected_by_customer: bool
@@ -1682,6 +1683,13 @@ def queue_recovery(
 
 
 def _parse_if_match(value: str | None) -> int:
+    """Parse a row version, bounded at both ends.
+
+    Python integers have no width, so `int("9007199254740992")` parsed happily and travelled into
+    the idempotency payload, where JCS canonicalisation follows IEEE-754, has no form for it, and
+    raises -- answering a bad row version with HTTP 500 on all three order transition routes. The
+    number was never valid; the only defect was where it was refused.
+    """
     if value is None:
         raise HTTPException(status.HTTP_428_PRECONDITION_REQUIRED, detail="If-Match is required")
     normalized = value.strip().strip('"')
@@ -1689,7 +1697,7 @@ def _parse_if_match(value: str | None) -> int:
         parsed = int(normalized)
     except ValueError as error:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="If-Match is invalid") from error
-    if parsed < 1:
+    if not 1 <= parsed <= MAX_CANONICAL_INT:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="If-Match is invalid")
     return parsed
 

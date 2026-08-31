@@ -305,6 +305,7 @@ export function render_() {
 
     // "Phát phiếu" — DEC-013. The route takes no body because nothing about the customer is
     // collected; it hands back a number to say out loud and a reference to carry on the order.
+    const ticketSubmission = new Submission("counter-ticket");
     const ticketNote = h("span", { class: "hint" });
     const ticketButton = h(
       "button",
@@ -317,8 +318,11 @@ export function render_() {
           try {
             const issued = await request(
               `/internal/v1/stores/${encodeURIComponent(store)}/counter-tickets`,
-              { method: "POST", body: {} },
+              // `request()` refuses any mutating call without a key, so omitting one threw here
+              // in the browser and this button never reached the server at all.
+              { method: "POST", body: {}, idempotencyKey: ticketSubmission.key() },
             );
+            ticketSubmission.reset();
             draft.contactId = issued.ticket_id;
             contactInput.value = issued.ticket_id;
             contactInput.setAttribute("aria-invalid", "false");

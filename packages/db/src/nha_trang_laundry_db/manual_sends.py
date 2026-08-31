@@ -12,6 +12,7 @@ from nha_trang_laundry_contracts import AgentDeploymentStage
 from nha_trang_laundry_domain.catalog import ApprovalAction
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
 
@@ -69,7 +70,6 @@ class ManualSendRepository:
 
     def prepare(self, connection: Any, command: ManualSendPrepareCommand) -> StoredManualSend:
         prepared_at = command.prepared_at or datetime.now(UTC)
-        _require_manual_sender(command.principal)
         if command.deployment_stage is not AgentDeploymentStage.SHADOW:
             raise ManualSendStateError("manual send is permitted only in shadow stage")
         if command.purpose != "TRANSACTIONAL":
@@ -77,6 +77,8 @@ class ManualSendRepository:
         channel = _channel(command.channel)
         with connection.transaction(), connection.cursor() as cursor:
             approval = _lock_approval(cursor, command.approval_request_id)
+            # After the lock, because the store to check membership against is on the row.
+            _require_manual_sender(cursor, command.principal, approval[10])
             _require_approved_transactional_binding(approval, command, prepared_at)
             cursor.execute(
                 "SELECT id FROM manual_send_envelopes WHERE approval_request_id = %s",
@@ -148,12 +150,12 @@ class ManualSendRepository:
     def attest(self, connection: Any, command: ManualSendAttestationCommand) -> StoredManualSend:
         recorded_at = command.recorded_at or datetime.now(UTC)
         sent_at = command.sent_at or recorded_at
-        _require_manual_sender(command.principal)
         if sent_at.tzinfo is None or sent_at.utcoffset() is None or sent_at > recorded_at:
             raise ManualSendStateError("manual send timestamp is invalid")
         with connection.transaction(), connection.cursor() as cursor:
             envelope = _lock_envelope(cursor, command.manual_send_envelope_id)
             approval = _lock_approval(cursor, _uuid(envelope[1]))
+            _require_manual_sender(cursor, command.principal, approval[10])
             if str(envelope[9]) != "APPROVED_FOR_MANUAL_SEND":
                 raise ManualSendStateError("manual-send envelope is not attestable")
             if int(str(envelope[10])) != command.expected_envelope_row_version:
@@ -239,7 +241,8 @@ def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
     cursor.execute(
         """
         SELECT r.resource_id, r.resource_version, r.snapshot_hash, r.rendered_hash,
-               r.action, r.policy_version, r.expires_at, s.status, s.row_version, r.requested_by
+               r.action, r.policy_version, r.expires_at, s.status, s.row_version, r.requested_by,
+               r.store_id
         FROM approval_requests r JOIN approval_request_states s ON s.approval_request_id = r.id
         WHERE r.id = %s FOR UPDATE OF s
         """,
@@ -254,9 +257,12 @@ def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
 def _lock_envelope(cursor: Any, envelope_id: UUID) -> tuple[object, ...]:
     cursor.execute(
         """
-        SELECT id, approval_request_id, resource_id, resource_version, snapshot_hash, rendered_hash,
-               recipient_binding_id, channel, purpose, status, row_version
-        FROM manual_send_envelopes WHERE id = %s FOR UPDATE
+        SELECT e.id, e.approval_request_id, e.resource_id, e.resource_version, e.snapshot_hash,
+               e.rendered_hash, e.recipient_binding_id, e.channel, e.purpose, e.status,
+               e.row_version, r.store_id
+        FROM manual_send_envelopes e
+        JOIN approval_requests r ON r.id = e.approval_request_id
+        WHERE e.id = %s FOR UPDATE OF e
         """,
         (envelope_id,),
     )
@@ -283,10 +289,24 @@ def _require_approved_transactional_binding(
         raise ManualSendStateError("manual-send content binding is stale")
 
 
-def _require_manual_sender(principal: StaffPrincipal) -> None:
+def _require_manual_sender(cursor: Any, principal: StaffPrincipal, store_id: object) -> None:
+    """Role, MFA, and membership of the shop whose approval is being spent.
+
+    Membership was missing until 2026-08-30, and this is the path where that mattered most: a
+    non-member operator could prepare and attest against another store's one-time SEND_MESSAGE
+    approval, permanently burning it and recording their own staff id as having sent that store's
+    approved message to a recipient the store never named. The owning store comes from the approval
+    row this call has already locked, never from the request.
+    """
     permitted = {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.OPERATOR}
     if not principal.mfa_verified or not principal.roles.intersection(permitted):
         raise ManualSendAuthorizationError("MFA and an authorized staff role are required")
+    require_store_membership(
+        cursor,
+        staff_user_id=principal.staff_user_id,
+        store_id=_uuid(store_id),
+        error=ManualSendAuthorizationError,
+    )
 
 
 def _channel(value: str) -> str:

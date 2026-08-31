@@ -220,6 +220,11 @@ def test_approval_is_server_derived_hash_bound_authorized_and_one_time(
     repository = ApprovalRepository()
     requester = principal(StaffRole.OPS_APPROVER)
     owner = principal(StaffRole.OWNER_ADMIN)
+    # An approval names its store and the repository requires membership of it (migration 0034),
+    # so both parties belong to the shop whose action they are deciding.
+    store_id = uuid4()
+    _assign_store(postgres_connection, requester, store_id)
+    _assign_store(postgres_connection, owner, store_id)
     resource_id = uuid4()
     request = ApprovalRequestCommand(
         ApprovalAction.SEND_MESSAGE,
@@ -233,6 +238,7 @@ def test_approval_is_server_derived_hash_bound_authorized_and_one_time(
         f"approval-{uuid4().hex}",
         uuid4(),
         NOW,
+        store_id=store_id,
     )
     created = repository.request(postgres_connection, request)
     replayed = repository.request(postgres_connection, replace(request, correlation_id=uuid4()))
@@ -256,14 +262,14 @@ def test_approval_is_server_derived_hash_bound_authorized_and_one_time(
             postgres_connection,
             replace(decision, principal=requester, correlation_id=uuid4()),
         )
+    # A member of this store who has not done MFA, so MFA is the refusal that fires rather than
+    # membership. Both are checked and membership runs first, which is why this needs seeding.
+    unverified = principal(StaffRole.OWNER_ADMIN, mfa=False)
+    _assign_store(postgres_connection, unverified, store_id)
     with pytest.raises(ApprovalAuthorizationError, match="MFA"):
         repository.decide(
             postgres_connection,
-            replace(
-                decision,
-                principal=principal(StaffRole.OWNER_ADMIN, mfa=False),
-                correlation_id=uuid4(),
-            ),
+            replace(decision, principal=unverified, correlation_id=uuid4()),
         )
     with pytest.raises(ApprovalStateError, match="hash is stale"):
         repository.decide(
@@ -327,6 +333,9 @@ def test_expired_approval_is_durably_expired_not_silently_extended(
     repository = ApprovalRepository()
     requester = principal(StaffRole.OPERATOR)
     owner = principal(StaffRole.OWNER_ADMIN)
+    store_id = uuid4()
+    _assign_store(postgres_connection, requester, store_id)
+    _assign_store(postgres_connection, owner, store_id)
     request = ApprovalRequestCommand(
         ApprovalAction.CONFIRM_SLOT,
         "SLOT_PROPOSAL",
@@ -339,6 +348,7 @@ def test_expired_approval_is_durably_expired_not_silently_extended(
         f"approval-{uuid4().hex}",
         uuid4(),
         NOW,
+        store_id=store_id,
     )
     created = repository.request(postgres_connection, request)
     with pytest.raises(ApprovalStateError, match="expired"):

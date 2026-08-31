@@ -239,6 +239,10 @@ class ProductionTransitionRequest(StrictRequest):
 
 
 class ApprovalRequest(StrictRequest):
+    #: The shop this approval belongs to. Required since migration `0034`: an approval used to
+    #: carry no store at all, so `decide` could not check membership and a member of any store
+    #: could approve any other store's action.
+    store_id: UUID
     action: ApprovalAction
     resource_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,127}$")
     resource_id: UUID
@@ -995,6 +999,7 @@ def request_approval(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
     try:
         stored = service.request_approval(
+            store_id=request.store_id,
             action=request.action,
             resource_type=request.resource_type,
             resource_id=request.resource_id,
@@ -1147,6 +1152,7 @@ class CounterTicketResponse(BaseModel):
 )
 def issue_counter_ticket(
     store_id: UUID,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> CounterTicketResponse:
@@ -1159,8 +1165,10 @@ def issue_counter_ticket(
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
     try:
-        issued = service.issue_counter_ticket(store_id=store_id, principal=principal)
-    except (StoreAccessError, CounterTicketError) as error:
+        issued = service.issue_counter_ticket(
+            store_id=store_id, idempotency_key=idempotency_key, principal=principal
+        )
+    except (StoreAccessError, CounterTicketError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
     return CounterTicketResponse(
         ticket_id=issued.ticket_id,
@@ -1192,6 +1200,7 @@ class DeliveryLegResponse(BaseModel):
 def record_delivery_leg(
     order_id: UUID,
     request: DeliveryLegRequest,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> DeliveryLegResponse:
@@ -1208,9 +1217,10 @@ def record_delivery_leg(
             order_id=order_id,
             leg_kind=request.leg_kind,
             outcome=request.outcome,
+            idempotency_key=idempotency_key,
             principal=principal,
         )
-    except (StoreAccessError, DeliveryLegError) as error:
+    except (StoreAccessError, DeliveryLegError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
     return DeliveryLegResponse(
         leg_id=stored.leg_id,

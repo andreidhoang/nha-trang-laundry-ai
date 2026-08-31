@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-30'
+last_updated: '2026-08-31'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -3006,6 +3006,36 @@ items:
   - an_agreement_authorises_exactly_one_order
   - the_acceptance_key_is_honoured
   - a_bug_can_be_load_bearing
+  - what_this_item_did_not_fix
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CROSS-STORE-INTEGRITY-001
+  phase: PRODUCTION_HARDENING
+  title: An approval belongs to a shop, and the buttons reach the server
+  status: COMPLETE
+  priority: 250
+  depends_on:
+  - AGREEMENT-INTEGRITY-001
+  - SHADOW-CONSOLE-001
+  context_domains:
+  - orders_audit
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-cross-store-integrity-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - an_approval_belongs_to_a_shop
+  - the_manual_send_authorisation_cannot_be_spent_by_an_outsider
+  - the_audit_timeline_is_scoped_to_its_aggregate
+  - two_console_buttons_now_reach_the_server
+  - what_is_checked_and_what_provably_cannot_be
   - what_this_item_did_not_fix
   - rollback_assessment
   blocked_by_decisions: []

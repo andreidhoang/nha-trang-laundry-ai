@@ -259,7 +259,9 @@ def test_a_counter_ticket_is_a_customer_reference_the_walk_in_path_accepts(
     postgres_connection.commit()
     service = OperationsService(AuthSettings(database_url=database_url))
 
-    ticket = service.issue_counter_ticket(store_id=store_id, principal=member)
+    ticket = service.issue_counter_ticket(
+        store_id=store_id, idempotency_key=f"ticket-{uuid4().hex}", principal=member
+    )
     stored = service.create_order_request(
         store_id=store_id,
         contact_binding_id=ticket.ticket_id,
@@ -286,7 +288,9 @@ def test_another_stores_counter_ticket_is_not_a_customer_reference_here(
     postgres_connection.commit()
     service = OperationsService(AuthSettings(database_url=database_url))
 
-    ticket = service.issue_counter_ticket(store_id=issuing_store, principal=issuer)
+    ticket = service.issue_counter_ticket(
+        store_id=issuing_store, idempotency_key=f"ticket-{uuid4().hex}", principal=issuer
+    )
 
     with pytest.raises(ChannelBindingError, match="contact binding is not available"):
         service.create_order_request(

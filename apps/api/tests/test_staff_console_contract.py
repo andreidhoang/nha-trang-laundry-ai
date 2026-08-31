@@ -290,3 +290,43 @@ def test_every_client_module_parses(tmp_path: Path) -> None:
             failures.append(f"{source.relative_to(ROOT)}\n{result.stderr.strip()}")
 
     assert not failures, "modules failed to parse:\n" + "\n\n".join(failures)
+
+
+def test_every_mutating_console_call_carries_an_idempotency_key() -> None:
+    """A mutating call without a key throws in the browser and never reaches the server.
+
+    `core/api.js` raises `"<METHOD> <path> was issued without an idempotency key"` before it opens
+    a request, so a screen that omits one is not a slow path or a 4xx -- it is a button that does
+    nothing and reports a client error. Two shipped that way and were found by adversarial review
+    rather than by CI: "Phát phiếu", which made `DEC-013`'s walk-in unreachable from the console,
+    and "Ghi nhận chuyến giao", which made a delivery order impossible to close.
+
+    Asserted over source text because the console has no build step and no type checker between it
+    and the API -- the same reason the route-existence test above reads authored JavaScript.
+    """
+
+    offenders: list[str] = []
+    for source in sorted((WEB / "src").rglob("*.js")):
+        text = source.read_text(encoding="utf-8")
+        for match in re.finditer(r"\brequest\(", text):
+            depth, index = 0, match.end() - 1
+            while index < len(text):
+                if text[index] == "(":
+                    depth += 1
+                elif text[index] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            call = text[match.end() : index]
+            mutating = re.search(r'method:\s*"(POST|PATCH|PUT|DELETE)"', call)
+            if mutating and "idempotencyKey" not in call:
+                line = text[: match.start()].count("\n") + 1
+                offenders.append(
+                    f"{source.relative_to(ROOT)}:{line} issues {mutating.group(1)} with no key"
+                )
+
+    assert not offenders, (
+        "these console calls would throw in the browser before reaching the server; "
+        f"give each one an idempotencyKey: {offenders}"
+    )

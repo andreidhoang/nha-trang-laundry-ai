@@ -49,6 +49,7 @@ from nha_trang_laundry_domain.quotes import (
 
 from .fixtures import SyntheticFixtureBundle
 from .synthetic_pricing import ROOT
+from .synthetic_store import seed_store_membership
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +106,9 @@ def execute_personalized_price_preflight(
         pricebook_version_id=uuid4(),
         service_version_id=uuid4(),
     )
+    seed_store_membership(
+        connection, principals=(actor_id,), occurred_at=timestamp, store_id=store_id
+    )
     QuoteRepository().create_revision(
         connection,
         QuoteRevisionCommand(store_id, request_id, snapshot, 0, 0, actor_id, uuid4(), timestamp),
@@ -130,6 +134,7 @@ def execute_personalized_price_preflight(
             f"personalized-quote-{uuid4().hex}",
             uuid4(),
             timestamp,
+            store_id=store_id,
         ),
     )
     with connection.cursor() as cursor:
@@ -189,6 +194,9 @@ def execute_measurement_change_preflight(
         pricebook_version_id=pricebook_version_id,
         service_version_id=service_version_id,
     )
+    seed_store_membership(
+        connection, principals=(actor_id,), occurred_at=timestamp, store_id=store_id
+    )
     repository = QuoteRepository()
     repository.create_revision(
         connection,
@@ -210,10 +218,16 @@ def execute_measurement_change_preflight(
             f"measurement-approval-{uuid4().hex}",
             uuid4(),
             timestamp,
+            store_id=store_id,
         ),
     )
     approver = StaffPrincipal(
         uuid4(), f"synthetic-approver-{uuid4().hex}", frozenset({StaffRole.OWNER_ADMIN}), True
+    )
+    # The decider belongs to the shop whose action they are deciding (migration 0034). Two parties
+    # is still two parties: the approver is a different person from the requester above.
+    seed_store_membership(
+        connection, principals=(approver,), occurred_at=timestamp, store_id=store_id
     )
     approvals.decide(
         connection,
@@ -322,6 +336,9 @@ def execute_estimate_acknowledgment_preflight(
         acknowledged_at=acknowledged_at,
         pricebook_version_id=uuid4(),
         service_version_id=uuid4(),
+    )
+    seed_store_membership(
+        connection, principals=(actor_id,), occurred_at=timestamp, store_id=store_id
     )
     QuoteRepository().create_revision(
         connection,

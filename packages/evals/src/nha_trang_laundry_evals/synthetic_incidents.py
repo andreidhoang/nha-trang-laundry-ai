@@ -28,6 +28,7 @@ from nha_trang_laundry_domain.quotes import build_quote_snapshot
 
 from .fixtures import SyntheticFixtureBundle
 from .synthetic_quote_lifecycle import _snapshot
+from .synthetic_store import seed_store_membership
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +149,9 @@ def _seed_completed_order(connection: Any, timestamp: datetime) -> tuple[Any, An
         uuid4(),
         uuid4(),
     )
+    seed_store_membership(
+        connection, principals=(actor_id,), occurred_at=timestamp, store_id=store_id
+    )
     estimate = _snapshot(
         quote_id,
         revision=1,
@@ -180,6 +184,7 @@ def _seed_completed_order(connection: Any, timestamp: datetime) -> tuple[Any, An
                 f"synthetic-completed-order-{quote_id}",
                 uuid4(),
                 timestamp - timedelta(hours=13),
+                store_id=store_id,
             ),
         )
         .approval_request_id

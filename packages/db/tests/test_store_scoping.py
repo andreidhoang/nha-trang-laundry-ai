@@ -191,16 +191,23 @@ def test_the_refusal_carries_the_callers_own_error_type(
 def test_the_approval_queue_excludes_anything_it_cannot_attribute_to_a_member_store(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    """`approval_requests` has no store column, so the queue resolves through the order.
+    """The queue shows a store its own approvals, and shows nobody else theirs.
 
-    An approval whose resource does not resolve to a store the caller belongs to is excluded rather
-    than shown, because a queue entry nobody can attribute to a store is how cross-store disclosure
-    happens. Excluding is the fail-closed direction: a new resource type stays invisible until it is
-    joined here explicitly.
+    Rewritten on 2026-08-30. It used to assert that an approval whose *resource* did not resolve to
+    an order was excluded from everyone -- true, fail-closed, and hiding two problems. Resolving the
+    store through `orders ON o.id = r.resource_id` meant every `MESSAGE_DRAFT` approval, which is
+    the whole manual-send queue, was invisible to the people meant to action it. And an approval
+    that could not be attributed to a store in the queue could still be *decided* by anyone, because
+    `decide` had no store to check membership against at all.
+
+    Migration `0034` gives an approval its own `store_id`, so both questions have the same answer
+    and this test now pins that answer: a member sees it, an outsider does not.
     """
     from nha_trang_laundry_db.approvals import ApprovalRepository
 
-    assigned = _staff(postgres_connection, store_id=uuid4())
+    store_id = uuid4()
+    assigned = _staff(postgres_connection, store_id=store_id)
+    outsider = _staff(postgres_connection, store_id=uuid4())
     unassigned = _staff(postgres_connection)
     approval_id = uuid4()
     with postgres_connection.transaction(), postgres_connection.cursor() as cursor:
@@ -210,10 +217,10 @@ def test_the_approval_queue_excludes_anything_it_cannot_attribute_to_a_member_st
                 id, action, resource_type, resource_id, resource_version, snapshot_hash,
                 rendered_hash, policy_version, required_role, reason_codes, obligations,
                 execution_capability, requested_by, requested_at, expires_at, envelope,
-                envelope_hash
+                envelope_hash, store_id
             ) VALUES (
                 %s, 'PRESENT_QUOTE', 'ORDER', %s, 1, %s, %s, 'policy-v1', 'OPS_APPROVER',
-                '[]'::jsonb, '[]'::jsonb, 'cap', %s, %s, %s, '{}'::jsonb, %s
+                '[]'::jsonb, '[]'::jsonb, 'cap', %s, %s, %s, '{}'::jsonb, %s, %s
             )
             """,
             (
@@ -225,6 +232,7 @@ def test_the_approval_queue_excludes_anything_it_cannot_attribute_to_a_member_st
                 NOW,
                 NOW.replace(year=NOW.year + 1),
                 f"JCS-SHA256-V1:{uuid4().hex * 2}",
+                store_id,
             ),
         )
         cursor.execute(
@@ -237,6 +245,8 @@ def test_the_approval_queue_excludes_anything_it_cannot_attribute_to_a_member_st
         )
 
     with postgres_connection.cursor() as cursor:
-        for principal in (assigned, unassigned):
+        member_sees = ApprovalRepository.list_pending(cursor, principal=assigned, limit=100)
+        assert approval_id in {item.approval_request_id for item in member_sees}
+        for principal in (outsider, unassigned):
             listed = ApprovalRepository.list_pending(cursor, principal=principal, limit=100)
             assert approval_id not in {item.approval_request_id for item in listed}

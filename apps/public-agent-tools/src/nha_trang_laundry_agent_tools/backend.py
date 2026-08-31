@@ -746,6 +746,7 @@ class DomainAgentToolBackend:
                         correlation_id=claims.jti,
                         requested_at=self._now(),
                         actor_type=ActorRole.AGENT_RUNNER.value,
+                        store_id=claims.store_id,
                     ),
                 )
             except IdempotencyConflictError as error:

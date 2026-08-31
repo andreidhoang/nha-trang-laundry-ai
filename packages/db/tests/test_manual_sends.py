@@ -50,10 +50,55 @@ def _principal(role: StaffRole, *, mfa: bool = True) -> StaffPrincipal:
     )
 
 
-def _approved_message(connection: psycopg.Connection[Any]) -> tuple[UUID, UUID]:
+def _member_store(
+    connection: Any, *principals: StaffPrincipal, store_id: UUID | None = None
+) -> UUID:
+    """A shop these principals belong to.
+
+    Migration `0034` binds an approval to a store and the repository requires membership of it, so a
+    principal minted with `uuid4()` and no assignment is refused -- by the same rule that stops a
+    member of one store approving another's action. The fixture seeds what production requires
+    rather than the check being relaxed to fit it.
+    """
+    store_id, assigner = store_id or uuid4(), uuid4()
+    moment = datetime.now(UTC)
+    with connection.cursor() as cursor:
+        for identifier, subject in [(assigner, f"oidc-{assigner}")] + [
+            (p.staff_user_id, p.oidc_subject) for p in principals
+        ]:
+            cursor.execute(
+                """
+                INSERT INTO staff_users (id, oidc_subject, display_name, status, created_at)
+                VALUES (%s, %s, 'Nhân viên', 'ACTIVE', %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (identifier, subject, moment),
+            )
+        for member in principals:
+            cursor.execute(
+                """
+                INSERT INTO staff_store_assignments (
+                    staff_user_id, store_id, assigned_by_staff_id, assigned_at, row_version
+                ) VALUES (%s, %s, %s, %s, 1)
+                ON CONFLICT DO NOTHING
+                """,
+                (member.staff_user_id, store_id, assigner, moment),
+            )
+    return store_id
+
+
+def _no_mfa_member(connection: psycopg.Connection[Any], store_id: UUID) -> StaffPrincipal:
+    """A member of the right shop who has not done MFA, so the MFA refusal is what fires."""
+    principal = _principal(StaffRole.OPERATOR, mfa=False)
+    _member_store(connection, principal, store_id=store_id)
+    return principal
+
+
+def _approved_message(connection: psycopg.Connection[Any]) -> tuple[UUID, UUID, UUID]:
     approvals = ApprovalRepository()
     requester = _principal(StaffRole.OPS_APPROVER)
     owner = _principal(StaffRole.OWNER_ADMIN)
+    store_id = _member_store(connection, requester, owner)
     created = approvals.request(
         connection,
         ApprovalRequestCommand(
@@ -68,6 +113,7 @@ def _approved_message(connection: psycopg.Connection[Any]) -> tuple[UUID, UUID]:
             f"manual-send-approval-{uuid4().hex}",
             uuid4(),
             NOW,
+            store_id=store_id,
         ),
     )
     approvals.decide(
@@ -84,15 +130,17 @@ def _approved_message(connection: psycopg.Connection[Any]) -> tuple[UUID, UUID]:
             NOW + timedelta(seconds=1),
         ),
     )
-    return created.approval_request_id, uuid4()
+    return created.approval_request_id, uuid4(), store_id
 
 
 def test_manual_attestation_consumes_exact_approval_and_blocks_worker_execution(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    approval_id, recipient_id = _approved_message(postgres_connection)
+    approval_id, recipient_id, store_id = _approved_message(postgres_connection)
     manual = ManualSendRepository()
     sender = _principal(StaffRole.OPERATOR)
+    # The sender spends the approval, so they must belong to the shop that holds it.
+    _member_store(postgres_connection, sender, store_id=store_id)
     prepared = manual.prepare(
         postgres_connection,
         ManualSendPrepareCommand(
@@ -175,9 +223,11 @@ def test_manual_attestation_consumes_exact_approval_and_blocks_worker_execution(
 def test_manual_send_fails_closed_for_marketing_stale_content_and_missing_mfa(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    approval_id, recipient_id = _approved_message(postgres_connection)
+    approval_id, recipient_id, store_id = _approved_message(postgres_connection)
     manual = ManualSendRepository()
     sender = _principal(StaffRole.OPERATOR)
+    # The sender spends the approval, so they must belong to the shop that holds it.
+    _member_store(postgres_connection, sender, store_id=store_id)
     base = ManualSendPrepareCommand(
         approval_id,
         1,
@@ -201,7 +251,7 @@ def test_manual_send_fails_closed_for_marketing_stale_content_and_missing_mfa(
     with pytest.raises(ManualSendAuthorizationError, match="MFA"):
         manual.prepare(
             postgres_connection,
-            replace(base, principal=_principal(StaffRole.OPERATOR, mfa=False)),
+            replace(base, principal=_no_mfa_member(postgres_connection, store_id)),
         )
     with pytest.raises(ManualSendStateError, match="shadow stage"):
         manual.prepare(

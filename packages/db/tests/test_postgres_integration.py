@@ -432,8 +432,9 @@ def test_an_exact_quote_is_accepted_when_its_approval_envelope_is_real(
 
     quote_id = uuid4()
     actor_id = uuid4()
+    store_id = uuid4()
     approval_id = create_approval_envelope(
-        postgres_connection, requested_by=actor_id, resource_id=quote_id
+        postgres_connection, store_id=store_id, requested_by=actor_id, resource_id=quote_id
     )
     estimate = make_quote_snapshot(quote_id, 1)
     earned = replace(

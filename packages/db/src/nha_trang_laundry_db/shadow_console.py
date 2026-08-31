@@ -760,15 +760,54 @@ class ShadowConsoleRepository:
             self._require_store_access(
                 cursor, principal=principal, store_id=store_id, roles=SHADOW_READ_ROLES
             )
+            # `_require_store_access` above proves the caller belongs to the store they NAMED.
+            # It says nothing about the aggregate, and until 2026-08-30 nothing else did either:
+            # substituting another store's order id while naming your own store returned that
+            # store's full audit timeline -- creation, every transition, the settlement, and the
+            # actor id of its operator. It doubled as an existence oracle over any UUID in the
+            # system, since a real aggregate returned rows and a random one returned none.
+            #
+            # `audit_events` carries no store column, so the aggregate's owner is resolved from the
+            # aggregate itself. Fail-closed by construction: an aggregate type not listed here
+            # resolves to nothing and the timeline is empty, which is also what a caller sees for an
+            # identifier that does not exist -- so probing still teaches nobody which stores exist.
             cursor.execute(
                 """
                 SELECT occurred_at, action, actor_type, actor_id, aggregate_type, aggregate_id
                 FROM audit_events
-                WHERE aggregate_id = %s
+                WHERE aggregate_id = %(aggregate)s
+                  AND EXISTS (
+                      SELECT 1 FROM orders t
+                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+                      UNION ALL
+                      SELECT 1 FROM quotes t
+                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+                      UNION ALL
+                      SELECT 1 FROM order_requests t
+                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+                      UNION ALL
+                      SELECT 1 FROM counter_tickets t
+                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+                      UNION ALL
+                      SELECT 1 FROM order_settlements t
+                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+                      UNION ALL
+                      SELECT 1 FROM delivery_legs t
+                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+                      UNION ALL
+                      SELECT 1 FROM quote_acceptances t
+                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+                      UNION ALL
+                      SELECT 1 FROM customer_incidents t
+                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+                      UNION ALL
+                      SELECT 1 FROM agent_runs t
+                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+                  )
                 ORDER BY occurred_at, id
-                LIMIT %s
+                LIMIT %(limit)s
                 """,
-                (aggregate_id, limit),
+                {"aggregate": aggregate_id, "store": store_id, "limit": limit},
             )
             return tuple(
                 AuditEntry(

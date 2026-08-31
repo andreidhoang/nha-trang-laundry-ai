@@ -108,6 +108,7 @@ def make_quote_snapshot(
 def create_approval_envelope(
     connection: Any,
     *,
+    store_id: UUID,
     requested_by: UUID,
     resource_id: UUID | None = None,
     requested_at: datetime | None = None,
@@ -126,6 +127,30 @@ def create_approval_envelope(
     and when the decision lands this helper is where the real binding belongs.
     """
 
+    # The requester must belong to the store the approval names (migration 0034), so the fixture
+    # seeds what production requires rather than the check being relaxed to fit it.
+    assigner = uuid4()
+    with connection.cursor() as cursor:
+        parties = ((requested_by, f"oidc-{requested_by}"), (assigner, f"oidc-{assigner}"))
+        for ident, subject in parties:
+            cursor.execute(
+                """
+                INSERT INTO staff_users (id, oidc_subject, display_name, status, created_at)
+                VALUES (%s, %s, 'Nhân viên', 'ACTIVE', %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (ident, subject, requested_at or PRICED_AT),
+            )
+        cursor.execute(
+            """
+            INSERT INTO staff_store_assignments (
+                staff_user_id, store_id, assigned_by_staff_id, assigned_at, row_version
+            ) VALUES (%s, %s, %s, %s, 1)
+            ON CONFLICT DO NOTHING
+            """,
+            (requested_by, store_id, assigner, requested_at or PRICED_AT),
+        )
+
     moment = requested_at or PRICED_AT
     stored = ApprovalRepository().request(
         connection,
@@ -141,6 +166,7 @@ def create_approval_envelope(
             f"quote-approval-fixture-{uuid4().hex}",
             uuid4(),
             moment,
+            store_id=store_id,
         ),
     )
     return stored.approval_request_id

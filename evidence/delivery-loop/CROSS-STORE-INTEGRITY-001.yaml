@@ -1,0 +1,179 @@
+schema_version: 1
+work_item: CROSS-STORE-INTEGRITY-001
+recorded_at: '2026-08-31T17:40:00+07:00'
+requirement_contract: >-
+  Close the four authorization defects and the two dead console commands the 62-agent adversarial
+  verification found on 2026-08-29 -- nine lenses, then two skeptics per finding defaulting to
+  `refuted` unless they personally reran the reproduction.
+
+  All six trace to two absences. `approval_requests` had no `store_id`, so nothing about an approval
+  could be attributed to a shop; and `core/api.js` refuses to issue a mutating call without an
+  idempotency key, which two screens did not supply.
+
+  No decision is taken. Membership checking is the rule every other store-scoped repository already
+  follows (`orders.py:340`, `STORE-SCOPING-002`); this applies it where it was missing.
+rollback_impact: >-
+  Reverting reopens cross-store approval, cross-store manual send, and the audit-timeline read, and
+  returns both console buttons to throwing in the browser.
+
+  **Not a clean revert.** Migration `0034` adds `store_id NOT NULL` to `approval_requests`, which is
+  append-only: rows written under this item cannot be deleted, and reverting the column requires a
+  forward migration that drops it. The application code must revert with it -- `_lock_approval`
+  selects `r.store_id` and `_authorize_decision` reads index 13, so reverting only the migration
+  raises on every decision.
+
+  `manual_sends._lock_envelope` now joins `approval_requests` for the store; reverting it alone
+  leaves an index error. The two console screens and the two routes must revert together: a route
+  that requires `Idempotency-Key` with a client that stops sending one is a 422 on every click.
+
+  The failure direction of a partial revert is a crash, not silent permission -- which is the right
+  direction, and is stated here rather than discovered.
+unresolved_assumptions: >-
+  **`rendered_hash` is not verified and cannot be.** It is a digest of a rendering this system does
+  not store, so comparing it against anything would be theatre. `snapshot_hash` is verified for
+  `ORDER`, where a stored digest exists. The finding said "resource, digests, policy version and
+  store are all unverified client assertions"; store and resource-existence are now checked,
+  `snapshot_hash` is checked where checkable, and **`policy_version` is still unverified** -- there
+  is no published-configuration lookup on this path. That half of the finding remains open and is
+  recorded here rather than counted as closed.
+
+  **`QUOTE_REVISION` resource existence is unverifiable by construction**, not by omission. See the
+  evidence below.
+
+  **CẦN XÁC MINH:** whether one shop's staff ever legitimately approve another shop's action --
+  a regional supervisor, an owner covering two branches. Nothing in `staff_store_assignments`
+  prevents assigning one person to several stores, so the model supports it; but nobody has
+  confirmed it is how this business runs, and if a supervisor is expected to approve without an
+  assignment, this item refuses them.
+
+  **Not claimed:** that every route is now store-scoped. Six read routes bound to `current_principal`
+  still skip MFA, and no systematic sweep of read paths was done beyond the audit timeline the
+  verification named.
+evidence:
+  an_approval_belongs_to_a_shop: >-
+    Measured on 2026-08-31 against a clean database, re-running the reproductions:
+
+        1. store B requests an approval naming store A  -> ApprovalAuthorizationError
+        2. store B decides store A's approval           -> ApprovalAuthorizationError
+        3. store A's own owner approves it              -> ALLOWED
+        4. approval naming a nonexistent resource       -> ApprovalStateError
+        5. store B reads store A's audit timeline       -> 0 entries
+           store A reads its own aggregate              -> 1 entry
+
+    Line 3 and the second half of line 5 carry as much weight as the refusals: a guard that refuses
+    everyone passes an attack test and closes the shop.
+
+    A false pass was caught on the first run. Test 2 reported OK because the probe had
+    `ApprovalDecisionCommand`'s arguments in the wrong order, so the call was rejected by
+    reason-code validation before reaching the membership check. The tell was test 3 failing with
+    the *same* error -- a legitimate owner cannot be refused for the same cause as an outsider. Two
+    tests failing identically is a broken probe, not two findings.
+
+    The store is **named** rather than inferred because only `ORDER` and `QUOTE_REVISION` of the
+    thirteen `APPROVAL_RESOURCE_TYPES` have a backing table, and `MESSAGE_DRAFT` -- the manual-send
+    path, a built capability -- is not one of them. An inferred store cannot be checked for those.
+  the_manual_send_authorisation_cannot_be_spent_by_an_outsider: >-
+    `prepare` and `attest` called `_require_manual_sender`, which checked MFA and role and nothing
+    else; neither `_lock_approval` nor `_lock_envelope` selected a store, because there was none to
+    select. Store B's operator got `201 APPROVED_FOR_MANUAL_SEND` and then `200 MANUAL_SEND_RECORDED`
+    against store A's approval, with `recipient_binding_id` set to a UUID they supplied -- and store
+    A's own operator then got `409 manual-send envelope already exists`. The outsider had
+    permanently burned store A's one-time authorisation, and the audit trail recorded store B's
+    staff as having sent store A's approved message to a recipient store A never named.
+
+    Both methods now resolve the store from the approval row they already lock and require
+    membership of it. The check moved *after* the lock for that reason: the store to check against
+    is on the row, and a client-supplied identifier is not authority.
+
+    A second defect fell out of the same absence. `list_pending` joined
+    `orders ON o.id = r.resource_id`, so **every `MESSAGE_DRAFT` approval -- the entire manual-send
+    queue -- was invisible to the people meant to action it.** The old test asserted that exclusion
+    was correct fail-closed behaviour; it was rewritten to pin the real rule, which the store column
+    now makes expressible: a member sees it, an outsider does not.
+  the_audit_timeline_is_scoped_to_its_aggregate: >-
+    `_require_store_access` proved the caller belonged to the store they *named*, and the query then
+    filtered on `aggregate_id` alone. Naming your own store while supplying another store's order id
+    returned 16 of that store's audit entries -- creation, fourteen transitions, the settlement, each
+    with `occurred_at`, `aggregate_type` and its operator's `actor_id`. It also worked as an
+    existence oracle over any UUID: a random id returned 0 entries, a real one returned 16.
+
+    `audit_events` carries no store column, so the aggregate's owner is resolved from the aggregate
+    itself across the nine store-owning tables. Fail-closed by construction: an aggregate type not
+    listed resolves to nothing and the timeline is empty -- which is also what a caller sees for an
+    identifier that does not exist, so probing still teaches nobody which stores exist.
+  two_console_buttons_now_reach_the_server: >-
+    `core/api.js:113` raises before opening a request when a mutating call has no idempotency key.
+    "Phát phiếu" (`orderRequests.js:318`) and "Ghi nhận chuyến giao" (`orders.js:667`) both omitted
+    one, so they threw in the browser and reported a client error. **`DEC-013`'s walk-in was
+    therefore unreachable from the console for a full day after `ORDER-LIFECYCLE-001` fixed its
+    server route** -- the third time in this sequence that a layer below the product looked finished
+    while the product did not work.
+
+    Neither route accepted a key. Rather than send one the server ignores, both routes now honour
+    it, which closes a separate MEDIUM finding: `delivery_legs` is an append-only ledger where a
+    retry is a *new row by design* -- correct for a second real attempt, wrong for a resent request,
+    which recorded an attempt nobody made. The key separates them: same key is the same attempt.
+    Issuing a ticket is idempotent for the same reason, so a double-click hands over one number.
+
+    The durable fix is neither patch but
+    `test_every_mutating_console_call_carries_an_idempotency_key`, which walks every `request(` call
+    in `apps/web/src` and fails on any mutating one without a key. Both defects were found by
+    adversarial review rather than CI; the next one fails a test.
+
+    A correction to my own report: I stated four dead buttons before verifying. There are two. The
+    regex that produced "four" used a 400-character window and truncated before the `idempotencyKey`
+    on two `manualSend.js` calls, which were always correct.
+  what_is_checked_and_what_provably_cannot_be: >-
+    **`QUOTE_REVISION` resource existence is not checked, and the first attempt to check it was
+    wrong.** Migration `0029` makes `quote_revisions.approval_id` a foreign key, so the approval is
+    written *before* the revision it authorises exists. Requiring the revision to resolve at request
+    time refuses the only order those two writes can happen in. `ORDER` is checked because an order
+    does exist first. The reason is recorded in the code so nobody re-adds it.
+
+    **The agent path is exempt from staff membership.** It requests as `AGENT_RUNNER` with
+    `requested_by = claims.run_id` -- a run, not a person, and never a row in
+    `staff_store_assignments`. Requiring membership there would refuse every agent approval rather
+    than secure anything. It is bound differently and not less: verified claims carrying the store,
+    and `_bound_request` checking the store/contact/conversation tuple against the stored aggregate
+    before this is reached. Either way the approval records which shop it belongs to.
+
+    **`policy_version` is still unverified**, and that half of the envelope finding stays open.
+  what_this_item_did_not_fix: >-
+    Of the 21 findings open when this batch began, 8 are closed -- these six plus two MEDIUMs that
+    fell out of the same work. Thirteen remain, including five HIGH:
+
+    - the settlement panel's Vietnamese guardrail, checkbox hint and success line all state the
+      opposite of what the server does for delivery orders (`orderDetail.js:205`);
+    - the settlement route returns 500 on a paid amount >= 2^53, and `If-Match` >= 2^53 returns 500
+      on all three order transition routes -- one unbounded-int cause, two entry points;
+    - `CONFIRMED -> CANCELLED` is unguarded, so an order can be cancelled after the laundry is
+      washed and released and the money then never recorded. This one needs an owner decision about
+      custody and refund, not code;
+    - the owner-confirmed 30% promotion is structurally unreachable. Its window closed 2026-08-31,
+      so the urgency is gone and the wiring belongs with the next campaign.
+
+    Also open and untouched: a `PICKUP` leg is accepted on a `RETURN_ONLY` order, because
+    `MODES_EXPECTING_RETURN` has no `MODES_EXPECTING_PICKUP` counterpart.
+  rollback_assessment: >-
+    See rollback_impact. One migration (`0034`), the approval repository's request and decide paths,
+    the manual-send lock and sender check, the shadow audit query, two routes, two service methods,
+    two console screens, one new console contract test, and roughly fifteen fixture files that had
+    been minting principals with no store assignment.
+
+    The fixture churn is the honest cost of the change and was not worked around: every synthetic
+    generator and test that created an approval was seeding a principal production would refuse.
+    Four separate times in this sequence a fixture has turned out to exercise a path no real user
+    could walk.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

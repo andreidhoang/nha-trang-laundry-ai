@@ -26,6 +26,7 @@ from nha_trang_laundry_db.manual_sends import (
 from nha_trang_laundry_domain.catalog import ActorRole, ApprovalAction
 
 from .fixtures import SyntheticFixtureBundle
+from .synthetic_store import seed_store_membership
 
 
 class SyntheticManualSendError(ValueError):
@@ -52,6 +53,12 @@ def execute_manual_worker_double_send_preflight(
     requester = _principal(StaffRole.OPS_APPROVER)
     owner = _principal(StaffRole.OWNER_ADMIN)
     sender = _principal(StaffRole.OPERATOR)
+    # The manual-send path is exactly what the store binding protects: an outsider could consume
+    # this one-time approval and attest a send to a recipient of their choosing. All three
+    # principals belong to the shop the approval names.
+    store_id = seed_store_membership(
+        connection, principals=(requester, owner, sender), occurred_at=occurred_at
+    )
     approval = approvals.request(
         connection,
         ApprovalRequestCommand(
@@ -66,6 +73,7 @@ def execute_manual_worker_double_send_preflight(
             f"synthetic-manual-send-{uuid4().hex}",
             uuid4(),
             occurred_at,
+            store_id=store_id,
         ),
     )
     approvals.decide(

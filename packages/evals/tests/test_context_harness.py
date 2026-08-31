@@ -111,7 +111,17 @@ def test_context_drift_check_passes() -> None:
     # A bug can be load-bearing. The other two are the same shape of hole: one agreement backed
     # unlimited orders because nothing spent it, and the acceptance route demanded an
     # Idempotency-Key it never passed to the idempotency layer.
-    assert "92 work items" in result.stdout
+    # The ninety-third is CROSS-STORE-INTEGRITY-001. `approval_requests` had no store column at
+    # all, so `list_pending` inferred one by joining orders -- which works for two of thirteen
+    # resource types. That one absence caused three defects: `decide` had no store to check, so any
+    # member of any store could approve any other store's action; manual send let an outsider spend
+    # store A's one-time SEND_MESSAGE authorisation and attest it to a recipient of their choosing;
+    # and every MESSAGE_DRAFT approval was invisible in the queue meant to action it. It also
+    # scoped the shadow audit timeline to its aggregate, and gave two console buttons the
+    # idempotency key that `core/api.js` demands -- without it they threw in the browser and never
+    # reached the server, which is why DEC-013's walk-in stayed unreachable a day after its route
+    # was fixed.
+    assert "93 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

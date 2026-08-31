@@ -666,7 +666,11 @@ export function render_(_context) {
         try {
           const recorded = await request(
             `/internal/v1/orders/${encodeURIComponent(legDraft.orderId.trim())}/delivery-legs`,
-            { method: "POST", body: { leg_kind: legDraft.kind, outcome: legDraft.outcome } },
+            {
+              method: "POST",
+              body: { leg_kind: legDraft.kind, outcome: legDraft.outcome },
+              idempotencyKey: legSubmission.key(),
+            },
           );
           legSubmission.reset();
           setResult(

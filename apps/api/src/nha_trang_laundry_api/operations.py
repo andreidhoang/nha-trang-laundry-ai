@@ -6,7 +6,7 @@ import hmac
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -522,6 +522,7 @@ class OperationsService:
     def request_approval(
         self,
         *,
+        store_id: UUID,
         action: ApprovalAction,
         resource_type: str,
         resource_id: UUID,
@@ -546,6 +547,7 @@ class OperationsService:
                     principal.staff_user_id,
                     idempotency_key,
                     uuid4(),
+                    store_id=store_id,
                 ),
             )
 
@@ -618,43 +620,116 @@ class OperationsService:
         order_id: UUID,
         leg_kind: DeliveryLegKind,
         outcome: DeliveryLegOutcome,
+        idempotency_key: str,
         principal: StaffPrincipal,
     ) -> StoredDeliveryLeg:
         """Record that the courier took laundry out, and whether it reached the customer.
 
         `DEC-023`, resolved 2026-08-26. No amount crosses this method: the customer paid the exact
         total at the counter before the laundry left, so a leg attests arrival and nothing else.
+
+        Idempotent since 2026-08-31, for two reasons that met here. The route took no key, so the
+        console's `request()` threw before sending and "Ghi nhận chuyến giao" never reached the
+        server. And `delivery_legs` is an append-only ledger where a retry is a *new* row by
+        design -- correct for a second real attempt, wrong for a resent request, which wrote a
+        second attempt nobody made. The key separates the two: same key is the same attempt.
         """
 
+        recorded_at = datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
-            return DeliveryLegRepository().record(
+
+            def commit() -> dict[str, object]:
+                leg = DeliveryLegRepository().record(
+                    connection,
+                    RecordDeliveryLegCommand(
+                        order_id=order_id,
+                        leg_kind=leg_kind,
+                        outcome=outcome,
+                        principal=principal,
+                        correlation_id=uuid4(),
+                        recorded_at=recorded_at,
+                    ),
+                )
+                return {
+                    "leg_id": str(leg.leg_id),
+                    "order_id": str(leg.order_id),
+                    "leg_kind": leg.leg_kind,
+                    "outcome": leg.outcome,
+                    "completes_fulfillment": leg.completes_fulfillment,
+                }
+
+            result = self._idempotency.execute(
                 connection,
-                RecordDeliveryLegCommand(
-                    order_id=order_id,
-                    leg_kind=leg_kind,
-                    outcome=outcome,
-                    principal=principal,
-                    correlation_id=uuid4(),
+                IdempotentCommand(
+                    scope=f"staff-delivery-leg:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={
+                        "order_id": str(order_id),
+                        "leg_kind": leg_kind.value,
+                        "outcome": outcome.value,
+                    },
+                    occurred_at=recorded_at,
                 ),
+                commit,
             )
+        value = result.response
+        return StoredDeliveryLeg(
+            leg_id=UUID(str(value["leg_id"])),
+            order_id=UUID(str(value["order_id"])),
+            leg_kind=str(value["leg_kind"]),
+            outcome=str(value["outcome"]),
+            completes_fulfillment=bool(value["completes_fulfillment"]),
+        )
 
     # --- COUNTER-TICKET-001 (DEC-013) -------------------------------------------------------
 
-    def issue_counter_ticket(self, *, store_id: UUID, principal: StaffPrincipal) -> IssuedTicket:
+    def issue_counter_ticket(
+        self, *, store_id: UUID, idempotency_key: str, principal: StaffPrincipal
+    ) -> IssuedTicket:
         """Hand a walk-in customer the number their order is known by.
 
         `DEC-013`, resolved 2026-08-26: a walk-in is identified by a counter-issued number and
         nothing about the person is stored. There is no request body for the same reason -- there is
         nothing to send. A field here would be the privacy policy the decision declined to write.
+
+        Idempotent since 2026-08-31. The route took no key and the console's `request()` refuses to
+        issue any mutating call without one, so "Phát phiếu" threw in the browser and never reached
+        the server -- the walk-in path was dead at the button. Honouring the key rather than merely
+        accepting it also means a double-click at the counter hands over one number, not two.
         """
 
+        issued_at = datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
-            return CounterTicketRepository().issue(
+
+            def commit() -> dict[str, object]:
+                ticket = CounterTicketRepository().issue(
+                    connection,
+                    store_id=store_id,
+                    principal=principal,
+                    correlation_id=uuid4(),
+                )
+                return {
+                    "ticket_id": str(ticket.ticket_id),
+                    "ticket_number": ticket.ticket_number,
+                    "issued_on": ticket.issued_on.isoformat(),
+                }
+
+            result = self._idempotency.execute(
                 connection,
-                store_id=store_id,
-                principal=principal,
-                correlation_id=uuid4(),
+                IdempotentCommand(
+                    scope=f"staff-counter-ticket:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={"store_id": str(store_id)},
+                    occurred_at=issued_at,
+                ),
+                commit,
             )
+        value = result.response
+        return IssuedTicket(
+            ticket_id=UUID(str(value["ticket_id"])),
+            ticket_number=int(str(value["ticket_number"])),
+            issued_on=date.fromisoformat(str(value["issued_on"])),
+        )
 
     # --- QUOTE-ACCEPT-001 (DEC-021) ---------------------------------------------------------
     #

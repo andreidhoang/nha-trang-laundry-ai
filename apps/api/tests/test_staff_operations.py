@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from typing import Any
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -33,6 +34,41 @@ def _principal(role: StaffRole) -> StaffPrincipal:
     )
 
 
+def _member_store(connection: Any, *principals: StaffPrincipal) -> UUID:
+    """A shop these principals belong to.
+
+    Migration `0034` binds an approval to a store and the repository requires membership of it, so
+    a principal minted with `uuid4()` and no assignment is refused -- by the same rule that stops a
+    member of one store approving another's action. The fixture seeds what production requires
+    rather than the check being relaxed to fit it.
+    """
+    store_id, assigner = uuid4(), uuid4()
+    moment = datetime.now(UTC)
+    with connection.cursor() as cursor:
+        for identifier, subject in [(assigner, f"oidc-{assigner}")] + [
+            (p.staff_user_id, p.oidc_subject) for p in principals
+        ]:
+            cursor.execute(
+                """
+                INSERT INTO staff_users (id, oidc_subject, display_name, status, created_at)
+                VALUES (%s, %s, 'Nhân viên', 'ACTIVE', %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (identifier, subject, moment),
+            )
+        for member in principals:
+            cursor.execute(
+                """
+                INSERT INTO staff_store_assignments (
+                    staff_user_id, store_id, assigned_by_staff_id, assigned_at, row_version
+                ) VALUES (%s, %s, %s, %s, 1)
+                ON CONFLICT DO NOTHING
+                """,
+                (member.staff_user_id, store_id, assigner, moment),
+            )
+    return store_id
+
+
 def test_real_service_manual_send_is_idempotent_version_bound_and_atomic() -> None:
     database_url = os.environ.get("DATABASE_URL")
     if database_url is None:
@@ -45,6 +81,7 @@ def test_real_service_manual_send_is_idempotent_version_bound_and_atomic() -> No
 
     with psycopg.connect(database_url) as connection:
         apply_migrations(connection)
+        store_id = _member_store(connection, requester, owner, sender)
         approval = ApprovalRepository().request(
             connection,
             ApprovalRequestCommand(
@@ -59,6 +96,7 @@ def test_real_service_manual_send_is_idempotent_version_bound_and_atomic() -> No
                 f"staff-operations-approval-{uuid4().hex}",
                 uuid4(),
                 requested_at,
+                store_id=store_id,
             ),
         )
         ApprovalRepository().decide(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -19,6 +19,7 @@ from nha_trang_laundry_db.idempotency import (
     IdempotentCommand,
 )
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
 
@@ -47,6 +48,11 @@ class ApprovalRequestCommand:
     requested_by: UUID
     idempotency_key: str
     correlation_id: UUID
+    #: The shop this approval belongs to. Named rather than inferred: only two of the thirteen
+    #: resource types have a backing table to infer it from, and `MESSAGE_DRAFT` -- the manual-send
+    #: path, and a built capability -- is not one of them. Placed last among the required fields so
+    #: adding it makes every existing caller fail to compile rather than silently shift.
+    store_id: UUID = field(kw_only=True)
     requested_at: datetime | None = None
     # The staff command path audits as STAFF; the agent tool path must not impersonate it.
     actor_type: str = "STAFF"
@@ -96,6 +102,24 @@ class ApprovalRepository:
 
     def request(self, connection: Any, command: ApprovalRequestCommand) -> StoredApproval:
         requested_at = command.requested_at or datetime.now(UTC)
+        with connection.cursor() as cursor:
+            # Staff membership is a staff concept, so it is checked on the staff path only. The
+            # agent path requests as `AGENT_RUNNER` with `requested_by = claims.run_id` -- an agent
+            # run, not a person, and never a row in `staff_store_assignments`. Requiring membership
+            # of it would refuse every agent approval rather than secure anything.
+            #
+            # That path is bound differently and not less: its claims are verified upstream, they
+            # carry the store, and `_bound_request` checks the store/contact/conversation tuple
+            # against the stored aggregate before this is reached. Either way the approval now
+            # records which shop it belongs to, which is what `decide` reads.
+            if command.actor_type == "STAFF":
+                require_store_membership(
+                    cursor,
+                    staff_user_id=command.requested_by,
+                    store_id=command.store_id,
+                    error=ApprovalAuthorizationError,
+                )
+            _require_resolvable_resource(cursor, command)
         request_payload: dict[str, object] = {
             "action": command.action.value,
             "resource_type": command.resource_type,
@@ -105,6 +129,7 @@ class ApprovalRepository:
             "rendered_hash": command.rendered_hash,
             "policy_version": command.policy_version,
             "requested_by": str(command.requested_by),
+            "store_id": str(command.store_id),
         }
         scope = (
             f"approval:{command.resource_type}:{command.resource_id}:"
@@ -134,10 +159,10 @@ class ApprovalRepository:
                         id, action, resource_type, resource_id, resource_version, snapshot_hash,
                         rendered_hash, policy_version, required_role, reason_codes, obligations,
                         execution_capability, requested_by, requested_at, expires_at,
-                        envelope, envelope_hash
+                        envelope, envelope_hash, store_id
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb,
-                        %s, %s, %s, %s, %s::jsonb, %s
+                        %s, %s, %s, %s, %s::jsonb, %s, %s
                     )
                     """,
                     (
@@ -158,6 +183,7 @@ class ApprovalRepository:
                         data.expires_at,
                         envelope.document.canonical_json.decode("utf-8"),
                         envelope.document.snapshot_hash,
+                        command.store_id,
                     ),
                 )
                 cursor.execute(
@@ -229,7 +255,7 @@ class ApprovalRepository:
         stored: StoredApproval | None = None
         with connection.transaction(), connection.cursor() as cursor:
             row = _lock_approval(cursor, command.approval_request_id)
-            _authorize_decision(row, command.principal)
+            _authorize_decision(cursor, row, command.principal)
             _require_exact_binding(
                 row,
                 command.observed_resource_version,
@@ -483,14 +509,19 @@ class ApprovalRepository:
 
         if not 1 <= limit <= 200:
             raise ValueError("approval queue limit must be between 1 and 200")
+        # Reads the approval's own store since migration `0034`. It used to join `orders ON
+        # o.id = r.resource_id`, which had two consequences: an approval whose resource was not an
+        # order could not be attributed and was silently excluded -- so every `MESSAGE_DRAFT`, the
+        # entire manual-send queue, was invisible here -- and the store was inferred from a
+        # resource rather than read from the approval, which is why `decide` had no store to check
+        # membership against at all.
         cursor.execute(
             """
             SELECT r.id, s.status, r.envelope_hash, r.required_role, r.expires_at
             FROM approval_requests r
             JOIN approval_request_states s ON s.approval_request_id = r.id
-            JOIN orders o ON o.id = r.resource_id
             JOIN staff_store_assignments a
-              ON a.store_id = o.store_id AND a.staff_user_id = %s
+              ON a.store_id = r.store_id AND a.staff_user_id = %s
              AND a.revoked_at IS NULL
             WHERE s.status = 'REQUESTED'
             ORDER BY r.expires_at, r.id
@@ -511,7 +542,7 @@ def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
         """
         SELECT r.resource_id, r.resource_version, r.snapshot_hash, r.rendered_hash,
                r.requested_by, r.policy_version, r.required_role, r.requested_at,
-               r.expires_at, r.envelope_hash, s.status, s.row_version, r.action
+               r.expires_at, r.envelope_hash, s.status, s.row_version, r.action, r.store_id
         FROM approval_requests r
         JOIN approval_request_states s ON s.approval_request_id = r.id
         WHERE r.id = %s
@@ -525,6 +556,52 @@ def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
     return tuple(row)
 
 
+#: Which resource types this system can actually locate, and where. The other eleven in
+#: `APPROVAL_RESOURCE_TYPES` name content that lives in the envelope itself (`MESSAGE_DRAFT`) or
+#: capabilities that are not built (`SLOT_PROPOSAL`, `B2B_TERMS`, `EXPORT_REQUEST`, ...). For those
+#: the store binding above is the whole of the check, and that is stated rather than implied.
+_RESOLVABLE_RESOURCES: dict[str, str] = {
+    "ORDER": """
+        SELECT o.store_id, o.row_version, o.current_quote_snapshot_hash
+        FROM orders o WHERE o.id = %s
+    """,
+}
+#: `QUOTE_REVISION` is deliberately absent, and the reason is worth stating because the first
+#: attempt included it and was wrong. Migration `0029` makes `quote_revisions.approval_id` a
+#: foreign key, so **the approval is written before the revision it authorises exists**. Requiring
+#: the revision to resolve at request time refuses the only order those two writes can happen in.
+#: For that type the store binding is the whole of the check, and the digest it names is verified
+#: later, at decision and execution time, by `_require_exact_binding`.
+
+
+def _require_resolvable_resource(cursor: Any, command: ApprovalRequestCommand) -> None:
+    """For the two resource types that exist as rows, prove the envelope describes a real one.
+
+    An approval is an immutable, audited artifact asserting that a named person approved a specific
+    content digest of a specific resource. Until 2026-08-30 none of that was checked: `resource_id`
+    was never resolved, the digests were never compared against anything, and an envelope naming a
+    `QUOTE_REVISION` that did not exist, with a fabricated hash and an unpublished policy version,
+    was accepted, approved and frozen into the ledger.
+
+    What is checkable is checked here: the resource exists, it belongs to the store the request
+    names, and its stored digest is the one being approved. `rendered_hash` is deliberately not
+    verified -- it is a digest of a rendering this system does not store, so comparing it against
+    anything would be theatre. That limit is real and is recorded in the item's evidence rather
+    than papered over.
+    """
+    query = _RESOLVABLE_RESOURCES.get(command.resource_type)
+    if query is None:
+        return
+    cursor.execute(query, (command.resource_id,))
+    row = cursor.fetchone()
+    if row is None:
+        raise ApprovalStateError("the approval names a resource this store does not have")
+    if _uuid(row[0]) != command.store_id:
+        raise ApprovalStateError("the approval names a resource belonging to a different store")
+    if not hmac.compare_digest(str(row[2]), command.snapshot_hash):
+        raise ApprovalStateError("the approval names a content digest this resource does not have")
+
+
 def _validate_human_decision(command: ApprovalDecisionCommand) -> None:
     if re.fullmatch(r"[A-Z][A-Z0-9_]{1,99}", command.reason_code) is None:
         raise ApprovalStateError("approval reason code is invalid")
@@ -532,7 +609,17 @@ def _validate_human_decision(command: ApprovalDecisionCommand) -> None:
         raise ApprovalStateError("approval note is too long")
 
 
-def _authorize_decision(row: tuple[object, ...], principal: StaffPrincipal) -> None:
+def _authorize_decision(cursor: Any, row: tuple[object, ...], principal: StaffPrincipal) -> None:
+    # The store comes from the locked row, never from the request: a client-supplied identifier is
+    # not authority. Until 2026-08-30 this check did not exist at all and `_lock_approval` did not
+    # even select a store -- a member of any store could approve any other store's action, and the
+    # three distinct refusals leaked whether an id existed and what role it needed.
+    require_store_membership(
+        cursor,
+        staff_user_id=principal.staff_user_id,
+        store_id=_uuid(row[13]),
+        error=ApprovalAuthorizationError,
+    )
     required = StaffRole(str(row[6]))
     if StaffRole.OWNER_ADMIN not in principal.roles and required not in principal.roles:
         raise ApprovalAuthorizationError("approval role is not authorized")

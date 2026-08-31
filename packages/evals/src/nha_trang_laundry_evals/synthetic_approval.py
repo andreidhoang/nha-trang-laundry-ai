@@ -24,6 +24,7 @@ from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_domain.catalog import ActorRole, ApprovalAction
 
 from .fixtures import SyntheticFixtureBundle
+from .synthetic_store import seed_store_membership
 
 
 class SyntheticApprovalError(ValueError):
@@ -62,6 +63,9 @@ def execute_post_approval_edit_preflight(
     repository = ApprovalRepository()
     requester = _principal(StaffRole.OPS_APPROVER)
     owner = _principal(StaffRole.OWNER_ADMIN)
+    store_id = seed_store_membership(
+        connection, principals=(requester, owner), occurred_at=occurred_at
+    )
     resource_id = uuid4()
     request = ApprovalRequestCommand(
         ApprovalAction.SEND_MESSAGE,
@@ -75,6 +79,7 @@ def execute_post_approval_edit_preflight(
         f"synthetic-post-approval-edit-{uuid4().hex}",
         uuid4(),
         occurred_at,
+        store_id=store_id,
     )
     created = repository.request(connection, request)
     repository.decide(

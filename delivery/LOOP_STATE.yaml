@@ -1,8 +1,15 @@
 schema_version: 1
-last_updated: '2026-09-03T16:05:46.596240+00:00'
+last_updated: '2026-09-03T16:07:23.277197+00:00'
 current_work_item: null
-last_result: COMPLETE
-blocker: null
+last_result: BLOCKED
+blocker: 'Needs a provisioned host, which DECISION-HOSTING-001 has not selected. Everything
+  buildable without one is done: the topology, the identity provider, the observability
+  checks, the archiving, and the order-exit rules DEC-024 settled. What remains is
+  physical -- a machine, a TLS certificate from a private CA installed and trusted
+  on every tablet, DNS for the console name, an off-host archive repository in a separate
+  failure domain, the age key pair generated on the owner''s own device, and a timed
+  restore drill. An agent may not select a vendor, accept commercial terms, hold the
+  backup identity, or run a deployment.'
 evidence_records:
 - work_item: IDENTITY-001
   path: evidence/delivery-loop/IDENTITY-001.yaml
@@ -379,6 +386,16 @@ blocked_records:
     API and worker roles, so no identity can purge. Two of ten classes have a separable
     store today; both governed by DEC-018. Three adversarial reviews refuted the design.'
   recorded_at: '2026-08-18T15:13:54.669299+00:00'
+- work_item: SHOP-CUTOVER-001
+  reason: 'Needs a provisioned host, which DECISION-HOSTING-001 has not selected.
+    Everything buildable without one is done: the topology, the identity provider,
+    the observability checks, the archiving, and the order-exit rules DEC-024 settled.
+    What remains is physical -- a machine, a TLS certificate from a private CA installed
+    and trusted on every tablet, DNS for the console name, an off-host archive repository
+    in a separate failure domain, the age key pair generated on the owner''s own device,
+    and a timed restore drill. An agent may not select a vendor, accept commercial
+    terms, hold the backup identity, or run a deployment.'
+  recorded_at: '2026-09-03T16:07:23.277197+00:00'
 unblocked_records:
 - work_item: OPENCLAW-REPACK-001
   reason: The exact-commit hosted GitHub workflow was authorized and executed; reevaluating

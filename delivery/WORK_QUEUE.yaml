@@ -3293,7 +3293,7 @@ items:
 - id: SHOP-CUTOVER-001
   phase: PRODUCTION_HARDENING
   title: The day the shop starts using it
-  status: PENDING
+  status: BLOCKED
   priority: 261
   depends_on:
   - SHOP-IDENTITY-001
@@ -3317,3 +3317,11 @@ items:
   - one_real_transaction_at_the_counter
   - rollback_assessment
   blocked_by_decisions: []
+  blocking_condition: 'Needs a provisioned host, which DECISION-HOSTING-001 has not
+    selected. Everything buildable without one is done: the topology, the identity
+    provider, the observability checks, the archiving, and the order-exit rules DEC-024
+    settled. What remains is physical -- a machine, a TLS certificate from a private
+    CA installed and trusted on every tablet, DNS for the console name, an off-host
+    archive repository in a separate failure domain, the age key pair generated on
+    the owner''s own device, and a timed restore drill. An agent may not select a
+    vendor, accept commercial terms, hold the backup identity, or run a deployment.'

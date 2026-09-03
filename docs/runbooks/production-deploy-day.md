@@ -222,9 +222,14 @@ should hear them first:
   carries money. A failed attempt is recorded as a failed leg, nothing is charged, and the goods
   come back to the shop; a retry is a new leg. *(This section said the opposite until
   `SHOP-CUTOVER-001` corrected it — it was written before `DEC-023` and never revisited.)*
-- **An order cannot leave production once an exception is recorded, and a confirmed order can be
-  cancelled without the money being recorded.** Both are `DEC-024`, open. Until it is signed, do not
-  record a production exception in the system, and treat a late cancellation as a paper matter.
+- **A production exception is recoverable, and a late cancellation has to say what happened.**
+  `DEC-024`, decided 2026-09-03 and built by `ORDER-EXIT-001`. Recording an exception remembers
+  where the work was interrupted, so a re-treated stain resumes and the order still completes; an
+  order may be rewashed from an exception, which is the only way production moves backwards.
+  Cancelling is free while nothing has been received, started or paid, and otherwise routes through
+  cancellation review where a named staff member states one of three resolutions. Say the third one
+  out loud at the counter: **there is no option for "washed, walked away, no money"** — a customer
+  whose laundry has been washed pays and collects, or the laundry stays here.
 - **No customer is remembered.** A walk-in is a ticket number and nothing else, by `DEC-013`. Two
   visits by the same person are two unrelated tickets.
 - **Nothing is sent to any customer.** No channel is connected and automated sends are gated off.
@@ -258,9 +263,32 @@ OpenTelemetry instruments record into a no-op provider; the record is the struct
 plus these exit codes. `MONITORING-001` adds a collector at the AI stage, where there is more to
 watch than a shop counter.
 
-**Nothing delivers these to a person yet.** That is `DEC-025`, open, because every delivery
-mechanism adds a counterparty and a credential this deployment deliberately does not have. Until it
-is signed, read the cron mail. An alert nobody receives is not an alert.
+**Delivery to a person is `DEC-025`, decided 2026-09-03: one Telegram message to the owner.** Two
+environment values switch it on, and until they are set the checks still exit non-zero for the host
+scheduler, which is the floor the decision kept:
+
+```bash
+export R1_ALERT_TELEGRAM_TOKEN_FILE=/run/secrets/alert_telegram_token
+export R1_ALERT_TELEGRAM_CHAT_ID=...        # the owner's chat, one recipient
+```
+
+Three properties of it that matter more than the mechanism. It is a **separate bot** from any
+future customer bot, with **no inbound handler** and one hardcoded recipient. It posts directly
+over HTTPS from the check script — never through the outbox, the channel adapter or the consent
+machinery — so it is not an automated send, and `FEATURE_AUTOMATED_SENDS_ENABLED` stays false and
+stays meaningful. And a failed alert never masks the failure it was carrying: the exit code and the
+structured line stand on their own.
+
+The WAL gap, the volume and the capability flags alert at any hour. Console-unreachable alerts
+between 07:00 and 21:00 only: a console down at 03:00 that is back before opening needs nobody
+woken, and one down at 07:45 needs everybody.
+
+**The backup key is `DEC-026`, decided the same day.** Generate the `age` key pair **on your own
+device** — not on this host and not through an agent. The public half becomes the
+`r1_backup_encryption_recipients` secret; the private half goes into your password manager, with one
+offline copy stored physically away from both the shop and this server. Nothing on the host can
+decrypt what it archives, which is the point. **Lose both copies and every backup is permanently
+unrecoverable** — no vendor to call, by design.
 
 ## 8. If it goes wrong
 

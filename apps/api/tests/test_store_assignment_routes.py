@@ -21,6 +21,7 @@ from nha_trang_laundry_api.operations import OperationsService
 from nha_trang_laundry_db.identity import IdentityRepository, StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.store_access import is_store_member
+from nha_trang_laundry_db.stores import StoreRepository
 
 ORIGIN = "http://testserver"
 CSRF = "z" * 40
@@ -44,6 +45,23 @@ def connection() -> Generator[psycopg.Connection[Any], None, None]:
 @pytest.fixture
 def service() -> OperationsService:
     return OperationsService(AuthSettings(database_url=_database_url()))
+
+
+def _ensure_store(connection: Any, store_id: UUID) -> None:
+    """`STORE-REGISTRY-001`: `store_id` is a foreign key, so the shop exists first.
+
+    The route refuses an unknown store with a typed conflict rather than letting the constraint
+    surface as a 500, so a test that grants membership of an invented identifier would be testing
+    the refusal instead of the grant.
+    """
+
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng thử nghiệm",
+        created_by=None,
+        correlation_id=uuid4(),
+    )
 
 
 def _owner(connection: Any) -> StaffPrincipal:
@@ -102,6 +120,7 @@ def test_an_owner_grants_and_the_member_immediately_passes_store_scoped_routes(
     owner = _owner(connection)
     operator = _operator(connection, owner)
     store_id = uuid4()
+    _ensure_store(connection, store_id)
 
     try:
         with _client(service, operator) as as_operator:
@@ -132,6 +151,7 @@ def test_a_non_owner_cannot_grant_and_is_told_nothing_extra(
     operator = _operator(connection, owner)
     target = _operator(connection, owner)
     store_id = uuid4()
+    _ensure_store(connection, store_id)
 
     try:
         with _client(service, operator) as as_operator:
@@ -151,6 +171,7 @@ def test_a_non_owner_cannot_revoke(connection: Any, service: OperationsService) 
     owner = _owner(connection)
     operator = _operator(connection, owner)
     store_id = uuid4()
+    _ensure_store(connection, store_id)
 
     try:
         with _client(service, owner) as as_owner:
@@ -177,6 +198,7 @@ def test_granting_twice_with_one_key_replays_and_writes_one_row(
     owner = _owner(connection)
     operator = _operator(connection, owner)
     store_id = uuid4()
+    _ensure_store(connection, store_id)
     key = f"grant-{uuid4().hex}"
 
     try:
@@ -217,6 +239,7 @@ def test_revoking_removes_access_on_the_next_request(
     owner = _owner(connection)
     operator = _operator(connection, owner)
     store_id = uuid4()
+    _ensure_store(connection, store_id)
 
     try:
         with _client(service, owner) as as_owner:

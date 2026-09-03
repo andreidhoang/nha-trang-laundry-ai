@@ -29,6 +29,7 @@ from nha_trang_laundry_db.store_access import (
     member_store_ids,
     require_store_membership,
 )
+from nha_trang_laundry_db.stores import StoreRepository
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
 
@@ -79,7 +80,24 @@ def _operator(connection: Any, owner: StaffPrincipal) -> StaffPrincipal:
     )
 
 
+def _ensure_store(connection: Any, store_id: UUID) -> None:
+    """`STORE-REGISTRY-001`: `store_id` is a foreign key, so the shop exists before anyone joins it.
+
+    The deploy-day runbook runs `scripts/bootstrap_store.py` before assigning anyone, and this is
+    the fixture standing in for that step rather than an INSERT that skips it.
+    """
+
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng thử nghiệm",
+        created_by=None,
+        correlation_id=uuid4(),
+    )
+
+
 def _assign(connection: Any, owner: StaffPrincipal, staff: StaffPrincipal, store_id: UUID) -> None:
+    _ensure_store(connection, store_id)
     ShadowConsoleRepository.assign_store(
         connection,
         staff_user_id=staff.staff_user_id,

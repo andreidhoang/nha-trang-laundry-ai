@@ -37,6 +37,7 @@ from nha_trang_laundry_db.settlement import (
     SettlementStateError,
 )
 from nha_trang_laundry_db.store_access import StoreAccessError
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     FulfillmentMode,
@@ -68,7 +69,25 @@ def connection() -> Generator[psycopg.Connection[Any], None, None]:
         yield established
 
 
+def _ensure_store(connection: Any, store_id: UUID) -> None:
+    """`STORE-REGISTRY-001`: `store_id` is a foreign key, so the shop exists before anyone joins it.
+
+    The deploy-day runbook runs `scripts/bootstrap_store.py` before assigning anyone, and this is
+    the fixture standing in for that step rather than an INSERT that skips it.
+    """
+
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng thử nghiệm",
+        created_by=None,
+        correlation_id=uuid4(),
+    )
+
+
 def _staff(connection: Any, store_id: UUID | None, role: StaffRole) -> StaffPrincipal:
+    if store_id is not None:
+        _ensure_store(connection, store_id)
     staff_id, assigner = uuid4(), uuid4()
     with connection.transaction(), connection.cursor() as cursor:
         for identifier in (staff_id, assigner):

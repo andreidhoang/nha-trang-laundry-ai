@@ -17,6 +17,7 @@ from nha_trang_laundry_db.incidents import (
     IncidentRepository,
 )
 from nha_trang_laundry_db.quotes import QuoteRepository, QuoteRevisionCommand
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.canonical import canonical_document
 from nha_trang_laundry_domain.catalog import (
     ApprovalAction,
@@ -48,10 +49,20 @@ def execute_correction_preflight(
     policy_version = _text(seed, "affected_policy_version")
     capability = _text(seed, "affected_capability")
     rendered_hash = canonical_document({"correction": "synthetic corrected fact"}).snapshot_hash
+    # STORE-REGISTRY-001: an incident belongs to a shop, and `store_id` is a foreign key now.
+    store_id = uuid4()
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng tổng hợp",
+        created_by=None,
+        correlation_id=uuid4(),
+        occurred_at=timestamp,
+    )
     stored = IncidentRepository().open_correction(
         connection,
         CorrectionOpenCommand(
-            uuid4(),
+            store_id,
             affected_message_id,
             policy_version,
             _hash("synthetic-contact-scope"),

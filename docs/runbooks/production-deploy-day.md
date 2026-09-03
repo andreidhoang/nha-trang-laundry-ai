@@ -57,6 +57,11 @@ SUPERUSER_DATABASE_URL=... uv run python scripts/apply_demo_grants.py
 DATABASE_URL=...           uv run python scripts/verify_database_grants.py
 ```
 
+**Despite its name, `apply_demo_grants.py` is the production grant script**, and it must run after
+**every** migration, not only this one. The name is a trap on the one morning nobody can afford to
+skip a step, and it is recorded here rather than quietly renamed: the file is cited by recorded
+evidence for two completed items.
+
 The second command is not optional and is the reason the first is safe to forget. `GRANT ... ON ALL
 TABLES` is a one-shot snapshot: before 2026-08-26 every migration that added a table left the
 application roles with **no privileges on it**, and the first symptom was `permission denied` on a
@@ -81,7 +86,22 @@ Every capability flag is forced false in the compose file: `FEATURE_PUBLIC_CHANN
 `FEATURE_AUTOMATED_SENDS_ENABLED`, `FEATURE_AGENT_RUNTIME_ENABLED`. Do not set them. They are
 governed by `delivery/GATE_REGISTRY.yaml` and no gate has been passed.
 
-## 3. Bind the first owner
+## 3. Create the store
+
+```bash
+DATABASE_URL=... uv run python scripts/bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
+```
+
+Prints the store's identifier. Everything in this system that belongs to a shop carries it, and
+since `STORE-REGISTRY-001` it is a foreign key: before that a store was a UUID somebody typed into
+the console, and a typo made a staff member a member of a store that did not exist -- refused
+everywhere, shown nothing, with no error saying why.
+
+Run it again with `--store-id` and it is a no-op, so a re-run of this runbook is safe. Pass
+`--actor-id` with the owner's staff UUID once step 4 has produced one, if you would rather the
+record name a person than say `SYSTEM`; ordering it that way is fine too.
+
+## 4. Bind the first owner
 
 ```bash
 DATABASE_URL=... uv run python scripts/bootstrap_owner.py \
@@ -92,7 +112,12 @@ DATABASE_URL=... uv run python scripts/bootstrap_owner.py \
 Binds one named `OWNER_ADMIN` to an already-verified OIDC subject. It creates no password and holds
 no credential. Everyone else is added by the owner through the console afterwards.
 
-## 4. Publish the price list
+**`OWNER_ADMIN` is not implicitly a member of the store.** The owner assigns themselves from the
+console -- `POST /internal/v1/staff/{id}/stores/{store_id}` -- and that assignment is audited like
+any other, including who granted it. Until it exists the owner can administer staff and see
+nothing else.
+
+## 5. Publish the price list
 
 ```bash
 DATABASE_URL=... uv run python scripts/publish_pricebook.py --actor-id '<owner staff uuid>'
@@ -105,7 +130,7 @@ different file. Publishing is a human act with an attributed actor, never a boot
 Re-run it whenever a price changes. No redeploy is needed: the API reads the published configuration
 per request and verifies its digest.
 
-## 5. Prove it before letting staff in
+## 6. Prove it before letting staff in
 
 ```bash
 uv run python scripts/staging_smoke.py            # TLS-verifying operator-boundary check
@@ -126,22 +151,27 @@ Then one real transaction by hand, at the counter, on the real host:
 That sequence is proven working against a live database (2026-08-26). If any step refuses on the
 real host, the cause is configuration, not the code path.
 
-## 6. What this deployment cannot do on day one
+## 7. What this deployment cannot do on day one
 
 Say these out loud to whoever is running the counter, because the console says them too but a person
 should hear them first:
 
-- **Delivery orders cannot be completed.** A delivered order can be taken and worked, but it cannot
-  be settled or closed — `DEC-010` does not support a non-counter settlement, and no delivery leg
-  can be recorded. See `docs/DECISION_REQUEST_DELIVERY_COMPLETION_2026-08.md`. Take delivery jobs on
-  paper until that is signed and built.
+- **Delivery orders can be taken, paid for and closed.** `DEC-023` was signed on 2026-08-26 and
+  `FULFILMENT-001` built it: the customer pays the exact quoted total at the counter before the
+  laundry leaves, and a named staff member records the delivery leg when it arrives. No driver
+  carries money. A failed attempt is recorded as a failed leg, nothing is charged, and the goods
+  come back to the shop; a retry is a new leg. *(This section said the opposite until
+  `SHOP-CUTOVER-001` corrected it — it was written before `DEC-023` and never revisited.)*
+- **An order cannot leave production once an exception is recorded, and a confirmed order can be
+  cancelled without the money being recorded.** Both are `DEC-024`, open. Until it is signed, do not
+  record a production exception in the system, and treat a late cancellation as a paper matter.
 - **No customer is remembered.** A walk-in is a ticket number and nothing else, by `DEC-013`. Two
   visits by the same person are two unrelated tickets.
 - **Nothing is sent to any customer.** No channel is connected and automated sends are gated off.
 - **The AI does nothing.** No model has ever been invoked by this system. The assistant on the
   console is deterministic and says so.
 
-## 7. If it goes wrong
+## 8. If it goes wrong
 
 Rollback is `docker compose -f compose.production.yaml down` and restoring the previous image tag.
 **Migrations are forward-only and do not roll back.** `0031` in particular drops a CHECK constraint

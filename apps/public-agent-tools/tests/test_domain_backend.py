@@ -46,6 +46,7 @@ from nha_trang_laundry_db.configurations import ConfigurationRepository
 from nha_trang_laundry_db.intake import CreateOrderRequestCommand, OrderRequestRepository
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.pricebook import publish_pricebook
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import FulfillmentMode, QuantityBasis, Unit
 from nha_trang_laundry_domain.pricebook_import import published_price_rules
 from nha_trang_laundry_domain.quote_composition import (
@@ -164,9 +165,26 @@ def _claims(
     )
 
 
+def _ensure_store(connection: Any, store_id: UUID) -> None:
+    """`STORE-REGISTRY-001`: `store_id` is a foreign key, so the shop exists before anyone joins it.
+
+    The deploy-day runbook runs `scripts/bootstrap_store.py` before assigning anyone, and this is
+    the fixture standing in for that step rather than an INSERT that skips it.
+    """
+
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng thử nghiệm",
+        created_by=None,
+        correlation_id=uuid4(),
+    )
+
+
 def _seed_request(
     connection: Any, *, store_id: UUID, contact_id: UUID, conversation_id: UUID
 ) -> UUID:
+    _ensure_store(connection, store_id)
     return (
         OrderRequestRepository()
         .create(
@@ -406,6 +424,7 @@ def test_order_request_create_persists_a_bound_draft(
     connection: Any, backend: DomainAgentToolBackend
 ) -> None:
     store_id, contact_id, conversation_id = uuid4(), uuid4(), uuid4()
+    _ensure_store(connection, store_id)
     claims = _claims(store_id=store_id, contact_id=contact_id, conversation_id=conversation_id)
     status, payload = _invoke(
         backend,
@@ -445,6 +464,7 @@ def test_record_customer_facts_bumps_version_under_if_match_and_stores_types_onl
     connection: Any, backend: DomainAgentToolBackend
 ) -> None:
     store_id, contact_id, conversation_id = uuid4(), uuid4(), uuid4()
+    _ensure_store(connection, store_id)
     request_id = _seed_request(
         connection, store_id=store_id, contact_id=contact_id, conversation_id=conversation_id
     )
@@ -566,6 +586,7 @@ def test_quote_estimate_through_the_facade_equals_a_direct_engine_call(
 ) -> None:
     _publish(connection)
     store_id, contact_id, conversation_id = uuid4(), uuid4(), uuid4()
+    _ensure_store(connection, store_id)
     request_id = _seed_request(
         connection, store_id=store_id, contact_id=contact_id, conversation_id=conversation_id
     )
@@ -631,6 +652,7 @@ def test_an_unresolved_quote_estimate_carries_the_engines_refusal_and_writes_not
 ) -> None:
     _publish(connection)
     store_id, contact_id, conversation_id = uuid4(), uuid4(), uuid4()
+    _ensure_store(connection, store_id)
     request_id = _seed_request(
         connection, store_id=store_id, contact_id=contact_id, conversation_id=conversation_id
     )
@@ -779,6 +801,7 @@ def _quote_for_approval(
 ) -> tuple[AgentRunnerClaims, UUID, dict[str, Any]]:
     _publish(connection)
     store_id, contact_id, conversation_id = uuid4(), uuid4(), uuid4()
+    _ensure_store(connection, store_id)
     request_id = _seed_request(
         connection, store_id=store_id, contact_id=contact_id, conversation_id=conversation_id
     )
@@ -896,6 +919,7 @@ def test_no_persisted_artifact_contains_customer_free_text(
     connection: Any, backend: DomainAgentToolBackend
 ) -> None:
     store_id, contact_id, conversation_id = uuid4(), uuid4(), uuid4()
+    _ensure_store(connection, store_id)
     claims = _claims(store_id=store_id, contact_id=contact_id, conversation_id=conversation_id)
     _, created = _invoke(
         backend,

@@ -19,6 +19,7 @@ from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.manual_sends import ManualSendStateError
 from nha_trang_laundry_db.migrations import apply_migrations
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import ApprovalAction
 
 HASH_A = "JCS-SHA256-V1:" + "a" * 64
@@ -34,6 +35,22 @@ def _principal(role: StaffRole) -> StaffPrincipal:
     )
 
 
+def _ensure_store(connection: Any, store_id: UUID) -> None:
+    """`STORE-REGISTRY-001`: `store_id` is a foreign key, so the shop exists before anyone joins it.
+
+    The deploy-day runbook runs `scripts/bootstrap_store.py` before assigning anyone, and this is
+    the fixture standing in for that step rather than an INSERT that skips it.
+    """
+
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng thử nghiệm",
+        created_by=None,
+        correlation_id=uuid4(),
+    )
+
+
 def _member_store(connection: Any, *principals: StaffPrincipal) -> UUID:
     """A shop these principals belong to.
 
@@ -44,6 +61,7 @@ def _member_store(connection: Any, *principals: StaffPrincipal) -> UUID:
     """
     store_id, assigner = uuid4(), uuid4()
     moment = datetime.now(UTC)
+    _ensure_store(connection, store_id)
     with connection.cursor() as cursor:
         for identifier, subject in [(assigner, f"oidc-{assigner}")] + [
             (p.staff_user_id, p.oidc_subject) for p in principals

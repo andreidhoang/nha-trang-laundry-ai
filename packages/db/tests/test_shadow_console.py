@@ -29,6 +29,7 @@ from nha_trang_laundry_db.shadow_console import (
     ShadowConsoleRepository,
     ShadowStateError,
 )
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA, evaluate_production_sla
 
 NOW = datetime.now(UTC)
@@ -79,9 +80,26 @@ def _owner(connection: psycopg.Connection[Any]) -> StaffPrincipal:
     return _staff(connection, roles=frozenset({StaffRole.OWNER_ADMIN}))
 
 
+def _ensure_store(connection: Any, store_id: UUID) -> None:
+    """`STORE-REGISTRY-001`: `store_id` is a foreign key, so the shop exists before anyone joins it.
+
+    The deploy-day runbook runs `scripts/bootstrap_store.py` before assigning anyone, and this is
+    the fixture standing in for that step rather than an INSERT that skips it.
+    """
+
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng thử nghiệm",
+        created_by=None,
+        correlation_id=uuid4(),
+    )
+
+
 def _member(
     connection: psycopg.Connection[Any], store_id: UUID, *, roles: frozenset[StaffRole]
 ) -> StaffPrincipal:
+    _ensure_store(connection, store_id)
     owner = _owner(connection)
     ShadowConsoleRepository.assign_store(
         connection,
@@ -102,6 +120,7 @@ def _member(
 
 
 def _draft(connection: psycopg.Connection[Any], store_id: UUID) -> UUID:
+    _ensure_store(connection, store_id)
     agent_run_id = uuid4()
     with connection.transaction(), connection.cursor() as cursor:
         cursor.execute(

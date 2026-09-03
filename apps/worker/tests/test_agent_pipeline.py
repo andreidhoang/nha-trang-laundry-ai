@@ -38,6 +38,7 @@ from nha_trang_laundry_contracts import (
 from nha_trang_laundry_db.agent_runs import AgentRunEnqueueCommand, AgentRunRepository
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.pricebook import publish_pricebook
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_worker.agent_runner import (
     AgentRunner,
     AgentRunnerTokenIssuer,
@@ -176,6 +177,22 @@ def pipeline(
     )
 
 
+def _ensure_store(connection: Any, store_id: UUID) -> None:
+    """`STORE-REGISTRY-001`: `store_id` is a foreign key, so the shop exists first.
+
+    The deploy-day runbook runs `scripts/bootstrap_store.py` first, and this is the fixture standing
+    in for that step rather than an INSERT that skips it.
+    """
+
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng thử nghiệm",
+        created_by=None,
+        correlation_id=uuid4(),
+    )
+
+
 def enqueue(
     connection: psycopg.Connection[Any],
     *,
@@ -185,11 +202,13 @@ def enqueue(
     order_request_id: UUID | None = None,
     bound_row_version: int = 0,
 ) -> AgentRunEnqueueCommand:
+    run_store_id = store_id or uuid4()
+    _ensure_store(connection, run_store_id)
     command = AgentRunEnqueueCommand(
         agent_run_id=uuid4(),
         source_webhook_event_id=None,
         organization_id=uuid4(),
-        store_id=store_id or uuid4(),
+        store_id=run_store_id,
         channel="INTERNAL_TEST",
         conversation_binding_id=conversation_binding_id or uuid4(),
         contact_binding_id=contact_binding_id or uuid4(),
@@ -755,6 +774,7 @@ def test_a_full_pipeline_run_with_the_domain_backend_executes_real_tools(
     database_url = os.environ["DATABASE_URL"]
     _publish_pricebook(database_url)
     store_id, contact_id, conversation_id = uuid4(), uuid4(), uuid4()
+    _ensure_store(postgres_connection, store_id)
     runner, transport = _domain_wired_runner_and_transport(database_url)
     try:
         first = enqueue(

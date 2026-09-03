@@ -19,6 +19,7 @@ from nha_trang_laundry_db.configurations import (
 from nha_trang_laundry_db.identity import IdentityRepository, IdentityStateError, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.quotes import QuoteRepository, QuoteRevisionCommand, QuoteStateError
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
     QuantityBasis,
     QuoteFinality,
@@ -36,6 +37,22 @@ def postgres_connection() -> Generator[psycopg.Connection[Any], None, None]:
     with psycopg.connect(database_url) as connection:
         apply_migrations(connection)
         yield connection
+
+
+def _ensure_store(connection: Any, store_id: UUID) -> None:
+    """`STORE-REGISTRY-001`: `store_id` is a foreign key, so the shop exists first.
+
+    The deploy-day runbook runs `scripts/bootstrap_store.py` first, and this is the fixture standing
+    in for that step rather than an INSERT that skips it.
+    """
+
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng thử nghiệm",
+        created_by=None,
+        correlation_id=uuid4(),
+    )
 
 
 def test_postgres_append_only_ledger_trigger(postgres_connection: psycopg.Connection[Any]) -> None:
@@ -291,6 +308,7 @@ def test_postgres_quote_revisions_are_atomic_hash_verified_and_immutable(
 ) -> None:
     quote_id = uuid4()
     store_id = uuid4()
+    _ensure_store(postgres_connection, store_id)
     request_id = uuid4()
     actor_id = UUID("00000000-0000-0000-0000-000000000011")
     repository = QuoteRepository()
@@ -395,6 +413,11 @@ def test_an_exact_quote_cannot_cite_an_approval_that_does_not_exist(
     """
 
     quote_id = uuid4()
+    # A real store, so the violation this test asserts is the approval's and not the store's.
+    # `STORE-REGISTRY-001` added `quotes_store_fk`, and without this the test would keep passing
+    # while proving something else entirely -- the failure mode it was written to prevent.
+    store_id = uuid4()
+    _ensure_store(postgres_connection, store_id)
     estimate = make_quote_snapshot(quote_id, 1)
     invented = replace(
         estimate.data,
@@ -409,7 +432,7 @@ def test_an_exact_quote_cannot_cite_an_approval_that_does_not_exist(
         QuoteRepository().create_revision(
             postgres_connection,
             QuoteRevisionCommand(
-                uuid4(),
+                store_id,
                 uuid4(),
                 build_quote_snapshot(invented),
                 0,
@@ -433,6 +456,7 @@ def test_an_exact_quote_is_accepted_when_its_approval_envelope_is_real(
     quote_id = uuid4()
     actor_id = uuid4()
     store_id = uuid4()
+    _ensure_store(postgres_connection, store_id)
     approval_id = create_approval_envelope(
         postgres_connection, store_id=store_id, requested_by=actor_id, resource_id=quote_id
     )
@@ -450,7 +474,7 @@ def test_an_exact_quote_is_accepted_when_its_approval_envelope_is_real(
         QuoteRepository().create_revision(
             postgres_connection,
             QuoteRevisionCommand(
-                uuid4(),
+                store_id,
                 uuid4(),
                 build_quote_snapshot(earned),
                 0,

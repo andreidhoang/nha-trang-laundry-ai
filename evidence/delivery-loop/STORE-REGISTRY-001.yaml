@@ -1,0 +1,154 @@
+schema_version: 1
+work_item: STORE-REGISTRY-001
+recorded_at: '2026-09-01T04:20:00+07:00'
+requirement_contract: >-
+  Give `store_id` a table, a foreign key and a production path to create the first one, so that the
+  identifier every authorization decision in this system turns on names something that exists.
+
+  This is an R1 deployment blocker rather than a tidy-up. `scripts/seed_demo_data.py` refuses any
+  DSN whose host is not local, so before this item a production deployment could bring its first
+  store into existence only by inventing a UUID and pasting it into the console.
+rollback_impact: >-
+  **Not a clean revert.** Migration `0035` creates `stores`, backfills it from the fourteen tables
+  that already claim to belong to one, and adds fourteen foreign keys. Reverting the migration
+  requires a forward migration that drops them; reverting the application code alone leaves
+  `scripts/bootstrap_store.py` and `seed_demo_data.py` calling a repository whose table is gone.
+
+  The application half is small: one new repository module, one existence check on the assignment
+  path, one script, and the demo seed. The fixture half is not: roughly twenty test files now
+  create a store before anything that belongs to one, and reverting the migration without reverting
+  them leaves those calls writing to a table that does not exist.
+
+  Direction of a partial revert is a crash rather than silent permission, which is the right
+  direction and is stated here rather than discovered.
+unresolved_assumptions: >-
+  **`name` is nullable, and backfilled stores have none.** A store that existed before this
+  migration has an identifier and no name, because nobody has told the system what the shop is
+  called. Defaulting one would write a fact the business never stated -- the same objection `0034`
+  records against defaulting a store for an orphaned approval. `bootstrap_store.py` requires a name;
+  the console has no surface to set one on an existing store, so a backfilled store stays unnamed
+  until somebody adds one.
+
+  **The backfill takes each store's earliest known timestamp as its `created_at`.** That is a fact
+  those rows carry, not an invention, but it is the earliest row that *mentions* the store rather
+  than the day the shop opened.
+
+  **A second store is not a feature.** The table permits many and the deployment expects one. No
+  route creates a store, deliberately: creating one is a deploy-day act with an attributed actor,
+  and a console button for it would be a multi-store product nobody has asked for.
+
+  **CẦN XÁC MINH:** whether this shop will ever run a second branch on the same deployment. If it
+  will, store creation needs a surface and a name-change path, and neither exists.
+
+  **Not claimed:** that every table which should reference a store now does. Fourteen columns named
+  `store_id` were found and all fourteen are constrained; a table that identifies its store
+  indirectly, through an order or a quote, is transitively covered and was not given its own key.
+evidence:
+  every_store_id_references_a_store: >-
+    Sixteen migrations referenced `store_id` across fourteen tables and none created a table for it.
+    `scripts/seed_demo_data.py` had said so in its own header since it was written: "The store is a
+    bare UUID because there is no `stores` table."
+
+    Everything this system does to keep one shop's work away from another rested on that value.
+    `staff_store_assignments` granted membership of it, `require_store_membership` checked it, `0034`
+    bound approvals to it, the shadow audit timeline resolved ownership through it, and
+    `REVERIFY-REGRESSIONS-001` scoped the reprice UPDATE by it. Every one of those compared an
+    unchecked value against another unchecked value.
+
+    Now `stores` exists and all fourteen columns reference it. The concrete consequence, pinned by
+    `test_a_membership_cannot_name_a_store_that_does_not_exist`: assigning a staff member to a
+    mistyped identifier used to succeed, leaving them a member of a store that did not exist --
+    shown nothing, refused every write, with no error anywhere saying why, because every check
+    compared their assignment against the same invented value.
+
+    `ShadowConsoleRepository.assign_store` refuses an unknown store before the write, so an operator
+    gets a typed refusal rather than a `ForeignKeyViolation` surfacing as HTTP 500 -- the same crash
+    shape `COUNTER-DEFECTS-001` closed on the transition routes.
+  the_backfill_is_lossless_on_a_populated_database: >-
+    The lesson `0034` taught three days ago is that a migration which has only ever run against an
+    empty database has not been tested. `0035` was therefore applied to both:
+
+        empty database (0001..0035 forward)          -> applied, 0 stores
+        populated database (1 order, 1 quote,        -> applied, 1 store backfilled with the
+        1 ticket, 1 assignment, at 0034)                earliest timestamp those rows carry
+
+    The backfill unions every table that claims a store and takes each store's earliest known
+    moment as its `created_at`. No existing column is touched and no row is deleted, so a database
+    that had work in it keeps all of it.
+  production_can_create_its_first_store: >-
+    `scripts/bootstrap_store.py` creates a store against a production DSN, attributed, through the
+    same repository the demo seed and the fixtures now use. Verified end to end:
+
+        bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
+          -> store b515bc21… created
+        bootstrap_store.py --name 'again' --store-id b515bc21…
+          -> already exists as 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'; nothing changed
+
+    Idempotent by identity rather than by key, because it runs from a runbook step on the shop's
+    first morning and a second run should be a no-op rather than a conflict somebody has to
+    interpret at the counter. A re-run does not rename the shop: a name is a fact somebody stated,
+    and re-running a deployment step is not somebody restating it.
+
+    `docs/runbooks/production-deploy-day.md` gains it as step 3, and gains two corrections it needed
+    anyway: that `OWNER_ADMIN` is not implicitly a member of the store and must assign themselves,
+    and that `scripts/apply_demo_grants.py` is the production grant script despite its name and must
+    run after **every** migration. The name is a trap on the one morning nobody can afford to skip a
+    step; it is recorded rather than quietly renamed, because the file is cited by two completed
+    items' recorded evidence.
+  the_fixtures_had_to_learn_what_production_requires: >-
+    Adding the constraint turned 172 tests red across 27 files. Every one was a fixture minting a
+    store identifier that no production path could have produced -- the fourth time in this sequence
+    a fixture has been found building a shape the shop cannot, and by far the largest.
+
+    They were not worked around. Roughly twenty files now create the store first, through
+    `StoreRepository` rather than an INSERT of their own, so the fixture walks the same path the
+    deploy-day runbook walks.
+
+    Two of those repairs were worth more than the compilation they fixed:
+
+    - `test_postgres_integration.py` asserted that a quote citing an invented `approval_id` raises
+      `ForeignKeyViolation`. With `quotes_store_fk` added it would have kept passing while proving
+      something entirely different -- the store's violation, not the approval's. It now creates a
+      real store, so the assertion is about the thing it names.
+    - `test_two_agent_workers_cannot_claim_the_same_run` failed in a way that had nothing to do with
+      stores, and found a real defect in the new repository: `StoreRepository.create` opened its
+      existence check on a bare cursor, and a plain SELECT starts an implicit transaction that
+      nothing closed. Every later `commit_material_change` on that connection then nested inside it
+      as a savepoint instead of committing, so work that looked written was invisible to every other
+      session. The symptom appeared two hundred lines away as two workers both failing to claim a
+      run that had been enqueued. The check now runs inside `connection.transaction()`, and the
+      reason is recorded in the code.
+  a_test_that_hung_instead_of_failing: >-
+    Not caused by this item, found by it, and fixed because a declared acceptance check that hangs
+    cannot honestly be recorded as passing.
+
+    `test_shared_index_race_fails_before_head_compare_and_swap` installs a required git clean filter
+    over `delivery/*.yaml` and has it spawn `git add` from inside `git add` -- deliberately, because
+    the thing under test is whether a concurrent index write is caught before the control ref moves.
+    The inner call had no timeout, so when it lost the race for the index lock the caller was
+    holding, the whole suite stopped with no output. Measured: three full runs stalled at the same
+    test, and the same file passed twice in isolation, which is what an unbounded race looks like.
+
+    It surfaced now rather than earlier because this item changed the contents of `delivery/`, and
+    the number and size of the files passing through the filter is what decides the timing.
+
+    The fix does not weaken the test: a sentinel stops the filter re-entering itself, and a bounded
+    wait turns a lost race into a failed required filter, so the existing assertions report it. A
+    hang teaches nothing; a failure names the file and the lock.
+  rollback_assessment: >-
+    See rollback_impact. One migration, one new repository module and its tests, one existence check
+    on the assignment path, one bootstrap script, the demo seed, the deploy-day runbook, and the
+    fixture files that now create a store before using one.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

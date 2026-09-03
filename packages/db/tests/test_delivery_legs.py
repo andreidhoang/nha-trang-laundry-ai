@@ -25,6 +25,7 @@ from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.orders import CreateOrderCommand, OrderRepository, OrderTransitionCommand
 from nha_trang_laundry_db.store_access import StoreAccessError
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     FulfillmentMode,
@@ -49,7 +50,24 @@ def postgres_connection() -> Generator[psycopg.Connection[Any], None, None]:
         yield connection
 
 
+def _ensure_store(connection: Any, store_id: UUID) -> None:
+    """`STORE-REGISTRY-001`: `store_id` is a foreign key, so the shop exists before anyone joins it.
+
+    The deploy-day runbook runs `scripts/bootstrap_store.py` before assigning anyone, and this is
+    the fixture standing in for that step rather than an INSERT that skips it.
+    """
+
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng thử nghiệm",
+        created_by=None,
+        correlation_id=uuid4(),
+    )
+
+
 def _member(connection: Any, store_id: UUID, role: StaffRole) -> StaffPrincipal:
+    _ensure_store(connection, store_id)
     staff_id = uuid4()
     with connection.transaction(), connection.cursor() as cursor:
         cursor.execute(

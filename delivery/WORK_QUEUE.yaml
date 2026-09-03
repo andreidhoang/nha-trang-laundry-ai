@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-08-31'
+last_updated: '2026-09-03'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -3177,7 +3177,7 @@ items:
 - id: STORE-REGISTRY-001
   phase: PRODUCTION_HARDENING
   title: A store is a row, not a UUID somebody typed
-  status: PENDING
+  status: COMPLETE
   priority: 256
   depends_on:
   - COUNTER-DEFECTS-001
@@ -3193,6 +3193,8 @@ items:
   - every_store_id_references_a_store
   - the_backfill_is_lossless_on_a_populated_database
   - production_can_create_its_first_store
+  - the_fixtures_had_to_learn_what_production_requires
+  - a_test_that_hung_instead_of_failing
   - rollback_assessment
   blocked_by_decisions: []
 - id: SHOP-DEPLOY-001

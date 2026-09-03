@@ -17,6 +17,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_db.identity import StaffPrincipal
+from nha_trang_laundry_db.stores import StoreRepository
 
 
 def seed_store_membership(
@@ -32,6 +33,18 @@ def seed_store_membership(
     fixture and a second insert must not be an error.
     """
     store = store_id or uuid4()
+    # And the shop itself has to exist. `STORE-REGISTRY-001` gave `store_id` a table and a foreign
+    # key, so a bare UUID is now refused by PostgreSQL rather than only by nobody. Same correction
+    # as the paragraph above, one layer down: the fixture creates what the deploy-day runbook
+    # creates.
+    StoreRepository.create(
+        connection,
+        store_id=store,
+        name="Cửa hàng tổng hợp",
+        created_by=None,
+        correlation_id=uuid4(),
+        occurred_at=occurred_at,
+    )
     assigner = uuid4()
     with connection.cursor() as cursor:
         cursor.execute(

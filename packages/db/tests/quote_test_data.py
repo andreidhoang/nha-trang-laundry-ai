@@ -12,6 +12,7 @@ from nha_trang_laundry_db.quotes import (
     QuoteRepository,
     QuoteRevisionCommand,
 )
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.canonical import canonical_document
 from nha_trang_laundry_domain.catalog import (
     AdjustmentDirection,
@@ -44,6 +45,27 @@ SERVICE_VERSION_ID = UUID("00000000-0000-0000-0000-000000000202")
 # window. Once the server's own clock decides, a fixed past date builds a quote no shop could sell
 # from. It is priced a few minutes ago instead, which is what a quote at a counter is.
 PRICED_AT = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=5)
+
+
+def ensure_store(connection: Any, store_id: UUID, *, at: datetime | None = None) -> None:
+    """A store must exist before anything can belong to it.
+
+    Fixtures used to mint a bare UUID and hand it to `staff_store_assignments`, which is what
+    production could never do and now cannot: `STORE-REGISTRY-001` gave `store_id` a table and a
+    foreign key. The deploy-day runbook creates the store with `scripts/bootstrap_store.py` before
+    anyone is assigned to it, so the fixture calls the same repository rather than an INSERT of its
+    own -- a fixture that builds a shape production cannot has caught this repository out four
+    times already.
+    """
+
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng thử nghiệm",
+        created_by=None,
+        correlation_id=uuid4(),
+        occurred_at=at or PRICED_AT,
+    )
 
 
 def make_quote_snapshot(
@@ -134,6 +156,7 @@ def create_approval_envelope(
 
     # The requester must belong to the store the approval names (migration 0034), so the fixture
     # seeds what production requires rather than the check being relaxed to fit it.
+    ensure_store(connection, store_id, at=requested_at)
     assigner = uuid4()
     with connection.cursor() as cursor:
         parties = ((requested_by, f"oidc-{requested_by}"), (assigner, f"oidc-{assigner}"))
@@ -196,6 +219,7 @@ def accepted_quote(
     """
 
     identifier = quote_id or uuid4()
+    ensure_store(connection, store_id)
     # A real intake request bound to a real counter ticket. `OrderRepository.create` checks that the
     # order's customer is the customer the quote was priced for, reached through this request, so a
     # fixture that invents a `bound_order_request_id` builds a chain no customer could walk.

@@ -38,6 +38,7 @@ from nha_trang_laundry_db.intake import (
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_db.store_access import StoreAccessError
+from nha_trang_laundry_db.stores import StoreRepository
 
 NOW = datetime.now(UTC)
 
@@ -79,9 +80,26 @@ def _staff(connection: psycopg.Connection[Any], *, roles: frozenset[StaffRole]) 
     )
 
 
+def _ensure_store(connection: Any, store_id: UUID) -> None:
+    """`STORE-REGISTRY-001`: `store_id` is a foreign key, so the shop exists before anyone joins it.
+
+    The deploy-day runbook runs `scripts/bootstrap_store.py` before assigning anyone, and this is
+    the fixture standing in for that step rather than an INSERT that skips it.
+    """
+
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng thử nghiệm",
+        created_by=None,
+        correlation_id=uuid4(),
+    )
+
+
 def _member(
     connection: psycopg.Connection[Any], store_id: UUID, *, roles: frozenset[StaffRole]
 ) -> StaffPrincipal:
+    _ensure_store(connection, store_id)
     owner = _staff(connection, roles=frozenset({StaffRole.OWNER_ADMIN}))
     ShadowConsoleRepository.assign_store(
         connection,
@@ -183,10 +201,12 @@ def test_the_repository_default_keeps_the_agent_actor(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
     """The agent tool path shares `create`; omitting actor_type must not start auditing STAFF."""
+    store_id = uuid4()
+    _ensure_store(postgres_connection, store_id)
     stored = OrderRequestRepository().create(
         postgres_connection,
         CreateOrderRequestCommand(
-            store_id=uuid4(),
+            store_id=store_id,
             contact_binding_id=uuid4(),
             conversation_binding_id=uuid4(),
             actor_id=uuid4(),

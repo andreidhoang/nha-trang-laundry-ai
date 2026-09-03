@@ -4,11 +4,11 @@ Every record this creates is invented. No real person, phone number or address a
 the script refuses to run against anything that does not look like a local database, because the
 cost of being wrong about that is a synthetic staff member with OWNER_ADMIN in a real system.
 
-The store is a bare UUID because there is no `stores` table: `store_id` appears in eight columns
-across six migrations with no foreign key anywhere. That is a real gap recorded in
-docs/PRODUCTION_READINESS_ASSESSMENT.md, not something this script papers over — it prints the
-UUID it chose so a human can paste it into the console, which is exactly what the console requires
-today.
+The store used to be a bare UUID, because there was no `stores` table: `store_id` appeared in
+fourteen columns with no foreign key anywhere, and this script printed the identifier it invented so
+a human could paste it into the console. `STORE-REGISTRY-001` closed that, so the seed now creates
+the store through `StoreRepository` — the same call `scripts/bootstrap_store.py` makes on deploy
+day — and a demo that skipped it would be refused by PostgreSQL rather than by nobody.
 
 Usage:
     DATABASE_URL=postgresql://... uv run python scripts/seed_demo_data.py
@@ -36,6 +36,7 @@ from nha_trang_laundry_db.identity import (
 from nha_trang_laundry_db.pricebook import publish_pricebook
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_db.store_access import is_store_member
+from nha_trang_laundry_db.stores import StoreRepository
 
 # Stable so that re-seeding, and the runbook, always name the same store.
 DEMO_STORE_ID = UUID("11111111-2222-4333-8444-555555555555")
@@ -83,6 +84,14 @@ def seed(connection: object) -> tuple[UUID, dict[str, UUID]]:
         oidc_subject=OWNER_SUBJECT,
         display_name=OWNER_NAME,
         email=None,
+        correlation_id=uuid4(),
+    )
+    # The shop exists before anyone is assigned to it, exactly as on deploy day.
+    StoreRepository.create(
+        connection,
+        store_id=DEMO_STORE_ID,
+        name="Cửa hàng demo",
+        created_by=owner_id,
         correlation_id=uuid4(),
     )
     # assign_store demands a real OWNER_ADMIN principal rather than a flag, so build one from

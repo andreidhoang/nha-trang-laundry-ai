@@ -18,6 +18,7 @@ from nha_trang_laundry_contracts import (
 )
 from nha_trang_laundry_db.agent_runs import AgentRunEnqueueCommand, AgentRunRepository
 from nha_trang_laundry_db.migrations import apply_migrations
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_worker.agent_runner import (
     AgentRunner,
     AgentRunnerTokenIssuer,
@@ -51,6 +52,14 @@ def postgres_connection() -> Generator[psycopg.Connection[Any], None, None]:
         pytest.skip("DATABASE_URL is required for PostgreSQL integration tests")
     with psycopg.connect(database_url) as connection:
         apply_migrations(connection)
+        # STORE-REGISTRY-001: an agent run names a store, and `store_id` is a foreign key now.
+        StoreRepository.create(
+            connection,
+            store_id=STORE_ID,
+            name="Cửa hàng thử nghiệm",
+            created_by=None,
+            correlation_id=uuid4(),
+        )
         yield connection
 
 
@@ -97,12 +106,15 @@ def runner() -> AgentRunner:
     )
 
 
+STORE_ID = uuid4()
+
+
 def enqueue_command(*, created_at: datetime | None = None) -> AgentRunEnqueueCommand:
     return AgentRunEnqueueCommand(
         agent_run_id=uuid4(),
         source_webhook_event_id=None,
         organization_id=uuid4(),
-        store_id=uuid4(),
+        store_id=STORE_ID,
         channel="INTERNAL_TEST",
         conversation_binding_id=uuid4(),
         contact_binding_id=uuid4(),

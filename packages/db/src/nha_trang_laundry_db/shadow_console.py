@@ -29,6 +29,7 @@ from nha_trang_laundry_domain.sla import ProductionSlaPolicy, evaluate_productio
 
 from .identity import StaffPrincipal, StaffRole
 from .store_access import require_store_membership
+from .stores import StoreRepository
 from .transactions import MaterialChange, OutboxEvent, commit_material_change
 
 #: Roles allowed to read a Shadow surface at all. Membership is checked separately and always.
@@ -160,6 +161,13 @@ class ShadowConsoleRepository:
         timestamp = now or datetime.now(UTC)
         with connection.cursor() as cursor:
             _require_active_owner(cursor, principal)
+            # STORE-REGISTRY-001 gave `store_id` a foreign key, which is what stops a mistyped
+            # identifier becoming a membership of a store that does not exist. Left to the
+            # constraint alone the operator would get HTTP 500 from a `ForeignKeyViolation`
+            # raised deep inside the transaction -- the same shape as the crash
+            # COUNTER-DEFECTS-001 closed. The refusal is decided here so it reads as one.
+            if not StoreRepository.exists(cursor, store_id):
+                raise ShadowStateError("no such store")
             version = _next_assignment_version(cursor, staff_user_id)
 
         def mutation(cursor: Any) -> None:

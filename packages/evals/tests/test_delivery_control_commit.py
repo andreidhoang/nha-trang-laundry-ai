@@ -433,14 +433,20 @@ def test_shared_index_race_fails_before_head_compare_and_swap(tmp_path: Path) ->
         "import sys\n"
         "from pathlib import Path\n"
         "payload = sys.stdin.buffer.read()\n"
-        "if os.environ.get('GIT_INDEX_FILE'):\n"
+        # Injected once, and never from inside itself. The filter runs per staged
+        # `delivery/*.yaml`, and the `git add` it spawns competes for the same index lock as the
+        # `git add` that invoked it. Without the sentinel and the timeout, a lost race waits for a
+        # lock the caller is holding and the test hangs with no output -- which teaches nothing.
+        # Bounded, a lost race fails the required filter and the assertions below say so.
+        "if os.environ.get('GIT_INDEX_FILE') and not os.environ.get('CONTROL_RACE_INJECTED'):\n"
         "    root = Path(__file__).resolve().parents[1]\n"
         "    (root / 'rogue.txt').write_text('injected\\n', encoding='utf-8')\n"
         "    environment = os.environ.copy()\n"
         "    environment.pop('GIT_INDEX_FILE', None)\n"
+        "    environment['CONTROL_RACE_INJECTED'] = '1'\n"
         "    subprocess.run(\n"
         "        ['git', 'add', '--', 'rogue.txt'], cwd=root, env=environment,\n"
-        "        check=True, capture_output=True,\n"
+        "        check=True, capture_output=True, timeout=60,\n"
         "    )\n"
         "sys.stdout.buffer.write(payload)\n",
         encoding="utf-8",

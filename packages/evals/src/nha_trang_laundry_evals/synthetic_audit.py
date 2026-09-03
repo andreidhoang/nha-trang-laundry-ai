@@ -23,6 +23,7 @@ from nha_trang_laundry_db.agent_runs import (
     AgentToolCallLedgerEntry,
     request_fingerprint,
 )
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import ActorRole
 
 from .fixtures import SyntheticFixtureBundle
@@ -48,12 +49,22 @@ def execute_audit_write_failure_preflight(
         raise ValueError("audit-failure fixture does not select the agent tool audit action")
     trace_id = _source_event_id(fixture.payload)
     timestamp = fixture_clock(fixture.payload)
+    # STORE-REGISTRY-001: an agent run names a store, and `store_id` is a foreign key now.
+    run_store_id = uuid4()
+    StoreRepository.create(
+        connection,
+        store_id=run_store_id,
+        name="Cửa hàng tổng hợp",
+        created_by=None,
+        correlation_id=uuid4(),
+        occurred_at=timestamp,
+    )
     repository = AgentRunRepository()
     command = AgentRunEnqueueCommand(
         agent_run_id=uuid4(),
         source_webhook_event_id=None,
         organization_id=uuid4(),
-        store_id=uuid4(),
+        store_id=run_store_id,
         channel="INTERNAL_TEST",
         conversation_binding_id=uuid4(),
         contact_binding_id=uuid4(),

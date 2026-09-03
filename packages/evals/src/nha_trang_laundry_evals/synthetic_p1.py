@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 import rfc8785
 from nha_trang_laundry_db.intake import CreateOrderRequestCommand, OrderRequestRepository
+from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.pricebook_import import import_pricebook_csv, runtime_price_rules
 from nha_trang_laundry_worker.response_templates import render_published_list_price
 
@@ -85,6 +86,15 @@ def execute_bound_intake_preflight(
     contact_id = UUID(_text(context, "contact_binding_id"))
     conversation_id = UUID(_text(context, "conversation_binding_id"))
     timestamp = _clock(fixture.payload)
+    # STORE-REGISTRY-001: the fixture names a store, and `store_id` is a foreign key now.
+    StoreRepository.create(
+        connection,
+        store_id=store_id,
+        name="Cửa hàng tổng hợp",
+        created_by=None,
+        correlation_id=uuid4(),
+        occurred_at=timestamp,
+    )
     stored = OrderRequestRepository().create(
         connection,
         CreateOrderRequestCommand(

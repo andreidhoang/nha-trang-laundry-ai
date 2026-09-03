@@ -1,4 +1,25 @@
-"""Vendor-neutral OpenTelemetry instruments with bounded, PII-safe attributes."""
+"""Vendor-neutral OpenTelemetry instruments with bounded, PII-safe attributes.
+
+**R1 exports none of this, on purpose.** No exporter package is declared in any `pyproject.toml`,
+no `OTEL_*` variable appears in any compose file, there is no collector and no `/metrics` endpoint,
+so `metrics.get_meter_provider()` returns the API's no-op provider and every instrument below
+records into nothing.
+
+`SHOP-OBSERVABILITY-001` decided that rather than leaving it ambiguous, because "instrumented but
+not exported" reads as an oversight and invites somebody to trust a dashboard that does not exist.
+For one host serving one shop, the record is the structured stdout stream -- which now actually
+reaches a stream -- plus the exit codes of `scripts/check_shop_operations.py`. A collector is one
+more stateful service to run, upgrade and back up, for a deployment with four containers and two
+staff.
+
+So the contracts here are a **contract**, not a live signal: they define the names and attribute
+shapes a collector would use, and they stay correct while unused. `MONITORING-001` is the item that
+adds the collector, and it is scoped to G1 -- the AI stage -- where there is genuinely more to watch
+than a shop counter.
+
+The two backup metrics are the exception worth naming: `backup_age_s` and `restore_test_age_s` have
+real producers now, and they emit as structured events rather than as metrics, for the same reason.
+"""
 
 from __future__ import annotations
 

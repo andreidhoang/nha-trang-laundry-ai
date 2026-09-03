@@ -63,6 +63,7 @@ from nha_trang_laundry_observability import (
     CorrelationContext,
     SafeStructuredLogger,
     Telemetry,
+    configure_structured_logging,
     correlation_scope,
     current_correlation,
 )
@@ -93,6 +94,13 @@ from nha_trang_laundry_api.operations import (
     UnresolvedQuoteResult,
 )
 from nha_trang_laundry_api.security import BrowserSecurityMiddleware, RequestSizeLimitMiddleware
+
+# SHOP-OBSERVABILITY-001. Before this call, every `_LOGGER.record(...)` below was a no-op in the
+# container: uvicorn's default LOGGING_CONFIG leaves this logger at WARNING with no handler
+# anywhere, and a logger below its level does not raise -- so `emit` returned True and the line went
+# nowhere. It is configured at import, before the first request can be served, because the browser
+# security boundary logs rejections during startup traffic too.
+configure_structured_logging()
 
 _AUTH_SETTINGS = AuthSettings()
 app = FastAPI(

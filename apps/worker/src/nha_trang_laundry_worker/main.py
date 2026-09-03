@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
+from nha_trang_laundry_observability import configure_structured_logging
 
 from .host import WorkerSettings, WorkerSupervisor
 
@@ -15,6 +16,10 @@ def create_app(
     settings: WorkerSettings | None = None,
     supervisor: WorkerSupervisor | None = None,
 ) -> FastAPI:
+    # SHOP-OBSERVABILITY-001: the worker's structured events had the same silent sink as the
+    # API's -- a logger below its level with no handler. Configured before the supervisor starts,
+    # so a failure during startup is a line rather than a shrug.
+    configure_structured_logging()
     effective_settings = settings or WorkerSettings()
     effective_supervisor = supervisor or WorkerSupervisor(effective_settings)
 

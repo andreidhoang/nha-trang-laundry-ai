@@ -1,0 +1,149 @@
+schema_version: 1
+work_item: SHOP-OBSERVABILITY-001
+recorded_at: '2026-09-03T14:05:00+07:00'
+requirement_contract: >-
+  Make the structured log reach a log, answer the telemetry question instead of leaving it
+  ambiguous, and build the checks that can actually fail on a one-host deterministic deployment.
+
+  The first is not an improvement, it is a defect: the API's entire structured-event machinery --
+  the schema, the redaction, the correlation ids -- was being discarded in the container, and
+  nothing said so.
+rollback_impact: >-
+  A clean revert. One new module and its export, two call sites, one script, three docstrings, one
+  decision entry, two test files and the runbook. No schema change, no migration, and no change to
+  any write path.
+
+  Reverting returns the deployment to emitting no logs at all and to having no check that can see a
+  filling disk or a stale archive. The one coupling is `DEC-025`: it is registered `OPEN` and its
+  fail-closed state is the current behaviour, so reverting the checks leaves a decision open about
+  something that no longer exists.
+unresolved_assumptions: >-
+  **The volume threshold is judgement, not measurement.** Ten percent free is the point at which
+  somebody plausibly still has a day to act on one host; nobody has measured how fast this shop's
+  WAL accumulates, because no shop is running yet. It should be revisited once a week of real
+  operation exists.
+
+  **The capability-flag check reads the container environment, not the running process.** A flag
+  changed inside a process after start -- which nothing in this codebase does -- would not be seen.
+  It is the environment that a restart would restore, which is the thing a deployment can actually
+  drift on.
+
+  **CẦN XÁC MINH:** whether a five-minute cadence is right. It is the interval at which a filling
+  disk is caught with hours to spare and a stale archive within a third of the recovery point, but
+  it is chosen rather than derived, and it costs one PostgreSQL connection per run.
+
+  **Not claimed: that anything delivers these to a person.** `DEC-025` is open and its fail-closed
+  state is exactly what ships -- a non-zero exit for a host scheduler and a structured line. That is
+  a real gap, stated rather than dressed up: the shop would still find out about a full disk when it
+  cannot take an order.
+
+  **Not claimed:** that the checks have run against a production host. They were exercised against
+  the local integration database and a real filesystem; the capability-flag check needs a running
+  compose stack and is exercised by its unit tests only.
+evidence:
+  a_structured_event_reaches_stdout_in_the_container: >-
+    `SafeStructuredLogger` sinks to `logging.getLogger("nha_trang_laundry.structured").info`. Under
+    uvicorn's default `LOGGING_CONFIG`, which the API image applies, measured independently:
+
+        logger effective level : WARNING
+        isEnabledFor(INFO)     : False
+        root handlers          : []
+        nha_trang handlers     : []
+
+    **Every `_LOGGER.record(...)` call in the API was a no-op in the container**, including the
+    browser security boundary's CSRF and origin rejections -- the closest thing this deployment has
+    to a security log.
+
+    What made it survive is worth naming, because it is a general shape: a logger below its level
+    does not raise, so `SafeStructuredLogger.emit` returned `True` and the caller had every reason
+    to believe the line had been written. The failure was invisible from inside the abstraction that
+    was failing.
+
+    `configure_structured_logging` attaches one stdout handler at INFO, with no formatter beyond the
+    message -- the event already serialises to one JSON object per line with its own timestamp and
+    severity, and wrapping that in a second timestamp produces output that is neither text nor
+    parseable JSON. `propagate` is off so a root handler installed by anything else cannot duplicate
+    audit-adjacent lines, and the function is idempotent because configuring logging in both a
+    factory and a startup hook is a normal accident.
+
+    Pinned by five tests, one of which asserts the *defect*: under uvicorn's configuration and
+    without this call, the event is dropped and `emit` still reports success. A regression is now a
+    failure rather than a silence.
+
+    The idempotency itself was wrong on the first attempt, and the full suite caught it where the
+    file alone did not. Returning early whenever any marked handler existed meant a second call
+    naming a *different* stream was a silent no-op -- so once any other test imported the API, which
+    configures stdout at import, a test passing its own buffer got an empty buffer. Idempotent has
+    to mean "no duplicates", not "the first caller wins": a caller that names a stream means it, and
+    a process that redirects its output would otherwise keep writing to the old one.
+  the_telemetry_question_is_answered_not_left_open: >-
+    `telemetry.py` declares the metric contracts and the API wires meter and tracer providers, but
+    no exporter package is declared in any `pyproject.toml`, no `OTEL_*` variable appears in any
+    compose file, and there is no collector and no `/metrics` endpoint. The default providers are
+    no-ops, so every instrument records into nothing.
+
+    **Decided: no collector in R1.** Recorded in the module's own docstring rather than in a
+    document, because "instrumented but not exported" reads as an oversight and invites somebody to
+    trust a dashboard that does not exist. For four containers and two staff, a collector is one
+    more stateful service to run, upgrade and back up; the record is the structured stdout stream --
+    which now actually reaches a stream -- plus the exit codes of the checks.
+
+    The contracts stay as a contract: they define the names and attribute shapes a collector would
+    use, and they remain correct while unused. `MONITORING-001` adds the collector at G1, where
+    there is genuinely more to watch than a shop counter. `backup_age_s` finally has a producer, and
+    it emits as a structured event for the same reason.
+  four_checks_that_can_actually_fire: >-
+    `PRODUCTION_OPERATIONS_SPEC_V1` §4.1 names seven paging conditions. **Five have no referent in
+    R1** -- no channel and no sender, so no `UNKNOWN` reconciliation and nothing to suppress; no
+    provider, so no token to refresh; no Zone A, so no cell to watch; and the policy decision point
+    is in-process rather than a service, so its failure is an API 5xx. Shipping those five anyway is
+    how an on-call learns the pager is noise, and how the real alert gets missed.
+
+    Two of the seven apply, and two more are needed that the spec does not name because it was
+    written assuming managed infrastructure and a channel-carrying system:
+
+    - **WAL archive gap** at the 900s recovery point, asserted against
+      `deploy/backup/backup-policy-v1.json` so the threshold cannot drift from the policy it
+      enforces. `archive_mode = off` reports success rather than failure, because that is the
+      provider-managed branch and reporting it as a failure would train the operator to ignore the
+      one backup signal they have.
+    - **Database volume**, which is not in §4.1 and is the most likely of the four to save this
+      deployment: a failing `archive_command` pins WAL segments forever, the disk fills, PostgreSQL
+      stops accepting writes, and **the counter cannot take an order**. Nobody is watching a
+      provider dashboard on one host.
+    - **Capability flags on the running containers.** `report_delivery_status.py` reads repository
+      YAML and knows nothing about a host, so a flag set by hand on a container is exactly the
+      bypass it cannot see. §4.1 calls this a security incident rather than operational noise.
+    - **Console reachable**, also not in §4.1, because that spec treats the console as an internal
+      tool. In R1 the console is the business.
+
+    Exercised for real rather than only unit-tested, and the volume check immediately failed on the
+    development host at 7.2% free -- which is what a check that can fire looks like:
+
+        OK  wal_archive_gap: archive_mode is 'off'; recovery is the provider's (managed branch)
+        !!! database_volume: 7.2% free of 460GiB (limit 10%)
+
+    Each check emits a structured line and the script exits non-zero, so the outcome is in the same
+    stream as everything else and a host scheduler surfaces it.
+
+    Delivery to a person is `DEC-025`, opened here and the owner's: every mechanism -- SMTP, a
+    messaging bot, a paging provider -- adds a counterparty and a credential this deployment
+    deliberately does not have, and choosing one is not an engineer's call. Until it is signed the
+    fail-closed state is the exit code and the cron mail. An alert nobody receives is not an alert.
+  rollback_assessment: >-
+    See rollback_impact. One logging module and its two call sites, one operations-check script,
+    two test files, one decision entry and its request document, three docstrings recording
+    decisions where they live, and the runbook section that tells an operator to schedule it.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

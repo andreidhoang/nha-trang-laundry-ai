@@ -569,3 +569,23 @@ decisions:
       cancellation loses the money silently. `ORDER-EXIT-001` is written and deliberately not
       started; `SHOP-CUTOVER-001` does not proceed while this is open, because both cases occur in
       the first week of real counter operation.
+  - id: DEC-025
+    title: Who is told when the shop's software is in trouble
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_ALERT_ROUTING_2026-09.md
+    opened_at: '2026-09-03'
+    question: >-
+      `SHOP-OBSERVABILITY-001` built four checks that can genuinely fail on the R1 deployment, and
+      nothing carries their result to a person. Every way of delivering one adds a counterparty and
+      a credential -- an SMTP account, a messaging bot token, a paging provider -- and R1
+      deliberately has none of those. The owner decides which failures warrant waking somebody, at
+      what hour, through which account, and whose account it is. Two of the four will not announce
+      themselves: a WAL archive gap means the recovery guarantee is silently gone, and a filling
+      database volume ends with PostgreSQL refusing writes and the counter unable to take an order.
+    blocking_today: >-
+      Nothing is blocked. The checks run, exit non-zero for a host scheduler, and emit a structured
+      line. What is missing is delivery to a person, so the shop would find out about a full disk
+      when it cannot take an order. An alert nobody receives is not an alert.

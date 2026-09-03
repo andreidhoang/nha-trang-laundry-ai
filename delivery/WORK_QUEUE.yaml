@@ -3249,7 +3249,7 @@ items:
 - id: SHOP-OBSERVABILITY-001
   phase: PRODUCTION_HARDENING
   title: A system that can say what happened to it
-  status: PENDING
+  status: COMPLETE
   priority: 259
   depends_on:
   - SHOP-DEPLOY-001

@@ -231,6 +231,37 @@ should hear them first:
 - **The AI does nothing.** No model has ever been invoked by this system. The assistant on the
   console is deterministic and says so.
 
+## 7a. What watches it once staff are in
+
+```bash
+DATABASE_URL=...            R1_PGDATA_PATH=/var/lib/docker/volumes/nha-trang-laundry-shop_pgdata/_data R1_CONSOLE_HEALTH_URL=http://127.0.0.1:8000/healthz   uv run python scripts/check_shop_operations.py
+```
+
+Four checks, every five minutes from a host scheduler. Non-zero exit means at least one failed, and
+each one also emits a structured line to stdout — which, since `SHOP-OBSERVABILITY-001`, actually
+reaches a stream. Before that every `record()` call in the API was a no-op in the container.
+
+Of the seven paging conditions in `specs/PRODUCTION_OPERATIONS_SPEC_V1.md` §4.1, five have no
+referent here: there is no channel, no sender, no provider and no agent cell, so there is nothing to
+be unsure about, nothing to suppress, no token to refresh and no cell to watch. The four that do
+matter are:
+
+| Check | Why it matters here |
+|---|---|
+| WAL archive gap | The recovery guarantee is silently gone. Nothing else in the system looks at the age of the last archive. |
+| Database volume | **This is how a correctly configured archiver closes the shop.** A failing `archive_command` pins WAL segments, the disk fills, PostgreSQL refuses writes, and the counter cannot take an order. |
+| Capability flags | A flag reading true on a *running container* without a signed manifest in `releases/gates/`. `report_delivery_status.py` reads repository YAML and cannot see a host. §4.1 calls this a security incident. |
+| Console reachable | In R1 the console is the business. |
+
+**There is no metrics collector and that is deliberate.** No exporter is declared, so the
+OpenTelemetry instruments record into a no-op provider; the record is the structured stdout stream
+plus these exit codes. `MONITORING-001` adds a collector at the AI stage, where there is more to
+watch than a shop counter.
+
+**Nothing delivers these to a person yet.** That is `DEC-025`, open, because every delivery
+mechanism adds a counterparty and a credential this deployment deliberately does not have. Until it
+is signed, read the cron mail. An alert nobody receives is not an alert.
+
 ## 8. If it goes wrong
 
 Rollback is `docker compose -f compose.r1.yaml down` and restoring the previous image tag.

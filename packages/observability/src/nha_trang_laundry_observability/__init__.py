@@ -12,6 +12,7 @@ from .correlation import (
     current_correlation,
 )
 from .events import EventSeverity, SafeStructuredLogger, StructuredEvent
+from .logging_setup import STRUCTURED_LOGGER_NAME, configure_structured_logging
 from .redaction import REDACTED, redact_text, sanitize
 from .telemetry import (
     METRIC_CONTRACTS,
@@ -25,6 +26,7 @@ __all__ = [
     "CORRELATION_HEADER",
     "METRIC_CONTRACTS",
     "REDACTED",
+    "STRUCTURED_LOGGER_NAME",
     "CorrelationContext",
     "EventSeverity",
     "MetricContract",
@@ -32,6 +34,7 @@ __all__ = [
     "StructuredEvent",
     "Telemetry",
     "TelemetryContractError",
+    "configure_structured_logging",
     "correlation_scope",
     "current_correlation",
     "current_trace_id",

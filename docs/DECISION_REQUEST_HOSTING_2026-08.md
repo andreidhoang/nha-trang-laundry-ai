@@ -21,6 +21,37 @@ mark it `UNVERIFIED`; do not create the account to find out." That instruction i
 here — this table narrows the field and states exactly what still needs a human to go verify with a
 real account, not what to sign.
 
+## 0a. What R1 changed about this request (2026-09-03)
+
+`DEC-027` scoped the first release to the deterministic staff console: Zone C only, no public
+ingress, no agent cell. That changes this packet in three ways, and they all make the decision
+smaller:
+
+- **A1 asks for two isolated compute units because of Zone A.** Zone A is the public agent runtime
+  processing untrusted language, and R1 has none — no channel is connected and no model is invoked.
+  **R1 needs one host.** ADR-0007 §1 permits exactly this: *"If cost forces one host, the correct
+  response is to delay public ingress, not to collapse the boundary."* The second host returns as a
+  requirement at G2, along with the ingress it exists to isolate.
+- **A3 is the whole ingress story, not a subset of it.** There is no public path to keep the console
+  away from, because there is no public path. Staff reach it over the shop network or a VPN address
+  and `R1_CONSOLE_BIND_IP` defaults to loopback so an unset value fails closed.
+- **A4's residency question is narrower than it looks.** R1 stores **no customer personal data**:
+  no address column exists in any migration, a walk-in is a counter ticket (`DEC-013`), there is no
+  customer-record layer (`DEC-015`), and with no channel there are no message bodies. What the host
+  holds is order financial records and staff identity — the latter self-hosted in Keycloak under
+  `DEC-011`, so no staff PII leaves the host either.
+
+A5 and A2 are unchanged and are the ones that still decide the answer: a restore drill inside four
+hours, and an encrypted archive in a separate failure domain. `SHOP-RECOVERY-001` built the
+archiving against a repository-client interface deliberately not bound to a vendor, so the client
+that ships with the chosen provider is a wrapper rather than a rewrite.
+
+**One question to add to the verification, which the original table does not ask:** whether the
+candidate's object storage supports **append-only or versioned writes with a credential that cannot
+delete**. The archive command writes with `--if-not-exists` for a reason — an archive a compromised
+host can overwrite is an archive a compromised host can destroy — and a provider whose only
+credential grants delete undermines that.
+
 ## 1. The five hard constraints (ADR-0007)
 
 - **A1** two isolated compute units with private networking between them

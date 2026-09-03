@@ -611,3 +611,43 @@ decisions:
       script all exist, and none can run without a recipient key. `BACKUP-RESTORE-001` completes on
       a drill result rather than on configuration, and the drill needs the identity this decision
       places. Deferring means the deployment runs with no recovery at all.
+  - id: DEC-027
+    title: What the first production release contains, and what it deliberately leaves out
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: context/tasks/TASK-shop-cutover-001.md
+    opened_at: '2026-08-31'
+    question: >-
+      Whether the first production deployment carries the AI, or only the deterministic staff
+      console. The distinction is not a preference: `delivery/GATE_REGISTRY.yaml` and the release
+      gate schema require, for even the lowest AI stage, a manifest signed by three distinct actors,
+      and the next stage additionally requires fourteen shadow days, one hundred representative
+      interactions and thirty completed real orders. Those orders can only come from operating the
+      shop, so the deterministic console is not an alternative to the AI ladder -- it is its first
+      rung.
+    resolved_at: '2026-08-31'
+    decision_record: context/tasks/TASK-shop-cutover-001.md
+    resolution: >-
+      R1 is the deterministic staff console running one real shop: Zone C only, one host, no public
+      ingress, no channel, no model. All thirteen capabilities read NOT_AUTHORIZED on day one, which
+      is the expected production state rather than a gap, and all five feature flags ship false --
+      `WorkerSettings` raises if any is true, so deploying the code cannot enable a capability.
+
+      ADR-0007 §1 permits the shape and gives the reason: Zone P and Zone A exist to process
+      untrusted language, and "if cost forces one host, the correct response is to delay public
+      ingress, not to collapse the boundary." R1 has no untrusted language to process.
+
+      Deliberately out of scope, each with the decision that keeps it out rather than an omission:
+      the model provider posture (`DEC-006`), the inbound channel and who staffs it (`DEC-016`), the
+      market-facing name (`DEC-017`), and retention purge execution (`DEC-018`, `DEC-019`,
+      `DEC-020`) -- which R1 does not reach, because it stores no customer personal data at all: no
+      address column exists in any migration, a walk-in is a counter ticket under `DEC-013`, there
+      is no customer-record layer under `DEC-015`, and with no channel there are no webhook
+      payloads, conversation bodies or agent drafts. The one class that accumulates is the order
+      financial record, whose schedule is ten years.
+
+      What R1 still needs from the owner is recorded as its own decisions: `DEC-024` order exit,
+      `DEC-025` alert routing, `DEC-026` backup key custody, and the hosting selection tracked as
+      `DECISION-HOSTING-001`.

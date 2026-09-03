@@ -92,3 +92,22 @@ def test_restore_validator_is_read_only_and_checks_duplicate_delivery() -> None:
     assert "outbox_events WHERE status = 'PROCESSING'" in recovery
     assert "INSERT " not in recovery and "UPDATE " not in recovery and "DELETE " not in recovery
     assert "no release authority was granted" in validator
+
+
+def test_a_production_drill_can_be_validated_at_all() -> None:
+    """`SHOP-RECOVERY-001`: `PRODUCTION` was not an admissible environment.
+
+    `BACKUP-RESTORE-001` completes on a drill result rather than on configuration, so a validator
+    that rejects the only environment whose drill counts made the item unclosable. This test and
+    the fixture it uses both said `STAGING`, so the gap was invisible from inside the test suite --
+    the same shape as a migration whose backfill only ever ran against an empty database.
+    """
+
+    policy = load_backup_policy(POLICY_PATH)
+
+    for environment in ("STAGING", "PRODUCTION"):
+        document = _valid_evidence() | {"environment": environment}
+        assert parse_restore_drill(document, policy).achieved_rpo_seconds == 600
+
+    with pytest.raises(RecoveryValidationError, match="environment is invalid"):
+        parse_restore_drill(_valid_evidence() | {"environment": "LAPTOP"}, policy)

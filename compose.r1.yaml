@@ -61,14 +61,41 @@ services:
     # Longer than the 20s the application services take. A shutdown that kills a checkpoint
     # mid-flight is paid back as recovery time on the next start.
     stop_grace_period: 120s
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     ports: []
     environment:
       POSTGRES_DB: nha_trang_laundry
       POSTGRES_USER: laundry_migrate
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      # `archive_command` uploads from inside this container, so it needs egress to the archive
+      # repository and nothing else. Compose cannot express that restriction; host firewall rules
+      # can, and the runbook says so.
+      BACKUP_REPOSITORY_PREFIX: ${R1_BACKUP_REPOSITORY:-}
+      BACKUP_UPLOAD_COMMAND: ${R1_BACKUP_UPLOAD_COMMAND:-}
+    configs:
+      - source: r1_postgresql_conf
+        target: /etc/postgresql/postgresql.conf
+        uid: "70"
+        gid: "70"
+        mode: 0440
+      - source: r1_archive_wal
+        target: /usr/local/bin/archive-wal.sh
+        uid: "70"
+        gid: "70"
+        mode: 0550
     secrets:
       - source: r1_postgres_password
         target: postgres_password
+        uid: "70"
+        gid: "70"
+        mode: 0400
+      - source: r1_backup_encryption_recipients
+        target: backup_encryption_recipients
+        uid: "70"
+        gid: "70"
+        mode: 0400
+      - source: r1_backup_repository_credential
+        target: backup_repository_credential
         uid: "70"
         gid: "70"
         mode: 0400
@@ -82,7 +109,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-    networks: [database-private]
+    # `archive-egress` is the honest cost of an `archive_command` that does not lie about
+    # durability. Restrict the destination with host firewall rules; compose cannot.
+    networks: [database-private, archive-egress]
 
   migrate:
     image: ${R1_API_IMAGE:-nha-trang-laundry-api:local}
@@ -296,6 +325,10 @@ services:
 configs:
   r1_caddyfile:
     file: deploy/production/Caddyfile
+  r1_postgresql_conf:
+    file: deploy/production/postgresql.conf
+  r1_archive_wal:
+    file: deploy/production/backup/archive-wal.sh
   r1_keycloak_realm:
     file: deploy/production/keycloak/realm-nhatrang.json
 
@@ -326,6 +359,10 @@ secrets:
     external: true
   r1_keycloak_bootstrap_admin_password:
     external: true
+  r1_backup_encryption_recipients:
+    external: true
+  r1_backup_repository_credential:
+    external: true
 
 networks:
   # The fix. `tls` is the only service attached to a non-internal network, so the published port is
@@ -340,6 +377,9 @@ networks:
     driver: bridge
   database-private:
     internal: true
+    driver: bridge
+  archive-egress:
+    internal: false
     driver: bridge
 
 volumes:

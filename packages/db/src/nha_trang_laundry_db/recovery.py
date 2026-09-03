@@ -105,7 +105,14 @@ def load_backup_policy(path: Path) -> BackupPolicy:
 
 
 def parse_restore_drill(document: dict[str, Any], policy: BackupPolicy) -> RestoreDrillEvidence:
-    if document.get("schema_version") != 1 or document.get("environment") != "STAGING":
+    # SHOP-RECOVERY-001: `PRODUCTION` was not admissible, so a production drill could not be
+    # validated at all -- and `BACKUP-RESTORE-001` completes on a drill result rather than on
+    # configuration. The contract test hardcoded `STAGING` too, so it would have passed unchanged
+    # while proving nothing about the environment that matters.
+    if document.get("schema_version") != 1 or document.get("environment") not in {
+        "STAGING",
+        "PRODUCTION",
+    }:
         raise RecoveryValidationError("restore evidence schema or environment is invalid")
     for field in (
         "encrypted_off_host_copy_verified",
@@ -177,13 +184,34 @@ def validate_restored_database(
             """
             SELECT
                 (SELECT count(*) FROM domain_events WHERE correlation_id = %s),
-                (SELECT count(*) FROM audit_events WHERE correlation_id = %s)
+                (SELECT count(*) FROM audit_events WHERE correlation_id = %s),
+                -- The chain has to be continuous, not merely present. `domain_events` is unique on
+                -- (aggregate_type, aggregate_id, aggregate_version), so an aggregate whose highest
+                -- version exceeds its event count lost an event in the middle -- which is exactly
+                -- what a restore to the wrong point looks like, and what counting rows for one
+                -- correlation id cannot see.
+                (
+                    SELECT count(*) FROM (
+                        SELECT aggregate_type, aggregate_id
+                        FROM domain_events
+                        GROUP BY aggregate_type, aggregate_id
+                        HAVING max(aggregate_version) <> count(*)
+                    ) AS gaps
+                ),
+                -- And the restored database must reach at least the point the drill claims to have
+                -- recovered to. A restore that stopped earlier would satisfy every count above.
+                (SELECT max(occurred_at) FROM domain_events)
             """,
             (evidence.correlation_id, evidence.correlation_id),
         )
         timeline = cursor.fetchone()
         audit_timeline_verified = (
-            timeline is not None and int(timeline[0]) > 0 and int(timeline[1]) > 0
+            timeline is not None
+            and int(timeline[0]) > 0
+            and int(timeline[1]) > 0
+            and int(timeline[2]) == 0
+            and timeline[3] is not None
+            and timeline[3] >= evidence.selected_recovery_point_at
         )
         cursor.execute(
             """

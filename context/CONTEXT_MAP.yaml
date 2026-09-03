@@ -111,6 +111,7 @@ domains:
       - specs/SECURITY_RELIABILITY_SPEC_V1.md
       - docs/DECISION_REQUEST_ORDER_EXIT_2026-08.md
       - docs/DECISION_REQUEST_ALERT_ROUTING_2026-09.md
+      - docs/DECISION_REQUEST_BACKUP_KEY_CUSTODY_2026-09.md
       - packages/db/migrations/0026_assistant_turns.sql
       - packages/db/migrations/0027_assistant_transcript_retention.sql
     contracts:

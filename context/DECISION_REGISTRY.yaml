@@ -589,3 +589,25 @@ decisions:
       Nothing is blocked. The checks run, exit non-zero for a host scheduler, and emit a structured
       line. What is missing is delivery to a person, so the shop would find out about a full disk
       when it cannot take an order. An alert nobody receives is not an alert.
+  - id: DEC-026
+    title: Who holds the key that can read the shop's backups
+    status: OPEN
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_REQUEST_BACKUP_KEY_CUSTODY_2026-09.md
+    opened_at: '2026-09-03'
+    question: >-
+      ADR-0007 §3 requires the archive to be encrypted before it leaves the host "with a key that is
+      not stored on Host A". Taken literally that excludes a passphrase, because a value present to
+      write the archive also decrypts every archive ever taken -- the exact failure the requirement
+      exists to exclude. So the archiving encrypts to a recipient public key and the identity that
+      can read lives elsewhere. The owner decides who physically holds it, where the second copy
+      lives, who may authorise its use in a restore, and acknowledges that losing it makes every
+      backup permanently unrecoverable -- not difficult, impossible, with no vendor to call and no
+      copy on the server by design.
+    blocking_today: >-
+      Archiving is built and not enabled: `archive_command`, the base-backup sidecar and the restore
+      script all exist, and none can run without a recipient key. `BACKUP-RESTORE-001` completes on
+      a drill result rather than on configuration, and the drill needs the identity this decision
+      places. Deferring means the deployment runs with no recovery at all.

@@ -3271,7 +3271,7 @@ items:
 - id: SHOP-RECOVERY-001
   phase: PRODUCTION_HARDENING
   title: The parts of recovery that can be built before a host exists
-  status: PENDING
+  status: COMPLETE
   priority: 260
   depends_on:
   - SHOP-DEPLOY-001

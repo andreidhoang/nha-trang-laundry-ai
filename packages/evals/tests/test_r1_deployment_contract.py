@@ -194,7 +194,12 @@ def test_the_database_branch_is_a_profile_rather_than_a_second_file(
     assert postgres["read_only"] is True
     assert postgres["cap_drop"] == ["ALL"]
     assert not postgres.get("ports")
-    assert set(_mapping(postgres, "networks")) == {"database-private"}
+    # Two networks, and the second is a deliberate concession recorded rather than hidden.
+    # `archive_command` uploads from inside this container because the alternative -- spool locally
+    # and ship asynchronously -- makes the command lie: PostgreSQL may recycle a segment the moment
+    # it returns 0, so the only copy would still be on the failing host. `ingress-edge` is not
+    # among them, so nothing here is reachable from the shop network.
+    assert set(_mapping(postgres, "networks")) == {"database-private", "archive-egress"}
     environment = _mapping(postgres, "environment")
     # The password arrives as a mounted file; an environment variable would reach the image layer,
     # `docker inspect`, and every log line that dumps the environment.

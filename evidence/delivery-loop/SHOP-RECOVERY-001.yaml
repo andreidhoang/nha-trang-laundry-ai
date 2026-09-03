@@ -1,0 +1,138 @@
+schema_version: 1
+work_item: SHOP-RECOVERY-001
+recorded_at: '2026-09-03T15:30:00+07:00'
+requirement_contract: >-
+  Build the archiving a restore drill will run, the procedure it follows, and a validator that can
+  accept a production drill -- everything `BACKUP-RESTORE-001` needs except the host and the key.
+
+  The policy existed and the mechanism did not. `deploy/backup/backup-policy-v1.json` has stated
+  the recovery point, recovery time, off-host and encryption requirements since August; no
+  archiver, no cron, no snapshot configuration and no restore procedure existed anywhere in the
+  repository.
+rollback_impact: >-
+  A clean revert of new files plus one validator change. Three shell scripts, one PostgreSQL
+  configuration, one runbook, one decision entry, one contract test case, and the compose wiring
+  that mounts them.
+
+  Reverting the `recovery.py` change returns the validator to rejecting `PRODUCTION` outright, so
+  `BACKUP-RESTORE-001` becomes unclosable again, and returns the audit proof to "at least one event
+  exists for one correlation id" -- which a restore to the wrong point also satisfies.
+
+  Nothing is enabled by this item. `archive_command` refuses to run without
+  `BACKUP_REPOSITORY_PREFIX` and a recipients file, neither of which exists until `DEC-026` is
+  signed, so a partial revert degrades to "no archiving" rather than to "archiving that lies".
+unresolved_assumptions: >-
+  **None of this has run.** The scripts are written against `age`, `pg_basebackup` and a
+  repository-client interface supplied through `BACKUP_UPLOAD_COMMAND` / `BACKUP_FETCH_COMMAND` /
+  `BACKUP_LIST_COMMAND`, which are deliberately not bound to a vendor because the hosting decision
+  has not chosen one. The indirection is honest about the unknown and is also untested: a client
+  whose flags differ from `--if-not-exists` needs a wrapper, and nothing here says which client.
+
+  **`age` is not installed in the PostgreSQL image yet.** The `archive_command` calls it and the
+  compose file mounts the script, but the image is the stock `postgres:16.10-alpine`. Adding a
+  binary to that image is a supply-chain step -- a pinned digest, a checksum, a scan -- and it
+  belongs with the branch selection rather than ahead of it. **The self-managed branch does not
+  work until that is done**, which is stated here rather than discovered at cutover.
+
+  **CẦN XÁC MINH:** `archive_timeout = 60s` costs a near-empty 16MB segment per minute of idleness.
+  For a shop that is closed twelve hours a day that is roughly 700 segments overnight, and nobody
+  has measured what that costs at the chosen provider's storage prices. The alternative -- a wider
+  timeout -- buys storage with recovery point, which is the wrong trade to make silently.
+
+  **Not claimed: that a restore works.** Nothing here has restored anything. `BACKUP-RESTORE-001`
+  stays BLOCKED on an operator-provisioned off-host repository and a reviewed drill, and this item
+  deliberately does not touch its status.
+
+  **The `archive-egress` network is a real widening.** The database container can now open outbound
+  connections. Restricting the destination is a host firewall rule that compose cannot express, and
+  the runbook says so rather than the compose file pretending to.
+evidence:
+  the_host_holds_a_key_that_cannot_decrypt_the_archive: >-
+    ADR-0007 §3 and `PRODUCTION_OPERATIONS_SPEC_V1` §3.1 both require encryption "before leaving
+    Host A with a key that is not stored on Host A".
+
+    Read literally -- and it should be -- that excludes a symmetric passphrase, which is what most
+    backup tooling offers first. A passphrase present on the host to write the archive also
+    decrypts every archive ever taken, so a host compromise reads the whole of the shop's history.
+    That is precisely the failure the sentence exists to exclude, and a design that satisfies the
+    words while missing that is worse than one that admits it cannot.
+
+    So `archive-wal.sh` and `base-backup.sh` encrypt with `age -R`, to a recipient public key.
+    Nothing on the host can read back what it wrote. The identity that can is placed by `DEC-026`,
+    opened here, and the decision names the consequence plainly: losing it makes every backup
+    permanently unrecoverable -- not difficult, impossible, with no vendor to call and no copy on
+    the server by design.
+
+    A consequence worth stating, and now in the restore runbook: the database holds Keycloak's realm
+    and its signing keys, so a stolen archive plus the identity is a full staff-identity compromise.
+    Not a §3.3 violation -- that names release-signing, provider and channel credentials, none of
+    which are in the database -- but the reason key custody carries the weight it does.
+  the_archive_command_does_not_lie_about_durability: >-
+    The tempting design is to have `archive_command` write to a local spool and let a sidecar ship
+    it: the database container stays off the network, which is cleaner on every diagram.
+
+    It also makes the command lie. PostgreSQL is free to recycle a segment the moment
+    `archive_command` returns 0, so a spool-and-ship design reports success while the only copy is
+    still on the host that is failing. A recovery guarantee becomes a hope, silently, and the way
+    you find out is during a restore.
+
+    So the upload happens inside the command and its exit code means what it says. The cost is that
+    the database container needs egress, expressed as an `archive-egress` network and restricted by
+    host firewall rules that compose cannot write. The deployment contract test asserts that
+    membership exactly, so the concession stays visible instead of becoming ambient, and
+    `ingress-edge` is not among its networks -- nothing here is reachable from the shop network.
+
+    The upload is `--if-not-exists`. An archive command that overwrites is one that can destroy
+    history on a retry, and a WAL segment name is unique by construction, so a collision means
+    something is wrong rather than something is repeated.
+  an_idle_afternoon_cannot_produce_a_stale_recovery_point: >-
+    `archive_timeout = 60s`, and it is the least obvious line in `postgresql.conf`.
+
+    WAL is shipped when a segment fills. A shop with no orders between 14:00 and 18:00 fills nothing
+    in that window, so without a timeout the recovery point silently ages to four hours while
+    `pg_stat_archiver` reports success and every other signal reads healthy. A laundry has exactly
+    that shape of day.
+
+    `SHOP-OBSERVABILITY-001`'s WAL-gap check is the other half: the timeout bounds the gap, the
+    check notices when the bound stops holding. Neither alone is enough -- a timeout with nothing
+    watching it fails silently when archiving breaks, and a check with no timeout fires on ordinary
+    quiet.
+  the_validator_accepts_a_production_drill: >-
+    `recovery.py:107` rejected any evidence whose `environment` was not `"STAGING"`. So a production
+    drill could not be validated at all -- and `BACKUP-RESTORE-001` completes on a drill result
+    rather than on configuration, which made the item unclosable by construction.
+
+    The contract test hardcoded `"STAGING"` too, so it would have passed unchanged while proving
+    nothing about the environment that matters. That is the same shape as a migration whose backfill
+    only ever ran against an empty database, and it is the second time in this sequence that a test
+    and the code it tests shared an assumption that made the defect invisible from inside the suite.
+
+    The audit-continuity proof was strengthened while it was open. It asserted "at least one
+    `domain_events` row and one `audit_events` row exist for this correlation id" -- presence, which
+    a restore to the wrong point also satisfies. It now additionally requires that **no aggregate
+    has a highest version exceeding its event count** (the events table is unique on
+    (type, id, version), so a shortfall is an event lost in the middle), and that the restored
+    database reaches at least the recovery point the drill claims. Both are things a partial restore
+    fails and a count of rows cannot see.
+
+    `docs/runbooks/restore-drill.md` now exists -- `PRODUCTION_OPERATIONS_SPEC_V1` §7 requires it
+    and it did not. It counts fetching the decryption identity from its holder as a **timed step
+    inside the four-hour objective**, because a drill that starts with the key already in hand
+    measures a restore that will never happen that way.
+  rollback_assessment: >-
+    See rollback_impact. Three shell scripts, one PostgreSQL configuration, one validator change and
+    its contract case, one runbook, one decision entry and its request, and the compose wiring that
+    mounts them.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

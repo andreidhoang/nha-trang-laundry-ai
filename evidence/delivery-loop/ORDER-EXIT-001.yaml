@@ -1,0 +1,154 @@
+schema_version: 1
+work_item: ORDER-EXIT-001
+recorded_at: '2026-09-03T23:30:00+07:00'
+requirement_contract: >-
+  Make production `EXCEPTION` recoverable and guard late cancellation, per `DEC-024` as the owner
+  resolved it on 2026-09-03.
+
+  Both defects are week-one counter events. Today an order interrupted by a found stain can reach
+  no terminal state at all, and an order whose laundry is already in a machine can be cancelled
+  outright with the money never recorded. This was the last item standing between the queue and
+  cutover.
+rollback_impact: >-
+  **Not a clean revert, and the direction matters.** Reverting the domain returns `EXCEPTION` to
+  being absorbing and `CONFIRMED -> CANCELLED` to being unguarded -- so an order cancelled after
+  work began stops being refused, which is silent money loss rather than a crash.
+
+  No migration and no schema change. The `0008` projection trigger already blocks
+  `ACTIVE -> CANCELLED` and it stays exactly as it was: the reviewed path reaches `CANCELLED` from
+  `CANCELLATION_REVIEW`, which the trigger has always permitted, so the database and the domain now
+  agree rather than one having to be relaxed.
+
+  Three couplings that revert together or not at all:
+
+  - `CustodyResolution` and the console's `CUSTODY_RESOLUTIONS`: a console offering a member the
+    server does not accept is a 422 on a cancellation, at the counter;
+  - the enum's three members and the Vietnamese gloss for them, or the select shows raw tokens;
+  - the console's conditional field and the route's optional parameter: a client that stops sending
+    it meets a server that requires it for the reviewed path, and the cancellation cannot complete.
+unresolved_assumptions: >-
+  **The attestation lives on the event ledger rather than in a table of its own.** `domain_events`
+  is append-only, is unique on (aggregate_type, aggregate_id, aggregate_version), and already
+  carries the acting staff id -- so the resolution is attributed and immutable without a fifth
+  aggregate. `DEC-021` got its own table because a quote acceptance is *spent* by a later command
+  and has to be single-shot; nothing spends a cancellation. If a later requirement needs to query
+  cancellations by resolution across stores, that is the point at which this becomes a table.
+
+  **Supplying a resolution is the approval.** The domain still takes two booleans, and the
+  repository derives both from the one field, so there is no path that approves a cancellation
+  without saying what happened to the laundry and the money. That is deliberate: a second field
+  nobody fills is exactly how this defect started.
+
+  **CẦN XÁC MINH:** whether staff will reach for `SHOP_FAULT_NO_CHARGE` when the honest answer is
+  that the customer changed their mind late. The three codes are not equally comfortable to select,
+  and the one that costs the shop money is the one an operator picks to end an awkward
+  conversation. The owner review `DEC-021` established over acceptances is the control, and nothing
+  measures it yet.
+
+  **Not claimed:** that an exception records *why*. It records that one happened and what it
+  interrupted. A reason-code vocabulary for production exceptions -- stain, machine fault, damage --
+  is a separate decision about what the shop wants to count, and inventing one here would be
+  guessing at a report nobody has asked for.
+
+  **Not claimed:** that the console guides staff through the choice. It offers the field when the
+  target is `CANCELLED`, states the rule and the absent fourth option, and lets the server's
+  refusal explain the rest. Whether that reads well to somebody mid-shift is a question for the
+  people who will use it.
+evidence:
+  an_exception_is_an_interruption_not_an_outcome: >-
+    `EXCEPTION` was terminal alongside `RELEASED`, and it also discarded `production_resume_status`
+    -- so an order in which staff recorded a stain or a machine fault could reach neither
+    `COMPLETED` nor `CANCELLED`. It sat `ACTIVE` forever, paid, with the customer's laundry in the
+    shop.
+
+    That contradicted the shop's own policy rather than merely being incomplete. `DEC-004` gives a
+    free rewash within 7 days on store fault and caps compensation at 5x the cleaning fee -- a
+    remedy policy that assumes the laundry gets finished. A state machine in which it cannot is the
+    policy disagreeing with itself.
+
+    An exception now stores the state it interrupted, exactly as `ON_HOLD` already did, and resumes
+    to it **or to any earlier point in the production sequence**. That second half is the case that
+    matters: a stain found at quality check needs the load rewashed, which is backward movement,
+    and the forward-only sequence rule would refuse it. Requiring an attributed exception first is
+    the control -- production cannot walk backwards quietly.
+
+    An exception is refused before production starts, for the same reason a hold is: nothing has
+    happened to the laundry, so the case is a commercial cancellation. It also keeps
+    `production_resume_status` inside the `0007` CHECK constraint, which does not admit
+    `NOT_STARTED` -- so the alternative would have been a 500 from a constraint rather than a
+    refusal.
+
+    Driven over the real routes on a fresh database:
+
+        record a production exception            -> 200
+        cannot resume past the interruption      -> 409  an exception cannot resume past where it
+                                                          interrupted
+        resume backwards for a rewash            -> 200
+        forward to quality check, ready, released -> 200
+        settle                                   -> 201
+        complete the order                       -> 200  order now reads COMPLETED
+  a_started_order_cannot_be_cancelled_without_resolution: >-
+    A direct cancellation is free only while production is `NOT_STARTED`, intake is not `ACCEPTED`
+    and nothing has been paid -- the customer changing their mind at the counter, which is the
+    common case and which staff would work around on paper if it needed a review step. Once any of
+    those is false the order cancels only through `CANCELLATION_REVIEW`.
+
+    No transition-table change was needed, which is worth recording because it was the first thing
+    considered. An order holding a customer's goods can already advance `CONFIRMED -> ACTIVE`, and
+    `ACTIVE -> CANCELLATION_REVIEW` exists -- so the path is there, and the refusal simply names it.
+    An order with laundry in the shop *should* be `ACTIVE`; adding `CONFIRMED -> CANCELLATION_REVIEW`
+    would have let it skip the state that says so.
+
+    `custody_and_financial_resolution_recorded` now means one of three things a named staff member
+    states: `NOT_RECEIVED`, `RETURNED_UNWASHED_REFUNDED`, or `SHOP_FAULT_NO_CHARGE`.
+
+    **There is deliberately no fourth code for "washed, walked away, no money".** A customer whose
+    laundry has been washed does not cancel -- they pay and collect, or the goods stay with the
+    shop. The protection is physical custody, which is also why the missing guard never cost the
+    business anything, and the absence of the fourth member is what keeps that from being
+    negotiable at the counter. The console says so in Vietnamese on the field itself.
+
+    Measured over HTTP:
+
+        cancel outright, work begun        -> 409  work has begun; cancel through cancellation review
+        advance to confirmation, confirm, active, into review -> 200
+        cancel with no resolution          -> 409  cancellation resolution is incomplete
+        cancel with a resolution           -> 200
+        the resolution on the event ledger -> RETURNED_UNWASHED_REFUNDED
+  the_guard_that_could_never_fire: >-
+    The sharpest part of the original finding, and the reason this was not simply a missing check.
+
+    `CANCELLATION_REVIEW -> CANCELLED` was the **only** guarded edge into `CANCELLED`, and it could
+    never succeed: `cancellation_approved` and `custody_and_financial_resolution_recorded` both
+    default `False` and `packages/db/.../orders.py` never passed either. Every other edge into
+    `CANCELLED` had no guard at all. So the reviewed path always refused and the unreviewed path
+    always succeeded -- the guard was inverted in practice, and 1000-odd green tests saw neither
+    half, because no test had ever tried to cancel a started order.
+
+    Both halves are now reachable and both are exercised: the reviewed path succeeds with a
+    resolution and refuses without one, and the unreviewed path refuses once work has begun.
+
+    A note on the probe, because it repeated a mistake this repository keeps finding. Its first
+    version asserted "cannot resume past the interruption" *after* the rewash resume -- by which
+    point the order was `IN_PROCESS` and the remembered state was cleared, so it was really
+    testing the ordinary forward-only sequence rule while claiming to test the exception bound. It
+    passed, for the wrong reason. The step now runs while the order is still in `EXCEPTION`, and
+    the refusal message it reports is the one it names.
+  rollback_assessment: >-
+    See rollback_impact. One new enum with three members, two guards and one helper in the domain,
+    one command field and its derivation in the repository, one request field and one service
+    parameter, one conditional console field with its Vietnamese gloss, five domain tests, and the
+    regenerated console manifest, disclosure registry and internal API contract.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

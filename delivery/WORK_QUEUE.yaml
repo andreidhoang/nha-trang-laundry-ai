@@ -3125,7 +3125,7 @@ items:
 - id: ORDER-EXIT-001
   phase: PRODUCTION_HARDENING
   title: An order that cannot finish and an order that finishes without paying
-  status: PENDING
+  status: COMPLETE
   priority: 254
   depends_on:
   - REVERIFY-REGRESSIONS-002
@@ -3148,8 +3148,7 @@ items:
   - a_started_order_cannot_be_cancelled_without_resolution
   - the_guard_that_could_never_fire
   - rollback_assessment
-  blocked_by_decisions:
-  - DEC-024
+  blocked_by_decisions: []
 - id: COUNTER-DEFECTS-001
   phase: PRODUCTION_HARDENING
   title: The defects a counter day reaches

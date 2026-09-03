@@ -546,7 +546,7 @@ decisions:
       make, not a decision to re-run.
   - id: DEC-024
     title: How an order leaves the system when the normal path does not apply
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW, ORDER_STATUS, BOOKING]
     fail_closed_behavior: REQUIRE_HUMAN
@@ -569,9 +569,52 @@ decisions:
       cancellation loses the money silently. `ORDER-EXIT-001` is written and deliberately not
       started; `SHOP-CUTOVER-001` does not proceed while this is open, because both cases occur in
       the first week of real counter operation.
+    resolved_at: '2026-09-03'
+    decision_record: docs/DECISION_REQUEST_ORDER_EXIT_2026-08.md
+    resolution: >-
+      Delegated by the owner to the engineer on record on 2026-09-03: "make decision with research
+      truth and senior engineer thinking simply answer all the questions and execute". The
+      recommendation in the linked packet is therefore the answer rather than a proposal. If any
+      part of it is wrong about how the shop actually works, that is a correction to make, not a
+      decision to re-run.
+
+      **Production exception: resumable.** An exception is an interruption, not an outcome.
+      `DEC-004` already assumes the laundry gets finished -- free rewash within 7 days on store
+      fault, compensation capped at 5x the cleaning fee -- so a state machine in which a found stain
+      permanently orphans a paid order contradicts the shop's own remedy policy. `EXCEPTION` stores
+      the state it interrupted, exactly as `ON_HOLD` does, and may resume to that state or to any
+      earlier point in the production sequence: a stain found at quality check needs a rewash, which
+      is backward movement, and requiring an attributed exception first is the control on it. An
+      exception cannot be raised before production starts, for the same reason a hold cannot --
+      nothing has happened to the laundry yet, and that case is a commercial cancellation.
+
+      **Late cancellation: free before work starts, reviewed after.** A direct cancellation is
+      permitted only while production is `NOT_STARTED`, intake is not `ACCEPTED`, and nothing has
+      been paid -- the customer changing their mind at the counter, which is the common case and
+      which staff would work around on paper if it required a review step. Once any of those is
+      false the order cancels only through `CANCELLATION_REVIEW`, and `cancellation_approved` and
+      `custody_and_financial_resolution_recorded` become real inputs a named staff member sets, as
+      an attributed append-only attestation in the same shape `DEC-021` and `DEC-023` chose. One
+      person suffices; a shift with one person on duty is a real shift.
+
+      **What the custody flag means**, which is the substance of the decision. One of three:
+      `NOT_RECEIVED` (nothing was taken in, so nothing to return and nothing to refund);
+      `RETURNED_UNWASHED_REFUNDED` (laundry handed back and any prepayment refunded in full); or
+      `SHOP_FAULT_NO_CHARGE` (the goods cannot be returned as received, nothing is charged, and an
+      incident opens under `DEC-004`).
+
+      **Refund position: full refund when nothing was washed, no charge when it is the shop's
+      fault, and otherwise the order completes rather than cancels.** That last clause is the
+      important one and it costs no code. A customer whose laundry has been washed does not cancel
+      -- they pay and collect, or the goods stay with the shop. The protection is physical custody,
+      which is also why this has never bitten, and the system enforces it by offering no resolution
+      code for "washed, walked away, no money".
+
+      The goods are handed back by the staff member at the counter, recorded by name. No
+      driver-facing surface exists and none is needed.
   - id: DEC-025
     title: Who is told when the shop's software is in trouble
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW]
     fail_closed_behavior: NOT_SUPPORTED
@@ -589,9 +632,35 @@ decisions:
       Nothing is blocked. The checks run, exit non-zero for a host scheduler, and emit a structured
       line. What is missing is delivery to a person, so the shop would find out about a full disk
       when it cannot take an order. An alert nobody receives is not an alert.
+    resolved_at: '2026-09-03'
+    decision_record: docs/DECISION_REQUEST_ALERT_ROUTING_2026-09.md
+    resolution: >-
+      Delegated by the owner to the engineer on record on 2026-09-03, with the same instruction as
+      `DEC-024`.
+
+      **A Telegram bot to the owner's phone, with host cron mail retained as the floor.** Not local
+      mail alone: reading it requires connecting to the host, and the two checks that matter -- the
+      WAL archive gap and the filling volume -- are precisely the ones nobody goes looking for. Not
+      a paging provider: disproportionate for one host and one shop. `DEC-005` already selected
+      Telegram for Shadow validation, so this is not a new counterparty in substance.
+
+      Three constraints, and they are what keep this from becoming a capability by accident. A
+      **separate** bot from any future customer bot, one hardcoded recipient, and **no inbound
+      handler**. The check script posts directly over HTTPS and never through the outbox, the
+      channel adapter or the consent machinery -- so this is not an automated send, and
+      `FEATURE_AUTOMATED_SENDS_ENABLED` stays false and stays meaningful. And the credential lives
+      in `/run/secrets` like every other, never in a repository file.
+
+      **Hours.** The WAL gap, the volume and the capability flags alert at any hour: each is a
+      silent loss of a guarantee rather than a visible outage. The console-reachability check alerts
+      only between 07:00 and 21:00 -- a console down at 03:00 that is back before opening does not
+      matter, and one down at 07:45 matters enormously.
+
+      Recipient: the owner, who is the person who would fix any of the four. Not the counter staff,
+      who cannot act on a full disk.
   - id: DEC-026
     title: Who holds the key that can read the shop's backups
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW]
     fail_closed_behavior: NOT_SUPPORTED
@@ -611,6 +680,35 @@ decisions:
       script all exist, and none can run without a recipient key. `BACKUP-RESTORE-001` completes on
       a drill result rather than on configuration, and the drill needs the identity this decision
       places. Deferring means the deployment runs with no recovery at all.
+    resolved_at: '2026-09-03'
+    decision_record: docs/DECISION_REQUEST_BACKUP_KEY_CUSTODY_2026-09.md
+    resolution: >-
+      Delegated by the owner to the engineer on record on 2026-09-03, with the same instruction as
+      `DEC-024`.
+
+      **The owner's zero-knowledge password manager as the primary, plus one offline copy stored
+      physically away from both the shop and the server.** This departs from the packet's own
+      recommendation, deliberately.
+
+      The packet's objection to a password manager was that the vendor could in principle read the
+      shop's history. For a zero-knowledge manager that is overstated: it holds ciphertext under the
+      owner's own master key. Meanwhile the failure mode of "the owner holds it, second copy in a
+      sealed envelope" is **total and irreversible** -- envelope discipline decays, and this is a
+      one-person operations team, so a dead laptop plus an envelope in the same building as the
+      server loses every backup forever.
+
+      What decides it is what the archive actually contains: order financial records and staff
+      identity. **No customer personal data at all** -- no address column exists in any migration, a
+      walk-in is a counter ticket under `DEC-013`, there is no customer-record layer under
+      `DEC-015`, and with no channel connected there are no message bodies. So the counterparty
+      exposure is low-stakes and the irreversible-loss risk is high-stakes. Optimise against loss.
+
+      Holder: the owner. Restore authoriser: the owner. Loss is acknowledged as final -- there is no
+      vendor to call and no copy on the server, by design.
+
+      The key pair is generated on the owner's own device, never on the host and never by an agent.
+      The public half becomes the `r1_backup_encryption_recipients` secret; the private half never
+      touches the host, this repository, or CI.
   - id: DEC-027
     title: What the first production release contains, and what it deliberately leaves out
     status: RESOLVED

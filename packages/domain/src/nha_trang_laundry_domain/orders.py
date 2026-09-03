@@ -127,13 +127,42 @@ def transition_commercial(
         raise OrderTransitionError("INVALID_STATE_TRANSITION: illegal commercial transition")
     if target is CommercialOrderStatus.ACTIVE and state.intake is not IntakeStatus.ACCEPTED:
         raise OrderTransitionError("INVALID_STATE_TRANSITION: intake is not accepted")
-    if (
-        state.commercial is CommercialOrderStatus.CANCELLATION_REVIEW
-        and target is CommercialOrderStatus.CANCELLED
-        and not (cancellation_approved and custody_and_financial_resolution_recorded)
-    ):
-        raise OrderTransitionError("HUMAN_APPROVAL_REQUIRED: cancellation resolution is incomplete")
+    if target is CommercialOrderStatus.CANCELLED:
+        if state.commercial is CommercialOrderStatus.CANCELLATION_REVIEW:
+            if not (cancellation_approved and custody_and_financial_resolution_recorded):
+                raise OrderTransitionError(
+                    "HUMAN_APPROVAL_REQUIRED: cancellation resolution is incomplete"
+                )
+        elif _work_has_begun(state):
+            # DEC-024. Every other edge into CANCELLED had no guard at all, so an order whose
+            # laundry was already in a machine could be cancelled outright and the money never
+            # recorded -- while the one path that *is* guarded could never succeed, because its two
+            # flags default false and no caller passed them. The guarded path was the impossible
+            # one.
+            #
+            # Free before work starts, reviewed after. A customer changing their mind at the counter
+            # is the common case and staff would work around a review step for it; an order with
+            # laundry in the shop belongs in `CANCELLATION_REVIEW`, reached by advancing to ACTIVE
+            # first, which is where an order holding a customer's goods should be anyway.
+            raise OrderTransitionError(
+                "HUMAN_APPROVAL_REQUIRED: work has begun; cancel through cancellation review"
+            )
     return replace(state, commercial=target)
+
+
+def _work_has_begun(state: OrderState) -> bool:
+    """Whether anything has happened that a cancellation would have to resolve.
+
+    Any one of these means the shop is holding something of the customer's, has done work, or has
+    taken money -- and each is a thing a named staff member has to account for before the order can
+    disappear.
+    """
+
+    return (
+        state.production is not ProductionStatus.NOT_STARTED
+        or state.intake is IntakeStatus.ACCEPTED
+        or state.balance is not OrderBalanceStatus.UNPAID
+    )
 
 
 def transition_intake(
@@ -191,14 +220,42 @@ def transition_production(state: OrderState, target: ProductionStatus) -> OrderS
         if target is not state.production_resume_status:
             raise OrderTransitionError("INVALID_STATE_TRANSITION: invalid hold resume target")
         return replace(state, production=target, production_resume_status=None)
-    if current in {ProductionStatus.RELEASED, ProductionStatus.EXCEPTION}:
+    if current is ProductionStatus.EXCEPTION:
+        # DEC-024. `EXCEPTION` used to be terminal alongside `RELEASED`, and it also discarded the
+        # state it interrupted -- so a paid order in which staff recorded a stain or a machine fault
+        # could never reach `COMPLETED` or `CANCELLED`. It sat ACTIVE forever with the goods in the
+        # shop, which contradicts `DEC-004`: the remedy policy gives a free rewash within 7 days on
+        # store fault, and therefore assumes the laundry gets finished.
+        #
+        # An exception resumes to the state it interrupted, **or to any earlier point in the
+        # sequence**. That second half is the case that matters: a stain found at quality check
+        # needs a rewash, which is backward movement, and the forward-only rule below would refuse
+        # it. Requiring an attributed exception first is the control on going backwards -- it cannot
+        # happen quietly.
+        resume = state.production_resume_status
+        if resume is None or target not in PRODUCTION_SEQUENCE:
+            raise OrderTransitionError("INVALID_STATE_TRANSITION: invalid exception resume target")
+        if PRODUCTION_SEQUENCE.index(target) > PRODUCTION_SEQUENCE.index(resume):
+            raise OrderTransitionError(
+                "INVALID_STATE_TRANSITION: an exception cannot resume past where it interrupted"
+            )
+        return replace(state, production=target, production_resume_status=None)
+    if current is ProductionStatus.RELEASED:
         raise OrderTransitionError("INVALID_STATE_TRANSITION: production is terminal")
     if target is ProductionStatus.ON_HOLD:
         if current is ProductionStatus.NOT_STARTED:
             raise OrderTransitionError("INVALID_STATE_TRANSITION: unstarted work cannot be held")
         return replace(state, production=target, production_resume_status=current)
     if target is ProductionStatus.EXCEPTION:
-        return replace(state, production=target, production_resume_status=None)
+        # Refused before work starts, for the same reason a hold is: nothing has happened to the
+        # laundry yet, so there is no production exception to record and the case is a commercial
+        # cancellation. It also keeps `production_resume_status` inside the `0007` CHECK
+        # constraint, which does not admit `NOT_STARTED`.
+        if current is ProductionStatus.NOT_STARTED:
+            raise OrderTransitionError(
+                "INVALID_STATE_TRANSITION: unstarted work has no production exception"
+            )
+        return replace(state, production=target, production_resume_status=current)
     current_index = PRODUCTION_SEQUENCE.index(current)
     if target not in PRODUCTION_SEQUENCE or PRODUCTION_SEQUENCE.index(target) != current_index + 1:
         raise OrderTransitionError("INVALID_STATE_TRANSITION: illegal production transition")

@@ -280,7 +280,72 @@ def main() -> int:
         for result in results:
             print(f"  {'OK ' if result.passed else '!!!'} {result.name}: {result.detail}")
 
-    return 0 if all(result.passed for result in results) else 1
+    failures = [result for result in results if not result.passed]
+    if failures:
+        deliver_alert(failures, now=datetime.now(UTC))
+
+    return 0 if not failures else 1
+
+
+#: `DEC-025`. `console_reachable` is the only check whose failure is a visible outage rather than a
+#: silent loss of a guarantee, and a console down at 03:00 that recovers before opening does not
+#: need anybody woken. The other three alert at any hour: a stale archive and a filling disk are
+#: losses nobody would otherwise notice, and a capability flag enabled without a signed manifest is
+#: a security incident under the operations spec.
+QUIET_HOURS_CHECKS = frozenset({"console_reachable"})
+QUIET_HOURS_START = 21
+QUIET_HOURS_END = 7
+
+
+def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
+    """Send one message to the owner, per `DEC-025`. Returns whether anything was sent.
+
+    **This is not a customer channel and must never become one.** It posts directly over HTTPS from
+    this script -- never through the outbox, the channel adapter or the consent machinery -- so it
+    is not an automated send and `FEATURE_AUTOMATED_SENDS_ENABLED` stays false and stays meaningful.
+    The bot is separate from any future customer bot, the recipient is a single configured chat, and
+    there is no inbound handler anywhere.
+
+    Unconfigured is not an error. `DEC-025` also keeps the host scheduler's own mail as the floor,
+    so a deployment that has not set the token still surfaces failures through a non-zero exit --
+    what it must not do is pretend an alert went out.
+    """
+
+    token_file = os.environ.get("R1_ALERT_TELEGRAM_TOKEN_FILE")
+    chat_id = os.environ.get("R1_ALERT_TELEGRAM_CHAT_ID")
+    if not token_file or not chat_id:
+        return False
+
+    quiet = now.hour >= QUIET_HOURS_START or now.hour < QUIET_HOURS_END
+    reportable = [
+        failure for failure in failures if not (quiet and failure.name in QUIET_HOURS_CHECKS)
+    ]
+    if not reportable:
+        return False
+
+    try:
+        token = _Path(token_file).read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+
+    lines = ["Bảng vận hành — cần xem ngay:"]
+    lines.extend(f"• {failure.name}: {failure.detail}" for failure in reportable)
+    body = urllib.parse.urlencode(
+        {"chat_id": chat_id, "text": "\n".join(lines), "disable_web_page_preview": "true"}
+    ).encode()
+
+    try:
+        request = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return bool(200 <= response.status < 300)
+    except (urllib.error.URLError, OSError, ValueError):
+        # A failed alert must not mask the failure it was carrying. The exit code and the structured
+        # line already stand on their own; swallowing this keeps the check's own verdict intact.
+        return False
 
 
 if __name__ == "__main__":

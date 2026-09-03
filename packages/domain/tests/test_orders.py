@@ -156,3 +156,114 @@ def test_a_terminal_commercial_status_freezes_intake_and_production() -> None:
         )
         with pytest.raises(OrderTransitionError, match="order is closed"):
             transition_production(released, ProductionStatus.IN_PROCESS)
+
+
+def test_a_production_exception_is_an_interruption_not_an_outcome() -> None:
+    """`DEC-024`: `EXCEPTION` had zero outgoing edges, so a stain orphaned a paid order forever.
+
+    It also discarded the state it interrupted. `DEC-004` gives a free rewash within 7 days on
+    store fault, so the shop's own remedy policy assumes the laundry gets finished -- a state
+    machine in which it cannot is the policy contradicting itself.
+    """
+
+    working = state(
+        commercial=CommercialOrderStatus.ACTIVE,
+        intake=IntakeStatus.ACCEPTED,
+        production=ProductionStatus.QUALITY_CHECK,
+    )
+    excepted = transition_production(working, ProductionStatus.EXCEPTION)
+    assert excepted.production is ProductionStatus.EXCEPTION
+    # The interrupted state is remembered rather than thrown away, exactly as a hold does.
+    assert excepted.production_resume_status is ProductionStatus.QUALITY_CHECK
+
+    resumed = transition_production(excepted, ProductionStatus.QUALITY_CHECK)
+    assert resumed.production is ProductionStatus.QUALITY_CHECK
+    assert resumed.production_resume_status is None
+
+    # And onward to release, so the order can actually reach COMPLETED.
+    released = transition_production(
+        transition_production(resumed, ProductionStatus.READY_AT_STORE),
+        ProductionStatus.RELEASED,
+    )
+    assert released.production is ProductionStatus.RELEASED
+
+
+def test_an_exception_may_resume_backwards_for_a_rewash_but_not_forwards() -> None:
+    """The half of the rule that matters: a stain found at quality check needs the load rewashed.
+
+    That is backward movement, which the forward-only sequence rule refuses. Requiring an
+    attributed exception first is the control -- production cannot walk backwards quietly.
+    """
+
+    excepted = transition_production(
+        state(
+            commercial=CommercialOrderStatus.ACTIVE,
+            intake=IntakeStatus.ACCEPTED,
+            production=ProductionStatus.QUALITY_CHECK,
+        ),
+        ProductionStatus.EXCEPTION,
+    )
+
+    rewashing = transition_production(excepted, ProductionStatus.IN_PROCESS)
+    assert rewashing.production is ProductionStatus.IN_PROCESS
+
+    # But an exception is not a shortcut: it cannot resume past where it interrupted.
+    with pytest.raises(OrderTransitionError, match="cannot resume past"):
+        transition_production(excepted, ProductionStatus.READY_AT_STORE)
+
+
+def test_unstarted_work_has_no_production_exception() -> None:
+    """Same reason a hold is refused there, plus the `0007` CHECK does not admit NOT_STARTED."""
+
+    with pytest.raises(OrderTransitionError, match="unstarted work has no production exception"):
+        transition_production(
+            state(commercial=CommercialOrderStatus.ACTIVE, intake=IntakeStatus.ACCEPTED),
+            ProductionStatus.EXCEPTION,
+        )
+
+
+def test_a_cancellation_is_free_before_work_starts_and_reviewed_after() -> None:
+    """`DEC-024`: the guard was inverted in practice.
+
+    `CANCELLATION_REVIEW -> CANCELLED` was the only guarded edge and could never succeed, because
+    its two flags default false and no caller passed them. Every other edge into `CANCELLED` had no
+    guard at all -- so the reviewed path always refused and the unreviewed path always succeeded.
+    """
+
+    # Nothing taken in, nothing paid: the customer changed their mind at the counter.
+    untouched = state(commercial=CommercialOrderStatus.CONFIRMED)
+    assert (
+        transition_commercial(untouched, CommercialOrderStatus.CANCELLED).commercial
+        is CommercialOrderStatus.CANCELLED
+    )
+
+    # Laundry received and a machine running: this is the case that used to succeed silently.
+    for started in (
+        state(commercial=CommercialOrderStatus.CONFIRMED, intake=IntakeStatus.ACCEPTED),
+        state(
+            commercial=CommercialOrderStatus.CONFIRMED,
+            intake=IntakeStatus.ACCEPTED,
+            production=ProductionStatus.IN_PROCESS,
+        ),
+        state(commercial=CommercialOrderStatus.CONFIRMED, balance=OrderBalanceStatus.PAID),
+    ):
+        with pytest.raises(OrderTransitionError, match="work has begun"):
+            transition_commercial(started, CommercialOrderStatus.CANCELLED)
+
+
+def test_the_reviewed_cancellation_now_has_a_way_to_succeed() -> None:
+    review = transition_commercial(
+        state(commercial=CommercialOrderStatus.ACTIVE, intake=IntakeStatus.ACCEPTED),
+        CommercialOrderStatus.CANCELLATION_REVIEW,
+    )
+
+    with pytest.raises(OrderTransitionError, match="HUMAN_APPROVAL_REQUIRED"):
+        transition_commercial(review, CommercialOrderStatus.CANCELLED)
+
+    cancelled = transition_commercial(
+        review,
+        CommercialOrderStatus.CANCELLED,
+        cancellation_approved=True,
+        custody_and_financial_resolution_recorded=True,
+    )
+    assert cancelled.commercial is CommercialOrderStatus.CANCELLED

@@ -154,6 +154,31 @@ MODES_EXPECTING_PICKUP: Final = frozenset(
 )
 
 
+class CustodyResolution(StrEnum):
+    """What happened to the laundry and the money when an order was cancelled after work began.
+
+    `DEC-024`. The two flags on `transition_commercial` existed and no caller ever passed them, so
+    the one guarded cancellation path always refused while the unguarded one always succeeded. This
+    enum is the content of `custody_and_financial_resolution_recorded`: a named staff member says
+    which of three things happened, and the order records it.
+
+    There is deliberately **no code for "washed, walked away, no money"**. A customer whose laundry
+    has been washed does not cancel -- they pay and collect, or the goods stay with the shop. The
+    protection is physical custody, which is also why the missing guard never cost the business
+    anything, and the absence of a fourth member is what keeps that rule from being quietly
+    negotiable at the counter.
+    """
+
+    #: Nothing was taken in. Nothing to hand back and nothing to refund.
+    NOT_RECEIVED = "NOT_RECEIVED"
+    #: The laundry went back unwashed and any prepayment was refunded in full.
+    RETURNED_UNWASHED_REFUNDED = "RETURNED_UNWASHED_REFUNDED"
+    #: The goods cannot be returned as received. Nothing is charged, and an incident opens under
+    #: `DEC-004` -- free rewash within 7 days on store fault, compensation capped at 5x the
+    #: cleaning fee, staff approving up to 100,000d.
+    SHOP_FAULT_NO_CHARGE = "SHOP_FAULT_NO_CHARGE"
+
+
 class CommercialOrderStatus(StrEnum):
     DRAFT = "DRAFT"
     REQUESTED = "REQUESTED"

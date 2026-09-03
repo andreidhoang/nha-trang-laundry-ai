@@ -78,6 +78,19 @@ const COMMERCIAL_TARGETS = [
   "COMPLETED",
 ];
 
+/**
+ * `CustodyResolution`, exactly as `DEC-024` settled it.
+ *
+ * Three members and deliberately not four: there is no code for "washed, walked away, no money",
+ * because a customer whose laundry has been washed does not cancel — they pay and collect, or the
+ * goods stay with the shop. The absence is the rule, so it cannot be negotiated at the counter.
+ */
+const CUSTODY_RESOLUTIONS = [
+  "NOT_RECEIVED",
+  "RETURNED_UNWASHED_REFUNDED",
+  "SHOP_FAULT_NO_CHARGE",
+];
+
 /** `OrderCreateRequest.quote_snapshot_hash`, exactly as the server's pattern spells it. */
 const SNAPSHOT_HASH = /^JCS-SHA256-V1:[0-9a-f]{64}$/;
 
@@ -181,7 +194,17 @@ export function render_(_context) {
   };
 
   /** @type {{orderId: string, rowVersion: string, target: string}} */
-  const move = { orderId: "", rowVersion: "", target: COMMERCIAL_TARGETS[0] };
+  // DEC-024. `custodyResolution` is sent only when the target is CANCELLED, and the server decides
+  // whether it was needed: a cancellation before any work has begun does not require one, and one
+  // after work has begun is refused without it. The console does not try to predict which, because
+  // that would be duplicating the legal-transition table the note at the top of this file warns
+  // against -- it offers the field and lets the refusal explain itself.
+  const move = {
+    orderId: "",
+    rowVersion: "",
+    target: COMMERCIAL_TARGETS[0],
+    custodyResolution: "",
+  };
 
   const createBody = h("div");
   const createResultHost = h("div", { class: "stack" });
@@ -499,7 +522,10 @@ export function render_(_context) {
         `/internal/v1/orders/${encodeURIComponent(move.orderId.trim())}/transition`,
         {
           method: "POST",
-          body: { target: move.target },
+          body:
+            move.target === "CANCELLED" && move.custodyResolution
+              ? { target: move.target, custody_resolution: move.custodyResolution }
+              : { target: move.target },
           idempotencyKey: transitionSubmission.key(),
           ifMatch: Number.parseInt(move.rowVersion.trim(), 10),
         },
@@ -588,6 +614,17 @@ export function render_(_context) {
     targetSelect.addEventListener("change", (event) => {
       move.target = /** @type {HTMLSelectElement} */ (event.target).value;
       transitionSubmission.reset();
+      redrawMove();
+    });
+
+    const custodySelect = enumSelect(
+      "custody_resolution",
+      ["", ...CUSTODY_RESOLUTIONS],
+      move.custodyResolution,
+    );
+    custodySelect.addEventListener("change", (event) => {
+      move.custodyResolution = /** @type {HTMLSelectElement} */ (event.target).value;
+      transitionSubmission.reset();
     });
 
     const submit = h(
@@ -617,6 +654,20 @@ export function render_(_context) {
         hint: "Máy chủ quyết định chuyển đổi nào hợp lệ.",
         control: targetSelect,
       }),
+      ...(move.target === "CANCELLED"
+        ? [
+            labelled({
+              id: "move-custody",
+              label: "Đồ và tiền đã xử lý thế nào",
+              hint:
+                "Chỉ cần khi đơn đã bắt đầu làm: đã nhận đồ, đã vào máy, hay đã thu tiền. " +
+                "Khách đổi ý ngay tại quầy khi chưa nhận đồ thì để trống. " +
+                "Không có mục nào cho “đã giặt rồi khách bỏ đi mà không trả tiền”: " +
+                "đồ đã giặt thì khách trả tiền và lấy về, hoặc đồ ở lại tiệm (DEC-024).",
+              control: custodySelect,
+            }),
+          ]
+        : []),
       h("div", { class: "action-bar" }, gated(submit, writeVerdict)),
       moveResult,
     );

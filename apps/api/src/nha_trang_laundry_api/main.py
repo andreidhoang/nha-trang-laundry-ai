@@ -51,6 +51,7 @@ from nha_trang_laundry_domain.canonical import MAX_CANONICAL_INT
 from nha_trang_laundry_domain.catalog import (
     ApprovalAction,
     CommercialOrderStatus,
+    CustodyResolution,
     FulfillmentMode,
     IntakeStatus,
     ProductionStatus,
@@ -231,6 +232,11 @@ class OrderCreateRequest(StrictRequest):
 
 class CommercialTransitionRequest(StrictRequest):
     target: CommercialOrderStatus
+    #: `DEC-024`. Required only to cancel an order whose work has begun, and the refusal says so.
+    #: Supplying it is the approval: a named staff member states what happened to the laundry and
+    #: the money, and the order records it. There is deliberately no separate "approved" boolean --
+    #: a second field nobody fills is how the original defect started.
+    custody_resolution: CustodyResolution | None = None
 
 
 class IntakeTransitionRequest(StrictRequest):
@@ -881,6 +887,7 @@ def transition_order(
             expected_row_version=expected,
             idempotency_key=idempotency_key,
             principal=principal,
+            custody_resolution=request.custody_resolution,
         )
     except (OrderStateError, OrderAuthorizationError, IdempotencyConflictError) as error:
         _raise_operations_error(error)

@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
+    CustodyResolution,
     FulfillmentMode,
     IntakeStatus,
     OrderBalanceStatus,
@@ -64,6 +65,12 @@ class OrderTransitionCommand:
     intake_readiness: IntakeReadiness | None = None
     production_accepted_at: datetime | None = None
     occurred_at: datetime | None = None
+    #: `DEC-024`. What a named staff member says happened to the laundry and the money when an
+    #: order is cancelled after work began. `transition_commercial` has always taken the two flags
+    #: this fills and no caller ever passed them, so the reviewed cancellation path could not
+    #: succeed while the unreviewed one always did. Supplying a resolution *is* the approval --
+    #: there is no separate boolean, because a second field nobody sets is how this defect started.
+    custody_resolution: CustodyResolution | None = None
 
 
 @dataclass(frozen=True)
@@ -436,7 +443,16 @@ class OrderRepository:
             current = _order_state(row)
             try:
                 if command.commercial_target is not None:
-                    next_state = transition_commercial(current, command.commercial_target)
+                    # DEC-024: a resolution supplied by a named staff member is the approval. Both
+                    # flags derive from the one field, so there is no way to approve a cancellation
+                    # without saying what happened to the customer's laundry and their money.
+                    resolved = command.custody_resolution is not None
+                    next_state = transition_commercial(
+                        current,
+                        command.commercial_target,
+                        cancellation_approved=resolved,
+                        custody_and_financial_resolution_recorded=resolved,
+                    )
                     dimension = "commercial"
                     target = command.commercial_target.value
                 elif command.intake_target is not None:
@@ -516,7 +532,21 @@ class OrderRepository:
                     aggregate_id=command.order_id,
                     aggregate_version=next_version,
                     event_type="ORDER_STATE_TRANSITIONED",
-                    event_payload={"dimension": dimension, "target": target},
+                    # DEC-024's attestation lives here rather than in a table of its own. The
+                    # event ledger is already append-only, already carries the acting staff id, and
+                    # `domain_events` is unique on (type, id, version) -- so the resolution is
+                    # attributed and immutable without a fifth aggregate. `DEC-021` got its own
+                    # table because a quote acceptance is spent by a later command; nothing spends
+                    # a cancellation.
+                    event_payload=(
+                        {"dimension": dimension, "target": target}
+                        if command.custody_resolution is None
+                        else {
+                            "dimension": dimension,
+                            "target": target,
+                            "custody_resolution": command.custody_resolution.value,
+                        }
+                    ),
                     audit_action="ORDER_STATE_TRANSITION",
                     actor_type="STAFF",
                     actor_id=command.principal.staff_user_id,

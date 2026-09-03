@@ -167,3 +167,113 @@ def test_the_thresholds_match_the_published_backup_policy() -> None:
     # check sits at the recovery point rather than the interval on purpose: one late segment is not
     # yet a lost guarantee, and paging on it would be paging on ordinary variance.
     assert policy["wal_archive_max_interval_seconds"] < CHECKS.MAX_ARCHIVE_GAP_SECONDS
+
+
+def test_an_unconfigured_alert_channel_is_not_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`DEC-025` keeps the host scheduler's mail as the floor, so silence must stay honest.
+
+    A deployment that has not set the token still surfaces failures through the exit code. What it
+    must never do is report that an alert went out when none did.
+    """
+
+    monkeypatch.delenv("R1_ALERT_TELEGRAM_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("R1_ALERT_TELEGRAM_CHAT_ID", raising=False)
+
+    sent = CHECKS.deliver_alert(
+        [_failure("database_volume")], now=datetime(2026, 9, 3, 10, tzinfo=UTC)
+    )
+
+    assert sent is False
+
+
+def test_a_silent_loss_alerts_at_any_hour_and_an_outage_does_not(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The distinction `DEC-025` drew, and the reason it is not "always" or "office hours".
+
+    A console down at 03:00 that recovers before the shop opens needs nobody woken. A stale archive
+    or a filling disk at 03:00 is a guarantee quietly going away, and nothing else will mention it.
+    """
+
+    token = tmp_path / "token"
+    token.write_text("probe-token", encoding="utf-8")
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_TOKEN_FILE", str(token))
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_CHAT_ID", "1234")
+
+    posted: list[str] = []
+
+    def _capture(request: object, timeout: float = 0) -> object:
+        posted.append(getattr(request, "data", b"").decode())
+
+        class _Response:
+            status = 200
+
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+        return _Response()
+
+    monkeypatch.setattr(CHECKS.urllib.request, "urlopen", _capture)
+
+    night = datetime(2026, 9, 3, 3, tzinfo=UTC)
+    assert CHECKS.deliver_alert([_failure("console_reachable")], now=night) is False
+    assert posted == []
+
+    assert CHECKS.deliver_alert([_failure("wal_archive_gap")], now=night) is True
+    assert len(posted) == 1
+
+    day = datetime(2026, 9, 3, 10, tzinfo=UTC)
+    assert CHECKS.deliver_alert([_failure("console_reachable")], now=day) is True
+    assert len(posted) == 2
+
+
+def test_a_failed_alert_does_not_mask_the_failure_it_was_carrying(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("probe-token", encoding="utf-8")
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_TOKEN_FILE", str(token))
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_CHAT_ID", "1234")
+
+    def _explode(*_: object, **__: object) -> object:
+        raise OSError("no route to host")
+
+    monkeypatch.setattr(CHECKS.urllib.request, "urlopen", _explode)
+
+    # Returns False rather than raising: the check's own verdict and exit code stand on their own,
+    # and a broken alerting path must not become a broken check.
+    assert (
+        CHECKS.deliver_alert(
+            [_failure("database_volume")], now=datetime(2026, 9, 3, 10, tzinfo=UTC)
+        )
+        is False
+    )
+
+
+def test_alerting_never_touches_the_send_machinery() -> None:
+    """It is a monitoring notification, not an automated send, and the boundary is load-bearing.
+
+    Going through the outbox would make this an outbound customer-messaging path in everything but
+    intent, and `FEATURE_AUTOMATED_SENDS_ENABLED` would stop meaning what it says.
+    """
+
+    source = (ROOT / "scripts/check_shop_operations.py").read_text("utf-8")
+    imports = [
+        line
+        for line in source.splitlines()
+        if line.startswith(("import ", "from ")) or line.lstrip().startswith(("import ", "from "))
+    ]
+    # Asserted over the import lines rather than the whole file: the module docstring names the
+    # outbox and suppression precisely to explain that neither has a referent here, and a naive
+    # substring search over prose flags its own explanation.
+    joined = "\n".join(imports)
+    for forbidden in ("outbox", "channel", "consent", "manual_send", "OutboxEvent"):
+        assert forbidden not in joined, f"{forbidden} reached the alerting path"
+    assert "urllib.request" in joined, "the alert posts directly, so this import is the mechanism"
+
+
+def _failure(name: str) -> object:
+    return CHECKS.CheckResult(name=name, passed=False, detail="synthetic", fields={})

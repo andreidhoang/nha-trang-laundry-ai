@@ -90,6 +90,7 @@ from nha_trang_laundry_domain.catalog import (
     ActorRole,
     ApprovalAction,
     CommercialOrderStatus,
+    CustodyResolution,
     FulfillmentMode,
     IntakeStatus,
     ProductionStatus,
@@ -303,6 +304,7 @@ class OperationsService:
         expected_row_version: int,
         idempotency_key: str,
         principal: StaffPrincipal,
+        custody_resolution: CustodyResolution | None = None,
     ) -> StoredOrder:
         with self._connection_factory(self._database_url) as connection:
             return self._orders.transition(
@@ -314,6 +316,7 @@ class OperationsService:
                     idempotency_key,
                     uuid4(),
                     commercial_target=target,
+                    custody_resolution=custody_resolution,
                 ),
             )
 

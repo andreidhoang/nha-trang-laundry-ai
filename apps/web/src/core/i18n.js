@@ -137,6 +137,11 @@ export const ENUM_GLOSS = {
   RELEASED: "đã giao ra",
   ON_HOLD: "tạm dừng",
   EXCEPTION: "sự cố",
+  // DEC-024. `CustodyResolution`: what a named staff member says happened to the laundry and the
+  // money when an order is cancelled after work began.
+  NOT_RECEIVED: "chưa nhận đồ",
+  RETURNED_UNWASHED_REFUNDED: "đã trả đồ chưa giặt và hoàn tiền",
+  SHOP_FAULT_NO_CHARGE: "lỗi tiệm, không thu tiền",
   // OrderBalanceStatus
   UNPAID: "chưa thanh toán",
   PARTIALLY_PAID: "thanh toán một phần",

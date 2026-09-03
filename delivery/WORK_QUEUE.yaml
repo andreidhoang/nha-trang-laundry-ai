@@ -3200,7 +3200,7 @@ items:
 - id: SHOP-DEPLOY-001
   phase: PRODUCTION_HARDENING
   title: A production topology that can actually be reached
-  status: PENDING
+  status: COMPLETE
   priority: 257
   depends_on:
   - STORE-REGISTRY-001

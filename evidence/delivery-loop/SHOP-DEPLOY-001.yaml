@@ -1,0 +1,130 @@
+schema_version: 1
+work_item: SHOP-DEPLOY-001
+recorded_at: '2026-09-03T05:10:00+07:00'
+requirement_contract: >-
+  A one-host Zone C deployment manifest for the R1 release, whose TLS listener exists.
+
+  ADR-0007 §1 permits this shape and says why: Zone P and Zone A exist to process untrusted
+  language, and "if cost forces one host, the correct response is to delay public ingress, not to
+  collapse the boundary." R1 connects no channel and invokes no model, so there is nothing for
+  either zone to isolate.
+rollback_impact: >-
+  A clean revert of new files. `compose.r1.yaml`, `deploy/production/Caddyfile` and
+  `packages/evals/tests/test_r1_deployment_contract.py` are additions; deleting them restores the
+  previous state exactly, because `compose.production.yaml`, its contract test and the staging
+  Caddyfile are untouched.
+
+  The one coupling is `docs/runbooks/production-deploy-day.md`, which now names `compose.r1.yaml`
+  and the `r1_*` secrets. Reverting the compose file without the runbook leaves an operator
+  creating secrets no manifest reads, against a topology that cannot serve a request.
+
+  Nothing is deployed by this item and no infrastructure is provisioned.
+unresolved_assumptions: >-
+  **The console hostname is pinned in the file, not parameterised beyond a default.**
+  `console.giatlasachcong.lan` is a placeholder for one shop, and `R1_CONSOLE_HOST` overrides it.
+  Pinning one name keeps the Caddyfile reviewable and matches how `staging.internal` is pinned
+  today; a second shop on the same host would need more than a variable.
+
+  **CẦN XÁC MINH:** the hostname itself. `DEC-017` -- which name the shop goes to market under -- is
+  open, and the certificate, the DNS entry and this file must all agree with whatever the owner
+  answers. The name here is internal and never customer-facing, so it does not pre-empt that
+  decision, but it should be changed with it.
+
+  **The self-managed PostgreSQL profile is written and unproven.** It is a profile so the two
+  hosting branches cannot drift, but no self-managed instance has been run: `stop_grace_period`,
+  the `/run/postgresql` tmpfs and `read_only: true` with a named volume are all reasoned rather than
+  measured. `SHOP-RECOVERY-001` is where the archiving that branch needs is built, and the drill
+  that proves it needs a host.
+
+  **Not claimed: that the listener works on a real Linux host.** The mechanism is proven by
+  experiment below and the pattern is proven by the demo stack, but the production binding is
+  untested by definition until a host exists. `SHOP-CUTOVER-001` carries the port scan.
+
+  **Not claimed:** that this file is complete for R1. Keycloak (`SHOP-IDENTITY-001`) and the backup
+  sidecar (`SHOP-RECOVERY-001`) are services this topology will gain, and both are separate items
+  because each carries a decision or a drill of its own.
+evidence:
+  the_listener_the_staging_file_only_promised: >-
+    `compose.production.yaml` attaches `tls` only to `ingress-private`, which is `internal: true`,
+    and Docker accepts a published port on such a service and then silently discards it. Measured
+    directly on this host with two throwaway services, identical but for one network:
+
+        service   HostConfig.PortBindings                                   NetworkSettings.Ports
+        broken    {"8443/tcp":[{"HostIp":"127.0.0.1","HostPort":"18443"}]}  {"8443/tcp":[]}
+        fixed     {"8443/tcp":[{"HostIp":"127.0.0.1","HostPort":"18444"}]}  {"8443/tcp":[{...18444}]}
+
+        127.0.0.1:18443  no listener
+        127.0.0.1:18444  LISTENING
+
+    So the deploy described by `docs/runbooks/production-deploy-day.md` would have brought up four
+    healthy containers and answered nothing, with no error anywhere to explain it. The console is
+    the entire product in R1 -- no channel, no agent, no fallback -- so this was the difference
+    between a deployment and an outage nobody could diagnose.
+
+    `compose.demo.yaml:131-142` had already found and documented this, and deliberately left
+    production alone: "changing the deployed topology belongs to its own reviewed item."
+
+    The fix is an `ingress-edge` network that is not internal, carrying `tls` and nothing else. The
+    contract test asserts the *membership* of that network exactly rather than merely that it
+    exists, because attaching a second service to it would put that service on the host's network --
+    a regression that an existence check would not see.
+  the_bind_address_fails_closed: >-
+    `R1_CONSOLE_BIND_IP` defaults to `127.0.0.1`, so an unset variable produces a console nobody can
+    reach rather than one everybody can. The deploy-day runbook sets it to the VPN or shop-LAN
+    address; `0.0.0.0` is named as the thing not to write.
+
+    ADR-0007 §1 requires the staff console to be unreachable from the internet, and this is the
+    only line in the file that enforces it. It is a default rather than a required variable for the
+    same reason the migration in `0034` refuses to guess a store: the safe answer must be what
+    happens when nobody says anything.
+
+    Two prerequisites this surfaced are now in the runbook, and neither is in this repository: the
+    shop's DNS must resolve the console name (an iOS tablet has no `/etc/hosts`), and the private CA
+    must be installed **and explicitly trusted** on every device -- on iOS a second step whose
+    failure mode is a console that will not load with no useful error. The certificate cannot come
+    from a public CA because the hostname is internal, so this is not optional polish.
+  the_hardening_invariants_are_unchanged: >-
+    Every property the staging topology established is asserted again against the new file: non-root
+    numeric users for all four services, `read_only` root filesystems, `cap_drop: ALL`,
+    `no-new-privileges`, bounded `pids_limit`, `noexec,nosuid` tmpfs, external secrets only, the
+    one-shot `migrate` job gating `api` and `worker` on `service_completed_successfully`, the DSN
+    arriving as a mounted file rather than an environment variable, and all five capability flags
+    false.
+
+    One assertion is there for a reason that is easy to lose: `127.0.0.1` must stay in
+    `API_TRUSTED_HOSTS`, because the API container's own HEALTHCHECK calls `/healthz` on the
+    loopback address and `TrustedHostMiddleware` would reject it -- leaving the container
+    permanently unhealthy for a reason nothing in the logs explains.
+
+    The PostgreSQL branch is a compose profile rather than a second file, so provider-managed PITR
+    and self-managed WAL archiving cannot drift apart. Drift between two deployment files is
+    discovered on the morning somebody needs to restore.
+  the_staging_contract_still_describes_what_it_ran: >-
+    `compose.production.yaml` is untouched, and a test asserts it stays that way -- its name, and
+    the absence of `ingress-edge` from it.
+
+    That is not deference to a file. `STAGING-001`, `CONTAINER-001` and `DEMO-STACK-001` are
+    COMPLETE and their recorded evidence names `compose.production.yaml` in the acceptance commands
+    they ran. `test_staging_deployment_contract.py` asserts its service set is exactly
+    {api, migrate, tls, worker} and that `tls` is on `ingress-private` alone. Renaming the file, or
+    adding R1's services to it, would rewrite closed evidence to describe a topology it never ran --
+    which `AGENTS.md` forbids for the same reason it forbids relabelling a synthetic SKIP.
+
+    The staging file therefore keeps the listener defect, and the R1 file's header says why the
+    asymmetry is deliberate rather than an oversight.
+  rollback_assessment: >-
+    See rollback_impact. Two new files, one new contract test, and the deploy-day runbook. No
+    application code, no schema change, and nothing provisioned.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

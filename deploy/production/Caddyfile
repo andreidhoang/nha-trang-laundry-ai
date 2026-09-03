@@ -1,0 +1,34 @@
+# The shop's console, on the shop's own network.
+#
+# ADR-0007 §1: the staff console is never reachable from the internet. Staff reach it over the
+# shop LAN or a VPN address, and this proxy is the only listener the host publishes. There is no
+# public path here because R1 has no public ingress: the webhook path Zone P exists for belongs to
+# a channel nobody has connected.
+#
+# `auto_https off` because the console hostname is internal, so no public CA can issue for it and
+# there is no ACME challenge that could ever succeed. The certificate is the owner's, from a private
+# CA that has to be installed *and explicitly trusted* on every tablet -- on iOS that is a second
+# step, and its failure mode is a console that will not load with no useful error.
+
+{
+	admin off
+	auto_https off
+}
+
+:8443 {
+	tls /run/secrets/tls_certificate /run/secrets/tls_private_key
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# One name, matched exactly. Anything else is told nothing about what runs here.
+	@console host console.giatlasachcong.lan
+	handle @console {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		respond "unrecognized private host" 421
+	}
+}

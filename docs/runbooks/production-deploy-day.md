@@ -23,21 +23,37 @@ requires a *reviewed restore drill*, not a configured backup.
 
 ## 1. Secrets
 
-`compose.production.yaml` declares eleven external Docker secrets. External means the compose file
-never contains them and they are never in this repository — see `docs/runbooks/provider-credentials.md`.
+`compose.r1.yaml` declares eleven external Docker secrets. External means the compose file never
+contains them and they are never in this repository — see `docs/runbooks/provider-credentials.md`.
 
 ```bash
-printf '%s' '<value>' | docker secret create staging_migration_database_url -
-printf '%s' '<value>' | docker secret create staging_api_database_url -
-printf '%s' '<value>' | docker secret create staging_worker_database_url -
-printf '%s' '<value>' | docker secret create staging_oidc_issuer -
-printf '%s' '<value>' | docker secret create staging_oidc_audience -
-printf '%s' '<value>' | docker secret create staging_oidc_jwks_url -
-printf '%s' '<value>' | docker secret create staging_oidc_mfa_claim -
-printf '%s' '<value>' | docker secret create staging_oidc_mfa_value -
-docker secret create staging_tls_certificate  ./fullchain.pem
-docker secret create staging_tls_private_key  ./privkey.pem
+printf '%s' '<value>' | docker secret create r1_migration_database_url -
+printf '%s' '<value>' | docker secret create r1_api_database_url -
+printf '%s' '<value>' | docker secret create r1_worker_database_url -
+printf '%s' '<value>' | docker secret create r1_oidc_issuer -
+printf '%s' '<value>' | docker secret create r1_oidc_audience -
+printf '%s' '<value>' | docker secret create r1_oidc_jwks_url -
+printf '%s' '<value>' | docker secret create r1_oidc_mfa_claim -
+printf '%s' '<value>' | docker secret create r1_oidc_mfa_value -
+docker secret create r1_tls_certificate  ./fullchain.pem
+docker secret create r1_tls_private_key  ./privkey.pem
 ```
+
+A twelfth, `r1_postgres_password`, only when the hosting decision selects a self-managed database —
+the `self-managed-database` profile. A provider-managed endpoint with PITR leaves the profile off.
+
+**Use `compose.r1.yaml`, not `compose.production.yaml`.** The latter is honestly named
+`nha-trang-laundry-private-staging` and its `tls` service is attached only to an `internal: true`
+network, so Docker accepts its published port and silently discards it — measured, on this host:
+
+```
+service   HostConfig.PortBindings                                   NetworkSettings.Ports
+broken    {"8443/tcp":[{"HostIp":"127.0.0.1","HostPort":"18443"}]}  {"8443/tcp":[]}
+fixed     {"8443/tcp":[{"HostIp":"127.0.0.1","HostPort":"18444"}]}  {"8443/tcp":[{...18444}]}
+```
+
+The console would not answer a single request. `SHOP-DEPLOY-001` fixed that in `compose.r1.yaml`
+and left the staging file alone, because its acceptance commands are cited by closed evidence.
 
 **Three database URLs, deliberately.** The migration identity owns the schema; the API and worker
 identities do not. The migrations still do not create the roles — that part of `DEC-020` is open —
@@ -75,9 +91,22 @@ true.
 ## 2. Bring the stack up
 
 ```bash
-docker compose -f compose.production.yaml up -d migrate   # runs and exits
-docker compose -f compose.production.yaml up -d api worker tls
+export R1_CONSOLE_HOST=console.giatlasachcong.lan   # the name on the certificate
+export R1_CONSOLE_BIND_IP=10.8.0.1                  # the VPN or shop-LAN address, never 0.0.0.0
+
+docker compose -f compose.r1.yaml up -d migrate   # runs and exits
+docker compose -f compose.r1.yaml up -d api worker tls
 ```
+
+`R1_CONSOLE_BIND_IP` defaults to `127.0.0.1`: an unset variable produces a console nobody can reach
+rather than one everybody can. Two things must also be true before a tablet at the counter can load
+it, and neither is in this repository:
+
+- the shop's DNS resolves the console hostname to the host. An iOS device has no `/etc/hosts`, so
+  this must be DNS;
+- the private CA that issued the certificate is installed **and explicitly trusted** on every
+  device. On iOS that is a second step under Settings → General → About → Certificate Trust
+  Settings, and its failure mode is a console that will not load with no useful error.
 
 `migrate` is a one-shot container running `python -m nha_trang_laundry_db.migration_job`. It must
 exit 0 before the API starts; the API does not migrate on boot, on purpose.
@@ -173,7 +202,7 @@ should hear them first:
 
 ## 8. If it goes wrong
 
-Rollback is `docker compose -f compose.production.yaml down` and restoring the previous image tag.
+Rollback is `docker compose -f compose.r1.yaml down` and restoring the previous image tag.
 **Migrations are forward-only and do not roll back.** `0031` in particular drops a CHECK constraint
 that cannot be restored while any row written since would violate it, so a rollback past it needs a
 new forward migration — see `evidence/delivery-loop/QUOTE-ACCEPT-001.yaml`.

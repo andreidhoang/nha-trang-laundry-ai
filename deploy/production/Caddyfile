@@ -23,8 +23,40 @@
 	}
 
 	# One name, matched exactly. Anything else is told nothing about what runs here.
-	@console host console.giatlasachcong.lan
+	@console host {$R1_CONSOLE_HOST:console.giatlasachcong.lan}
 	handle @console {
+		# The identity provider, same origin as the console. That is a necessity rather than a
+		# preference: the API sets `connect-src 'self'` and `form-action 'self'` on everything it
+		# serves, so the browser cannot reach an issuer on another origin. Only the realm's own
+		# browser endpoints are exposed -- the admin console, the master realm and the management
+		# port are not reachable from the shop network at all.
+		handle /idp/realms/nhatrang/* {
+			reverse_proxy keycloak:8080
+		}
+		handle /idp/resources/* {
+			reverse_proxy keycloak:8080
+		}
+		handle /idp* {
+			respond 404
+		}
+
+		# The sign-in pages are served here rather than from `apps/web`, so they stay out of the
+		# console's service-worker manifest and out of its disclosure registry -- both of which are
+		# content-hashed over authored console source and would treat these as console screens.
+		# They are outside `BrowserSecurityMiddleware`, so the policy they would have inherited is
+		# stated explicitly and is at least as strict.
+		handle /signin/* {
+			root * /srv/signin
+			header {
+				Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:"
+				X-Content-Type-Options nosniff
+				X-Frame-Options DENY
+				Referrer-Policy no-referrer
+				Cache-Control "no-store"
+			}
+			file_server
+		}
+
 		reverse_proxy api:8000
 	}
 

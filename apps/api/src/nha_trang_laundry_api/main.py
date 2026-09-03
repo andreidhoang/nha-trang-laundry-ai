@@ -431,6 +431,27 @@ class QueueRecoveryResponse(BaseModel):
 
 
 def get_identity_service() -> StaffIdentityService:
+    """Build the identity service per request, which is also the JWKS-outage policy.
+
+    A new `StaffIdentityService` means a new `IdentityPlatformVerifier` means a new `PyJWKClient`,
+    whose key cache is per instance and is therefore discarded before it can ever be reused. Every
+    `POST /internal/v1/auth/session` fetches the signing keys live, and if the issuer is down the
+    exchange is a 401.
+
+    `SHOP-IDENTITY-001` recorded that as the decision rather than leaving it as an accident, because
+    with Keycloak self-hosted on the same host (`DEC-011`) staff sign-in now has a hard local
+    dependency and somebody will ask what happens when it stops.
+
+    **Fail closed, no key cache.** A cache window is a window in which a rotated or revoked signing
+    key still mints sessions, and the cost avoided is one HTTP GET over a loopback bridge per
+    sign-in, already bounded to five attempts per 300s per source by `AuthenticationAttemptLimiter`.
+
+    **The blast radius is new sign-ins only.** `current_principal` never touches JWKS: sessions are
+    opaque rows in `staff_sessions`, so staff already signed in keep working for the eight-hour idle
+    and twenty-four-hour absolute lifetimes. For a shop whose staff sign in once a shift, an issuer
+    outage is an inconvenience at the start of a shift rather than a stop.
+    """
+
     try:
         return StaffIdentityService(AuthSettings())
     except AuthenticationUnavailable as error:

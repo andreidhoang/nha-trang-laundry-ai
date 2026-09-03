@@ -12,7 +12,7 @@ It is eleven secrets, one host, and the sequence below.
 | | Prerequisite | Who |
 |---|---|---|
 | 1 | A host is chosen and provisioned, per ADR-0007's three-zone two-host topology | owner — `DEC-HOSTING`, unsigned |
-| 2 | An OIDC issuer exists with an MFA claim, and the shop's staff have accounts | owner |
+| 2 | ~~An OIDC issuer exists with an MFA claim~~ — **built**: Keycloak in Zone C, `SHOP-IDENTITY-001`. The owner still creates the staff accounts, in the Keycloak admin console, after step 2 | owner |
 | 3 | A TLS certificate and key for the console hostname | owner |
 | 4 | An off-host encrypted PostgreSQL backup repository in a separate failure domain | owner — `BACKUP-RESTORE-001`, blocked on this |
 | 5 | The owner's own OIDC subject, to bind the first `OWNER_ADMIN` | owner |
@@ -114,6 +114,37 @@ exit 0 before the API starts; the API does not migrate on boot, on purpose.
 Every capability flag is forced false in the compose file: `FEATURE_PUBLIC_CHANNELS_ENABLED`,
 `FEATURE_AUTOMATED_SENDS_ENABLED`, `FEATURE_AGENT_RUNTIME_ENABLED`. Do not set them. They are
 governed by `delivery/GATE_REGISTRY.yaml` and no gate has been passed.
+
+## 2a. The identity provider
+
+Keycloak comes up with the stack and imports `deploy/production/keycloak/realm-nhatrang.json`, which
+carries no users and no client secret. Three things to do before anybody signs in:
+
+1. **Create the staff accounts.** Reach the admin console from the host only — it is deliberately
+   not routed on the shop network:
+
+   ```bash
+   docker compose -f compose.r1.yaml exec keycloak /opt/keycloak/bin/kcadm.sh      config credentials --server http://localhost:8080/idp --realm master      --user admin --password "$(cat /path/to/bootstrap-admin-password)"
+   ```
+
+   Each account gets a username and a temporary password. Every account configures TOTP on first
+   sign-in — the realm makes `CONFIGURE_TOTP` a default required action, and the browser flow makes
+   the second factor **required**, not conditional on the account having one. A conditional second
+   factor is skipped for exactly the account an attacker would choose.
+
+2. **Note each staff member's OIDC subject.** It is the `id` of the Keycloak user, and it is what
+   `bootstrap_owner.py` binds in step 4 and what the console binds for everyone else. Roles are
+   never read from the token: `staff_role_assignments` in PostgreSQL is the only role source.
+
+3. **Delete the bootstrap admin** once the owner has their own admin account with a second factor.
+   Nothing enforces this, and a bootstrap password that outlives its purpose is a password nobody
+   is rotating.
+
+**If staff cannot sign in and the console is up**, the issuer is the first thing to check. Sign-in
+fetches the signing keys live on every exchange and fails closed if Keycloak is down — but existing
+sessions are opaque database rows and keep working for up to 8 hours idle / 24 hours absolute, so
+the symptom is "nobody new can sign in" rather than "everybody is thrown out". That is a decision,
+recorded on `get_identity_service` in `apps/api/.../main.py`, not an accident.
 
 ## 3. Create the store
 

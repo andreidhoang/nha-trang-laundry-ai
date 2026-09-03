@@ -3224,7 +3224,7 @@ items:
 - id: SHOP-IDENTITY-001
   phase: PRODUCTION_HARDENING
   title: The identity provider the owner chose, built
-  status: PENDING
+  status: COMPLETE
   priority: 258
   depends_on:
   - SHOP-DEPLOY-001

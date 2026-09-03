@@ -1,0 +1,172 @@
+schema_version: 1
+work_item: SHOP-IDENTITY-001
+recorded_at: '2026-09-03T13:10:00+07:00'
+requirement_contract: >-
+  Build the production staff identity provider `DEC-011` chose on 2026-08-18 -- Keycloak
+  self-hosted in Zone C -- so that a real staff member can sign in to a production deployment.
+
+  The decision was ratified and nothing was built. The only working issuer in this repository was
+  `scripts/demo_identity_provider.py`, which is development-only by construction, and
+  `SECURITY_RELIABILITY_SPEC_V1` §5.1 excludes it by name: "Password, passkey or OIDC
+  implementation must come from a maintained auth component."
+
+  The API's verifier is unchanged. It was always generic RS256/JWKS with a configurable claim; what
+  was missing was an issuer.
+rollback_impact: >-
+  Reverting removes the `keycloak` service, the realm, the sign-in pages and their proxy routes,
+  and returns production staff sign-in to having no issuer at all. No application code is reverted
+  with it -- the verifier is untouched -- and no schema changes.
+
+  Two couplings:
+
+  - the `keycloak` service and the `self-managed-database` profile: Keycloak's own database lives
+    in the same instance. On the provider-managed branch that database is provisioned by the
+    provider, and the runbook says so;
+  - `apps/web/index.html`'s `console-signin-path` meta tag and `apps/web/sw.js`: the manifest is a
+    fingerprint over authored console source, so the tag and the regenerated manifest revert
+    together or `test_the_service_worker_shell_manifest_is_current` fails. That failure is loud.
+
+  Nothing is deployed and no account exists. The realm ships with zero users.
+unresolved_assumptions: >-
+  **Every account carries a second factor, not only privileged ones, and that is forced rather than
+  chosen.** Keycloak cannot know who is privileged: roles live only in `staff_role_assignments` and
+  `identity.py:51` records that they are read "without trusting OIDC role claims", so the issuer has
+  no basis for a conditional policy. Requiring it universally satisfies
+  `SECURITY_RELIABILITY_SPEC_V1` §5.1 and is simpler than a policy that cannot be correctly
+  targeted. The database remains the enforcement point; the issuer only asserts.
+
+  **The realm was verified against Keycloak 26.0 at a pinned digest.** The flow structure, the LoA
+  condition and the `acr` mapping are version-sensitive. An upgrade must re-run the two probes
+  rather than assume; that operational tax is what `DEC-011`'s cost column accepted.
+
+  **CẦN XÁC MINH:** the console hostname, which `DEC-017` has not answered. It is internal and never
+  customer-facing, so it does not pre-empt that decision, but the certificate, the DNS entry, the
+  compose variable and the realm's root URL must all agree with whatever the owner settles on.
+
+  **Not claimed: that this has run behind the real proxy.** Both probes ran against Keycloak
+  directly over HTTP with `sslRequired` relaxed for the probe realm only; the committed realm keeps
+  `sslRequired: all`. What is unverified is the `X-Forwarded-Proto` path through Caddy and the
+  same-origin `/idp/` mount -- that is `SHOP-CUTOVER-001`, and it needs the certificate.
+
+  **Not claimed:** that WebAuthn works. The policy is configured and TOTP is what was exercised; a
+  passkey enrolment needs a real authenticator and a real device.
+
+  **The bootstrap admin is a temporary credential.** `KC_BOOTSTRAP_ADMIN_*` creates it on first
+  start. The runbook step to delete it once the owner has their own admin account with a second
+  factor is written; nothing enforces it, and an undeleted bootstrap admin is a password that
+  outlives the reason it existed.
+evidence:
+  the_issuer_is_same_origin_by_necessity: >-
+    Not a preference. The API sets `connect-src 'self'` and `form-action 'self'` on every response
+    it serves, including the console it mounts at `/staff`, and `apps/web/README.md` records the
+    consequence as settled architecture: the browser is not and cannot become an OIDC client of a
+    foreign origin.
+
+    Keycloak is therefore mounted behind the proxy at `/idp/` on the console origin, and the whole
+    flow -- authorize, login, callback, token exchange, session exchange -- is same-origin without
+    relaxing a single header. It is also the shape `scripts/demo_identity_provider.py` already
+    proves end to end, so the API side needed no change at all.
+
+    Only the realm's browser endpoints are exposed. `/idp/realms/nhatrang/*` and `/idp/resources/*`
+    proxy; everything else under `/idp` answers 404, so the admin console and the master realm are
+    not reachable from the shop network. Administration is `docker compose exec`, which requires
+    host access.
+
+    The sign-in pages are served by the proxy from `deploy/production/signin/` rather than from
+    `apps/web`, so they stay out of the console's service-worker fingerprint and out of its
+    disclosure registry -- both of which are content-hashed over authored console source and would
+    treat these as console screens. Being outside `BrowserSecurityMiddleware`, they carry their own
+    Content-Security-Policy, stated explicitly and at least as strict as the one they would have
+    inherited.
+  the_realm_is_a_committed_artifact: >-
+    `deploy/production/keycloak/realm-nhatrang.json`, imported at start, with **zero users and zero
+    client secrets** -- which is what makes it reviewable in a pull request and what makes the
+    gitleaks scan over it mean something. Staff accounts are created by the owner afterwards,
+    exactly as `bootstrap_owner.py` already assumes.
+
+    Two things were learned by importing it rather than reasoning about it:
+
+    - **Flow descriptions are `VARCHAR(255)`.** The first import failed on a 292-character
+      description with `Value too long for column "DESCRIPTION"`, and Keycloak refused to start at
+      all rather than starting with a partial realm. The reasoning moved to the runbook and the
+      evidence; the file carries the short form.
+    - **A relative redirect URI needs a root URL.** With none set, the authorize endpoint answered
+      `Invalid parameter: redirect_uri` and rendered no login form. The client now carries
+      `rootUrl: ${env.R1_CONSOLE_ORIGIN}`, so one variable configures the origin in the compose
+      file, the Caddyfile and the realm rather than three literals drifting apart.
+  the_mfa_claim_is_a_string_the_verifier_can_read: >-
+    This is the finding that mattered, and the first attempt walked straight into it.
+
+    `_claim_value` (`apps/api/.../auth.py:264-270`) walks a dotted path and returns the value only
+    `if isinstance(current, str)`. Bind the MFA claim to something the issuer emits as anything
+    else and `mfa_verified` is false for everybody, so every `OWNER_ADMIN`, `OPS_APPROVER`,
+    `ACCOUNTANT` and `AUDITOR` sign-in dies in `identity.py:218` with a message the browser sees as
+    a generic 401 -- indistinguishable from a bad token. Safe, and unbearable to debug.
+
+    Measured against Keycloak 26.0 with a real Chrome driving the real flow, password then TOTP,
+    and the resulting `id_token` decoded:
+
+        amr = None                    absent entirely -- binding to it yields None every time
+        acr = '1'                     first realm: the loa map alone does nothing
+        acr = 'mfa'   (str)           after adding the level-of-authentication condition
+        aud = 'staff-console' (str)   matches `oidc_audience` with no audience mapper
+
+    The first realm looked right and would have failed every sign-in. What was missing is that
+    `acr.loa.map` maps a level to a name but nothing *reaches* a level: the second factor has to sit
+    in a subflow carrying a `conditional-level-of-authentication` condition configured at level 2,
+    and the client has to ask for it -- which `minimum.acr.value: mfa` makes the server do on every
+    request rather than leaving it to the client. With that in place the realm's discovery document
+    advertises `acr_values_supported: ['mfa', '0', '2']` and the token carries the string.
+
+    So `oidc_mfa_claim=acr` and `oidc_mfa_value=mfa`. **No hardcoded-claim mapper**, which would
+    have turned the system's only MFA proof into a constant.
+  a_token_without_a_second_factor_is_refused: >-
+    A guard that admits everyone passes an attack test, so both directions were driven.
+
+    A second account with a password and no OTP credential: the password is accepted, and the
+    browser lands on `login-actions/required-action` with `CONFIGURE_TOTP` rather than on the
+    callback. No authorization code is issued, so no token exists to exchange:
+
+        password accepted, then landed on: .../login-actions/required-action
+        no authorization code issued     : yes
+        forced to set up a second factor : yes
+
+    That is why the OTP execution is `REQUIRED` inside the conditional subflow rather than the
+    built-in `CONDITIONAL` "user configured" arrangement. A second factor conditional on the account
+    already having one is skipped for exactly the account an attacker would choose.
+  the_jwks_outage_policy_is_decided_and_proven: >-
+    Keycloak on the same host makes the issuer a hard local dependency of staff sign-in, so the
+    behaviour when it stops is a question somebody will ask.
+
+    What the code does today, read rather than assumed: `get_identity_service` is a FastAPI
+    dependency that constructs a new `StaffIdentityService` per request, so a new
+    `IdentityPlatformVerifier`, so a new `PyJWKClient` whose cache is per instance and is discarded
+    before it can be reused. Every exchange fetches the signing keys live.
+
+    **Decided: fail closed, no key cache.** A cache window is a window in which a rotated or revoked
+    signing key still mints sessions, and the cost avoided is one HTTP GET over a loopback bridge
+    per sign-in, already bounded to five attempts per 300s per source. The reasoning is recorded in
+    a docstring on the dependency itself, so the next reader finds it where the decision lives
+    rather than in a document.
+
+    **The blast radius is new sign-ins only.** `current_principal` never touches JWKS -- sessions
+    are opaque rows in `staff_sessions` -- so staff already signed in keep working for the
+    eight-hour idle and twenty-four-hour absolute lifetimes. For a shop whose staff sign in once a
+    shift, an issuer outage is an inconvenience at the start of a shift rather than a stop.
+  rollback_assessment: >-
+    See rollback_impact. One Dockerfile, one realm, five sign-in files, one Keycloak service, two
+    proxy route blocks, one console meta tag and its regenerated manifest, one docstring recording
+    the outage policy, and two contract tests.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

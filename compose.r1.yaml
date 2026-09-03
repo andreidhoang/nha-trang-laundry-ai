@@ -182,6 +182,64 @@ services:
         condition: service_completed_successfully
     networks: [database-private]
 
+  # DEC-011, ratified 2026-08-18: the production staff identity provider, self-hosted in Zone C so
+  # staff PII never leaves the owner-controlled host. It is a hard dependency of staff sign-in, and
+  # the JWKS-outage behaviour that follows from that is stated in `apps/api/.../main.py` beside the
+  # dependency that constructs the verifier.
+  keycloak:
+    <<: *runtime-hardening
+    image: ${R1_IDP_IMAGE:-nha-trang-laundry-idp:local}
+    build:
+      context: .
+      dockerfile: deploy/production/Keycloak.Dockerfile
+    user: "10005:10005"
+    command: ["start", "--optimized", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: postgres
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD_FILE: /run/secrets/keycloak_database_password
+      # TLS terminates at the proxy on an internal network; Keycloak is never reachable from the
+      # host. `KC_HOSTNAME` is the browser-facing origin, which is what it stamps into `iss`.
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /idp
+      KC_HOSTNAME: "https://${R1_CONSOLE_HOST:-console.giatlasachcong.lan}:8443/idp"
+      KC_HOSTNAME_STRICT: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "false"
+      # The realm's client uses a relative redirect URI, resolved against this. One variable
+      # configures the origin in three places rather than three literals drifting apart -- measured:
+      # with no root URL, Keycloak answers a relative redirect URI with "Invalid parameter:
+      # redirect_uri" and no login form is ever rendered.
+      R1_CONSOLE_ORIGIN: "https://${R1_CONSOLE_HOST:-console.giatlasachcong.lan}:8443"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_bootstrap_admin_password
+    configs:
+      - source: r1_keycloak_realm
+        target: /opt/keycloak/data/import/realm-nhatrang.json
+        uid: "10005"
+        gid: "10005"
+        mode: 0440
+    secrets:
+      - source: r1_keycloak_database_password
+        target: keycloak_database_password
+        uid: "10005"
+        gid: "10005"
+        mode: 0400
+      - source: r1_keycloak_bootstrap_admin_password
+        target: keycloak_bootstrap_admin_password
+        uid: "10005"
+        gid: "10005"
+        mode: 0400
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+      - /opt/keycloak/data/tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=10005,gid=10005
+    # No `ingress-edge`, no `archive-egress`: Keycloak has no outbound need -- no email, no
+    # federation, no external identity provider.
+    networks: [ingress-private, database-private]
+
   tls:
     <<: *runtime-hardening
     image: ${R1_TLS_IMAGE:-nha-trang-laundry-tls:local}
@@ -224,6 +282,12 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      keycloak:
+        condition: service_started
+    volumes:
+      - ./deploy/production/signin:/srv/signin:ro
+    environment:
+      R1_CONSOLE_HOST: "${R1_CONSOLE_HOST:-console.giatlasachcong.lan}"
     networks:
       ingress-edge:
       ingress-private:
@@ -232,6 +296,8 @@ services:
 configs:
   r1_caddyfile:
     file: deploy/production/Caddyfile
+  r1_keycloak_realm:
+    file: deploy/production/keycloak/realm-nhatrang.json
 
 secrets:
   r1_migration_database_url:
@@ -255,6 +321,10 @@ secrets:
   r1_tls_private_key:
     external: true
   r1_postgres_password:
+    external: true
+  r1_keycloak_database_password:
+    external: true
+  r1_keycloak_bootstrap_admin_password:
     external: true
 
 networks:

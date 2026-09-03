@@ -1,0 +1,195 @@
+{
+  "realm": "nhatrang",
+  "displayName": "Giặt Là Sạch Cộng",
+  "enabled": true,
+  "sslRequired": "all",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": false,
+  "duplicateEmailsAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "internationalizationEnabled": true,
+  "supportedLocales": [
+    "vi",
+    "en"
+  ],
+  "defaultLocale": "vi",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 28800,
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "otpPolicyLookAheadWindow": 1,
+  "webAuthnPolicyRpEntityName": "Giat La Sach Cong",
+  "webAuthnPolicySignatureAlgorithms": [
+    "ES256",
+    "RS256"
+  ],
+  "webAuthnPolicyUserVerificationRequirement": "preferred",
+  "webAuthnPolicyRequireResidentKey": "not specified",
+  "webAuthnPolicyAttestationConveyancePreference": "not specified",
+  "webAuthnPolicyCreateTimeout": 0,
+  "webAuthnPolicyAvoidSameAuthenticatorRegister": true,
+  "attributes": {
+    "acr.loa.map": "{\"mfa\":2}"
+  },
+  "browserFlow": "browser-mfa-required",
+  "requiredActions": [
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "providerId": "CONFIGURE_TOTP",
+      "enabled": true,
+      "defaultAction": true,
+      "priority": 10,
+      "config": {}
+    },
+    {
+      "alias": "UPDATE_PASSWORD",
+      "name": "Update Password",
+      "providerId": "UPDATE_PASSWORD",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 30,
+      "config": {}
+    },
+    {
+      "alias": "webauthn-register",
+      "name": "Webauthn Register",
+      "providerId": "webauthn-register",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 70,
+      "config": {}
+    }
+  ],
+  "authenticationFlows": [
+    {
+      "alias": "browser-mfa-required",
+      "description": "Password and a second factor. The `acr` claim is set to the level actually reached, so a session that skipped the second factor cannot claim to have passed it.",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "autheticatorFlow": false
+        },
+        {
+          "flowAlias": "browser-mfa-required-forms",
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "autheticatorFlow": true
+        }
+      ]
+    },
+    {
+      "alias": "browser-mfa-required-forms",
+      "description": "Username and password, then the second-factor subflow.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-username-password-form",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "autheticatorFlow": false
+        },
+        {
+          "flowAlias": "browser-mfa-required-second-factor",
+          "requirement": "CONDITIONAL",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "autheticatorFlow": true
+        }
+      ]
+    },
+    {
+      "alias": "browser-mfa-required-second-factor",
+      "description": "Runs whenever level 2 is asked for, and the client's minimum.acr.value asks for it on every request -- server-enforced, not something a client may decline.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorConfig": "loa-two",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "autheticatorFlow": false
+        },
+        {
+          "authenticator": "auth-otp-form",
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "autheticatorFlow": false
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "loa-two",
+      "config": {
+        "loa-condition-level": "2",
+        "loa-max-age": "0"
+      }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "staff-console",
+      "name": "Staff console",
+      "description": "The console at /staff. A public client with PKCE: the browser cannot hold a secret, and connect-src 'self' means this client and the API share one origin.",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "fullScopeAllowed": false,
+      "redirectUris": [
+        "/signin/callback.html"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "/signin/",
+        "acr.loa.map": "{\"mfa\":2}",
+        "minimum.acr.value": "mfa",
+        "access.token.lifespan": "300"
+      },
+      "defaultClientScopes": [
+        "acr",
+        "profile",
+        "email",
+        "roles"
+      ],
+      "optionalClientScopes": [],
+      "rootUrl": "${env.R1_CONSOLE_ORIGIN}"
+    }
+  ],
+  "users": []
+}

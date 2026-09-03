@@ -80,6 +80,11 @@ def test_the_tls_listener_exists_and_is_the_only_thing_on_the_host(
         if "ingress-edge" in _mapping(_mapping(services, name), "networks")
     }
     assert on_edge == {"tls"}
+    # Keycloak in particular: it holds every staff identity and has no outbound need.
+    assert set(_mapping(_mapping(services, "keycloak"), "networks")) == {
+        "ingress-private",
+        "database-private",
+    }
 
     ports = _mapping(services, "tls")["ports"]
     assert isinstance(ports, list) and len(ports) == 1
@@ -111,7 +116,7 @@ def test_the_hardening_the_staging_file_established_is_unchanged(
     shop_config: dict[str, object],
 ) -> None:
     services = _mapping(shop_config, "services")
-    assert set(services) == {"api", "migrate", "tls", "worker"}
+    assert set(services) == {"api", "keycloak", "migrate", "tls", "worker"}
     for name in services:
         service = _mapping(services, name)
         assert service["read_only"] is True
@@ -129,6 +134,7 @@ def test_the_hardening_the_staging_file_established_is_unchanged(
         "10002:10002",
         "10003:10003",
         "10004:10004",
+        "10005:10005",
     }
 
     secrets = _mapping(shop_config, "secrets")

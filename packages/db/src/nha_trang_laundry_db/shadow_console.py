@@ -159,7 +159,17 @@ class ShadowConsoleRepository:
         """
 
         timestamp = now or datetime.now(UTC)
-        with connection.cursor() as cursor:
+        # `connection.transaction()` and not a bare cursor. A plain SELECT opens an implicit
+        # transaction that nothing here closes, so the `commit_material_change` below nests inside
+        # it as a savepoint and ends in RELEASE rather than COMMIT: the write looks successful, is
+        # invisible to every other session, and is discarded when the connection closes. A revoked
+        # store assignment silently staying live is the worst instance of that available here.
+        #
+        # STORE-REGISTRY-001 found this defect and fixed it in `stores.py`, then added a new SELECT
+        # to this still-unfixed block in the same commit. So it is applied to every pre-check in
+        # this module rather than to the two that were reported -- on a read it costs a clean
+        # commit, and it means the pattern cannot come back one function at a time.
+        with connection.transaction(), connection.cursor() as cursor:
             _require_active_owner(cursor, principal)
             # STORE-REGISTRY-001 gave `store_id` a foreign key, which is what stops a mistyped
             # identifier becoming a membership of a store that does not exist. Left to the
@@ -235,7 +245,7 @@ class ShadowConsoleRepository:
         """
 
         timestamp = now or datetime.now(UTC)
-        with connection.cursor() as cursor:
+        with connection.transaction(), connection.cursor() as cursor:
             _require_active_owner(cursor, principal)
             version = _next_assignment_version(cursor, staff_user_id)
 
@@ -376,7 +386,7 @@ class ShadowConsoleRepository:
     ) -> tuple[PendingDraft, ...]:
         if not 1 <= limit <= 200:
             raise ShadowStateError("draft queue limit must be between 1 and 200")
-        with connection.cursor() as cursor:
+        with connection.transaction(), connection.cursor() as cursor:
             self._require_store_access(
                 cursor, principal=principal, store_id=store_id, roles=SHADOW_READ_ROLES
             )
@@ -434,7 +444,7 @@ class ShadowConsoleRepository:
         """
         if not 1 <= limit <= 200:
             raise ShadowStateError("review log limit must be between 1 and 200")
-        with connection.cursor() as cursor:
+        with connection.transaction(), connection.cursor() as cursor:
             self._require_store_access(
                 cursor, principal=principal, store_id=store_id, roles=SHADOW_READ_ROLES
             )
@@ -515,7 +525,7 @@ class ShadowConsoleRepository:
         if decision not in DRAFT_DECISIONS:
             raise ShadowStateError("draft decision must be APPROVE, EDIT or REJECT")
         timestamp = now or datetime.now(UTC)
-        with connection.cursor() as cursor:
+        with connection.transaction(), connection.cursor() as cursor:
             cursor.execute(
                 "SELECT store_id FROM agent_drafts WHERE agent_run_id = %s", (agent_run_id,)
             )
@@ -602,7 +612,7 @@ class ShadowConsoleRepository:
         # is allowed to make, and an unbounded limit returns the whole table in one page.
         if not 1 <= limit <= 200:
             raise ShadowStateError("exception queue limit must be between 1 and 200")
-        with connection.cursor() as cursor:
+        with connection.transaction(), connection.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT receipt_id, outbox_id, provider, message_kind, attempt_number,
@@ -719,7 +729,7 @@ class ShadowConsoleRepository:
         """
 
         timestamp = now or datetime.now(UTC)
-        with connection.cursor() as cursor:
+        with connection.transaction(), connection.cursor() as cursor:
             self._require_store_access(
                 cursor, principal=principal, store_id=store_id, roles=SHADOW_READ_ROLES
             )
@@ -764,7 +774,7 @@ class ShadowConsoleRepository:
         principal: StaffPrincipal,
         limit: int = 100,
     ) -> tuple[AuditEntry, ...]:
-        with connection.cursor() as cursor:
+        with connection.transaction(), connection.cursor() as cursor:
             self._require_store_access(
                 cursor, principal=principal, store_id=store_id, roles=SHADOW_READ_ROLES
             )

@@ -265,3 +265,46 @@ def test_revoking_removes_access_on_the_next_request(
     assert revoked.status_code == 204
     assert after.status_code == 403, "revocation must take effect on the very next request"
     assert stores.json() == {"store_ids": []}
+
+
+def test_granting_access_to_a_store_that_does_not_exist_is_a_typed_refusal(
+    connection: Any, service: OperationsService
+) -> None:
+    """STORE-REGISTRY-001's evidence claims this and nothing asserted it at the HTTP boundary.
+
+    Without the check in the repository the foreign key still refuses the write, but it does so
+    from inside the transaction as a `ForeignKeyViolation`, which escapes the route's except tuple
+    and becomes an unhandled 500 -- the same shape as the crash COUNTER-DEFECTS-001 closed on the
+    intake and production routes. A typo at the counter should read as a refusal, not as the
+    software falling over.
+
+    `raise_server_exceptions=False` is required: without it TestClient re-raises rather than
+    letting the 500 be observed, so a test written the obvious way cannot tell the two apart.
+    """
+
+    owner = _owner(connection)
+    operator = _operator(connection, owner)
+    never_issued = uuid4()
+
+    app.dependency_overrides[current_principal] = lambda: owner
+    app.dependency_overrides[get_operations_service] = lambda: service
+    try:
+        # `_client` builds a TestClient that re-raises server exceptions, which would turn a 500
+        # into a test error rather than an observable status code -- the difference this test is
+        # about.
+        with TestClient(
+            app,
+            cookies={"staff_session": "token", "staff_csrf": CSRF},
+            raise_server_exceptions=False,
+        ) as as_owner:
+            response = as_owner.post(
+                f"/internal/v1/staff/{operator.staff_user_id}/stores/{never_issued}",
+                headers=_headers(f"grant-{uuid4().hex}"),
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code < 500, (
+        f"a mistyped store must be refused, not crash the route: {response.status_code}"
+    )
+    assert response.status_code in {404, 409, 422}, response.status_code

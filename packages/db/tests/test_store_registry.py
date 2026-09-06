@@ -39,16 +39,40 @@ def _create(connection: Any, store_id: UUID, name: str = "Cửa hàng thử nghi
     )
 
 
+def _staff_user(connection: Any) -> UUID:
+    staff_id = uuid4()
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO staff_users (id, oidc_subject, display_name, status, created_at)
+            VALUES (%s, %s, 'Nhân viên', 'ACTIVE', now())
+            """,
+            (staff_id, f"oidc-{staff_id}"),
+        )
+    return staff_id
+
+
 def test_a_membership_cannot_name_a_store_that_does_not_exist(connection: Any) -> None:
     """The whole point of the table: a mistyped identifier is refused by the database.
 
     Before this, assigning a staff member to a UUID nobody had ever issued succeeded. That member
     was then a member of nothing -- shown no orders, refused every write, with no error anywhere
     saying why, because every check compared their assignment against the same invented value.
+
+    **The staff users are real, and that is the test.** The first version passed three fresh
+    `uuid4()` values, so three foreign keys could fire and PostgreSQL reported the first one it
+    checked -- `staff_store_assignments_staff_user_id_fkey`. Dropping the store constraint
+    entirely left that version green. The same work item wrote a comment about this exact trap in
+    the adjacent file (`test_postgres_integration.py`: "without this the test would keep passing")
+    and then walked into it here. Only `store_id` is invented now, and the constraint is named, so
+    the assertion cannot be satisfied by a different rule holding.
     """
 
+    staff_id = _staff_user(connection)
+    assigner = _staff_user(connection)
+
     with (
-        pytest.raises(psycopg.errors.ForeignKeyViolation),
+        pytest.raises(psycopg.errors.ForeignKeyViolation) as raised,
         connection.transaction(),
         connection.cursor() as cursor,
     ):
@@ -58,8 +82,13 @@ def test_a_membership_cannot_name_a_store_that_does_not_exist(connection: Any) -
                 staff_user_id, store_id, assigned_by_staff_id, assigned_at, row_version
             ) VALUES (%s, %s, %s, now(), 1)
             """,
-            (uuid4(), uuid4(), uuid4()),
+            (staff_id, uuid4(), assigner),
         )
+
+    assert "staff_store_assignments_store_fk" in str(raised.value), (
+        "the insert was refused by a different constraint than the one this test exists for: "
+        f"{raised.value}"
+    )
 
 
 def test_creating_a_store_twice_is_a_no_op_rather_than_a_conflict(connection: Any) -> None:

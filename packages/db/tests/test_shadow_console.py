@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -597,6 +598,14 @@ def test_the_sla_board_reports_exactly_what_the_domain_engine_computed() -> None
     class _Connection:
         def cursor(self) -> _Cursor:
             return _Cursor()
+
+        # The repository opens an explicit transaction around every pre-read: a bare cursor leaves
+        # an implicit one open that nothing closes, and a later commit on the same connection then
+        # nests as a savepoint and is discarded. A double that has `cursor` but not `transaction`
+        # is not a connection, and it made this test pass against a shape production never uses.
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
 
     board = ShadowConsoleRepository().sla_risk_board(
         _Connection(), store_id=store_id, principal=principal, policy=STANDARD_WASH_SLA, now=NOW

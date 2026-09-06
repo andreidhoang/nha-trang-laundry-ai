@@ -19,8 +19,9 @@ pg_basebackup \
     --host "${BACKUP_SOURCE_HOST:-postgres}" \
     --username "${BACKUP_SOURCE_USER:-laundry_backup}" \
     --format=tar --wal-method=none --checkpoint=fast --no-password --pgdata=- \
+  | gzip -c \
   | age -R "$recipients" \
   | "${BACKUP_UPLOAD_COMMAND:?BACKUP_UPLOAD_COMMAND is required}" \
-        --if-not-exists - "${repository}/base/${label}.tar.age"
+        --if-not-exists - "${repository}/base/${label}.tar.gz.age"
 
 echo "base backup ${label} archived"

@@ -1,6 +1,16 @@
 # ADR-0007: Production deployment topology and hosting decision function
 
-**Status:** proposed — topology accepted, hosting provider **not selected**
+**Status:** accepted 2026-09-03 — topology accepted, **FPT Cloud `STANDARD-02` selected** for the
+R1 release (Singapore self-serve as a same-day fallback). See `DECISION-HOSTING-001`'s evidence
+record and §4a of `docs/DECISION_REQUEST_HOSTING_2026-08.md`.
+
+**One amendment the selection carries, recorded here because §4's admissibility function is
+otherwise read as still binding.** A1 — two isolated compute units — exists because of Zone A, the
+public agent runtime that processes untrusted language. R1 connects no channel and invokes no
+model, so Zone A does not exist and **one host satisfies this topology today**. That is not a
+relaxation: §1 already names it as the correct response, "if cost forces one host, the correct
+response is to delay public ingress, not to collapse the boundary." A1 returns as a requirement at
+G2, together with the ingress it exists to isolate, and the second host is provisioned then.
 
 **Date:** 2026-08-12
 **Depends on:** ADR-0002 and ADR-0003 trust boundaries; ADR-0005 (Zalo OA introduces the first

@@ -27,12 +27,13 @@ echo "restoring from $latest to $target_time"
 
 "${BACKUP_FETCH_COMMAND:?BACKUP_FETCH_COMMAND is required}" "$latest" \
   | age -d -i "$identity" \
+  | gzip -dc \
   | tar -x -C "$data_directory"
 
 # `restore_command` fetches and decrypts one segment at a time, so the private key is needed for
 # the whole of recovery and not only for the base backup.
 cat > "$data_directory/postgresql.auto.conf" <<CONF
-restore_command = '${BACKUP_FETCH_COMMAND} ${repository}/wal/%f.age | age -d -i ${identity} > %p'
+restore_command = '${BACKUP_FETCH_COMMAND} ${repository}/wal/%f.gz.age | age -d -i ${identity} | gzip -dc > %p'
 recovery_target_time = '${target_time}'
 recovery_target_action = 'promote'
 CONF

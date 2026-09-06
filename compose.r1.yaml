@@ -47,7 +47,10 @@ services:
   # branch is a profile rather than a second file so the two cannot drift apart.
   postgres:
     profiles: ["self-managed-database"]
-    image: ${R1_POSTGRES_IMAGE:-postgres:16.10-alpine}
+    image: ${R1_POSTGRES_IMAGE:-nha-trang-laundry-postgres:local}
+    build:
+      context: .
+      dockerfile: deploy/production/Postgres.Dockerfile
     init: true
     read_only: true
     cap_drop: ["ALL"]

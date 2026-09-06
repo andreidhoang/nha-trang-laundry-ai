@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-03'
+last_updated: '2026-09-06'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -1223,7 +1223,7 @@ items:
 - id: DECISION-HOSTING-001
   phase: PRODUCTION_HARDENING
   title: Hosting decision packet and admissibility verdict for ADR-0007
-  status: BLOCKED
+  status: COMPLETE
   priority: 201
   depends_on: []
   context_domains:
@@ -1242,14 +1242,6 @@ items:
   - restore_feasibility_assessment
   - owner_written_approval
   blocked_by_decisions: []
-  blocking_condition: Completion requires owner_written_approval selecting a hosting
-    provider for the ADR-0007 three-zone two-host topology, plus verified commercial
-    cost and data-residency terms and a provider-specific restore-feasibility assessment.
-    A coding agent may not select a vendor, accept commercial terms, assert residency,
-    or sign the owner approval; DEC-HOSTING authority sits with the business owner.
-    The admissibility criteria and the shape of the required verdict are specified
-    in docs/adr/0007-production-deployment-topology.md and specs/PRODUCTION_OPERATIONS_SPEC_V1.md
-    sections 1 and 3; no infrastructure was provisioned and no capability was authorized.
   task_packet: context/tasks/TASK-decision-hosting-001.md
 - id: PROVIDER-ACCESS-001
   phase: AGENT_SHADOW

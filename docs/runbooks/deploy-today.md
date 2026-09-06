@@ -1,0 +1,219 @@
+# Runbook — deploy today
+
+**Written:** 2026-09-03 · **Status:** every command has been run except those needing a host.
+
+`production-deploy-day.md` is the reference: it explains each step and why it exists. **This page is
+the order to do them in, on one afternoon, with nothing left to decide.** Where the two disagree,
+that one is right and this one is stale.
+
+Roughly three hours if the host is ready, most of it waiting. The two long poles are the certificate
+trust on tablets and the restore drill.
+
+---
+
+## Before you touch a terminal — the two things only you can do
+
+**1. The machine.** FPT Cloud `STANDARD-02` — 4 vCPU, 8 GB RAM, 100 GB SSD, in Vietnam
+(`DECISION-HOSTING-001`). Their pricing page quotes by sales, so start that now; if it will not
+land today, take Vultr or DigitalOcean Singapore, ~US$48/month, and migrate before a channel goes
+live. Migrating is the restore drill in §7 pointed at a different machine — it is a rehearsed
+procedure, not an escape hatch.
+
+**2. The backup key.** Generate it on **your own laptop**, never on the server:
+
+```bash
+age-keygen -o ~/laundry-backup-identity.txt        # keep this. Losing it loses every backup.
+grep 'public key' ~/laundry-backup-identity.txt    # this half goes to the server
+```
+
+Private half into your password manager **and** one offline copy stored away from both the shop and
+the server (`DEC-026`). Only the public half ever reaches the host, which is why nothing on the
+server can read its own archive — proven, not assumed: a 16 MiB WAL segment archives to 211 KiB,
+round-trips byte-identical, and the recipient key on the host **cannot** decrypt it.
+
+Also needed, and none is engineering: object storage in a **different** failure domain from the host
+with a credential that **cannot delete**; a DNS record for the console name; and a TLS certificate
+for it. The hostname is internal, so no public CA can issue — see §3.
+
+---
+
+## 1. The host, locked down first
+
+```bash
+ssh root@<host>
+adduser --disabled-password --gecos "" laundry && usermod -aG sudo laundry
+# copy your key to ~laundry/.ssh/authorized_keys, then:
+sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/; s/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+systemctl restart ssh
+
+ufw default deny incoming && ufw default allow outgoing
+ufw allow from <your-admin-ip> to any port 22 proto tcp
+ufw allow from <shop-lan-or-vpn-cidr> to any port 8443 proto tcp
+ufw enable
+```
+
+**Port 8443 is never open to the world.** ADR-0007 §1: staff reach the console over the shop network
+or a VPN, never a public hostname. The compose file defaults its bind address to loopback so an
+unset variable produces a console nobody can reach rather than one everybody can — §4 sets it.
+
+Install Docker Engine plus the compose plugin from Docker's own repository, then log out and back in.
+
+## 2. The code
+
+```bash
+git clone <repo> /opt/laundry && cd /opt/laundry
+docker compose -f compose.r1.yaml --profile self-managed-database build
+```
+
+Four images: API, worker, Caddy, and PostgreSQL with `age` and `gzip` pinned in for the archiving.
+
+## 3. The certificate, and the step that catches everyone
+
+The console hostname is internal, so **no public CA can issue for it**. Make a private CA once, on
+your laptop:
+
+```bash
+openssl req -x509 -newkey rsa:4096 -days 3650 -nodes -keyout ca.key -out ca.crt \
+  -subj "/CN=Giat La Sach Cong Internal CA"
+openssl req -newkey rsa:2048 -nodes -keyout console.key -out console.csr \
+  -subj "/CN=console.giatlasachcong.lan"
+printf "subjectAltName=DNS:console.giatlasachcong.lan" > san.cnf
+openssl x509 -req -in console.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -days 825 -extfile san.cnf -out console.crt
+```
+
+Then, and this is the part that turns into a mysterious morning if it is skipped:
+
+- **DNS** on the shop router must resolve `console.giatlasachcong.lan` to the host. An iPhone or iPad
+  has no `/etc/hosts`, so it must be DNS.
+- **`ca.crt` installed *and explicitly trusted* on every device.** On iOS that is two separate steps
+  — install the profile, then Settings → General → About → **Certificate Trust Settings** and switch
+  it on. Miss the second and the console simply will not load, with no useful error, and the service
+  worker will not register either.
+
+## 4. Secrets
+
+Thirteen, plus one for alerts. External Docker secrets: never in the repository, never in an image
+layer, never in a compose file.
+
+```bash
+docker swarm init            # required for `docker secret`, single node is fine
+
+for n in migration api worker; do
+  printf '%s' "postgresql://laundry_${n}:<password>@postgres:5432/nha_trang_laundry" \
+    | docker secret create r1_${n}_database_url -
+done
+printf '%s' '<postgres superuser password>' | docker secret create r1_postgres_password -
+
+printf '%s' 'https://console.giatlasachcong.lan:8443/idp/realms/nhatrang' | docker secret create r1_oidc_issuer -
+printf '%s' 'staff-console'                                               | docker secret create r1_oidc_audience -
+printf '%s' 'http://keycloak:8080/idp/realms/nhatrang/protocol/openid-connect/certs' | docker secret create r1_oidc_jwks_url -
+printf '%s' 'acr' | docker secret create r1_oidc_mfa_claim -
+printf '%s' 'mfa' | docker secret create r1_oidc_mfa_value -
+
+docker secret create r1_tls_certificate ./console.crt
+docker secret create r1_tls_private_key ./console.key
+printf '%s' '<keycloak db password>'    | docker secret create r1_keycloak_database_password -
+printf '%s' '<temporary admin password>'| docker secret create r1_keycloak_bootstrap_admin_password -
+
+printf '%s' 'age1...'                   | docker secret create r1_backup_encryption_recipients -
+printf '%s' '<object store credential>' | docker secret create r1_backup_repository_credential -
+```
+
+`oidc_mfa_claim=acr` and `oidc_mfa_value=mfa` are not arbitrary. Measured against the real Keycloak
+with a real browser: `amr` is absent entirely and `acr` is the string `mfa` once the realm's
+level-of-authentication condition runs. Bind the wrong one and **every** privileged sign-in fails
+with a generic 401 that looks exactly like a bad password.
+
+## 5. Bring it up
+
+```bash
+export R1_CONSOLE_HOST=console.giatlasachcong.lan
+export R1_CONSOLE_BIND_IP=<the shop-LAN or VPN address of this host>   # never 0.0.0.0
+export R1_BACKUP_REPOSITORY=<s3://bucket/laundry>
+export R1_BACKUP_UPLOAD_COMMAND=<your object-store client wrapper>
+
+docker compose -f compose.r1.yaml --profile self-managed-database up -d postgres
+docker compose -f compose.r1.yaml exec postgres psql -U laundry_migrate -d postgres -c "
+  CREATE ROLE laundry_api    LOGIN PASSWORD '<...>';
+  CREATE ROLE laundry_worker LOGIN PASSWORD '<...>';
+  CREATE ROLE laundry_backup LOGIN REPLICATION PASSWORD '<...>';
+  CREATE ROLE keycloak       LOGIN PASSWORD '<...>';
+  CREATE DATABASE keycloak OWNER keycloak;"
+
+docker compose -f compose.r1.yaml up -d migrate          # runs once and exits; must exit 0
+docker compose -f compose.r1.yaml --profile self-managed-database up -d api worker keycloak tls
+
+SUPERUSER_DATABASE_URL=... uv run python scripts/apply_demo_grants.py
+DATABASE_URL=...           uv run python scripts/verify_database_grants.py
+```
+
+**`apply_demo_grants.py` is the production grant script despite its name, and it must run after
+every migration** — `GRANT ... ON ALL TABLES` is a one-shot snapshot, and skipping it surfaces as
+`permission denied` on a write path days after the deploy that caused it.
+
+## 6. The shop's own records
+
+```bash
+DATABASE_URL=... uv run python scripts/bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
+DATABASE_URL=... uv run python scripts/bootstrap_owner.py --oidc-subject '<your Keycloak user id>' --display-name 'Chủ tiệm'
+DATABASE_URL=... uv run python scripts/publish_pricebook.py --actor-id '<owner staff uuid>'
+```
+
+Staff accounts are created in Keycloak first (`production-deploy-day.md` §2a) — each person sets
+their own TOTP on first sign-in, and the second factor is required for everyone because roles live
+only in the database and the issuer cannot know who is privileged. **`OWNER_ADMIN` is not implicitly
+a member of the store**: assign yourself from the console once you are in.
+
+**Until the pricebook is published, `POST /quotes` answers 503 by design.** The shop cannot quote.
+
+## 7. The restore drill — before staff, not after
+
+```bash
+uv run python scripts/staging_smoke.py --expect-host console.giatlasachcong.lan
+uv run python scripts/verify_database_grants.py
+uv run python scripts/report_delivery_status.py     # all 13 must read NOT_AUTHORIZED
+```
+
+Then `docs/runbooks/restore-drill.md`, timed, on a clean machine. **`BACKUP-RESTORE-001` completes
+on a drill result and never on configuration**, and a backup that has never been restored is a
+belief. Start the clock when you start fetching the key from wherever `DEC-026` put it — that
+handover is inside the four hours, and a drill that begins with the key already in hand measures a
+restore that will never happen that way.
+
+## 8. Watch it
+
+```bash
+DATABASE_URL=... R1_PGDATA_PATH=/var/lib/docker/volumes/nha-trang-laundry-shop_pgdata/_data \
+R1_CONSOLE_HEALTH_URL=http://127.0.0.1:8000/healthz \
+R1_ALERT_TELEGRAM_TOKEN_FILE=/run/secrets/alert_telegram_token \
+R1_ALERT_TELEGRAM_CHAT_ID=<your chat> \
+  uv run python scripts/check_shop_operations.py
+```
+
+Every five minutes from cron. Four checks, and the one most likely to save you is the volume: a
+failing `archive_command` pins WAL segments forever, the disk fills, PostgreSQL stops accepting
+writes, **and the counter cannot take an order.**
+
+## 9. One real transaction, by hand, before anyone else touches it
+
+Tiếp nhận → *Phát phiếu* → a number appears. Báo giá → weigh, pick the service, *Khách tự mang tới
+và tự lấy* → a total. *Khách đã chốt giá*. Create the order, walk it intake → production → released,
+record the settlement, and watch it read `COMPLETED`.
+
+That sequence is proven against a live database. **If a step refuses on the real host, the cause is
+configuration, not the code path.**
+
+## 10. Say these out loud to whoever runs the counter
+
+- **Delivery orders work.** Paid in full at the counter before the laundry leaves; a named person
+  records the leg when it arrives. A failed attempt is a failed leg, nothing is charged, the goods
+  come back.
+- **A production exception is recoverable.** Record it, deal with the stain, resume — including
+  rewashing, which is the only way production moves backwards.
+- **Cancelling after work has started asks what happened to the laundry and the money.** There is no
+  option for *washed, walked away, no money*: that customer pays and collects, or the laundry stays
+  here.
+- **No customer is remembered.** A walk-in is a ticket number. Two visits are two unrelated tickets.
+- **Nothing is sent to anyone, and the AI does nothing.** No channel is connected and no model has
+  ever been invoked. The assistant on the console is deterministic and says so.

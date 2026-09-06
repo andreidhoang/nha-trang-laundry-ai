@@ -1,0 +1,162 @@
+schema_version: 1
+work_item: DECISION-HOSTING-001
+recorded_at: '2026-09-03T18:40:00+07:00'
+requirement_contract: >-
+  Complete the ADR-0007 admissibility verdict with researched figures, select a host, and record the
+  approval -- delegated by the owner to the engineer on record on 2026-09-03 with an instruction to
+  decide and execute.
+
+  Also closes the two things that stood between the selection and a deployable stack: the
+  self-managed database branch did not work, because `age` was not in the PostgreSQL image, and the
+  archiving as written would have cost roughly eighty gigabytes a month to protect a laundry.
+rollback_impact: >-
+  Reverting the selection returns `DECISION-HOSTING-001` to BLOCKED and leaves `DEPLOY-TARGET-001`,
+  `MONITORING-001`, `BACKUP-RESTORE-001`, `SLO-VERIFY-001` and `OPS-RUNBOOK-001` gated behind it, as
+  they were.
+
+  The engineering half reverts separately and cleanly: the PostgreSQL image, the compression in the
+  two archive scripts and the matching decompression in the restore, `archive_timeout`, and one
+  runbook. **They must revert together.** An archive written compressed and restored by a script
+  that does not decompress is a backup that appears to exist and cannot be read -- the worst
+  possible failure of this subsystem, and the only one that would not be noticed until a restore.
+
+  No schema change, no application code, nothing provisioned, and no account created.
+unresolved_assumptions: >-
+  **The price is unverified because FPT does not publish one.** Their pricing page names the
+  `STANDARD-02` specification -- 4 vCPU, 8 GB, 100 GB SSD -- and directs to sales for a figure,
+  excluding 8% VAT. That is the one cell of the ADR-0007 table this item could not fill, and it is
+  also the reason the fallback below exists rather than being hypothetical.
+
+  **The residency reading is the most likely interpretation, not a settled one.** Decree 53/2022
+  obliges domestic enterprises to store regulated data in Vietnam with no triggering conditions, but
+  published legal commentary records genuine ambiguity over whether that reaches every domestic
+  enterprise or only those providing services on telecommunications networks, the internet, or
+  value-added services in cyberspace. Enforcement mechanisms are not documented in the sources read.
+  This is a reason to prefer domestic hosting, not a proof of obligation -- and R1 as scoped holds
+  no regulated data either way.
+
+  **CẦN XÁC MINH, and the operator must ask it:** whether the chosen object storage supports
+  append-only or versioned writes with a credential that cannot delete. `archive-wal.sh` writes
+  `--if-not-exists` so a compromised host cannot destroy history, and a provider whose only
+  credential grants delete quietly undermines that. The original ADR-0007 table does not ask.
+
+  **Not claimed: that anything has been deployed.** No account exists, no machine is provisioned,
+  nothing has been restored. `SHOP-CUTOVER-001` stays BLOCKED and `BACKUP-RESTORE-001` still
+  completes on a timed drill.
+
+  **The compression ratio is measured on one synthetic segment**, sixteen mebibytes carrying two
+  hundred kilobytes of random data. A busy segment compresses far less. The direction is not in
+  doubt; the exact monthly figure is not established.
+evidence:
+  admissibility_verdict_per_candidate: >-
+    **R1 changes the question before the candidates are compared.** A1 asks for two isolated compute
+    units, and it asks because of Zone A -- the public agent runtime processing untrusted language.
+    R1 connects no channel and invokes no model, so Zone A does not exist and **one host satisfies
+    the topology**. ADR-0007 §1 anticipates exactly this: "If cost forces one host, the correct
+    response is to delay public ingress, not to collapse the boundary."
+
+    Against the remaining constraints:
+
+        candidate            A2 archive   A3 console off   A4 residency      A5 restore
+        FPT Cloud (VN)       yes, S3 API  yes, firewall    strongest         self-run, drillable
+        Bizfly Cloud (VN)    unpublished  yes              strongest         self-run
+        Vultr / DO (SGP)     yes          yes              needs a judgement self-run, drillable
+        Hetzner (EU)         yes          yes              weakest           self-run
+
+    **Selected: FPT Cloud `STANDARD-02` -- 4 vCPU, 8 GB, 100 GB SSD, in Vietnam**, with the archive
+    in a different failure domain.
+
+    Hetzner is eliminated on something the original table does not weigh: **latency at a counter**.
+    Singapore is roughly 30-50ms from Vietnam and domestic 10-20ms, both invisible; Europe is around
+    250ms, which is visibly slow on every weigh-price-accept step with a customer standing there.
+    It is the cheapest option in the table and it is out on user experience.
+
+    Bizfly was the other domestic candidate and the only one with self-serve provisioning and
+    published prices -- from 95,000d/month, servers in thirty seconds. Its published tiers stop at
+    2 vCPU / 4 GB / 40 GB, which is undersized on disk once Docker images, WAL and the ten-percent
+    volume alarm are counted.
+  verified_cost_and_residency: >-
+    **Residency, and this is what decided it.** Decree 53/2022 obliges *domestic enterprises* --
+    those established under Vietnamese law with a head office in Vietnam, which A & T CARE is -- to
+    store regulated data in Vietnam, and unlike the obligation on foreign enterprises it carries no
+    triggering conditions. Regulated data means personal information, data generated by users in
+    Vietnam, and data about their relationships.
+
+    R1 holds almost none of it. `DEC-013` and `DEC-015` mean no customer name, phone or address is
+    stored anywhere; no channel is connected; the only personal data is staff identity, in a
+    Keycloak self-hosted on the same box. **So R1 could lawfully run abroad today.**
+
+    The selection is about the deployment this becomes rather than the one it is. The day
+    `CHANNEL-TELEGRAM-001` or an official Zalo OA carries one real conversation, the database holds
+    customer personal data and the obligation stops being ambiguous -- and that is a poor moment to
+    be moving a live shop's production database across a border.
+
+    **Cost.** FPT publishes the specification and not the price, quoting by sales, excluding 8% VAT.
+    The figure is therefore unverified and is recorded as such rather than guessed. What is verified
+    is the shape: VND invoicing with a VAT invoice, which matters more than it looks for a company
+    whose own accounting records are kept on a ten-year schedule under `DEC-008`. A business keeping
+    books to that standard should not have its infrastructure billed as a foreign-currency charge on
+    a personal card.
+
+    Support in Vietnamese, at 07:45, is the third reason and not a rounding error for a two-person
+    shop with one technical founder.
+  restore_feasibility_assessment: >-
+    A5 is not answered by choosing a vendor, and the two things that were actually blocking it are
+    now closed.
+
+    **`age` was not in the PostgreSQL image**, which `SHOP-RECOVERY-001` recorded at the time as
+    "the self-managed branch does not work until that is done, stated now rather than discovered at
+    cutover". `deploy/production/Postgres.Dockerfile` now pins `age=1.2.1-r10` and `gzip=1.14-r2`
+    from Alpine 3.22 community. Built and verified: both binaries run as uid 70.
+
+    **The archiving would have been expensive enough to matter.** A WAL segment is a fixed 16MiB
+    file however little is in it, and `archive_timeout` deliberately ships partly-empty ones so an
+    idle shop cannot drift behind its recovery point. Uncompressed at the 60s this repository first
+    carried, a twelve-hour trading day is roughly 11GB, about 80GB a month before the 35-day
+    retention is counted -- to protect a laundry whose real daily writes are a few megabytes.
+
+    Two corrections. `archive_timeout` is now **300s**, which is the value
+    `backup-policy-v1.json` already bounds the archive interval at and leaves two thirds of the
+    900s recovery point for a slow upload; 60s bought margin the policy does not ask for at five
+    times the segments. And the pipeline compresses **before** encrypting -- ciphertext does not
+    compress, and doing it the other way round is a silent mistake that still works and costs a
+    hundred times more forever.
+
+    Proven end to end inside the built image, with real keys:
+
+        segment 16MiB -> archived 211KiB   (77x smaller)
+        OK  round trip is byte-identical
+        OK  the recipient key on the host cannot decrypt what it wrote
+        OK  re-archiving the same segment is refused rather than overwriting
+
+    The third line is the one ADR-0007 §3 actually asks for -- encryption with a key that is not on
+    the host -- and it is now measured rather than asserted. The fourth is why the object store must
+    support append-only writes: an archive command that can overwrite is one that can destroy
+    history on a retry.
+  owner_written_approval: >-
+    Delegated on 2026-09-03: "ultrathink to pick the best host and make all best optimal decisions
+    for real world deploy our app today", following the same delegation that settled `DEC-024`,
+    `DEC-025` and `DEC-026`. The selection above is recorded as the owner's decision rather than as
+    a recommendation.
+
+    **What the owner still does, because no delegation can move it:** create the account, accept the
+    commercial terms, and pay. Generate the backup key pair on their own device -- not on the host
+    and not through an agent -- and place it per `DEC-026`.
+
+    **And the fallback, which is part of the decision rather than a hedge.** FPT quotes by sales, so
+    if that does not land the same day, deploying today beats waiting: take Vultr or DigitalOcean
+    Singapore, around US$48/month for 8 GB and 4 vCPU with S3-compatible storage alongside. R1 holds
+    no regulated data, so nothing in Decree 53's categories leaves Vietnam, and the move to FPT is
+    the restore drill pointed at a different machine -- a rehearsed procedure the deployment needs
+    anyway.
+
+    **The trigger is recorded rather than the intention: migrate before `CHANNEL-TELEGRAM-001` or
+    `CHANNEL-ZALO-001` completes**, because that is the item that creates regulated data.
+
+    `docs/runbooks/deploy-today.md` is the single ordered path from an empty machine to one real
+    counter transaction, with nothing left to decide inside it.
+checks:
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

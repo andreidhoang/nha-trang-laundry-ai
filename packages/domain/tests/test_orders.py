@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
+    CustodyResolution,
     FulfillmentMode,
     IntakeStatus,
     OrderBalanceStatus,
@@ -267,3 +268,90 @@ def test_the_reviewed_cancellation_now_has_a_way_to_succeed() -> None:
         custody_and_financial_resolution_recorded=True,
     )
     assert cancelled.commercial is CommercialOrderStatus.CANCELLED
+
+
+def test_custody_not_acceptance_is_what_a_cancellation_must_resolve() -> None:
+    """The guard read `intake is ACCEPTED` and so caught only the last of six intake states.
+
+    The shop takes physical custody at `RECEIVED_PENDING_INSPECTION` -- four stages earlier. An
+    order sitting in any of those states has a customer's laundry on the counter, and used to
+    cancel outright with nothing recorded about where the goods went.
+    """
+
+    holding_the_goods = (
+        IntakeStatus.RECEIVED_PENDING_INSPECTION,
+        IntakeStatus.WAITING_PRICE_APPROVAL,
+        IntakeStatus.WAITING_CUSTOMER_RECONFIRMATION,
+        IntakeStatus.WAITING_SLOT_APPROVAL,
+        IntakeStatus.ACCEPTED,
+    )
+    for intake in holding_the_goods:
+        with pytest.raises(OrderTransitionError, match="work has begun"):
+            transition_commercial(
+                state(commercial=CommercialOrderStatus.CONFIRMED, intake=intake),
+                CommercialOrderStatus.CANCELLED,
+            )
+
+    # The two states where the shop holds nothing stay free: before handover, and after a
+    # rejection that returned the goods. `transition_intake` refuses `-> REJECTED` from
+    # `AWAITING_HANDOFF` because custody was never received, which is the same boundary.
+    for intake in (IntakeStatus.AWAITING_HANDOFF, IntakeStatus.REJECTED):
+        assert (
+            transition_commercial(
+                state(commercial=CommercialOrderStatus.CONFIRMED, intake=intake),
+                CommercialOrderStatus.CANCELLED,
+            ).commercial
+            is CommercialOrderStatus.CANCELLED
+        )
+
+
+def test_a_resolution_the_order_record_contradicts_is_refused() -> None:
+    """Making a resolution the approval did not make it true.
+
+    Only contradictions are refused, never judgements: the shop records custody at handover and
+    records when production starts, so both of these claims are checkable against what the system
+    already wrote down.
+    """
+
+    def review(intake: IntakeStatus, production: ProductionStatus) -> OrderState:
+        return state(
+            commercial=CommercialOrderStatus.CANCELLATION_REVIEW,
+            intake=intake,
+            production=production,
+        )
+
+    def cancel(order: OrderState, resolution: CustodyResolution) -> OrderState:
+        return transition_commercial(
+            order,
+            CommercialOrderStatus.CANCELLED,
+            cancellation_approved=True,
+            custody_and_financial_resolution_recorded=True,
+            custody_resolution=resolution,
+        )
+
+    with pytest.raises(OrderTransitionError, match="never received"):
+        cancel(
+            review(IntakeStatus.ACCEPTED, ProductionStatus.NOT_STARTED),
+            CustodyResolution.NOT_RECEIVED,
+        )
+    with pytest.raises(OrderTransitionError, match="returned unwashed"):
+        cancel(
+            review(IntakeStatus.ACCEPTED, ProductionStatus.QUALITY_CHECK),
+            CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        )
+
+    # The same two resolutions, on orders whose records agree with them.
+    assert (
+        cancel(
+            review(IntakeStatus.AWAITING_HANDOFF, ProductionStatus.NOT_STARTED),
+            CustodyResolution.NOT_RECEIVED,
+        ).commercial
+        is CommercialOrderStatus.CANCELLED
+    )
+    assert (
+        cancel(
+            review(IntakeStatus.ACCEPTED, ProductionStatus.NOT_STARTED),
+            CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        ).commercial
+        is CommercialOrderStatus.CANCELLED
+    )

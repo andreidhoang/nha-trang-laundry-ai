@@ -404,6 +404,16 @@ class OrderRepository:
             ),
             "intake_readiness": command.intake_readiness,
             "production_accepted_at": command.production_accepted_at,
+            # What staff said happened to the customer's laundry and their money is part of the
+            # command's identity, not decoration on it. Left out of this payload, two cancellations
+            # differing only in their resolution hashed to the same digest, so the second returned
+            # the first's stored response: the ledger recorded NOT_RECEIVED while the staff member
+            # who pressed the button had recorded SHOP_FAULT_NO_CHARGE, and nothing anywhere
+            # reported a conflict. Every other field that changes what gets written is here; this
+            # one decides both `cancellation_approved` and what the event says.
+            "custody_resolution": (
+                command.custody_resolution.value if command.custody_resolution else None
+            ),
         }
 
         def transition_once() -> dict[str, object]:
@@ -452,6 +462,7 @@ class OrderRepository:
                         command.commercial_target,
                         cancellation_approved=resolved,
                         custody_and_financial_resolution_recorded=resolved,
+                        custody_resolution=command.custody_resolution,
                     )
                     dimension = "commercial"
                     target = command.commercial_target.value

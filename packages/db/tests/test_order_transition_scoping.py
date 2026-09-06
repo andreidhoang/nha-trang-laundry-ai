@@ -22,6 +22,7 @@ import pytest
 from nha_trang_laundry_api.operations import OperationsService
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
+from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.orders import (
     CreateOrderCommand,
     OrderAuthorizationError,
@@ -32,11 +33,14 @@ from nha_trang_laundry_db.orders import (
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
+    CustodyResolution,
+    IntakeStatus,
     FulfillmentMode,
     QuantityBasis,
     QuoteFinality,
     QuoteRevisionStatus,
 )
+from nha_trang_laundry_domain.orders import IntakeReadiness
 from nha_trang_laundry_domain.quote_composition import QUOTE_VALIDITY
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, build_quote_snapshot
 from quote_test_data import PRICED_AT, accepted_quote, make_quote_snapshot
@@ -559,3 +563,76 @@ def test_an_order_request_reaches_a_terminal_status_with_its_order(connection: A
         ),
     )
     assert request_status() == "CANCELLED"
+
+
+def test_what_happened_to_the_laundry_is_part_of_the_command_not_decoration(
+    connection: Any,
+) -> None:
+    """`custody_resolution` decides both the approval and what the ledger records.
+
+    It was left out of the hashed idempotency payload, so two cancellations differing only in
+    their resolution produced the same digest: the second returned the first's stored response
+    with HTTP 200, and the ledger kept the first resolution while the staff member who pressed the
+    button had recorded a different one. Nothing reported a conflict.
+    """
+
+    store_id, repository = uuid4(), OrderRepository()
+    _ensure_store(connection, store_id)
+    owner = _staff(connection, store_id)
+    order_id = _order_in_store(connection, store_id, owner)
+
+    def move(version: int, **fields: Any) -> Any:
+        return repository.transition(
+            connection,
+            OrderTransitionCommand(
+                order_id,
+                version,
+                owner,
+                f"move-{uuid4().hex}",
+                uuid4(),
+                occurred_at=NOW + timedelta(minutes=version),
+                **fields,
+            ),
+        )
+
+    move(1, commercial_target=CommercialOrderStatus.STORE_CONFIRMATION_PENDING)
+    move(2, commercial_target=CommercialOrderStatus.CONFIRMED)
+    # Handoff is recorded before acceptance -- the shop takes custody here, not at ACCEPTED.
+    move(3, intake_target=IntakeStatus.RECEIVED_PENDING_INSPECTION)
+    move(
+        4,
+        intake_target=IntakeStatus.ACCEPTED,
+        intake_readiness=IntakeReadiness(True, True, True, True, True, True),
+        production_accepted_at=NOW + timedelta(minutes=4),
+    )
+    move(5, commercial_target=CommercialOrderStatus.ACTIVE)
+    move(6, commercial_target=CommercialOrderStatus.CANCELLATION_REVIEW)
+
+    # Production never started, so "returned unwashed and refunded" is true of this order.
+    cancel = OrderTransitionCommand(
+        order_id,
+        7,
+        owner,
+        f"cancel-{uuid4().hex}",
+        uuid4(),
+        commercial_target=CommercialOrderStatus.CANCELLED,
+        custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        occurred_at=NOW + timedelta(minutes=7),
+    )
+    cancelled = repository.transition(connection, cancel)
+    assert cancelled.commercial is CommercialOrderStatus.CANCELLED
+
+    # The same command replayed is still one cancellation.
+    assert repository.transition(connection, replace(cancel, correlation_id=uuid4())).replayed
+
+    # The same key claiming a different thing happened to the customer's goods is a conflict, not
+    # a replay. Before the fix this returned the stored response and reported success.
+    with pytest.raises(IdempotencyConflictError, match="IDEMPOTENCY_CONFLICT"):
+        repository.transition(
+            connection,
+            replace(
+                cancel,
+                custody_resolution=CustodyResolution.NOT_RECEIVED,
+                correlation_id=uuid4(),
+            ),
+        )

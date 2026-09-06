@@ -8,6 +8,7 @@ from typing import Final
 
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
+    CustodyResolution,
     FulfillmentMode,
     IntakeStatus,
     OrderBalanceStatus,
@@ -85,6 +86,20 @@ INTAKE_SEQUENCE: Final = (
     IntakeStatus.ACCEPTED,
 )
 
+# Custody, not acceptance, is what a cancellation has to account for. This tested
+# `intake is ACCEPTED` and so caught only the last of six intake states: an order at
+# `RECEIVED_PENDING_INSPECTION` -- the customer's laundry physically on the counter, four stages
+# before acceptance -- cancelled outright with nothing recorded about where the goods went. The
+# same file already knew better, refusing `-> REJECTED` from `AWAITING_HANDOFF` because "custody
+# was never received"; that is precisely the boundary, and it belongs on both sides.
+#
+# These two are the only states where the shop holds nothing: before handover, and after a
+# rejection that returned the goods. Every other state means somebody has to say what happened to
+# them.
+CUSTODY_NOT_HELD_INTAKE_STATUSES: Final = frozenset(
+    {IntakeStatus.AWAITING_HANDOFF, IntakeStatus.REJECTED}
+)
+
 # A closed order has no further intake or production. `0008`'s projection trigger already refuses
 # any UPDATE of a row in one of these states, so before COUNTER-DEFECTS-001 the two dimensions that
 # never consulted `commercial` produced a valid next state and met the trigger as an unhandled
@@ -110,6 +125,7 @@ def transition_commercial(
     *,
     cancellation_approved: bool = False,
     custody_and_financial_resolution_recorded: bool = False,
+    custody_resolution: CustodyResolution | None = None,
 ) -> OrderState:
     """Apply a commercial transition after checking all orthogonal state requirements."""
     if target is CommercialOrderStatus.COMPLETED:
@@ -133,6 +149,7 @@ def transition_commercial(
                 raise OrderTransitionError(
                     "HUMAN_APPROVAL_REQUIRED: cancellation resolution is incomplete"
                 )
+            _reject_resolution_contradicting_the_record(state, custody_resolution)
         elif _work_has_begun(state):
             # DEC-024. Every other edge into CANCELLED had no guard at all, so an order whose
             # laundry was already in a machine could be cancelled outright and the money never
@@ -150,6 +167,38 @@ def transition_commercial(
     return replace(state, commercial=target)
 
 
+def _reject_resolution_contradicting_the_record(
+    state: OrderState, resolution: CustodyResolution | None
+) -> None:
+    """Refuse a resolution the order's own recorded facts say is untrue.
+
+    ORDER-EXIT-001 made a resolution the approval, which stopped an order from disappearing
+    without one -- but nothing then compared what staff said against what the system had already
+    written down. A named staff member can be mistaken as easily as they can be dishonest, and both
+    produce the same ledger entry.
+
+    Only contradictions are refused here, never judgements. "We never received it" is checkable:
+    the shop records custody at handover. "Returned unwashed" is checkable: the shop records when
+    production started. What a paid, collected order should be cancelled *as* is not checkable and
+    is not decided here -- `CustodyResolution` has three members precisely because the fourth case
+    is an open question, and inventing an answer in domain code is how a policy gap becomes a
+    silent default.
+    """
+
+    received = state.intake is not IntakeStatus.AWAITING_HANDOFF
+    if resolution is CustodyResolution.NOT_RECEIVED and received:
+        raise OrderTransitionError(
+            "INVALID_STATE_TRANSITION: the order records custody of the goods, "
+            "so they cannot be resolved as never received"
+        )
+    washed = state.production is not ProductionStatus.NOT_STARTED
+    if resolution is CustodyResolution.RETURNED_UNWASHED_REFUNDED and washed:
+        raise OrderTransitionError(
+            "INVALID_STATE_TRANSITION: production has begun on the goods, "
+            "so they cannot be resolved as returned unwashed"
+        )
+
+
 def _work_has_begun(state: OrderState) -> bool:
     """Whether anything has happened that a cancellation would have to resolve.
 
@@ -160,7 +209,7 @@ def _work_has_begun(state: OrderState) -> bool:
 
     return (
         state.production is not ProductionStatus.NOT_STARTED
-        or state.intake is IntakeStatus.ACCEPTED
+        or state.intake not in CUSTODY_NOT_HELD_INTAKE_STATUSES
         or state.balance is not OrderBalanceStatus.UNPAID
     )
 

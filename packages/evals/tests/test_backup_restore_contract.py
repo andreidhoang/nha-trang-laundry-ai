@@ -232,3 +232,68 @@ def test_the_restore_command_is_built_from_values_that_cannot_break_it() -> None
         "tar succeeding is not proof: a truncated stream extracts a prefix, and the truncated "
         "backup is the one that sorts newest"
     )
+
+
+def test_every_flag_a_runbook_passes_to_a_script_exists() -> None:
+    """The runbooks cited three scripts with arguments those scripts do not have.
+
+    `staging_smoke.py` was invoked bare in one deploy runbook (exits 2, two required arguments
+    missing) and with `--expect-host` in the other, which does not exist. `validate_restore_drill.py
+    --database-url` does not exist either -- the flag takes a path to a file -- and it was printed
+    in the wrong form in three places, on the command that produces the evidence
+    `BACKUP-RESTORE-001` completes on. `deploy-today.md` claimed "every command has been run except
+    those needing a host"; all three of those failures are argument parsing and need no host.
+
+    Reading the flags out of the source rather than running `--help` keeps this test from needing
+    the scripts' dependencies, and it is the same text `argparse` would read.
+    """
+
+    import re
+
+    scripts = ROOT / "scripts"
+    known: dict[str, set[str]] = {}
+    for script in scripts.glob("*.py"):
+        text = script.read_text("utf-8")
+        flags = set(re.findall(r'add_argument\(\s*"(--[a-z0-9-]+)"', text))
+        if flags:
+            known[script.name] = flags | {"--help"}
+
+    invocation = re.compile(r"scripts/([a-z_0-9]+\.py)((?:[ \t]+(?:--[a-z0-9-]+|[^\s\\]+))*)")
+    offenders: list[str] = []
+    for runbook in sorted((ROOT / "docs/runbooks").glob("*.md")):
+        for line in runbook.read_text("utf-8").splitlines():
+            # Only lines that are commands. Prose mentions a script name without arguments.
+            if line.lstrip().startswith(("#", "*", "-", "|", ">")):
+                continue
+            for name, tail in invocation.findall(line):
+                if name not in known:
+                    continue
+                for flag in re.findall(r"(--[a-z0-9-]+)", tail):
+                    if flag not in known[name]:
+                        offenders.append(f"{runbook.name}: {name} has no {flag}")
+
+    assert not offenders, "runbooks pass flags these scripts do not accept:\n  " + "\n  ".join(
+        sorted(set(offenders))
+    )
+
+
+def test_the_restore_drill_exports_everything_restore_sh_requires() -> None:
+    """`restore.sh` aborts under `set -eu` on any `:?` variable, and two were never exported.
+
+    The drill halted at its own first command, on the stopwatch, inside the four-hour RTO.
+    """
+
+    import re
+
+    script = (ROOT / "deploy/production/backup/restore.sh").read_text("utf-8")
+    required = set(re.findall(r"\$\{([A-Z_]+):\?", script))
+    assert required, "the pattern no longer matches; restore.sh changed shape"
+
+    drill = (ROOT / "docs/runbooks/restore-drill.md").read_text("utf-8")
+    exported = set(re.findall(r"export ([A-Z_]+)=", drill))
+    missing = sorted(required - exported)
+    assert not missing, f"restore-drill.md never exports: {missing}"
+
+    # And the commands those two name have to exist, or the runbook points at nothing again.
+    for helper in ("r1-archive-list.sh", "r1-archive-fetch.sh", "r1-archive-upload.sh"):
+        assert (ROOT / "deploy/production/backup" / helper).is_file(), helper

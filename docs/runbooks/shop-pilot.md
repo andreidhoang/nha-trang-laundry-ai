@@ -94,13 +94,30 @@ Create an R2 bucket and a token that can **write and read but not delete** — t
 writes `--if-not-exists` so a compromised machine cannot destroy history, and a delete-capable
 credential quietly undoes that.
 
+The credential is an **rclone configuration file**, because that is what the shipped upload,
+list and fetch scripts read. `<your rclone/aws wrapper>` used to appear here with no step that
+produced a wrapper, and the postgres image had no object-store client at all to wrap — so the
+archiving this section calls the point the pilot's safety rests on could not run.
+
 ```bash
-printf '%s' '<r2 credential>' > .shop/secrets/backup_repository_credential
+cat > .shop/secrets/backup_repository_credential <<'CONF'
+[archive]
+type = s3
+provider = Cloudflare
+access_key_id = <key>
+secret_access_key = <secret>
+endpoint = <account>.r2.cloudflarestorage.com
+CONF
 chmod 600 .shop/secrets/backup_repository_credential
 
-export R1_BACKUP_REPOSITORY='s3://laundry-archive'
-export R1_BACKUP_UPLOAD_COMMAND=<your rclone/aws wrapper>
+export R1_BACKUP_REPOSITORY='archive:laundry-archive'
+# Defaulted in compose.r1.yaml; set it only to substitute a different client.
+# export R1_BACKUP_UPLOAD_COMMAND=/usr/local/bin/r1-archive-upload.sh
 ```
+
+The key that writes the archive must not be able to delete from it (`DEC-026`). On R2 that is a
+token scoped to Object Read & Write on this one bucket, with the bucket's own lifecycle rules doing
+any expiry.
 
 **Do not skip this and start trading.** One machine with no archive is one accident away from
 losing a week of the shop's money records, and the customer's paper ticket is not a substitute for
@@ -140,6 +157,8 @@ first sign-in. Then:
 
 ```bash
 DATABASE_URL=... uv run python scripts/bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
+# Write the printed identifier down. Re-running without `--store-id` mints a *second* shop, and a
+# pilot week is exactly when a step gets run twice.
 DATABASE_URL=... uv run python scripts/bootstrap_owner.py --oidc-subject '<your Keycloak user id>' --display-name 'Chủ tiệm'
 DATABASE_URL=... uv run python scripts/publish_pricebook.py --actor-id '<owner staff uuid>'
 ```
@@ -156,8 +175,20 @@ Cron every five minutes, from day one:
 
 ```bash
 DATABASE_URL=... R1_PGDATA_PATH=<the pgdata volume path> \
-R1_CONSOLE_HEALTH_URL=http://127.0.0.1:8000/healthz \
+R1_BASE_BACKUP_MARKER=<the pgbackupstaging volume path>/last-success \
+R1_RECOVERY_MODE=self-managed \
+R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
   uv run python scripts/check_shop_operations.py
+```
+
+`http://127.0.0.1:8000/healthz` was here and nothing serves it — `api` publishes no ports and is
+only on internal networks — so the console check would have read failed every five minutes of the
+pilot. And add the daily base backup to cron alongside it, or the WAL being archived has nothing
+to be replayed onto:
+
+```bash
+30 2 * * * cd <repo> && docker compose -f compose.r1.yaml -f compose.shop-local.yaml \
+  --profile self-managed-database exec -T postgres /usr/local/bin/base-backup.sh
 ```
 
 The volume check is the one most likely to save the week: a failing `archive_command` pins WAL
@@ -182,7 +213,9 @@ Do not copy files to the cloud host. **Restore onto it**, following
 ```
 start the clock when you start fetching the backup key from wherever DEC-026 put it
 restore onto the cloud host from the R2 archive
-validate:  uv run python scripts/validate_restore_drill.py --evidence drill.json --database-url ...
+validate:  printf '%s' 'postgresql://.../restored' > /tmp/restore-dsn && chmod 600 /tmp/restore-dsn
+           uv run python scripts/validate_restore_drill.py --evidence drill.json \
+             --database-url-file /tmp/restore-dsn
 ```
 
 The validator checks what can be checked rather than attested: quote snapshots recomputed and

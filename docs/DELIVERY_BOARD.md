@@ -10,7 +10,9 @@ machine-readable capability status.
 [`delivery/CAPABILITY_STATUS.yaml`](../delivery/CAPABILITY_STATUS.yaml) is the production-
 authorization source. A code status never authorizes a release.
 
-**77 items: 42 complete, 15 blocked, 20 pending.**
+**106 items: 73 complete, 16 blocked, 17 pending** (2026-09-06). This line goes stale between
+sessions; `delivery/WORK_QUEUE.yaml` is the truth, and `scripts/report_delivery_status.py`
+prints it.
 Every capability reads `NOT_AUTHORIZED`. Resolving a decision removes one fail-closed reason for the
 capabilities it names — it authorizes nothing by itself; G1–G4 evidence still governs authorization.
 

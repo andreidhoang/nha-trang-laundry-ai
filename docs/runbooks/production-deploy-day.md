@@ -5,7 +5,7 @@ most have been run locally; the sequence has never been executed end to end on a
 machine, because no machine exists. Treat step ordering as verified and step *outcomes* as expected.
 
 This exists because the distance between this repository and a shop using it is now mostly not code.
-It is eleven secrets, one host, and the sequence below.
+It is fourteen secrets, one host, and the sequence below.
 
 ## 0. Before you start — what must already be true
 
@@ -23,8 +23,16 @@ requires a *reviewed restore drill*, not a configured backup.
 
 ## 1. Secrets
 
-`compose.r1.yaml` declares eleven external Docker secrets. External means the compose file never
-contains them and they are never in this repository — see `docs/runbooks/provider-credentials.md`.
+`docker secret` requires a swarm, and a host that has never joined one refuses the first command
+below with `This node is not a swarm manager`. One node is a swarm:
+
+```bash
+docker swarm init
+```
+
+`compose.r1.yaml` declares **fourteen** external Docker secrets. External means the compose file
+never contains them and they are never in this repository — see
+`docs/runbooks/provider-credentials.md`.
 
 ```bash
 printf '%s' '<value>' | docker secret create r1_migration_database_url -
@@ -35,12 +43,47 @@ printf '%s' '<value>' | docker secret create r1_oidc_audience -
 printf '%s' '<value>' | docker secret create r1_oidc_jwks_url -
 printf '%s' '<value>' | docker secret create r1_oidc_mfa_claim -
 printf '%s' '<value>' | docker secret create r1_oidc_mfa_value -
+printf '%s' '<value>' | docker secret create r1_keycloak_database_password -
 docker secret create r1_tls_certificate  ./fullchain.pem
 docker secret create r1_tls_private_key  ./privkey.pem
 ```
 
-A twelfth, `r1_postgres_password`, only when the hosting decision selects a self-managed database —
-the `self-managed-database` profile. A provider-managed endpoint with PITR leaves the profile off.
+`r1_keycloak_database_password` was missing from this list until the adversarial round, and it is
+not optional: it is mounted into the `keycloak` service and read by `keycloak-entrypoint.sh`, the
+service is unprofiled, and `tls` depends on it — so `up -d api worker tls` pulls it in and the
+stack never becomes ready. The same value must be the password of the `keycloak` database role
+created in §1a.
+
+Three more only when the hosting decision selects a self-managed database — the
+`self-managed-database` profile. A provider-managed endpoint with PITR leaves the profile off and
+owns its own backups.
+
+```bash
+printf '%s' '<value>' | docker secret create r1_postgres_password -
+# The age *public* key (or keys) the archive is encrypted to. Public: nothing on this host can
+# read back what it writes, which is what ADR-0007 §3 requires.
+docker secret create r1_backup_encryption_recipients ./recipients.txt
+# An rclone configuration naming the archive repository, with a credential that can write and
+# cannot delete (DEC-026).
+docker secret create r1_backup_repository_credential ./rclone.conf
+```
+
+## 1a. Database roles
+
+Four roles, not three. `keycloak` owns the identity provider's own schema and is separate from
+every application role — it is a different system with a different lifecycle, and the migration
+role must never be able to rewrite staff credentials.
+
+```bash
+docker compose -f compose.r1.yaml exec -T postgres \
+  psql -U laundry_migrate -d nha_trang_laundry <<'SQL'
+CREATE ROLE keycloak LOGIN PASSWORD '<the r1_keycloak_database_password value>';
+CREATE DATABASE keycloak OWNER keycloak;
+SQL
+```
+
+`docker cp` into these containers fails — the root filesystem is read-only — so SQL arrives on
+stdin, as above.
 
 **Use `compose.r1.yaml`, not `compose.production.yaml`.** The latter is honestly named
 `nha-trang-laundry-private-staging` and its `tls` service is attached only to an `internal: true`
@@ -120,17 +163,43 @@ governed by `delivery/GATE_REGISTRY.yaml` and no gate has been passed.
 Keycloak comes up with the stack and imports `deploy/production/keycloak/realm-nhatrang.json`, which
 carries no users and no client secret. Three things to do before anybody signs in:
 
+0. **Create the admin that everything below needs.** `SHOP-FIRST-START-001` removed the bootstrap
+   admin secret, correctly — but no step then created an admin any other way, so following this
+   runbook end to end left the operator with no admin, therefore no staff accounts, therefore no
+   sign-in. Run once, on the host, interactively:
+
+   ```bash
+   docker compose -f compose.r1.yaml exec keycloak \
+     /opt/keycloak/bin/kc.sh bootstrap-admin user
+   ```
+
+   It prompts for a username and password and stores neither anywhere this repository can see.
+   Do not pass the password on the command line: the shell expands it before exec, so it appears
+   in the host's `docker` process arguments where `ps` can read it.
+
 1. **Create the staff accounts.** Reach the admin console from the host only — it is deliberately
    not routed on the shop network:
 
    ```bash
-   docker compose -f compose.r1.yaml exec keycloak /opt/keycloak/bin/kcadm.sh      config credentials --server http://localhost:8080/idp --realm master      --user admin --password "$(cat /path/to/bootstrap-admin-password)"
+   docker compose -f compose.r1.yaml exec keycloak /opt/keycloak/bin/kcadm.sh \
+     config credentials --server http://localhost:8080/idp --realm master --user <admin>
    ```
 
-   Each account gets a username and a temporary password. Every account configures TOTP on first
+   `kcadm.sh` prompts for the password when `--password` is omitted, which is the form to use.
+
+   **The enrolment ceremony, and why it is not optional.** Every account configures TOTP on first
    sign-in — the realm makes `CONFIGURE_TOTP` a default required action, and the browser flow makes
-   the second factor **required**, not conditional on the account having one. A conditional second
-   factor is skipped for exactly the account an attacker would choose.
+   the second factor **required**, not conditional on the account having one. But an account that
+   has not yet enrolled is offered the *enrolment* form, so **whoever holds the temporary password
+   first enrols the factor**. Measured: knowing only the password, an unenrolled account was taken
+   over, the attacker's own TOTP secret was registered, and the resulting token asserted `acr=mfa`.
+   This cannot be closed in Keycloak configuration — an unenrolled user has to be able to enrol.
+
+   So: **never send a temporary password to anybody.** Create the account and have the staff member
+   enrol their authenticator at the counter, on their own phone, with you present, in that sitting.
+   Then, and only then, grant their role in step 5. Roles live in `staff_role_assignments`, not in
+   the issuer, so a session with no granted role can do nothing — that separation is what makes
+   this ceremony an actual control rather than advice.
 
 2. **Note each staff member's OIDC subject.** It is the `id` of the Keycloak user, and it is what
    `bootstrap_owner.py` binds in step 4 and what the console binds for everyone else. Roles are
@@ -151,6 +220,11 @@ recorded on `get_identity_service` in `apps/api/.../main.py`, not an accident.
 ```bash
 DATABASE_URL=... uv run python scripts/bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
 ```
+
+**Write the identifier down before you run anything else, and pass it back with `--store-id` on
+every later run.** Without `--store-id` this mints a *new* store each time, so a runbook step run
+twice — which is what runbook steps are for — leaves two shops and staff assigned to whichever one
+they were told about.
 
 Prints the store's identifier. Everything in this system that belongs to a shop carries it, and
 since `STORE-REGISTRY-001` it is a foreign key: before that a store was a UUID somebody typed into
@@ -193,7 +267,12 @@ per request and verifies its digest.
 ## 6. Prove it before letting staff in
 
 ```bash
-uv run python scripts/staging_smoke.py            # TLS-verifying operator-boundary check
+# Both arguments are required; run bare it exits 2 with "the following arguments are required".
+# The CA file is the private authority that issued the console certificate — the same one every
+# tablet has to trust — so this check fails exactly where a tablet would.
+uv run python scripts/staging_smoke.py \
+  --base-url https://console.giatlasachcong.lan:8443 \
+  --ca-file ./ca.crt
 uv run python scripts/verify_database_grants.py   # role separation actually enforced
 uv run python scripts/verify_contracts.py
 uv run python scripts/report_delivery_status.py   # every capability must read NOT_AUTHORIZED
@@ -204,7 +283,12 @@ Then one real transaction by hand, at the counter, on the real host:
 1. **Tiếp nhận** → *Phát phiếu* → a number appears
 2. **Báo giá** → weigh, pick the service, `Khách tự mang tới và tự lấy` → a total appears
 3. *Khách đã chốt giá* → the revision becomes `APPROVED_EXACT`
-4. Create the order, walk it through intake → production → released
+4. Create the order, then on **Đơn hàng** use *Chuyển trạng thái đơn*: pick the dimension
+   (Thương mại / Nhận đồ / Sản xuất) and the target. Nhận đồ first — `Đã nhận, chờ kiểm` then
+   `Đã nhận` — because an order cannot become `Đang chạy` until intake is accepted. Then Thương mại
+   to `Đang chạy`, then Sản xuất through to `Đã giao ra`. *(Until `CONSOLE-LIFECYCLE-001` there was
+   no screen for the intake or production dimensions at all, so this step could not be performed
+   from the console and dead-ended on `409 intake is not accepted`.)*
 5. Record the settlement
 6. The order reads `COMPLETED`
 
@@ -239,10 +323,44 @@ should hear them first:
 ## 7a. What watches it once staff are in
 
 ```bash
-DATABASE_URL=...            R1_PGDATA_PATH=/var/lib/docker/volumes/nha-trang-laundry-shop_pgdata/_data R1_CONSOLE_HEALTH_URL=http://127.0.0.1:8000/healthz   uv run python scripts/check_shop_operations.py
+DATABASE_URL=... \
+R1_PGDATA_PATH=/var/lib/docker/volumes/nha-trang-laundry-shop_pgdata/_data \
+R1_BASE_BACKUP_MARKER=/var/lib/docker/volumes/nha-trang-laundry-shop_pgbackupstaging/_data/last-success \
+R1_RECOVERY_MODE=self-managed \
+R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
+  uv run python scripts/check_shop_operations.py
 ```
 
-Four checks, every five minutes from a host scheduler. Non-zero exit means at least one failed, and
+Three of these were wrong until the adversarial round and each failure was silent:
+
+- **`R1_CONSOLE_HEALTH_URL` pointed at `http://127.0.0.1:8000/healthz`**, which nothing serves:
+  `api` publishes no ports and sits only on `internal: true` networks, so the check the runbook
+  calls "the console is the business" would have read `passed=False` every five minutes forever.
+  The console is reached through the proxy, by its own name, exactly as a tablet reaches it.
+- **`R1_RECOVERY_MODE` is required on the self-managed branch.** `archive_mode = off` used to
+  return a green tick on both branches; undeclared is now a refusal rather than a guess.
+- **`R1_BASE_BACKUP_MARKER` is new**: there was a WAL check and no base-backup check, and a WAL
+  chain restores nothing on its own.
+
+Five checks, every five minutes from a host scheduler.
+
+### The base backup, daily
+
+`archive_command` ships WAL continuously from inside the database container; the base backup those
+segments are replayed onto is taken by the host scheduler against the same container. There is no
+sidecar service — `DEC-026` says there is one, and there never was.
+
+```bash
+# 02:30 daily, on the host's crontab.
+30 2 * * * cd /srv/nha-trang-laundry && docker compose -f compose.r1.yaml \
+  --profile self-managed-database exec -T postgres /usr/local/bin/base-backup.sh
+```
+
+It stages and verifies the artifact before anything leaves the host, then writes the marker
+`R1_BASE_BACKUP_MARKER` above reads. A failure exits non-zero and uploads nothing, so cron mail is
+the floor and the `base_backup_age` check is the ceiling.
+
+ Non-zero exit means at least one failed, and
 each one also emits a structured line to stdout — which, since `SHOP-OBSERVABILITY-001`, actually
 reaches a stream. Before that every `record()` call in the API was a no-op in the container.
 

@@ -43,8 +43,21 @@ export BACKUP_REPOSITORY_PREFIX=...                          # the same prefix t
 export RECOVERY_TARGET_TIME='2026-09-03 14:05:00+07'
 export PGDATA=/var/lib/postgresql/restore                    # must be empty; the script refuses otherwise
 
+# These two were missing from this runbook and `restore.sh` requires both with `:?` under `set -eu`,
+# so the drill halted on its own first command — on the stopwatch. They are how the script lists
+# and fetches objects; the repository shipped `r1-archive-upload.sh` for writing and these are the
+# read side of the same rclone configuration.
+export BACKUP_LIST_COMMAND=/usr/local/bin/r1-archive-list.sh
+export BACKUP_FETCH_COMMAND=/usr/local/bin/r1-archive-fetch.sh
+
 deploy/production/backup/restore.sh
 ```
+
+**The identity path must not contain `%`, a quote, `$`, a backtick or a backslash.** The script
+refuses those before writing anything, because all three of the ways they broke a restore reported
+success and failed hours later, when PostgreSQL was started, inside the four-hour clock. Spaces are
+fine — `/Volumes/USB DRIVE/age-identity.txt` works, and is the expected shape given the key arrives
+on removable media.
 
 Then start PostgreSQL against that directory and wait for promotion. The script writes
 `recovery_target_action = 'promote'`, so the server promotes itself and stops replaying.
@@ -55,9 +68,15 @@ whole of recovery — not only to open the base backup.
 ## 3. Prove it, rather than declare it
 
 ```bash
+# `--database-url-file`, not `--database-url`: the flag takes a *path to a file* holding the DSN,
+# and the script rejects anything that is not a regular file. Printed in the wrong form in three
+# places until the adversarial round, on the command that produces the evidence
+# `BACKUP-RESTORE-001` completes on.
+printf '%s' 'postgresql://.../restored' > /run/restore-dsn
+chmod 0600 /run/restore-dsn
 uv run python scripts/validate_restore_drill.py \
   --evidence drill-2026-09-03.json \
-  --database-url postgresql://.../restored
+  --database-url-file /run/restore-dsn
 ```
 
 The validator connects read-only and checks what can be checked in code rather than attested:
@@ -67,7 +86,7 @@ The validator connects read-only and checks what can be checked in code rather t
 | Recovery point ≤ 15 min | computed from the two timestamps you recorded |
 | Recovery time ≤ 4 h | computed, wall-clock, from when you started |
 | Quote snapshots hash-identical | recomputed through `canonical_document` and compared |
-| Audit chain has no gap | no aggregate whose highest version exceeds its event count, **and** the restored database reaches at least the recovery point it claims |
+| Audit chain has no gap | for the six aggregate types whose writers promise contiguous versions, none whose highest version differs from its count of *distinct* versions, **and** the restored database reaches at least the recovery point it claims |
 | No duplicate send | duplicate `idempotency_key` in `outbox_events`, duplicate `provider_message_id`, and zero rows stuck in `PROCESSING` |
 | Object evidence fetchable | attested — the objects are outside the database |
 

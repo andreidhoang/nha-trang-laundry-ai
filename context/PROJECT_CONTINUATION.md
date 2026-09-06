@@ -1,12 +1,31 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-08-18 (Asia/Ho_Chi_Minh)
-**Active work item:** none. The queue's 2026-08-14/15 completions (`TEST-ISOLATION-001`,
-`DEMO-STACK-001`, `QUOTE-COMMAND-001`, `STORE-SCOPING-002`, `STORE-ASSIGNMENT-001`,
-`SETTLEMENT-001`, `TOOL-BACKEND-001`) are recorded with evidence in `delivery/LOOP_STATE.yaml`, and
-the owner-directed assistant slice is now registered as `ASSISTANT-001` (COMPLETE, evidence at
-`evidence/delivery-loop/ASSISTANT-001.yaml`). The spine is built and tested end to end at **941
-passing** with the guarded PostgreSQL suite; migrations run `0001`–`0027`.
+**Last reconciled:** 2026-09-06 (Asia/Ho_Chi_Minh)
+**Active work item:** none. **106 queue items: 73 complete, 16 blocked, 17 pending.** The suite runs
+**1135 passing, 3 skipped** with the guarded PostgreSQL suite; migrations run `0001`–`0035`.
+
+## Where R1 stands — 2026-09-06
+
+`DEC-027` scoped R1 to the deterministic staff console: no channel, no agent, no public ingress,
+all thirteen capabilities `NOT_AUTHORIZED`. That is not a scope cut — G2 requires 30 completed real
+orders, and only a trading shop produces those, so operating the console *is* the path to the AI
+ladder rather than a detour around it.
+
+An eight-lens adversarial verification round on 2026-09-06 found **15 HIGH and ~13 MEDIUM defects,
+every HIGH in code written that day**, none visible to ruff, mypy, 1118 tests, `verify_contracts.py`
+or a clean `compose config`. R1 would have failed on day one three independent ways: identity
+(a password alone yielded an MFA-asserted privileged session, and a second sign-in returned a silent
+`acr=0`), recovery (an empty base backup recorded as archived and preferred by the restore, and a
+drill validator that could never pass on a real database), and coverage (the console had no intake
+or production surface, so no order could leave `CONFIRMED`). All fifteen are closed, each with a
+reproduction verified to fail without the fix.
+
+What is *not* closed and cannot be by an agent: a provisioned host, a TLS certificate for the
+console name, the first staff accounts, and any signed gate manifest. `SHOP-CUTOVER-001` remains
+BLOCKED on the first of those.
+
+The older sections below are kept for the frame they establish; where any of them disagrees with
+`delivery/WORK_QUEUE.yaml`, the queue is right.
 
 ## Read this first — 2026-08-18 agentic-harness session
 

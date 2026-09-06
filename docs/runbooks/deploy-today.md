@@ -1,10 +1,17 @@
 # Runbook — deploy today
 
-**Written:** 2026-09-03 · **Status:** every command has been run except those needing a host.
+**Written:** 2026-09-03 · **Corrected:** 2026-09-06 · **Status:** the commands that need no
+host have been run, and after the adversarial round that claim is true. It was made before,
+and three of the invocations on this page were argument-parsing failures that needed no host
+to discover. `packages/evals/tests/test_backup_restore_contract.py` now checks every flag any
+runbook passes to a script against that script's own arguments.
 
 `production-deploy-day.md` is the reference: it explains each step and why it exists. **This page is
 the order to do them in, on one afternoon, with nothing left to decide.** Where the two disagree,
-that one is right and this one is stale.
+check both against `compose.r1.yaml` and the script's own `--help` before believing either. The
+blanket "that one is right and this one is stale" was itself wrong on the secret list — this page
+had all fourteen and that one was missing two, including the one without which Keycloak never
+starts — so it sent the operator to the list that could not bring the stack up.
 
 Roughly three hours if the host is ready, most of it waiting. The two long poles are the certificate
 trust on tablets and the restore drill.
@@ -65,7 +72,9 @@ git clone <repo> /opt/laundry && cd /opt/laundry
 docker compose -f compose.r1.yaml --profile self-managed-database build
 ```
 
-Four images: API, worker, Caddy, and PostgreSQL with `age` and `gzip` pinned in for the archiving.
+Five images: API, worker, Caddy, Keycloak, and PostgreSQL with `age`, `gzip` and `rclone` pinned
+in for the archiving. Keycloak is the slowest and was omitted from this count; start the build
+before you make coffee, not after.
 
 ## 3. The certificate, and the step that catches everyone
 
@@ -93,8 +102,8 @@ Then, and this is the part that turns into a mysterious morning if it is skipped
 
 ## 4. Secrets
 
-Thirteen, plus one for alerts. External Docker secrets: never in the repository, never in an image
-layer, never in a compose file.
+Fourteen declared in `compose.r1.yaml`, plus one file for alerts that is not a Docker secret.
+External Docker secrets: never in the repository, never in an image layer, never in a compose file.
 
 ```bash
 docker swarm init            # required for `docker secret`, single node is fine
@@ -114,11 +123,19 @@ printf '%s' 'mfa' | docker secret create r1_oidc_mfa_value -
 docker secret create r1_tls_certificate ./console.crt
 docker secret create r1_tls_private_key ./console.key
 printf '%s' '<keycloak db password>'    | docker secret create r1_keycloak_database_password -
-printf '%s' '<temporary admin password>'| docker secret create r1_keycloak_bootstrap_admin_password -
 
 printf '%s' 'age1...'                   | docker secret create r1_backup_encryption_recipients -
-printf '%s' '<object store credential>' | docker secret create r1_backup_repository_credential -
+docker secret create r1_backup_repository_credential ./rclone.conf
 ```
+
+`r1_keycloak_bootstrap_admin_password` used to be created here and is not any more: no compose file
+mounts it, nothing reads it, and it was a live admin credential sitting in the swarm store for no
+reason. `SHOP-FIRST-START-001` removed the mount and this line outlived it. The admin is created
+interactively instead — `production-deploy-day.md` §2a step 0.
+
+`r1_backup_repository_credential` is an **rclone configuration file**, not a bare token: it is what
+`RCLONE_CONFIG` points at inside the postgres container, and the credential in it must be able to
+write and must not be able to delete (`DEC-026`).
 
 `oidc_mfa_claim=acr` and `oidc_mfa_value=mfa` are not arbitrary. Measured against the real Keycloak
 with a real browser: `amr` is absent entirely and `acr` is the string `mfa` once the realm's
@@ -170,7 +187,9 @@ a member of the store**: assign yourself from the console once you are in.
 ## 7. The restore drill — before staff, not after
 
 ```bash
-uv run python scripts/staging_smoke.py --expect-host console.giatlasachcong.lan
+# `--expect-host` does not exist; the arguments are --base-url and --ca-file, both required.
+uv run python scripts/staging_smoke.py \
+  --base-url https://console.giatlasachcong.lan:8443 --ca-file ./ca.crt
 uv run python scripts/verify_database_grants.py
 uv run python scripts/report_delivery_status.py     # all 13 must read NOT_AUTHORIZED
 ```
@@ -183,23 +202,45 @@ restore that will never happen that way.
 
 ## 8. Watch it
 
+The alert token is a plain file on the host, readable only by whoever runs cron. It is not a
+Docker secret because nothing in a container reads it — `check_shop_operations.py` runs on the
+host. Create it before the first run, or alerts are silently never delivered:
+
+```bash
+install -m 0600 /dev/null /etc/nha-trang-laundry/alert-telegram-token
+printf '%s' '<bot token from @BotFather>' > /etc/nha-trang-laundry/alert-telegram-token
+```
+
 ```bash
 DATABASE_URL=... R1_PGDATA_PATH=/var/lib/docker/volumes/nha-trang-laundry-shop_pgdata/_data \
-R1_CONSOLE_HEALTH_URL=http://127.0.0.1:8000/healthz \
-R1_ALERT_TELEGRAM_TOKEN_FILE=/run/secrets/alert_telegram_token \
+R1_BASE_BACKUP_MARKER=/var/lib/docker/volumes/nha-trang-laundry-shop_pgbackupstaging/_data/last-success \
+R1_RECOVERY_MODE=self-managed \
+R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
+R1_ALERT_TELEGRAM_TOKEN_FILE=/etc/nha-trang-laundry/alert-telegram-token \
 R1_ALERT_TELEGRAM_CHAT_ID=<your chat> \
   uv run python scripts/check_shop_operations.py
 ```
 
-Every five minutes from cron. Four checks, and the one most likely to save you is the volume: a
-failing `archive_command` pins WAL segments forever, the disk fills, PostgreSQL stops accepting
-writes, **and the counter cannot take an order.**
+Every five minutes from cron. **Five** checks now, and the one most likely to save you is the
+volume: a failing `archive_command` pins WAL segments forever, the disk fills, PostgreSQL stops
+accepting writes, **and the counter cannot take an order.**
+
+`R1_CONSOLE_HEALTH_URL` said `http://127.0.0.1:8000/healthz` until the adversarial round. Nothing
+serves that: `api` publishes no ports and sits only on `internal: true` networks, so the check this
+runbook calls the most important one would have failed every five minutes forever. It goes through
+the proxy, by the console's own name, exactly as a tablet reaches it.
+
+Alerts are quiet 21:00–07:00 **shop time** for console-unreachable only; everything else wakes you
+at any hour. That comparison was made in UTC until the adversarial round, which inverted the window
+by seven hours — an outage at 07:45 as the shop opened was suppressed.
 
 ## 9. One real transaction, by hand, before anyone else touches it
 
 Tiếp nhận → *Phát phiếu* → a number appears. Báo giá → weigh, pick the service, *Khách tự mang tới
 và tự lấy* → a total. *Khách đã chốt giá*. Create the order, walk it intake → production → released,
-record the settlement, and watch it read `COMPLETED`.
+then on **Đơn hàng** use *Chuyển trạng thái đơn*: Nhận đồ to `Đã nhận, chờ kiểm` then `Đã nhận`,
+Thương mại to `Đang chạy`, Sản xuất through to `Đã giao ra`. Record the settlement, and watch it
+read `COMPLETED`. Intake first is not a preference: `Đang chạy` is refused until intake is accepted.
 
 That sequence is proven against a live database. **If a step refuses on the real host, the cause is
 configuration, not the code path.**

@@ -258,6 +258,11 @@ def run(base_url: str, ca_file: _Path) -> list[Result]:
             body=json.dumps(
                 {
                     "bound_order_request_id": _stable_uuid(seed),
+                    # Required since `cc52c87`. Both quote posts in this script were written
+                    # before that and would have been refused 422 -- the priced check would have
+                    # failed outright, and the auditor check passed only because authorization
+                    # runs before body validation, so it was measuring the wrong refusal.
+                    "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
                     "lines": [
                         {
                             "service_code": code,
@@ -364,6 +369,7 @@ def run(base_url: str, ca_file: _Path) -> list[Result]:
         body=json.dumps(
             {
                 "bound_order_request_id": _stable_uuid("auditor"),
+                "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
                 "lines": [
                     {
                         "service_code": "STANDARD_WASH_DRY",

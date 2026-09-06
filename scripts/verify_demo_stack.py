@@ -262,7 +262,12 @@ def run(base_url: str, ca_file: _Path) -> list[Result]:
                     # before that and would have been refused 422 -- the priced check would have
                     # failed outright, and the auditor check passed only because authorization
                     # runs before body validation, so it was measuring the wrong refusal.
-                    "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
+                    #
+                    # `PICKUP_AND_RETURN` specifically: the check below exists to prove that an
+                    # unresolved delivery fee suppresses the display total, and a self-service
+                    # quote has no delivery fee to leave unresolved. It would have reported
+                    # SELF_SERVICE_NO_DELIVERY_JOB and measured nothing.
+                    "fulfillment_mode": "PICKUP_AND_RETURN",
                     "lines": [
                         {
                             "service_code": code,

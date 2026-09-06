@@ -1,8 +1,10 @@
 # Decision request — who is told when the shop's software is in trouble
 
 **Date:** 2026-09-03
-**Status:** OPEN. Registered as `DEC-025`, owner `BUSINESS_OWNER`, fail-closed: the checks exit
-non-zero for a host scheduler and nothing is delivered anywhere else.
+**Status:** RESOLVED 2026-09-03 as `DEC-025` — a Telegram bot to the owner's phone, with host cron
+mail retained as the floor. This document is the packet that was put to the owner; the register in
+`context/DECISION_REGISTRY.yaml` carries the decision and is authoritative. It said OPEN for three
+days after the decision was taken, which is the same defect the console's gap register had.
 **Trigger:** `SHOP-OBSERVABILITY-001` built four checks that can genuinely fail on the R1
 deployment. Nothing carries their result to a person.
 

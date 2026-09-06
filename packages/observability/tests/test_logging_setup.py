@@ -20,6 +20,7 @@ from nha_trang_laundry_observability import (
     SafeStructuredLogger,
     StructuredEvent,
     configure_structured_logging,
+    structured_logging_is_live,
 )
 from uvicorn.config import LOGGING_CONFIG
 
@@ -107,3 +108,51 @@ def _event() -> StructuredEvent:
         correlation=CorrelationContext.new(),
         fields={},
     )
+
+
+def test_log_level_cannot_silence_the_record_stream() -> None:
+    """`LOG_LEVEL=WARNING` is an ordinary thing to set, and it discarded every record.
+
+    These lines are records -- CSRF rejections, origin rejections, the operations checks -- not
+    diagnostics, and `emit` returned True for all of them because a logger below its level does
+    not raise. DEBUG still makes it louder; nothing makes it quieter than INFO.
+    """
+
+    import os
+
+    buffer = io.StringIO()
+    previous = os.environ.get("LOG_LEVEL")
+    os.environ["LOG_LEVEL"] = "WARNING"
+    try:
+        configure_structured_logging(stream=buffer)
+        logging.getLogger(STRUCTURED_LOGGER_NAME).info('{"event": "kept"}')
+    finally:
+        if previous is None:
+            os.environ.pop("LOG_LEVEL", None)
+        else:
+            os.environ["LOG_LEVEL"] = previous
+
+    assert "kept" in buffer.getvalue()
+    assert structured_logging_is_live() is True
+
+
+def test_a_later_dictconfig_cannot_silently_disable_the_stream() -> None:
+    """`disable_existing_loggers` defaults to true, and uvicorn's own config uses it.
+
+    The handler survives, the level survives, and not one line is written -- with `emit` still
+    reporting success. Nothing could observe that before; `structured_logging_is_live` can.
+    """
+
+    buffer = io.StringIO()
+    configure_structured_logging(stream=buffer)
+    assert structured_logging_is_live() is True
+
+    logging.config.dictConfig(
+        {"version": 1, "disable_existing_loggers": True, "handlers": {}, "loggers": {}}
+    )
+    assert structured_logging_is_live() is False
+
+    configure_structured_logging(stream=buffer)
+    assert structured_logging_is_live() is True
+    logging.getLogger(STRUCTURED_LOGGER_NAME).info('{"event": "back"}')
+    assert "back" in buffer.getvalue()

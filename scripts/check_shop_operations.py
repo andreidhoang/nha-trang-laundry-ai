@@ -44,9 +44,11 @@ import os
 import shutil
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import psycopg
 import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
@@ -56,6 +58,7 @@ from nha_trang_laundry_observability import (
     SafeStructuredLogger,
     StructuredEvent,
     configure_structured_logging,
+    structured_logging_is_live,
 )
 
 #: `deploy/backup/backup-policy-v1.json` sets the recovery point at 900 seconds. An archive gap
@@ -87,7 +90,9 @@ class CheckResult:
     fields: dict[str, object]
 
 
-def check_wal_archive_gap(database_url: str, *, now: datetime | None = None) -> CheckResult:
+def check_wal_archive_gap(
+    database_url: str, *, now: datetime | None = None, recovery_mode: str | None = None
+) -> CheckResult:
     """How long since a WAL segment was archived, and whether archiving is failing outright.
 
     `archive_timeout` bounds this on an idle shop: without it, an afternoon with no orders produces
@@ -105,13 +110,32 @@ def check_wal_archive_gap(database_url: str, *, now: datetime | None = None) -> 
         archive_mode = (cursor.fetchone() or [None])[0]
 
     if archive_mode != "on":
-        # Not a failure on a provider-managed database, where PITR is the provider's. It is a
-        # failure on the self-managed branch, and the operator knows which they are running.
+        # "The operator knows which branch they are running" was the whole defect: the check did
+        # not, and returned PASS either way. On the self-managed branch that is a blind pass on the
+        # one guarantee the pilot week rests on -- archiving off, nothing archived, green tick. The
+        # branch is now declared, and an undeclared branch is unknown, which means stop.
+        if recovery_mode == "provider-managed":
+            return CheckResult(
+                "wal_archive_gap",
+                passed=True,
+                detail=(
+                    f"archive_mode is {archive_mode!r} and the provider owns PITR "
+                    "(declared managed branch)"
+                ),
+                fields={"archive_mode": str(archive_mode), "recovery_mode": recovery_mode},
+            )
         return CheckResult(
             "wal_archive_gap",
-            passed=True,
-            detail=f"archive_mode is {archive_mode!r}; recovery is the provider's (managed branch)",
-            fields={"archive_mode": str(archive_mode)},
+            passed=False,
+            detail=(
+                f"archive_mode is {archive_mode!r} and no WAL is being archived"
+                if recovery_mode == "self-managed"
+                else (
+                    f"archive_mode is {archive_mode!r} and the recovery branch is undeclared; "
+                    "set --recovery-mode or R1_RECOVERY_MODE to self-managed or provider-managed"
+                )
+            ),
+            fields={"archive_mode": str(archive_mode), "recovery_mode": recovery_mode},
         )
 
     archived, last_archived, failed, last_failed = row if row else (0, None, 0, None)
@@ -232,21 +256,68 @@ def main() -> int:
     parser.add_argument("--volume-path", default=os.environ.get("R1_PGDATA_PATH"))
     parser.add_argument("--compose-file", default="compose.r1.yaml")
     parser.add_argument("--console-url", default=os.environ.get("R1_CONSOLE_HEALTH_URL"))
+    parser.add_argument(
+        "--recovery-mode",
+        choices=("self-managed", "provider-managed"),
+        default=os.environ.get("R1_RECOVERY_MODE"),
+        help="who owns point-in-time recovery; undeclared makes the WAL check refuse to guess",
+    )
     parser.add_argument("--json", action="store_true", help="one JSON object, for a wrapper")
     arguments = parser.parse_args()
 
     selected = set(arguments.check or ["all"])
     run_all = "all" in selected
-    results: list[CheckResult] = []
 
-    if (run_all or "wal" in selected) and arguments.database_url:
-        results.append(check_wal_archive_gap(arguments.database_url))
-    if (run_all or "volume" in selected) and arguments.volume_path:
-        results.append(check_database_volume(arguments.volume_path))
-    if run_all or "flags" in selected:
-        results.append(check_capability_flags(arguments.compose_file))
-    if (run_all or "console" in selected) and arguments.console_url:
-        results.append(check_console_reachable(arguments.console_url))
+    # Name, the input it needs, and the flag that supplies it. Keeping the three together is what
+    # makes the "explicitly asked for, cannot run" case expressible at all.
+    planned: list[tuple[str, str, object, str]] = [
+        ("wal", "wal_archive_gap", arguments.database_url, "--database-url"),
+        ("volume", "database_volume", arguments.volume_path, "--volume-path"),
+        ("flags", "capability_flags", arguments.compose_file, "--compose-file"),
+        ("console", "console_reachable", arguments.console_url, "--console-url"),
+    ]
+
+    runners = {
+        "wal": lambda: check_wal_archive_gap(
+            str(arguments.database_url), recovery_mode=arguments.recovery_mode
+        ),
+        "volume": lambda: check_database_volume(str(arguments.volume_path)),
+        "flags": lambda: check_capability_flags(str(arguments.compose_file)),
+        "console": lambda: check_console_reachable(str(arguments.console_url)),
+    }
+
+    # A check named on the command line and then skipped for want of its input is the worst
+    # outcome available: the operator asked for it, the exit code was 0, and nothing said the
+    # question had gone unanswered. Cron mail reads as success. Refuse instead.
+    unusable = [
+        f"{selector} needs {flag}"
+        for selector, _, value, flag in planned
+        if selector in selected and not value
+    ]
+    if unusable:
+        raise SystemExit(
+            "These checks were asked for and cannot run: " + "; ".join(unusable) + ". "
+            "A check that silently does not run is worse than one that fails."
+        )
+
+    results: list[CheckResult] = []
+    for selector, name, value, _ in planned:
+        if not ((run_all or selector in selected) and value):
+            continue
+        try:
+            results.append(runners[selector]())
+        except Exception as error:
+            # `docker` absent from cron's PATH, or the database unreachable, used to abort main()
+            # before any event was emitted and before `deliver_alert` ran -- so the one condition
+            # most likely to coincide with a real outage was the one that produced no alert.
+            results.append(
+                CheckResult(
+                    name,
+                    passed=False,
+                    detail=f"the check itself failed: {type(error).__name__}: {error}"[:200],
+                    fields={"check_error": type(error).__name__},
+                )
+            )
 
     if not results:
         raise SystemExit(
@@ -255,6 +326,15 @@ def main() -> int:
         )
 
     configure_structured_logging()
+    if not structured_logging_is_live():
+        # The events below are this script's entire durable output; the printed lines are for
+        # whoever is watching a terminal. If the stream is dead there is nothing to find later,
+        # and saying so on stderr costs nothing and does not change the exit code.
+        print(
+            "check_shop_operations: the structured log stream is not live; "
+            "these results will not be recorded anywhere",
+            file=_sys.stderr,
+        )
     logger = SafeStructuredLogger()
     correlation = CorrelationContext.new()
     for result in results:
@@ -296,6 +376,14 @@ QUIET_HOURS_CHECKS = frozenset({"console_reachable"})
 QUIET_HOURS_START = 21
 QUIET_HOURS_END = 7
 
+#: The shop is in Nha Trang and the decision is written in the shop's hours. Comparing
+#: `datetime.now(UTC).hour` against them inverted the window exactly: at UTC+7 the script alerted
+#: from 14:00 to 04:00 local and stayed silent from 04:00 to 14:00, so the case
+#: `production-deploy-day.md` names by name -- "one down at 07:45 needs everybody" -- was 00:45 UTC
+#: and suppressed, while a 22:00 outage nobody needed to see woke the owner. The test encoded the
+#: same UTC hours and called 03:00 UTC "night", so it passed while pinning the bug.
+SHOP_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+
 
 def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
     """Send one message to the owner, per `DEC-025`. Returns whether anything was sent.
@@ -316,7 +404,8 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
     if not token_file or not chat_id:
         return False
 
-    quiet = now.hour >= QUIET_HOURS_START or now.hour < QUIET_HOURS_END
+    local_hour = now.astimezone(SHOP_TIMEZONE).hour
+    quiet = local_hour >= QUIET_HOURS_START or local_hour < QUIET_HOURS_END
     reportable = [
         failure for failure in failures if not (quiet and failure.name in QUIET_HOURS_CHECKS)
     ]

@@ -12,6 +12,7 @@ import importlib
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -98,19 +99,38 @@ def test_a_recent_archive_passes_and_a_failing_one_does_not(
     assert "most recent attempt failed" in failing.detail
 
 
-def test_archiving_off_is_the_managed_branch_rather_than_a_failure(
+def test_archiving_off_is_a_pass_only_on_the_branch_that_was_declared(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The hosting decision may choose a provider whose PITR is not ours to inspect.
+    """`archive_mode = off` means two opposite things and the check cannot tell them apart itself.
 
-    Reporting that as a failure would train the operator to ignore this check on the branch where
-    it is the only backup signal they have.
+    On a provider-managed database PITR is the provider's and archiving off is correct. On the
+    self-managed branch it means nothing is being archived at all -- the exact failure this check
+    exists for. The first version returned PASS for both and said "the operator knows which they
+    are running", which was true of the operator and false of the check; the earlier version of
+    this test asserted that blind pass and was cited as evidence the check worked.
+
+    Undeclared is neither, and neither means stop.
     """
 
     _archiver(monkeypatch, [(0, None, 0, None), ["off"]])
-    result = CHECKS.check_wal_archive_gap("postgresql://synthetic")
-    assert result.passed is True
-    assert "provider" in result.detail
+    managed = CHECKS.check_wal_archive_gap(
+        "postgresql://synthetic", recovery_mode="provider-managed"
+    )
+    assert managed.passed is True
+    assert "provider" in managed.detail
+
+    _archiver(monkeypatch, [(0, None, 0, None), ["off"]])
+    self_managed = CHECKS.check_wal_archive_gap(
+        "postgresql://synthetic", recovery_mode="self-managed"
+    )
+    assert self_managed.passed is False
+    assert "no WAL is being archived" in self_managed.detail
+
+    _archiver(monkeypatch, [(0, None, 0, None), ["off"]])
+    undeclared = CHECKS.check_wal_archive_gap("postgresql://synthetic")
+    assert undeclared.passed is False
+    assert "undeclared" in undeclared.detail
 
 
 def test_archiving_on_with_nothing_ever_archived_is_a_failure(
@@ -218,16 +238,32 @@ def test_a_silent_loss_alerts_at_any_hour_and_an_outage_does_not(
 
     monkeypatch.setattr(CHECKS.urllib.request, "urlopen", _capture)
 
-    night = datetime(2026, 9, 3, 3, tzinfo=UTC)
+    # Instants are given in UTC because that is what the caller passes, and named by the shop's
+    # clock because that is what the decision is written in. The previous version of this test
+    # called 03:00 UTC "night" -- it is 10:00 in Nha Trang, mid-morning -- so it passed while
+    # pinning an alerting window that was inverted by seven hours.
+    night = datetime(2026, 9, 2, 20, tzinfo=UTC)  # 03:00 local, quiet
     assert CHECKS.deliver_alert([_failure("console_reachable")], now=night) is False
     assert posted == []
 
+    # A guarantee going away wakes somebody whatever the hour.
     assert CHECKS.deliver_alert([_failure("wal_archive_gap")], now=night) is True
     assert len(posted) == 1
 
-    day = datetime(2026, 9, 3, 10, tzinfo=UTC)
-    assert CHECKS.deliver_alert([_failure("console_reachable")], now=day) is True
+    # The case `production-deploy-day.md` names by name: "một máy hỏng lúc 07:45 thì cần mọi
+    # người". 07:45 local is 00:45 UTC, and under the UTC comparison it was suppressed.
+    opening = datetime(2026, 9, 3, 0, 45, tzinfo=UTC)  # 07:45 local, the shop is opening
+    assert CHECKS.deliver_alert([_failure("console_reachable")], now=opening) is True
     assert len(posted) == 2
+
+    # And the other edge: 22:00 local is 15:00 UTC, which the UTC comparison called working hours.
+    late = datetime(2026, 9, 3, 15, tzinfo=UTC)  # 22:00 local, closed
+    assert CHECKS.deliver_alert([_failure("console_reachable")], now=late) is False
+    assert len(posted) == 2
+
+    day = datetime(2026, 9, 3, 3, tzinfo=UTC)  # 10:00 local, open
+    assert CHECKS.deliver_alert([_failure("console_reachable")], now=day) is True
+    assert len(posted) == 3
 
 
 def test_a_failed_alert_does_not_mask_the_failure_it_was_carrying(
@@ -277,3 +313,60 @@ def test_alerting_never_touches_the_send_machinery() -> None:
 
 def _failure(name: str) -> object:
     return CHECKS.CheckResult(name=name, passed=False, detail="synthetic", fields={})
+
+
+def test_a_check_that_was_asked_for_and_cannot_run_refuses_loudly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exit 0 with the question unanswered is the worst outcome available.
+
+    `--check wal` with no `--database-url` used to skip silently and, if any other check passed,
+    exit 0. Cron mail reads that as success, so the operator believes an answer they never got.
+    """
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(
+        CHECKS._sys, "argv", ["check_shop_operations.py", "--check", "wal", "--json"]
+    )
+    with pytest.raises(SystemExit) as raised:
+        CHECKS.main()
+    assert "wal needs --database-url" in str(raised.value)
+
+
+def test_one_broken_check_does_not_discard_the_others_or_the_alert(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`docker` missing from cron's PATH used to abort before any event or alert.
+
+    That is the condition most likely to coincide with a real outage, so it was the one that
+    produced no alert. A check that raises is now a failing check, which is what it is.
+    """
+
+    def _explode(_compose: str) -> object:
+        raise FileNotFoundError("[Errno 2] No such file or directory: 'docker'")
+
+    monkeypatch.setattr(CHECKS, "check_capability_flags", _explode)
+    monkeypatch.setattr(
+        CHECKS,
+        "check_database_volume",
+        lambda _path: CHECKS.CheckResult("database_volume", passed=True, detail="fine", fields={}),
+    )
+    delivered: list[list[Any]] = []
+
+    def _record(failures: list[Any], *, now: object) -> bool:
+        delivered.append(failures)
+        return True
+
+    monkeypatch.setattr(CHECKS, "deliver_alert", _record)
+    monkeypatch.setattr(
+        CHECKS._sys,
+        "argv",
+        ["check_shop_operations.py", "--volume-path", str(tmp_path), "--json"],
+    )
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("R1_CONSOLE_HEALTH_URL", raising=False)
+
+    assert CHECKS.main() == 1
+    assert delivered, "a check raising must not stop the alert from going out"
+    assert [failure.name for failure in delivered[0]] == ["capability_flags"]
+    assert "FileNotFoundError" in delivered[0][0].detail

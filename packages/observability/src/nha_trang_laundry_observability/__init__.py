@@ -12,7 +12,11 @@ from .correlation import (
     current_correlation,
 )
 from .events import EventSeverity, SafeStructuredLogger, StructuredEvent
-from .logging_setup import STRUCTURED_LOGGER_NAME, configure_structured_logging
+from .logging_setup import (
+    STRUCTURED_LOGGER_NAME,
+    configure_structured_logging,
+    structured_logging_is_live,
+)
 from .redaction import REDACTED, redact_text, sanitize
 from .telemetry import (
     METRIC_CONTRACTS,
@@ -42,5 +46,6 @@ __all__ = [
     "redact_text",
     "safe_attributes",
     "sanitize",
+    "structured_logging_is_live",
     "validate_telemetry_contracts",
 ]

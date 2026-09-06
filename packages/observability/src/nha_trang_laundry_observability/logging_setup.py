@@ -54,8 +54,22 @@ def configure_structured_logging(
     resolved = (level or os.environ.get("LOG_LEVEL") or "INFO").upper()
     if resolved not in logging._nameToLevel:
         resolved = "INFO"
+
+    # `LOG_LEVEL` is how an operator asks for less diagnostic noise. It is not how they ask to stop
+    # recording what the system did, and these lines are records: CSRF rejections, origin
+    # rejections, operations checks. Setting `LOG_LEVEL=WARNING` -- an ordinary thing to do on a
+    # busy host -- silently discarded all of them, and `emit` still returned True, because a logger
+    # below its level does not raise. So the level floors at INFO: DEBUG makes it louder, nothing
+    # makes it quieter than the record stream.
+    if logging._nameToLevel[resolved] > logging.INFO:
+        resolved = "INFO"
+
     logger.setLevel(resolved)
     logger.propagate = False
+    # `dictConfig` with the default `disable_existing_loggers=True` -- uvicorn's own config, and
+    # anything else that runs after this -- sets `disabled` on every logger it did not create. The
+    # handler survives, the level survives, and not one line is written.
+    logger.disabled = False
 
     target = stream or sys.stdout
     for existing in list(logger.handlers):
@@ -77,3 +91,17 @@ def configure_structured_logging(
     handler._ntl_marker = _MARKER  # type: ignore[attr-defined]
     logger.addHandler(handler)
     return logger
+
+
+def structured_logging_is_live() -> bool:
+    """Whether a structured record would actually reach a handler right now.
+
+    `emit` cannot answer this: it returns True whenever the sink did not raise, and a disabled or
+    over-levelled logger does not raise. Callers that need the record stream to exist -- the
+    operations checks, whose whole output is these events -- can ask before relying on it.
+    """
+
+    logger = logging.getLogger(STRUCTURED_LOGGER_NAME)
+    if logger.disabled or not logger.isEnabledFor(logging.INFO):
+        return False
+    return any(getattr(handler, "_ntl_marker", None) == _MARKER for handler in logger.handlers)

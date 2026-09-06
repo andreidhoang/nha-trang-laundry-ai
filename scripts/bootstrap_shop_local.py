@@ -69,6 +69,10 @@ def certificate(host: str, existing: list[str]) -> None:
 
     authority = SECRET_DIRECTORY.parent / "ca"
     authority.mkdir(parents=True, exist_ok=True)
+    # `mkdir` takes the umask default, so this came out 0755 -- world-listable, holding the private
+    # key that signs the console certificate. The key file itself is 0600; the directory around it
+    # was not, and `chmod` is applied on every run because an existing directory keeps its mode.
+    authority.chmod(0o700)
     ca_certificate, ca_key = authority / "ca.crt", authority / "ca.key"
 
     if not ca_certificate.exists():
@@ -183,6 +187,9 @@ def main() -> int:
 
     SECRET_DIRECTORY.mkdir(parents=True, exist_ok=True)
     SECRET_DIRECTORY.chmod(0o700)
+    # The parent too: `mkdir(parents=True)` gives it the umask default, so `.shop/` itself came out
+    # 0755 and world-listable around a 0700 directory of secrets.
+    SECRET_DIRECTORY.parent.chmod(0o700)
     existing: list[str] = []
 
     roles = {name: password() for name in ("laundry_migrate", "laundry_api", "laundry_worker")}
@@ -196,7 +203,10 @@ def main() -> int:
         )
     write("postgres_password", roles["laundry_migrate"], existing=existing)
     write("keycloak_database_password", password(), existing=existing)
-    write("keycloak_bootstrap_admin_password", password(), existing=existing)
+    # No `keycloak_bootstrap_admin_password`: nothing mounts it and nothing reads it, so it was a
+    # live admin credential sitting on disk for no reason. `SHOP-FIRST-START-001` removed the
+    # mount and this line outlived it. The admin is created interactively with
+    # `kc.sh bootstrap-admin user`, once, on the host.
 
     write("oidc_issuer", f"https://{host}:8443/idp/realms/nhatrang", existing=existing)
     write("oidc_audience", "staff-console", existing=existing)
@@ -226,10 +236,19 @@ def main() -> int:
     print()
     print("  Create the database roles with these passwords, once postgres is up:")
     print()
-    for role, secret in roles.items():
-        if f"{role}" in {"laundry_migrate"}:
+    # Read back from the files rather than printing what was just generated. `write()` leaves an
+    # existing secret alone, but `roles` is regenerated on every run -- so a re-run printed fresh
+    # passwords that matched nothing on disk, and an operator who pasted them created roles the
+    # API and worker could not authenticate as. The docstring says re-running is safe, and this is
+    # what makes that true. The keycloak line below always did it this way.
+    for role in roles:
+        short = role.removeprefix("laundry_")
+        name = "migration" if short == "migrate" else short
+        if role == "laundry_migrate":
             continue
-        print(f"    CREATE ROLE {role} LOGIN PASSWORD '{secret}';")
+        dsn = (SECRET_DIRECTORY / f"{name}_database_url").read_text(encoding="utf-8")
+        stored = dsn.split("://", 1)[1].split("@", 1)[0].split(":", 1)[1]
+        print(f"    CREATE ROLE {role} LOGIN PASSWORD '{stored}';")
     print("    CREATE ROLE laundry_backup LOGIN REPLICATION PASSWORD '<pick one>';")
     print(
         f"    CREATE ROLE keycloak LOGIN PASSWORD "

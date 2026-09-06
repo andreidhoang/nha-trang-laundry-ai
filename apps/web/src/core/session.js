@@ -162,16 +162,27 @@ export function end() {
 
 /** @returns {Promise<void>} */
 export async function signOut() {
+  /** @type {string | null} */
+  let endSessionUrl = null;
   try {
-    await request("/internal/v1/auth/logout", {
+    const result = await request("/internal/v1/auth/logout", {
       method: "POST",
       idempotencyKey: `logout:${crypto.randomUUID()}`,
     });
+    endSessionUrl = result?.end_session_url ?? null;
   } catch {
     // A failed sign-out still ends the local session. The cookie may survive on the server, which
     // is why the session list and its revoke control exist as a real remedy.
   }
   end();
+
+  // Ending our session and leaving the issuer's alive is how a shop tablet hands the next person a
+  // silent sign-in as whoever used it last: their Keycloak cookies survive, so the next
+  // authorization request comes back with a code and nobody types anything. Measured on a real
+  // Keycloak -- AUTH_SESSION_ID, KEYCLOAK_IDENTITY and KEYCLOAK_SESSION were all still held after
+  // this function returned. The navigation is last so a failure to reach the issuer cannot leave
+  // the operator looking at a console that still thinks they are signed in.
+  if (endSessionUrl) location.assign(endSessionUrl);
 }
 
 /**

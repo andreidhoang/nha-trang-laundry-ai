@@ -77,13 +77,13 @@ paths:
   /internal/v1/auth/logout:
     post:
       operationId: logout
-      summary: logout
+      summary: End the application session, and tell the console where to end the issuer's.
       x-authorization-dependencies:
       - current_principal
       - get_identity_service
       x-documented-by-fastapi: false
       responses:
-        '204':
+        '200':
           description: Success response.
   /internal/v1/auth/session:
     post:

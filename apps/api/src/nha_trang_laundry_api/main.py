@@ -7,6 +7,7 @@ from pathlib import Path
 from secrets import token_urlsafe
 from time import perf_counter
 from typing import Annotated, Literal, NoReturn
+from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
@@ -563,20 +564,50 @@ def get_session(
     return _session_response(principal)
 
 
-@app.post(
-    "/internal/v1/auth/logout", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False
-)
+@app.post("/internal/v1/auth/logout", include_in_schema=False)
 def logout(
     request: Request,
     response: Response,
     principal: Annotated[StaffPrincipal | None, Depends(current_principal)] = None,
     service: Annotated[StaffIdentityService | None, Depends(get_identity_service)] = None,
-) -> None:
+) -> dict[str, str | None]:
+    """End the application session, and tell the console where to end the issuer's.
+
+    Ending only this session left every Keycloak cookie in place -- `AUTH_SESSION_ID`,
+    `KEYCLOAK_IDENTITY`, `KEYCLOAK_SESSION`, measured after a sign-out -- so the next person to
+    press "sign in" on a shop tablet was handed a code without presenting anything at all. That is
+    the enabling half of the silent-SSO defect; `acr_values` on the authorization request is the
+    other half, and both are needed: one stops a session being reused, the other stops it existing.
+
+    The URL is built here rather than in the console because the issuer is deployment
+    configuration, and hard-coding `/idp/realms/...` into `apps/web` would couple the console to
+    one topology. A deployment with no issuer configured -- the demo stack -- gets null and the
+    console skips the navigation.
+    """
+
     session_token = request.cookies.get(_AUTH_SETTINGS.staff_session_cookie_name)
     if session_token is not None and principal is not None and service is not None:
         service.logout(session_token, principal)
     response.delete_cookie(_AUTH_SETTINGS.staff_session_cookie_name, path="/")
     response.delete_cookie(_AUTH_SETTINGS.staff_csrf_cookie_name, path="/")
+    return {"end_session_url": _end_session_url(request)}
+
+
+def _end_session_url(request: Request) -> str | None:
+    issuer = _AUTH_SETTINGS.oidc_issuer
+    client_id = _AUTH_SETTINGS.oidc_audience
+    if not issuer or not client_id:
+        return None
+    # `client_id` rather than `id_token_hint`: the console never keeps the ID token. `callback.js`
+    # holds it in one `const` for one fetch and lets it go, which is the property that keeps a
+    # bearer token out of storage, and it is worth more than the marginally stronger hint.
+    parameters = urlencode(
+        {
+            "client_id": client_id,
+            "post_logout_redirect_uri": str(request.base_url.replace(path="/signin/")),
+        }
+    )
+    return f"{issuer.rstrip('/')}/protocol/openid-connect/logout?{parameters}"
 
 
 def _session_response(principal: StaffPrincipal) -> SessionResponse:

@@ -150,3 +150,54 @@ def test_the_console_points_at_the_sign_in_surface() -> None:
 
     index = (ROOT / "apps/web/index.html").read_text("utf-8")
     assert '<meta name="console-signin-path" content="/signin/">' in index
+
+
+def test_the_authorization_request_asks_for_the_second_factor_by_name() -> None:
+    """`minimum.acr.value` on the client is not enforced on the SSO-cookie path.
+
+    Measured against a real Keycloak 26.0.8 importing this exact realm: a first sign-in presented
+    the password form and the OTP form and returned `acr: "mfa"`; a second, identical authorization
+    request from the same browser returned a code with **no form at all** and `acr: "0"`. The realm
+    can step up -- adding `acr_values` to the same request brought the password form back -- it
+    simply was not being asked.
+
+    Both consequences were reproduced end to end against the real `StaffIdentityService`: an
+    OPERATOR session issued from the silent token, which is a shop tablet handing the next person a
+    24-hour session as whoever used it last; and an OWNER_ADMIN refused, because a sensitive role
+    requires MFA, which is a privileged member locked out of their own console behind a deliberately
+    opaque message on their second sign-in of the day.
+    """
+
+    signin = (ROOT / "deploy/production/signin/signin.js").read_text("utf-8")
+    assert 'acr_values: "mfa"' in signin, (
+        "the authorization request must ask for the second factor; the realm setting alone was "
+        "measured not to enforce it once an SSO cookie exists"
+    )
+
+    # The value has to be one the realm maps, or Keycloak refuses the request outright.
+    realm = json.loads((ROOT / "deploy/production/keycloak/realm-nhatrang.json").read_text("utf-8"))
+    loa_map = json.loads(realm["attributes"]["acr.loa.map"])
+    assert "mfa" in loa_map, loa_map
+
+
+def test_signing_out_of_the_console_also_ends_the_session_at_the_issuer() -> None:
+    """Ending ours and leaving theirs is what makes the silent sign-in reusable.
+
+    Measured after a console sign-out against a real Keycloak: `AUTH_SESSION_ID`,
+    `KEYCLOAK_IDENTITY` and `KEYCLOAK_SESSION` were all still held, so the next authorization
+    request needed no password, no OTP and no click.
+    """
+
+    session = (ROOT / "apps/web/src/core/session.js").read_text("utf-8")
+    assert "end_session_url" in session, "sign-out must follow the issuer's end-session endpoint"
+
+    main = (ROOT / "apps/api/src/nha_trang_laundry_api/main.py").read_text("utf-8")
+    assert "protocol/openid-connect/logout" in main
+    # Built from configuration, so a deployment without an issuer gets null rather than a broken
+    # navigation, and the console never learns one topology's paths.
+    assert "post_logout_redirect_uri" in main
+    realm = json.loads((ROOT / "deploy/production/keycloak/realm-nhatrang.json").read_text("utf-8"))
+    client = next(c for c in realm["clients"] if c["clientId"] == "staff-console")
+    assert client["attributes"]["post.logout.redirect.uris"], (
+        "the realm must accept a post-logout redirect, or the browser stops at an error page"
+    )

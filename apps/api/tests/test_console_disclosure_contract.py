@@ -233,7 +233,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # "duong duyet gia chua ton tai" (the acceptance path landed in QUOTE-ACCEPT-001, and orders
     # are created through it daily). The order-form correction splits into one more slot than the
     # sentence it replaced, which is the whole of the delta.
-    assert sum(counts.values()) == _registry()["total"] == 161
+    # 175 since CONSOLE-LIFECYCLE-001 added `blockedBy` to DISCLOSURE_KEYS: fourteen `#/gaps`
+    # entries name what stops a capability, and until now the key that names *decisions* was the
+    # one key the registry did not read. That is how the same defect landed twice -- an entry
+    # saying a RESOLVED decision was a pending blocker, invisible to every check. The count rose
+    # by exactly the number of long-enough `blockedBy` values; the short ones still cannot bind,
+    # which is why the guard for that class reads the module source instead.
+    assert sum(counts.values()) == _registry()["total"] == 175
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -372,6 +378,51 @@ def test_no_policy_bound_disclosure_describes_a_resolved_decision_as_open() -> N
             f"{entry['module']} describes {entry['binding']['decision']} as still open, "
             f"but the register says {entry['binding']['decision_status']}"
         )
+
+
+def test_no_gap_entry_names_a_settled_decision_as_a_pending_blocker() -> None:
+    """Read from the source, not the registry, because the worst instance was too short to register.
+
+    `#/gaps` is a compliance surface: staff read it to learn what the shop cannot do and what to do
+    on paper instead. Twice now an entry has named a RESOLVED decision under "Bị chặn bởi", which
+    an operator reads as "no policy yet" -- so a counter dispute got improvised while the owner had
+    already set a 7-day window, a 5x cap and a 100,000d approval ceiling.
+
+    `test_no_policy_bound_disclosure_describes_a_resolved_decision_as_open` guards the same class,
+    but only over POLICY_BOUND entries, of which there is one. The entry that caused this read
+    `blockedBy: "DEC-004"` -- seven characters, under `MINIMUM_LENGTH`, so no slot existed to bind.
+    This reads every `blockedBy` in the module regardless of length.
+
+    Naming a settled decision is allowed and often right -- the figures it settled are what staff
+    should apply today. What is forbidden is naming it *as though the decision were still coming*.
+    """
+
+    registry = yaml.safe_load((ROOT / "context/DECISION_REGISTRY.yaml").read_text(encoding="utf-8"))
+    statuses = {d["id"]: d["status"] for d in registry["decisions"]}
+
+    source = (ROOT / "apps/web/src/screens/gaps.js").read_text(encoding="utf-8")
+    values = re.findall(
+        r'blockedBy:\s*((?:\s*"(?:[^"\\]|\\.)*"\s*\+?)+)',
+        source,
+    )
+    assert values, "no blockedBy entries were found; the pattern or the module changed"
+
+    offenders: list[str] = []
+    for value in values:
+        text = "".join(re.findall(r'"((?:[^"\\]|\\.)*)"', value))
+        for decision in set(re.findall(r"DEC-\d+", text)):
+            if statuses.get(decision) != "RESOLVED":
+                continue
+            # The entry must say the decision was taken. Both forms are in use -- the DEC-010
+            # entry COUNTER-DEFECTS-001 corrected says "đã quyết", the register says "đã chốt" --
+            # and narrowing to one would fail a sentence that is already right.
+            if not any(marker in text for marker in ("đã chốt", "đã quyết")):
+                offenders.append(f"{decision} ({statuses.get(decision)}): {text[:80]}")
+
+    assert not offenders, (
+        "these gap entries name a settled decision as a pending blocker:\n  "
+        + "\n  ".join(offenders)
+    )
 
 
 @pytest.mark.parametrize("entry", _entries("ABSENT_ROUTE"), ids=lambda e: e["slot_id"])

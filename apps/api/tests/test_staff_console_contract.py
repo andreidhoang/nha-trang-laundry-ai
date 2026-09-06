@@ -110,6 +110,18 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/stores/{}/shadow/drafts",
         "/internal/v1/shadow/unknown-sends",
         "/internal/v1/stores/{}/assistant/turns",
+        # The counter's day, end to end. These three are one requirement, not three: an order
+        # cannot reach ACTIVE while intake is not ACCEPTED, and every later step hangs off ACTIVE.
+        # Both transition routes existed on the server from the beginning and no screen called
+        # either, so a console-only operator could create, quote and confirm an order and then
+        # dead-end on `409 INVALID_STATE_TRANSITION: intake is not accepted` -- while the gap
+        # register told them the console covered "việc nhận đồ". The walk that proves the shop can
+        # run on this software is the walk that needs all three.
+        "/internal/v1/orders/{}/transition",
+        "/internal/v1/orders/{}/intake-transition",
+        "/internal/v1/orders/{}/production-transition",
+        "/internal/v1/orders/{}/settlement",
+        "/internal/v1/orders/{}/delivery-legs",
     }
     missing = sorted(required - referenced)
     assert not missing, f"no screen calls these routes any more: {missing}"

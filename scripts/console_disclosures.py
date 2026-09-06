@@ -36,7 +36,23 @@ REGISTRY_PATH = ROOT / "specs/contracts/console-disclosures-v1.yaml"
 #: The object keys that carry honesty chrome. `guardrail` and `missing` are the spec's gap notices;
 #: `why` is the capability-refusal reason a disabled control shows; `caveat`, `note` and `lede` are
 #: the screen-level disclosures. A key added here without a registry entry fails the check.
-DISCLOSURE_KEYS = ("guardrail", "missing", "why", "caveat", "note", "lede", "today")
+DISCLOSURE_KEYS = (
+    "guardrail",
+    "missing",
+    "why",
+    "caveat",
+    "note",
+    "lede",
+    "today",
+    "blockedBy",
+)
+
+#: `blockedBy` was missing until CONSOLE-LIFECYCLE-001, and it is the key that names *decisions* --
+#: so `#/gaps` twice told staff a settled decision was still being made, under a "Bị chặn bởi"
+#: label, and neither the registry nor any test could see it. Length is why the worst instance
+#: stayed invisible even in principle: the entry read `blockedBy: "DEC-004"`, seven characters,
+#: far under `MINIMUM_LENGTH`. Registering the long ones is worth doing, but the guard that
+#: actually catches the class reads the source directly and is in the contract test.
 
 #: `today` was missing from that tuple until CONSOLE-ORDER-GAP-001, found by noticing the slot count
 #: rose by two when three strings were added. It is the key on every `#/gaps` entry that tells an

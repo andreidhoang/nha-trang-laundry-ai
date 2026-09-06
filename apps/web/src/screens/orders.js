@@ -79,6 +79,73 @@ const COMMERCIAL_TARGETS = [
 ];
 
 /**
+ * `IntakeStatus`, complete and unfiltered, and `ProductionStatus` likewise.
+ *
+ * Both routes have existed on the server since the beginning and no screen called either, so the
+ * console could take an order to CONFIRMED and no further: `ACTIVE` refuses while intake is not
+ * ACCEPTED, and every later step hangs off ACTIVE. Staff could create, quote and confirm an order
+ * and then had nowhere to record that the customer's laundry was in their hands.
+ *
+ * As with the commercial list, every value is offered and the domain decides which is reachable.
+ * `REJECTED` is here because refusing goods at the counter is a real counter action; the server
+ * refuses it from AWAITING_HANDOFF, where custody was never received.
+ */
+const INTAKE_TARGETS = [
+  "RECEIVED_PENDING_INSPECTION",
+  "WAITING_PRICE_APPROVAL",
+  "WAITING_CUSTOMER_RECONFIRMATION",
+  "WAITING_SLOT_APPROVAL",
+  "ACCEPTED",
+  "REJECTED",
+];
+
+const PRODUCTION_TARGETS = [
+  "QUEUED",
+  "IN_PROCESS",
+  "QUALITY_CHECK",
+  "READY_AT_STORE",
+  "RELEASED",
+  "EXCEPTION",
+];
+
+/**
+ * The three orthogonal dimensions of one order, as the domain models them.
+ *
+ * One command, one route each. They are separate on the server because they move independently --
+ * an order can be washed while its commercial state sits at ACTIVE -- and presenting them as one
+ * list of targets would invent a state machine the domain does not have.
+ */
+const DIMENSIONS = [
+  {
+    key: "commercial",
+    label: "Thương mại",
+    field: "commercial",
+    targets: COMMERCIAL_TARGETS,
+    path: (id) => `/internal/v1/orders/${encodeURIComponent(id)}/transition`,
+    legend: "Trạng thái thương mại đích",
+  },
+  {
+    key: "intake",
+    label: "Nhận đồ",
+    field: "intake",
+    targets: INTAKE_TARGETS,
+    path: (id) => `/internal/v1/orders/${encodeURIComponent(id)}/intake-transition`,
+    legend: "Trạng thái nhận đồ đích",
+  },
+  {
+    key: "production",
+    label: "Sản xuất",
+    field: "production",
+    targets: PRODUCTION_TARGETS,
+    path: (id) => `/internal/v1/orders/${encodeURIComponent(id)}/production-transition`,
+    legend: "Trạng thái sản xuất đích",
+  },
+];
+
+/** @param {string} key */
+const dimensionOf = (key) => DIMENSIONS.find((entry) => entry.key === key) ?? DIMENSIONS[0];
+
+/**
  * `CustodyResolution`, exactly as `DEC-024` settled it.
  *
  * Three members and deliberately not four: there is no code for "washed, walked away, no money",
@@ -202,8 +269,12 @@ export function render_(_context) {
   const move = {
     orderId: "",
     rowVersion: "",
+    dimension: "commercial",
     target: COMMERCIAL_TARGETS[0],
     custodyResolution: "",
+    // The one fact intake carries that the server cannot read for itself. `evaluate_delivery`
+    // returns REQUIRE_HUMAN for every slot at this stage, so it is the operator's word or nothing.
+    slotApproved: false,
   };
 
   const createBody = h("div");
@@ -518,18 +589,19 @@ export function render_(_context) {
     render(moveResultHost);
 
     try {
-      const moved = await request(
-        `/internal/v1/orders/${encodeURIComponent(move.orderId.trim())}/transition`,
-        {
-          method: "POST",
-          body:
-            move.target === "CANCELLED" && move.custodyResolution
-              ? { target: move.target, custody_resolution: move.custodyResolution }
-              : { target: move.target },
-          idempotencyKey: transitionSubmission.key(),
-          ifMatch: Number.parseInt(move.rowVersion.trim(), 10),
-        },
-      );
+      const dimension = dimensionOf(move.dimension);
+      let body = { target: move.target };
+      if (dimension.key === "commercial" && move.target === "CANCELLED" && move.custodyResolution) {
+        body = { target: move.target, custody_resolution: move.custodyResolution };
+      } else if (dimension.key === "intake") {
+        body = { target: move.target, slot_approved: move.slotApproved };
+      }
+      const moved = await request(dimension.path(move.orderId.trim()), {
+        method: "POST",
+        body,
+        idempotencyKey: transitionSubmission.key(),
+        ifMatch: Number.parseInt(move.rowVersion.trim(), 10),
+      });
       transitionSubmission.reset();
       // The row moved, so the version held in this form is now one behind. Adopt the version the
       // server just returned rather than leaving a value that would produce a STALE on the next
@@ -538,7 +610,8 @@ export function render_(_context) {
       setResult(
         moveResult,
         "ok",
-        `Đã chuyển sang ${enumVi(moved.commercial)}. Bản ghi giờ là v${moved.row_version}.`,
+        `${dimension.label}: đã chuyển sang ${enumVi(moved[dimension.field])}. ` +
+          `Bản ghi giờ là v${moved.row_version}.`,
       );
       render(moveResultHost, orderCard(moved));
       render(moveBody, moveForm());
@@ -610,11 +683,46 @@ export function render_(_context) {
       },
     });
 
-    const targetSelect = enumSelect("target", COMMERCIAL_TARGETS, move.target);
+    const dimension = dimensionOf(move.dimension);
+
+    const dimensionSelect = /** @type {HTMLSelectElement} */ (
+      h(
+        "select",
+        { name: "dimension" },
+        DIMENSIONS.map((entry) =>
+          h(
+            "option",
+            { value: entry.key, selected: entry.key === move.dimension, title: entry.key },
+            entry.label,
+          ),
+        ),
+      )
+    );
+    dimensionSelect.addEventListener("change", (event) => {
+      move.dimension = /** @type {HTMLSelectElement} */ (event.target).value;
+      // A target from the previous dimension is meaningless against the new route, so it is
+      // replaced rather than carried across where the server would refuse it as a bad enum.
+      move.target = dimensionOf(move.dimension).targets[0];
+      move.custodyResolution = "";
+      move.slotApproved = false;
+      transitionSubmission.reset();
+      redrawMove();
+    });
+
+    const targetSelect = enumSelect("target", dimension.targets, move.target);
     targetSelect.addEventListener("change", (event) => {
       move.target = /** @type {HTMLSelectElement} */ (event.target).value;
       transitionSubmission.reset();
       redrawMove();
+    });
+
+    const slotInput = h("input", {
+      type: "checkbox",
+      checked: move.slotApproved,
+      onChange: (event) => {
+        move.slotApproved = /** @type {HTMLInputElement} */ (event.target).checked;
+        transitionSubmission.reset();
+      },
     });
 
     const custodySelect = enumSelect(
@@ -649,12 +757,32 @@ export function render_(_context) {
         control: versionInput,
       }),
       labelled({
+        id: "move-dimension",
+        label: "Chiều cần chuyển",
+        hint:
+          "Ba chiều của một đơn chạy độc lập nhau: thương mại, nhận đồ, sản xuất. " +
+          "Một đơn không thể sang “Đang chạy” khi chưa nhận đồ, và không thể giặt khi chưa chạy.",
+        control: dimensionSelect,
+      }),
+      labelled({
         id: "move-target",
-        label: "Trạng thái thương mại đích",
+        label: dimension.legend,
         hint: "Máy chủ quyết định chuyển đổi nào hợp lệ.",
         control: targetSelect,
       }),
-      ...(move.target === "CANCELLED"
+      ...(dimension.key === "intake"
+        ? [
+            labelled({
+              id: "move-slot",
+              label: "Đã duyệt lịch cho đơn này",
+              hint:
+                "Chỉ tích khi bạn đã xác nhận tiệm còn chỗ làm đơn này. Máy chủ không tự quyết " +
+                "được điều đó, nên đây là lời của bạn — và nó được ghi lại kèm tên bạn.",
+              control: slotInput,
+            }),
+          ]
+        : []),
+      ...(dimension.key === "commercial" && move.target === "CANCELLED"
         ? [
             labelled({
               id: "move-custody",
@@ -781,11 +909,13 @@ export function render_(_context) {
     }),
     panel({
       eyebrow: "Lệnh",
-      title: "Chuyển trạng thái thương mại",
+      title: "Chuyển trạng thái đơn",
       guardrail:
-        "Màn hình này cố ý không biết bước nào là hợp lệ — quy tắc đó thuộc về máy chủ, và chép " +
-        "nó sang trình duyệt là tạo bản thứ hai không ai giữ cho khớp được. Cả tám đích đều được " +
-        "chào; máy chủ từ chối cái nào không hợp lệ và nói rõ vướng ở đâu.",
+        "Một đơn có ba chiều chạy độc lập: thương mại, nhận đồ, sản xuất. Chọn chiều trước, rồi " +
+        "chọn đích. Màn hình này cố ý không biết bước nào là hợp lệ — quy tắc đó thuộc về máy " +
+        "chủ, và chép nó sang trình duyệt là tạo bản thứ hai không ai giữ cho khớp được. Mọi " +
+        "đích của chiều đang chọn đều được chào; máy chủ từ chối cái nào không hợp lệ và nói rõ " +
+        "vướng ở đâu.",
       children: h("div", { class: "stack" }, moveBody, moveResultHost),
     }),
     panel({

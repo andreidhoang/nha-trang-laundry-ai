@@ -20,9 +20,9 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from nha_trang_laundry_api.operations import OperationsService
+from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
-from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.orders import (
     CreateOrderCommand,
     OrderAuthorizationError,
@@ -34,8 +34,8 @@ from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     CustodyResolution,
-    IntakeStatus,
     FulfillmentMode,
+    IntakeStatus,
     QuantityBasis,
     QuoteFinality,
     QuoteRevisionStatus,

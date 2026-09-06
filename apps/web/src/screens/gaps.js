@@ -54,17 +54,21 @@ import { facts, panel } from "../ui/components.js";
 const GROUPS = [
   {
     heading: "Vòng đời đơn hàng",
-    // COUNTER-DEFECTS-001. This lede denied four dimensions and three of them had shipped:
-    // "Tiếp nhận" takes an order in and issues a counter ticket, the order screen records a
-    // delivery leg, and the order detail screen settles. A register of what is unsupported is a
-    // compliance surface, so a stale denial here is the same defect as the settlement panel's
-    // false guardrail closed by BOUNDS-AND-TRUTH-001 — it teaches staff the shop cannot do
-    // something it can, and they work around it on paper.
+    // COUNTER-DEFECTS-001 corrected this lede from denying four dimensions to denying one, and
+    // over-corrected: it counted the "Tiếp nhận" screen as the intake surface. That screen creates
+    // an order_request and issues a counter ticket — a different aggregate, which never touches
+    // the order's intake dimension. So the lede claimed the console covered "việc nhận đồ" while
+    // no screen called /intake-transition, and intake is the blocking dimension: an order cannot
+    // reach ACTIVE until it is ACCEPTED. A register of what is unsupported is a compliance
+    // surface, and a false claim of *support* is the worse direction — staff plan a day around it.
+    //
+    // CONSOLE-LIFECYCLE-001 built both missing surfaces, so this lede no longer denies a
+    // dimension. It says what is true now, and the reason it is worth saying is that it was
+    // wrong in both directions within one week.
     lede:
-      "Bảng vận hành hôm nay bao được vòng đời thương mại của một đơn, việc nhận đồ, chặng giao " +
-      "và tất toán tại quầy. Chiều còn thiếu bề mặt là sản xuất: tuyến /production-transition có " +
-      "trên máy chủ nhưng không màn hình nào gọi nó, nên trạng thái giặt sấy được theo dõi ngoài " +
-      "hệ thống.",
+      "Bảng vận hành hôm nay bao được cả bốn chiều của một đơn tại quầy: thương mại, nhận đồ, " +
+      "sản xuất và tất toán, cùng chặng giao. Ba chiều trạng thái nằm chung ở lệnh “Chuyển " +
+      "trạng thái đơn” trên màn hình Đơn hàng — chọn chiều trước, rồi chọn đích.",
     entries: [
       {
         ref: "M3 · MÀN 2",
@@ -83,7 +87,14 @@ const GROUPS = [
           "tên, số điện thoại hay địa chỉ của khách. Khách vãng lai được nhận diện bằng số phiếu " +
           "do quầy phát (DEC-013, 26/08), và số phiếu đó là bound_contact_id của đơn — nên đơn " +
           "tạo được, còn hồ sơ khách thì chưa có.",
-        blockedBy: "DEC-015 — chủ tiệm quyết hồ sơ khách hàng là gì và khi nào một người trở thành khách",
+        // DEC-015 is RESOLVED (26/08), not pending: the owner decided *not* to build a customer
+        // record layer yet, and named the trigger that reopens it. "Still being decided" and
+        // "decided not to, on purpose" are different things to plan a shop around — the sentence
+        // COUNTER-DEFECTS-001 wrote when it fixed the same defect on DEC-010, in the very commit
+        // that left this one.
+        blockedBy:
+          "DEC-015 (đã chốt 26/08) — chủ tiệm quyết chưa xây lớp hồ sơ khách hàng; mở lại khi có " +
+          "kênh liên lạc chính thức",
         today:
           "Liên hệ được nhận diện phía máy chủ qua contact binding; bảng vận hành không tạo khách.",
       },
@@ -135,7 +146,17 @@ const GROUPS = [
         missing:
           "Không có remedies, credit_grants hay credit_ledger_entries. Bồi hoàn là một lệnh có " +
           "duyệt, không phải một trạng thái tự do, nên không thể thay bằng một ô ghi chú.",
-        blockedBy: "DEC-004",
+        // DEC-004 is RESOLVED (18/08) and carries the operative figures. Naming it as the blocker
+        // made staff read "chưa có chính sách" under a "Bị chặn bởi" label and improvise at the
+        // counter, when the owner had already set the window, the cap and the approval ceiling.
+        // The blocker is the absent tables, which is what this now says; the policy is stated so
+        // staff can apply it on paper today.
+        blockedBy:
+          "Thiếu kho dữ liệu, không phải thiếu quyết định. Chính sách đã chốt (DEC-004, 18/08): " +
+          "giặt lại miễn phí nếu khách báo trong 7 ngày kể từ khi lấy đồ và nhân viên xác định " +
+          "lỗi thuộc về tiệm; bồi thường mất hoặc hỏng tối đa 5 lần phí giặt của món đó; nhân " +
+          "viên duyệt được tới 100.000đ, trên mức đó phải có chủ tiệm. Ghi tay theo mức này cho " +
+          "tới khi có bề mặt.",
       },
     ],
   },

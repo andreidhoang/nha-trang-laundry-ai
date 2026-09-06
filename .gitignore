@@ -49,3 +49,8 @@ Thumbs.db
 # Local demo material: generated keys, certificates, passwords and secret files.
 # Generators are committed (scripts/generate_demo_material.py); their output never is.
 .demo/
+
+# Shop-pilot material: the same rule, for a real shop rather than a demo. These are live
+# credentials for a running business -- database passwords, a TLS private key, the Keycloak
+# bootstrap admin -- so the directory is ignored before it exists rather than after.
+.shop/

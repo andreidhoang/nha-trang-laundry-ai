@@ -230,3 +230,84 @@ def _secret_list(service: dict[str, object]) -> list[dict[str, object]]:
     value = service["secrets"]
     assert isinstance(value, list)
     return cast(list[dict[str, object]], value)
+
+
+@pytest.fixture(scope="module")
+def shop_local_config() -> dict[str, object]:
+    command = [
+        "docker",
+        "compose",
+        "-f",
+        COMPOSE_FILE,
+        "-f",
+        "compose.shop-local.yaml",
+        "--profile",
+        "self-managed-database",
+        "config",
+        "--format",
+        "json",
+    ]
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        pytest.skip(f"docker compose is unavailable: {result.stderr.strip()[:200]}")
+    return cast(dict[str, object], json.loads(result.stdout))
+
+
+def test_the_pilot_overlay_changes_where_secrets_come_from_and_nothing_else(
+    self_managed_config: dict[str, object], shop_local_config: dict[str, object]
+) -> None:
+    """The pilot on the shop's own machine has to be a rehearsal, not a second topology.
+
+    `compose.shop-local.yaml` exists because a shop laptop runs plain `docker compose` with no
+    swarm, so `external: true` secrets cannot be read and files are used instead -- which ADR-0007
+    §5 admits by name. Everything else must be identical, or the week proves something other than
+    what will be deployed.
+    """
+
+    cloud = _mapping(self_managed_config, "services")
+    shop = _mapping(shop_local_config, "services")
+    assert set(cloud) == set(shop)
+
+    for name in cloud:
+        one, other = _mapping(cloud, name), _mapping(shop, name)
+        for property_name in (
+            "user",
+            "read_only",
+            "cap_drop",
+            "security_opt",
+            "init",
+            "pids_limit",
+            "networks",
+            "environment",
+            "image",
+            "command",
+            "entrypoint",
+        ):
+            assert one.get(property_name) == other.get(property_name), f"{name}.{property_name}"
+
+    assert _mapping(self_managed_config, "networks") == _mapping(shop_local_config, "networks")
+
+    # Only the sources move, and every one of them moves to a file rather than staying external.
+    secrets = _mapping(shop_local_config, "secrets")
+    for name in secrets:
+        secret = _mapping(secrets, name)
+        assert "external" not in secret, name
+        assert str(secret.get("file", "")).endswith(f"/{name.removeprefix('r1_')}"), name
+
+
+def test_the_pilot_is_not_the_demo_stack(shop_local_config: dict[str, object]) -> None:
+    """`compose.demo.yaml` seeds synthetic staff holding OWNER_ADMIN and wires a development
+    identity provider that mints a token for any subject asked of it.
+
+    Running a real shop on that would be handing out owner access to anyone who can reach the port.
+    The pilot overlay touches neither, and this is the assertion that keeps somebody from reaching
+    for the file that already existed.
+    """
+
+    services = _mapping(shop_local_config, "services")
+    assert "demo-idp" not in services
+    assert "demo-seed" not in services
+    assert "demo-grants" not in services
+    serialized = json.dumps(shop_local_config).casefold()
+    assert "demo_identity_provider" not in serialized
+    assert "seed_demo_data" not in serialized

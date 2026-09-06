@@ -151,7 +151,13 @@ def test_context_drift_check_passes() -> None:
     # reach a log; under uvicorn's default configuration every record() call in the API is a no-op.
     # SHOP-RECOVERY-001 builds the archiving a restore drill will run. SHOP-CUTOVER-001 is the day
     # itself, and needs a host nobody has chosen.
-    assert "104 work items" in result.stdout
+    # The hundred-and-fifth is SHOP-PILOT-001, which is the answer to a question worth recording:
+    # can the shop use this for a week on its own machine before paying for hosting. It can, and it
+    # is not a detour -- the week ends by restoring the shop's real data onto the cloud host, which
+    # is the restore drill BACKUP-RESTORE-001 completes on and which has to happen either way. It
+    # also starts the two clocks nothing else can start: SHOP-INSTRUMENT-001's four-to-six weeks of
+    # measurement, and the thirty real orders G2 requires.
+    assert "105 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

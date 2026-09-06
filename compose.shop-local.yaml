@@ -1,0 +1,54 @@
+# The shop's own machine, for the pilot week.
+#
+#   docker compose -f compose.r1.yaml -f compose.shop-local.yaml --profile self-managed-database up -d
+#
+# **An overlay, not a fourth topology.** Everything about the deployment -- the services, the
+# network graph, the non-root users, the read-only filesystems, the capability flags forced false --
+# comes from `compose.r1.yaml` and is not restated here, so the pilot cannot drift away from the
+# thing it is a rehearsal for. This file changes exactly one thing.
+#
+# **What it changes, and why that is not a compromise.** `compose.r1.yaml` declares its secrets
+# `external: true`, which reads them from the Docker Swarm secret store. A shop laptop running plain
+# `docker compose` has no swarm, so the secrets come from files instead. ADR-0007 §5 admits this
+# explicitly: "The provider's secret store or a file-based store with restrictive ownership both
+# qualify; what does not qualify is any path where a secret reaches the image layer, a log line, an
+# OTel attribute or a backup archive." `scripts/bootstrap_shop_local.py` writes them 0600 under
+# `.shop/`, which is gitignored before it exists.
+#
+# **This is not `compose.demo.yaml`.** That file seeds synthetic staff holding OWNER_ADMIN and wires
+# a development identity provider that mints tokens for any subject it is asked for. Running a real
+# shop on it would be handing out owner access. This overlay touches neither: the identity provider
+# is the same Keycloak, the staff are real, and the only thing that changes is where the secrets are
+# read from.
+
+secrets:
+  r1_migration_database_url: !override
+    file: ./.shop/secrets/migration_database_url
+  r1_api_database_url: !override
+    file: ./.shop/secrets/api_database_url
+  r1_worker_database_url: !override
+    file: ./.shop/secrets/worker_database_url
+  r1_postgres_password: !override
+    file: ./.shop/secrets/postgres_password
+  r1_oidc_issuer: !override
+    file: ./.shop/secrets/oidc_issuer
+  r1_oidc_audience: !override
+    file: ./.shop/secrets/oidc_audience
+  r1_oidc_jwks_url: !override
+    file: ./.shop/secrets/oidc_jwks_url
+  r1_oidc_mfa_claim: !override
+    file: ./.shop/secrets/oidc_mfa_claim
+  r1_oidc_mfa_value: !override
+    file: ./.shop/secrets/oidc_mfa_value
+  r1_tls_certificate: !override
+    file: ./.shop/secrets/tls_certificate
+  r1_tls_private_key: !override
+    file: ./.shop/secrets/tls_private_key
+  r1_keycloak_database_password: !override
+    file: ./.shop/secrets/keycloak_database_password
+  r1_keycloak_bootstrap_admin_password: !override
+    file: ./.shop/secrets/keycloak_bootstrap_admin_password
+  r1_backup_encryption_recipients: !override
+    file: ./.shop/secrets/backup_encryption_recipients
+  r1_backup_repository_credential: !override
+    file: ./.shop/secrets/backup_repository_credential

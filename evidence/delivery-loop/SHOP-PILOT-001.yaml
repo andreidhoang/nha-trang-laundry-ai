@@ -1,0 +1,145 @@
+schema_version: 1
+work_item: SHOP-PILOT-001
+recorded_at: '2026-09-06T14:20:00+07:00'
+requirement_contract: >-
+  Let the shop run the console on its own machine, on its own network, for a week of real trading
+  before a hosting bill starts -- and make the end of that week the migration onto the cloud host
+  rather than a separate exercise.
+
+  The owner asked whether this was possible. It is, and it is better than a detour for a reason that
+  is structural rather than financial: the migration *is* the restore drill, and
+  `BACKUP-RESTORE-001` completes on a drill result and never on configuration, so the drill has to
+  happen either way.
+rollback_impact: >-
+  A clean revert of new files. One compose overlay, one bootstrap script, one runbook, one task
+  packet, two contract tests, and a `.gitignore` entry. No application code, no schema change, no
+  change to `compose.r1.yaml`, and nothing provisioned.
+
+  Reverting removes the ability to run the pilot and changes nothing about the cloud path.
+
+  The one coupling is the `.gitignore` entry for `.shop/`. Reverting it while a machine has been
+  bootstrapped would expose live database passwords, a TLS private key and a Keycloak bootstrap
+  admin to the next `git add -A`. The entry is therefore written before the directory can exist
+  rather than after, and the revert order is: stop the pilot, delete `.shop/`, then revert.
+unresolved_assumptions: >-
+  **No shop has run a week on this.** The stack builds, the overlay validates, the bootstrap
+  produces a working certificate and correctly-permissioned secrets, and the contract tests pin the
+  properties that matter. What is untested is a week of a real counter, which is the entire point
+  of the exercise and cannot be established in advance.
+
+  **The archive is the single point on which the pilot's safety rests, and it is opt-in.**
+  `bootstrap_shop_local.py` accepts an empty repository credential so a machine can be prepared
+  before the object store exists. A shop that trades without setting it is one accident away from
+  losing its money records, and the runbook says so in those words -- but nothing in the code
+  refuses to start. Making the stack refuse to run without a configured archive was considered and
+  rejected: it would also refuse during the hour between bringing the stack up and finishing the
+  bucket, which is when an operator most needs it to work.
+
+  **CẦN XÁC MINH: the machine's sleep behaviour.** A laptop that suspends takes the console down
+  mid-shift, and macOS in particular will sleep on lid close regardless of power settings unless
+  told otherwise. The runbook says to disable sleep and prefer wired ethernet; nothing verifies it,
+  and the failure is intermittent and confusing rather than loud.
+
+  **Not claimed: that a power cut is handled.** `full_page_writes` is on so an unclean shutdown is
+  survivable, and the shop falls back to paper as it does today. A repeated unclean shutdown on a
+  machine with no UPS is a different matter and is named in the runbook rather than solved.
+
+  **Not claimed: that this satisfies A5.** The restore drill is what does, it needs the cloud host,
+  and it stays with `BACKUP-RESTORE-001`.
+evidence:
+  the_overlay_changes_only_where_secrets_come_from: >-
+    A shop laptop runs plain `docker compose` with no swarm, so `compose.r1.yaml`'s
+    `external: true` secrets cannot be read. `compose.shop-local.yaml` overrides them to files and
+    **nothing else** -- no service, no user, no network, no capability flag, no image.
+
+    That is not a compromise smuggled in. ADR-0007 §5 admits it by name: "The provider's secret
+    store or a file-based store with restrictive ownership both qualify; what does not qualify is
+    any path where a secret reaches the image layer, a log line, an OTel attribute or a backup
+    archive." `bootstrap_shop_local.py` writes them `0600` inside a `0700` directory, verified:
+
+        drwx------  .shop/secrets
+        -rw-------  .shop/secrets/tls_private_key
+        -rw-------  .shop/ca/ca.key
+
+    The property is pinned rather than described.
+    `test_the_pilot_overlay_changes_only_where_secrets_come_from_and_nothing_else` compares the
+    rendered configuration of the overlay against the cloud one service by service -- user,
+    `read_only`, `cap_drop`, `security_opt`, `init`, `pids_limit`, networks, environment, image,
+    command, entrypoint -- and asserts the network graph is identical. A pilot that drifts from the
+    deployment it rehearses proves something other than what will be deployed, and this is what
+    stops that happening quietly.
+  a_real_shop_cannot_be_run_on_the_demo_stack: >-
+    The obvious thing to reach for is `compose.demo.yaml`, which already runs this stack locally
+    with file-based secrets. **It would be a serious mistake.** That file seeds synthetic staff
+    holding `OWNER_ADMIN` and wires `scripts/demo_identity_provider.py`, which mints a signed token
+    for any subject it is asked for. Running a real shop on it is handing owner access to anyone who
+    can reach the port.
+
+    `test_the_pilot_is_not_the_demo_stack` asserts the rendered pilot configuration contains no
+    `demo-idp`, `demo-seed` or `demo-grants` service and no reference to the demo identity provider
+    or the demo seed anywhere in it. The assertion exists because the temptation is real and the
+    consequence is silent: the demo stack works, and the person who reaches for it would have a
+    shop that ran perfectly and could be signed into by anybody.
+  the_machine_can_be_prepared_without_generating_the_backup_key_on_it: >-
+    `bootstrap_shop_local.py` **requires** the age public key as an argument and will not generate
+    the pair. `DEC-026` places the private half away from the thing it protects, and ADR-0007 §3
+    requires encryption "with a key that is not stored on Host A" -- a script that generated the
+    identity on the shop machine would have written it next to the archive it exists to protect,
+    which is the exact failure that sentence excludes.
+
+    The recipient is pattern-checked rather than trusted, because a mistyped one produces an archive
+    nobody can read and a restore is where that is discovered. Verified: an empty value is refused
+    with the reason, not accepted silently.
+
+    What it does produce, verified end to end: a private CA and a server certificate carrying the
+    subject alternative name browsers actually check, chaining correctly --
+
+        subject=CN=console.giatlasachcong.lan
+        X509v3 Subject Alternative Name: DNS:console.giatlasachcong.lan
+        .shop/secrets/tls_certificate: OK
+
+    The CA and the server certificate are separate files on purpose: the CA is what gets installed
+    on ten tablets and outlives the server certificate, so renewing one does not mean re-trusting
+    anything on the other.
+
+    Re-running is safe. Every secret that already exists is left alone and named in the output --
+    a second run after the shop has been trading would otherwise rotate the database passwords out
+    from under a live system.
+  the_week_ends_in_the_restore_drill_rather_than_a_file_copy: >-
+    The runbook does not offer a way to copy files to the cloud host. It ends by **restoring** the
+    shop's real data onto it from the off-site archive, timed, following
+    `docs/runbooks/restore-drill.md`, with the clock starting when the operator begins fetching the
+    backup key from wherever `DEC-026` put it.
+
+    That is the whole argument for doing the pilot at all. `BACKUP-RESTORE-001` completes on a drill
+    result and never on configuration, so the drill is mandatory; running it as the migration means
+    it happens once, on data somebody cares about, while the original machine is still working and
+    the shop is still trading. A drill that needs improvisation is a failed drill -- and this is the
+    cheapest possible place to find that out.
+
+    Two clocks also start on day one that nothing else can start. `SHOP-INSTRUMENT-001` needs ten
+    timed loads, twenty delivery legs with real distances and costs, a measured cost per kilo and a
+    confirmed safe capacity, and its packet is explicit that four to six weeks of real operation
+    cannot be simulated or back-filled. `G2` needs thirty completed real orders. Both are owner long
+    poles on everything downstream, and both begin the morning the counter opens rather than after
+    a cloud deployment.
+
+    The off-site archive fits a free tier permanently rather than for a trial: at the corrected
+    `archive_timeout` of 300s with compression, the shop writes roughly 30MB and 145 objects a day,
+    against Cloudflare R2's 10GB of storage and one million writes a month.
+  rollback_assessment: >-
+    See rollback_impact. One compose overlay, one bootstrap script, one runbook, one task packet,
+    two contract tests and a `.gitignore` entry. No application code and nothing provisioned.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

@@ -1669,7 +1669,7 @@ items:
 - id: DEPLOY-TARGET-001
   phase: PRODUCTION_HARDENING
   title: Production topology, isolated agent cell host, and closed capability flags
-  status: PENDING
+  status: BLOCKED
   priority: 213
   depends_on:
   - DECISION-HOSTING-001
@@ -1691,6 +1691,13 @@ items:
   - rollback_assessment
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-deploy-target-001.md
+  blocking_condition: 'Selectable now that DECISION-HOSTING-001 is complete, but it
+    needs a provisioned host and its evidence is G2-shaped rather than R1-shaped:
+    external_port_scan_single_path and agent_cell_isolation_proven_by_attempt both
+    describe a topology with public webhook ingress and a Zone A agent cell, neither
+    of which R1 has. The R1 half of this work is already recorded under SHOP-DEPLOY-001,
+    SHOP-IDENTITY-001, SHOP-OBSERVABILITY-001 and SHOP-RECOVERY-001; what is left
+    here belongs with the second host, at G2, alongside the ingress it exists to isolate.'
 - id: MONITORING-001
   phase: PRODUCTION_HARDENING
   title: Telemetry collector, retention, and paging alert contracts
@@ -3317,3 +3324,33 @@ items:
     archive repository in a separate failure domain, the age key pair generated on
     the owner''s own device, and a timed restore drill. An agent may not select a
     vendor, accept commercial terms, hold the backup identity, or run a deployment.'
+- id: SHOP-PILOT-001
+  phase: PRODUCTION_HARDENING
+  title: The shop's own machine runs the week before the cloud bill starts
+  status: COMPLETE
+  priority: 262
+  depends_on:
+  - SHOP-RECOVERY-001
+  - DECISION-HOSTING-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/adr/0007-production-deployment-topology.md
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  - docs/runbooks/container-deployment.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-pilot-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_overlay_changes_only_where_secrets_come_from
+  - a_real_shop_cannot_be_run_on_the_demo_stack
+  - the_machine_can_be_prepared_without_generating_the_backup_key_on_it
+  - the_week_ends_in_the_restore_drill_rather_than_a_file_copy
+  - rollback_assessment
+  blocked_by_decisions: []

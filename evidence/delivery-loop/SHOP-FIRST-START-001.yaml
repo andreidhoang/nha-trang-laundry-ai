@@ -1,0 +1,159 @@
+schema_version: 1
+work_item: SHOP-FIRST-START-001
+recorded_at: '2026-09-06T14:05:00+07:00'
+requirement_contract: >-
+  Bring the R1 topology up as a whole for the first time and fix what that reveals.
+
+  `SHOP-DEPLOY-001` and `SHOP-IDENTITY-001` are COMPLETE and their evidence is honest about what it
+  proved: `docker compose config` validated, contract tests passed, Keycloak was verified
+  standalone. **Nobody had ever run the five services together** -- `docker ps -a` filtered on the
+  project name returned nothing. This is a corrective item rather than an edit to closed history,
+  because a COMPLETE item is immutable planning history.
+rollback_impact: >-
+  Reverting returns a stack that does not start. Every change here is the difference between a
+  container running and a container in a restart loop, so a partial revert is worse than either
+  state: the Keycloak entrypoint, the transaction-log tmpfs and the realm's absolute URLs are three
+  separate reasons the same service fails, and removing any one of them reintroduces a crash loop
+  with a different message.
+
+  The Caddy change reverts independently and costs only the sign-in surface, which answers 404
+  without it.
+
+  No application code, no schema change, no migration. `compose.r1.yaml`'s topology -- services,
+  networks, users, hardening, capability flags -- is untouched, and its contract test still passes
+  unchanged, which is the evidence that this fixed startup rather than redesigning anything.
+unresolved_assumptions: >-
+  **The sign-in flow has not been driven in a browser against this stack.** Every route answers and
+  the realm's discovery document is correct, but a real Chrome profile with the private CA trusted,
+  completing password and TOTP against this Keycloak and landing on the console with a session
+  cookie, has not been done. The individual halves are proven -- the flow against a standalone
+  Keycloak in `SHOP-IDENTITY-001`, the routes here -- and the join is not.
+
+  **No counter transaction has run through this stack.** That is `SHOP-CUTOVER-001` and it needs a
+  host.
+
+  **CẦN XÁC MINH: `stop_grace_period` for Keycloak.** It inherits the 20s the application services
+  use. Keycloak took roughly seven seconds to start and shuts down faster, so 20s is very likely
+  ample, but it was not measured under a shutdown carrying live sessions.
+
+  **Not claimed: that the transaction-log tmpfs is right for every future topology.** It is right
+  for one Keycloak with one datasource, where there is no second resource for a transaction to be
+  in doubt between. A clustered Keycloak, or one with a second datasource, would need a volume.
+
+  **The archive failures observed here are the unconfigured-repository case and are expected.** With
+  `archive_mode = on` and no `BACKUP_REPOSITORY_PREFIX`, `pg_stat_archiver` reached 109 failed
+  attempts. That is the state `SHOP-PILOT-001`'s evidence describes as opt-in and the runbook warns
+  about; `check_wal_archive_gap` reports it as a failure, which is correct behaviour rather than a
+  defect found here.
+evidence:
+  configuration_that_validates_is_not_configuration_that_starts: >-
+    The whole justification for this item, and it held.
+
+    `compose config` validated, `mypy` passed, and 1118 tests were green across two items that had
+    designed and documented this topology in detail. Bringing it up found **four** defects, none of
+    which any of those could see, and three of which produced a container that reports itself `Up`
+    before dying.
+
+    Two of them are the same shape and worth naming as a class: **a service that starts, announces
+    itself healthy, and then exits.** `docker ps` showed `Up 3 seconds` for Keycloak while it was in
+    a restart loop, and the first log line was a warning about an unrelated build-time option that
+    had nothing to do with the failure underneath it. A deployment checked by "is it up" would have
+    passed.
+
+    Final state, from an empty machine: PostgreSQL healthy under a read-only root filesystem as uid
+    70 with a mounted configuration, `migrate` exiting 0 after applying 35 migrations forward-only,
+    the API and worker healthy, Keycloak started in 6.7s with the realm imported, and Caddy serving.
+  keycloak_has_no_file_suffix_convention: >-
+    `KC_BOOTSTRAP_ADMIN_PASSWORD_FILE` and `KC_DB_PASSWORD_FILE` are not options Keycloak knows. It
+    does not reject them -- it ignores them, and then behaves as though the value were simply
+    absent:
+
+        bootstrap-admin-username available only when bootstrap admin password is set
+
+    on a loop, with no indication that the `_FILE` variable was the cause. The `_FILE` convention is
+    a Docker-image idiom that Postgres and MySQL images implement; Keycloak's documented mechanism
+    is a vault provider, which does not cover these options.
+
+    Both are fixed in ways that are better than what they replace rather than equivalent:
+
+    - **The bootstrap admin is gone from the environment entirely.** `kc.sh bootstrap-admin user` is
+      the supported path and it is run once by an operator already on the host, so no admin
+      credential ever sits where `docker inspect` or an environment dump would carry it. The
+      runbook's existing instruction to delete that admin once the owner has their own account with
+      a second factor now has nothing to leak in the meantime.
+    - **The database password is read by a three-line entrypoint** baked into the image, so it
+      exists only inside the process -- not in `environment:`, not in `docker inspect`, not in the
+      shell history of whoever wrote the compose file.
+  a_read_only_filesystem_needs_every_writable_path_named: >-
+    `SHOP-IDENTITY-001` recorded this as a risk in its own words -- "the exact writable paths must
+    be verified against the pinned digest, not assumed" -- and named `/opt/keycloak/data/tmp` as the
+    one it expected. Starting it found the one it did not:
+
+        ARJUNA012225: FileSystemStore::setupStore - cannot access root of object store:
+        /opt/keycloak/bin/../data/transaction-logs/ShadowNoFileLockStore/defaultStore/
+
+    Narayana's object store. tmpfs rather than a volume is deliberate and is the substantive part of
+    the decision: these are in-doubt XA transaction records, and this Keycloak has exactly one
+    datasource, so there is no second resource for a transaction to be in doubt between. Nothing
+    worth recovering is lost on restart.
+
+    A fourth defect came from the same class of assumption. `${env.R1_CONSOLE_ORIGIN}` is **not**
+    substituted during realm import, so a client whose root URL was written that way made Keycloak
+    refuse to start:
+
+        Invalid client staff-console: Root URL is not a valid URL; A redirect URI is not a valid URI
+
+    The realm now carries the origin as a literal, and the contract test pins it against
+    `compose.r1.yaml`'s default so the two cannot drift. That is worse than a variable and better
+    than a server that will not start, and the test is what makes a hostname change a three-file
+    edit a grep finds rather than a surprise.
+
+    This also corrected a test that was pinning something that does not work: the previous assertion
+    required `rootUrl == "${env.R1_CONSOLE_ORIGIN}"`, which was green and wrong.
+  the_routes_answer_and_the_rest_do_not: >-
+    Measured against the running stack over TLS on the console hostname, with the private CA:
+
+        console shell        -> 200
+        sign-in page         -> 200
+        sign-in module       -> 200
+        callback page        -> 200
+        keycloak same-origin -> 200
+        admin console        -> 404
+        master realm         -> 404
+        unknown hostname     -> 421
+
+    The last three matter as much as the first five. The admin console and the master realm are not
+    reachable from the shop network at all, and a request arriving on any other hostname learns
+    nothing about what runs here.
+
+    The sign-in surface answered 404 on the first attempt, and the cause is a Caddy distinction
+    worth recording because the symptom points elsewhere: **`handle` does not strip the matched
+    prefix and `handle_path` does**, so `/signin/` resolved to `/srv/signin/signin/` while the files
+    sat correctly mounted one directory up. Every other route was already correct, so it read like a
+    broken volume mount rather than a routing bug.
+
+    All five capability flags were then read from the **running containers** rather than from a
+    file, which is the check `report_delivery_status.py` structurally cannot perform: every one
+    reads false, on both the API and the worker.
+
+    One operational note the runbook needs and did not have: **`docker cp` into these containers
+    fails** with "container rootfs is marked read-only", so the role-creation step has to arrive on
+    stdin. The runbook already says to paste it; now there is a reason recorded for why that is not
+    a stylistic choice.
+  rollback_assessment: >-
+    See rollback_impact. One Keycloak entrypoint script and its Dockerfile line, two build-time
+    options moved to where they take effect, one tmpfs, four absolute URLs in the realm, one Caddy
+    directive, one corrected contract assertion, and the removal of a secret nothing reads.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

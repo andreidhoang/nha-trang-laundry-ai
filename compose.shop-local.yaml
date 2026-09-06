@@ -46,8 +46,6 @@ secrets:
     file: ./.shop/secrets/tls_private_key
   r1_keycloak_database_password: !override
     file: ./.shop/secrets/keycloak_database_password
-  r1_keycloak_bootstrap_admin_password: !override
-    file: ./.shop/secrets/keycloak_bootstrap_admin_password
   r1_backup_encryption_recipients: !override
     file: ./.shop/secrets/backup_encryption_recipients
   r1_backup_repository_credential: !override

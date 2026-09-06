@@ -87,10 +87,19 @@ def test_the_client_is_public_with_pkce_and_no_password_grant() -> None:
     assert client["directAccessGrantsEnabled"] is False
     assert client["implicitFlowEnabled"] is False
     assert client["serviceAccountsEnabled"] is False
-    # Relative, resolved against `rootUrl`, which one environment variable sets. Measured: with no
-    # root URL, Keycloak answers "Invalid parameter: redirect_uri" and renders no login form.
-    assert client["redirectUris"] == ["/signin/callback.html"]
-    assert client["rootUrl"] == "${env.R1_CONSOLE_ORIGIN}"
+    # Absolute, and pinned against the compose default so the two cannot drift.
+    #
+    # Two measurements produced this. A *relative* redirect URI with no root URL makes the authorize
+    # endpoint answer "Invalid parameter: redirect_uri" and render no login form at all. And
+    # `${env.VAR}` is not substituted during realm import, so a root URL written that way makes
+    # Keycloak refuse to start -- "Invalid client staff-console: Root URL is not a valid URL" --
+    # after the container has already reported itself Up.
+    origin = "https://console.giatlasachcong.lan:8443"
+    assert client["rootUrl"] == origin
+    assert client["redirectUris"] == [f"{origin}/signin/callback.html"]
+    assert client["webOrigins"] == [origin]
+    compose = (ROOT / "compose.r1.yaml").read_text("utf-8")
+    assert "R1_CONSOLE_HOST:-console.giatlasachcong.lan" in compose
 
 
 def test_the_realm_refuses_plain_http_and_self_registration() -> None:

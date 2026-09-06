@@ -157,7 +157,14 @@ def test_context_drift_check_passes() -> None:
     # is the restore drill BACKUP-RESTORE-001 completes on and which has to happen either way. It
     # also starts the two clocks nothing else can start: SHOP-INSTRUMENT-001's four-to-six weeks of
     # measurement, and the thirty real orders G2 requires.
-    assert "105 work items" in result.stdout
+    # The hundred-and-sixth is SHOP-FIRST-START-001, and it exists because nobody had ever run the
+    # five services together: `docker ps -a` for the project name returned nothing. Configuration
+    # that validates is not configuration that starts. Bringing it up found four defects invisible
+    # to `compose config`, to mypy and to this suite -- Keycloak has no `_FILE` convention and
+    # silently ignores those variables, a read-only filesystem needs every writable path named,
+    # `${env.VAR}` is not substituted during realm import, and Caddy's `handle` does not strip the
+    # path prefix that `handle_path` does.
+    assert "106 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

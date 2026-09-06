@@ -3354,3 +3354,32 @@ items:
   - the_week_ends_in_the_restore_drill_rather_than_a_file_copy
   - rollback_assessment
   blocked_by_decisions: []
+- id: SHOP-FIRST-START-001
+  phase: PRODUCTION_HARDENING
+  title: The first time the stack was actually started, and the four defects that
+    found
+  status: COMPLETE
+  priority: 263
+  depends_on:
+  - SHOP-PILOT-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/adr/0007-production-deployment-topology.md
+  - docs/runbooks/container-deployment.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-first-start-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - configuration_that_validates_is_not_configuration_that_starts
+  - keycloak_has_no_file_suffix_convention
+  - a_read_only_filesystem_needs_every_writable_path_named
+  - the_routes_answer_and_the_rest_do_not
+  - rollback_assessment
+  blocked_by_decisions: []

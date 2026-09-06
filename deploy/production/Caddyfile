@@ -45,7 +45,12 @@
 		# content-hashed over authored console source and would treat these as console screens.
 		# They are outside `BrowserSecurityMiddleware`, so the policy they would have inherited is
 		# stated explicitly and is at least as strict.
-		handle /signin/* {
+		# `handle_path`, not `handle`: the former strips the matched prefix and the latter does not,
+		# so with `handle` a request for `/signin/` resolves to `/srv/signin/signin/` and answers
+		# 404 while the files sit correctly mounted one directory up. Measured by starting the
+		# stack -- every other route returned what it should, and this one looked like a broken
+		# mount.
+		handle_path /signin/* {
 			root * /srv/signin
 			header {
 				Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:"

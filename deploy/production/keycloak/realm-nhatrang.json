@@ -169,14 +169,14 @@
       "frontchannelLogout": true,
       "fullScopeAllowed": false,
       "redirectUris": [
-        "/signin/callback.html"
+        "https://console.giatlasachcong.lan:8443/signin/callback.html"
       ],
       "webOrigins": [
-        "+"
+        "https://console.giatlasachcong.lan:8443"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "/signin/",
+        "post.logout.redirect.uris": "https://console.giatlasachcong.lan:8443/signin/",
         "acr.loa.map": "{\"mfa\":2}",
         "minimum.acr.value": "mfa",
         "access.token.lifespan": "300"
@@ -188,7 +188,7 @@
         "roles"
       ],
       "optionalClientScopes": [],
-      "rootUrl": "${env.R1_CONSOLE_ORIGIN}"
+      "rootUrl": "https://console.giatlasachcong.lan:8443"
     }
   ],
   "users": []

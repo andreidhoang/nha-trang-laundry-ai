@@ -13,6 +13,7 @@ ARG KEYCLOAK_BASE="quay.io/keycloak/keycloak:26.0@sha256:09a381c715ab0b111835b70
 FROM ${KEYCLOAK_BASE} AS builder
 ENV KC_DB=postgres
 ENV KC_HEALTH_ENABLED=true
+ENV KC_METRICS_ENABLED=false
 ENV KC_HTTP_RELATIVE_PATH=/idp
 RUN /opt/keycloak/bin/kc.sh build
 
@@ -25,5 +26,7 @@ RUN echo 'keycloak:x:10005:10005::/opt/keycloak:/sbin/nologin' >> /etc/passwd \
     && echo 'keycloak:x:10005:' >> /etc/group \
     && chown -R 10005:10005 /opt/keycloak
 
+COPY --chmod=0555 deploy/production/keycloak-entrypoint.sh /opt/keycloak/bin/entrypoint.sh
+
 USER 10005:10005
-ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]
+ENTRYPOINT ["/opt/keycloak/bin/entrypoint.sh"]

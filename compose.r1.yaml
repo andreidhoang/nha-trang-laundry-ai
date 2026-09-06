@@ -239,15 +239,16 @@ services:
       KC_HOSTNAME: "https://${R1_CONSOLE_HOST:-console.giatlasachcong.lan}:8443/idp"
       KC_HOSTNAME_STRICT: "true"
       KC_PROXY_HEADERS: xforwarded
-      KC_HEALTH_ENABLED: "true"
-      KC_METRICS_ENABLED: "false"
-      # The realm's client uses a relative redirect URI, resolved against this. One variable
-      # configures the origin in three places rather than three literals drifting apart -- measured:
-      # with no root URL, Keycloak answers a relative redirect URI with "Invalid parameter:
-      # redirect_uri" and no login form is ever rendered.
-      R1_CONSOLE_ORIGIN: "https://${R1_CONSOLE_HOST:-console.giatlasachcong.lan}:8443"
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_bootstrap_admin_password
+      # `KC_HEALTH_ENABLED` and `KC_METRICS_ENABLED` are build-time options and are set in the
+      # Dockerfile. Setting them here under `--optimized` only produces "the new values will NOT be
+      # used until another build is run", which is noise that hides a real failure underneath it.
+      # The realm carries the console origin as a literal rather than reading this. `${env.VAR}`
+      # is not substituted during realm import -- measured: Keycloak refuses to start with
+      # "Invalid client staff-console: Root URL is not a valid URL; A redirect URI is not a valid
+      # URI", after the container has already reported itself Up. A contract test pins the realm's
+      # origin against this default so the two cannot drift; changing the hostname is a three-file
+      # edit that a grep finds, which is worse than a variable and better than a server that will
+      # not start.
     configs:
       - source: r1_keycloak_realm
         target: /opt/keycloak/data/import/realm-nhatrang.json
@@ -255,19 +256,35 @@ services:
         gid: "10005"
         mode: 0440
     secrets:
+      # No bootstrap admin in this environment, and that is the fix rather than a workaround.
+      #
+      # Keycloak 26 does not read `KC_BOOTSTRAP_ADMIN_PASSWORD_FILE` -- it silently ignores it and
+      # then refuses to start, because a bootstrap username without a password is invalid:
+      # "bootstrap-admin-username available only when bootstrap admin password is set", on a
+      # restart loop. Measured by bringing the stack up, which is the only way it shows.
+      #
+      # `kc.sh bootstrap-admin user` is the supported path and is better: the admin is created once
+      # by an operator who is already on the host, so no admin credential ever sits in the running
+      # container's environment where `docker inspect` and every environment dump would carry it.
+      # The runbook's instruction to delete that admin once the owner has their own account with a
+      # second factor now has nothing left to leak in the meantime.
       - source: r1_keycloak_database_password
         target: keycloak_database_password
-        uid: "10005"
-        gid: "10005"
-        mode: 0400
-      - source: r1_keycloak_bootstrap_admin_password
-        target: keycloak_bootstrap_admin_password
         uid: "10005"
         gid: "10005"
         mode: 0400
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
       - /opt/keycloak/data/tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=10005,gid=10005
+      # Narayana's object store, which `SHOP-IDENTITY-001` recorded as a risk -- "the exact writable
+      # paths must be verified against the pinned digest, not assumed" -- and which starting the
+      # stack then measured: "ARJUNA012225: FileSystemStore::setupStore - cannot access root of
+      # object store", on a restart loop, after the container had already reported itself Up.
+      #
+      # tmpfs rather than a volume is deliberate. These are in-doubt XA transaction records, and
+      # Keycloak here has exactly one datasource, so there is no second resource for a transaction
+      # to be in doubt between. Nothing worth recovering is lost when the container restarts.
+      - /opt/keycloak/data/transaction-logs:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=10005,gid=10005
     # No `ingress-edge`, no `archive-egress`: Keycloak has no outbound need -- no email, no
     # federation, no external identity provider.
     networks: [ingress-private, database-private]
@@ -359,8 +376,6 @@ secrets:
   r1_postgres_password:
     external: true
   r1_keycloak_database_password:
-    external: true
-  r1_keycloak_bootstrap_admin_password:
     external: true
   r1_backup_encryption_recipients:
     external: true

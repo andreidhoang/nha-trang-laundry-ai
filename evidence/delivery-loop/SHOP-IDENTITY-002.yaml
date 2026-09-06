@@ -1,0 +1,111 @@
+schema_version: 1
+work_item: SHOP-IDENTITY-002
+recorded_at: '2026-09-06T18:55:00+07:00'
+requirement_contract: 'Close the two identity defects the adversarial round measured against a real Keycloak
+  importing the
+
+  committed realm, and write down the one that configuration cannot close.'
+rollback_impact: 'Reverting `acr_values` returns a silent sign-in on any browser holding an SSO cookie:
+  a session
+
+  takeover for OPERATOR and DRIVER, and a lockout for every role in `SENSITIVE_MFA_ROLES`. The
+
+  sign-out change reverts independently and costs the other half of the same defect. The logout route
+
+  now returns a body where it returned 204; a client that ignores the body is unaffected, and the
+
+  console tolerates a null.'
+unresolved_assumptions: '**The enrolment race is not closed and cannot be, in configuration.** Whoever
+  holds a new hire''s
+
+  temporary password before that hire has enrolled a factor can enrol their own and receive a token
+
+  asserting `acr=mfa` -- measured, with the attacker''s TOTP secret registered and a 24-hour session
+
+  issued on an ACCOUNTANT role. Keycloak has to offer an unenrolled user the enrolment form. The
+
+  control is that roles live in `staff_role_assignments` and not in the issuer, so a session with no
+
+  granted role has no capability; the ceremony that depends on is in the runbook and is a procedure,
+
+  not a mechanism.
+
+
+  **The fix is verified as configuration, not end to end.** The lens measured that `acr_values=mfa`
+
+  brings the password form back on the SSO-cookie path against a real Keycloak; the committed change
+
+  carrying it has not itself been driven through a browser.
+
+
+  **Not addressed here, all reported as LOW:** `admin-cli`''s direct grant is reachable through the
+
+  proxied token endpoint (failing today only incidentally), the self-service account console is
+
+  reachable from the shop network, an issuer outage is indistinguishable from a bad credential and
+
+  spends a rate-limit attempt, and the verifier checks no `typ`, `azp` or `nonce`.'
+evidence:
+  the_realm_setting_was_not_enforced_on_the_sso_path: "`realm-nhatrang.json:125` says the client's `minimum.acr.value`\
+    \ asks for the second factor \"on\nevery request -- server-enforced, not something a client may decline\"\
+    . Measured against Keycloak\n26.0.8 at the pinned digest, with the exact request `signin.js` built:\n\
+    \n    STEP 1  fresh browser        forms: [password, otp]   id_token acr='mfa'\n    STEP 3  same browser,\
+    \ again  forms: NONE              id_token acr='0'   (same subject)\n\n    no acr_values (what signin.js\
+    \ sent) -> SILENT CODE, no interaction\n    acr_values=mfa                      -> form shown\n\n\
+    Two consequences, both driven through the real `StaffIdentityService`. An OPERATOR session was\nissued\
+    \ from the silent token (`mfa_verified=False`, 24-hour expiry) -- on a shop tablet the next\nperson\
+    \ to press sign-in becomes the previous operator, presenting nothing. And an OWNER_ADMIN was\nrefused,\
+    \ because the role is in `SENSITIVE_MFA_ROLES`, surfacing as the deliberately opaque\n\"Danh tính\
+    \ không được chấp nhận\" with nothing explaining why: a first-day breaker.\n\n`acr_values=mfa` is\
+    \ now on the authorization request. `test_the_authorization_request_asks_for_the_second_factor_by_name`\n\
+    pins it and checks the value against the realm's own `acr.loa.map`, because a value the realm does\n\
+    not map is refused outright."
+  signing_out_left_every_issuer_cookie_alive: '`session.js` posted only to `/internal/v1/auth/logout`;
+    nothing in the repository called the
+
+    issuer''s `end_session_endpoint`, despite the client carrying `frontchannelLogout: true` and
+
+    `post.logout.redirect.uris`. Measured after a console sign-out: `AUTH_SESSION_ID`,
+
+    `KEYCLOAK_IDENTITY` and `KEYCLOAK_SESSION` all still held. That is the enabling half of the silent
+
+    sign-in above -- one defect stops a session being reused, the other stops it existing, and both
+
+    were needed.
+
+
+    The URL is built by the API from its own configuration and returned from the logout route, because
+
+    the issuer is deployment configuration and hard-coding `/idp/realms/...` into `apps/web` would
+
+    couple the console to one topology. A deployment with no issuer gets null and the console skips the
+
+    navigation, which is what keeps the demo stack working.'
+  what_configuration_cannot_close: "Recorded rather than fixed, because it is not fixable where it looks\
+    \ like it should be. With a\npassword alone, against an account whose `CONFIGURE_TOTP` was still pending:\n\
+    \n    forms presented: [password, totp-enrol]\n    TOTP secret the ATTACKER's device now holds: 8Nkjp1aNwzMyQoDrgLWU\n\
+    \    id_token acr='mfa'   <-- MFA asserted\n    SESSION ISSUED: roles=['ACCOUNTANT'] mfa_verified=True\
+    \ expires in 24h\n\n`SHOP-IDENTITY-001`'s evidence read the `login-actions/required-action` redirect\
+    \ as a refusal. It is\na refusal at that instant, and the next form in the same flow hands the visitor\
+    \ the factor.\n\nThe ceremony is in `production-deploy-day.md` §2a: never send a temporary password,\
+    \ enrol the\nauthenticator at the counter in the same sitting, and grant the role only afterwards.\
+    \ That is a real\ncontrol and not merely advice because roles are granted in our database, so a session\
+    \ without one\ncan do nothing."
+  rollback_assessment: '`deploy/production/signin/signin.js`, `apps/web/src/core/session.js`,
+
+    `apps/api/.../main.py`, plus the regenerated API contract. Full battery green at 1129 passed,
+
+    3 skipped.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

@@ -1,0 +1,96 @@
+schema_version: 1
+work_item: CONSOLE-LIFECYCLE-001
+recorded_at: '2026-09-06T18:55:00+07:00'
+requirement_contract: 'Give the console the two order dimensions it never had, and correct the gap register
+  that
+
+  described the absence wrongly in both directions.'
+rollback_impact: 'Reverting removes the only surface for intake and production and returns the console
+  to stopping at
+
+  CONFIRMED, which is the state in which R1 cannot run a shop. The `blockedBy` registry key and its
+
+  guard revert independently and cost only the check, not the corrected copy. Reworded guardrails
+
+  change content-hashed slot ids, so a revert must regenerate the disclosure registry and the service
+
+  worker manifest or `verify_contracts.py` fails.'
+unresolved_assumptions: '**Not driven in a browser.** The walk that proves this used routes extracted
+  from
+
+  `apps/web/src/screens/` at runtime, which is the strongest available evidence that the console can
+
+  reach them, but a person clicking the dimension selector on a tablet is not the same thing and has
+
+  not been done.
+
+
+  **The intake `slot_approved` checkbox is the operator''s word and nothing verifies it.** That is by
+
+  design -- `evaluate_delivery` returns REQUIRE_HUMAN for every slot at this stage -- but it means a
+
+  mis-tick is recorded as fact under a named staff member.
+
+
+  **Not claimed: that offering every enum value is right forever.** It follows the file''s existing
+
+  rule that the domain answers reachability, and the refusals are legible; a screen that offered only
+
+  legal targets would be a second copy of the transition table.'
+evidence:
+  the_console_could_not_move_an_order_past_confirmed: "`/intake-transition` (`main.py:897`) and `/production-transition`\
+    \ (`main.py:934`) existed from the\nbeginning and no screen called either. Measured over the console's\
+    \ own call sites, extracted from\n`apps/web/src/screens/` at two commits:\n\n    console routes before:\
+    \ 31    /orders/{}/intake-transition      absent\n    console routes now   : 33    /orders/{}/production-transition\
+    \  absent -> present\n\nIntake is the blocking dimension: `transition_commercial` refuses ACTIVE while\
+    \ intake is not\nACCEPTED, and every later step hangs off ACTIVE. A console-only operator dead-ended\
+    \ on\n`409 INVALID_STATE_TRANSITION: intake is not accepted`.\n\nOne command with a dimension selector,\
+    \ three routes. They are separate on the server because the\ndimensions move independently, and flattening\
+    \ them into one target list would invent a state\nmachine the domain does not have. Every Vietnamese\
+    \ gloss for both enums was already in `i18n.js`.\n\n`test_the_console_reaches_the_routes_its_screens_depend_on`\
+    \ now names all five counter-walk routes,\nso a screen losing one fails the suite."
+  the_gap_register_was_wrong_in_both_directions: '`COUNTER-DEFECTS-001` corrected the lede from denying
+    four dimensions to denying one, and
+
+    over-corrected: it counted the "Tiếp nhận" screen as the intake surface. That screen creates an
+
+    `order_request` and issues a counter ticket -- a different aggregate that never touches the order''s
+
+    intake dimension. The repository''s own glossary settles it: `i18n.js:141` glosses `NOT_RECEIVED`
+    as
+
+    "chưa nhận đồ", so *nhận đồ* is the intake dimension.
+
+
+    So the register claimed support the console did not have. A false claim of support is worse than a
+
+    false denial: staff plan a day around it. Both surfaces exist now and the lede says so.'
+  blocked_by_was_the_one_key_the_registry_never_read: "Two entries named RESOLVED decisions as pending\
+    \ blockers -- DEC-015 (resolved 2026-08-26) and\nDEC-004 (resolved 2026-08-18, carrying a 7-day rewash\
+    \ window, a 5x compensation cap and a 100,000d\nstaff approval ceiling). Under a \"Bị chặn bởi\" label\
+    \ an operator reads that as *no policy yet*, so a\ncounter dispute gets improvised while the owner\
+    \ has already set the numbers.\n\n`COUNTER-DEFECTS-001` fixed exactly this on DEC-010 and wrote the\
+    \ sentence explaining why, in the\ncommit that left these two.\n\nThe cause: `blockedBy` -- the one\
+    \ key that names decisions -- was not in `DISCLOSURE_KEYS`, so no\nslot existed and no check could\
+    \ see it. It is registered now (161 -> 175 slots, all fourteen\nlong-enough values). And because the\
+    \ worst instance was `blockedBy: \"DEC-004\"`, seven characters,\nbelow `MINIMUM_LENGTH` and unable\
+    \ to bind in principle, the guard for the class reads the module\nsource directly. Verified by restoring\
+    \ that exact string:\n\n    AssertionError: these gap entries name a settled decision as a pending\
+    \ blocker"
+  rollback_assessment: '`apps/web/src/screens/orders.js`, `gaps.js`, `scripts/console_disclosures.py`,
+    plus regenerated
+
+    `console-disclosures-v1.yaml` and `sw.js`. Full battery green at 1122 passed, 3 skipped.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

@@ -3383,3 +3383,218 @@ items:
   - the_routes_answer_and_the_rest_do_not
   - rollback_assessment
   blocked_by_decisions: []
+- id: ORDER-CUSTODY-001
+  phase: PRODUCTION_HARDENING
+  title: Custody, not acceptance, is what a cancellation resolves
+  status: COMPLETE
+  priority: 264
+  depends_on:
+  - SHOP-FIRST-START-001
+  context_domains:
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - AGENTS.md
+  contracts: []
+  task_packet: context/tasks/TASK-order-custody-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - custody_is_the_boundary_not_acceptance
+  - the_resolution_is_part_of_the_commands_identity
+  - a_resolution_the_record_contradicts_is_refused
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-LIFECYCLE-001
+  phase: PRODUCTION_HARDENING
+  title: The counter can run a whole day on the console
+  status: COMPLETE
+  priority: 265
+  depends_on:
+  - ORDER-CUSTODY-001
+  context_domains:
+  - orders_audit
+  normative_sources:
+  - AGENTS.md
+  contracts: []
+  task_packet: context/tasks/TASK-console-lifecycle-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_console_could_not_move_an_order_past_confirmed
+  - the_gap_register_was_wrong_in_both_directions
+  - blocked_by_was_the_one_key_the_registry_never_read
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-ALERTING-001
+  phase: PRODUCTION_HARDENING
+  title: The alerts fire in the shop's hours and survive a broken check
+  status: COMPLETE
+  priority: 266
+  depends_on:
+  - CONSOLE-LIFECYCLE-001
+  context_domains:
+  - platform
+  normative_sources:
+  - AGENTS.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-alerting-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - quiet_hours_were_inverted_by_seven_hours
+  - a_check_that_cannot_run_refuses_loudly
+  - the_managed_branch_is_declared_rather_than_guessed
+  - one_broken_check_does_not_discard_the_alert
+  - log_level_cannot_silence_the_record_stream
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: STORE-REGISTRY-002
+  phase: PRODUCTION_HARDENING
+  title: The dangling transaction, everywhere, and a test that looked
+  status: COMPLETE
+  priority: 267
+  depends_on:
+  - SHOP-ALERTING-001
+  context_domains:
+  - orders_audit
+  normative_sources:
+  - AGENTS.md
+  contracts: []
+  task_packet: context/tasks/TASK-store-registry-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_same_defect_was_reintroduced_in_the_commit_that_fixed_it
+  - the_cited_test_passed_with_the_constraint_dropped
+  - a_typed_refusal_at_the_http_boundary
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-IDENTITY-002
+  phase: PRODUCTION_HARDENING
+  title: The second factor is asked for, and signing out ends both sessions
+  status: COMPLETE
+  priority: 268
+  depends_on:
+  - STORE-REGISTRY-002
+  context_domains:
+  - platform
+  normative_sources:
+  - AGENTS.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-identity-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_realm_setting_was_not_enforced_on_the_sso_path
+  - signing_out_left_every_issuer_cookie_alive
+  - what_configuration_cannot_close
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-RECOVERY-002
+  phase: PRODUCTION_HARDENING
+  title: The backups can be taken, and the drill can be passed
+  status: COMPLETE
+  priority: 269
+  depends_on:
+  - SHOP-IDENTITY-002
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - AGENTS.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-recovery-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_drill_validator_could_never_pass
+  - an_empty_base_backup_was_recorded_as_archived
+  - the_restore_command_postgresql_refuses
+  - the_archiving_had_no_client_to_run
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: RUNBOOK-TRUTH-001
+  phase: PRODUCTION_HARDENING
+  title: The deploy runbooks can be executed
+  status: COMPLETE
+  priority: 270
+  depends_on:
+  - SHOP-RECOVERY-002
+  context_domains:
+  - platform
+  normative_sources:
+  - AGENTS.md
+  contracts: []
+  task_packet: context/tasks/TASK-runbook-truth-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - three_failures_that_needed_no_host
+  - the_two_runbooks_disagreed_and_the_reader_was_sent_to_the_wrong_one
+  - no_step_created_the_admin_everything_needs
+  - the_enrolment_ceremony
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-WALKTHROUGH-001
+  phase: PRODUCTION_HARDENING
+  title: One real counter transaction, through console routes, on a live stack
+  status: COMPLETE
+  priority: 271
+  depends_on:
+  - RUNBOOK-TRUTH-001
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - AGENTS.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-walkthrough-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - seventeen_steps_end_to_end
+  - every_step_used_a_route_a_screen_calls
+  - what_this_does_not_prove
+  - rollback_assessment
+  blocked_by_decisions: []

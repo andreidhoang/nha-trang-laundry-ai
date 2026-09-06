@@ -1,0 +1,84 @@
+schema_version: 1
+work_item: ORDER-CUSTODY-001
+recorded_at: '2026-09-06T18:55:00+07:00'
+requirement_contract: 'Close the three order-lifecycle defects the adversarial round found in ORDER-EXIT-001''s
+  own work.
+
+  A corrective item rather than an edit to closed history: a COMPLETE item''s planning record is
+
+  immutable under ADR-0004.'
+rollback_impact: 'Reverting restores three reachable defects on the counter''s most consequential command.
+  The
+
+  domain guard and the payload field revert independently; the consistency check depends on the
+
+  `custody_resolution` parameter added to `transition_commercial`, so reverting that alone leaves a
+
+  parameter nothing supplies, which is inert but misleading. No schema change and no migration.'
+unresolved_assumptions: '**A paid, collected order can still be cancelled as SHOP_FAULT_NO_CHARGE.** That
+  is deliberate and
+
+  is the MEDIUM this item does not close. Whether "shop fault, no charge" is a legitimate after-the-
+
+  fact refund or a falsehood is a judgement the recorded facts cannot settle, and inventing an answer
+
+  in domain code is how a policy gap becomes a silent default. `CustodyResolution` has three members
+
+  because the fourth case is an open question; it stays open, and it belongs in a decision packet.
+
+
+  **Not claimed: that the two contradictions are the only ones checkable.** They are the two the
+
+  system records unambiguously -- custody at handover, production start. Others may exist.'
+evidence:
+  custody_is_the_boundary_not_acceptance: "`_work_has_begun` tested `intake is ACCEPTED`, the last of\
+    \ six intake states. Custody transfers at\n`RECEIVED_PENDING_INSPECTION`, four stages earlier. Measured\
+    \ across every intake value before the\nfix -- four states with the customer's laundry physically\
+    \ in the shop allowed an outright\ncancellation with no resolution recorded:\n\n    intake=RECEIVED_PENDING_INSPECTION\
+    \      ALLOWED outright  <-- SHOP HOLDS THE LAUNDRY\n    intake=WAITING_PRICE_APPROVAL           ALLOWED\
+    \ outright  <-- SHOP HOLDS THE LAUNDRY\n    intake=WAITING_CUSTOMER_RECONFIRMATION  ALLOWED outright\
+    \  <-- SHOP HOLDS THE LAUNDRY\n    intake=WAITING_SLOT_APPROVAL            ALLOWED outright  <-- SHOP\
+    \ HOLDS THE LAUNDRY\n    intake=ACCEPTED                         refused: work has begun\n\nAfter:\
+    \ all five refuse and route through cancellation review. `AWAITING_HANDOFF` and `REJECTED`\nstay free\
+    \ -- the two states where the shop holds nothing. That boundary is not invented here:\n`transition_intake`\
+    \ already refuses `-> REJECTED` from `AWAITING_HANDOFF` because \"custody was\nnever received\", and\
+    \ this applies the same line on the other side.\n\n`test_custody_not_acceptance_is_what_a_cancellation_must_resolve`\
+    \ fails against the old guard."
+  the_resolution_is_part_of_the_commands_identity: "`custody_resolution` decided `cancellation_approved`,\
+    \ `custody_and_financial_resolution_recorded`\nand the ledger event, and was absent from the hashed\
+    \ idempotency payload. Two cancellations\ndiffering only in their resolution, one fixed order id,\
+    \ JCS-SHA256 over the exact dict the method\nbuilds:\n\n    before   'we never received it' -> JCS-SHA256-V1:55e9f0d8a170\n\
+    \             'our fault, no charge' -> JCS-SHA256-V1:55e9f0d8a170   same digest -> SILENT REPLAY\n\
+    \    after    'we never received it' -> JCS-SHA256-V1:da08c45c5d3f\n             'our fault, no charge'\
+    \ -> JCS-SHA256-V1:94119ef54b29   IDEMPOTENCY_CONFLICT\n\nSo the second call returned the first's\
+    \ stored response with HTTP 200: the ledger kept one\nresolution while the staff member who pressed\
+    \ the button had recorded another, and nothing reported\na conflict.\n\nPinned at the repository level\
+    \ against real PostgreSQL by\n`test_what_happened_to_the_laundry_is_part_of_the_command_not_decoration`,\
+    \ which drives an order\nthrough seven transitions to CANCELLATION_REVIEW, cancels it, replays the\
+    \ identical command\n(`replayed=True`), and then sends the same key with a different resolution. Verified\
+    \ to fail --\n`DID NOT RAISE IdempotencyConflictError` -- with the payload field removed."
+  a_resolution_the_record_contradicts_is_refused: "Making a resolution the approval did not make it true;\
+    \ nothing compared what staff said against\nwhat the system had written down.\n\n    goods on the\
+    \ counter, resolved 'never received'   -> refused: the order records custody\n    already washed,\
+    \ resolved 'returned unwashed'      -> refused: production has begun\n    never handed over, 'never\
+    \ received'               -> RECORDED\n    received, not started, returned unwashed          -> RECORDED\n\
+    \nOnly contradictions, never judgements. Custody at handover and production start are both recorded\n\
+    facts, so both claims are checkable; what a paid, collected order should be cancelled *as* is not,\n\
+    and is left open rather than defaulted.\n\n`test_a_resolution_the_order_record_contradicts_is_refused`\
+    \ fails without the check."
+  rollback_assessment: 'Three independent changes across `packages/domain/.../orders.py` and `packages/db/.../orders.py`.
+
+    Full battery green at 1121 passed, 3 skipped.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

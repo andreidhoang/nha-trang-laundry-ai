@@ -1,0 +1,90 @@
+schema_version: 1
+work_item: SHOP-WALKTHROUGH-001
+recorded_at: '2026-09-06T18:55:00+07:00'
+requirement_contract: 'Run the shop''s day against a running stack, using only routes the console''s own
+  screens call, and
+
+  report what happened.'
+rollback_impact: 'Nothing to roll back: this item changes no shipped artifact. Its value is the measurement.'
+unresolved_assumptions: '**This is the demo stack, not the R1 topology.** `compose.demo.yaml` seeds synthetic
+  staff and wires
+
+  a development identity provider that mints a token for any subject asked of it. The R1 stack has
+
+  been started (`SHOP-FIRST-START-001`) but no transaction has run through it, and it has no staff
+
+  accounts because creating them needs the interactive admin step on a real host.
+
+
+  **The sign-in was a demo token, not a browser.** No Chrome profile with the private CA trusted has
+
+  completed password and TOTP against the real Keycloak and landed on the console. The R1 proxy
+
+  answers only to `console.giatlasachcong.lan` and the demo proxy only to `staging.internal`, and
+
+  neither resolves here without an `/etc/hosts` entry, which is the owner''s to add.
+
+
+  **The walk used the console''s routes, not its widgets.** Route coverage is extracted from
+
+  `apps/web/src/screens/` at runtime and every step asserted against it, so no step used a surface
+
+  staff lack -- but a person clicking through the screens is a different test and has not been run.
+
+
+  **One store, one operator, no concurrency.** Nothing here exercises two people at the counter at
+
+  once; `REVERIFY-REGRESSIONS-002` covers the advisory-lock path separately.'
+evidence:
+  seventeen_steps_end_to_end: "Against the running demo stack, after `docker compose ... up -d --wait`\
+    \ and a clean database:\n\n     1  OK   201  phát phiếu (counter ticket)\n     2  OK   201  tiếp nhận\
+    \ (order request)\n     3  OK   201  báo giá 7 kg (quote)          -> 140,000 VND at the 6 kg tier\
+    \ rate\n     4  OK   201  khách đã chốt giá (acceptance)\n     5  OK   201  tạo đơn (order)\n    \
+    \ 6  OK   200  nhận đồ → đã nhận, chờ kiểm\n     7  OK   200  nhận đồ → đã nhận\n     8  OK   200\
+    \  thương mại → chờ tiệm xác nhận\n     9  OK   200  thương mại → đã xác nhận\n    10  OK   200  thương\
+    \ mại → đang chạy\n    11-15 OK 200  sản xuất → xếp hàng, giặt, kiểm tra, sẵn sàng, đã giao ra\n \
+    \   16  OK   201  tất toán (settlement)\n    17  OK   200  thương mại → hoàn tất\n\n    commercial=COMPLETED\
+    \  intake=ACCEPTED  production=RELEASED  balance=PAID\n\n7 kg at 20,000/kg is 140,000 -- the tier\
+    \ rate above the 6 kg cliff, on the live stack.\n\n`scripts/verify_demo_stack.py` reports 24/24 against\
+    \ the same stack, including that a quote with an\nunresolved delivery fee shows no display total and\
+    \ that an auditor is refused with an answer that\nteaches nothing."
+  every_step_used_a_route_a_screen_calls: "Each step asserts its path against the set extracted from `apps/web/src/screens/*.js`\
+    \ at runtime,\nso the walk is over the surface a member of staff has and nothing else. A step naming\
+    \ a route no\nscreen calls raises before the request is made.\n\nSteps 6-7 and 11-15 are the ones\
+    \ that could not have been taken before `CONSOLE-LIFECYCLE-001`:\n\n    console routes before: 31\
+    \    /orders/{}/intake-transition      absent -> present\n    console routes now   : 33    /orders/{}/production-transition\
+    \  absent -> present\n\nSince ACTIVE is refused while intake is not ACCEPTED, step 10 and everything\
+    \ after it were\nunreachable from the console, which is the whole of the R1 premise."
+  what_this_does_not_prove: 'It does not prove the R1 topology works: this is the demo stack, whose identity
+    provider mints a
+
+    token for any subject and whose seed creates synthetic staff holding OWNER_ADMIN. It does not prove
+
+    the browser sign-in flow, which needs a hostname that resolves and a trusted private CA. It does not
+
+    prove anything about a provisioned host, backups taken against a real object store, or a restore
+
+    drill -- those are `SHOP-CUTOVER-001` and `BACKUP-RESTORE-001`, both blocked on things an agent
+
+    cannot obtain.
+
+
+    What it proves is that the deterministic core -- ticket, quote, acceptance, order, intake,
+
+    production, settlement, completion -- runs a whole counter transaction over HTTP against a real
+
+    database through the surface staff actually have.'
+  rollback_assessment: No shipped artifact changed.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

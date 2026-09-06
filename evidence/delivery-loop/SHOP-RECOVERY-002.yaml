@@ -1,0 +1,136 @@
+schema_version: 1
+work_item: SHOP-RECOVERY-002
+recorded_at: '2026-09-06T18:55:00+07:00'
+requirement_contract: 'Make the backups takeable and the drill passable. Three HIGH findings plus the
+  three reasons the
+
+  archiving could not run at all.'
+rollback_impact: 'Reverting the validator returns a check no real database can pass, which is worse than
+  no check --
+
+  an operator who cannot pass a drill stops running drills. Reverting `base-backup.sh` returns silent
+
+  storage of truncated artifacts that the restore then prefers, and since DEC-026 requires a
+
+  credential that cannot delete, those objects are unremovable. The rclone addition and the wrapper
+
+  revert together; without them `archive_command` fails on every segment.'
+unresolved_assumptions: '**No full PITR has been run against the changed scripts.** Lens 3 ran a complete
+  real PITR against
+
+  the previous versions -- base backup, nine archived segments, restore, promotion, 51000 rows at the
+
+  correct target -- so the machinery is proven; these changes are to the guards around it and were
+
+  exercised separately with a rig.
+
+
+  **The rclone wrapper has not been run against a real object store.** Its argument handling,
+
+  existence check and refusals are exercised locally; the S3 semantics it relies on -- an atomic PUT,
+
+  so a partial upload never becomes visible -- are asserted from the provider''s contract, not
+
+  measured. Object versioning and lock are what make the overwrite protection true, and that is
+
+  repository configuration the owner holds.
+
+
+  **`CONTIGUOUSLY_VERSIONED_AGGREGATES` is a list, so a new aggregate type is unchecked until added.**
+
+  That is the honest trade: the check can only speak where the invariant is actually promised. A test
+
+  asserts the list''s exact contents so growing it is deliberate.
+
+
+  **The 26-hour base-backup threshold assumes a daily schedule.** Changing the cron means changing the
+
+  constant.'
+evidence:
+  the_drill_validator_could_never_pass: "`recovery.py:198` compared `count(*)` to `max(aggregate_version)`\
+    \ on a comment claiming\n`domain_events` is unique on the version triple. `0001_transaction_foundation.sql:12`\
+    \ makes it\nunique on `(aggregate_type, aggregate_id, aggregate_version, event_type)`, so two events\
+    \ at one\nversion are legal and were counted twice.\n\nAnd it asked contiguity of writers that never\
+    \ promised it: `agent_runs.py:312` hardcodes\n`aggregate_version=8` for a completion, `automation.py:103`\
+    \ writes only version 2,\n`quotes.py` writes the accepted revision number. A/B against a database\
+    \ built from all 35\nmigrations, differing only in that number:\n\n    RUN 1: completion event at\
+    \ version 8 (what the code writes)  -> VALIDATOR FAILED\n    RUN 2: identical database, contiguous\
+    \ version 4              -> VALIDATOR PASSED\n\n`domain_events` is append-only -- `reject_ledger_mutation()`\
+    \ refuses the repair -- so any shop\nholding one completed agent run could never pass a drill, and\
+    \ `BACKUP-RESTORE-001` completes on a\ndrill result.\n\nNow scoped to the six aggregates whose writers\
+    \ do promise 1-then-n+1, counting distinct versions.\nVerified on all six shapes against real PostgreSQL,\
+    \ old query beside new:\n\n    case                                     want    old    new\n    ORDER\
+    \ healthy 1,2,3                     False  False  False\n    ORDER v2 genuinely lost             \
+    \     True   True   True\n    ORDER v2 lost, masked by a pair          True  False   True\n    AGENT_RUN\
+    \ completion at v8              False   True  False\n    AUTOMATION envelope max2 count1         False\
+    \   True  False\n    APPROVAL two types at v1                False   True  False\n\nThe third row\
+    \ is the one the old query got wrong in the dangerous direction: a genuinely lost\nversion, hidden\
+    \ by a same-version pair, passed."
+  an_empty_base_backup_was_recorded_as_archived: "`base-backup.sh` streamed `pg_basebackup | gzip | age\
+    \ | upload` in one pipeline. POSIX `sh` has no\n`pipefail`, so `set -eu` saw only the upload's status.\
+    \ With `pg_basebackup` absent entirely:\n\n    /rig/base-backup.sh: line 18: pg_basebackup: not found\n\
+    \    base backup base-20260906T080036Z archived\n    exit=0\n    220 bytes stored, decrypting to 0\
+    \ bytes of tar\n\nAnd `restore.sh:24` took `sort | tail -1`, so the corrupt newest was always selected\
+    \ over the good\nbackup from nine seconds earlier: `tar: short read`, exit 1.\n\nStreaming cannot\
+    \ be made safe when the credential cannot delete -- by the time the failure is\nvisible the partial\
+    \ object is already stored. The artifact is staged and verified before anything\nleaves the host;\
+    \ `archive-wal.sh` already did this for segments and this script had not. Restore now\ntries candidates\
+    \ newest-first and requires `global/pg_control`, because `tar` succeeding is not\nproof: a truncated\
+    \ stream extracts a prefix. Exercised with a rig -- truncated newest rejected, good\none restored."
+  the_restore_command_postgresql_refuses: "`restore.sh:36` interpolated three values unquoted into a single-quoted\
+    \ config value. All three\ncases printed \"data directory prepared\" and exited 0, then failed when\
+    \ PostgreSQL was started --\ninside the four-hour RTO, after the visible step reported success:\n\n\
+    \    space in the identity path -> FATAL: could not locate required checkpoint record\n    % in the\
+    \ repository path   -> FATAL: invalid value for parameter \"restore_command\"\n    ' in the identity\
+    \ path     -> FATAL: configuration file contains errors\n\nThe runbook has the key handed over on\
+    \ removable media at drill time, so \"/Volumes/USB DRIVE/\" is\nthe expected shape. Paths are quoted\
+    \ inside the command now -- inner double quotes within\nPostgreSQL's single quotes -- and the characters\
+    \ quoting cannot save are refused before anything is\nwritten. Measured: a `%` and a `'` both refused\
+    \ with exit 4, and a path with a space produced a\ncorrect `restore_command`."
+  the_archiving_had_no_client_to_run: 'Both scripts exec `$BACKUP_UPLOAD_COMMAND` as one executable and
+    the image had no object-store
+
+    client at all -- rclone, aws, s3cmd, mc, curl, gsutil and az all MISSING -- with `--no-cache`
+
+    leaving no apk index and `read_only: true` plus `cap_drop: ALL` preventing an install. So
+
+    `archive_command` failed on every segment, which is precisely the failure `deploy-today.md` warns
+
+    fills the disk and stops the shop taking orders. The runbooks said `<your rclone/aws wrapper>` with
+
+    no step producing one.
+
+
+    `rclone=1.69.3-r5` is pinned in; verified in the built image alongside `age`, `gzip` and
+
+    `pg_basebackup`. Three reference scripts ship: upload, list and fetch. The upload wrapper also
+
+    closes `--if-not-exists` failing open -- a client that did not know the flag took it as a filename
+
+    and exited 0 -- by making an unrecognised first argument exit 64.
+
+
+    `base-backup.sh` was referenced by no compose file, scheduler or runbook while `DEC-026` recorded
+
+    that the base-backup sidecar "exists". It is mounted, scheduled from the host crontab, and writes
+    a
+
+    marker the new `base_backup_age` check reads.'
+  rollback_assessment: '`packages/db/.../recovery.py`, the four scripts under `deploy/production/backup/`,
+
+    `Postgres.Dockerfile`, `compose.r1.yaml`, `scripts/check_shop_operations.py`. Full battery green at
+
+    1135 passed, 3 skipped.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

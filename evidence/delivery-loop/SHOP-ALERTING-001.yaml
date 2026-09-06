@@ -1,0 +1,99 @@
+schema_version: 1
+work_item: SHOP-ALERTING-001
+recorded_at: '2026-09-06T18:55:00+07:00'
+requirement_contract: 'Close the five defects the adversarial round found in SHOP-OBSERVABILITY-001''s
+  own work. Four of
+
+  them shared a shape: the check reported success while answering no question.'
+rollback_impact: 'Reverting returns an alerting window inverted by seven hours, a green tick over unarchived
+  WAL, and
+
+  a monitoring script whose most likely failure mode is silence. The logging floor reverts
+
+  independently and costs every structured record under `LOG_LEVEL=WARNING`. No schema change.'
+unresolved_assumptions: '**The Telegram delivery path is still not exercised against the real API.** `deliver_alert`
+  is
+
+  tested with a captured `urlopen`; no message has been sent to a real chat, because that needs a bot
+
+  token and a chat id the owner holds.
+
+
+  **`MAX_BASE_BACKUP_AGE_SECONDS` is 26 hours against a daily backup, chosen not measured.** It gives
+
+  one late run before anybody is woken. If the schedule changes the constant has to.
+
+
+  **The marker''s age is the age of a successful upload, not proof the object is readable.** Only a
+
+  restore proves that, which is the drill.'
+evidence:
+  quiet_hours_were_inverted_by_seven_hours: "`QUIET_HOURS_START = 21` / `END = 7` compared against `datetime.now(UTC).hour`\
+    \ while the shop is\nUTC+7. The decision is written in the shop's hours, so the real window was:\n\
+    \n    SILENCED (local): 04 05 06 07 08 09 10 11 12 13\n    ALERTS   (local): 14 ... 03\n\n`production-deploy-day.md`\
+    \ names the failing case by name -- \"một máy hỏng lúc 07:45 thì cần mọi\nngười\". 07:45 local is\
+    \ 00:45 UTC and was suppressed; a 22:00 outage nobody needed woke the owner.\n\nThe test encoded the\
+    \ same UTC hours and called `datetime(2026, 9, 3, 3, tzinfo=UTC)` \"night\" -- it\nis 10:00 in Nha\
+    \ Trang -- so it passed while pinning the bug. Rewritten around fixed instants named\nby the shop's\
+    \ clock, including 00:45 UTC (07:45 local, must alert) and 15:00 UTC (22:00 local, must\nbe quiet).\
+    \ The comparison converts to `Asia/Ho_Chi_Minh` first."
+  a_check_that_cannot_run_refuses_loudly: '`--check wal` with no `--database-url` was skipped by a silent
+    `and arguments.database_url`, and if
+
+    any other check passed the script exited 0. The operator asked a question, got no answer, and cron
+
+    mail read as success. Named-and-unrunnable now raises `SystemExit` naming the missing flag; pinned
+
+    by `test_a_check_that_was_asked_for_and_cannot_run_refuses_loudly`.'
+  the_managed_branch_is_declared_rather_than_guessed: "`archive_mode = off` returned PASS on both branches,\
+    \ with a comment saying \"the operator knows\nwhich they are running\" -- true of the operator, false\
+    \ of the check. On the self-managed branch\nthat is a green tick over nothing being archived at all,\
+    \ which is the guarantee the pilot week\nrests on. The old test asserted that blind pass and `SHOP-OBSERVABILITY-001`'s\
+    \ evidence cited it as\nproof the check worked.\n\n    provider-managed  -> PASS   \"the provider\
+    \ owns PITR (declared managed branch)\"\n    self-managed      -> FAIL   \"archive_mode is 'off' and\
+    \ no WAL is being archived\"\n    undeclared        -> FAIL   \"the recovery branch is undeclared;\
+    \ set --recovery-mode\"\n\nUndeclared is neither, and unknown means stop.\n\nAlso added: `base_backup_age`.\
+    \ There was a WAL check and no base-backup check, and a WAL chain\nrestores nothing on its own. Exercised\
+    \ in all three states against a real marker file -- never\nwritten (exit 1), fresh (exit 0), 66.3h\
+    \ old (exit 1)."
+  one_broken_check_does_not_discard_the_alert: 'An exception in any check aborted `main()` before any
+    structured event was emitted and before
+
+    `deliver_alert` ran. So `docker` missing from cron''s PATH (`FileNotFoundError` at
+
+    `check_capability_flags`), or the database being unreachable, produced no alert at exactly the
+
+    moment an alert was most likely to be needed. Each check is isolated; one that raises becomes a
+
+    failing check carrying its exception type. Pinned by
+
+    `test_one_broken_check_does_not_discard_the_others_or_the_alert`, which asserts the alert still
+
+    goes out and carries `FileNotFoundError`.'
+  log_level_cannot_silence_the_record_stream: "`configure_structured_logging` honoured `LOG_LEVEL`, so\
+    \ `WARNING` -- an ordinary thing to set on a\nbusy host -- discarded every structured record while\
+    \ `emit()` kept returning True, because a logger\nbelow its level does not raise. These lines are\
+    \ records, not diagnostics: CSRF rejections, origin\nrejections, the operations checks. The level\
+    \ floors at INFO.\n\nA later `dictConfig` with the default `disable_existing_loggers=True` -- uvicorn's\
+    \ own config --\nalso killed the stream silently. Measured:\n\n    LOG_LEVEL=WARNING          -> wrote\
+    \ 14 bytes, live=True\n    after a hostile dictConfig -> live=False\n    after reconfigure       \
+    \   -> live=True, bytes=28\n\n`structured_logging_is_live()` lets a caller ask rather than assume,\
+    \ and\n`check_shop_operations.py` says so on stderr when the stream is dead, because its events are\
+    \ its\nonly durable output."
+  rollback_assessment: '`scripts/check_shop_operations.py`, `packages/observability/.../logging_setup.py`,
+    plus the two
+
+    tests that pinned the bugs. Full battery green at 1126 passed, 3 skipped.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

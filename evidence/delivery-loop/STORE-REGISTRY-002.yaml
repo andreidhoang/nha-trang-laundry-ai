@@ -1,0 +1,83 @@
+schema_version: 1
+work_item: STORE-REGISTRY-002
+recorded_at: '2026-09-06T18:55:00+07:00'
+requirement_contract: 'Remove the dangling-transaction pattern from every pre-check in `shadow_console.py`,
+  and make the
+
+  foreign-key test cited by STORE-REGISTRY-001''s evidence actually test the constraint it names.'
+rollback_impact: 'Reverting returns silent write loss on any long-lived or pooled connection, and a test
+  that passes
+
+  with the store constraint deleted. The eight transaction wrappers revert together; the test and the
+
+  HTTP-boundary assertion revert independently. No schema change.'
+unresolved_assumptions: '**No shipped caller loses data today.** The API wraps these in the idempotency
+  transaction and the
+
+  demo seed uses `with psycopg.connect(...)`, so the reproduction needed a long-lived connection. It
+
+  is fixed as a class rather than as a live incident, because the way it surfaced originally was a
+
+  pooled connection.
+
+
+  **Not claimed: that the other seven sites had reproducible loss.** Four had a commit after them and
+
+  two of those had not been reported at all; the rest are reads, where the cost of the wrapper is a
+
+  clean commit and the benefit is that the pattern cannot return one function at a time.'
+evidence:
+  the_same_defect_was_reintroduced_in_the_commit_that_fixed_it: "A plain SELECT opens an implicit transaction\
+    \ that nothing closes, so the following\n`commit_material_change` nests as a SAVEPOINT and ends in\
+    \ RELEASE rather than COMMIT: the write\nlooks successful, is invisible to every other session, and\
+    \ is discarded when the connection closes.\n\n`STORE-REGISTRY-001` found this, fixed it in `stores.py:66`\
+    \ with a comment explaining it, and in the\nsame commit inserted a new SELECT into the still-unfixed\
+    \ block in `shadow_console.py`. Reproduced\nthere on a long-lived connection:\n\n    after assign_store():\
+    \ INTRANS (open transaction)\n    other session sees assignment: None\n    after c1.close():     assignment:\
+    \ None        <- write discarded\n    revoke_store:         revoked_at stays (None,) <- a revocation\
+    \ of access, silently lost\n\nApplied to all eight pre-checks in the module, not the two reported.\
+    \ Two of the eight have a commit\nafter them and were not in the report at all.\n\nThe test double\
+    \ for these reads had `cursor` and no `transaction`, so it was not a connection and\npassed against\
+    \ a shape production never uses; it models both now."
+  the_cited_test_passed_with_the_constraint_dropped: "`STORE-REGISTRY-001`'s evidence cites `test_a_membership_cannot_name_a_store_that_does_not_exist`\n\
+    as the pin for migration `0035`. It inserted three fresh `uuid4()` values, so three foreign keys\n\
+    could fire and PostgreSQL reported the first it checked:\n\n    violates foreign key constraint \"\
+    staff_store_assignments_staff_user_id_fkey\"\n\nMeasured by dropping `staff_store_assignments_store_fk`\
+    \ on a real database and re-running: the test\npassed with the constraint gone. The same work item\
+    \ wrote a comment about this exact trap in the\nadjacent file -- `test_postgres_integration.py:417`,\
+    \ \"without this the test would keep passing\" --\nand then walked into it.\n\nRewritten to use real\
+    \ staff users so only `store_id` is invented, and to assert the constraint by\nname. Verified by dropping\
+    \ the constraint again: `DID NOT RAISE ForeignKeyViolation`."
+  a_typed_refusal_at_the_http_boundary: '`STORE-REGISTRY-001`''s evidence claims a mistyped store is a
+    typed refusal rather than an HTTP 500,
+
+    and no test asserted that at the HTTP boundary. Without the repository check the FK still refuses
+
+    the write, but from inside the transaction as a `ForeignKeyViolation` that escapes the route''s
+
+    except tuple -- the same shape as the crash `COUNTER-DEFECTS-001` closed.
+
+
+    `test_granting_access_to_a_store_that_does_not_exist_is_a_typed_refusal` asserts `< 500` at the
+
+    route, with `raise_server_exceptions=False`, which is required or TestClient re-raises and the two
+
+    outcomes are indistinguishable.'
+  rollback_assessment: '`packages/db/.../shadow_console.py` (eight sites), `packages/db/tests/test_store_registry.py`,
+
+    `test_shadow_console.py`, `apps/api/tests/test_store_assignment_routes.py`. Full battery green at
+
+    1127 passed, 3 skipped.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

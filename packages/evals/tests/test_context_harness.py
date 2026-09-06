@@ -164,7 +164,15 @@ def test_context_drift_check_passes() -> None:
     # silently ignores those variables, a read-only filesystem needs every writable path named,
     # `${env.VAR}` is not substituted during realm import, and Caddy's `handle` does not strip the
     # path prefix that `handle_path` does.
-    assert "106 work items" in result.stdout
+    # 114 since the eight corrective items of the 2026-09-06 adversarial round. That round put
+    # eight lenses over one day's work and found fifteen HIGH defects, every one in code written
+    # that day and none visible to ruff, mypy, this suite, `verify_contracts.py` or a clean
+    # `compose config`: identity accepted a password alone as MFA and handed a shop tablet a silent
+    # session as the previous operator; an empty base backup was recorded as archived and preferred
+    # by the restore; the drill validator could not pass on any real database; and the console had
+    # no intake or production surface, so no order could leave CONFIRMED. They are separate items
+    # rather than edits because a COMPLETE item's planning record is immutable (ADR-0004).
+    assert "114 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

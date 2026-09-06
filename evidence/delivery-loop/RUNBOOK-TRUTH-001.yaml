@@ -1,0 +1,149 @@
+schema_version: 1
+work_item: RUNBOOK-TRUTH-001
+recorded_at: '2026-09-06T18:55:00+07:00'
+requirement_contract: 'Make the three deploy runbooks executable as written, and add the checks that would
+  have caught
+
+  them.'
+rollback_impact: 'Reverting returns runbooks that cannot be followed: two verification commands that exit
+  on argument
+
+  parsing, a drill that halts on its own first command, a secret list missing the one without which
+
+  Keycloak never starts, and no step that creates the admin. The two new tests revert independently
+
+  and cost only the guard. No code change outside `verify_demo_stack.py`.'
+unresolved_assumptions: '**Still untested against a real host.** Every correction here was made against
+  the scripts'' own
+
+  argument parsers and against `compose.r1.yaml`; the sequence has still never been executed end to
+
+  end on a provisioned machine, which is what `SHOP-CUTOVER-001` is for and what it is blocked on.
+
+
+  **The flag checker reads `add_argument` literals, not the parser.** It would miss a flag built
+
+  dynamically or aliased. No script in `scripts/` does that today.
+
+
+  **The enrolment ceremony is a procedure and nothing enforces it.** An operator who sends a temporary
+
+  password over chat defeats it, and the system cannot tell.
+
+
+  **`docs/STATUS.md` and `delivery/CAPABILITY_STATUS.yaml` remain stale.** They carry visible dates and
+
+  fail closed -- every capability still reads NOT_AUTHORIZED, which is true -- so they are stale
+
+  rather than wrong. `PROJECT_CONTINUATION.md` and `DELIVERY_BOARD.md` were reconciled here because
+
+  they carried affirmative claims that had become false.'
+evidence:
+  three_failures_that_needed_no_host: "`deploy-today.md:3` claimed \"every command has been run except\
+    \ those needing a host\". Measured\nagainst the scripts' own `--help`:\n\n    staging_smoke.py   \
+    \      [-h] --base-url BASE_URL --ca-file CA_FILE\n      production-deploy-day.md ran it bare    \
+    \  -> exit 2, two required arguments missing\n      deploy-today.md passed --expect-host      -> no\
+    \ such flag\n    validate_restore_drill.py [-h] --evidence --database-url-file\n      printed as --database-url\
+    \ in three places, including inside restore.sh itself\n\n`restore.sh` also requires `BACKUP_LIST_COMMAND`\
+    \ and `BACKUP_FETCH_COMMAND` with `:?` under\n`set -eu`, and `restore-drill.md` exported neither --\
+    \ so the drill halted at its own first command,\non the stopwatch, inside the four-hour RTO.\n\nTwo\
+    \ tests now guard the classes: every flag any runbook passes to a script is checked against that\n\
+    script's own `add_argument` literals, and every `:?` variable `restore.sh` requires against what the\n\
+    drill exports. Both verified to fail -- by restoring `--expect-host`, and by deleting one export.\n\
+    \nThe commands those two variables name did not exist either, which would have made the correction\n\
+    point at nothing; `r1-archive-list.sh` and `r1-archive-fetch.sh` ship, and were exercised together:\n\
+    list emits full paths, fetch takes one back and streams it."
+  the_two_runbooks_disagreed_and_the_reader_was_sent_to_the_wrong_one: '`compose.r1.yaml` declares fourteen
+    external secrets. `production-deploy-day.md` said eleven, listed
+
+    ten, called `r1_postgres_password` "a twelfth", and omitted two entirely --
+
+    `r1_keycloak_database_password` and `r1_backup_repository_credential`. The first is mounted into
+
+    `keycloak` and read by `keycloak-entrypoint.sh`; `keycloak` is unprofiled and `tls` depends on it,
+
+    so `up -d api worker tls` pulls it in and the stack never becomes ready.
+
+
+    `deploy-today.md:6` said "where the two disagree, that one is right and this one is stale" -- and
+
+    `deploy-today.md` had all fourteen. The precedence rule sent the operator to the list that cannot
+
+    bring the stack up. Both corrected; the precedence sentence now says to check `compose.r1.yaml` and
+
+    the script''s `--help` rather than to trust either page.
+
+
+    Also corrected: no `docker swarm init` before the first `docker secret create`; four database roles
+
+    rather than three, with the `keycloak` role and database that `compose.r1.yaml:230` requires; "four
+
+    images" when there are five and the omitted one is the slowest to build; `bootstrap_store.py`
+
+    invoked without `--store-id`, which mints a second shop on the second run; and
+
+    `R1_CONSOLE_HEALTH_URL=http://127.0.0.1:8000/healthz` in all three runbooks, which nothing serves
+    --
+
+    `api` publishes no ports and is only on internal networks, so the check the runbooks call the most
+
+    important one would have read failed every five minutes forever.'
+  no_step_created_the_admin_everything_needs: '`SHOP-FIRST-START-001` removed the bootstrap-admin secret,
+    correctly, and its evidence said
+
+    `kc.sh bootstrap-admin user` "is run once by an operator already on the host". That string existed
+
+    in exactly one place in the repository and it was a compose comment. `production-deploy-day.md:127`
+
+    read a password file no step created; `deploy-today.md:117` created a swarm secret no compose file
+
+    mounts, leaving a live admin credential in the swarm store; `bootstrap_shop_local.py:199` wrote the
+
+    same orphan to disk.
+
+
+    Following either runbook end to end left the operator with no admin, therefore no staff accounts,
+
+    therefore no sign-in -- while steps 3 to 6 presupposed a console somebody could enter. It is a step
+
+    now, and both orphan creations are gone.
+
+
+    `kcadm.sh` is invoked without `--password`, which makes it prompt: the shell expands
+
+    `"$(cat ...)"` before exec, so the value would appear in the host''s `docker` process arguments.'
+  the_enrolment_ceremony: '`SHOP-IDENTITY-002` closed what could be closed in code and recorded that whoever
+    holds a temporary
+
+    password before enrolment can enrol their own factor and receive a token asserting `acr=mfa`. That
+
+    cannot be fixed in Keycloak configuration, so the runbook carries the procedure: never send a
+
+    temporary password, enrol the authenticator at the counter in the same sitting, grant the role only
+
+    afterwards.
+
+
+    It is a real control rather than advice because roles live in `staff_role_assignments` and not in
+
+    the issuer, so a session with no granted role can do nothing -- and that separation is stated where
+
+    the ceremony is, so an operator who wonders why can see it.'
+  rollback_assessment: 'Three runbooks, `deploy/production/backup/` (two new read-side scripts),
+
+    `scripts/verify_demo_stack.py`, `scripts/bootstrap_shop_local.py`, and the orientation documents.
+
+    Full battery green at 1137 passed, 3 skipped.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

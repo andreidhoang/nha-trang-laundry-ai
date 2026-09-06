@@ -13,6 +13,27 @@ from nha_trang_laundry_domain.canonical import canonical_document
 
 from .migrations import discover_migrations
 
+#: Aggregates whose writers promise a contiguous version sequence starting at 1, and are therefore
+#: the ones a gap check can speak about. Each of these writes version 1 on creation and `n + 1`
+#: thereafter, so a missing number is a missing event.
+#:
+#: The types deliberately absent are absent because their versions mean something else.
+#: `AGENT_RUN` hardcodes 8 for a completion event (`agent_runs.py`), so max 8 with three events is
+#: correct and healthy. `AUTOMATED_EXECUTION_ENVELOPE` is only ever written at version 2
+#: (`automation.py`), so max 2 with one event is the only shape it has.
+#: `QUOTE_ACCEPTANCE` carries the accepted revision number, so accepting revision 4 is one event at
+#: version 4. `CHANNEL_SEND` carries an attempt number. Including any of them made the drill
+#: unpassable on any real database, which is a check that fails safe into being useless: an
+#: operator who cannot pass a drill stops running drills.
+CONTIGUOUSLY_VERSIONED_AGGREGATES: tuple[str, ...] = (
+    "AGENT_DRAFT",
+    "APPROVAL",
+    "MANUAL_SEND",
+    "ORDER",
+    "ORDER_REQUEST",
+    "STAFF_STORE_ASSIGNMENT",
+)
+
 
 class RecoveryValidationError(ValueError):
     """Raised when recovery policy, evidence, or restored state fails closed."""
@@ -185,24 +206,41 @@ def validate_restored_database(
             SELECT
                 (SELECT count(*) FROM domain_events WHERE correlation_id = %s),
                 (SELECT count(*) FROM audit_events WHERE correlation_id = %s),
-                -- The chain has to be continuous, not merely present. `domain_events` is unique on
-                -- (aggregate_type, aggregate_id, aggregate_version), so an aggregate whose highest
-                -- version exceeds its event count lost an event in the middle -- which is exactly
-                -- what a restore to the wrong point looks like, and what counting rows for one
-                -- correlation id cannot see.
+                -- The chain has to be continuous, not merely present: an aggregate whose highest
+                -- version exceeds the number of distinct versions lost an event in the middle,
+                -- which is what a restore to the wrong point looks like and what counting rows for
+                -- one correlation id cannot see.
+                --
+                -- Two corrections to the first version of this, both measured. It compared
+                -- `count(*)` on the claim that `domain_events` is unique on the version triple; it
+                -- is unique on (aggregate_type, aggregate_id, aggregate_version, event_type), so
+                -- two events at one version are legal and counted twice -- a false positive, and
+                -- worse, a genuinely lost version masked by a same-version pair passed. Counting
+                -- distinct versions is right on both.
+                --
+                -- And it ran over every aggregate type, including ones whose writers never
+                -- promised contiguity: `agent_runs` hardcodes version 8 for a completion, and
+                -- `automation` writes only version 2. Any database holding one completed agent run
+                -- could never pass the drill, and `BACKUP-RESTORE-001` completes on a drill result.
+                -- The check now runs where the invariant is actually made.
                 (
                     SELECT count(*) FROM (
                         SELECT aggregate_type, aggregate_id
                         FROM domain_events
+                        WHERE aggregate_type = ANY(%s)
                         GROUP BY aggregate_type, aggregate_id
-                        HAVING max(aggregate_version) <> count(*)
+                        HAVING max(aggregate_version) <> count(DISTINCT aggregate_version)
                     ) AS gaps
                 ),
                 -- And the restored database must reach at least the point the drill claims to have
                 -- recovered to. A restore that stopped earlier would satisfy every count above.
                 (SELECT max(occurred_at) FROM domain_events)
             """,
-            (evidence.correlation_id, evidence.correlation_id),
+            (
+                evidence.correlation_id,
+                evidence.correlation_id,
+                list(CONTIGUOUSLY_VERSIONED_AGGREGATES),
+            ),
         )
         timeline = cursor.fetchone()
         audit_timeline_verified = (

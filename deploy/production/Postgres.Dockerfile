@@ -21,9 +21,15 @@ FROM ${POSTGRES_BASE}
 # Pinned exactly, like every other dependency in this repository. `--no-cache` leaves no index
 # behind, so the running image cannot install anything else, and the read-only root filesystem in
 # `compose.r1.yaml` means it could not persist it if it tried.
+# `rclone` is here because the archiving contract had no implementation without it. Both
+# `archive-wal.sh` and `base-backup.sh` exec `$BACKUP_UPLOAD_COMMAND`, and this image contained no
+# object-store client of any kind -- so `archive_command` failed on every segment, WAL pinned
+# forever, and the disk filled until the shop could not take an order. `deploy-today.md` describes
+# that failure precisely while shipping the image that guarantees it.
 RUN apk add --no-cache \
         age=1.2.1-r10 \
-        gzip=1.14-r2
+        gzip=1.14-r2 \
+        rclone=1.69.3-r5
 
 # The archive command is mounted as a config at runtime rather than baked in, so it can be reviewed
 # in a diff and changed without rebuilding the database image. The directory has to exist for the

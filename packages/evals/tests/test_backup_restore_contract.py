@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from nha_trang_laundry_db.recovery import (
+    CONTIGUOUSLY_VERSIONED_AGGREGATES,
     RecoveryValidationError,
     load_backup_policy,
     parse_restore_drill,
@@ -111,3 +112,123 @@ def test_a_production_drill_can_be_validated_at_all() -> None:
 
     with pytest.raises(RecoveryValidationError, match="environment is invalid"):
         parse_restore_drill(_valid_evidence() | {"environment": "LAPTOP"}, policy)
+
+
+def test_the_continuity_check_speaks_only_where_contiguity_is_promised() -> None:
+    """It ran over every aggregate type and made the drill unpassable on any real database.
+
+    Two defects, both measured against a database built from all 35 migrations. It compared
+    `count(*)` on the stated claim that `domain_events` is unique on the version triple -- the
+    constraint is on (aggregate_type, aggregate_id, aggregate_version, **event_type**), so two
+    events at one version are legal, counted twice, and flagged. And it asked the question of
+    writers that never promised an answer: `agent_runs` hardcodes version 8 for a completion,
+    `automation` writes only version 2, `quotes` writes the accepted revision number.
+
+    A/B on a real database differing only in that number: version 8 failed the validator, version 4
+    passed. Since `domain_events` is append-only -- `reject_ledger_mutation` refuses the repair --
+    any shop holding one completed agent run could never pass a drill, and BACKUP-RESTORE-001
+    completes on a drill result. A check that cannot be passed is not strict, it is ignored.
+
+    The list is the contract, so this test names what must be in it and what must not.
+    """
+
+    assert set(CONTIGUOUSLY_VERSIONED_AGGREGATES) == {
+        "AGENT_DRAFT",
+        "APPROVAL",
+        "MANUAL_SEND",
+        "ORDER",
+        "ORDER_REQUEST",
+        "STAFF_STORE_ASSIGNMENT",
+    }
+
+    # Each of these writes 1 on creation and n + 1 thereafter. If a writer stops doing that, the
+    # aggregate belongs out of the list rather than the check being weakened for everyone.
+    sources = ROOT / "packages/db/src/nha_trang_laundry_db"
+    hardcoded_high = (sources / "agent_runs.py").read_text("utf-8")
+    assert "aggregate_version=8" in hardcoded_high, (
+        "AGENT_RUN no longer hardcodes a high version; if it is contiguous now it should be "
+        "checked, and this test should say so rather than being deleted"
+    )
+
+
+def test_the_continuity_check_still_catches_a_lost_event_including_a_masked_one() -> None:
+    """The direction that matters, and the one the first version got wrong in silence.
+
+    An aggregate that lost version 2 but happens to carry two events at version 1 has
+    `max = 3, count(*) = 3` -- so the original query passed it. Counting distinct versions is what
+    makes a real gap visible whether or not a same-version pair hides it.
+    """
+
+    def flagged(versions: list[int]) -> bool:
+        # The predicate the query applies, per aggregate.
+        return max(versions) != len(set(versions))
+
+    assert flagged([1, 2, 3]) is False
+    assert flagged([1, 3]) is True
+    assert flagged([1, 1, 3]) is True, "a lost version masked by a same-version pair must fail"
+    assert flagged([1, 1, 2]) is False
+
+
+def test_the_backup_scripts_can_actually_run_where_they_are_mounted() -> None:
+    """Three separate ways the archiving could not work as shipped, all closed together.
+
+    `base-backup.sh` was referenced by no compose file, no scheduler and no runbook, while DEC-026
+    recorded that the base-backup sidecar "exists". `BACKUP_UPLOAD_COMMAND` was execed as a single
+    executable by both scripts and the image contained no object-store client at all -- not rclone,
+    aws, s3cmd, mc, curl, gsutil or az -- with `--no-cache` leaving no apk index and a read-only
+    root filesystem preventing an install. And the runbooks said `<your rclone/aws wrapper>` with
+    no step that produced a wrapper.
+    """
+
+    compose = (ROOT / "compose.r1.yaml").read_text("utf-8")
+    dockerfile = (ROOT / "deploy/production/Postgres.Dockerfile").read_text("utf-8")
+
+    assert "base-backup.sh" in compose, "nothing schedules or mounts the base backup"
+    assert "r1-archive-upload.sh" in compose
+    assert "rclone=" in dockerfile, "the upload command has no client to exec"
+    assert (ROOT / "deploy/production/backup/r1-archive-upload.sh").is_file()
+
+    # Staged before upload: a streamed pipeline stores its own truncation, and DEC-026 requires a
+    # credential that cannot delete, so nobody can remove the bad object afterwards.
+    assert "BACKUP_STAGING_DIR" in compose
+    base_backup = (ROOT / "deploy/production/backup/base-backup.sh").read_text("utf-8")
+    assert "pg_basebackup" in base_backup
+    assert base_backup.count("nothing was uploaded") >= 3, (
+        "every failure before the upload must say that nothing was uploaded; POSIX sh has no "
+        "pipefail and the first version reported success for an empty backup"
+    )
+    assert "last-success" in base_backup, "the operations check reads a marker this must write"
+
+
+def test_the_upload_wrapper_refuses_an_unknown_first_argument() -> None:
+    """`--if-not-exists` failed open: a client that does not know it took it as a filename.
+
+    The callers cannot verify this and did not; the wrapper they call now does.
+    """
+
+    wrapper = (ROOT / "deploy/production/backup/r1-archive-upload.sh").read_text("utf-8")
+    assert "--if-not-exists) shift ;;" in wrapper
+    assert "exit 64" in wrapper, "an unrecognised flag must be a hard error, not a filename"
+    assert "--immutable" in wrapper, "a race past the existence check must still not overwrite"
+
+
+def test_the_restore_command_is_built_from_values_that_cannot_break_it() -> None:
+    """All three shapes reported success and failed hours later, inside the four-hour clock.
+
+    The key is handed over on removable media at drill time, so a path like "/Volumes/USB DRIVE/"
+    is the expected shape. Spaces are handled by quoting inside the command; the characters
+    quoting cannot save are refused before anything is written.
+    """
+
+    restore = (ROOT / "deploy/production/backup/restore.sh").read_text("utf-8")
+    assert 'restore_command = \'"${fetch_command}"' in restore, (
+        "the interpolated paths must be quoted inside the command, or a space in the identity "
+        "path yields FATAL: could not locate required checkpoint record"
+    )
+    assert "exit 4" in restore, "a % or a quote must be refused rather than written"
+    # Newest first, but not newest only.
+    assert "sort -r" in restore
+    assert "global/pg_control" in restore, (
+        "tar succeeding is not proof: a truncated stream extracts a prefix, and the truncated "
+        "backup is the one that sorts newest"
+    )

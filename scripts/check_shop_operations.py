@@ -175,6 +175,44 @@ def check_database_volume(path: str) -> CheckResult:
     )
 
 
+#: A daily base backup, with room for one to be late before anybody is woken. Beyond this the
+#: recovery point is not what the policy says it is, however healthy WAL archiving looks.
+MAX_BASE_BACKUP_AGE_SECONDS = 26 * 3600
+
+
+def check_base_backup_age(marker_path: str, *, now: datetime | None = None) -> CheckResult:
+    """When a base backup last completed, read from the marker `base-backup.sh` writes on success.
+
+    There was a WAL archive check and no base-backup check at all, and a WAL chain with no base
+    backup restores nothing -- so the shop could have had a green tick on the only backup signal it
+    watched while holding nothing it could actually restore from. The marker is written after the
+    artifact is verified and uploaded, so its age is the age of a backup that exists rather than of
+    an attempt.
+    """
+
+    moment = now or datetime.now(UTC)
+    marker = _Path(marker_path)
+    if not marker.is_file():
+        return CheckResult(
+            "base_backup_age",
+            passed=False,
+            detail=f"no base backup has ever completed (no marker at {marker_path})",
+            fields={"marker": marker_path},
+        )
+    age = moment.timestamp() - marker.stat().st_mtime
+    passed = age <= MAX_BASE_BACKUP_AGE_SECONDS
+    return CheckResult(
+        "base_backup_age",
+        passed=passed,
+        detail=(
+            f"last base backup {age / 3600:.1f}h ago "
+            f"(limit {MAX_BASE_BACKUP_AGE_SECONDS / 3600:.0f}h): "
+            f"{marker.read_text(encoding='utf-8').strip()[:80]}"
+        ),
+        fields={"base_backup_age_s": int(age)},
+    )
+
+
 def check_capability_flags(compose_file: str) -> CheckResult:
     """Every capability flag must read false on the running containers, not in the compose file.
 
@@ -249,12 +287,17 @@ def main() -> int:
     parser.add_argument(
         "--check",
         action="append",
-        choices=["wal", "volume", "flags", "console", "all"],
+        choices=["wal", "base", "volume", "flags", "console", "all"],
         help="repeatable; defaults to every check that is configured",
     )
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL"))
     parser.add_argument("--volume-path", default=os.environ.get("R1_PGDATA_PATH"))
     parser.add_argument("--compose-file", default="compose.r1.yaml")
+    parser.add_argument(
+        "--base-backup-marker",
+        default=os.environ.get("R1_BASE_BACKUP_MARKER"),
+        help="the last-success marker base-backup.sh writes; its age is the backup's age",
+    )
     parser.add_argument("--console-url", default=os.environ.get("R1_CONSOLE_HEALTH_URL"))
     parser.add_argument(
         "--recovery-mode",
@@ -273,6 +316,7 @@ def main() -> int:
     planned: list[tuple[str, str, object, str]] = [
         ("wal", "wal_archive_gap", arguments.database_url, "--database-url"),
         ("volume", "database_volume", arguments.volume_path, "--volume-path"),
+        ("base", "base_backup_age", arguments.base_backup_marker, "--base-backup-marker"),
         ("flags", "capability_flags", arguments.compose_file, "--compose-file"),
         ("console", "console_reachable", arguments.console_url, "--console-url"),
     ]
@@ -282,6 +326,7 @@ def main() -> int:
             str(arguments.database_url), recovery_mode=arguments.recovery_mode
         ),
         "volume": lambda: check_database_volume(str(arguments.volume_path)),
+        "base": lambda: check_base_backup_age(str(arguments.base_backup_marker)),
         "flags": lambda: check_capability_flags(str(arguments.compose_file)),
         "console": lambda: check_console_reachable(str(arguments.console_url)),
     }

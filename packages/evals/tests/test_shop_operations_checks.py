@@ -370,3 +370,27 @@ def test_one_broken_check_does_not_discard_the_others_or_the_alert(
     assert delivered, "a check raising must not stop the alert from going out"
     assert [failure.name for failure in delivered[0]] == ["capability_flags"]
     assert "FileNotFoundError" in delivered[0][0].detail
+
+
+def test_a_wal_chain_with_no_base_backup_is_reported(tmp_path: Path) -> None:
+    """There was a WAL archive check and no base-backup check at all.
+
+    A WAL chain restores nothing without a base backup to apply it to, so the shop could hold a
+    green tick on the only backup signal it watched while holding nothing it could restore from.
+    The marker is written by `base-backup.sh` after the artifact is verified and uploaded, so its
+    age is the age of a backup that exists rather than of an attempt.
+    """
+
+    marker = tmp_path / "last-success"
+
+    never = CHECKS.check_base_backup_age(str(marker))
+    assert never.passed is False
+    assert "has ever completed" in never.detail
+
+    marker.write_text("base-20260906T100000Z 3001743", encoding="utf-8")
+    fresh = CHECKS.check_base_backup_age(str(marker))
+    assert fresh.passed is True
+
+    stale = CHECKS.check_base_backup_age(str(marker), now=datetime.now(UTC) + timedelta(hours=27))
+    assert stale.passed is False
+    assert stale.fields["base_backup_age_s"] > CHECKS.MAX_BASE_BACKUP_AGE_SECONDS

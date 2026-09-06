@@ -74,7 +74,14 @@ services:
       # repository and nothing else. Compose cannot express that restriction; host firewall rules
       # can, and the runbook says so.
       BACKUP_REPOSITORY_PREFIX: ${R1_BACKUP_REPOSITORY:-}
-      BACKUP_UPLOAD_COMMAND: ${R1_BACKUP_UPLOAD_COMMAND:-}
+      # Defaults to the wrapper this repository ships. The runbooks used to say
+      # "<your rclone/aws wrapper>" with no step that produced one, and the image had no
+      # object-store client to wrap.
+      BACKUP_UPLOAD_COMMAND: ${R1_BACKUP_UPLOAD_COMMAND:-/usr/local/bin/r1-archive-upload.sh}
+      # rclone reads this and only this: a read-only root filesystem has no home directory for it
+      # to search, and an explicit path keeps the credential out of any other search order.
+      RCLONE_CONFIG: /run/secrets/backup_repository_credential
+      BACKUP_STAGING_DIR: /var/lib/postgresql/backup-staging
     configs:
       - source: r1_postgresql_conf
         target: /etc/postgresql/postgresql.conf
@@ -83,6 +90,16 @@ services:
         mode: 0440
       - source: r1_archive_wal
         target: /usr/local/bin/archive-wal.sh
+        uid: "70"
+        gid: "70"
+        mode: 0550
+      - source: r1_base_backup
+        target: /usr/local/bin/base-backup.sh
+        uid: "70"
+        gid: "70"
+        mode: 0550
+      - source: r1_archive_upload
+        target: /usr/local/bin/r1-archive-upload.sh
         uid: "70"
         gid: "70"
         mode: 0550
@@ -107,6 +124,10 @@ services:
       - /run/postgresql:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=70,gid=70
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # A base backup is staged and verified here before anything leaves the host, because a
+      # streamed upload stores its own truncation and the archive credential cannot delete.
+      # Deliberately not a tmpfs: a base backup is not something to hold in memory.
+      - pgbackupstaging:/var/lib/postgresql/backup-staging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U laundry_migrate -d nha_trang_laundry"]
       interval: 10s
@@ -349,6 +370,16 @@ configs:
     file: deploy/production/postgresql.conf
   r1_archive_wal:
     file: deploy/production/backup/archive-wal.sh
+  # `base-backup.sh` was referenced by no compose file, no scheduler and no runbook, while
+  # `DEC-026` recorded that "the base-backup sidecar ... exists". There is no sidecar; it is run by
+  # the host scheduler against this container, which is how `check_shop_operations.py` already
+  # runs, and it needs to be inside the container to reach the staging volume.
+  r1_base_backup:
+    file: deploy/production/backup/base-backup.sh
+  # The upload client both scripts exec. Mounted rather than baked so it can be reviewed in a diff
+  # and replaced for a provider whose client is not rclone.
+  r1_archive_upload:
+    file: deploy/production/backup/r1-archive-upload.sh
   r1_keycloak_realm:
     file: deploy/production/keycloak/realm-nhatrang.json
 
@@ -401,4 +432,5 @@ networks:
     driver: bridge
 
 volumes:
+  pgbackupstaging:
   pgdata:

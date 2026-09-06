@@ -182,6 +182,9 @@ export async function signOut() {
   // Keycloak -- AUTH_SESSION_ID, KEYCLOAK_IDENTITY and KEYCLOAK_SESSION were all still held after
   // this function returned. The navigation is last so a failure to reach the issuer cannot leave
   // the operator looking at a console that still thinks they are signed in.
+  // Null whenever the issuer is not same-origin with this console -- the demo stack, and any
+  // deployment with no issuer at all. Navigating there anyway sent the operator to a host the
+  // browser cannot resolve.
   if (endSessionUrl) location.assign(endSessionUrl);
 }
 

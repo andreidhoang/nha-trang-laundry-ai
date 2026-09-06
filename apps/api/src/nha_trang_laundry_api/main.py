@@ -590,22 +590,40 @@ def logout(
         service.logout(session_token, principal)
     response.delete_cookie(_AUTH_SETTINGS.staff_session_cookie_name, path="/")
     response.delete_cookie(_AUTH_SETTINGS.staff_csrf_cookie_name, path="/")
-    return {"end_session_url": _end_session_url(request)}
+    return {"end_session_url": _end_session_url()}
 
 
-def _end_session_url(request: Request) -> str | None:
+def _end_session_url() -> str | None:
+    """The issuer's end-session endpoint, but only when a browser here could actually reach it.
+
+    Two things this must not do, both measured against the running demo stack before they were
+    fixed. It must not name an issuer the browser cannot resolve: R1 mounts Keycloak same-origin
+    behind the proxy, which `connect-src 'self'` forces, but the demo's issuer is
+    `https://demo-idp.local` on an internal network -- so the console offered a sign-out that
+    navigated to a dead host. Same-origin is therefore the condition, not an incidental property.
+
+    And it must not build the redirect from `request.base_url`. Behind Caddy, uvicorn sees the
+    proxied request as `http`, so the parameter came out
+    `post_logout_redirect_uri=http%3A%2F%2F...` -- which would not match the `https` URI registered
+    in the realm, and Keycloak answers an error page rather than redirecting. The configured origin
+    is the authority for what this deployment is called; the request is not.
+    """
+
     issuer = _AUTH_SETTINGS.oidc_issuer
     client_id = _AUTH_SETTINGS.oidc_audience
     if not issuer or not client_id:
         return None
+
+    origins = [item.strip() for item in _AUTH_SETTINGS.staff_allowed_origins.split(",")]
+    origin = next((item for item in origins if item and issuer.startswith(f"{item}/")), None)
+    if origin is None:
+        return None
+
     # `client_id` rather than `id_token_hint`: the console never keeps the ID token. `callback.js`
     # holds it in one `const` for one fetch and lets it go, which is the property that keeps a
     # bearer token out of storage, and it is worth more than the marginally stronger hint.
     parameters = urlencode(
-        {
-            "client_id": client_id,
-            "post_logout_redirect_uri": str(request.base_url.replace(path="/signin/")),
-        }
+        {"client_id": client_id, "post_logout_redirect_uri": f"{origin}/signin/"}
     )
     return f"{issuer.rstrip('/')}/protocol/openid-connect/logout?{parameters}"
 

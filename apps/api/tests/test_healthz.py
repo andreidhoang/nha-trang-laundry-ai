@@ -463,3 +463,53 @@ def test_staff_mutations_require_mfa_before_service_dispatch() -> None:
 
     assert manual.status_code == 403
     assert incident.status_code == 403
+
+
+def test_the_end_session_url_names_an_issuer_the_browser_can_reach() -> None:
+    """Two ways this was wrong, both measured against the running demo stack.
+
+    It named an issuer the browser cannot resolve. R1 mounts Keycloak same-origin behind the proxy
+    -- which `connect-src 'self'` forces -- but the demo's issuer is `https://demo-idp.local` on an
+    internal network, so clicking Đăng xuất navigated to a dead host. The code comment claimed the
+    demo "gets null"; it got a URL. Same-origin is the condition now, not an assumption.
+
+    And it built the redirect from `request.base_url`. Behind Caddy, uvicorn sees the proxied
+    request as `http`, so the parameter came out `post_logout_redirect_uri=http%3A%2F%2F...` --
+    which would not match the `https` URI registered in the realm, and Keycloak answers an error
+    page instead of redirecting. Every real sign-out would have ended there.
+    """
+
+    from unittest.mock import patch
+
+    from nha_trang_laundry_api import main
+
+    class Settings:
+        oidc_issuer: str | None = "https://console.giatlasachcong.lan:8443/idp/realms/nhatrang"
+        oidc_audience = "staff-console"
+        staff_allowed_origins = "https://console.giatlasachcong.lan:8443,http://127.0.0.1:8000"
+
+    with patch.object(main, "_AUTH_SETTINGS", Settings()):
+        url = main._end_session_url()
+    assert url is not None
+    assert url.startswith("https://console.giatlasachcong.lan:8443/idp/realms/nhatrang/")
+    # The scheme is the whole point: `http` here is a Keycloak error page on every sign-out.
+    assert (
+        "post_logout_redirect_uri=https%3A%2F%2Fconsole.giatlasachcong.lan%3A8443%2Fsignin%2F"
+        in url
+    )
+
+    class CrossOrigin(Settings):
+        oidc_issuer = "https://demo-idp.local/"
+        staff_allowed_origins = "https://staging.internal:8443"
+
+    with patch.object(main, "_AUTH_SETTINGS", CrossOrigin()):
+        assert main._end_session_url() is None, (
+            "an issuer on another origin is one this browser cannot reach; the console must skip "
+            "the navigation rather than send the operator to a dead host"
+        )
+
+    class NoIssuer(Settings):
+        oidc_issuer: str | None = None
+
+    with patch.object(main, "_AUTH_SETTINGS", NoIssuer()):
+        assert main._end_session_url() is None

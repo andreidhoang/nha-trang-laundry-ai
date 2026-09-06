@@ -53,8 +53,13 @@ done
 candidates="$("$list_command" "${repository}/base/" | sort -r)"
 [ -n "$candidates" ] || { echo "no base backup found in ${repository}/base/" >&2; exit 3; }
 
+# One line at a time, not `for candidate in $candidates`: that word-splits, so a repository prefix
+# or an object name containing a space would be torn into fragments and every fetch would miss.
+# A space in these paths is expected rather than exotic -- the identity arrives on removable media
+# and "/Volumes/USB DRIVE/" is the ordinary shape of that.
 restored=""
-for candidate in $candidates; do
+while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
     echo "trying $candidate"
     if "$fetch_command" "$candidate" \
       | age -d -i "$identity" \
@@ -72,7 +77,9 @@ for candidate in $candidates; do
     fi
     # A partial extraction must not be mistaken for the next candidate's work.
     rm -rf "${data_directory:?}/"* "${data_directory:?}/".[!.]* 2>/dev/null || true
-done
+done <<CANDIDATES
+$candidates
+CANDIDATES
 
 [ -n "$restored" ] || {
     echo "no base backup in ${repository}/base/ could be restored; tried:" >&2

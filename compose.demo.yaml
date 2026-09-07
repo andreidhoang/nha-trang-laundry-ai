@@ -129,7 +129,7 @@ services:
       #
       # Demo only. R1 names exactly one origin, which is what `connect-src 'self'` and the
       # same-origin identity provider depend on.
-      STAFF_ALLOWED_ORIGINS: "https://staging.internal:8443,https://localhost:8443"
+      STAFF_ALLOWED_ORIGINS: "https://staging.internal:8443,https://localhost:8443,http://localhost:8081"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -150,6 +150,14 @@ services:
     # equivalent production fix is not made here: changing the deployed topology belongs to its
     # own reviewed item, and STAGING-001's evidence needs re-reading in light of this.
     networks: [ingress-private, ingress-edge]
+    # The plain-HTTP loopback listener, so the demo opens without a certificate dialogue.
+    # `127.0.0.1` explicitly: nothing off this machine reaches it.
+    ports:
+      - name: demo-loopback-http
+        host_ip: 127.0.0.1
+        target: 8080
+        published: "8081"
+        protocol: tcp
     configs: !override
       - source: demo_caddyfile
         target: /etc/caddy/Caddyfile

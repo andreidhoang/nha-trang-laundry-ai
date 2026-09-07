@@ -37,3 +37,24 @@
 		respond "unrecognized private host" 421
 	}
 }
+
+# A plain-HTTP listener on loopback, for looking at the demo without a certificate dialogue.
+#
+# **Only ever bound to 127.0.0.1, and only in the demo.** Browsers class `http://localhost` as a
+# trustworthy origin -- `Secure` cookies and service workers both work there -- so this is the one
+# place plain HTTP costs nothing, because nothing off the machine can reach it.
+#
+# It exists because the private CA is the first wall anyone meets: Chrome answers
+# ERR_CERT_AUTHORITY_INVALID and does not always offer a way past it. Installing a root CA in the
+# system keychain to look at a demo for twenty minutes is the wrong trade.
+#
+# R1 has no equivalent and must not get one. There the console carries real orders over a shop
+# network, `Secure` cookies mean what they say, and TLS is the reason the private CA exists at all.
+:8080 {
+	header -Server
+	handle_path /demo-idp/* {
+		reverse_proxy demo-idp:9000
+	}
+	redir /demo-idp /demo-idp/ 308
+	reverse_proxy api:8000
+}

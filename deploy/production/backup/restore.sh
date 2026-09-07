@@ -48,10 +48,72 @@ for candidate_name in identity repository fetch_command; do
     esac
 done
 
-# Newest first, but not newest only. A truncated or empty base backup sorts newest and used to be
-# the one and only candidate, so a good backup from seconds earlier was never tried.
-candidates="$("$list_command" "${repository}/base/" | sort -r)"
-[ -n "$candidates" ] || { echo "no base backup found in ${repository}/base/" >&2; exit 3; }
+# The recovery target in UTC, as YYYYMMDDHHMMSS, so it can be compared to the labels the base
+# backups carry. `busybox date -d` parses "YYYY-MM-DD hh:mm:ss" as UTC and rejects an offset, so the
+# offset is applied by hand.
+_target_stamp() {
+    _dt=$(printf '%s' "$target_time" | sed -E 's/([+-][0-9]{2}:?[0-9]{2}?|Z)$//' | sed -E 's/\.[0-9]+$//')
+    _off=$(printf '%s' "$target_time" | sed -nE 's/.*([+-][0-9]{2}:?[0-9]{2}?|Z)$/\1/p')
+    _epoch=$(date -u -d "$_dt" +%s 2>/dev/null) || {
+        echo "refusing: RECOVERY_TARGET_TIME is not a timestamp this can read: $target_time" >&2
+        echo "use e.g. '2026-09-03 14:05:00+07'" >&2
+        exit 6
+    }
+    case "$_off" in
+        ""|Z) _shift=0 ;;
+        *)
+            _sign=$(printf '%s' "$_off" | cut -c1)
+            _hh=$(printf '%s' "$_off" | cut -c2-3)
+            _mm=$(printf '%s' "$_off" | tr -d ':' | cut -c4-5)
+            [ -n "$_mm" ] || _mm=0
+            _shift=$(( 10#$_hh * 3600 + 10#$_mm * 60 ))
+            [ "$_sign" = "-" ] && _shift=$(( -_shift ))
+            ;;
+    esac
+    date -u -d "@$(( _epoch - _shift ))" +%Y%m%d%H%M%S
+}
+target_stamp=$(_target_stamp)
+
+# **Newest at or before the target, not newest overall.** A base backup taken *after* the recovery
+# target cannot be recovered from -- PostgreSQL stops with `could not locate required checkpoint
+# record`, hours into the drill -- and that is the ordinary case rather than an edge one. Backups
+# run nightly; recovering from something that went wrong yesterday afternoon means reaching for the
+# backup from before it, not the one taken since. Measured: restoring to 05:31:50 picked the 05:31:57
+# backup and the server refused to start.
+#
+# Still newest-first among the eligible, and still not newest-only: a truncated artifact sorts
+# newest and used to be the sole candidate, so a good backup from seconds earlier was never tried.
+all_candidates="$("$list_command" "${repository}/base/" | sort -r)"
+[ -n "$all_candidates" ] || { echo "no base backup found in ${repository}/base/" >&2; exit 3; }
+
+candidates=""
+skipped=""
+# Splitting on newlines only, so an object path containing a space stays one candidate.
+IFS='
+'
+for candidate in $all_candidates; do
+    # `base-20260907T053157Z.tar.gz.age` -> `20260907053157`
+    stamp=$(printf '%s' "${candidate##*/}" | sed -nE 's/^base-([0-9]{8})T([0-9]{6})Z.*/\1\2/p')
+    if [ -z "$stamp" ]; then
+        echo "ignoring an object whose name is not a base-backup label: $candidate" >&2
+        continue
+    fi
+    if [ "$stamp" -le "$target_stamp" ]; then
+        candidates="${candidates}${candidate}
+"
+    else
+        skipped="${skipped}  $candidate (taken after the target)
+"
+    fi
+done
+unset IFS
+
+[ -z "$skipped" ] || { echo "not eligible for this recovery target:" >&2; printf '%s' "$skipped" >&2; }
+[ -n "$candidates" ] || {
+    echo "no base backup was taken at or before ${target_time}; the earliest recovery point is" >&2
+    echo "the oldest backup in ${repository}/base/. Nothing was changed." >&2
+    exit 7
+}
 
 # One line at a time, not `for candidate in $candidates`: that word-splits, so a repository prefix
 # or an object name containing a space would be torn into fragments and every fetch would miss.

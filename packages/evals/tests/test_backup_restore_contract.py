@@ -297,3 +297,31 @@ def test_the_restore_drill_exports_everything_restore_sh_requires() -> None:
     # And the commands those two name have to exist, or the runbook points at nothing again.
     for helper in ("r1-archive-list.sh", "r1-archive-fetch.sh", "r1-archive-upload.sh"):
         assert (ROOT / "deploy/production/backup" / helper).is_file(), helper
+
+
+def test_the_base_backup_is_chosen_by_the_recovery_target_not_by_recency() -> None:
+    """A backup taken after the target cannot be recovered from, and that is the ordinary case.
+
+    Backups run nightly, so undoing something from yesterday afternoon means reaching back past
+    last night's backup. Measured during the first real drill: restoring to 05:31:50 selected the
+    05:31:57 backup and PostgreSQL refused to start --
+    `FATAL: could not locate required checkpoint record`, after the restore step had printed
+    "data directory prepared" and exited 0.
+
+    With the fix, the same command skipped it by name and reached the 04:20:27 backup, replayed
+    the archived WAL onto it, and stopped before the first transaction after the target.
+    """
+
+    restore = (ROOT / "deploy/production/backup/restore.sh").read_text("utf-8")
+    assert "target_stamp" in restore, "the target must be compared against each backup's label"
+    assert "taken after the target" in restore, "skipped candidates must say why"
+    # The comparison has to survive an offset: the runbook's own example is '+07'.
+    assert "_shift" in restore and "date -u -d" in restore
+    # And it must still be newest-first among the eligible, not oldest-first.
+    assert "sort -r" in restore
+
+    drill = (ROOT / "docs/runbooks/restore-drill.md").read_text("utf-8")
+    assert "RCLONE_CONFIG" in drill, (
+        "restore_command runs as a child of the server and fetches every segment; without this in "
+        "PostgreSQL's environment recovery stops at the base backup"
+    )

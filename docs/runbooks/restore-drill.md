@@ -50,6 +50,11 @@ export PGDATA=/var/lib/postgresql/restore                    # must be empty; th
 export BACKUP_LIST_COMMAND=/usr/local/bin/r1-archive-list.sh
 export BACKUP_FETCH_COMMAND=/usr/local/bin/r1-archive-fetch.sh
 
+# And this one must also be in **PostgreSQL's** environment when you start it in step 2b, not only
+# in this shell: `restore_command` runs as a child of the server and fetches every WAL segment, so
+# without it recovery stops at the base backup with `could not locate required checkpoint record`.
+export RCLONE_CONFIG=/path/to/the/rclone.conf naming the archive
+
 deploy/production/backup/restore.sh
 ```
 
@@ -59,8 +64,17 @@ success and failed hours later, when PostgreSQL was started, inside the four-hou
 fine — `/Volumes/USB DRIVE/age-identity.txt` works, and is the expected shape given the key arrives
 on removable media.
 
+**The base backup is chosen by the target, not by recency.** A backup taken *after* the recovery
+target cannot be recovered from -- PostgreSQL refuses with `could not locate required checkpoint
+record` -- and that is the ordinary case, not an edge one: backups run nightly, so undoing
+something from yesterday afternoon means reaching back past last night's backup. `restore.sh`
+picks the newest backup at or before the target and prints the ones it skipped and why. If it says
+none is eligible, the target is older than the oldest backup you hold.
+
 Then start PostgreSQL against that directory and wait for promotion. The script writes
-`recovery_target_action = 'promote'`, so the server promotes itself and stops replaying.
+`recovery_target_action = 'promote'`, so the server promotes itself and stops replaying. Watch for
+`restored log file ... from archive` lines: that is the archive being read back, and their absence
+means `restore_command` cannot reach it.
 
 `restore_command` decrypts each WAL segment as it fetches it, so the identity is needed for the
 whole of recovery — not only to open the base backup.

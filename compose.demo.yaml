@@ -121,6 +121,15 @@ services:
     networks: [ingress-private]
 
   api:
+    environment:
+      # `https://localhost:8443` alongside the demo name. The browser sends `Origin` with the host
+      # it was given, and the API refuses any origin it does not know -- so without this, opening
+      # the console on `localhost` reaches the proxy, renders, and then fails sign-in with a 403
+      # that looks like a broken deployment rather than a missing entry in a list.
+      #
+      # Demo only. R1 names exactly one origin, which is what `connect-src 'self'` and the
+      # same-origin identity provider depend on.
+      STAFF_ALLOWED_ORIGINS: "https://staging.internal:8443,https://localhost:8443"
     depends_on:
       migrate:
         condition: service_completed_successfully

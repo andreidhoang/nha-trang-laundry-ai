@@ -16,7 +16,15 @@
 		-Server
 	}
 
-	@private_operator host staging.internal
+	# `localhost` and `127.0.0.1` alongside the demo name, so the console opens on a machine
+	# with no DNS entry for it. Not a loosening: the port is published on 127.0.0.1 only, so all
+	# three names reach the same loopback listener and nothing off this machine reaches it at
+	# all. The demo certificate already carries both as subject alternative names, so the
+	# browser's only complaint is the private CA, which it would make anyway.
+	#
+	# This is the demo file. `deploy/staging/Caddyfile` and the R1 topology are unchanged: there
+	# one name is the whole point, and anything else still gets 421.
+	@private_operator host staging.internal localhost 127.0.0.1
 	handle @private_operator {
 		handle_path /demo-idp/* {
 			reverse_proxy demo-idp:9000

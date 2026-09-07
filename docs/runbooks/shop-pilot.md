@@ -197,13 +197,41 @@ order → intake → production → released → settlement → `COMPLETED`.
 
 Cron every five minutes, from day one:
 
+**The checks split, because the things they look at live in different places.** Three of them read
+the database and its volumes, which on the self-managed branch nothing on the host can reach; two of
+them need Docker and the console's TLS name, which nothing inside the network has. That is two cron
+entries, not one, and the split is a consequence of the topology rather than a preference.
+
 ```bash
-DATABASE_URL=... R1_PGDATA_PATH=<the pgdata volume path> \
-R1_BASE_BACKUP_MARKER=<the pgbackupstaging volume path>/last-success \
-R1_RECOVERY_MODE=self-managed \
-R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
-  uv run python scripts/check_shop_operations.py
+# Every five minutes. The data checks, inside the database's own network, as the postgres uid --
+# the base-backup marker lives in a 0700 directory owned by it.
+*/5 * * * * cd /srv/nha-trang-laundry && docker run --rm \
+  --network nha-trang-laundry-shop_database-private --user 70:70 \
+  -v "$PWD:/repo:ro" -w /repo -e HOME=/tmp \
+  -v nha-trang-laundry-shop_pgdata:/pgdata:ro \
+  -v nha-trang-laundry-shop_pgbackupstaging:/staging:ro \
+  -e DATABASE_URL="$(cat .shop/secrets/migration_database_url)" \
+  -e R1_RECOVERY_MODE=self-managed \
+  -e R1_PGDATA_PATH=/pgdata -e R1_BASE_BACKUP_MARKER=/staging/last-success \
+  -e R1_ALERT_TELEGRAM_TOKEN_FILE=/repo/.shop/alert-telegram-token \
+  -e R1_ALERT_TELEGRAM_CHAT_ID='<your chat>' \
+  --entrypoint python nha-trang-laundry-api:local \
+  scripts/check_shop_operations.py --check wal --check base --check volume
+
+# Every five minutes. The host checks: capability flags need the Docker socket, and the console
+# check has to reach the console the way a tablet does, by name, over TLS.
+*/5 * * * * cd /srv/nha-trang-laundry && \
+  R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
+  R1_ALERT_TELEGRAM_TOKEN_FILE=/srv/nha-trang-laundry/.shop/alert-telegram-token \
+  R1_ALERT_TELEGRAM_CHAT_ID='<your chat>' \
+  uv run python scripts/check_shop_operations.py --check flags --check console
 ```
+
+Measured against the running pilot stack: `wal_archive_gap` OK, `database_volume` OK at 14.4% free
+of 58 GiB, `base_backup_age` OK at 2.4h, `capability_flags` OK — every flag false on the running
+containers. A check named and unable to run now refuses rather than skipping, so a wrong path here
+fails loudly on the first tick instead of reading healthy forever.
+
 
 `http://127.0.0.1:8000/healthz` was here and nothing serves it — `api` publishes no ports and is
 only on internal networks — so the console check would have read failed every five minutes of the

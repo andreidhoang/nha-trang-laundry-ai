@@ -50,3 +50,5 @@ secrets:
     file: ./.shop/secrets/backup_encryption_recipients
   r1_backup_repository_credential: !override
     file: ./.shop/secrets/backup_repository_credential
+  r1_backup_source_password: !override
+    file: ./.shop/secrets/backup_source_password

@@ -34,4 +34,16 @@ RUN apk add --no-cache \
 # The archive command is mounted as a config at runtime rather than baked in, so it can be reviewed
 # in a diff and changed without rebuilding the database image. The directory has to exist for the
 # read-only mount to land.
+
+# The base backup stages here before anything leaves the host, and the root filesystem is read-only,
+# so this has to be a volume. **It has to exist in the image, owned by 70:70, or it does not work.**
+# Docker seeds an empty named volume from the image's directory at that path -- content *and*
+# ownership -- and when the path is absent it creates the volume `root:root 0755` instead. Measured
+# on the first bring-up of the pilot stack: every `archive_command` failed with
+# `mkdir /var/lib/postgresql/backup-staging/objectstore: permission denied`, twelve times, while
+# every service read healthy. The same would have happened on the cloud host.
+RUN mkdir -p /var/lib/postgresql/backup-staging \
+    && chown 70:70 /var/lib/postgresql/backup-staging \
+    && chmod 0700 /var/lib/postgresql/backup-staging
+
 USER 70:70

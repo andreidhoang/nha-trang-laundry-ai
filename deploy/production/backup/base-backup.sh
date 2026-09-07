@@ -23,6 +23,16 @@
 set -eu
 
 recipients="${BACKUP_RECIPIENTS_FILE:-/run/secrets/backup_encryption_recipients}"
+
+# `pg_basebackup --no-password` never prompts, and `pg_hba` requires scram for the replication
+# connection, so without this the backup fails authentication with no way to supply one. The value
+# is read from a mounted secret into the environment of this process only -- it is not in the
+# compose file, not in `docker inspect`, and never on a command line where `ps` would show it.
+source_password_file="${BACKUP_SOURCE_PASSWORD_FILE:-/run/secrets/backup_source_password}"
+if [ -r "$source_password_file" ]; then
+    PGPASSWORD="$(cat "$source_password_file")"
+    export PGPASSWORD
+fi
 repository="${BACKUP_REPOSITORY_PREFIX:?BACKUP_REPOSITORY_PREFIX is required}"
 upload="${BACKUP_UPLOAD_COMMAND:?BACKUP_UPLOAD_COMMAND is required}"
 label="base-$(date -u +%Y%m%dT%H%M%SZ)"

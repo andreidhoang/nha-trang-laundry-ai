@@ -311,3 +311,60 @@ def test_the_pilot_is_not_the_demo_stack(shop_local_config: dict[str, object]) -
     serialized = json.dumps(shop_local_config).casefold()
     assert "demo_identity_provider" not in serialized
     assert "seed_demo_data" not in serialized
+
+
+def test_the_things_that_only_a_first_bring_up_of_the_pilot_could_find() -> None:
+    """Four defects, each of which let every service report healthy while the shop had no backups.
+
+    `SHOP-PILOT-001` validated this overlay with `docker compose config` and a property diff. None
+    of these is visible that way, and three of them would have happened identically on the cloud
+    host -- they are not pilot-specific.
+    """
+
+    dockerfile = (ROOT / "deploy/production/Postgres.Dockerfile").read_text(encoding="utf-8")
+    compose = (ROOT / COMPOSE_FILE).read_text(encoding="utf-8")
+
+    # 1. An empty named volume takes its ownership from the image. With the path absent, Docker
+    #    creates it root:root and every archive_command fails `permission denied` -- twelve times,
+    #    while the container reads healthy.
+    assert "mkdir -p /var/lib/postgresql/backup-staging" in dockerfile
+    assert "chown 70:70 /var/lib/postgresql/backup-staging" in dockerfile
+
+    # 2. `host all all all` does not cover replication: PostgreSQL requires the literal keyword, so
+    #    `pg_basebackup` was refused by pg_hba and no base backup could ever be taken.
+    hba = (ROOT / "deploy/production/postgres-init/10-replication-hba.sh").read_text("utf-8")
+    assert "host replication laundry_backup all scram-sha-256" in hba
+    assert "r1_replication_hba" in compose, "the init script must be mounted or it does nothing"
+    # Scoped to the one role with REPLICATION -- it reads the whole cluster byte for byte.
+    for role in ("laundry_api", "laundry_worker", "laundry_migrate"):
+        assert f"host replication {role}" not in hba
+
+    # 3. `pg_basebackup --no-password` never prompts and pg_hba now demands scram, so the backup
+    #    role needs a credential. The runbook used to say `PASSWORD '<pick one>'` -- a password the
+    #    base backup could never learn.
+    assert "r1_backup_source_password" in compose
+    base_backup = (ROOT / "deploy/production/backup/base-backup.sh").read_text("utf-8")
+    assert "PGPASSWORD" in base_backup
+    bootstrap = (ROOT / "scripts/bootstrap_shop_local.py").read_text("utf-8")
+    assert "<pick one>" not in bootstrap
+    assert 'write("backup_source_password"' in bootstrap
+
+    # 4. `pg_isready` with no host checks the Unix socket, which the initdb server is already
+    #    serving while it runs the init scripts -- so the container reported healthy seven seconds
+    #    before the real server listened on the network.
+    assert "pg_isready -h 127.0.0.1" in compose
+
+
+def test_the_migration_waits_for_a_database_that_compose_cannot_order() -> None:
+    """`depends_on` cannot express this, and `required: false` silently drops the wait.
+
+    On the self-managed branch `postgres` is a profiled service in this project, so `migrate` must
+    wait for it; on the provider-managed branch there is no `postgres` service and a hard
+    dependency makes the file invalid. `required: false` satisfies both and waits for neither --
+    measured, `migrate` started 14ms before `postgres`, which went healthy ten seconds later.
+    """
+
+    job = (ROOT / "packages/db/src/nha_trang_laundry_db/migration_job.py").read_text("utf-8")
+    assert "_connect_when_ready" in job
+    assert "STARTUP_TIMEOUT_SECONDS" in job, "the wait must be bounded, or a dead database hangs"
+    assert "Migrations were not" in job, "the timeout must say nothing was applied"

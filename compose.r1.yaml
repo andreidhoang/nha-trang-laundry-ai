@@ -93,6 +93,11 @@ services:
         uid: "70"
         gid: "70"
         mode: 0550
+      - source: r1_replication_hba
+        target: /docker-entrypoint-initdb.d/10-replication-hba.sh
+        uid: "70"
+        gid: "70"
+        mode: 0550
       - source: r1_base_backup
         target: /usr/local/bin/base-backup.sh
         uid: "70"
@@ -114,6 +119,11 @@ services:
         uid: "70"
         gid: "70"
         mode: 0400
+      - source: r1_backup_source_password
+        target: backup_source_password
+        uid: "70"
+        gid: "70"
+        mode: 0400
       - source: r1_backup_repository_credential
         target: backup_repository_credential
         uid: "70"
@@ -129,7 +139,14 @@ services:
       # Deliberately not a tmpfs: a base backup is not something to hold in memory.
       - pgbackupstaging:/var/lib/postgresql/backup-staging
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U laundry_migrate -d nha_trang_laundry"]
+      # `-h 127.0.0.1` forces a TCP check, and it is the whole point of this line. Without a host
+      # `pg_isready` uses the Unix socket, which the *initdb* server is already serving while it
+      # runs the init scripts -- so the container reported healthy seven seconds before the real
+      # server started listening on the network, `migrate` connected over TCP and got
+      # `Connection refused`, and the bring-up stopped. Measured on the first boot of the pilot
+      # stack; it only happens on an empty volume, which is deploy day and the pilot's first
+      # morning and nothing else.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U laundry_migrate -d nha_trang_laundry"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -241,6 +258,11 @@ services:
   # dependency that constructs the verifier.
   keycloak:
     <<: *runtime-hardening
+    # The same race as `migrate`: Keycloak owns its own schema and connects at boot.
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
     image: ${R1_IDP_IMAGE:-nha-trang-laundry-idp:local}
     build:
       context: .
@@ -370,6 +392,9 @@ configs:
     file: deploy/production/postgresql.conf
   r1_archive_wal:
     file: deploy/production/backup/archive-wal.sh
+  # Runs once, during initdb, before the server accepts a network connection.
+  r1_replication_hba:
+    file: deploy/production/postgres-init/10-replication-hba.sh
   # `base-backup.sh` was referenced by no compose file, no scheduler and no runbook, while
   # `DEC-026` recorded that "the base-backup sidecar ... exists". There is no sidecar; it is run by
   # the host scheduler against this container, which is how `check_shop_operations.py` already
@@ -409,6 +434,11 @@ secrets:
   r1_keycloak_database_password:
     external: true
   r1_backup_encryption_recipients:
+    external: true
+  # The `laundry_backup` role's password. A fourth database credential, separate from the three
+  # application ones because it is the only role with REPLICATION and REPLICATION reads the whole
+  # cluster byte for byte.
+  r1_backup_source_password:
     external: true
   r1_backup_repository_credential:
     external: true

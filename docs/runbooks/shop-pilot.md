@@ -136,8 +136,19 @@ docker compose $C exec postgres psql -U laundry_migrate -d postgres   # paste th
 docker compose $C up -d migrate                                       # must exit 0
 docker compose $C up -d api worker keycloak tls
 
-SUPERUSER_DATABASE_URL=... uv run python scripts/apply_demo_grants.py
-DATABASE_URL=...           uv run python scripts/verify_database_grants.py
+# `postgres` publishes no port and sits only on internal networks, so nothing on the host can
+# connect to it, and the API image carries no `scripts/` directory. Both of those are deliberate.
+# The SQL therefore arrives on stdin -- `docker cp` also fails, because the root filesystem is
+# read-only. `scripts/emit_shop_database_setup.py` prints exactly the statements to pipe, reading
+# the passwords back from `.shop/secrets/` so they match what the containers will present.
+uv run python scripts/emit_shop_database_setup.py \
+  | docker compose -f compose.r1.yaml -f compose.shop-local.yaml \
+      --profile self-managed-database exec -T postgres \
+      psql -U laundry_migrate -d nha_trang_laundry -v ON_ERROR_STOP=1
+
+# Keycloak and the worker fail to authenticate until the roles above exist, so restart them once.
+docker compose -f compose.r1.yaml -f compose.shop-local.yaml \
+  --profile self-managed-database restart worker keycloak
 ```
 
 `compose.shop-local.yaml` changes exactly one thing: where the secrets are read from. A shop laptop

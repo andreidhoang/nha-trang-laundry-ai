@@ -203,6 +203,11 @@ def main() -> int:
         )
     write("postgres_password", roles["laundry_migrate"], existing=existing)
     write("keycloak_database_password", password(), existing=existing)
+    # `laundry_backup`'s password. `pg_basebackup --no-password` never prompts and `pg_hba` demands
+    # scram for the replication connection, so this file is the only way the base backup can
+    # authenticate -- and it was missing entirely, which is why the first pilot bring-up could
+    # archive WAL and never take a base backup to replay it onto.
+    write("backup_source_password", password(), existing=existing)
     # No `keycloak_bootstrap_admin_password`: nothing mounts it and nothing reads it, so it was a
     # live admin credential sitting on disk for no reason. `SHOP-FIRST-START-001` removed the
     # mount and this line outlived it. The admin is created interactively with
@@ -249,7 +254,8 @@ def main() -> int:
         dsn = (SECRET_DIRECTORY / f"{name}_database_url").read_text(encoding="utf-8")
         stored = dsn.split("://", 1)[1].split("@", 1)[0].split(":", 1)[1]
         print(f"    CREATE ROLE {role} LOGIN PASSWORD '{stored}';")
-    print("    CREATE ROLE laundry_backup LOGIN REPLICATION PASSWORD '<pick one>';")
+    stored_backup = (SECRET_DIRECTORY / "backup_source_password").read_text(encoding="utf-8")
+    print(f"    CREATE ROLE laundry_backup LOGIN REPLICATION PASSWORD '{stored_backup}';")
     print(
         f"    CREATE ROLE keycloak LOGIN PASSWORD "
         f"'{(SECRET_DIRECTORY / 'keycloak_database_password').read_text(encoding='utf-8')}';"

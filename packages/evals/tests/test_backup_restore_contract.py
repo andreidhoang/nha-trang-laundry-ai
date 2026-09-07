@@ -325,3 +325,40 @@ def test_the_base_backup_is_chosen_by_the_recovery_target_not_by_recency() -> No
         "restore_command runs as a child of the server and fetches every segment; without this in "
         "PostgreSQL's environment recovery stops at the base backup"
     )
+
+
+def test_every_database_command_in_a_runbook_can_reach_the_database() -> None:
+    """Eleven lines told the operator to run a script the machine could not run.
+
+    `postgres` publishes no port and sits only on `internal: true` networks -- deliberate, and what
+    ADR-0007 §1 asks for -- so `DATABASE_URL=... uv run python scripts/...` cannot connect on the
+    self-managed branch. Every step that creates the store, binds the owner, publishes the
+    pricebook or verifies the grants was in that form, which is the whole of the shop's setup.
+
+    `scripts/shop-admin` runs the same script inside the database's own network, in the API image,
+    with the repository mounted read-only for the `scripts/` directory the image does not ship.
+    """
+
+    wrapper = ROOT / "scripts/shop-admin"
+    assert wrapper.is_file() and wrapper.stat().st_mode & 0o111, "shop-admin must be executable"
+
+    text = wrapper.read_text("utf-8")
+    assert "--network" in text and "database-private" in text
+    assert "--volume" in text and ":ro" in text, "the repository mount must be read-only"
+    assert "DATABASE_URL" in text, "an explicit DATABASE_URL must still win, for other branches"
+
+    # And the runbooks must actually use it, or the wrapper is decoration.
+    needs_database = ("bootstrap_store.py", "bootstrap_owner.py", "publish_pricebook.py")
+    offenders: list[str] = []
+    for name in ("shop-pilot.md", "deploy-today.md", "production-deploy-day.md"):
+        runbook = (ROOT / "docs/runbooks" / name).read_text("utf-8")
+        for line in runbook.splitlines():
+            if "uv run python scripts/" not in line:
+                continue
+            if any(script in line for script in needs_database):
+                offenders.append(f"{name}: {line.strip()[:90]}")
+
+    assert not offenders, (
+        "these runbook lines cannot connect on the self-managed branch; "
+        "use ./scripts/shop-admin:\n  " + "\n  ".join(offenders)
+    )

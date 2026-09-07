@@ -1,0 +1,66 @@
+#!/bin/sh
+# Run one of this repository's admin scripts against a database with no host-reachable port.
+#
+# **Why this exists.** `bootstrap_store.py`, `bootstrap_owner.py`, `publish_pricebook.py`,
+# `verify_database_grants.py` and `apply_demo_grants.py` all take a `DATABASE_URL` and all appear in
+# the deploy runbooks as `DATABASE_URL=... uv run python scripts/...`. On the self-managed branch
+# none of them can run that way: `postgres` publishes no port and sits only on `internal: true`
+# networks, which is deliberate and is what ADR-0007 §1 asks for. So every one of those eleven lines
+# was a command that could not be executed on the machine the runbook was describing.
+#
+# The database is reachable from inside its own network, so that is where the script runs -- in the
+# API image, which already carries the workspace and its dependencies, with the repository
+# bind-mounted read-only for the `scripts/` directory the image does not ship.
+#
+#   ./scripts/shop-admin bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
+#   ./scripts/shop-admin verify_database_grants.py
+#
+# On a provider-managed database this is unnecessary: the endpoint is reachable from the host and
+# the runbook's plain `uv run` form is correct there.
+
+set -eu
+
+[ $# -ge 1 ] || {
+    echo "usage: $0 <script-in-scripts/> [arguments...]" >&2
+    exit 64
+}
+
+script="$1"
+shift
+
+[ -f "scripts/$script" ] || {
+    echo "$0: scripts/$script does not exist. Run this from the repository root." >&2
+    exit 66
+}
+
+network="${R1_DATABASE_NETWORK:-nha-trang-laundry-shop_database-private}"
+image="${R1_API_IMAGE:-nha-trang-laundry-api:local}"
+
+# The migration identity by default: these are schema-and-configuration commands, and the API and
+# worker roles deliberately cannot do them. `DATABASE_URL` in the environment wins, which is how the
+# provider-managed branch and a drill machine pass their own.
+database_url="${DATABASE_URL:-}"
+if [ -z "$database_url" ]; then
+    [ -r .shop/secrets/migration_database_url ] || {
+        echo "$0: set DATABASE_URL, or run scripts/bootstrap_shop_local.py first." >&2
+        exit 67
+    }
+    database_url="$(cat .shop/secrets/migration_database_url)"
+fi
+
+docker network inspect "$network" >/dev/null 2>&1 || {
+    echo "$0: no docker network named '$network'. Is the stack up? Set R1_DATABASE_NETWORK to" >&2
+    echo "the right one -- 'docker network ls' lists them." >&2
+    exit 68
+}
+
+# `--rm`, no ports, read-only mount: this container exists for one command and reaches the database
+# the same way `api` does, over `database-private`.
+exec docker run --rm \
+    --network "$network" \
+    --volume "$PWD:/repo:ro" \
+    --workdir /repo \
+    --env DATABASE_URL="$database_url" \
+    --env SUPERUSER_DATABASE_URL="$database_url" \
+    --entrypoint python \
+    "$image" "scripts/$script" "$@"

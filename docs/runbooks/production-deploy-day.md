@@ -111,9 +111,22 @@ CREATE DATABASE nha_trang_laundry OWNER laundry_migrate;
 
 Then, **after** the migration in step 2 and again after every future migration:
 
+
+> **On the self-managed branch, use `./scripts/shop-admin` instead of `uv run python`.**
+> `postgres` publishes no port and sits only on `internal: true` networks, so nothing on the host
+> can reach it — which is what ADR-0007 §1 asks for, and which meant every `DATABASE_URL=... uv run`
+> line below was a command that could not be executed on the machine this page describes. The
+> wrapper runs the same script inside the database's own network:
+>
+> ```bash
+> ./scripts/shop-admin bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
+> ```
+>
+> On a provider-managed endpoint the plain `uv run` form is correct and this wrapper is unnecessary.
+
 ```bash
 SUPERUSER_DATABASE_URL=... uv run python scripts/apply_demo_grants.py
-DATABASE_URL=...           uv run python scripts/verify_database_grants.py
+./scripts/shop-admin verify_database_grants.py
 ```
 
 **Despite its name, `apply_demo_grants.py` is the production grant script**, and it must run after
@@ -218,7 +231,7 @@ recorded on `get_identity_service` in `apps/api/.../main.py`, not an accident.
 ## 3. Create the store
 
 ```bash
-DATABASE_URL=... uv run python scripts/bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
+./scripts/shop-admin bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
 ```
 
 **Write the identifier down before you run anything else, and pass it back with `--store-id` on
@@ -238,7 +251,7 @@ record name a person than say `SYSTEM`; ordering it that way is fine too.
 ## 4. Bind the first owner
 
 ```bash
-DATABASE_URL=... uv run python scripts/bootstrap_owner.py \
+./scripts/shop-admin bootstrap_owner.py \
   --oidc-subject '<the owner's subject from the IdP>' \
   --display-name 'Chủ tiệm'
 ```
@@ -254,7 +267,7 @@ nothing else.
 ## 5. Publish the price list
 
 ```bash
-DATABASE_URL=... uv run python scripts/publish_pricebook.py --actor-id '<owner staff uuid>'
+./scripts/shop-admin publish_pricebook.py --actor-id '<owner staff uuid>'
 ```
 
 **Until this runs, the shop cannot quote anything** — `POST /quotes` returns 503 `pricebook
@@ -273,7 +286,7 @@ per request and verifies its digest.
 uv run python scripts/staging_smoke.py \
   --base-url https://console.giatlasachcong.lan:8443 \
   --ca-file ./ca.crt
-uv run python scripts/verify_database_grants.py   # role separation actually enforced
+./scripts/shop-admin verify_database_grants.py   # role separation actually enforced
 uv run python scripts/verify_contracts.py
 uv run python scripts/report_delivery_status.py   # every capability must read NOT_AUTHORIZED
 ```

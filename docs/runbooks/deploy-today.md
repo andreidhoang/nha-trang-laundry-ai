@@ -144,6 +144,19 @@ with a generic 401 that looks exactly like a bad password.
 
 ## 5. Bring it up
 
+
+> **On the self-managed branch, use `./scripts/shop-admin` instead of `uv run python`.**
+> `postgres` publishes no port and sits only on `internal: true` networks, so nothing on the host
+> can reach it — which is what ADR-0007 §1 asks for, and which meant every `DATABASE_URL=... uv run`
+> line below was a command that could not be executed on the machine this page describes. The
+> wrapper runs the same script inside the database's own network:
+>
+> ```bash
+> ./scripts/shop-admin bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
+> ```
+>
+> On a provider-managed endpoint the plain `uv run` form is correct and this wrapper is unnecessary.
+
 ```bash
 export R1_CONSOLE_HOST=console.giatlasachcong.lan
 export R1_CONSOLE_BIND_IP=<the shop-LAN or VPN address of this host>   # never 0.0.0.0
@@ -162,7 +175,7 @@ docker compose -f compose.r1.yaml up -d migrate          # runs once and exits; 
 docker compose -f compose.r1.yaml --profile self-managed-database up -d api worker keycloak tls
 
 SUPERUSER_DATABASE_URL=... uv run python scripts/apply_demo_grants.py
-DATABASE_URL=...           uv run python scripts/verify_database_grants.py
+./scripts/shop-admin verify_database_grants.py
 ```
 
 **`apply_demo_grants.py` is the production grant script despite its name, and it must run after
@@ -172,9 +185,9 @@ every migration** — `GRANT ... ON ALL TABLES` is a one-shot snapshot, and skip
 ## 6. The shop's own records
 
 ```bash
-DATABASE_URL=... uv run python scripts/bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
-DATABASE_URL=... uv run python scripts/bootstrap_owner.py --oidc-subject '<your Keycloak user id>' --display-name 'Chủ tiệm'
-DATABASE_URL=... uv run python scripts/publish_pricebook.py --actor-id '<owner staff uuid>'
+./scripts/shop-admin bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
+./scripts/shop-admin bootstrap_owner.py --oidc-subject '<your Keycloak user id>' --display-name 'Chủ tiệm'
+./scripts/shop-admin publish_pricebook.py --actor-id '<owner staff uuid>'
 ```
 
 Staff accounts are created in Keycloak first (`production-deploy-day.md` §2a) — each person sets
@@ -190,7 +203,7 @@ a member of the store**: assign yourself from the console once you are in.
 # `--expect-host` does not exist; the arguments are --base-url and --ca-file, both required.
 uv run python scripts/staging_smoke.py \
   --base-url https://console.giatlasachcong.lan:8443 --ca-file ./ca.crt
-uv run python scripts/verify_database_grants.py
+./scripts/shop-admin verify_database_grants.py
 uv run python scripts/report_delivery_status.py     # all 13 must read NOT_AUTHORIZED
 ```
 

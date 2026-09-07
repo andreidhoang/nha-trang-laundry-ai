@@ -166,12 +166,25 @@ it would be handing out owner access.
 Staff accounts in Keycloak first (`production-deploy-day.md` §2a) — everyone sets their own TOTP on
 first sign-in. Then:
 
+
+> **On the self-managed branch, use `./scripts/shop-admin` instead of `uv run python`.**
+> `postgres` publishes no port and sits only on `internal: true` networks, so nothing on the host
+> can reach it — which is what ADR-0007 §1 asks for, and which meant every `DATABASE_URL=... uv run`
+> line below was a command that could not be executed on the machine this page describes. The
+> wrapper runs the same script inside the database's own network:
+>
+> ```bash
+> ./scripts/shop-admin bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
+> ```
+>
+> On a provider-managed endpoint the plain `uv run` form is correct and this wrapper is unnecessary.
+
 ```bash
-DATABASE_URL=... uv run python scripts/bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
+./scripts/shop-admin bootstrap_store.py --name 'Giặt Là Sạch Cộng — 3A Lê Đại Hành'
 # Write the printed identifier down. Re-running without `--store-id` mints a *second* shop, and a
 # pilot week is exactly when a step gets run twice.
-DATABASE_URL=... uv run python scripts/bootstrap_owner.py --oidc-subject '<your Keycloak user id>' --display-name 'Chủ tiệm'
-DATABASE_URL=... uv run python scripts/publish_pricebook.py --actor-id '<owner staff uuid>'
+./scripts/shop-admin bootstrap_owner.py --oidc-subject '<your Keycloak user id>' --display-name 'Chủ tiệm'
+./scripts/shop-admin publish_pricebook.py --actor-id '<owner staff uuid>'
 ```
 
 `OWNER_ADMIN` is not implicitly a member of the store — assign yourself from the console. Until the

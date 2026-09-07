@@ -287,6 +287,13 @@ uv run python scripts/staging_smoke.py \
   --base-url https://console.giatlasachcong.lan:8443 \
   --ca-file ./ca.crt
 ./scripts/shop-admin verify_database_grants.py   # role separation actually enforced
+
+# The console, in a real browser that types. Heavy and on-demand, which is why it is not in the
+# suite -- and worth running before staff are let in, because it is the only check that *uses* the
+# interface rather than inspecting it. Its first run found a duplicate DOM id that stopped a
+# field's label from focusing the field: valid JavaScript, renders correctly, passes every contract
+# test, and misbehaves only under a finger.
+uv run --with playwright python scripts/verify_console_interaction.py
 uv run python scripts/verify_contracts.py
 uv run python scripts/report_delivery_status.py   # every capability must read NOT_AUTHORIZED
 ```

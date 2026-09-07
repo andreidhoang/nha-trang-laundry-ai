@@ -1,0 +1,84 @@
+schema_version: 1
+work_item: CONSOLE-LABEL-001
+recorded_at: '2026-09-07T18:00:00+07:00'
+requirement_contract: Run the console in a real browser for the first time and fix what that reveals.
+rollback_impact: 'Reverting returns a screen where tapping a field''s label does not focus the field and
+  its hint is
+
+  attached to an element assistive technology does not read for it. One helper; no API, schema or
+
+  contract change.'
+unresolved_assumptions: '**The browser check stubs the API.** It proves the interface renders and responds
+  to typing; it does
+
+  not prove any of it against a live server, which is what `verify_counter_transaction.py` does from
+
+  the other side.
+
+
+  **It is not in the suite.** It needs a browser download, so it stays an on-demand check invoked with
+
+  `uv run --with playwright`, now named in deploy day''s verification step. A check nobody runs is
+
+  worth nothing, and this one had never been run at all.
+
+
+  **Only screens the script visits were checked.** A static sweep found the one other repeated id
+
+  literal -- `quote-request-summary`, three mutually exclusive render branches -- but a screen the
+
+  script does not open could carry one.'
+evidence:
+  the_label_pointed_at_a_div: "    strict mode violation: locator(\"#intake-contact\") resolved to 2 elements\n\
+    \      1) <div id=\"intake-contact\" class=\"stack stack--tight\">\n      2) <input type=\"text\"\
+    \ id=\"intake-contact\" ...>\n\n`labelled()` assigned the id to whatever element it was handed. The\
+    \ intake screen needs a field and\na \"Phát phiếu\" button beside it, so it passes a wrapper -- and\
+    \ the input inside already carried the\nsame id.\n\n`<label for>` resolves to the first match in document\
+    \ order, which is the div, so tapping the label\ndid not focus the field. On a shop tablet, tapping\
+    \ the label is how a field gets focus.\n`aria-describedby` landed on the div too, so the hint explaining\
+    \ that a walk-in gets a ticket code\nand that unknown codes are refused was attached to something\
+    \ no screen reader reads for that input.\n\nThe id and the description now go to the element a label\
+    \ can point at: the control when it is\nlabelable, otherwise the first field within it. The input\
+    \ no longer sets its own id, because\nsetting it in two places is what produced the collision."
+  why_nothing_else_could_see_it: 'A duplicate id is valid JavaScript. It renders correctly, serves correctly,
+    and passes the console
+
+    contract tests, the disclosure registry, the service-worker manifest and all 1144 tests -- every one
+
+    of which inspects the console rather than using it. It misbehaves only when something tries to
+
+    *use* the label: a finger, or assistive technology.
+
+
+    That is the whole argument for keeping a browser check in the verification step. 46 assertions pass
+
+    after the fix, 0 fail.'
+  the_shop_is_configured_end_to_end: "With the same session, the two remaining deploy-day commands were\
+    \ run against the pilot stack for\nthe first time, through `scripts/shop-admin`:\n\n    OWNER_ADMIN\
+    \ binding verified for staff ID 1490abd9-...\n    pricebook published: JCS-SHA256-V1:e9580d747725bf91...\n\
+    \n    stores                 | 1\n    staff_users            | 1\n    owner_admin grants     | 1\n\
+    \    configuration_versions | 1\n    store membership rows  | 0\n\nThe last row is correct and deliberate:\
+    \ `OWNER_ADMIN` is not implicitly a member of any store, and\n`bootstrap_owner.py` says so. Until\
+    \ the pricebook was published `POST /quotes` answers 503 by\ndesign, so this is the point at which\
+    \ the shop can quote.\n\n**The owner binding is a rehearsal record.** Its OIDC subject is the literal\n\
+    `REHEARSAL-DO-NOT-USE-8f3c1a7e`, which no Keycloak account carries, so nobody can authenticate as\n\
+    it -- and it goes when the stack is destroyed before real trading, along with every throwaway\nsecret."
+  rollback_assessment: '`apps/web/src/ui/components.js`, `apps/web/src/screens/orderRequests.js`, the
+    regenerated
+
+    `sw.js`, and one runbook line. Full battery green at 1144 passed, 3 skipped; 46 browser assertions
+
+    pass.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

@@ -186,7 +186,11 @@ def test_context_drift_check_passes() -> None:
     # `staging_smoke.py` refused every host but one and looked for a string the console has not
     # contained since it was localised, so deploy day's "prove it before letting staff in" step
     # failed against every deployment and nobody knew, because the runbooks invoked it wrongly.
-    assert "118 work items" in result.stdout
+    # 119 with CONSOLE-LABEL-001: the console was driven in a real browser for the first time and
+    # a duplicate DOM id meant tapping a field's label did not focus the field. Valid JavaScript,
+    # renders correctly, passes every contract test and all of these -- and misbehaves only when a
+    # finger or a screen reader tries to *use* the label.
+    assert "119 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

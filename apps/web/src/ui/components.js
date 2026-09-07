@@ -785,8 +785,22 @@ export function listView(spec) {
  * @returns {HTMLElement}
  */
 export function labelled(spec) {
-  spec.control.id = spec.id;
-  if (spec.hint) spec.control.setAttribute("aria-describedby", `${spec.id}-hint`);
+  // The id and the description belong on the thing a label can point at, which is not always the
+  // element passed in. A caller that needs a field *and* a button beside it hands over a wrapper,
+  // and putting the id there produced two elements carrying `intake-contact` -- the div and the
+  // input inside it, which already had it. `<label for>` resolves to the first, so tapping the
+  // label did not focus the field, and `aria-describedby` sat on a div a screen reader never reads
+  // for that input. On a tablet, tapping the label is how a field gets focus.
+  //
+  // Found by driving the console in a real browser: `strict mode violation:
+  // locator("#intake-contact") resolved to 2 elements`. Nothing else could see it -- duplicate ids
+  // are valid JavaScript, render fine, and only misbehave when something tries to *use* the label.
+  const labelable =
+    spec.control.matches?.("input, select, textarea") === true
+      ? spec.control
+      : (spec.control.querySelector?.("input, select, textarea") ?? spec.control);
+  labelable.id = spec.id;
+  if (spec.hint) labelable.setAttribute("aria-describedby", `${spec.id}-hint`);
   return h(
     "div",
     null,

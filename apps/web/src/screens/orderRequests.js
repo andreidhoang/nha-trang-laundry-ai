@@ -285,7 +285,8 @@ export function render_() {
 
   function buildForm() {
     const contactInput = h("input", {
-      id: "intake-contact",
+      // No `id` here: `labelled` puts it on the field it can find, and setting it in two places is
+      // what produced a duplicate when this input was wrapped alongside the ticket button.
       type: "text",
       value: draft.contactId,
       autocomplete: "off",

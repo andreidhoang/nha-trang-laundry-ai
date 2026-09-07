@@ -1,0 +1,91 @@
+schema_version: 1
+work_item: SHOP-RECOVERY-003
+recorded_at: '2026-09-07T12:45:00+07:00'
+requirement_contract: 'Run a real point-in-time restore against the corrected scripts, on a clean machine,
+  from the
+
+  encrypted archive the pilot stack produced.'
+rollback_impact: 'Reverting the selection rule returns a restore that reports success and then cannot
+  start, for the
+
+  ordinary case of recovering to any point before the most recent nightly backup. Reverting the
+
+  runbook''s `RCLONE_CONFIG` export returns a recovery that replays nothing and looks like a corrupt
+
+  archive.'
+unresolved_assumptions: '**No validator pass.** `validate_restore_drill.py` verifies quote snapshot hashes
+  and the audit
+
+  chain against real shop records, and this database has never traded -- it holds 35 migrations and a
+
+  marker table. That half belongs at the end of the pilot week, which is what the runbook has always
+
+  said. The contiguity check it depends on returns 0 gaps here, though this database has no agent
+
+  runs so it is not the case that distinguishes the fixed query from the broken one.
+
+
+  **The archive was rclone''s local backend.** Durability is untested; the read-back path is not.
+
+
+  **Timings were not recorded as drill evidence.** This measured correctness, not RPO or RTO, and a
+
+  drill that produces a `BACKUP-RESTORE-001` result has to measure both against a stopwatch that
+
+  starts when the key is fetched.'
+evidence:
+  the_backup_was_chosen_by_recency_not_by_the_target: "`restore.sh` took the newest base backup. A backup\
+    \ taken *after* the recovery target cannot be\nrecovered from, and that is the ordinary case rather\
+    \ than an edge one: backups run nightly, so\nundoing something from yesterday afternoon means reaching\
+    \ back past last night's backup.\n\nMeasured, restoring to 05:31:50 with a backup at 05:31:57:\n\n\
+    \    restored from base-20260907T053157Z.tar.gz.age to 2026-09-07 05:31:50+00\n    data directory\
+    \ prepared.            <- exit 0\n    ...\n    FATAL:  could not locate required checkpoint record\n\
+    \nIt now selects the newest at or before the target and says what it skipped:\n\n    not eligible\
+    \ for this recovery target:\n      base-20260907T053157Z.tar.gz.age (taken after the target)\n   \
+    \ trying base-20260907T042027Z.tar.gz.age\n\nThe comparison handles an offset, because the runbook's\
+    \ own example is `+07` and `busybox date -d`\nrejects one; the offset is applied by hand through epoch\
+    \ seconds. A target older than every backup\nheld is refused outright rather than restored wrongly."
+  restore_command_had_no_credential: '`restore_command` runs as a child of the PostgreSQL server, not
+    of `restore.sh`, so nothing the
+
+    drill runbook exports reaches it. `r1-archive-fetch.sh` requires `RCLONE_CONFIG` with `:?`, so
+
+    every segment fetch failed and recovery stopped at the base backup having replayed nothing --
+
+    which looks exactly like a corrupt archive rather than a missing variable. It is an export in the
+
+    runbook now, next to a description of what its absence looks like.'
+  the_drill_end_to_end: "A clean machine, an empty PGDATA, the identity supplied from outside:\n\n   \
+    \ trying base-20260907T042027Z.tar.gz.age\n    restored from base-20260907T042027Z.tar.gz.age to 2026-09-07\
+    \ 05:31:50.653532+00\n    restored log file \"000000010000000000000007\" from archive\n    ... through\
+    \ \"00000001000000000000000B\"\n    recovery stopping before commit of transaction 1085, time 05:31:53.754504+00\n\
+    \    database system is ready to accept connections\n\nThe recovery point is exactly right, which\
+    \ is the whole question a drill asks:\n\n    id | note                                       | at\n\
+    \     1 | BEFORE the recovery target - must survive  | 05:31:47.24228+00\n    (1 row)\n\nThe row written\
+    \ after the target is absent. `pg_is_in_recovery()` is false, so it is a promoted\nprimary rather\
+    \ than a replica still catching up; 46 tables and 35 applied migrations came back\nwith it."
+  what_this_does_not_claim: 'It does not claim a passing `BACKUP-RESTORE-001` drill. That needs quote
+    snapshots and an audit
+
+    chain from a shop that has traded, and timings measured from when the key was fetched. It claims
+
+    that the chain works: an encrypted archive written by one machine, read back by another that holds
+
+    only the public key''s counterpart, replayed to a chosen instant, stopping in the right place.'
+  rollback_assessment: '`deploy/production/backup/restore.sh` and `docs/runbooks/restore-drill.md`, plus
+    the test pinning
+
+    the selection rule. Full battery green at 1141 passed, 3 skipped.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

@@ -1,0 +1,121 @@
+schema_version: 1
+work_item: SHOP-PILOT-003
+recorded_at: '2026-09-07T12:45:00+07:00'
+requirement_contract: 'Start the pilot stack for the first time and fix what that reveals. SHOP-PILOT-001
+  validated the
+
+  overlay with `docker compose config` and a property diff and shipped; nobody had run it.'
+rollback_impact: 'Reverting returns a stack that cannot complete a bring-up on an empty machine, and --
+  if it is
+
+  coaxed up by hand -- one that archives nothing and can never take a base backup, with every service
+
+  reading healthy throughout. The five changes are independent of each other and each reintroduces a
+
+  distinct failure. Three of them affect the cloud host identically.'
+unresolved_assumptions: '**The archive destination was rclone''s local backend, not an object store.**
+  That proves the whole
+
+  encrypt-compress-ship-and-read-back path and proves nothing about durability: the objects were on
+
+  the same disk as the database, which is not a backup. A real pilot needs an off-host repository
+
+  whose credential can write and cannot delete.
+
+
+  **The backup key was a throwaway.** Generated in a container, private half held outside the repo
+
+  for the session. A real pilot generates it on another device and never lets the private half touch
+
+  the shop machine.
+
+
+  **No staff account exists and nobody has signed in.** Creating the Keycloak admin and the staff
+
+  accounts is interactive and, by the enrolment ceremony this repository now documents, has to happen
+
+  in person. So the console answered over TLS but nothing has been done *through* it here.
+
+
+  **`R1_PGDATA_PATH` could not be exercised.** On Docker Desktop a named volume lives inside a VM and
+
+  is not visible to the host, so the volume check has no path to measure. On a Linux shop machine it
+
+  is `/var/lib/docker/volumes/.../_data` and works.'
+evidence:
+  nothing_ordered_the_database_start: "`migrate` and `keycloak` declared no `depends_on` at all. Invisible\
+    \ on the provider-managed branch,\nwhere the database is somebody else's and already up. On the self-managed\
+    \ branch `postgres` is a\nservice in the same project and started concurrently:\n\n    psycopg.OperationalError:\
+    \ connection to server at \"172.28.0.4\", port 5432 failed:\n    Connection refused\n\n`depends_on`\
+    \ cannot express this. A hard dependency on a profiled service makes the file invalid\nwhen the profile\
+    \ is off; `required: false` keeps both branches valid and drops the wait entirely --\nmeasured, `migrate`\
+    \ started at 03:59:14.608 and `postgres` at 03:59:14.622, with the first healthy\nprobe at 03:59:24.\
+    \ So the wait lives in `migration_job.py`, bounded at 90s and printing what it is\nwaiting for, which\
+    \ also covers a provider endpoint that is briefly unreachable."
+  healthy_was_true_before_the_port_was_open: "`pg_isready` with no `-h` checks the Unix socket. The *initdb*\
+    \ server is already serving that\nsocket while it runs the init scripts, so the container reported\
+    \ healthy well before the real\nserver bound the network port:\n\n    03:58:29  database system is\
+    \ ready to accept connections   <- initdb's temporary server\n    03:58:36  listening on IPv4 address\
+    \ \"0.0.0.0\", port 5432   <- seven seconds later\n\n`-h 127.0.0.1` forces the TCP check. It only\
+    \ matters on an empty volume, which is deploy day and\nthe pilot's first morning."
+  the_archive_could_not_be_written: "Docker seeds an empty named volume from the image's directory at\
+    \ that path -- contents *and*\nownership -- and creates it `root:root 0755` when the path is absent\
+    \ from the image.\n`/var/lib/postgresql/backup-staging` was absent, so:\n\n    rclone: Failed to copy:\
+    \ mkdir /var/lib/postgresql/backup-staging/objectstore: permission denied\n    pg_stat_archiver: archived_count=0\
+    \ failed_count=12\n\nTwelve failures while every service read healthy. The directory is created in\
+    \ the Dockerfile owned\n70:70. After the fix, on a clean machine: `WAL archived=4 failed=0`, and a\
+    \ segment fetched back\ndecrypts with the identity held off the machine to exactly 16777216 bytes\
+    \ -- one WAL segment --\nwhile a different key gets `no identity matched any of the recipients`."
+  no_base_backup_could_ever_be_taken: "Two independent reasons, both fatal.\n\n`host all all all scram-sha-256`\
+    \ does not cover replication: PostgreSQL matches a replication\nconnection only against a line carrying\
+    \ the literal keyword, and the image grants it over the\nsocket and loopback only. `base-backup.sh`\
+    \ connects over the network so PGDATA is never shared out\nof the container, so:\n\n    pg_basebackup:\
+    \ error: no pg_hba.conf entry for replication connection from host\n    \"172.23.0.2\", user \"laundry_backup\"\
+    , no encryption\n\nAn init script adds the line, scoped to the one role with REPLICATION -- that connection\
+    \ reads the\nwhole cluster byte for byte, which is every privilege separation here defeated at once.\n\
+    \nAnd that role had no credential. `pg_basebackup --no-password` never prompts, pg_hba now demands\n\
+    scram, and the bootstrap printed `PASSWORD '<pick one>'` -- a password the backup could never\nlearn.\
+    \ It is a mounted secret written by the bootstrap.\n\nThe failure guard added by SHOP-RECOVERY-002\
+    \ behaved correctly throughout: every failure printed\n\"nothing was uploaded\" and stored no object.\
+    \ After the fix: a 5.8 MB encrypted artifact that\ndecrypts to a 47 MB tar carrying `global/pg_control`\
+    \ and 2231 entries, and a marker the\n`base_backup_age` check reads."
+  the_grants_step_could_not_run_on_this_branch: 'Both deploy runbooks told the operator to run `apply_demo_grants.py`
+    from the host. On the
+
+    self-managed branch `postgres` publishes no port and sits only on `internal: true` networks, so
+
+    nothing on the host can reach it; the API image carries no `scripts/` directory, so it cannot be
+
+    run there; and `docker cp` fails because the root filesystem is read-only.
+
+
+    `scripts/emit_shop_database_setup.py` prints the SQL to pipe to `psql` on stdin, which is the one
+
+    path that works. It reads the passwords back from `.shop/secrets/` so they match what the
+
+    containers are already mounted with, reuses the grant statements from `apply_demo_grants.py` rather
+
+    than restating them, and is re-runnable -- PostgreSQL has no `CREATE ROLE IF NOT EXISTS`, so each
+
+    role is created or has its password set, and a second run repairs a mismatch instead of raising.'
+  rollback_assessment: '`compose.r1.yaml`, `compose.shop-local.yaml`, `Postgres.Dockerfile`, a new postgres
+    init script,
+
+    `base-backup.sh`, `migration_job.py`, `bootstrap_shop_local.py`, `emit_shop_database_setup.py`, and
+
+    `shop-pilot.md`. Full battery green at 1140 passed, 3 skipped, plus a bring-up from an empty
+
+    machine using only the runbook''s commands.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

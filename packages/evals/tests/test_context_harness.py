@@ -172,7 +172,13 @@ def test_context_drift_check_passes() -> None:
     # by the restore; the drill validator could not pass on any real database; and the console had
     # no intake or production surface, so no order could leave CONFIRMED. They are separate items
     # rather than edits because a COMPLETE item's planning record is immutable (ADR-0004).
-    assert "114 work items" in result.stdout
+    # 116 since the pilot stack was started for the first time and a real point-in-time restore
+    # was run against it. Between them those found seven more defects that `docker compose config`,
+    # a property diff of the rendered files, mypy and this suite all passed -- including a database
+    # nothing waited for, a container reporting healthy seven seconds before its port was open, an
+    # archive directory no process could write, and a `pg_hba` that made a base backup impossible.
+    # Every one let the stack look healthy while the shop had no recoverable backup.
+    assert "116 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

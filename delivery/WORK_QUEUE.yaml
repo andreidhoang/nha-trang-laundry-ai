@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-06'
+last_updated: '2026-09-07'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -3596,5 +3596,61 @@ items:
   - seventeen_steps_end_to_end
   - every_step_used_a_route_a_screen_calls
   - what_this_does_not_prove
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-PILOT-003
+  phase: PRODUCTION_HARDENING
+  title: The pilot stack actually runs, and five reasons it did not
+  status: COMPLETE
+  priority: 272
+  depends_on:
+  - SHOP-WALKTHROUGH-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/adr/0007-production-deployment-topology.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-pilot-003.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - nothing_ordered_the_database_start
+  - healthy_was_true_before_the_port_was_open
+  - the_archive_could_not_be_written
+  - no_base_backup_could_ever_be_taken
+  - the_grants_step_could_not_run_on_this_branch
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-RECOVERY-003
+  phase: PRODUCTION_HARDENING
+  title: A real point-in-time restore, and two reasons it could not run
+  status: COMPLETE
+  priority: 273
+  depends_on:
+  - SHOP-PILOT-003
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/adr/0007-production-deployment-topology.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-recovery-003.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_backup_was_chosen_by_recency_not_by_the_target
+  - restore_command_had_no_credential
+  - the_drill_end_to_end
+  - what_this_does_not_claim
   - rollback_assessment
   blocked_by_decisions: []

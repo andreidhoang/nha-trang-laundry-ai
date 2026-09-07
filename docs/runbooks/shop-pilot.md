@@ -258,6 +258,60 @@ everything after this:
 
 That is `SHOP-INSTRUMENT-001`, and its packet is explicit that it cannot be simulated or back-filled.
 
+## Running it every day
+
+Everything above gets the shop trading once. This is what makes it keep trading without anybody
+thinking about it.
+
+### The machine
+
+| | |
+|---|---|
+| **Docker must start itself** | Docker Desktop → Settings → General → **Start Docker Desktop when you sign in**. Off by default, and it is the whole game: the containers carry `restart: unless-stopped`, so they come back on their own — but only once Docker is running. Measured on the development Mac: `AutoStart: False` and Docker absent from the login items, which means a power cut leaves the counter with no console until somebody opens an application. |
+| **The Mac must not sleep** | System Settings → Lock Screen and Energy → never sleep on power. A sleeping machine is an offline console, and staff will assume the software is broken. |
+| **It must log back in by itself** | System Settings → Users & Groups → Automatic login, *if* the machine is somewhere only staff reach. Without it a power cut stops at the login screen and Docker never starts. Weigh that against who can walk up to the machine. |
+| **Wired, not wifi** | Wifi power-saving drops the console mid-shift, and the failure looks like the software hanging. |
+
+`restart: unless-stopped` and not `always`, deliberately: if you stop the stack on purpose it stays
+stopped, and does not fight you at the next reboot. The cost is that `docker compose stop` survives
+a restart — use `start` to bring it back, not a reboot.
+
+### Every morning, in ten seconds
+
+Staff do not need this. You do, once, with coffee:
+
+```bash
+docker compose -f compose.r1.yaml -f compose.shop-local.yaml \
+  --profile self-managed-database ps
+```
+
+Five services, all `Up`. If `postgres` is up and the others are not, the roles or secrets moved; if
+everything is up and the console will not load, it is DNS or the certificate on that tablet, not the
+software.
+
+### What actually breaks, and what it looks like
+
+| Symptom | Cause, in order of likelihood | What to do |
+|---|---|---|
+| Console will not load on one tablet | That tablet lost the CA trust, or the router forgot the DNS entry | Re-install `.shop/ca/ca.crt` and switch trust on; check the router |
+| Console will not load on *any* tablet | The Mac slept, rebooted without Docker, or lost the network | Wake it; check Docker is running; `... up -d` |
+| "Không thể nhận đơn" / writes refused | Disk full — almost always a failing `archive_command` pinning WAL | `--check volume` and `--check wal`; fix the archive credential before clearing anything |
+| Nobody can sign in, existing sessions fine | Keycloak is down | It is the issuer, not the console: existing sessions last 8h idle / 24h absolute, so you have time |
+| One person cannot sign in | Their authenticator drifted, or their role was never granted | Roles live in `staff_role_assignments`, not the issuer |
+
+The pattern worth internalising: **the console being unreachable and the console being broken look
+identical to staff.** The five-minute checks exist so you learn which it is from your phone rather
+than from someone shouting across the shop.
+
+### The three things that must be true on any given day
+
+1. `docker compose ... ps` shows five services up.
+2. `check_shop_operations.py` exited 0 on its last run — WAL archived within 15 minutes, a base
+   backup inside 26 hours, disk above 10%, no capability flag true, console answering.
+3. Somebody other than you could do (1) and (2) from this page.
+
+The third is the one that gets skipped and the one that matters on the day you are not there.
+
 ## 7. Ending the week — which is the restore drill
 
 Do not copy files to the cloud host. **Restore onto it**, following

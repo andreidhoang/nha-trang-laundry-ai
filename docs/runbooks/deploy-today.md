@@ -229,6 +229,7 @@ DATABASE_URL=... R1_PGDATA_PATH=/var/lib/docker/volumes/nha-trang-laundry-shop_p
 R1_BASE_BACKUP_MARKER=/var/lib/docker/volumes/nha-trang-laundry-shop_pgbackupstaging/_data/last-success \
 R1_RECOVERY_MODE=self-managed \
 R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
+  R1_CONSOLE_CA_FILE=/srv/nha-trang-laundry/.shop/ca/ca.crt \
 R1_ALERT_TELEGRAM_TOKEN_FILE=/etc/nha-trang-laundry/alert-telegram-token \
 R1_ALERT_TELEGRAM_CHAT_ID=<your chat> \
   uv run python scripts/check_shop_operations.py

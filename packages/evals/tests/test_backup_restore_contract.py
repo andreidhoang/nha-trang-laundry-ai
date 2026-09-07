@@ -362,3 +362,77 @@ def test_every_database_command_in_a_runbook_can_reach_the_database() -> None:
         "these runbook lines cannot connect on the self-managed branch; "
         "use ./scripts/shop-admin:\n  " + "\n  ".join(offenders)
     )
+
+
+def test_the_deploy_gate_can_run_against_the_console_it_verifies() -> None:
+    """`staging_smoke.py` accepted `--base-url` and then compared it to one hardcoded literal.
+
+    So deploy day's first verification step -- "prove it before letting staff in" -- refused with
+    `staging URL must be exactly https://staging.internal:8443`, on a page whose whole subject is a
+    different host. And its staff-shell marker was `b"Staff Operations"`, a string that exists
+    nowhere in `apps/web/`: the console was localised to Vietnamese and this was never updated, so
+    the check failed against *every* deployment, including the staging host it was pinned to.
+    Nobody saw it, because both runbooks invoked the script with arguments it does not take.
+
+    Every structural refusal stays; what the hostname pin was doing is done properly by TLS.
+    """
+
+    import sys
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    # `scripts/` is not a package on mypy's path; the import is real and is exercised below.
+    from staging_smoke import validate_target  # type: ignore[import-not-found]
+
+    ca = ROOT / "pyproject.toml"  # any regular file; the CA's contents are not read here
+    assert validate_target("https://console.giatlasachcong.lan:8443", ca)
+    assert validate_target("https://staging.internal:8443", ca), "the staging host must still work"
+
+    for refused in (
+        "http://console.giatlasachcong.lan:8443",  # plain http
+        "https://console.giatlasachcong.lan",  # no explicit port
+        "https://u:p@console.giatlasachcong.lan:8443",  # credentials in the authority
+        "https://console.giatlasachcong.lan:8443/x",  # a path prefix
+        "https://console.giatlasachcong.lan:8443?q=1",  # a query
+    ):
+        with pytest.raises(ValueError):
+            validate_target(refused, ca)
+
+    # The real invariant, and the one that cannot rot the way a hardcoded English title did: every
+    # marker the smoke test looks for has to be in the shell it is looking at.
+    import re as _re
+
+    smoke = (ROOT / "scripts/staging_smoke.py").read_text("utf-8")
+    shell = (ROOT / "apps/web/index.html").read_bytes()
+    markers = _re.findall(r'b(?:"|\')((?:[^"\'\\]|\\.)+)(?:"|\')', smoke)
+    looked_for = [m for m in markers if "title" in m or "console-signin-path" in m]
+    assert looked_for, "the staff-shell markers are no longer recognisable in this script"
+    for marker in looked_for:
+        raw = marker.encode("utf-8").decode("unicode_escape").encode("latin-1")
+        assert raw in shell, (
+            f"staging_smoke.py looks for {raw!r} and apps/web/index.html does not contain it. "
+            "That is how this check came to fail against every deployment: the console was "
+            "localised and the marker was not."
+        )
+
+
+def test_the_console_check_can_verify_a_private_certificate() -> None:
+    """The console's name is internal, so no public CA can issue for it.
+
+    Without a CA file `urlopen` fails `CERTIFICATE_VERIFY_FAILED` -- measured against the pilot
+    stack, reporting the console unreachable while it was serving perfectly. That is a permanent
+    false alarm on the check the runbooks call "the console is the business", every five minutes.
+
+    Turning verification off would have made it green and worthless: it could no longer tell the
+    shop's console from anything answering on that address.
+    """
+
+    checks = (ROOT / "scripts/check_shop_operations.py").read_text("utf-8")
+    assert "--console-ca-file" in checks
+    assert "ssl.create_default_context(cafile=ca_file)" in checks
+    assert "verify_mode" not in checks and "CERT_NONE" not in checks, (
+        "verification must never be disabled to make this check pass"
+    )
+    for name in ("shop-pilot.md", "deploy-today.md", "production-deploy-day.md"):
+        runbook = (ROOT / "docs/runbooks" / name).read_text("utf-8")
+        if "R1_CONSOLE_HEALTH_URL" in runbook:
+            assert "R1_CONSOLE_CA_FILE" in runbook, name

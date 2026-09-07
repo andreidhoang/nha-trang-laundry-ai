@@ -42,6 +42,7 @@ import argparse
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import urllib.error
 import urllib.parse
@@ -262,17 +263,41 @@ def check_capability_flags(compose_file: str) -> CheckResult:
     )
 
 
-def check_console_reachable(url: str, *, timeout: float = 5.0) -> CheckResult:
+def check_console_reachable(
+    url: str, *, timeout: float = 5.0, ca_file: str | None = None
+) -> CheckResult:
+    """Reach the console the way a tablet does: by its own name, over TLS it can verify.
+
+    **The certificate authority is not optional here.** The console's hostname is internal, so no
+    public CA can issue for it and the certificate is the shop's own -- which means the system trust
+    store cannot verify it and `urlopen` fails with `CERTIFICATE_VERIFY_FAILED`. Measured against
+    the pilot stack: this check reported the console unreachable while the console was serving
+    perfectly, which is a permanent false alarm on the one check the runbooks call "the console is
+    the business", every five minutes, for the whole week.
+
+    Turning verification off would have made it green and worthless: it could then no longer tell
+    the shop's console from anything at all answering on that address.
+    """
+
+    context = ssl.create_default_context(cafile=ca_file) if ca_file else None
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        with urllib.request.urlopen(url, timeout=timeout, context=context) as response:
             body = response.read(256).decode("utf-8", "replace")
             healthy = response.status == 200
     except (urllib.error.URLError, OSError, ValueError) as error:
         return CheckResult(
             "console_reachable",
             passed=False,
-            detail=f"{url} did not answer: {error}",
-            fields={"url": url},
+            detail=(
+                f"{url} did not answer: {error}"
+                + (
+                    ""
+                    if ca_file
+                    else " -- and no CA file was given, so a private certificate cannot be"
+                    " verified. Set --console-ca-file / R1_CONSOLE_CA_FILE."
+                )
+            ),
+            fields={"url": url, "ca_file_given": bool(ca_file)},
         )
     return CheckResult(
         "console_reachable",
@@ -299,6 +324,11 @@ def main() -> int:
         help="the last-success marker base-backup.sh writes; its age is the backup's age",
     )
     parser.add_argument("--console-url", default=os.environ.get("R1_CONSOLE_HEALTH_URL"))
+    parser.add_argument(
+        "--console-ca-file",
+        default=os.environ.get("R1_CONSOLE_CA_FILE"),
+        help="the private CA that signed the console certificate; without it TLS cannot verify",
+    )
     parser.add_argument(
         "--recovery-mode",
         choices=("self-managed", "provider-managed"),
@@ -328,7 +358,9 @@ def main() -> int:
         "volume": lambda: check_database_volume(str(arguments.volume_path)),
         "base": lambda: check_base_backup_age(str(arguments.base_backup_marker)),
         "flags": lambda: check_capability_flags(str(arguments.compose_file)),
-        "console": lambda: check_console_reachable(str(arguments.console_url)),
+        "console": lambda: check_console_reachable(
+            str(arguments.console_url), ca_file=arguments.console_ca_file
+        ),
     }
 
     # A check named on the command line and then skipped for want of its input is the worst

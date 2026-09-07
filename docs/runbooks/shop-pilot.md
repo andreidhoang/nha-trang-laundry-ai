@@ -222,6 +222,7 @@ entries, not one, and the split is a consequence of the topology rather than a p
 # check has to reach the console the way a tablet does, by name, over TLS.
 */5 * * * * cd /srv/nha-trang-laundry && \
   R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
+  R1_CONSOLE_CA_FILE=/srv/nha-trang-laundry/.shop/ca/ca.crt \
   R1_ALERT_TELEGRAM_TOKEN_FILE=/srv/nha-trang-laundry/.shop/alert-telegram-token \
   R1_ALERT_TELEGRAM_CHAT_ID='<your chat>' \
   uv run python scripts/check_shop_operations.py --check flags --check console

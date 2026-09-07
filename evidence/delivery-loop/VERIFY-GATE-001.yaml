@@ -1,0 +1,114 @@
+schema_version: 1
+work_item: VERIFY-GATE-001
+recorded_at: '2026-09-07T16:30:00+07:00'
+requirement_contract: 'Make the verification step deploy day calls "prove it before letting staff in"
+  able to run against
+
+  the deployment it is verifying, and run it.'
+rollback_impact: 'Reverting returns a gate that refuses every host but the private staging one and, on
+  that one, looks
+
+  for a string the console does not contain -- so it fails everywhere while reading as a check. And a
+
+  console monitor that reports the console unreachable while it is serving. Both revert
+
+  independently; neither touches application code.'
+unresolved_assumptions: '**No browser has rendered the console.** Every asset its service worker precaches
+  was fetched
+
+  through the proxy and all 32 return 200, which is the strongest statement available without one --
+
+  a missing module is a white screen on a tablet and that is now excluded. It is not the same as a
+
+  person signing in and using it.
+
+
+  **The sign-in flow is still undriven end to end.** It needs a Keycloak account, and creating one is
+
+  interactive and belongs to the enrolment ceremony this repository documents, which happens in
+
+  person.
+
+
+  **The gate ran from inside the network with the hostname supplied.** On a shop machine the name
+
+  resolves through the router; here it was given to the container directly. What that leaves untested
+
+  is DNS, not the check.'
+evidence:
+  the_gate_refused_every_host_it_was_meant_to_verify: "`staging_smoke.py` accepted `--base-url` and then\
+    \ compared it to one hardcoded literal:\n\n    ValueError: staging URL must be exactly https://staging.internal:8443\n\
+    \non runbook pages whose whole subject is a different host. Every structural refusal was kept,\nbecause\
+    \ each one rejects a real way of pointing the check somewhere else -- plain http, credentials\nin\
+    \ the authority, a query, a fragment, a path prefix, a missing port -- and all five were\nre-verified\
+    \ after the change. What the hostname pin was doing is done properly by TLS: the\ncertificate must\
+    \ be valid for the name and signed by the CA the caller supplies, so reaching a host\nyou have no\
+    \ CA for fails at the handshake."
+  the_marker_it_looked_for_did_not_exist: 'The staff-shell assertion was `b"Staff Operations"`. That string
+    exists nowhere in `apps/web/`:
+
+    the console was localised to Vietnamese and the marker was never updated. So the check failed
+
+    against every deployment, including the private staging host it was pinned to -- and nobody saw it,
+
+    because both deploy runbooks invoked the script with arguments it does not take.
+
+
+    The markers are now the title a tablet actually shows and the `console-signin-path` meta that turns
+
+    the signed-out screen''s button on; a shell served without the second explains the sign-in flow
+
+    instead of offering a way in, which looks like a working console and is not one.
+
+
+    The guard is the invariant rather than the strings: every marker the script looks for must be
+
+    present in `apps/web/index.html`. Verified by putting the old English title back --
+
+    `staging_smoke.py looks for b''<title>Staff Operations</title>'' and apps/web/index.html does not
+
+    contain it`.'
+  the_console_check_could_not_verify_a_private_certificate: "`check_console_reachable` called `urlopen`\
+    \ with no SSL context. The console's hostname is internal,\nso no public CA can issue for it and the\
+    \ system trust store cannot verify the shop's own\ncertificate:\n\n    console_reachable: ... did\
+    \ not answer: [SSL: CERTIFICATE_VERIFY_FAILED]\n\nMeasured against the pilot stack while the console\
+    \ was serving perfectly -- a permanent false alarm\non the check the runbooks call \"the console is\
+    \ the business\", every five minutes, for the whole\nweek. Disabling verification would have made\
+    \ it green and worthless: it could no longer tell the\nshop's console from anything answering on that\
+    \ address. It takes a CA file, and when one is absent\nit says so rather than only reporting the TLS\
+    \ error.\n\nWith it: `console_reachable: ... answered 200 {\"status\":\"ok\"}`. That was the last\
+    \ of the five\nchecks never exercised; all five now run green against the pilot stack."
+  the_console_loads: 'The gate passed against the pilot stack for the first time: `/healthz` with the
+    right body, the
+
+    staff shell with both markers, an unauthenticated `/internal/v1/session` failing closed at 401, and
+
+    `/openclaw`, `/webhook` and `/public/v1/messages` all 404, with the browser security headers on
+
+    every response.
+
+
+    Separately, every asset the service worker precaches was fetched through the proxy: **32 of 32
+
+    return 200**, with `/staff/` and `/staff/index.html` as `text/html`, `app.js` as `text/javascript`
+
+    and the manifest as `application/manifest+json`. A missing module is a white screen on a tablet,
+
+    and that is now excluded.'
+  rollback_assessment: '`scripts/staging_smoke.py`, `scripts/check_shop_operations.py`, the three deploy
+    runbooks, and two
+
+    tests. Full battery green at 1144 passed, 3 skipped.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

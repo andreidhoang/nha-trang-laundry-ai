@@ -3680,3 +3680,30 @@ items:
   - everything_a_runbook_names_now_exists
   - rollback_assessment
   blocked_by_decisions: []
+- id: VERIFY-GATE-001
+  phase: PRODUCTION_HARDENING
+  title: Deploy day's verification gate can run, and passes
+  status: COMPLETE
+  priority: 275
+  depends_on:
+  - RUNBOOK-TRUTH-002
+  context_domains:
+  - platform
+  normative_sources:
+  - AGENTS.md
+  contracts: []
+  task_packet: context/tasks/TASK-verify-gate-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_gate_refused_every_host_it_was_meant_to_verify
+  - the_marker_it_looked_for_did_not_exist
+  - the_console_check_could_not_verify_a_private_certificate
+  - the_console_loads
+  - rollback_assessment
+  blocked_by_decisions: []

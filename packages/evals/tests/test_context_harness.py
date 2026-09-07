@@ -182,7 +182,11 @@ def test_context_drift_check_passes() -> None:
     # cannot reach, because `postgres` publishes no port and sits only on internal networks, which
     # is what ADR-0007 §1 asks for. Eleven setup lines -- the store, the first owner, the pricebook
     # -- and the entire monitoring cron were in that class.
-    assert "117 work items" in result.stdout
+    # 118 with VERIFY-GATE-001. A gate that cannot fail honestly is worse than no gate:
+    # `staging_smoke.py` refused every host but one and looked for a string the console has not
+    # contained since it was localised, so deploy day's "prove it before letting staff in" step
+    # failed against every deployment and nobody knew, because the runbooks invoked it wrongly.
+    assert "118 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

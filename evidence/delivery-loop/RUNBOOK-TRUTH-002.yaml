@@ -1,0 +1,100 @@
+schema_version: 1
+work_item: RUNBOOK-TRUTH-002
+recorded_at: '2026-09-07T15:10:00+07:00'
+requirement_contract: 'Make every remaining runbook command executable on the topology the runbook describes.
+
+  RUNBOOK-TRUTH-001 fixed wrong flags and missing steps; it did not notice that a whole class of
+
+  commands names a database the host cannot reach.'
+rollback_impact: 'Reverting returns a shop that cannot be set up and monitoring that fails every five
+  minutes. No
+
+  application code and no schema change; `scripts/shop-admin` and the two cron entries revert
+
+  independently of each other.'
+unresolved_assumptions: '**The console check still cannot run here.** It needs `console.giatlasachcong.lan`
+  to resolve,
+
+  which needs a router DNS entry or a hosts file. On a shop machine it works; on this one it does not,
+
+  so `--check console` is the one check never exercised end to end.
+
+
+  **`shop-admin` assumes the compose project name.** It defaults to
+
+  `nha-trang-laundry-shop_database-private` and takes `R1_DATABASE_NETWORK` otherwise, which is
+
+  checked and refused with the `docker network ls` hint rather than failing obscurely.
+
+
+  **Not claimed: that no other runbook command is unrunnable.** Every script the three deploy
+
+  runbooks and the drill runbook name was checked to exist, and the database-dependent ones are now
+
+  pinned by a test. A command that exists and is wrong in some other way would not be caught.'
+evidence:
+  the_shops_setup_could_not_reach_its_database: 'Eleven lines across the three deploy runbooks read `DATABASE_URL=...
+    uv run python scripts/...`.
+
+    On the self-managed branch nothing on the host can connect: `postgres` publishes no port and sits
+
+    only on `internal: true` networks.
+
+
+    Those eleven are the shop''s entire setup -- the store, the first OWNER_ADMIN, the pricebook without
+
+    which `POST /quotes` answers 503, and the grant verification.
+
+
+    `scripts/shop-admin` runs the same script inside the database''s own network, in the API image which
+
+    already carries the workspace, with the repository mounted read-only for the `scripts/` directory
+
+    the image does not ship. Proven against the running pilot stack: the store was created, and
+
+    `verify_database_grants.py` reported role separation enforced across 46 tables and 2 application
+
+    roles, 3 required and 0 forbidden privileges each. It refuses legibly on an unknown script and on
+    a
+
+    network that does not exist.'
+  the_monitoring_could_not_either: "The same defect on the thing that watches the shop for the whole week:\n\
+    \n    wal_archive_gap: the check itself failed: OperationalError: failed to resolve host 'postgres'\n\
+    \nEvery five minutes, for the entire pilot. It was visible at all only because SHOP-ALERTING-001's\n\
+    per-check isolation turned an abort into a legible failing check.\n\nThe checks split, and the split\
+    \ follows the topology rather than a preference: three read the\ndatabase and its volumes, which the\
+    \ host cannot reach; two need the Docker socket and the console's\nTLS name, which nothing inside\
+    \ the network has. Two cron entries, with the data checks running as\nuid 70 because the base-backup\
+    \ marker lives in a 0700 directory owned by postgres.\n\nMeasured against the running stack: `wal_archive_gap`\
+    \ OK, `database_volume` OK at 14.4% free of\n58 GiB, `base_backup_age` OK at 2.4h, `capability_flags`\
+    \ OK with every flag false on the running\ncontainers."
+  everything_a_runbook_names_now_exists: 'Swept the three deploy runbooks and the drill runbook for every
+    `scripts/` reference and every
+
+    `shop-admin` target: nine scripts and four wrapper targets, all present. The six shell scripts under
+
+    `deploy/production/backup/` that `archive_command` and `restore.sh` invoke are present and
+
+    executable.
+
+
+    A test now fails if any runbook line naming `bootstrap_store.py`, `bootstrap_owner.py` or
+
+    `publish_pricebook.py` is still in a form that cannot connect.'
+  rollback_assessment: '`scripts/shop-admin`, the three deploy runbooks, and one test. Full battery green
+    at 1142 passed,
+
+    3 skipped.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

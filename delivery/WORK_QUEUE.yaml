@@ -3654,3 +3654,29 @@ items:
   - what_this_does_not_claim
   - rollback_assessment
   blocked_by_decisions: []
+- id: RUNBOOK-TRUTH-002
+  phase: PRODUCTION_HARDENING
+  title: Every command the deploy runbooks give can reach what it needs
+  status: COMPLETE
+  priority: 274
+  depends_on:
+  - SHOP-RECOVERY-003
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/adr/0007-production-deployment-topology.md
+  contracts: []
+  task_packet: context/tasks/TASK-runbook-truth-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_shops_setup_could_not_reach_its_database
+  - the_monitoring_could_not_either
+  - everything_a_runbook_names_now_exists
+  - rollback_assessment
+  blocked_by_decisions: []

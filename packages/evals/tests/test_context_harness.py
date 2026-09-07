@@ -178,7 +178,11 @@ def test_context_drift_check_passes() -> None:
     # nothing waited for, a container reporting healthy seven seconds before its port was open, an
     # archive directory no process could write, and a `pg_hba` that made a base backup impossible.
     # Every one let the stack look healthy while the shop had no recoverable backup.
-    assert "116 work items" in result.stdout
+    # 117 with RUNBOOK-TRUTH-002: a whole class of runbook commands named a database the host
+    # cannot reach, because `postgres` publishes no port and sits only on internal networks, which
+    # is what ADR-0007 §1 asks for. Eleven setup lines -- the store, the first owner, the pricebook
+    # -- and the entire monitoring cron were in that class.
+    assert "117 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

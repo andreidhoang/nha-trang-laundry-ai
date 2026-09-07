@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-07T05:41:43.828407+00:00'
+last_updated: '2026-09-07T08:03:53.829799+00:00'
 current_work_item: null
 last_result: COMPLETE
 blocker: null
@@ -244,6 +244,9 @@ evidence_records:
 - work_item: SHOP-RECOVERY-003
   path: evidence/delivery-loop/SHOP-RECOVERY-003.yaml
   recorded_at: '2026-09-07T05:41:43.828407+00:00'
+- work_item: RUNBOOK-TRUTH-002
+  path: evidence/delivery-loop/RUNBOOK-TRUTH-002.yaml
+  recorded_at: '2026-09-07T08:03:53.829799+00:00'
 blocked_records:
 - work_item: AGENT-001
   reason: Local fixture/assertion registry is complete and 289 tests pass, but PRIMARY/fallback

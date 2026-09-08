@@ -32,6 +32,7 @@ from nha_trang_laundry_db.orders import (
 )
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
+    AcquisitionSource,
     CommercialOrderStatus,
     CustodyResolution,
     FulfillmentMode,
@@ -141,6 +142,7 @@ def _order_in_store(connection: Any, store_id: UUID, owner: StaffPrincipal) -> U
             f"order-create-{uuid4().hex}",
             uuid4(),
             NOW,
+            AcquisitionSource.WALK_IN,
         ),
     )
     return stored.order_id
@@ -375,6 +377,7 @@ def test_an_agreement_authorises_exactly_one_order(
                 f"order-{uuid4().hex}",
                 uuid4(),
                 NOW,
+                AcquisitionSource.WALK_IN,
             ),
         )
 
@@ -459,6 +462,7 @@ def test_an_order_cannot_cite_a_price_the_customer_has_moved_on_from(
                 f"order-{uuid4().hex}",
                 uuid4(),
                 NOW,
+                AcquisitionSource.WALK_IN,
             ),
         )
 
@@ -490,6 +494,7 @@ def test_an_expired_quote_is_refused_whatever_the_caller_claims(connection: Any)
         # The caller claims the customer agreed well inside the window. Before this fix that claim
         # was the whole test the guard ran.
         PRICED_AT,
+        AcquisitionSource.WALK_IN,
     )
 
     with pytest.raises(OrderStateError, match="missing, stale, or expired"):
@@ -547,6 +552,7 @@ def test_an_order_request_reaches_a_terminal_status_with_its_order(connection: A
             f"order-create-{uuid4().hex}",
             uuid4(),
             NOW,
+            AcquisitionSource.WALK_IN,
         ),
     )
     assert request_status() == "SUBMITTED"

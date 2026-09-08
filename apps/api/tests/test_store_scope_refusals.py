@@ -117,6 +117,7 @@ def test_creating_an_order_in_an_unassigned_store_is_refused_not_crashed(
             "quote_snapshot_hash": SNAPSHOT_HASH,
             "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
             "customer_final_quote_accepted_at": datetime.now(UTC).isoformat(),
+            "acquisition_source": "WALK_IN",
         },
     )
 

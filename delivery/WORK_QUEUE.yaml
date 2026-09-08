@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-07'
+last_updated: '2026-09-08'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -3731,5 +3731,37 @@ items:
   - the_label_pointed_at_a_div
   - why_nothing_else_could_see_it
   - the_shop_is_configured_end_to_end
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: ACQUISITION-ATTRIBUTION-001
+  phase: PRODUCTION_HARDENING
+  title: Every order says where the customer came from
+  status: COMPLETE
+  priority: 277
+  depends_on:
+  - CONSOLE-LABEL-001
+  context_domains:
+  - business_truth
+  - orders_audit
+  normative_sources:
+  - AGENTS.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - docs/DECISION_REQUEST_ACQUISITION_2026-08.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-acquisition-attribution-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_blocker_this_waited_on_expired_in_august
+  - an_answer_a_busy_counter_can_give_honestly
+  - written_once_and_the_database_is_what_refuses
+  - no_agent_reachable_tool_can_see_it
+  - what_the_channel_report_still_cannot_tell_you
   - rollback_assessment
   blocked_by_decisions: []

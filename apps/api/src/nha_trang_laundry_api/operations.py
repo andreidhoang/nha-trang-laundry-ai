@@ -87,6 +87,7 @@ from nha_trang_laundry_db.store_access import (
     require_store_membership,
 )
 from nha_trang_laundry_domain.catalog import (
+    AcquisitionSource,
     ActorRole,
     ApprovalAction,
     CommercialOrderStatus,
@@ -276,6 +277,7 @@ class OperationsService:
         quote_snapshot_hash: str,
         fulfillment_mode: FulfillmentMode,
         accepted_at: datetime,
+        acquisition_source: AcquisitionSource,
         idempotency_key: str,
         principal: StaffPrincipal,
     ) -> StoredOrder:
@@ -293,6 +295,7 @@ class OperationsService:
                     idempotency_key,
                     uuid4(),
                     accepted_at,
+                    acquisition_source,
                 ),
             )
 

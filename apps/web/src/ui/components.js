@@ -811,18 +811,32 @@ export function labelled(spec) {
 }
 
 /**
+ * A select over a server enum, labelled in Vietnamese with the raw token kept as the option title.
+ *
+ * `glossary` overrides `enumVi` for this one select. It exists because `ENUM_GLOSS` is a single
+ * flat map across every server enum, and that only works while no two enums share a member name —
+ * `AcquisitionSource.UNKNOWN` and the send-reconciliation `UNKNOWN` are the first pair that does
+ * not. Passing the scoped map here keeps the collision visible at the call site instead of
+ * resolving it by whichever key was written last.
+ *
  * @param {string} name
  * @param {string[]} values
  * @param {string} [selected]
+ * @param {Record<string, string>} [glossary]
  * @returns {HTMLSelectElement}
  */
-export function enumSelect(name, values, selected) {
+export function enumSelect(name, values, selected, glossary) {
+  const label = (value) => {
+    const scoped = glossary?.[value];
+    if (!scoped) return enumVi(value);
+    return scoped.charAt(0).toUpperCase() + scoped.slice(1);
+  };
   return /** @type {HTMLSelectElement} */ (
     h(
       "select",
       { name },
       values.map((value) =>
-        h("option", { value, selected: value === selected, title: value }, enumVi(value)),
+        h("option", { value, selected: value === selected, title: value }, label(value)),
       ),
     )
   );

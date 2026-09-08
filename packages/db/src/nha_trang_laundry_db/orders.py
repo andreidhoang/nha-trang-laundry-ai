@@ -8,6 +8,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_domain.catalog import (
+    AcquisitionSource,
     CommercialOrderStatus,
     CustodyResolution,
     FulfillmentMode,
@@ -50,6 +51,11 @@ class CreateOrderCommand:
     idempotency_key: str
     correlation_id: UUID
     customer_final_quote_accepted_at: datetime
+    #: `ACQUISITION-ATTRIBUTION-001`. Where the customer says they found the shop, attested by the
+    #: staff member taking the order. Required and without a default on purpose: a default here
+    #: would let every caller that forgets the field record `UNKNOWN` silently, which is the exact
+    #: difference between "nobody asked" and "the code did not ask", and only the first is true.
+    acquisition_source: AcquisitionSource
 
 
 @dataclass(frozen=True)
@@ -128,6 +134,7 @@ class OrderRepository:
             "accepted_quote_snapshot_hash": command.accepted_quote_snapshot_hash,
             "fulfillment_mode": command.fulfillment_mode.value,
             "customer_final_quote_accepted_at": command.customer_final_quote_accepted_at,
+            "acquisition_source": command.acquisition_source.value,
         }
 
         def create_once() -> dict[str, object]:
@@ -300,10 +307,11 @@ class OrderRepository:
                         current_quote_revision, current_quote_snapshot_hash,
                         commercial_status, intake_status, production_status,
                         production_resume_status, fulfillment_mode, balance_status,
-                        customer_final_quote_accepted_at, row_version, created_at
+                        customer_final_quote_accepted_at, acquisition_source,
+                        row_version, created_at
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, 'REQUESTED', 'AWAITING_HANDOFF',
-                        'NOT_STARTED', NULL, %s, 'UNPAID', %s, 1, %s
+                        'NOT_STARTED', NULL, %s, 'UNPAID', %s, %s, 1, %s
                     )
                     """,
                     (
@@ -315,6 +323,7 @@ class OrderRepository:
                         command.accepted_quote_snapshot_hash,
                         command.fulfillment_mode.value,
                         command.customer_final_quote_accepted_at,
+                        command.acquisition_source.value,
                         occurred_at,
                     ),
                 )

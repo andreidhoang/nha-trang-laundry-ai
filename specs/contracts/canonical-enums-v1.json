@@ -175,6 +175,17 @@
       "PICKUP_ONLY",
       "RETURN_ONLY"
     ],
+    "AcquisitionSource": [
+      "WALK_IN",
+      "GOOGLE_MAPS",
+      "ZALO",
+      "FACEBOOK",
+      "PARTNER_FRONT_DESK",
+      "REFERRAL_CUSTOMER",
+      "LEAFLET_QR",
+      "RETURNING",
+      "UNKNOWN"
+    ],
     "DeliveryLegStatus": [
       "PLANNED",
       "ASSIGNED",

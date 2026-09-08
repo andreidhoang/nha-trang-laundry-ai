@@ -230,10 +230,11 @@ def _seed_completed_order(connection: Any, timestamp: datetime) -> tuple[Any, An
                 current_quote_snapshot_hash, commercial_status, intake_status,
                 production_status, fulfillment_mode, balance_status,
                 self_collection_recorded, customer_final_quote_accepted_at,
-                production_accepted_at, closed_at, row_version, created_at
+                production_accepted_at, closed_at, acquisition_source,
+                row_version, created_at
             ) VALUES (
                 %s, %s, %s, %s, 1, %s, 'COMPLETED', 'ACCEPTED', 'RELEASED',
-                'SELF_DROP_SELF_COLLECT', 'PAID', TRUE, %s, %s, %s, 1, %s
+                'SELF_DROP_SELF_COLLECT', 'PAID', TRUE, %s, %s, %s, 'UNKNOWN', 1, %s
             )
             """,
             (

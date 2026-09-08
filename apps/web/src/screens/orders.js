@@ -33,7 +33,7 @@
 import { MAX_LIMIT, Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UUID, shortId } from "../core/format.js";
-import { enumVi } from "../core/i18n.js";
+import { ACQUISITION_SOURCE_VI, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
@@ -59,6 +59,32 @@ const FULFILLMENT_MODES = [
   "PICKUP_AND_RETURN",
   "PICKUP_ONLY",
   "RETURN_ONLY",
+];
+
+/**
+ * `AcquisitionSource`. Where the customer says they found the shop.
+ *
+ * The order matters and is not alphabetical: the four the counter actually hears most sit first, so
+ * the common answer is one glance away, and `UNKNOWN` sits last as the resting value rather than
+ * hidden in the middle.
+ *
+ * **`UNKNOWN` is the default and is styled like every other option.** That is deliberate and it is
+ * the whole design of this field. A counter that did not get round to asking must be able to leave
+ * it, without a warning colour, a confirmation, or a hint that reads as disapproval — because the
+ * alternative is a busy operator picking whichever value clears the form, and a channel report
+ * built from those is worse than no report at all: it looks like evidence, and the shop will spend
+ * money against it. The nudge to ask lives in the field hint, where it costs nothing if ignored.
+ */
+const ACQUISITION_SOURCES = [
+  "WALK_IN",
+  "GOOGLE_MAPS",
+  "ZALO",
+  "FACEBOOK",
+  "PARTNER_FRONT_DESK",
+  "REFERRAL_CUSTOMER",
+  "LEAFLET_QR",
+  "RETURNING",
+  "UNKNOWN",
 ];
 
 /**
@@ -258,6 +284,9 @@ export function render_(_context) {
     hash: "",
     mode: FULFILLMENT_MODES[0],
     acceptedAt: "",
+    // Rests on "nobody asked" until somebody says otherwise, which is what is actually true before
+    // the question is put to the customer.
+    source: "UNKNOWN",
   };
 
   /** @type {{orderId: string, rowVersion: string, target: string}} */
@@ -372,6 +401,7 @@ export function render_(_context) {
       quote_revision: Number.parseInt(draft.revision.trim(), 10),
       quote_snapshot_hash: draft.hash.trim(),
       fulfillment_mode: draft.mode,
+      acquisition_source: draft.source,
       // `datetime-local` yields a naive wall-clock string; the server requires an aware instant.
       // `Date` reads it in the device's timezone and `toISOString` emits UTC, so the offset is
       // always explicit. The device's timezone is therefore load-bearing, which is why the hint
@@ -477,6 +507,17 @@ export function render_(_context) {
       createSubmission.reset();
     });
 
+    const sourceSelect = enumSelect(
+      "acquisition_source",
+      ACQUISITION_SOURCES,
+      draft.source,
+      ACQUISITION_SOURCE_VI,
+    );
+    sourceSelect.addEventListener("change", (event) => {
+      draft.source = /** @type {HTMLSelectElement} */ (event.target).value;
+      createSubmission.reset();
+    });
+
     const acceptedInput = h("input", {
       type: "datetime-local",
       value: draft.acceptedAt,
@@ -542,6 +583,14 @@ export function render_(_context) {
         id: "order-mode",
         label: "Hình thức giao nhận",
         control: modeSelect,
+      }),
+      labelled({
+        id: "order-source",
+        label: "Khách biết tiệm qua đâu",
+        hint:
+          "Hỏi một câu: “Anh/chị biết tiệm qua đâu ạ?” Chưa hỏi thì để nguyên “Chưa biết” — đó là " +
+          "câu trả lời đúng, không phải thiếu sót. Ghi xong là không sửa được nữa.",
+        control: sourceSelect,
       }),
       labelled({
         id: "order-accepted",

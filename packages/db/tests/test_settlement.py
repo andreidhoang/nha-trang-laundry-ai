@@ -39,6 +39,7 @@ from nha_trang_laundry_db.settlement import (
 from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
+    AcquisitionSource,
     CommercialOrderStatus,
     FulfillmentMode,
     IntakeStatus,
@@ -155,6 +156,7 @@ def _order(
             f"order-{uuid4().hex}",
             uuid4(),
             NOW,
+            AcquisitionSource.WALK_IN,
         ),
     )
     return stored.order_id

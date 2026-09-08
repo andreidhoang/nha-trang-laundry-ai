@@ -168,6 +168,28 @@ const GROUPS = [
       "quyết định kinh doanh dựa trên số bịa.",
     entries: [
       {
+        // ACQUISITION-ATTRIBUTION-001 added the column and the report, and deliberately stopped
+        // there. The gap that remains is the one an operator feels: the value is permanent and
+        // this console never shows it back, so a mis-tap at the counter is invisible from the
+        // moment it is made. Saying so here is cheaper and more honest than a read path that
+        // would have to thread the field through the order list, the transition response and the
+        // board — and the counter is told, in the field's own hint, that the entry is final.
+        ref: "ACQUISITION-ATTRIBUTION-001",
+        title: "Xem lại nguồn khách đã ghi trên một đơn",
+        what:
+          "Mở một đơn và thấy lại đã ghi khách biết tiệm qua đâu, để phát hiện bấm nhầm.",
+        missing:
+          "Đơn có ghi nguồn khách, nhưng không màn hình nào đọc lại được. OrderResponse không mang " +
+          "trường này, nên bảng đơn và thẻ đơn vừa tạo đều không hiển thị.",
+        blockedBy:
+          "Chưa có đường đọc: cần thêm trường vào read model của đơn, là một việc riêng.",
+        today:
+          "Ghi đúng ngay khi tạo đơn — ghi xong là không sửa được, kể cả bằng lệnh trực tiếp vào " +
+          "cơ sở dữ liệu. Chưa hỏi thì để “Chưa biết”; đó là câu trả lời đúng.",
+        note:
+          "Báo cáo theo kênh chạy bằng scripts/report_acquisition_sources.py, không phải màn hình.",
+      },
+      {
         ref: "M3 · MÀN 12",
         title: "Ghi nhận máy / mẻ / phút công",
         what: "Ghi lại máy nào chạy mẻ nào, trong bao lâu, và tốn bao nhiêu phút công của ai.",

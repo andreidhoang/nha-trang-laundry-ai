@@ -43,6 +43,7 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0033", "delivery_leg"),
         ("0034", "approval_store_binding"),
         ("0035", "store_registry"),
+        ("0036", "order_acquisition_source"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

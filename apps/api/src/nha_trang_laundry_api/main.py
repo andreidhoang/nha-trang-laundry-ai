@@ -50,6 +50,7 @@ from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_domain.approvals import ApprovalEnvelopeError
 from nha_trang_laundry_domain.canonical import MAX_CANONICAL_INT
 from nha_trang_laundry_domain.catalog import (
+    AcquisitionSource,
     ApprovalAction,
     CommercialOrderStatus,
     CustodyResolution,
@@ -229,6 +230,10 @@ class OrderCreateRequest(StrictRequest):
     quote_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     fulfillment_mode: FulfillmentMode
     customer_final_quote_accepted_at: datetime
+    #: `ACQUISITION-ATTRIBUTION-001`. Required, with no default. `UNKNOWN` is a value a caller
+    #: sends deliberately, never one the server supplies on their behalf -- an omitted field means
+    #: the client is out of date, and that is a different thing from a customer who was not asked.
+    acquisition_source: AcquisitionSource
 
 
 class CommercialTransitionRequest(StrictRequest):
@@ -868,6 +873,7 @@ def create_order(
             quote_snapshot_hash=request.quote_snapshot_hash,
             fulfillment_mode=request.fulfillment_mode,
             accepted_at=request.customer_final_quote_accepted_at,
+            acquisition_source=request.acquisition_source,
             idempotency_key=idempotency_key,
             principal=principal,
         )

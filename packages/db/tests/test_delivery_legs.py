@@ -27,6 +27,7 @@ from nha_trang_laundry_db.orders import CreateOrderCommand, OrderRepository, Ord
 from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
+    AcquisitionSource,
     CommercialOrderStatus,
     FulfillmentMode,
     IntakeStatus,
@@ -122,6 +123,7 @@ def _active_order(
             f"order-{uuid4().hex}",
             uuid4(),
             NOW,
+            AcquisitionSource.WALK_IN,
         ),
     )
     version = stored.row_version

@@ -1,0 +1,172 @@
+schema_version: 1
+work_item: ACQUISITION-ATTRIBUTION-001
+recorded_at: '2026-09-08T21:40:00+07:00'
+requirement_contract: >-
+  Every order records where the customer said they found the shop, attested by the staff member who
+  took it, written once and never by a model.
+rollback_impact: >-
+  Reverting removes one NOT NULL column from `orders`, one required request field, one console
+  select, one report script and three tests. The migration is forward-only, so a revert of the code
+  against a migrated database leaves a column no writer fills, and the INSERT then fails: rolling
+  this back means reverting the migration too, or restoring the default it deliberately drops. No
+  money, policy, state machine or permission changes; no agent surface changes.
+unresolved_assumptions: >-
+  **The field cannot be read back from any screen.** `OrderResponse` does not carry it, so a
+  mis-selection is permanent and invisible from the moment it is made. This was chosen rather than
+  overlooked -- a read path means threading the field through the order list, the transition
+  response and the board -- and the cost is recorded as an entry on `#/gaps` and warned about in
+  the field's own hint. It is the one honest weakness of this item.
+
+
+  **`PARTNER_FRONT_DESK` carries no partner reference.** `ACQUISITION-001` §3.3 wants one so a
+  per-partner QR is measurable. Deferred: no QR can be printed until `DEC-017` answers which name
+  goes on it, and a partner table nothing points at is a schema for an unmade decision. Adding the
+  reference later is additive.
+
+
+  **The report counts orders, not profit.** `SHOP-INSTRUMENT-001` is BLOCKED, so contribution per
+  order and per kg are unmeasured. A channel bringing many small orders can outrank the one that
+  actually feeds the shop. The report prints this above its own table rather than relying on
+  documentation, because a channel table is exactly what gets screenshotted and acted on.
+
+
+  **No consent state moved and none was made reachable.** `suppression_entries.CLEAR` remains
+  unwritable -- `consent_events.event_type` has no grant member and `evidence_webhook_id` is NOT
+  NULL, so consent can only be evidenced by an inbound webhook on a channel that does not exist.
+  `MarketingDeliveryRepository` still holds every marketing send with
+  `MARKETING_AUTHORIZATION_UNAVAILABLE`. Knowing which channel produced a customer is not
+  permission to message them, and this item did not make it one.
+evidence:
+  the_blocker_this_waited_on_expired_in_august: >-
+    `ACQUISITION-001` §3.3 specified this field on 2026-08-18 and deferred it with a correct reason:
+    "`orders` cannot receive rows at all until 3.1 or 3.2 lands, and attribution over an empty table
+    measures nothing." §7 then reserved enqueueing to the owner, "after `DEC-013` and `DEC-015` are
+    signed".
+
+
+    Both were resolved 2026-08-26. `DEC-013` resolved to a counter-issued ticket with no personal
+    data and shipped as `packages/db/migrations/0032_counter_ticket.sql`; `DEC-015` resolved that no
+    customer-record layer is built. `OrderRepository.create` has accepted a customer reference from
+    either a counter ticket or a channel binding since then
+    (`packages/db/src/nha_trang_laundry_db/orders.py:192-209`). Orders can be created; §3.1 is done;
+    §3.2 remains owner-blocked on channel artifacts and `DEC-016`.
+
+
+    So the precondition §7 named was met twelve days before this item was written, and nothing had
+    gone back to look. `docs/CLIENT_ACQUISITION_EXECUTION_2026-08.md` §1.1 still opens on "hệ thống
+    hiện chưa ghi nhận được một khách hàng nào, từ bất kỳ nguồn nào" and calls `DEC-013` the number
+    one growth constraint -- measured 2026-08-18, true then, false eight days later. Both documents
+    are dated, so both were corrected by a dated appendix rather than edited in place
+    (`context/tasks/TASK-acquisition-001.md` §8).
+
+
+    Only §3.3 was carved out. Enqueueing the whole packet would have asserted that §3.2 is ready,
+    which it is not.
+  an_answer_a_busy_counter_can_give_honestly: >-
+    The design claim is about pressure, not about a select existing, and it is the reason `UNKNOWN`
+    is a member at all: a required field with no comfortable honest option gets filled with whatever
+    clears the form, and the report built from that looks like evidence.
+
+
+    Verified in a real browser, `scripts/verify_console_interaction.py` section 7, 54 passed 0
+    failed:
+
+        ok   the order form asks where the customer came from  — 1 controls with that id
+        ok   and it rests on 'nobody asked' rather than on a plausible channel  — 'UNKNOWN'
+        ok   the resting option reads as an answer, in Vietnamese
+        ok   the send-reconciliation gloss did not leak into it
+        ok   every source the enum offers is reachable in one interaction  — 9 options
+        ok   leaving it unanswered raises no warning state  — aria-invalid=None class=None
+        ok   the field warns that the entry is final, since no screen can show it back
+        ok   tapping its label focuses the field  — activeElement=order-source
+
+    The fourth line is a defect this item introduced and caught. `ENUM_GLOSS` is one flat map across
+    every server enum, which works only while no two enums share a member name --
+    `AcquisitionSource.UNKNOWN` is the first that does not, colliding with the send-reconciliation
+    `UNKNOWN` ("chưa rõ kết quả", meaning the shop does not know whether a message arrived). A
+    duplicate key in a JavaScript object literal silently wins, so the collision would never have
+    failed anywhere: it would have quietly relabelled the send column and put "chưa rõ kết quả" in a
+    form field about how someone found the shop. Fixed with a scoped map passed explicitly
+    (`ACQUISITION_SOURCE_VI`, `enumSelect`'s fourth argument), and the browser now reads back
+    "…Khách nói đã từng dùng / Chưa biết".
+
+
+    `RETURNING` is glossed "khách nói đã từng dùng" -- reported speech -- because `DEC-015` resolved
+    that no customer record exists, so nothing checked it. A bare "khách cũ" would read as a fact the
+    database had verified.
+  written_once_and_the_database_is_what_refuses: >-
+    Attribution is one of the few facts here that cannot be corrected later, because its only source
+    walked out of the shop: nobody can be asked in November how they arrived in September, and §4
+    forbids a model guessing. A guard in one repository method is a guard a second writer misses, so
+    it lives in `enforce_order_projection_update()` beside `store_id`, `bound_contact_id` and
+    `created_at` (`packages/db/migrations/0036_order_acquisition_source.sql`).
+
+
+    `packages/db/tests/test_order_acquisition_source.py` proves it with raw SQL that bypasses the
+    repository entirely:
+
+        UPDATE orders SET acquisition_source = 'GOOGLE_MAPS', row_version = row_version + 1
+        -> psycopg.errors.RaiseException: invalid order projection update
+        stored value after the refusal: 'LEAFLET_QR', unchanged
+
+    Three further claims, each its own test: all nine enum members round-trip through the CHECK
+    constraint (a member the console offers and the database rejects is a 500 at the counter); the
+    column's `column_default` is NULL and `is_nullable` is NO, so the default `0036` needed for the
+    backfill was actually dropped and an INSERT that omits the field fails loudly instead of
+    recording ignorance; and the source is inside the hashed idempotency payload, so replaying a
+    create with the same key and a different source is an `IdempotencyConflictError` rather than a
+    silent discard that tells the counter it succeeded.
+  no_agent_reachable_tool_can_see_it: >-
+    A wrong balance is discovered when the till is counted. A fabricated attribution is never
+    discovered at all -- it is indistinguishable from the attested kind and the shop spends against
+    it. So the boundary is asserted mechanically, in the shape of
+    `test_settlement_is_unreachable_by_agents.py`:
+    `packages/evals/tests/test_acquisition_source_is_attested_only.py`, 4 passed.
+
+
+    The hash-pinned `agent-tools-v1.openapi.yaml` is read as whole text, not walked as a schema:
+    none of `acquisition_source`, `AcquisitionSource`, `acquisitionSource` occurs anywhere in it,
+    including in a description or an example, because any of those teaches a model the vocabulary.
+    Neither `apps/public-agent-tools/src` nor `apps/worker/src` names it in any source file. The
+    facade itself was not touched at all -- it is hash-pinned, and this session has already paid once
+    for invalidating pinned evidence. The route that writes it is `POST
+    /internal/v1/stores/{store_id}/orders` behind `require_operations_staff`, and the request field
+    is asserted required with no default.
+  what_the_channel_report_still_cannot_tell_you: >-
+    `scripts/report_acquisition_sources.py` groups orders by source and counts how many reached
+    `COMPLETED`, per store and date range. Rendered output, exercised directly:
+
+        NGUỒN KHÁCH            ĐƠN   HOÀN TẤT
+        WALK_IN                 12          9
+        GOOGLE_MAPS              5          5
+        UNKNOWN                  7          4
+        FACEBOOK                 0          0   (chưa có đơn nào)
+        ...
+
+    Every enum member appears even with no orders, so "this channel produced nothing" and "this
+    channel is missing from the report" cannot be read as one another. The four caveats are printed
+    under every run rather than documented: it counts orders and not profit; `UNKNOWN` is data about
+    the counter's habits and must not be redistributed across the other rows; a zero may mean never
+    tried; and `RETURNING` is the customer's word, unverifiable because no customer record exists.
+  rollback_assessment: >-
+    One forward-only migration (`0036`), one domain enum, one canonical-contract entry, the order
+    repository and its command, the create route and its request model, four console files, one
+    report script, one browser section and three new test files. Two pinned counts moved with
+    comments (`120 work items`, `179 disclosure slots`) and the disclosure registry was regenerated
+    -- the four new slots are the `#/gaps` entry recording that this field cannot be read back.
+
+
+    Full battery green: 1160 passed, 3 skipped; 54 browser assertions pass, 0 fail.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

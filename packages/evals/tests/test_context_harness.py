@@ -190,7 +190,12 @@ def test_context_drift_check_passes() -> None:
     # a duplicate DOM id meant tapping a field's label did not focus the field. Valid JavaScript,
     # renders correctly, passes every contract test and all of these -- and misbehaves only when a
     # finger or a screen reader tries to *use* the label.
-    assert "119 work items" in result.stdout
+    # 120 with ACQUISITION-ATTRIBUTION-001: the first growth-side item, and the only one that was
+    # buildable. It is `ACQUISITION-001` §3.3 carved out, because that packet deferred attribution
+    # on 2026-08-18 as useless over a table that could not receive rows -- and `DEC-013`/`DEC-015`
+    # resolved eight days later, `0032_counter_ticket.sql` shipped, and nobody went back. An order
+    # now records where the customer said they came from, once, and no model may write or read it.
+    assert "120 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

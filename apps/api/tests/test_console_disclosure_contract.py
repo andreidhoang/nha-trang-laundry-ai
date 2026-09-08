@@ -239,7 +239,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # saying a RESOLVED decision was a pending blocker, invisible to every check. The count rose
     # by exactly the number of long-enough `blockedBy` values; the short ones still cannot bind,
     # which is why the guard for that class reads the module source instead.
-    assert sum(counts.values()) == _registry()["total"] == 175
+    # 179 since ACQUISITION-ATTRIBUTION-001: one new `#/gaps` entry, four of whose keys are long
+    # enough to bind. The gap is a real one and is the honest half of that item -- an order now
+    # records where the customer came from and the value can never be changed, and no screen reads
+    # it back, so a mis-tap at the counter is invisible from the moment it is made. Naming that
+    # here was cheaper than a read path threaded through the order list and the board, and the
+    # counter is warned in the field's own hint that the entry is final.
+    assert sum(counts.values()) == _registry()["total"] == 179
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

@@ -19,6 +19,7 @@ from nha_trang_laundry_domain.canonical import (
 from nha_trang_laundry_domain.catalog import (
     CONFIRMED_LEGACY_ALIASES,
     DOMAIN_ENUM_REGISTRY,
+    AcquisitionSource,
     ActorRole,
     AdjustmentDirection,
     ApprovalAction,
@@ -138,6 +139,7 @@ __all__ = [
     "OTHER_SPECIAL_ITEM_SLA",
     "SPECIAL_ITEM_GUIDANCE_SLA",
     "STANDARD_WASH_SLA",
+    "AcquisitionSource",
     "ActorRole",
     "AdjustmentDirection",
     "ApprovalAction",

@@ -179,6 +179,48 @@ class CustodyResolution(StrEnum):
     SHOP_FAULT_NO_CHARGE = "SHOP_FAULT_NO_CHARGE"
 
 
+class AcquisitionSource(StrEnum):
+    """Where the customer says they found the shop, attested by the staff member taking the order.
+
+    `ACQUISITION-001` section 3.3. This is the only thing this system will ever know about how a
+    customer arrived, and it is knowledge of a specific kind: **it is a report of what a person
+    said, not a measurement.** No model classifies it, no heuristic infers it from a message body,
+    and nothing here is derived from data the shop holds -- because the shop holds none. `DEC-015`
+    resolved that no customer-record layer exists, so two orders from the same person share nothing
+    the database can see.
+
+    That is why `RETURNING` is a member and is nonetheless not a fact: it is the customer's claim,
+    repeated by staff. A system that could verify it would not need to be told.
+
+    `UNKNOWN` is a first-class member and the console must never discourage it. A staff member who
+    did not ask has to be able to say so. A required field with no honest option is a field that
+    gets filled with a plausible guess, and a channel report built on plausible guesses is worse
+    than no report at all, because someone will spend money on it.
+    """
+
+    #: Walked in off the street with no prior contact the counter knows of.
+    WALK_IN = "WALK_IN"
+    #: Found the shop through Google Maps or Google Search.
+    GOOGLE_MAPS = "GOOGLE_MAPS"
+    #: Arrived through Zalo.
+    ZALO = "ZALO"
+    #: Arrived through Facebook.
+    FACEBOOK = "FACEBOOK"
+    #: Sent by a partner's front desk -- a hotel, homestay or similar. Which partner is deliberately
+    #: not recorded: a per-partner reference needs an asset to point at, and no leaflet, QR or
+    #: contract can be printed until `DEC-017` settles which name goes on it.
+    PARTNER_FRONT_DESK = "PARTNER_FRONT_DESK"
+    #: Referred by another customer.
+    REFERRAL_CUSTOMER = "REFERRAL_CUSTOMER"
+    #: Came in holding a leaflet or having scanned a printed code.
+    LEAFLET_QR = "LEAFLET_QR"
+    #: Says they have used the shop before. The system cannot confirm this and does not try.
+    RETURNING = "RETURNING"
+    #: Nobody asked, or the customer did not say. Not a failure to record, but a record of not
+    #: knowing, which is a different thing and the report treats it as one.
+    UNKNOWN = "UNKNOWN"
+
+
 class CommercialOrderStatus(StrEnum):
     DRAFT = "DRAFT"
     REQUESTED = "REQUESTED"
@@ -333,6 +375,7 @@ DOMAIN_ENUM_REGISTRY: Final = MappingProxyType(
         "PromotionEligibilityEvent": PromotionEligibilityEvent,
         "CommitmentAuthority": CommitmentAuthority,
         "FulfillmentMode": FulfillmentMode,
+        "AcquisitionSource": AcquisitionSource,
         "CommercialOrderStatus": CommercialOrderStatus,
         "IntakeStatus": IntakeStatus,
         "ProductionStatus": ProductionStatus,

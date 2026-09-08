@@ -596,6 +596,67 @@ with sync_playwright() as playwright:
         f"{scope_note.count()} in DOM, hidden from a one-store session",
     )
 
+    print()
+    print("=" * 74)
+    print("7. ĐƠN HÀNG — the acquisition source, and the pressure it must not apply")
+    print("=" * 74)
+
+    # ACQUISITION-ATTRIBUTION-001. The claim is not "a select exists". It is that a counter which
+    # did not ask can leave the field alone and be recorded as not knowing, without the screen
+    # pushing back — because a required field with no comfortable honest option gets filled with
+    # whatever clears the form, and the resulting channel report is worse than no report. That is a
+    # claim about styling and default state, which no source-text test can make.
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+
+    source = page.locator("#order-source")
+    check(
+        "the order form asks where the customer came from",
+        source.count() == 1,
+        f"{source.count()} controls with that id",
+    )
+    check(
+        "and it rests on 'nobody asked' rather than on a plausible channel",
+        source.count() == 1 and source.input_value() == "UNKNOWN",
+        repr(source.input_value()) if source.count() else "absent",
+    )
+    check(
+        "the resting option reads as an answer, in Vietnamese",
+        "Chưa biết" in page.content(),
+    )
+    check(
+        "the send-reconciliation gloss did not leak into it",
+        "chưa rõ kết quả" not in (source.text_content() or "").lower(),
+        repr(source.text_content()) if source.count() else "absent",
+    )
+    check(
+        "every source the enum offers is reachable in one interaction",
+        source.locator("option").count() == 9,
+        f"{source.locator('option').count()} options",
+    )
+    # The pressure test: no warning colour, no aria-invalid, nothing that reads as disapproval
+    # while the honest answer is selected.
+    check(
+        "leaving it unanswered raises no warning state",
+        source.get_attribute("aria-invalid") is None
+        and "warn" not in (source.get_attribute("class") or "")
+        and "danger" not in (source.get_attribute("class") or ""),
+        f"aria-invalid={source.get_attribute('aria-invalid')} "
+        f"class={source.get_attribute('class')}",
+    )
+    check(
+        "the field warns that the entry is final, since no screen can show it back",
+        "không sửa được" in page.content(),
+    )
+    # And the label points at the select, which is the CONSOLE-LABEL-001 defect one screen over.
+    source.locator("xpath=../label").first.click()
+    page.wait_for_timeout(150)
+    check(
+        "tapping its label focuses the field",
+        page.evaluate("document.activeElement?.id") == "order-source",
+        f"activeElement={page.evaluate('document.activeElement?.id')}",
+    )
+
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))
     browser.close()
 

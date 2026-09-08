@@ -170,3 +170,38 @@ Adding a row to `delivery/WORK_QUEUE.yaml` is a scheduling act, and the item's f
 **The owner enqueues this**, after `DEC-013` and `DEC-015` are signed, with
 `blocked_by_decisions: [DEC-013, DEC-015]` and `depends_on: [CHANNEL-001]` where the messaged path is
 concerned.
+
+---
+
+## 8. Addendum, 2026-09-08 — §7's precondition is met, and §3.3 was carved out
+
+**Nothing above is edited.** This is appended because §7 named a condition and the condition has
+since been satisfied, and a reader arriving at §7 would otherwise take a stale blocker for a live
+one.
+
+§7 says the owner enqueues this item "after `DEC-013` and `DEC-015` are signed", and gives the
+reason: the first slice was gated on `DEC-013`, which was open on 2026-08-18. **Both were resolved
+2026-08-26.** `DEC-013` resolved to a counter-issued ticket with no personal data
+(`packages/db/migrations/0032_counter_ticket.sql`); `DEC-015` resolved that no customer-record layer
+is built, and reopens only when an official channel exists.
+
+That changes each slice differently, which is why this packet was **not** enqueued whole:
+
+| Slice | Status on 2026-09-08 |
+|---|---|
+| §3.1 counter identity | **Built.** `OrderRepository.create` accepts a customer reference from a counter ticket or a channel binding (`packages/db/src/nha_trang_laundry_db/orders.py:192-209`). |
+| §3.2 messaged identity | **Still owner-blocked**, unchanged. `CHANNEL-TELEGRAM-001` and `CHANNEL-ZALO-APPLY-001` need artifacts only the owner can produce, and `DEC-016` is open. |
+| §3.3 acquisition attribution | **Buildable, and was the only part that was not.** §3.3 called itself "genuinely useless today" because `orders` could not receive rows. It can now. |
+
+So §3.3 is carved out as `ACQUISITION-ATTRIBUTION-001`
+(`context/tasks/TASK-acquisition-attribution-001.md`), enqueued 2026-09-08, with one deferral
+recorded there: the `PARTNER_FRONT_DESK` organisation reference waits on `DEC-017`, because no
+per-partner QR can be printed until the shop knows which name goes on it.
+
+**This packet stays open** for §3.2 and for the partner reference. It is not superseded.
+
+One correction it carries for a document that points here: `docs/CLIENT_ACQUISITION_EXECUTION_2026-08.md`
+§1.1 opens on "hệ thống hiện chưa ghi nhận được một khách hàng nào, từ bất kỳ nguồn nào" and calls
+`DEC-013` "ràng buộc số một của tăng trưởng". That was measured 2026-08-18 and true then. It was
+false eight days later. The document is dated and its §10 points here, so it is left as written and
+corrected in this appendix rather than edited in place.

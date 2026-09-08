@@ -10,14 +10,14 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 5
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 150
+  DESCRIPTIVE: 154
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   READ_ONLY_MODULE: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 11
-total: 175
+total: 179
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -641,6 +641,40 @@ disclosures:
   text: Mọi chỉ số vận hành đều cần một read model có phiên bản đứng sau. Chưa có cái nào, nên bảng vận
     hành không hiển thị KPI — đếm tạm vài con số rồi gọi là KPI là cách nhanh nhất để một quyết định kinh
     doanh dựa trên số bịa.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:6778851efd49
+  module: screens/gaps.js
+  key: missing
+  text: Đơn có ghi nguồn khách, nhưng không màn hình nào đọc lại được. OrderResponse không mang trường
+    này, nên bảng đơn và thẻ đơn vừa tạo đều không hiển thị.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#blockedBy:321aa7855421
+  module: screens/gaps.js
+  key: blockedBy
+  text: 'Chưa có đường đọc: cần thêm trường vào read model của đơn, là một việc riêng.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:764b3eb7d264
+  module: screens/gaps.js
+  key: today
+  text: Ghi đúng ngay khi tạo đơn — ghi xong là không sửa được, kể cả bằng lệnh trực tiếp vào cơ sở dữ
+    liệu. Chưa hỏi thì để “Chưa biết”; đó là câu trả lời đúng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#note:6f8514c88a3a
+  module: screens/gaps.js
+  key: note
+  text: Báo cáo theo kênh chạy bằng scripts/report_acquisition_sources.py, không phải màn hình.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

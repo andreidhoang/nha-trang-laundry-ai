@@ -244,6 +244,35 @@ export const ENUM_GLOSS = {
 };
 
 /**
+ * `AcquisitionSource`, glossed separately from `ENUM_GLOSS` because it collides with it.
+ *
+ * `ENUM_GLOSS` is one flat map across every server enum, which works only while no two enums share
+ * a member name. `AcquisitionSource.UNKNOWN` is the first that does: the map already binds
+ * `UNKNOWN` to "chưa rõ kết quả" for send reconciliation, where it means the shop does not know
+ * whether a message arrived. Here it means nobody asked the customer where they came from. Those
+ * are different facts and no single gloss serves both — folding them together would put "chưa rõ
+ * kết quả" into a form field about how someone found the shop.
+ *
+ * A later duplicate key in a JavaScript object literal silently wins over the earlier one, so this
+ * collision would never have failed anywhere. It would have quietly relabelled the send column.
+ * Hence a scoped map passed explicitly, and not a second `UNKNOWN`.
+ */
+export const ACQUISITION_SOURCE_VI = {
+  WALK_IN: "đi ngang qua, vào luôn",
+  GOOGLE_MAPS: "tìm trên Google",
+  ZALO: "qua Zalo",
+  FACEBOOK: "qua Facebook",
+  PARTNER_FRONT_DESK: "lễ tân đối tác giới thiệu",
+  REFERRAL_CUSTOMER: "khách cũ giới thiệu",
+  LEAFLET_QR: "tờ rơi hoặc mã QR",
+  // Reported speech, and the wording says so. No customer record exists (`DEC-015`), so nothing
+  // here verified it; a bare "khách cũ" would read as a fact the database had checked.
+  RETURNING: "khách nói đã từng dùng",
+  // A state of knowledge, not a missing entry.
+  UNKNOWN: "chưa biết",
+};
+
+/**
  * The Vietnamese name of a server enum, capitalized for standalone display.
  *
  * Vietnamese is the reading language of this console; the raw token remains available wherever

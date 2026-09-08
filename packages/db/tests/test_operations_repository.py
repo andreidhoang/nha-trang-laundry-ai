@@ -38,6 +38,7 @@ from nha_trang_laundry_db.orders import (
 )
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
+    AcquisitionSource,
     ActorRole,
     ApprovalAction,
     CommercialOrderStatus,
@@ -420,6 +421,7 @@ def test_order_creation_transition_replay_authorization_and_atomic_audit(
         f"order-{uuid4().hex}",
         uuid4(),
         PRICED_AT + timedelta(hours=1),
+        AcquisitionSource.WALK_IN,
     )
     first = repository.create(postgres_connection, create)
     replay = repository.create(postgres_connection, replace(create, correlation_id=uuid4()))

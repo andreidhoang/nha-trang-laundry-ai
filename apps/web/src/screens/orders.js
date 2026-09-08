@@ -428,6 +428,13 @@ export function render_(_context) {
       draft.quoteId = "";
       draft.hash = "";
       draft.acceptedAt = "";
+      // And the source goes back to "nobody asked", which is true again the moment this customer
+      // leaves. Leaving it on the last answer would let the console supply a plausible value for
+      // the next customer -- exactly the failure `UNKNOWN` exists to prevent, except committed by
+      // the screen rather than by a hurried operator, and on a field that is immutable and that no
+      // screen reads back. `mode` is deliberately left sticky: a wrong fulfilment mode surfaces
+      // downstream when nobody comes to collect, and a wrong source surfaces nowhere, ever.
+      draft.source = "UNKNOWN";
       render(createBody, createForm());
       await board.reload();
     } catch (error) {

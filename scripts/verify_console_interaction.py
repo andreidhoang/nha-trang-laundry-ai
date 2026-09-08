@@ -73,6 +73,20 @@ ORDER_REQUEST = {
 }
 ORDER_REQUEST_CREATED = {**ORDER_REQUEST, "store_id": STORE, "replayed": False}
 
+#: `OrderResponse`, verbatim. Note what it does not contain: `acquisition_source`. The console
+#: cannot show the recorded source back, which is a registered gap on `#/gaps` and the reason
+#: section 7 has to check the *form's* behaviour rather than reading the value off a card.
+ORDER_CREATED = {
+    "order_id": "44444444-5555-4333-8444-888888888888",
+    "store_id": STORE,
+    "commercial": "REQUESTED",
+    "intake": "AWAITING_HANDOFF",
+    "production": "NOT_STARTED",
+    "balance": "UNPAID",
+    "row_version": 1,
+    "replayed": False,
+}
+
 #: What `GET /internal/v1/stores/{id}/settlements/today` returns. A non-round figure so a screen
 #: that quietly rounded or reformatted it would be visible in the assertion.
 SETTLEMENTS_TODAY = {
@@ -202,6 +216,13 @@ with sync_playwright() as playwright:
             # The quote form refuses to build without this, so an empty stub would leave every
             # assertion below looking at a refusal notice rather than a form.
             body = PRICEBOOK_SERVICES
+        elif url.endswith("/orders") and route.request.method == "POST":
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(ORDER_CREATED),
+            )
+            return
         elif "/order-requests/" in url:
             # The single-fetch endpoint, which the quotes prefill resolves `?request=` against.
             if state.get("request_missing"):
@@ -655,6 +676,33 @@ with sync_playwright() as playwright:
         "tapping its label focuses the field",
         page.evaluate("document.activeElement?.id") == "order-source",
         f"activeElement={page.evaluate('document.activeElement?.id')}",
+    )
+
+    # The assertion that matters most, and the one the first version of this section did not make:
+    # what the *next* customer's form says. A sticky select would have the console itself supply a
+    # plausible answer nobody gave, on a field that is immutable and that no screen reads back --
+    # which is precisely the failure `UNKNOWN` exists to prevent, committed by the software rather
+    # than by a hurried operator. Checking only the initial default cannot see it.
+    source.select_option("GOOGLE_MAPS")
+    page.locator("#order-contact").fill(CONTACT)
+    page.locator("#order-quote").fill("55555555-6666-4333-8444-999999999999")
+    page.locator("#order-hash").fill(f"JCS-SHA256-V1:{'a' * 64}")
+    page.locator("#order-accepted").fill("2026-09-08T10:00")
+    page.wait_for_timeout(150)
+    # Scoped by the field itself: the create form is not the first `form.form` on this screen --
+    # the transition form is, and clicking that one submits a different command entirely.
+    create_form = page.locator("form.form").filter(has=page.locator("#order-source"))
+    create_form.locator("button[type=submit]").first.click()
+    page.wait_for_timeout(1200)
+
+    check(
+        "the order was accepted, so this is the real post-submit form",
+        "Đã tạo đơn" in page.content(),
+    )
+    check(
+        "the next customer's form is back on 'nobody asked', not on the last answer",
+        page.locator("#order-source").input_value() == "UNKNOWN",
+        repr(page.locator("#order-source").input_value()),
     )
 
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

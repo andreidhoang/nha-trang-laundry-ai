@@ -1,0 +1,221 @@
+schema_version: 1
+work_item: SHOP-READINESS-AUDIT-001
+recorded_at: '2026-09-09T19:10:00+07:00'
+requirement_contract: >-
+  Drive the console as a member of staff against a real API and a real database, audit every layer
+  against that, and fix what a shop would actually meet.
+rollback_impact: >-
+  Reverting returns: two 500s on write routes including the money route; a WAL archiver that reports
+  a truncated segment as archived; an SLA board that can only say BREACHED; an intake screen that
+  sends staff back to paper; a settlement field that reads 132.000 as 132; three screens that assert
+  a write did not happen when nobody knows; a service worker that can be filled with pre-deploy
+  JavaScript; and a wifi blip that presents as a sign-out. One forward-only migration (0037) and one
+  re-derived evidence bundle do not revert cleanly and are named under unresolved_assumptions.
+unresolved_assumptions: >-
+  **This was a local stack, not the pilot host.** Real API, real PostgreSQL, real browser, real
+  roles, today's code -- but the identity provider was the development issuer rather than Keycloak,
+  and Caddy was not in front of it. Two things therefore remain unexercised end to end: the
+  `/signin/` page, and the console over TLS by its own hostname.
+
+
+  **Migration 0037 is forward-only.** Reverting the code against a migrated database leaves a
+  column nothing writes, which is harmless, but the column stays.
+
+
+  **The evidence bundle re-derivation is not reversible by design.** v2 is retained byte for byte
+  and the index names v3 current; going back means another re-derivation, not an edit.
+
+
+  **The sign-in throttle default moved from 5 to 30 failures per 300s, and that is a judgement
+  call the owner can reverse.** Measured: successes never accumulate, but five failures behind the
+  proxy refused a valid token, and every tablet shares one bucket because the server sees Caddy's
+  address for all of them. The bucket cannot be made finer safely -- the only candidates are a
+  client-controlled header and the subject of an unverified token. What did not change: while
+  throttled, a valid token is still refused. Thirty verifications per five minutes is negligible
+  work and R1 has no public ingress, but this should be revisited with the bucket key when Zone P
+  arrives.
+
+
+  **`incidents` still cannot leave OPEN.** One writer, hardcoded. The remedy tables do not exist,
+  `DEC-004` sets the policy, and `#/gaps` now states the consequence rather than only the missing
+  tables. Not fixed; recorded.
+evidence:
+  the_console_said_things_that_were_not_true: >-
+    The intake screen's explain block read "Chưa tiếp nhận được ở màn hình này … Trước mắt: nhận đồ
+    và ghi tay như cũ" -- twenty lines under the "Phát phiếu (khách vãng lai)" button that issues a
+    counter ticket and fills the field. `DEC-013` resolved 2026-08-26 and the path has worked since;
+    the walkthrough used it to issue Phiếu số 1. A staff member who believes the screen abandons the
+    software for the shop's commonest customer.
+
+
+    Six more of the same kind, each checked against the code rather than the spec: the delivery-fee
+    rule stated as if it applied to all four fulfilment modes when `evaluate_delivery` branches on
+    mode before it looks at distance, so PICKUP_ONLY and RETURN_ONLY always negotiate; the distance
+    boundary putting exactly 2.000 m in the paid band where the engine puts it in the free one; the
+    quantity-basis hint saying only a weighed quantity reaches a final price when an approved manual
+    one does too; "Chưa có bảng stores" after migration 0035 created it with a foreign key; the
+    approvals empty state still describing the pre-0034 join; and the takings explainer, which I
+    corrected and thereby made contradict the paragraph under it -- caught by the recheck round.
+  refusals_mapped_by_hand_missed_two_and_one_was_the_money_route: >-
+    `StoreAccessError` descends from `PermissionError`, so a route catching `ValueError` lets it
+    escape and FastAPI answers 500 -- which tells a client to retry a write it was refused. Measured
+    on the running stack, as an OPERATOR holding the settlement role with no assignment to that
+    store:
+
+        POST /internal/v1/orders/{id}/settlement  ->  HTTP 500  Internal Server Error
+        after the fix                              ->  HTTP 403  {"detail":"operation denied"}
+
+    Eight sibling routes already caught it. This had already shipped once on `create_order`, which
+    is why the fix is not another tuple: the application now answers the exception once, for the
+    whole surface, via a registered handler. The first version of the guarding test enumerated
+    routes by scanning `operations.py` bodies and covered six of at least nine while reading as if
+    it covered all of them -- `require_store_membership` is called from inside `orders.py`,
+    `approvals.py`, `assistant.py`, `delivery_legs.py` and `intake.py`. That was itself a recheck
+    finding, and the test now pins the handler instead.
+
+
+    Three more 500s, each reproduced: a duplicate OIDC subject, found by adding the same staff
+    member twice in the console; an empty `Idempotency-Key`, on the one header that exists to make a
+    retry safe; and a concurrent second sign-out, which fired before the cookies were deleted so the
+    loser kept its session while being shown an error.
+  a_write_whose_outcome_is_unknown_must_not_be_reported_as_refused: >-
+    On TIMEOUT and NETWORK the request may have been applied and the answer lost. Three screens said
+    otherwise -- "Trạng thái đơn không đổi", "Không có đơn nào được tạo", "Không có bản ghi nào được
+    tạo" -- which invites the retry that produces a second effect. Worst on order creation: the
+    code's own comment elsewhere says there is no cheap way to undo a duplicate order. All three now
+    say the outcome is unknown and ask the operator to read the board rather than press again.
+
+
+    The same principle produced the money-parsing fixes. A settlement typed as the total the screen
+    had just rendered -- `132.000 ₫`, copied -- parsed through `parseInt` to 132, which is a safe
+    integer, so it posted and the server refused it for not equalling the quoted total. No money
+    moved; the operator got a refusal they had no way to explain, for copying the number the
+    application showed them. The negotiated delivery fee shared the parse and truncated a fraction
+    silently. Both now use one `parseDong` that treats `.` as grouping and refuses a comma rather
+    than rounding it.
+  the_sla_board_could_only_ever_say_breached: >-
+    `evaluate_production_sla` computes `comparison_at = ready_at_store or evaluated_at` and reaches
+    `SlaOutcome.MET` only when `ready_at_store` is supplied. No column held it, so no caller could
+    supply one, and the board's population holds every order until it is physically RELEASED.
+    Measured on the real engine, for a bag washed in six hours and collected the next morning:
+
+        without the ready clock : BREACHED   REQUIRE_HUMAN   SLA_BREACHED
+        with the ready clock    : MET        ALLOW           SLA_MET
+        genuinely late (12h)    : BREACHED
+
+    That number is read out loud: `assistant.py` counts orders whose reason codes contain
+    SLA_BREACHED and tells the owner "N đơn đang sản xuất, trong đó M đơn đã quá mốc rủi ro". With
+    most customers collecting the next day, M was every order, every morning.
+
+
+    Migration 0037 adds `orders.production_ready_at`. My first version kept the earliest stamp with
+    COALESCE, reasoning that the question is when the laundry was done rather than how often the
+    board was touched -- and the recheck round showed that reasoning fails the moment a rewash
+    exists. `DEC-024` makes READY_AT_STORE -> EXCEPTION -> IN_PROCESS legal precisely because a
+    stain found at quality check needs one, so the frozen stamp reported MET permanently for the
+    order most likely to be late: the inverse of the defect the column was added to fix. It now
+    names the last completion, holds nothing during a rewash, and keeps its value on RELEASED,
+    tested through the repository against a real database across the whole cycle.
+  a_truncated_wal_segment_was_archived_and_reported_as_success: >-
+    `archive-wal.sh` read `if ! gzip -c "$src" | age -R ... ; then`, under a comment claiming the
+    pipeline's success was asserted rather than assumed. It was not: `set -o pipefail` is not POSIX
+    and a pipeline's status is its last command's. Measured, with a gzip stub that truncates:
+
+        old form: reported SUCCESS, artifact is 4096 bytes from a 16777216-byte segment
+        exit=0
+
+    PostgreSQL is then free to recycle a segment whose only archived copy is short, and nobody finds
+    out until a restore reaches it. Now staged rather than piped so each status is its own, plus
+    `gzip -t` and an uncompressed-length comparison against the source; the same stub is refused and
+    only the good segment reaches the repository.
+
+
+    Three more operational defects: two cron entries named `/srv/nha-trang-laundry`, which no step
+    on any runbook creates, so they failed on `cd` from the first run and said so nowhere -- cron
+    mails a mailbox nobody on that machine reads, so the shop would believe it was monitored. Deploy
+    day's grant step was written in the form `shop-admin` exists to replace. And the restore drill
+    exported two `/usr/local/bin` commands on a host the page calls clean, with nothing copying them
+    there or installing the tools they invoke, so the drill halted on its own first command -- on
+    the stopwatch, which is the number the drill exists to measure.
+  what_the_second_round_found_in_the_first_rounds_fixes: >-
+    A second round was run over the first round's changes with instructions to refute them. Four of
+    its findings were in my own fixes, one HIGH: the ready clock above; a test that read as stronger
+    than it was; a takings paragraph that contradicted the one under it; and delivery-fee copy that
+    still carried the blanket claim it had just been corrected for.
+
+
+    A fifth was mine by omission. My fix taught `syncNetworkAffordance` about permission, and there
+    was a third writer of `disabled` it did not know about: six places set it for the duration of an
+    in-flight request. A tablet rejoining wifi mid-write fired `online` and re-armed the button for
+    a second submit of a command already in flight. It now disables what it finds enabled, marks
+    that, and clears exactly those on the way back -- so anything already disabled stays disabled,
+    whoever did it and why. Proven in the browser: a permission-disabled control survives an
+    offline/online cycle, and a button held busy by its own request is not re-armed.
+
+
+    The round's own sweep added a money race and a lying offline story. `OrderRepository.create`'s
+    supersession guard was a plain read whose finding was never re-asserted at write time -- the
+    mutation's only compare-and-swap is `lifecycle = 'OPEN'`, which says nothing about whether the
+    customer has agreed a newer price -- so an acceptance committing mid-create left the order bound
+    to the older revision, and settlement prices off exactly that row. The guard now reads
+    `FOR UPDATE OF q`. The test for it says what it does and does not prove: the sequential case is
+    pinned, and because there is no hook inside the repository's transaction to stop at, the lock is
+    demonstrated directly rather than the interleaving staged.
+
+
+    And the console lied about being offline in three ways: a failed store read became "your account
+    has no shop, ask the owner"; a transport failure became "Chưa đăng nhập", which the paragraph
+    above `refresh()` forbids in as many words; and the fingerprinted service-worker cache could be
+    populated from the browser's HTTP cache, so the one tablet that had the console open before a
+    deploy could hold pre-deploy JavaScript in a cache correctly named for the new build.
+  no_ai_capability_moved_and_no_consent_state_became_reachable: >-
+    All 13 capabilities remain NOT_AUTHORIZED with zero evidence, verified by running
+    `report_delivery_status.py`. The worker's five flags default false and it refuses to start if any
+    external-capability flag is true -- verified by setting each one:
+
+        FEATURE_AGENT_RUNTIME_ENABLED=true    -> refused: worker host cannot enable unreleased ...
+        FEATURE_PUBLIC_CHANNELS_ENABLED=true  -> refused: worker host cannot enable unreleased ...
+        FEATURE_AUTOMATED_SENDS_ENABLED=true  -> refused: worker host cannot enable unreleased ...
+
+    `suppression_entries.CLEAR` is still unwritable and every marketing send is still held with
+    MARKETING_AUTHORIZATION_UNAVAILABLE.
+
+
+    One AI-side defect was fixed rather than deferred. `pipeline.py` hardcoded DRAFT /
+    DRAFT_REQUIRES_HUMAN and discarded `AgentRunResult.status`, so a run that never reached a
+    provider -- falling back to DETERMINISTIC_HANDOFF_TEXT and concluding REQUIRE_HUMAN -- appeared
+    in the Shadow console as ordinary model output awaiting approval. Wrong twice: a reviewer
+    approves text believing a model wrote it, and the Shadow evidence the ladder is measured on
+    records a deterministic fallback as a model draft.
+
+
+    And the ladder itself gained a floor it was missing: G3 asks for the first 200 automated sends to
+    be human-reviewed and the only `minimum: 200` lived in the BOUNDED clause, so a manifest could
+    claim G3 satisfied with zero. Keyed on the gate named in `gate_evidence` rather than the stage,
+    because G2 and G3 are both ASSISTED and only G3 carries it. That schema is pinned by
+    `AGENT-001`'s bundle, so the bundle was re-derived under `EVIDENCE-REPIN-001`'s procedure --
+    script edited first so the new bundle pins it, then captured, v2 retained byte for byte. Two
+    pins moved; every case status, release blocker and runtime path identical.
+  rollback_assessment: >-
+    33 adversarially verified findings across two rounds, all fixed. One forward-only migration
+    (0037), one global exception handler, one re-derived evidence bundle, one auth default, four
+    runbooks, the service-worker generator, and thirteen console and repository files.
+
+
+    Full battery green: 1168 passed, 3 skipped. 59 stubbed-browser assertions and 70 live-stack
+    assertions, 0 failures. The live walk trades twice -- a walk-in who collects and a delivery
+    order with a failed leg then a successful one -- and each fix above was reproduced before it was
+    changed and re-checked after.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

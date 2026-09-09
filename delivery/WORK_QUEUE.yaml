@@ -3768,7 +3768,7 @@ items:
 - id: SHOP-READINESS-AUDIT-001
   phase: PRODUCTION_HARDENING
   title: Use the software, then fix what using it reveals
-  status: IN_PROGRESS
+  status: COMPLETE
   priority: 278
   depends_on:
   - ACQUISITION-ATTRIBUTION-001

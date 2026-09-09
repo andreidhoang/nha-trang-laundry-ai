@@ -57,7 +57,27 @@ class AuthSettings(BaseSettings):
     )
     api_trusted_hosts: str = "localhost,127.0.0.1,testserver"
     api_max_request_bytes: int = 262_144
-    auth_attempt_limit: int = 5
+    #: How many *failed* identity exchanges one network source may make in a window. Successes do
+    #: not accumulate -- `exchange_identity_token` calls `AuthenticationAttemptLimiter.reset` on a
+    #: verified token -- so this bounds a run of failures and nothing else. Measured 2026-09-09:
+    #: eight legitimate sign-ins in a row all answer 200; five failures then answer 429, and so
+    #: does a ninth sign-in carrying a perfectly good token.
+    #:
+    #: That last sentence is why 5 was wrong here. Every tablet reaches the API through Caddy, so
+    #: `request.client.host` is the proxy for all of them and they share one bucket. Five failures
+    #: from anywhere in the shop -- one expired token, or Keycloak hiccupping while three tablets
+    #: retry -- locks out everybody for up to five minutes, including staff whose credentials are
+    #: fine, with customers at the counter. The bucket cannot be made finer safely: the only
+    #: candidates are `X-Forwarded-For`, which a client controls, and the `sub` of an unverified
+    #: token, which an attacker varies freely. Either would let the throttle be evaded outright.
+    #:
+    #: So the number moves instead, and what it costs is proportionate to what it buys. Thirty
+    #: signature verifications in five minutes is negligible work, and R1 has no public ingress at
+    #: all (ADR-0007: Zone P does not exist yet), so the credential-stuffing this bounds cannot
+    #: reach it from outside the shop's own network. When public ingress arrives this number should
+    #: be revisited together with the bucket key, and the reasoning above is the record of why it
+    #: is what it is.
+    auth_attempt_limit: int = 30
     auth_attempt_window_seconds: int = 300
 
     def require_identity_configuration(self) -> None:

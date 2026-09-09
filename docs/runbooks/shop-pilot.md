@@ -300,6 +300,7 @@ software.
 | Symptom | Cause, in order of likelihood | What to do |
 |---|---|---|
 | Console will not load on one tablet | That tablet lost the CA trust, or the router forgot the DNS entry | Re-install `.shop/ca/ca.crt` and switch trust on; check the router |
+| Sign-in answers 429 on every tablet at once | The sign-in throttle. **All tablets share one bucket** — they reach the API through Caddy, so the server sees the proxy's address for every one of them. Only *failed* exchanges count; a verified sign-in resets the count. So this means something produced a run of failures: Keycloak restarting while tablets retried, an expired token, or the wrong realm | **Wait it out.** The `Retry-After` header on the 429 says how long, at most five minutes. Do not restart anything: a restart clears the in-memory bucket but also every staff session, which is worse. If it recurs, look at Keycloak rather than at the console |
 | Console will not load on *any* tablet | The Mac slept, rebooted without Docker, or lost the network | Wake it; check Docker is running; `... up -d` |
 | "Không thể nhận đơn" / writes refused | Disk full — almost always a failing `archive_command` pinning WAL | `--check volume` and `--check wal`; fix the archive credential before clearing anything |
 | Nobody can sign in, existing sessions fine | Keycloak is down | It is the issuer, not the console: existing sessions last 8h idle / 24h absolute, so you have time |

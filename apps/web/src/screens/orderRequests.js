@@ -362,17 +362,16 @@ export function render_() {
         h(
           "p",
           null,
-          "Chưa tiếp nhận được ở màn hình này. Mã khách chỉ sinh ra từ một tin nhắn khách đã gửi " +
-            "qua kênh chính thức, nên người chưa nhắn bao giờ thì chưa có mã.",
+          "Bấm “Phát phiếu (khách vãng lai)” ở trên. Quầy phát một số phiếu, đọc số đó cho khách, " +
+            "và ô “Mã khách” tự điền. Không cần khách nhắn tin trước, và không cần ghi tay.",
         ),
         h(
           "p",
           null,
-          "Đây là khoảng trống quy trình đã ghi nhận, không phải lỗi. Tạo khách ngay tại quầy là " +
-            "lưu thông tin cá nhân khi chưa có cơ sở đồng ý, nên hệ thống từ chối thay vì tự làm. " +
-            "Trước mắt: nhận đồ và ghi tay như cũ. ",
-          h("a", { href: "#/gaps" }, "Xem khoảng trống này"),
-          ".",
+          "Hệ thống không lưu tên, số điện thoại hay địa chỉ của khách vãng lai — chỉ một con số " +
+            "do quầy phát. Vì không có thông tin cá nhân nào được lưu nên cũng không cần xin phép " +
+            "khách điều gì. Đây là quyết định của chủ tiệm ngày 26/08/2026 (DEC-013), không phải " +
+            "một khoảng trống.",
         ),
       ),
       h(

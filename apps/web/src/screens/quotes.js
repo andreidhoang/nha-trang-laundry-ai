@@ -34,7 +34,8 @@ import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UUID, dateTime, shortHash, shortId } from "../core/format.js";
 import { enumVi, serviceCategoryVi } from "../core/i18n.js";
-import { storeId } from "../core/session.js";
+import { can } from "../core/rbac.js";
+import { principal, storeId } from "../core/session.js";
 import {
   amount,
   badge,
@@ -42,6 +43,7 @@ import {
   enumSelect,
   errorNotice,
   facts,
+  gated,
   icon,
   labelled,
   listView,
@@ -318,7 +320,7 @@ function lineEditor({ catalog, lines, onStructuralChange, onValueChange, onAddLi
  * their screen, and the server refuses if either has moved — a quote reprised while the customer was
  * deciding must be read to them again, not silently accepted.
  */
-function acceptControl(result, store, onAccepted) {
+function acceptControl(result, store, onAccepted, writeVerdict) {
   if (result.finality === "APPROVED_EXACT") {
     return h(
       "p",
@@ -375,12 +377,12 @@ function acceptControl(result, store, onAccepted) {
     "div",
     { class: "stack stack--tight" },
     h("p", { class: "hint" }, "Bấm khi khách đã nghe giá và đồng ý. Tên bạn sẽ được ghi lại."),
-    button,
+    gated(button, writeVerdict),
     host,
   );
 }
 
-function revisionResult(result, store, onAccepted) {
+function revisionResult(result, store, onAccepted, writeVerdict) {
   return h(
     "div",
     { class: "card stack" },
@@ -390,7 +392,7 @@ function revisionResult(result, store, onAccepted) {
       h("h3", null, `Bản sửa đổi ${result.revision}`),
       h("div", { class: "row" }, priceStateBadge(result.finality)),
     ),
-    acceptControl(result, store, onAccepted),
+    acceptControl(result, store, onAccepted, writeVerdict),
     result.replayed
       ? h(
           "div",
@@ -524,6 +526,12 @@ function quoteCard(item, onPickRevision) {
  */
 export function render_(context) {
   const store = storeId();
+  // QUOTES-GATING. Until 2026-09-09 this screen consulted no capability at all, and neither did the
+  // assistant. It was never exploitable: a session without QUOTES_WRITE also lacks QUOTES_READ, so
+  // the catalog fetch fails and the form never renders -- the protection was real but incidental,
+  // resting on two capabilities happening to hold the same roles. Making it explicit costs one
+  // call and removes the silent failure mode where a read is widened and a write follows it.
+  const writeVerdict = can(principal(), "QUOTES_WRITE");
   const submission = new Submission("quote-create");
   // The Tiếp nhận screen's "Báo giá ngay" lands here. The id is a claim until the server confirms
   // it — `prefill` below resolves it before the form is allowed to rely on it.
@@ -573,8 +581,10 @@ export function render_(context) {
     id: "quote-distance",
     label: "Quãng đường đã đo (mét)",
     hint:
-      "Đo thật, không ước lượng. Dưới 2km miễn phí, 2–6km 10.000đ, trên 6km nhân viên và khách " +
-      "thỏa thuận rồi nhập ở ô dưới. Bỏ trống thì báo giá không ra tổng tiền và không chốt được.",
+      "Đo thật, không ước lượng. Với đơn có cả lấy và trả: dưới 2km miễn phí, 2–6km 10.000đ, " +
+      "trên 6km nhân viên và khách thỏa thuận rồi nhập ở ô dưới. Bỏ trống thì báo giá không ra " +
+      "tổng tiền và không chốt được. Đơn “Chỉ lấy” hoặc “Chỉ trả” không theo bảng quãng đường " +
+      "này — xem ô phí bên dưới.",
     control: distanceInput,
   });
 
@@ -600,10 +610,19 @@ export function render_(context) {
       invalidateKey();
     },
   });
+  // The label used to read "chỉ khi trên 6km", which is false for half the modes this field is
+  // shown for. `evaluate_delivery` branches on mode BEFORE it looks at distance
+  // (packages/domain/.../delivery.py:139-146): PICKUP_ONLY and RETURN_ONLY always take
+  // ONE_LEG_HUMAN_PRICE, at any distance. A one-leg pickup 500m away needs a negotiated fee just
+  // as much as a six-kilometre one, and staff reading "only over 6km" would leave it blank and get
+  // a quote with no total.
   const manualFeeField = labelled({
     id: "quote-manual-fee",
-    label: "Phí giao đã thỏa thuận (₫) — chỉ khi trên 6km",
-    hint: "Nhập số hai bên đã đồng ý, và tích ô bên dưới xác nhận khách đã đồng ý.",
+    label: "Phí giao đã thỏa thuận (₫)",
+    hint:
+      "Nhập số hai bên đã đồng ý, và tích ô bên dưới xác nhận khách đã đồng ý. Bắt buộc khi đơn " +
+      "chỉ có một chiều (“Chỉ lấy” hoặc “Chỉ trả”) — ở mọi quãng đường — và khi đơn có cả hai " +
+      "chiều mà xa hơn 6km.",
     control: manualFeeInput,
   });
   const manualAckField = labelled({
@@ -996,9 +1015,9 @@ export function render_(context) {
           // Repaint from the accepted revision so the screen shows the final price and the
           // control is replaced by the record, rather than leaving a button that would only
           // be refused a second time.
-          render(resultHost, revisionResult(accepted, store, null));
+          render(resultHost, revisionResult(accepted, store, null, writeVerdict));
           await list.reload();
-        }),
+        }, writeVerdict),
       );
       await list.reload();
     } catch (error) {
@@ -1095,7 +1114,8 @@ export function render_(context) {
           label: "Khách nhận đồ thế nào?",
           hint:
             "Khách tự mang đến và tự lấy về thì không có phí giao, và báo giá ra tổng tiền ngay. " +
-            "Có giao hàng thì cần quãng đường đã đo; trên 6km phí do nhân viên và khách thỏa thuận.",
+            "Có giao hàng thì cần quãng đường đã đo; trên 6km, và với đơn chỉ có một chiều ở " +
+              "mọi quãng đường, phí do nhân viên và khách thỏa thuận.",
           control: fulfillmentSelect,
         }),
         distanceField,
@@ -1126,10 +1146,13 @@ export function render_(context) {
       h(
         "div",
         { class: "action-bar" },
-        h(
-          "button",
-          { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
-          "Tính giá",
+        gated(
+          h(
+            "button",
+            { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
+            "Tính giá",
+          ),
+          writeVerdict,
         ),
       ),
       result,

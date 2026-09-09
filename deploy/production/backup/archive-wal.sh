@@ -37,14 +37,45 @@ segment_name="$2"
 recipients="${BACKUP_RECIPIENTS_FILE:-/run/secrets/backup_encryption_recipients}"
 repository="${BACKUP_REPOSITORY_PREFIX:?BACKUP_REPOSITORY_PREFIX is required}"
 
+compressed="/tmp/${segment_name}.gz"
 encrypted="/tmp/${segment_name}.gz.age"
-trap 'rm -f "$encrypted"' EXIT INT TERM
+trap 'rm -f "$compressed" "$encrypted"' EXIT INT TERM
 
-# `set -o pipefail` is not in POSIX sh, so the pipeline's success is asserted rather than assumed:
-# without this a gzip failure would be masked by age exiting 0 on empty input, and the command would
-# report a segment archived that is not.
-if ! gzip -c "$source_path" | age -R "$recipients" -o "$encrypted"; then
-    echo "archive-wal: compress/encrypt failed for ${segment_name}" >&2
+# **The two stages do not share a pipeline, and that is the whole point.** This used to read
+# `if ! gzip -c "$source_path" | age -R ... ; then`, above a comment claiming the pipeline's success
+# was asserted rather than assumed. It was not: `set -o pipefail` is not POSIX, and the exit status
+# of a pipeline in POSIX sh is the status of its LAST command. A gzip that died part-way -- a read
+# error on the segment, a full filesystem -- still fed `age` whatever it had managed to write, and
+# `age` encrypted that happily and exited 0. The `-s` guard below catches an empty artifact and a
+# truncated one is not empty, so the command returned 0 and PostgreSQL was free to recycle a segment
+# whose only archived copy was short. Nothing would notice until a restore reached that segment,
+# which is the one moment nobody can afford to find out.
+#
+# Staging to a file makes each status its own, and buys two checks a pipeline cannot have.
+if ! gzip -c "$source_path" > "$compressed"; then
+    echo "archive-wal: compression failed for ${segment_name}" >&2
+    exit 1
+fi
+
+# `gzip -t` walks the stream and verifies its CRC and length trailer, so a truncated member is
+# refused here rather than shipped.
+if ! gzip -t "$compressed"; then
+    echo "archive-wal: compressed segment ${segment_name} is corrupt" >&2
+    exit 1
+fi
+
+# And the decisive one: gzip records the uncompressed length, so this compares what was read against
+# what the segment actually is. A short read that happened to end on a member boundary passes the
+# CRC and fails this.
+source_bytes=$(wc -c < "$source_path")
+stored_bytes=$(gzip -l "$compressed" | awk 'NR==2 {print $2}')
+if [ "$source_bytes" -ne "$stored_bytes" ]; then
+    echo "archive-wal: ${segment_name} is ${stored_bytes} bytes compressed from ${source_bytes}" >&2
+    exit 1
+fi
+
+if ! age -R "$recipients" -o "$encrypted" < "$compressed"; then
+    echo "archive-wal: encryption failed for ${segment_name}" >&2
     exit 1
 fi
 [ -s "$encrypted" ] || { echo "archive-wal: produced an empty artifact for ${segment_name}" >&2; exit 1; }

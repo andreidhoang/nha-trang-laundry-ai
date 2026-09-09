@@ -10,6 +10,8 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
+from psycopg.errors import UniqueViolation
+
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
 
@@ -25,6 +27,19 @@ class StaffRole(StrEnum):
 SENSITIVE_MFA_ROLES = frozenset(
     {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.ACCOUNTANT, StaffRole.AUDITOR}
 )
+
+
+class StaffSubjectTakenError(ValueError):
+    """The OIDC subject already belongs to a staff user.
+
+    Its own type rather than a message, because the route has to answer it differently: every other
+    `IdentityStateError` from this module means "that staff user is missing or not in a state that
+    allows this", and this one means "that person is already here". Until 2026-09-09 the difference
+    was invisible -- nothing caught the `UniqueViolation`, so it escaped `create_staff` as an HTTP
+    500. Found by adding the same staff member twice in the console, which is the first mistake an
+    owner makes: a double tap, or re-adding somebody who left. A 500 tells the client to retry, so
+    the owner retries forever and is never told the account already exists.
+    """
 
 
 class IdentityStateError(ValueError):
@@ -459,13 +474,18 @@ def _change(
 def _insert_staff_owner(
     cursor: Any, staff_id: UUID, subject: str, name: str, email: str | None, timestamp: datetime
 ) -> None:
-    cursor.execute(
-        """
-        INSERT INTO staff_users (id, oidc_subject, display_name, email, status, created_at)
-        VALUES (%s, %s, %s, %s, 'ACTIVE', %s)
-        """,
-        (staff_id, subject, name, email, timestamp),
-    )
+    try:
+        cursor.execute(
+            """
+            INSERT INTO staff_users (id, oidc_subject, display_name, email, status, created_at)
+            VALUES (%s, %s, %s, %s, 'ACTIVE', %s)
+            """,
+            (staff_id, subject, name, email, timestamp),
+        )
+    except UniqueViolation as error:
+        # No savepoint: unlike `delivery_legs`, nothing here continues after the clash. The whole
+        # transaction must unwind, and it does -- this only changes what the caller is told.
+        raise StaffSubjectTakenError("this OIDC subject already belongs to a staff user") from error
     cursor.execute(
         """
         INSERT INTO staff_role_assignments (id, staff_user_id, role, assigned_at)
@@ -478,13 +498,18 @@ def _insert_staff_owner(
 def _insert_staff(
     cursor: Any, staff_id: UUID, subject: str, name: str, email: str | None, timestamp: datetime
 ) -> None:
-    cursor.execute(
-        """
-        INSERT INTO staff_users (id, oidc_subject, display_name, email, status, created_at)
-        VALUES (%s, %s, %s, %s, 'ACTIVE', %s)
-        """,
-        (staff_id, subject, name, email, timestamp),
-    )
+    try:
+        cursor.execute(
+            """
+            INSERT INTO staff_users (id, oidc_subject, display_name, email, status, created_at)
+            VALUES (%s, %s, %s, %s, 'ACTIVE', %s)
+            """,
+            (staff_id, subject, name, email, timestamp),
+        )
+    except UniqueViolation as error:
+        # No savepoint: unlike `delivery_legs`, nothing here continues after the clash. The whole
+        # transaction must unwind, and it does -- this only changes what the caller is told.
+        raise StaffSubjectTakenError("this OIDC subject already belongs to a staff user") from error
 
 
 def _assign_role(

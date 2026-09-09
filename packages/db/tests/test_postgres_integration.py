@@ -16,7 +16,12 @@ from nha_trang_laundry_db.configurations import (
     ConfigurationRepository,
     snapshot_hash,
 )
-from nha_trang_laundry_db.identity import IdentityRepository, IdentityStateError, StaffRole
+from nha_trang_laundry_db.identity import (
+    IdentityRepository,
+    IdentityStateError,
+    StaffRole,
+    StaffSubjectTakenError,
+)
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.quotes import QuoteRepository, QuoteRevisionCommand, QuoteStateError
 from nha_trang_laundry_db.stores import StoreRepository
@@ -493,3 +498,51 @@ def test_an_exact_quote_is_accepted_when_its_approval_envelope_is_real(
         row = cursor.fetchone()
     assert row is not None
     assert row[0] == approval_id
+
+
+def test_a_duplicate_oidc_subject_is_refused_in_words_not_as_a_server_error(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """`StaffSubjectTakenError`, not a bare `UniqueViolation`.
+
+    Found on 2026-09-09 by adding the same staff member twice in the running console, which is the
+    first mistake an owner makes: a double tap, or re-adding somebody who left. Nothing caught the
+    unique-constraint violation, so it escaped `create_staff` as an HTTP 500 -- and a 500 tells the
+    client to retry, so the owner retries forever and is never told the account already exists.
+    """
+
+    repository = IdentityRepository()
+    owner_id = repository.bootstrap_owner(
+        postgres_connection,
+        oidc_subject=f"owner-{uuid4().hex}",
+        display_name="Test Owner",
+        email=None,
+        correlation_id=uuid4(),
+    )
+    subject = f"operator-{uuid4().hex}"
+    repository.create_staff(
+        postgres_connection,
+        oidc_subject=subject,
+        display_name="Nhân viên",
+        email=None,
+        actor_id=owner_id,
+        correlation_id=uuid4(),
+    )
+
+    with pytest.raises(StaffSubjectTakenError, match="already belongs"):
+        repository.create_staff(
+            postgres_connection,
+            oidc_subject=subject,
+            display_name="Nhân viên trùng",
+            email=None,
+            actor_id=owner_id,
+            correlation_id=uuid4(),
+        )
+
+    # And the first staff member is still there: the clash aborted its own transaction and nothing
+    # else. A refusal that also destroyed the existing account would be worse than the 500.
+    with postgres_connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM staff_users WHERE oidc_subject = %s", (subject,))
+        row = cursor.fetchone()
+    assert row is not None
+    assert row[0] == 1

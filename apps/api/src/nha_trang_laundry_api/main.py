@@ -28,7 +28,12 @@ from nha_trang_laundry_db.delivery_legs import (
     DeliveryLegOutcome,
 )
 from nha_trang_laundry_db.idempotency import IdempotencyConflictError
-from nha_trang_laundry_db.identity import IdentityStateError, StaffPrincipal, StaffRole
+from nha_trang_laundry_db.identity import (
+    IdentityStateError,
+    StaffPrincipal,
+    StaffRole,
+    StaffSubjectTakenError,
+)
 from nha_trang_laundry_db.intake import OrderRequestSummary
 from nha_trang_laundry_db.manual_sends import (
     ManualSendAuthorizationError,
@@ -728,6 +733,14 @@ def create_staff(
             email=request.email,
             actor_id=principal.staff_user_id,
         )
+    # Ordered: the taken-subject case is a subclass-free sibling of IdentityStateError and answers
+    # a different question. "cannot be created" tells an owner nothing; "already exists" tells them
+    # to look for the person instead of pressing the button again.
+    except StaffSubjectTakenError as error:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="this OIDC subject already belongs to a staff user",
+        ) from error
     except IdentityStateError as error:
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="staff user cannot be created"
@@ -1048,7 +1061,13 @@ def record_settlement(
             idempotency_key=idempotency_key,
             principal=principal,
         )
-    except SettlementAuthorizationError as error:
+    # `StoreAccessError` is a `PermissionError`, not a `ValueError`, and this route is the one that
+    # moves money. `record_settlement` runs `_require_order_store_membership` before the idempotency
+    # claim, so a staff member holding the settlement role but not assigned to the order's store
+    # raised it here and it escaped as a 500 -- verified by execution on 2026-09-09. A 500 tells the
+    # client to retry, which is the worst possible advice on a payment. Eight sibling routes already
+    # catch it; this one did not.
+    except (SettlementAuthorizationError, StoreAccessError) as error:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
     except SettlementStateError as error:
         # The reason and its decision travel intact. "Not supported" with no way to learn which

@@ -776,10 +776,15 @@ function assignStorePanel(spec) {
       labelled({
         id: "staff-store-store",
         label: "Mã cửa hàng",
+        // "Chưa có bảng stores" was true when written and stopped being true with migration 0035,
+        // which created `stores` and put a foreign key on `staff_store_assignments.store_id`. The
+        // difference matters at the counter: it used to mean any UUID was accepted, and now a code
+        // that names no real shop is refused by the database. Saying the old thing invites the
+        // owner to read a refusal as a bug.
         hint:
-          "UUID của cửa hàng. Chưa có bảng stores nên không có danh sách để chọn, và chủ cũng " +
-          "không cần thuộc cửa hàng đó mới gán được — nhưng muốn tự xem dữ liệu thì phải tự gán " +
-          "mình vào.",
+          "UUID của cửa hàng, và phải là cửa hàng có thật — mã không tồn tại sẽ bị từ chối. " +
+          "Chưa có danh sách để chọn ở màn hình này, và chủ không cần thuộc cửa hàng đó mới gán " +
+          "được — nhưng muốn tự xem dữ liệu thì phải tự gán mình vào.",
         control: storeInput,
       }),
       h(

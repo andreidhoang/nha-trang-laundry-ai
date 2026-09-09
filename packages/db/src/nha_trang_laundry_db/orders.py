@@ -267,7 +267,18 @@ class OrderRepository:
                 raise OrderStateError("accepted exact quote is missing, stale, or expired")
 
             order_id = uuid4()
-            occurred_at = command.customer_final_quote_accepted_at
+            # The server's clock, not the caller's. `customer_final_quote_accepted_at` is an
+            # attested business fact -- when the customer agreed the price -- and it keeps its own
+            # column. It is not when this row was written, and it is not when this action happened,
+            # which is what `created_at` and every audit/event/outbox `occurred_at` below mean.
+            #
+            # COUNTER-DEFECTS-001 already established that this field cannot be trusted to decide
+            # whether a quote had expired, and introduced `moment` for exactly that reason; the
+            # record clock was left behind. Trusting it here let a caller backdate an order's
+            # creation and its whole audit trail: the order timeline sorts on `occurred_at`, and
+            # the channel report in `scripts/report_acquisition_sources.py` ranges over
+            # `created_at`, so a stale acceptance time filed today lands in last week's numbers.
+            occurred_at = moment
 
             def mutation(cursor: Any) -> None:
                 # Spend the agreement in the same transaction that creates the order. The guard

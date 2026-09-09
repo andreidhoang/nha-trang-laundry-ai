@@ -373,6 +373,14 @@ with sync_playwright() as pw:
     shot(page, "12-order-created.png")
     said = (form.locator("p.result, .notice, [data-state]").first.inner_text() or "").strip()
     created = "Đã tạo đơn" in page.content()
+    order_id = ""
+    for call in api_calls:
+        if call[0] == "POST" and call[2].endswith("/orders") and 200 <= call[1] < 300:
+            try:
+                order_id = json.loads(call[3]).get("order_id", "")
+            except (ValueError, TypeError):
+                order_id = ""
+    print(f"      this walk's order: {order_id or '(not captured)'}")
     ok("the order is created from the accepted quote", created, said[:160])
     if not created:
         print("      the refusal notice, as the counter reads it:")
@@ -394,12 +402,22 @@ with sync_playwright() as pw:
                 print(f"      body: {b}")
 
     def move(dimension, target, label, slot=False):
-        """Pick the order off the board and move one dimension, as staff do."""
+        """Pick *this walk's* order off the board and move one dimension, as staff do.
+
+        Selecting the first row is what the first version did, and it made the script depend on the
+        board's ordering: run it twice against the same shop and every transition failed with
+        "order is closed", because row one was yesterday's completed order. The board is a real
+        board -- it holds every order the shop has -- so the walk has to find its own.
+        """
         page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
         page.wait_for_timeout(1400)
-        pick = page.locator("button", has_text="Chọn để chuyển trạng thái")
+        card = page.locator("article.card").filter(has=page.locator(f'[title="{order_id}"]'))
+        if card.count() == 0:
+            ok(label, False, f"order {order_id} is not on the board")
+            return False
+        pick = card.first.locator("button", has_text="Chọn để chuyển trạng thái")
         if pick.count() == 0:
-            ok(label, False, "no order on the board to select")
+            ok(label, False, "the order's card offers no transition control")
             return False
         pick.first.click()
         page.wait_for_timeout(500)
@@ -443,11 +461,11 @@ with sync_playwright() as pw:
     head(12, "TẤT TOÁN — the money")
     page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
     page.wait_for_timeout(1200)
-    card_link = page.locator("a[href*='#/orders/']")
+    card_link = page.locator(f"a[href*='#/orders/{order_id}']")
     ok(
-        "the board links through to an order's own screen",
+        "the board links through to this order's own screen",
         card_link.count() >= 1,
-        f"{card_link.count()} links",
+        f"{card_link.count()} links to {order_id}",
     )
     if card_link.count():
         card_link.first.click()

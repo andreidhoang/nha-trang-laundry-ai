@@ -39,7 +39,8 @@ import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { dateTime, shortId } from "../core/format.js";
 import { NAV, enumLabel } from "../core/i18n.js";
-import { storeId } from "../core/session.js";
+import { can } from "../core/rbac.js";
+import { principal, storeId } from "../core/session.js";
 import { badge, errorNotice, icon, reasonCodeList, skeleton } from "../ui/components.js";
 
 /** The server caps history at 100; ask for its default page. */
@@ -380,6 +381,14 @@ function welcome(onPick) {
  */
 export function render_() {
   const store = storeId();
+  // ASSISTANT-GATING. This screen consulted no capability until 2026-09-09, and `rbac.js` had
+  // declared `ASSISTANT` all along. It was never exploitable -- a session that cannot ask also
+  // cannot read the transcript, so the composer never rendered -- but that made the protection an
+  // accident of two capabilities sharing a role list. `gated()` is not used here on purpose: it
+  // wraps its control in a div, and the composer is a two-item flex row whose layout the wrapper
+  // would break. The same three attributes are set directly, including `data-denied`, which is what
+  // stops `syncNetworkAffordance` re-arming the button when the connection is up.
+  const askVerdict = can(principal(), "ASSISTANT");
   const submission = new Submission("assistant-turn");
 
   const transcriptHost = h("div", { class: "chat__transcript" }, skeleton(2));
@@ -404,8 +413,12 @@ export function render_() {
     },
     onKeydown: (event) => {
       // Enter sends, Shift+Enter inserts a newline — the chat convention an operator expects.
+      // The verdict is checked here as well as on the button: `requestSubmit()` fires the form
+      // regardless of whether a button is disabled, so gating only the button would leave the
+      // keyboard path open and make the disabled control decorative.
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
+        if (!askVerdict.allowed) return;
         form.requestSubmit();
       }
     },
@@ -417,7 +430,10 @@ export function render_() {
       class: "chat__send",
       dataVariant: "primary",
       dataRequiresNetwork: "true",
-      title: "Gửi",
+      title: askVerdict.allowed ? "Gửi" : askVerdict.reason,
+      disabled: askVerdict.allowed ? null : "",
+      "aria-disabled": askVerdict.allowed ? null : "true",
+      dataDenied: askVerdict.allowed ? null : "true",
     },
     icon("arrow-up"),
     h("span", { class: "sr-only" }, "Gửi"),
@@ -507,7 +523,9 @@ export function render_() {
     h(
       "p",
       { class: "hint chat__composer-hint" },
-      `Enter để gửi · Shift+Enter xuống dòng · Tối đa ${MAX_QUESTION} ký tự.`,
+      askVerdict.allowed
+        ? `Enter để gửi · Shift+Enter xuống dòng · Tối đa ${MAX_QUESTION} ký tự.`
+        : askVerdict.reason,
     ),
   );
 

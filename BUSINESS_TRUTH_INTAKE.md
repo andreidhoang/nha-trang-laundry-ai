@@ -12,18 +12,31 @@ Quy ước: `ĐÃ XÁC NHẬN` là dữ liệu chủ tiệm cung cấp; `CHỨNG
 - Địa chỉ cửa hàng: **3A Lê Đại Hành, Phường Nha Trang, Khánh Hòa — ĐÃ XÁC NHẬN**
 - Địa chỉ ghi trên biển pháp nhân: **Số 3A Lê Đại Hành, Phường Nha Trang, Tỉnh Khánh Hòa, Việt Nam — QUAN SÁT TRÊN ẢNH**
 - Quy tắc nhận diện: **dùng “Giặt Là Sạch Cộng” khi giao tiếp thương hiệu; dùng tên pháp nhân và mã số thuế trên hợp đồng/hóa đơn/chứng từ cần danh tính pháp lý**
-- Quan hệ nhượng quyền: **CẦN XÁC MINH — chưa được ghi nhận ở bất kỳ đâu trong repo.** Tra cứu công khai
-  ngày 2026-08-18: “Giặt Là Sạch Cộng” là chuỗi nhượng quyền toàn quốc (`giatlasachcong.com`, trụ sở Hà
-  Nội, công bố 500+ tiệm tại 48 tỉnh, đang bán nhượng quyền), và **danh sách tiệm công khai của chuỗi
-  không có tiệm nào ở Khánh Hòa**. Không có hợp đồng, licence hay territory grant nào trong repo. Cho tới
-  khi chủ tiệm trả lời, **quy tắc nhận diện ở dòng trên đang dựa trên một giả định chưa được ghi nhận** —
-  xem `DEC-017` và `docs/DECISION_REQUEST_ACQUISITION_2026-08.md`.
+- Quan hệ nhượng quyền: **KHÔNG CÓ HỢP ĐỒNG — ĐÃ XÁC NHẬN bởi chủ tiệm ngày 2026-09-09 (`DEC-017` đã
+  chốt).** Tiệm không có hợp đồng, licence hay territory grant nào với chuỗi cùng tên ở Hà Nội. Tra cứu
+  công khai ngày 2026-08-18: “Giặt Là Sạch Cộng” là chuỗi nhượng quyền toàn quốc (`giatlasachcong.com`,
+  trụ sở Hà Nội, công bố 500+ tiệm tại 48 tỉnh, đang bán nhượng quyền), và **danh sách tiệm công khai của
+  chuỗi không có tiệm nào ở Khánh Hòa**. Quy tắc nhận diện ở dòng trên vì vậy là **lựa chọn của chủ tiệm**,
+  không phải quyền được cấp — kèm rủi ro nhãn hiệu mà chủ tiệm đã biết và chấp nhận. Hệ quả marketing độc
+  lập với rủi ro đó: **tra tên thương hiệu không ra tiệm này**, nên khả năng được tìm thấy phải dựa vào tên
+  trên biển hiệu và địa chỉ. Xem `DEC-017` và `docs/DECISION_REQUEST_ACQUISITION_2026-08.md`.
+- Tên trên biển hiệu: **Hoài Ngọc — ĐÃ XÁC NHẬN bởi chủ tiệm ngày 2026-09-09; CHUỖI KÝ TỰ CHÍNH XÁC CẦN
+  ẢNH.** Google bắt buộc tên hồ sơ doanh nghiệp phải đúng tên thật trên biển hiệu, và bước xác minh cho
+  tiệm cỡ này là quay một đoạn video liền mạch mặt tiền — nên biển hiệu sẽ được Google đọc dù có khớp hay
+  không. Đổi tên sau khi đã xác minh thì phải xác minh lại. **Chưa đặt tên hồ sơ Google trước khi có ảnh.**
+- Người đại diện pháp luật: **Hoài Ngọc — ĐÃ XÁC NHẬN bởi chủ tiệm ngày 2026-09-09; CHƯA ĐỐI CHIẾU với
+  giấy chứng nhận đăng ký doanh nghiệp.** Hồ sơ xác thực Zalo OA yêu cầu CCCD của người đại diện **khớp
+  tên trên giấy phép**, nên lời chủ tiệm chưa thay thế được việc đọc giấy phép — và hồ sơ sai là lý do bị
+  từ chối phổ biến nhất, với đồng hồ 14 ngày chạy sẵn.
 - Trạng thái tra cứu độc lập: **chưa đối chiếu cổng đăng ký doanh nghiệp/cơ quan thuế; người đại diện pháp luật và trạng thái hoạt động thuế CẦN XÁC MINH trước tích hợp hóa đơn**
 - Bản ghi cấu hình có cấu trúc: `templates/business-profile.csv`
 - Giờ mở cửa: **08:00–20:00 hằng ngày — ĐÃ XÁC NHẬN**
 - Lịch đóng cửa: **06 ngày Tết Nguyên Đán, ngày 30/4, ngày 01/5 và 02 ngày phát sinh/năm — ĐÃ XÁC NHẬN về quy tắc; ngày cụ thể phải cập nhật theo từng năm**
 - Điện thoại/hotline: **0382 318 492**; E.164: **+84382318492 — ĐÃ XÁC NHẬN**
-- Người trực inbound:
+- Người trực inbound: **Hoài Ngọc — ĐÃ XÁC NHẬN bởi chủ tiệm ngày 2026-09-09.** `DEC-016` vẫn **MỞ**:
+  chưa trả lời tài khoản kênh thuộc về công ty hay cá nhân, và ngoài giờ 08:00–20:00 thì tiệm nói gì.
+  Lưu ý một sự thật để chủ tiệm cân nhắc, không phải để hệ thống quyết: cam kết trả lời 5–10 phút ở §4
+  hiện dựa hoàn toàn vào một người, và người đó cũng là người đại diện pháp luật và đồng sở hữu.
 - Phương tiện pickup/delivery: **đơn dưới 20kg đi xe máy; đơn từ đúng 20kg trở lên đi ô tô — ĐÃ XÁC NHẬN**
 - Bán kính dự kiến: **có nhận giao tận nơi; trên 6km báo phí theo từng trường hợp**
 - Các phường/khu ưu tiên:

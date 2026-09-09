@@ -210,3 +210,84 @@ and keyword-stuffed or mismatched names are the most common cause of profile sus
 on the signboard and the name on Google have to agree — which means this decision should be answered
 **before** the profile is claimed and verified, not after. Re-verification is the cost of getting the
 order wrong.
+
+---
+
+# Answers, 2026-09-09
+
+**Nothing above is edited.** The request is left as it was written so that what was asked, and what
+was known when it was asked, both stay readable. This section records what the owner answered.
+
+## `DEC-017` — RESOLVED
+
+**Is there a franchise agreement? No.** The shop holds no agreement, licence or territory grant with
+the Hà Nội chain that trades under this name.
+
+**Which identity goes on customer-facing assets?** The business name stays **Giặt Là Sạch Cộng**,
+reconfirmed by the owner in the same answer. The B2B contract name stays **CÔNG TY TNHH A & T CARE**,
+MST `4202059758` — never in question. And a fourth name arrived that this request did not know
+existed: **Hoài Ngọc**, which is the name on the shop front, the legal representative, a co-owner,
+and the person who answers inbound.
+
+### What "no agreement" changes, and what it does not
+
+It does not change the name. The owner chose it and has now chosen it twice.
+
+It changes what the name *is*: **an owner's choice rather than a franchisor's grant**, which is
+exactly the distinction §1 of this request said only the owner could supply. Two things follow.
+
+**Trademark exposure is now a known and accepted risk**, carried by the owner, instead of an
+unrecorded assumption carried by this repository — which was the entire reason the decision was
+opened. The chain is a going concern actively selling franchises. A name used without a grant can be
+objected to, and the expensive moment to discover that is after it is printed on leaflets, painted
+on a QR code and verified on a Google listing. Whether to take legal advice before printing is the
+owner's call and this repository does not make it.
+
+**The brand name does not find this shop, and that is true regardless of the franchise answer.** A
+search returns the Hà Nội franchisor, its franchise-sales funnel, and hundreds of stores of the same
+name in other provinces; the chain's own public directory lists no store in Khánh Hòa. A hotel
+manager checking who they are about to hand forty bedsheets to lands on a page selling franchises.
+
+So findability rests on the two things that resolve to this shop and to nothing else: **the
+shop-front name and the address.** That was the recommendation on record before the answer, and the
+answer strengthens it rather than changing it — because Hoài Ngọc, unlike the brand name, returns
+this shop and no one else's.
+
+### The one thing still outstanding, and it is a photograph
+
+**The exact text painted on the shop front.** Google's Business Profile naming rule requires the
+profile name to be the real-world name as used on the storefront; keyword-stuffed or mismatched
+names are the most common cause of suspension; and for a shop this size the verification step is a
+single continuous video of the frontage — so the sign is read by Google whether or not it matches
+what was typed. Renaming after verification means verifying again.
+
+This is not knowable from this repository and is settled by one photograph. **Until it exists, no
+Google profile name is claimed and nothing customer-facing is printed.** Everything else `DEC-017`
+was blocking is unblocked.
+
+## `DEC-016` — still OPEN, one of three questions answered
+
+**Who answers inbound: Hoài Ngọc.** That fills the blank `Người trực inbound:` line in
+`BUSINESS_TRUTH_INTAKE.md` §1, which had been blank since 2026-07-27.
+
+Two questions remain, and they are the two that decide whether a channel may be connected at all:
+
+1. **Whose account is it?** A Zalo OA owned by `CÔNG TY TNHH A & T CARE`, or a personal account.
+   This is not paperwork. The Zalo presence today is an account on the personal hotline
+   `0382 318 492`, so the shop's customer relationships currently leave with whoever holds that
+   number.
+2. **What does the shop say outside 08:00–20:00?** Recommended, unchanged: acknowledge, capture,
+   promise nothing, name the hour a human will reply.
+
+So `CHANNEL-TELEGRAM-001` and `CHANNEL-ZALO-APPLY-001` stay where they were.
+
+One observation the answer surfaces without settling: the same person is now the legal
+representative, a co-owner, the name on the sign and the sole inbound responder, in a shop where two
+staff cover 08:00–20:00 and also wash, fold and deliver. The 5–10 minute response commitment in
+`BUSINESS_TRUTH_INTAKE.md` §4 rests entirely on one person's availability. That is a fact for the
+owner to weigh, not a blocker this document can resolve.
+
+## `DEC-015` — unchanged
+
+Still resolved as "no customer-record layer", and this answer does not reopen it. It reopens the day
+an official channel exists, which is `DEC-016`'s remaining two questions away.

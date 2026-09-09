@@ -231,7 +231,9 @@ of this into `docs/PRODUCTION_READINESS_ASSESSMENT.md`'s G3 section.
 
 ### Three decisions opened: `DEC-015`, `DEC-016`, `DEC-017`
 
-All `OPEN`, all fail closed, none blocks the others.
+**Status 2026-09-09: `DEC-015` and `DEC-017` are RESOLVED; `DEC-016` is partially answered and stays
+OPEN.** The bullets below are the questions as they were opened; the answers are in the registry and
+in the `Answers, 2026-09-09` section of the packet, and are summarised at the end of this block.
 Packet: `docs/DECISION_REQUEST_ACQUISITION_2026-08.md`.
 
 - **`DEC-015`** — what a customer record is, and when a person becomes one. **This is the CRM/party
@@ -251,6 +253,23 @@ Packet: `docs/DECISION_REQUEST_ACQUISITION_2026-08.md`.
   **Whether one exists was NOT verified and is NOT assumed** — a `CẦN XÁC MINH` line now sits in
   `BUSINESS_TRUTH_INTAKE.md` §1 so the identity rule above it no longer reads as settled truth. The
   brand name itself was not changed; the owner confirmed it and it stays confirmed.
+
+**What was answered.**
+
+- **`DEC-015` — RESOLVED 2026-08-26.** No customer-record layer. A walk-in is a counter ticket
+  (`DEC-013`, shipped as migration `0032`); a messaged customer uses the existing channel binding;
+  the prospect list stays organisations-only. Reopens when an official channel exists.
+- **`DEC-017` — RESOLVED 2026-09-09. There is no franchise agreement.** The name is the owner's own
+  choice, not a grant, and stays `Giặt Là Sạch Cộng`; the B2B contract name stays
+  `CÔNG TY TNHH A & T CARE`. Trademark exposure is now a recorded and accepted owner risk rather
+  than an unrecorded assumption. **`Hoài Ngọc`** is the legal representative, a co-owner, the name
+  on the shop front, and the inbound responder. One physical fact is still outstanding and gates the
+  Google profile only: **the exact string on the shop front**, settled by one photograph, because
+  Google requires the profile name to match the storefront and verifies by video of the frontage.
+- **`DEC-016` — still OPEN.** Who answers inbound is now named (`Hoài Ngọc`). Whose account the
+  channel is, and what the shop says outside 08:00–20:00, are not answered — so
+  `CHANNEL-TELEGRAM-001` and `CHANNEL-ZALO-APPLY-001` stay where they were. The account question is
+  load-bearing: the Zalo presence today sits on the personal hotline `0382 318 492`.
 
 ### Legal corrections — `RESEARCH_BRIEF.md` §11 is stale, do not cite it as current
 

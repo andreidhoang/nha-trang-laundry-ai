@@ -205,3 +205,21 @@ One correction it carries for a document that points here: `docs/CLIENT_ACQUISIT
 `DEC-013` "ràng buộc số một của tăng trưởng". That was measured 2026-08-18 and true then. It was
 false eight days later. The document is dated and its §10 points here, so it is left as written and
 corrected in this appendix rather than edited in place.
+
+## 9. Addendum, 2026-09-09 — `DEC-017` resolved; the partner reference is no longer decision-blocked
+
+§8 recorded that `ACQUISITION-ATTRIBUTION-001` deferred the `PARTNER_FRONT_DESK` organisation
+reference because `DEC-017` had not said which name goes on a per-partner QR. **`DEC-017` resolved
+2026-09-09: no franchise agreement, the name stays `Giặt Là Sạch Cộng`, and the shop front carries
+`Hoài Ngọc`.**
+
+So the reference is no longer waiting on a decision. It now waits on one physical fact — the exact
+string painted on the shop front, which gates every printed asset because Google requires the
+profile name to match the storefront and a rename after verification means verifying again. That is
+a photograph, not a decision, and the work stays unenqueued until it exists so that a partner table
+is not built for an asset nobody can print. Adding the reference remains additive; the enum value
+`PARTNER_FRONT_DESK` already ships.
+
+§3.2, the messaged identity, is unchanged: `DEC-016` answered only who staffs inbound and left both
+the account-ownership and out-of-hours questions open, so `CHANNEL-TELEGRAM-001` and
+`CHANNEL-ZALO-APPLY-001` stay where they were.

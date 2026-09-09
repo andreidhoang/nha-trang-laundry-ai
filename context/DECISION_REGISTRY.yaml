@@ -306,9 +306,27 @@ decisions:
       stranger sending a message, so CHANNEL-TELEGRAM-001 and CHANNEL-ZALO-APPLY-001 should not
       start before this is answered - they deliver strangers to a phone with no named owner, and an
       assistant answering out of hours would make promises no human is behind.
+
+
+      2026-09-09, partially answered and therefore still OPEN. The owner named Hoài Ngọc as the
+      person who answers inbound, which settles the first of the three questions and fills the blank
+      "Người trực inbound:" line in BUSINESS_TRUTH_INTAKE.md section 1. Two questions remain and
+      both are the ones that decide whether a channel may be connected: whether the channel account
+      belongs to CÔNG TY TNHH A & T CARE or to a person, and what the shop says outside 08:00-20:00.
+      The account question is not paperwork - the Zalo presence today is an account on the personal
+      hotline 0382 318 492, so the shop's customer relationships currently leave with whoever holds
+      that number.
+
+
+      One observation this answer surfaces rather than settles: the same person is now recorded as
+      the legal representative, a co-owner, the name on the shop front and the sole inbound
+      responder, in a business where two staff cover 08:00-20:00 and also wash, fold and deliver.
+      The 5-10 minute response commitment in section 4 of the intake document rests entirely on one
+      person's availability. That is a fact for the owner to weigh, not a blocker this registry can
+      resolve.
   - id: DEC-017
     title: Which name the shop goes to market under, and the franchise relationship behind it
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [PUBLIC_FAQ, LIST_PRICE_INFO, MARKETING_FOLLOWUP]
     fail_closed_behavior: NOT_SUPPORTED
@@ -328,6 +346,53 @@ decisions:
       No customer-facing asset is produced under either name. SALES_AND_NURTURE_PLAYBOOK.md already
       forbids issuing the one-page B2B offer while any field is a guess, and the name is now one of
       those fields. The prospect list, the visit route and the offer draft are internal only.
+    resolved_at: '2026-09-09'
+    decision_record: docs/DECISION_REQUEST_ACQUISITION_2026-08.md
+    resolution: >-
+      Owner answered both halves on 2026-09-09.
+
+
+      **There is no franchise agreement.** The shop holds no agreement, licence or territory grant
+      with the Hà Nội chain that trades under this name. The identity rule in
+      BUSINESS_TRUTH_INTAKE.md section 1 was therefore resting on an assumption, and now rests on a
+      recorded answer: it is the owner's own choice of name, not a franchisor's grant.
+
+
+      **The business name stays "Giặt Là Sạch Cộng"**, reconfirmed by the owner in the same answer,
+      and the B2B contract name stays CÔNG TY TNHH A & T CARE, MST 4202059758, which was never in
+      question. **Hoài Ngọc** is recorded as the legal representative, a co-owner, the name on the
+      shop front, and the person who answers inbound (the last of these belongs to DEC-016, which
+      stays open on its other two questions).
+
+
+      Two consequences follow from "no agreement" and both are recorded rather than argued:
+
+
+      The first is trademark exposure. The chain is a going concern actively selling franchises, and
+      a name used without a grant is a name that can be objected to - most expensively after it is
+      printed on leaflets, painted on a QR code and verified on a Google listing. This is now a
+      known and accepted risk carried by the owner rather than an unrecorded assumption carried by
+      this repository, which is the whole point of the decision. Whether to take legal advice before
+      printing is the owner's call.
+
+
+      The second is practical and independent of the first: **the brand name does not find this
+      shop.** A search for it returns the Hà Nội franchisor, its franchise-sales funnel, and
+      hundreds of stores with the same name in other provinces; the chain's own public directory
+      lists no store in Khánh Hòa. A hotel manager checking who they are about to hand forty
+      bedsheets to lands on a page selling franchises. So findability has to be built on the two
+      things that resolve to this shop and nothing else - **the shop-front name and the address** -
+      with the brand name carried alongside rather than relied on to do the finding.
+
+
+      That makes one physical fact load-bearing and it is the single thing still outstanding: **the
+      exact text painted on the shop front.** Google's Business Profile naming rule requires the
+      profile name to be the real-world name as used on the storefront, keyword-stuffed or
+      mismatched names are the most common cause of suspension, and the verification step for a shop
+      this size is a continuous video of the frontage - so the sign will be read by Google whether
+      or not it matches what was typed. It is not knowable from this repository and is settled by
+      one photograph. Until it is, no Google profile name is claimed and nothing customer-facing is
+      printed. Everything else DEC-017 blocked is unblocked.
   - id: DEC-018
     title: What purge means when the same bytes are both disposable payload and retained evidence
     status: OPEN

@@ -31,8 +31,18 @@ mints demo subjects::
     uv run --with playwright python scripts/verify_daily_operations.py \
         --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9101
 
-It trades: it issues a ticket, prices a bag, takes the money and closes the order. Point it at a
-shop that is meant to receive real orders and it will add one.
+**Two scenarios, because the shop sells two things.** The first is a walk-in who collects: ticket,
+quote, acceptance, order, intake, production, settlement, COMPLETED. The second is the service sold
+to hotels and homestays, and it exercises what the first cannot -- a delivery fee inside the quoted
+total (8 kg at the 6 kg tier plus the 2-6km band, checked as 170.000 ₫), a price bound to its
+fulfilment mode so an order claiming a different one is refused, a failed delivery leg followed by a
+successful one, and a completion that turns on that leg rather than on self-collection.
+
+Between them it also checks what the shop must refuse -- a customer code never issued, a seal that
+does not match, a stale row version -- and what a read-only role sees.
+
+It trades: it issues two tickets, prices two bags, takes the money twice and closes both orders.
+Point it at a shop that is meant to receive real orders and it will add them.
 """
 
 from __future__ import annotations
@@ -673,6 +683,181 @@ with sync_playwright() as pw:
         f"{len([h for h in hints if 'Vai trò được phép' in h])} of 3 explain the refusal",
     )
     actx.close()
+
+    head(17, "GIAO TẬN NƠI — the other half of the trade, priced and delivered")
+    # The walk above is a walk-in who collects. This is the service the shop sells to hotels and
+    # homestays, and it exercises what that one cannot: a delivery fee inside the quoted total, a
+    # fulfilment mode the price is bound to, delivery legs, and a completion that turns on a
+    # successful leg rather than on self-collection.
+    page.goto(f"{CONSOLE}#/order-requests", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    page.locator("button", has_text="Phát phiếu").first.click()
+    page.wait_for_timeout(1500)
+    d_ticket = page.locator("#intake-contact").input_value()
+    page.locator("button[type=submit]", has_text="Ghi nhận tiếp nhận").first.click()
+    page.wait_for_timeout(1500)
+    page.locator("#intake-quote-now").first.click()
+    page.wait_for_timeout(2000)
+
+    d_code = page.locator("#quote-line-0-code")
+    d_labels = [o.strip() for o in d_code.locator("option").all_text_contents()]
+    d_wash = next((i for i, o in enumerate(d_labels) if "Giặt sấy" in o), 1)
+    d_code.select_option(index=d_wash)
+    page.wait_for_timeout(300)
+    page.locator("#quote-line-0-qty").fill("")
+    page.locator("#quote-line-0-qty").click()
+    page.keyboard.type("8", delay=8)
+    page.wait_for_timeout(400)
+    page.locator("#quote-fulfillment").select_option("PICKUP_AND_RETURN")
+    page.wait_for_timeout(600)
+    distance = page.locator("#quote-distance")
+    ok("choosing delivery reveals the measured-distance field", distance.is_visible())
+    distance.fill("3500")
+    page.wait_for_timeout(400)
+    page.locator("button[type=submit]", has_text="Tính giá").first.click()
+    page.wait_for_timeout(2500)
+    shot(page, "20-delivery-quote.png")
+    d_text = page.locator("main").first.inner_text()
+    # 8 kg at the 6 kg-and-over tier is 160.000, and 3.5 km is the flat 10.000 band.
+    ok(
+        "the total is the service price plus the published 2-6km fee, computed by the server",
+        "170.000" in d_text.replace("\u00a0", " "),
+        [line_.strip() for line_ in d_text.splitlines() if "₫" in line_][:3],
+    )
+    d_accept = page.locator("button", has_text="Khách đã chốt giá")
+    if d_accept.count():
+        d_accept.first.click()
+        page.wait_for_timeout(2000)
+    d_heads = [h for h in page.locator("h3").all_text_contents() if "Bản sửa đổi" in h]
+    d_revision = d_heads[0].split()[-1] if d_heads else "1"
+    d_carried = {}
+    d_copies = page.locator("span.copyable")
+    for index in range(min(d_copies.count(), 4)):
+        item = d_copies.nth(index)
+        shown = (item.locator("span.copyable__text").inner_text() or "").strip()
+        item.locator("button", has_text="Sao chép").click()
+        page.wait_for_timeout(250)
+        d_carried[shown] = page.evaluate("() => navigator.clipboard.readText()")
+    d_quote = next((v for v in d_carried.values() if len(v) == 36 and v.count("-") == 4), "")
+    d_seal = next((v for v in d_carried.values() if v.startswith("JCS-SHA256-V1:")), "")
+
+    def create_delivery_order(mode, source):
+        page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
+        page.wait_for_timeout(1400)
+        page.locator("#order-contact").fill(d_ticket)
+        page.locator("#order-quote").fill(d_quote)
+        page.locator("#order-revision").fill(d_revision)
+        page.locator("#order-hash").fill(d_seal)
+        page.locator("#order-mode").select_option(mode)
+        page.locator("#order-source").select_option(source)
+        page.locator("#order-accepted").fill("2026-09-09T09:00")
+        form_ = page.locator("form.form").filter(has=page.locator("#order-source"))
+        form_.locator("button[type=submit]").first.click()
+        page.wait_for_timeout(2300)
+        return [c for c in api_calls if c[0] == "POST" and c[2].endswith("/orders")][-1]
+
+    head(18, "GIÁ NÀO THÌ ĐƠN ẤY — a price computed for delivery cannot become a walk-in order")
+    mismatch = create_delivery_order("SELF_DROP_SELF_COLLECT", "WALK_IN")
+    ok(
+        "an order whose fulfilment mode contradicts the price it cites is refused",
+        mismatch[1] >= 400,
+        f"HTTP {mismatch[1]} {mismatch[3][:140]}",
+    )
+
+    made = create_delivery_order("PICKUP_AND_RETURN", "PARTNER_FRONT_DESK")
+    ok("and the matching order is created", 200 <= made[1] < 300, f"HTTP {made[1]}")
+    delivery_id = ""
+    if 200 <= made[1] < 300:
+        try:
+            delivery_id = json.loads(made[3])["order_id"]
+        except (ValueError, TypeError, KeyError):
+            delivery_id = ""
+
+    def move_delivery(dimension, target, label, slot=False):
+        page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
+        page.wait_for_timeout(1400)
+        card = page.locator("article.card").filter(has=page.locator(f'[title="{delivery_id}"]'))
+        if card.count() == 0:
+            ok(label, False, f"order {delivery_id} is not on the board")
+            return False
+        card.first.locator("button", has_text="Chọn để chuyển trạng thái").click()
+        page.wait_for_timeout(500)
+        page.locator("#move-dimension").select_option(dimension)
+        page.wait_for_timeout(350)
+        page.locator("#move-target").select_option(target)
+        if slot and page.locator("#move-slot").count():
+            page.locator("#move-slot").check()
+        page.wait_for_timeout(200)
+        form_ = page.locator("form.form").filter(has=page.locator("#move-dimension"))
+        form_.locator("button[type=submit]").first.click()
+        page.wait_for_timeout(1700)
+        last_ = [c for c in api_calls if c[0] in ("POST", "PATCH") and "/orders/" in c[2]][-1]
+        good = 200 <= last_[1] < 300
+        ok(label, good, f"HTTP {last_[1]} {last_[3][:110] if not good else ''}")
+        return good
+
+    head(19, "CHẶNG GIAO — a failed trip, then a successful one")
+    for dimension, target, label, slot in [
+        ("intake", "RECEIVED_PENDING_INSPECTION", "the driver brings the bag in", False),
+        ("intake", "ACCEPTED", "inspected and accepted", True),
+        ("commercial", "STORE_CONFIRMATION_PENDING", "taken for confirmation", False),
+        ("commercial", "CONFIRMED", "confirmed", False),
+        ("commercial", "ACTIVE", "active", False),
+        ("production", "QUEUED", "queued", False),
+        ("production", "IN_PROCESS", "washing", False),
+        ("production", "QUALITY_CHECK", "checked", False),
+        ("production", "READY_AT_STORE", "ready", False),
+        ("production", "RELEASED", "handed to the courier", False),
+    ]:
+        move_delivery(dimension, target, f"delivery: {label}", slot=slot)
+
+    def record_leg(outcome, label):
+        page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
+        page.wait_for_timeout(1400)
+        page.locator("#leg-order").fill(delivery_id)
+        page.locator("#leg-kind").select_option("RETURN")
+        page.locator("#leg-outcome").select_option(outcome)
+        form_ = page.locator("form.form").filter(has=page.locator("#leg-order"))
+        form_.locator("button[type=submit]").first.click()
+        page.wait_for_timeout(1800)
+        legs = [c for c in api_calls if c[0] == "POST" and "delivery-legs" in c[2]]
+        ok(
+            label,
+            bool(legs) and 200 <= legs[-1][1] < 300,
+            f"HTTP {legs[-1][1]} {legs[-1][3][:110]}" if legs else "no call was made",
+        )
+
+    record_leg("FAILED", "a failed delivery attempt is recorded rather than hidden")
+    record_leg("SUCCEEDED", "and so is the successful second attempt")
+
+    head(20, "ĐÓNG ĐƠN GIAO — this one closes on the leg, not on self-collection")
+    page.goto(f"{CONSOLE}#/orders/{delivery_id}", wait_until="networkidle")
+    page.wait_for_timeout(1800)
+    d_amount = page.locator("#settlement-amount")
+    if d_amount.count():
+        d_amount.fill("170000")
+        # Deliberately NOT ticking "khách tự lấy đồ": this order left with the courier.
+        form_ = page.locator("form.form").filter(has=page.locator("#settlement-amount"))
+        form_.locator("button[type=submit]").first.click()
+        page.wait_for_timeout(2200)
+        settled = [c for c in api_calls if c[0] == "POST" and "settlement" in c[2]]
+        ok(
+            "the delivered total is settled",
+            bool(settled) and 200 <= settled[-1][1] < 300,
+            f"HTTP {settled[-1][1]}" if settled else "no call was made",
+        )
+        said_ = [
+            line_.strip()
+            for line_ in page.locator("main").first.inner_text().splitlines()
+            if "Đã ghi nhận" in line_
+        ]
+        ok(
+            "and the screen says the goods still have to reach the customer",
+            any("Chưa ghi nhận giao đồ" in s for s in said_),
+            said_[:1],
+        )
+    shot(page, "21-delivery-settled.png")
+    move_delivery("commercial", "COMPLETED", "the delivery order closes on its successful leg")
 
     print(f"\n{'=' * 78}\nRESULT: {len(PASS)} ok, {len(FAIL)} failed\n{'=' * 78}")
     for f in FAIL:

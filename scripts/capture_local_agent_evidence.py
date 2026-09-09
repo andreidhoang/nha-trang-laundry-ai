@@ -13,8 +13,17 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-SUPERSEDED_OUTPUTS = ("evidence/agent-shadow/local-synthetic-suite-v1.json",)
-DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v2.json"
+SUPERSEDED_OUTPUTS = (
+    "evidence/agent-shadow/local-synthetic-suite-v1.json",
+    # Superseded 2026-09-09. `release-gate-manifest-v1.schema.json` gained a numeric floor for
+    # `automated_sends_human_reviewed` at the gate that requires it, G3 -- the only floor for that
+    # counter had been in the BOUNDED clause, so a manifest could claim G3 satisfied with zero
+    # reviewed sends and nothing mechanical objected until the stage after the one the requirement
+    # governs. That schema is pinned here, so the bundle was re-derived per
+    # `context/tasks/TASK-evidence-repin-001.md` rather than hand-edited, and exactly one pin moved.
+    "evidence/agent-shadow/local-synthetic-suite-v2.json",
+)
+DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v3.json"
 PINNED_ARTIFACTS = (
     "specs/evals/eval-manifest-v1.yaml",
     "specs/evals/fixture-registry-v1.json",

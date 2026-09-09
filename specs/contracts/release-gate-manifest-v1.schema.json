@@ -283,15 +283,15 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-          "required": [
-            "function",
-            "actor_id",
-            "decision",
-            "signed_at",
-            "signature_algorithm",
-            "key_id",
-            "signed_payload_hash",
-            "signature"
+        "required": [
+          "function",
+          "actor_id",
+          "decision",
+          "signed_at",
+          "signature_algorithm",
+          "key_id",
+          "signed_payload_hash",
+          "signature"
         ],
         "properties": {
           "function": {
@@ -741,6 +741,46 @@
             ]
           }
         }
+      }
+    },
+    {
+      "$comment": "G3_ASSISTED_EVIDENCE_COMPLETE requires 'first 200 automated sends reviewed by a human' (delivery/GATE_REGISTRY.yaml). Keyed on the gate actually claimed rather than on the stage, because G2 and G3 are both ASSISTED and only G3 carries this requirement -- so a floor on the stage would wrongly demand 200 reviewed sends at the entry gate, before any send has been made. Until 2026-09-09 the only numeric floor for this counter lived in the BOUNDED clause, so a manifest could claim G3 satisfied with zero reviewed sends and nothing mechanical objected until the stage after the one the requirement governs.",
+      "if": {
+        "properties": {
+          "gate_evidence": {
+            "contains": {
+              "properties": {
+                "gate_id": {
+                  "const": "G3_ASSISTED_EVIDENCE_COMPLETE"
+                }
+              },
+              "required": [
+                "gate_id"
+              ]
+            }
+          }
+        },
+        "required": [
+          "gate_evidence"
+        ]
+      },
+      "then": {
+        "properties": {
+          "operational_evidence": {
+            "properties": {
+              "automated_sends_human_reviewed": {
+                "type": "integer",
+                "minimum": 200
+              }
+            },
+            "required": [
+              "automated_sends_human_reviewed"
+            ]
+          }
+        },
+        "required": [
+          "operational_evidence"
+        ]
       }
     }
   ],

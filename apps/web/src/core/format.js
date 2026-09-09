@@ -76,6 +76,34 @@ export function money(amount, unknownLabel = UNKNOWN) {
 }
 
 /**
+ * Read an amount of đồng the way a person writes one, including the way this console prints one.
+ *
+ * `Number.parseInt("132.000", 10)` is 132, and 132 is a safe integer, so a settlement typed as the
+ * exact total the screen had just rendered -- `132.000 ₫`, copied -- posted as one hundred and
+ * thirty-two đồng. The server refuses it, because a settlement must equal the quoted total to the
+ * đồng, so no money moved; what the operator got was a refusal they had no way to explain, for
+ * having copied the number the application showed them. The same parse sits behind the negotiated
+ * delivery fee, where a fractional entry was silently truncated instead of refused.
+ *
+ * So: `.` and any spacing are grouping and are removed, `₫` is decoration and is removed, and what
+ * must remain is digits. A `,` is rejected rather than stripped -- in Vietnamese it is the decimal
+ * separator, and đồng have no minor unit here, so "132,5" is a mistake to report and not a number
+ * to round.
+ *
+ * @param {string} value what the operator typed
+ * @returns {number|null} the amount, or null when it is not one
+ */
+export function parseDong(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return null;
+  if (trimmed.includes(",")) return null;
+  const digits = trimmed.replace(/[₫\s\u00a0.]/g, "");
+  if (!/^\d+$/.test(digits)) return null;
+  const amount = Number.parseInt(digits, 10);
+  return Number.isSafeInteger(amount) ? amount : null;
+}
+
+/**
  * Format a min/max pair the way the price rules require it to be read.
  *
  * A range must be shown whole — `ENGINEERING_SPEC_V1.md:233` says the UI shows only the entire

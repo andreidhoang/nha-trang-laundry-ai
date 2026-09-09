@@ -438,12 +438,21 @@ export function render_(_context) {
       render(createBody, createForm());
       await board.reload();
     } catch (error) {
+      // Same rule as the transition below, and it matters more here: an order is not cheaply
+      // undone. On a TIMEOUT or a NETWORK failure nobody knows whether the order exists, and
+      // "Không tạo được đơn" invites the one action that mints a second one. The idempotency key
+      // is kept on this path precisely so an unchanged resend replays rather than duplicates --
+      // but the board is what actually answers the question, so that is what this asks for.
+      const unknown = error.kind === "TIMEOUT" || error.kind === "NETWORK";
       setResult(
         createResult,
         error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
-        error.kind === "REQUIRE_HUMAN"
-          ? "Cần người quyết định trước khi tạo đơn. Không có đơn nào được tạo."
-          : "Không tạo được đơn. Máy chủ nêu lý do bên dưới, nguyên văn.",
+        unknown
+          ? "Chưa biết lệnh có tới máy chủ hay không, nên chưa biết đơn đã được tạo hay chưa. " +
+            "Đừng bấm lại — hãy tải lại bảng đơn và tìm mã khách này trước."
+          : error.kind === "REQUIRE_HUMAN"
+            ? "Cần người quyết định trước khi tạo đơn. Không có đơn nào được tạo."
+            : "Không tạo được đơn. Máy chủ nêu lý do bên dưới, nguyên văn.",
       );
       const notice = errorNotice(error);
       render(createResultHost, notice);
@@ -673,12 +682,23 @@ export function render_(_context) {
       render(moveBody, moveForm());
       await board.reload();
     } catch (error) {
+      // "Trạng thái đơn không đổi" is a claim about the server, and for a TIMEOUT or a NETWORK
+      // failure nobody knows whether it is true: the request may have been applied and the answer
+      // lost on the way back. Asserting it for those two told an operator at the counter that a
+      // transition had not happened when it might have, and the reasonable next move -- press it
+      // again -- is the one that produces a second effect. `Idempotency-Key` protects an exact
+      // resend, but the operator has no way to know that from this sentence, and the board is what
+      // actually settles it.
+      const unknown = error.kind === "TIMEOUT" || error.kind === "NETWORK";
       setResult(
         moveResult,
         error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
-        error.kind === "REQUIRE_HUMAN"
-          ? "Cần người duyệt trước khi chuyển. Trạng thái đơn không đổi."
-          : "Máy chủ từ chối chuyển trạng thái. Trạng thái đơn không đổi.",
+        unknown
+          ? "Chưa biết lệnh có tới máy chủ hay không, nên chưa biết đơn đã chuyển hay chưa. " +
+            "Đừng bấm lại — hãy tải lại bảng đơn và xem trạng thái thật."
+          : error.kind === "REQUIRE_HUMAN"
+            ? "Cần người duyệt trước khi chuyển. Trạng thái đơn không đổi."
+            : "Máy chủ từ chối chuyển trạng thái. Trạng thái đơn không đổi.",
       );
       const notice = errorNotice(error);
       render(

@@ -185,6 +185,26 @@ class OrderRepository:
                     FROM quotes q
                     JOIN quote_revisions r ON r.quote_id = q.id
                     WHERE q.id = %s AND r.revision = %s
+                    -- Locks the quote row, and that is what makes every fact above binding rather
+                    -- than merely recently true. Without it this was a plain read, and the only
+                    -- compare-and-swap at write time is `lifecycle = 'OPEN'` -- which says nothing
+                    -- about supersession. So the losing interleaving was: the guard reads
+                    -- `superseded = false`; a `quote_acceptances` insert plus `create_revision`
+                    -- commits on another connection; this transaction's UPDATE still finds
+                    -- lifecycle OPEN under READ COMMITTED's re-check and succeeds. The order then
+                    -- binds `current_quote_revision` to the older revision, and
+                    -- `SettlementRepository.record` prices off exactly that row -- so the counter
+                    -- collects a price the customer had already replaced.
+                    --
+                    -- `create_revision`'s own CAS updates `quotes`, so it takes the same row lock:
+                    -- accept-then-create now waits and then reads `superseded = true` and refuses,
+                    -- and create-then-accept waits and then fails its `lifecycle = 'OPEN'` match,
+                    -- which is correct -- a quote that became an order cannot be re-priced.
+                    --
+                    -- `OF q` and not a bare `FOR UPDATE`: only the agreement needs serialising, and
+                    -- `quote_revisions` is append-only, so locking its rows would add contention
+                    -- for nothing.
+                    FOR UPDATE OF q
                     """,
                     (command.accepted_quote_id, command.accepted_quote_revision),
                 )

@@ -13,10 +13,27 @@ rules:
   - This index is deliberately not hash-pinned by any bundle. A pointer inside the thing it points
     at cannot be updated without invalidating itself.
 current:
-  path: evidence/agent-shadow/local-synthetic-suite-v2.json
+  path: evidence/agent-shadow/local-synthetic-suite-v3.json
   derived_by: scripts/capture_local_agent_evidence.py
   release_effect: NONE
 superseded:
+  - path: evidence/agent-shadow/local-synthetic-suite-v2.json
+    sha256: sha256:753cbd1ce293a3b1cda59f5f2ab897ed01d44feff66f6eab591138577f5f5fe7
+    superseded_on: '2026-09-09'
+    superseded_by: evidence/agent-shadow/local-synthetic-suite-v3.json
+    work_item: SHOP-READINESS-AUDIT-001
+    reason: >-
+      An audit found that `specs/contracts/release-gate-manifest-v1.schema.json` carried no numeric
+      floor for `automated_sends_human_reviewed` at the gate that requires it. G3 asks for the first
+      200 automated sends to have been reviewed by a human; the only `minimum: 200` lived in the
+      BOUNDED clause, so a manifest could claim G3 satisfied with zero and nothing mechanical
+      objected until the stage after the one the requirement governs. The floor is keyed on the
+      gate claimed in `gate_evidence` rather than on the stage, because G2 and G3 are both ASSISTED
+      and only G3 carries it. That schema is pinned by this bundle, so the bundle was re-derived
+      rather than hand-edited, per this index's own rules. Two pins moved: the schema, and
+      `scripts/capture_local_agent_evidence.py`, whose default output and supersession list name
+      the new current bundle so a bare re-run cannot overwrite this record. Every case status, the
+      release-blocker list and the DETERMINISTIC_DEGRADED runtime path are unchanged.
   - path: evidence/agent-shadow/local-synthetic-suite-v1.json
     sha256: sha256:2a52cfaac55ec4fa8b9d6e93a5987d3b619e33d33aafd8c5eb5d50d3572aefec
     superseded_on: '2026-08-13'

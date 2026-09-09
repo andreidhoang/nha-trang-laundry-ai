@@ -28,6 +28,7 @@ from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.orders import (
     CreateOrderCommand,
     OrderRepository,
+    OrderStateError,
     OrderTransitionCommand,
 )
 from nha_trang_laundry_db.stores import StoreRepository
@@ -314,3 +315,145 @@ def _staff_for_store(connection: Any, store_id: UUID) -> StaffPrincipal:
     assert row is not None
     staff_id = row[0] if isinstance(row[0], UUID) else UUID(str(row[0]))
     return StaffPrincipal(staff_id, f"oidc-{staff_id}", frozenset({StaffRole.OWNER_ADMIN}), True)
+
+
+def test_a_committed_newer_acceptance_refuses_the_create_and_writes_nothing(
+    connection: Any,
+) -> None:
+    """The sequential case: a newer acceptance already committed when the create runs.
+
+    This one passed before `FOR UPDATE OF q` too, and says so plainly. The guard reads
+    `superseded` and refuses, and it does not need a lock to see an acceptance that committed
+    earlier. What it pins is the refusal and, as much as the refusal, that nothing is written on the
+    way out: no order row, and the agreement still OPEN for whoever prices it next.
+
+    The interleaving the lock actually exists for -- an acceptance committing *between* the guard's
+    read and the UPDATE -- cannot be arranged from outside the repository, because there is no hook
+    inside its transaction to stop at. The test below demonstrates the mechanism instead.
+    """
+
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url is None:
+        pytest.skip("DATABASE_URL is required for PostgreSQL integration tests")
+
+    store_id = uuid4()
+    principal = _staff(connection, store_id)
+    quote_id, revision, quote, contact_id = accepted_quote(
+        connection, store_id=store_id, principal=principal
+    )
+    # Committed so the other connection can see the setup at all. The race being tested is between
+    # the create and a *committed* acceptance, which is precisely the one READ COMMITTED lets
+    # through: an uncommitted one is invisible to everybody and proves nothing.
+    connection.commit()
+
+    # A second connection stands in for the other tablet, and accepts a newer revision while the
+    # create is mid-transaction. `accepted_quote` already left revision `revision` accepted, so a
+    # later acceptance is what supersedes it.
+    with psycopg.connect(database_url) as other, other.cursor() as cursor:
+        cursor.execute(
+            "SELECT max(final_revision) FROM quote_acceptances WHERE quote_id = %s", (quote_id,)
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        latest = int(row[0])
+        cursor.execute(
+            """
+            INSERT INTO quote_acceptances (
+                id, store_id, quote_id, accepted_revision, accepted_snapshot_hash, final_revision,
+                display_total_vnd, accepted_by, accepted_at, correlation_id, policy_version
+            )
+            SELECT %s, %s, %s, r.revision, r.snapshot_hash, %s, 0, %s, now(), %s, 'test'
+            FROM quote_revisions r WHERE r.quote_id = %s AND r.revision = %s
+            """,
+            (
+                uuid4(),
+                store_id,
+                quote_id,
+                latest + 1,
+                principal.staff_user_id,
+                uuid4(),
+                quote_id,
+                revision,
+            ),
+        )
+        other.commit()
+
+    # The create now runs against a quote the customer has re-agreed. It must refuse rather than
+    # bind the older revision.
+    with pytest.raises(OrderStateError) as refusal:
+        OrderRepository().create(
+            connection,
+            CreateOrderCommand(
+                store_id,
+                contact_id,
+                quote_id,
+                revision,
+                quote.document.snapshot_hash,
+                FulfillmentMode.SELF_DROP_SELF_COLLECT,
+                principal,
+                f"order-create-{uuid4().hex}",
+                uuid4(),
+                NOW,
+                AcquisitionSource.WALK_IN,
+            ),
+        )
+    assert "newer price" in str(refusal.value)
+
+    # And nothing was written: no order, and the agreement is still OPEN for whoever prices it next.
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM orders WHERE current_quote_id = %s", (quote_id,))
+        count = cursor.fetchone()
+        assert count is not None and count[0] == 0
+        cursor.execute("SELECT lifecycle FROM quotes WHERE id = %s", (quote_id,))
+        lifecycle = cursor.fetchone()
+        assert lifecycle is not None and lifecycle[0] == "OPEN"
+
+
+def test_the_create_guard_holds_a_lock_that_an_acceptance_must_wait_for(connection: Any) -> None:
+    """The mechanism, since the interleaving itself cannot be staged from outside.
+
+    `OrderRepository.create` reads its guard `FOR UPDATE OF q`, and the write half of accepting a
+    price -- `QuoteRepository.create_revision` -- updates that same `quotes` row. So the two
+    serialise on it: whichever arrives second waits, then sees the first's committed state
+    and refuses for the right reason. Before the lock, the guard was a plain read whose
+    `superseded` finding was never re-asserted at write time, and the mutation's only
+    compare-and-swap is `lifecycle = 'OPEN'` -- which says nothing about whether the customer has
+    agreed a newer price.
+
+    This holds the guard's own SELECT open on one connection and shows the acceptance's UPDATE
+    blocking on another, with a statement timeout standing in for "waits". A `QueryCanceled` here is
+    the pass: it means the second writer could not proceed. Without the lock it returns instantly.
+    """
+
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url is None:
+        pytest.skip("DATABASE_URL is required for PostgreSQL integration tests")
+
+    store_id = uuid4()
+    principal = _staff(connection, store_id)
+    quote_id, _revision, _quote, _contact = accepted_quote(
+        connection, store_id=store_id, principal=principal
+    )
+    connection.commit()
+
+    holder = psycopg.connect(database_url)
+    try:
+        with holder.cursor() as cursor:
+            # The same lock the create guard takes, on the same row.
+            cursor.execute("SELECT id FROM quotes WHERE id = %s FOR UPDATE", (quote_id,))
+            assert cursor.fetchone() is not None
+
+            with psycopg.connect(database_url) as accepter, accepter.cursor() as writer:
+                writer.execute("SET statement_timeout = '750ms'")
+                with pytest.raises(psycopg.errors.QueryCanceled):
+                    # What `create_revision` does when a price is accepted.
+                    writer.execute(
+                        """
+                        UPDATE quotes SET row_version = row_version + 1
+                        WHERE id = %s AND lifecycle = 'OPEN'
+                        """,
+                        (quote_id,),
+                    )
+    finally:
+        holder.rollback()
+        holder.close()

@@ -32,7 +32,7 @@
 
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UUID, dateTime, shortHash, shortId } from "../core/format.js";
+import { UUID, dateTime, parseDong, shortHash, shortId } from "../core/format.js";
 import { enumVi, serviceCategoryVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -293,7 +293,13 @@ function lineEditor({ catalog, lines, onStructuralChange, onValueChange, onAddLi
           labelled({
             id: `${prefix}-basis`,
             label: "Cơ sở khối lượng",
-            hint: "Chỉ khối lượng nhân viên đã cân mới tính ra giá cuối.",
+            // The domain downgrades to an estimate only for CUSTOMER_ESTIMATE
+            // (`quotes.py:494`); APPROVED_MANUAL yields APPROVED_EXACT exactly as
+            // STAFF_MEASUREMENT does. Saying only a weighed quantity can reach a final price sent
+            // staff back to the scales for a figure the shop had already approved by hand.
+            hint:
+              "“Khách tự ước” không ra được giá cuối. Khối lượng nhân viên đã cân, và khối lượng " +
+              "nhập tay đã được duyệt, đều ra giá cuối.",
             control: basisSelect,
           }),
         ),
@@ -585,8 +591,11 @@ export function render_(context) {
     id: "quote-distance",
     label: "Quãng đường đã đo (mét)",
     hint:
-      "Đo thật, không ước lượng. Với đơn có cả lấy và trả: dưới 2km miễn phí, 2–6km 10.000đ, " +
-      "trên 6km nhân viên và khách thỏa thuận rồi nhập ở ô dưới. Bỏ trống thì báo giá không ra " +
+      // `delivery.py:159` is `verified_distance_m <= 2_000` -> fee 0, so exactly 2.000 m is free
+      // and the paid band starts above it. "dưới 2km" put the boundary itself in the paid band.
+      "Đo thật, không ước lượng. Với đơn có cả lấy và trả: từ 2.000m trở xuống miễn phí, " +
+      "trên 2.000m đến 6.000m thu 10.000đ, " +
+      "trên 6.000m nhân viên và khách thỏa thuận rồi nhập ở ô dưới. Bỏ trống thì báo giá không ra " +
       "tổng tiền và không chốt được. Đơn “Chỉ lấy” hoặc “Chỉ trả” không theo bảng quãng đường " +
       "này — xem ô phí bên dưới.",
     control: distanceInput,
@@ -961,6 +970,11 @@ export function render_(context) {
     if (draft.quoteId && !draft.rowVersion) {
       return "Thêm bản sửa đổi cần phiên bản dòng hiện tại; hãy chọn lại báo giá từ danh sách.";
     }
+    // The fee is money the customer is held to, so it is refused here rather than rounded on the
+    // way out. Anything with a comma or a fraction is a mistake to report, not a number to fix.
+    if (draft.manualFeeVnd.trim() && parseDong(draft.manualFeeVnd) === null) {
+      return "Phí giao phải là số nguyên đồng. “10.000” đọc là 10000; không nhận dấu phẩy hay số lẻ.";
+    }
     return "";
   }
 
@@ -988,8 +1002,10 @@ export function render_(context) {
       ...(draft.verifiedDistanceM.trim()
         ? { verified_distance_m: Number.parseInt(draft.verifiedDistanceM, 10) }
         : {}),
+      // `parseDong`, not `parseInt`: a fractional entry used to be truncated silently, and the fee
+      // it produced is the one the customer is held to. `validate()` refuses a null before this.
       ...(draft.manualFeeVnd.trim()
-        ? { approved_manual_fee_vnd: Number.parseInt(draft.manualFeeVnd, 10) }
+        ? { approved_manual_fee_vnd: parseDong(draft.manualFeeVnd) }
         : {}),
       ...(draft.customerAcknowledgedFee ? { customer_acknowledged_manual_fee: true } : {}),
       ...(revisionMode
@@ -1025,12 +1041,19 @@ export function render_(context) {
       );
       await list.reload();
     } catch (error) {
+      // A lost answer is not a refusal. Same rule as the order screen: on TIMEOUT or NETWORK the
+      // quote may well exist, and saying it does not sends the operator to price the bag again --
+      // which is how a customer ends up hearing two numbers for one bag.
+      const unknown = error.kind === "TIMEOUT" || error.kind === "NETWORK";
       setResult(
         result,
         error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
-        error.kind === "REQUIRE_HUMAN"
-          ? "Bộ tính giá từ chối đoán. Không có bản ghi nào được tạo."
-          : "Không tạo được bản sửa đổi.",
+        unknown
+          ? "Chưa biết lệnh có tới máy chủ hay không, nên chưa biết báo giá đã được ghi hay chưa. " +
+            "Tải lại danh sách báo giá và kiểm tra trước khi tính lại."
+          : error.kind === "REQUIRE_HUMAN"
+            ? "Bộ tính giá từ chối đoán. Không có bản ghi nào được tạo."
+            : "Không tạo được bản sửa đổi.",
       );
       render(resultHost, errorNotice(error));
       revealError(resultHost);

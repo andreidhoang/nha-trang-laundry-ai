@@ -281,6 +281,18 @@ function storeBanner() {
   if (state.status !== "active") return null;
 
   if (state.memberStoreIds.length === 0) {
+    // Two different facts, and until 2026-09-09 both rendered as the first one. A single failed
+    // request to `/internal/v1/stores` was recorded as "assigned to nothing", so a wifi blip told
+    // a member of staff their account had no shop and sent them to the owner about an assignment
+    // that already existed.
+    if (!state.storeScopeKnown) {
+      return h(
+        "div",
+        { class: "banner", dataState: "danger", role: "status" },
+        "Chưa đọc được danh sách cửa hàng của bạn, nên chưa biết bạn được gán những cửa hàng " +
+          "nào. Đây không phải “chưa được gán” — hãy kiểm tra mạng rồi tải lại trang.",
+      );
+    }
     return h(
       "div",
       { class: "banner", dataState: "warn", role: "status" },
@@ -321,6 +333,22 @@ function renderBanners() {
     );
   }
 
+  if (state.status === "unreachable") {
+    children.push(
+      h(
+        "div",
+        { class: "banner", dataState: "danger", role: "alert" },
+        "Mất liên lạc với máy chủ. Chưa biết phiên còn hay hết — đây không phải đã đăng xuất. " +
+          "Những gì bạn đang nhập vẫn còn trên màn hình; kiểm tra mạng rồi bấm gửi lại.",
+        h(
+          "button",
+          { type: "button", dataVariant: "quiet", onClick: () => void session.refresh() },
+          "Kiểm tra lại phiên",
+        ),
+      ),
+    );
+  }
+
   if (state.status === "ended") {
     // An expiry with no error used to render nothing at all: the operator's next action failed and
     // the console said why only inside that one form. The banner is the standing condition, and it
@@ -349,6 +377,50 @@ function renderBanners() {
   if (store) children.push(store);
 
   render(banners, children);
+}
+
+/**
+ * The screen for a console that could not reach the server, which is not the same as a sign-out.
+ *
+ * `session.refresh()` used to record a transport failure as `status: "ended"`, so a wifi blip on a
+ * shop tablet rendered "Chưa đăng nhập" -- and the operator signed in again, learned nothing, and
+ * concluded the software had lost their shift. The paragraph above `refresh()` has always forbidden
+ * exactly that. The session may well still be valid; what is unknown is whether it is.
+ *
+ * @returns {HTMLElement}
+ */
+function unreachableScreen() {
+  const state = session.snapshot();
+  return h(
+    "section",
+    { class: "screen" },
+    h(
+      "div",
+      { class: "screen__header" },
+      h("p", { class: "eyebrow" }, "PHIÊN LÀM VIỆC"),
+      h("h1", null, "Chưa liên lạc được với máy chủ"),
+    ),
+    h(
+      "div",
+      { class: "card stack" },
+      h(
+        "div",
+        { class: "notice", dataState: "danger" },
+        "Không đọc được phiên làm việc. Đây KHÔNG phải đã đăng xuất — phiên của bạn có thể vẫn " +
+          "còn. Kiểm tra mạng của máy này rồi thử lại; đừng đăng nhập lại trước khi thử.",
+      ),
+      state.lastError ? h("p", { class: "hint mono" }, state.lastError) : null,
+      h(
+        "div",
+        { class: "form__actions" },
+        h(
+          "button",
+          { type: "button", dataVariant: "primary", onClick: () => void session.refresh() },
+          "Thử lại",
+        ),
+      ),
+    ),
+  );
 }
 
 /**
@@ -426,6 +498,10 @@ function signedOutScreen() {
 function guard(_context, route) {
   const state = session.snapshot();
   if (state.status === "unknown") return null;
+  // Before the signed-out branch on purpose: `unreachable` also has a null principal, and telling
+  // an operator they are signed out when the truth is "we could not ask" is the defect this exists
+  // to prevent.
+  if (state.status === "unreachable") return unreachableScreen();
   if (!state.principal) return signedOutScreen();
   if (!route) return null;
 
@@ -561,7 +637,14 @@ async function boot() {
     //
     // The `renderedKey !== null` guard keeps the boot case correct: arriving with no session at all
     // must still render the signed-out screen rather than leave an empty outlet.
-    if (state.status === "ended" && renderedKey !== null) return;
+    // `unreachable` is held to the same rule, and more strongly: a wifi blip is the commonest
+    // failure a shop tablet has, and rebuilding the screen for one would throw away a half-typed
+    // incident for the most trivial cause. On boot (`renderedKey === null`) it still renders, which
+    // is where `unreachableScreen()` belongs; mid-shift the banner below carries it and the form
+    // stays exactly where the operator left it.
+    if ((state.status === "ended" || state.status === "unreachable") && renderedKey !== null) {
+      return;
+    }
 
     const key = contentKey();
     if (key === renderedKey) return;

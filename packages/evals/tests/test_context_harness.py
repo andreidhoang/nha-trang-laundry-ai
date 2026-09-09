@@ -195,7 +195,12 @@ def test_context_drift_check_passes() -> None:
     # on 2026-08-18 as useless over a table that could not receive rows -- and `DEC-013`/`DEC-015`
     # resolved eight days later, `0032_counter_ticket.sql` shipped, and nobody went back. An order
     # now records where the customer said they came from, once, and no model may write or read it.
-    assert "120 work items" in result.stdout
+    # 121 with SHOP-READINESS-AUDIT-001: the console was signed into as four roles against a real
+    # API and a real database, two audit rounds ran over every layer, and 33 adversarially verified
+    # findings were fixed. Four of them were defects in the first round's own fixes. The item exists
+    # because the work needed a queue record and an evidence file like everything else here -- and
+    # because the re-derived local evidence bundle names a work item, and had to name a true one.
+    assert "121 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

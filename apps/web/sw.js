@@ -5,7 +5,7 @@
 // shared, is often unlocked, and leaves the shop; the console's offline story is therefore "the
 // interface loads and tells you it cannot reach the server", never "your data is still here".
 
-const CACHE = "staff-shell-e0f96c246033";
+const CACHE = "staff-shell-0a38b024d506";
 
 const SHELL = [
   "/staff/",
@@ -44,7 +44,18 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
+  // `cache: "reload"` on every shell request, and the cache name being a fingerprint of the files
+  // is exactly why it is needed. `cache.addAll(SHELL)` uses the default HTTP cache mode, so the
+  // browser is free to satisfy each request from its own HTTP cache -- which on the tablet that
+  // was running the console five minutes before a deploy still holds the previous modules. The new
+  // fingerprinted cache would then be populated with pre-deploy JavaScript and, being correctly
+  // named for the new build, never revalidated: old code against a new API, indefinitely, on that
+  // one device. "reload" bypasses the HTTP cache and takes the files from the network.
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((cache) => cache.addAll(SHELL.map((path) => new Request(path, { cache: "reload" })))),
+  );
   self.skipWaiting();
 });
 
@@ -67,9 +78,15 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
   if (!url.pathname.startsWith("/staff/")) return;
 
+  // `fetch` rejects on a transport failure and resolves on an HTTP error, so `.catch` alone let a
+  // 502 or a 503 from the proxy through to the page as though it were the module. The browser then
+  // fails to parse an error page as JavaScript and the console is blank, with a good copy of the
+  // file sitting in the cache the whole time. An error response is a failure to serve the shell,
+  // and is treated as one.
+  const fallback = () => caches.match(event.request).then((hit) => hit || Response.error());
   event.respondWith(
-    fetch(event.request).catch(() =>
-      caches.match(event.request).then((hit) => hit || Response.error()),
-    ),
+    fetch(event.request)
+      .then((response) => (response.ok ? response : fallback()))
+      .catch(fallback),
   );
 });

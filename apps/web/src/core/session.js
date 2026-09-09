@@ -28,6 +28,8 @@ const state = {
   principal: null,
   /** @type {"unknown"|"active"|"ended"} */
   status: "unknown",
+  // Whether the member-store list is an answer. False means the question was not answered.
+  storeScopeKnown: false,
   /** @type {string|null} */
   storeId: null,
   /** @type {string[]} */
@@ -90,11 +92,18 @@ export async function refresh() {
   } catch (error) {
     state.principal = null;
     state.memberStoreIds = [];
+    state.storeScopeKnown = false;
     if (error && error.kind === "SESSION_ENDED") {
+      // A 401 is an answer: there is no session, which is the application's normal first state.
       state.status = "ended";
       state.lastError = "";
     } else {
-      state.status = "ended";
+      // Anything else is not an answer, and the paragraph above this function has always said so:
+      // a console that cannot reach its own session endpoint must not pretend to be signed out,
+      // because the operator then tries to sign in again and learns nothing. Both branches used to
+      // set "ended" and differ only in `lastError`, so a wifi blip on a shop tablet -- the most
+      // ordinary failure this deployment has -- presented as a sign-out.
+      state.status = "unreachable";
       state.lastError = error?.message || String(error);
     }
   }
@@ -115,8 +124,14 @@ export async function loadMemberStores() {
   try {
     const body = await request("/internal/v1/stores");
     state.memberStoreIds = Array.isArray(body?.store_ids) ? body.store_ids.map(String) : [];
-  } catch {
+    state.storeScopeKnown = true;
+  } catch (error) {
+    // An empty list and an unanswered question are different facts, and the shell says something
+    // different about each. A bare `catch` recorded both as "assigned to nothing", so one failed
+    // request made the console tell a member of staff that their account has no shop and to go and
+    // ask the owner -- about an assignment that exists. `storeScopeKnown` is what separates them.
     state.memberStoreIds = [];
+    state.storeScopeKnown = error?.kind === "SESSION_ENDED";
   }
 
   const remembered = localStorage.getItem(STORE_KEY);

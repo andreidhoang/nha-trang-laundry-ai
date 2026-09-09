@@ -26,7 +26,7 @@
 
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UNKNOWN, UUID, count, dateTime, money, shortId } from "../core/format.js";
+import { UNKNOWN, UUID, count, dateTime, money, parseDong, shortId } from "../core/format.js";
 import { enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -147,9 +147,18 @@ function settlementPanel(spec) {
   /** @param {SubmitEvent} event */
   async function submit(event) {
     event.preventDefault();
-    const amount = Number.parseInt(draft.amount.trim(), 10);
-    if (!Number.isSafeInteger(amount) || amount < 0) {
-      setResult(result, "danger", "Số tiền phải là số nguyên đồng.");
+    // `parseDong` rather than `parseInt`: the total on this very screen renders as "132.000 ₫",
+    // and `parseInt("132.000", 10)` is 132 -- a safe integer, so it posted, and the server refused
+    // it for not equalling the quoted total. The operator had copied the number the application
+    // showed them and got a refusal with no explanation available to them.
+    const amount = parseDong(draft.amount);
+    if (amount === null) {
+      setResult(
+        result,
+        "danger",
+        "Số tiền phải là số nguyên đồng. Chép cả dấu chấm cũng được — “132.000” đọc là 132000. " +
+          "Không nhận dấu phẩy hay số lẻ.",
+      );
       return;
     }
     setResult(result, "warn", "Đang ghi nhận…");

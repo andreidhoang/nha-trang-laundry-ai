@@ -12,8 +12,8 @@ from nha_trang_laundry_evals import validate_eval_manifest
 
 ROOT = Path(__file__).resolve().parents[3]
 BUNDLE_INDEX = ROOT / "evidence/agent-shadow/bundle-index-v1.yaml"
-EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v2.json"
-SUPERSEDED_EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v1.json"
+EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v3.json"
+SUPERSEDED_EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v2.json"
 ROLLBACK = ROOT / "evidence/agent-shadow/rollback-assessment-v1.yaml"
 OPENCLAW_EVIDENCE = ROOT / "evidence/agent-shadow/openclaw-offline-verification-v1.json"
 
@@ -48,17 +48,29 @@ def test_local_suite_evidence_is_complete_current_and_explicitly_non_release() -
     assert _stale_pins(evidence) == []
 
 
-def test_superseded_bundle_is_retained_byte_for_byte() -> None:
-    """EVIDENCE-REPIN-001: re-derivation preserves the record, it does not replace it."""
+def test_every_superseded_bundle_is_retained_byte_for_byte() -> None:
+    """EVIDENCE-REPIN-001: re-derivation preserves the record, it does not replace it.
+
+    Every entry, not the newest one. There are two now -- v1 superseded 2026-08-13 to lift the
+    change freeze on the core, and v2 superseded 2026-09-09 when the release-gate schema gained the
+    G3 floor it was missing -- and the older record is exactly as load-bearing as the newer.
+    Checking only `superseded[0]` would have let v1's bytes drift the moment a second entry existed.
+    """
+
     index = yaml.safe_load(BUNDLE_INDEX.read_text(encoding="utf-8"))
     superseded = index["superseded"]
-    assert len(superseded) == 1
-    entry = superseded[0]
+    assert len(superseded) >= 2, "both re-derivations must be recorded"
+    assert superseded[0]["path"] == SUPERSEDED_EVIDENCE.relative_to(ROOT).as_posix(), (
+        "the newest superseded bundle is listed first, and is the one the comparison test reads"
+    )
 
-    assert entry["path"] == SUPERSEDED_EVIDENCE.relative_to(ROOT).as_posix()
-    assert SUPERSEDED_EVIDENCE.is_file()
-    actual = f"sha256:{sha256(SUPERSEDED_EVIDENCE.read_bytes()).hexdigest()}"
-    assert actual == entry["sha256"], "a superseded bundle's bytes must never change"
+    for entry in superseded:
+        retained = ROOT / entry["path"]
+        assert retained.is_file(), f"{entry['path']} was deleted"
+        actual = f"sha256:{sha256(retained.read_bytes()).hexdigest()}"
+        assert actual == entry["sha256"], (
+            f"a superseded bundle's bytes must never change: {entry['path']}"
+        )
 
 
 def test_bundle_index_names_exactly_one_current_bundle() -> None:

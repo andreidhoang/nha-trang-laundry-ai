@@ -283,8 +283,16 @@ def _record_draft_for_review(
         conversation_binding_id=claimed.conversation_binding_id,
         contact_binding_id=claimed.contact_binding_id,
         draft_text=result.draft_text,
-        terminal_outcome="DRAFT",
-        terminal_code="DRAFT_REQUIRES_HUMAN",
+        # Read from the run, not asserted. `AgentRunResult.status` is
+        # `Literal["DRAFT_REQUIRES_HUMAN", "REQUIRE_HUMAN"]` and carries the runtime's terminal
+        # disposition; hardcoding "DRAFT" here threw it away, so a run that never reached the
+        # provider -- where the bounded runtime falls back to DETERMINISTIC_HANDOFF_TEXT and
+        # concludes REQUIRE_HUMAN -- was filed and shown to staff as an ordinary AI draft awaiting
+        # approval. That is wrong twice: a reviewer approves text believing a model wrote it, and
+        # the Shadow evidence the capability ladder is measured on records a deterministic fallback
+        # as model output. `agent_drafts.terminal_outcome` has admitted both values since 0021.
+        terminal_outcome=("DRAFT" if result.status == "DRAFT_REQUIRES_HUMAN" else "REQUIRE_HUMAN"),
+        terminal_code=result.status,
         tool_call_count=result.tool_call_count,
         correlation_id=correlation_id,
         now=timestamp,

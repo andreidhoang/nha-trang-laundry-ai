@@ -423,7 +423,15 @@ class OrderRepository:
                 command.production_target.value if command.production_target else None
             ),
             "intake_readiness": command.intake_readiness,
-            "production_accepted_at": command.production_accepted_at,
+            # `production_accepted_at` is deliberately NOT here, and the difference matters. This
+            # payload answers "did the caller ask for the same thing?", and that timestamp is not
+            # something a caller asks for: `OperationsService.transition_intake` mints it with
+            # `datetime.now(UTC)` on every call. Hashing it made the same Idempotency-Key, resent
+            # for the identical intent, produce a different digest -- so the retry an operator makes
+            # when the counter's wifi stutters came back IDEMPOTENCY_CONFLICT, and the console told
+            # them the order had not changed when it had. Nothing is lost by leaving it out: the
+            # timestamp exists exactly when `intake_target` is ACCEPTED, and that field is above.
+            # `occurred_at`, the other server-minted clock, was already excluded for this reason.
             # What staff said happened to the customer's laundry and their money is part of the
             # command's identity, not decoration on it. Left out of this payload, two cancellations
             # differing only in their resolution hashed to the same digest, so the second returned

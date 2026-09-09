@@ -611,11 +611,13 @@ disclosures:
     - custody_events
     - batches
     why: 'Same shape: the custody context is measured empty and the disclosure says so.'
-- slot_id: screens/gaps.js#missing:4c53a8d9d8b5
+- slot_id: screens/gaps.js#missing:455dba33f5c7
   module: screens/gaps.js
   key: missing
-  text: Không có remedies, credit_grants hay credit_ledger_entries. Bồi hoàn là một lệnh có duyệt, không
-    phải một trạng thái tự do, nên không thể thay bằng một ô ghi chú.
+  text: 'Không có remedies, credit_grants hay credit_ledger_entries. Bồi hoàn là một lệnh có duyệt, không
+    phải một trạng thái tự do, nên không thể thay bằng một ô ghi chú. Hệ quả ở màn hình Sự cố: mọi sự
+    cố đứng yên ở OPEN. Chỉ có một chỗ ghi trạng thái và nó luôn ghi OPEN, nên danh sách chỉ dài thêm
+    chứ không đóng lại được — đó là thiếu đường xử lý, không phải sự cố bị bỏ quên.'
   binding:
     kind: ABSENT_TABLE
     tables:
@@ -623,7 +625,8 @@ disclosures:
     - credit_grants
     - credit_ledger_entries
     why: Remedy and credit aggregates. The sentence also states that compensation is an approved command
-      rather than a screen action, which stays true while these are absent.
+      rather than a screen action, and that an incident cannot leave OPEN while they are absent -- both
+      stay true exactly while these tables do not exist.
 - slot_id: screens/gaps.js#blockedBy:c4fb4de85d11
   module: screens/gaps.js
   key: blockedBy

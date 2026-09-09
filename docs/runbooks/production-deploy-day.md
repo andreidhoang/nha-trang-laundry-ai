@@ -342,13 +342,19 @@ should hear them first:
 
 ## 7a. What watches it once staff are in
 
+`$SHOP_ROOT` below is wherever this repository is checked out on the host — this page never clones,
+because the host and its path are the hosting decision's to make. Both lines used to hard-code
+`/srv/nha-trang-laundry`, which no step here or on any other runbook creates, so they failed on `cd`
+and said so nowhere: cron mails its output to a local mailbox nobody reads. Export it once in the
+crontab, or substitute it before pasting.
+
 ```bash
 DATABASE_URL=... \
 R1_PGDATA_PATH=/var/lib/docker/volumes/nha-trang-laundry-shop_pgdata/_data \
 R1_BASE_BACKUP_MARKER=/var/lib/docker/volumes/nha-trang-laundry-shop_pgbackupstaging/_data/last-success \
 R1_RECOVERY_MODE=self-managed \
 R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
-  R1_CONSOLE_CA_FILE=/srv/nha-trang-laundry/.shop/ca/ca.crt \
+  R1_CONSOLE_CA_FILE="$SHOP_ROOT/.shop/ca/ca.crt" \
   uv run python scripts/check_shop_operations.py
 ```
 
@@ -373,7 +379,7 @@ sidecar service — `DEC-026` says there is one, and there never was.
 
 ```bash
 # 02:30 daily, on the host's crontab.
-30 2 * * * cd /srv/nha-trang-laundry && docker compose -f compose.r1.yaml \
+30 2 * * * cd "$SHOP_ROOT" && docker compose -f compose.r1.yaml \
   --profile self-managed-database exec -T postgres /usr/local/bin/base-backup.sh
 ```
 

@@ -313,9 +313,13 @@ export function render_() {
     fetch: () => request(`/internal/v1/approvals?limit=${LIST_LIMIT}`),
     renderItem: (item) =>
       approvalCard(item, (host, expiresAt) => clocks.push({ host, expiresAt })),
+    // "gắn với đơn hàng" was true before migration 0034, when the queue joined through `orders` and
+    // could only ever show order-linked approvals. Since 0034 the server joins on the approval's
+    // own `store_id`, so every resource type in the caller's stores appears -- and the limits panel
+    // on this same screen already said so, which made the two halves contradict each other.
     emptyText:
-      "Không có việc nào gắn với đơn hàng đang chờ bạn quyết định. Đây không phải bằng " +
-      "chứng là hàng chờ trống — xem bảng giới hạn bên dưới.",
+      "Không có việc nào đang chờ bạn quyết định trong các cửa hàng bạn được gán. Đây không " +
+      "phải bằng chứng là hàng chờ trống — xem bảng giới hạn bên dưới.",
     clearMetaOnError: true,
     onLoadStart: () => {
       clocks.length = 0;

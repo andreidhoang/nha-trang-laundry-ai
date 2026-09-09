@@ -171,7 +171,13 @@ def main() -> int:
     parser.add_argument(
         "--backup-repository-credential",
         default="",
-        help="the object-store credential. Empty means archiving stays off until you set one.",
+        help=(
+            "the object-store credential. REQUIRED in practice: `postgresql.conf` sets "
+            "archive_mode = on unconditionally, so leaving this empty does not turn archiving off "
+            "-- it leaves every archive attempt failing, WAL pinned on disk, and the "
+            "volume filling "
+            "until PostgreSQL stops accepting writes."
+        ),
     )
     arguments = parser.parse_args()
 

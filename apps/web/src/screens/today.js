@@ -158,8 +158,9 @@ function takingsCard() {
       h(
         "p",
         null,
-        "Gồm: các đơn đã tất toán tại quầy hôm nay — khách trả đủ số tiền trên báo giá và nhận " +
-          "đồ về. Máy chủ cộng trực tiếp từ sổ ghi tất toán; màn hình này không tự cộng.",
+        "Gồm: các đơn đã tất toán tại quầy hôm nay — khách trả đủ số tiền trên báo giá. Có cả đơn " +
+          "khách trả trước rồi tiệm giao tận nơi, nên tiền đã thu không có nghĩa là đồ đã ra khỏi " +
+          "tiệm. Máy chủ cộng trực tiếp từ sổ ghi tất toán; màn hình này không tự cộng.",
       ),
       h(
         "p",

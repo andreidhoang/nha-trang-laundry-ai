@@ -118,6 +118,17 @@ with sync_playwright() as pw:
         lambda m: errors.append(f"console.{m.type}: {m.text}") if m.type == "error" else None,
     )
 
+    # Everything the walk carries from one screen to the next, bound before any section runs.
+    # Each of these used to be created inside the branch that filled it, so a screen that
+    # misbehaved raised NameError here rather than failing its own check -- and the run that
+    # matters most is exactly the run where a screen misbehaves. On the defaults the walk keeps
+    # going and each dependent step fails on its own terms, which is the report this exists for.
+    ticket_ref = ""
+    quote_id = ""
+    seal = ""
+    accepted_revision = "1"
+    order_id = ""
+
     head(1, "MỞ BẢNG — what a staff member sees before signing in")
     page.goto(CONSOLE, wait_until="networkidle")
     page.wait_for_timeout(800)
@@ -349,10 +360,10 @@ with sync_playwright() as pw:
         value = page.evaluate("() => navigator.clipboard.readText()")
         carried[shown] = value
         print(f"      copied {shown!r} -> {value[:46]}{'…' if len(value) > 46 else ''}")
-    quote_id = next((v for v in carried.values() if len(v) == 36 and v.count("-") == 4), None)
-    seal = next((v for v in carried.values() if v.startswith("JCS-SHA256-V1:")), None)
-    ok("the quote id can be carried to the order screen", quote_id is not None, str(quote_id))
-    ok("the quote's seal can be carried to the order screen", seal is not None, (seal or "")[:30])
+    quote_id = next((v for v in carried.values() if len(v) == 36 and v.count("-") == 4), "")
+    seal = next((v for v in carried.values() if v.startswith("JCS-SHA256-V1:")), "")
+    ok("the quote id can be carried to the order screen", bool(quote_id), str(quote_id))
+    ok("the quote's seal can be carried to the order screen", bool(seal), seal[:30])
 
     head(8, "TẠO ĐƠN — the order, with where the customer came from")
     page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
@@ -373,7 +384,6 @@ with sync_playwright() as pw:
     shot(page, "12-order-created.png")
     said = (form.locator("p.result, .notice, [data-state]").first.inner_text() or "").strip()
     created = "Đã tạo đơn" in page.content()
-    order_id = ""
     for call in api_calls:
         if call[0] == "POST" and call[2].endswith("/orders") and 200 <= call[1] < 300:
             try:

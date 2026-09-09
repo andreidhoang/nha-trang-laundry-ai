@@ -17,6 +17,19 @@ turns one into the other.
 | 2 | **The decryption identity**, fetched from wherever `DEC-026` placed it | its holder |
 | 3 | A clean host with an empty data directory. Never the host being recovered from | operator |
 | 4 | A stopwatch. The whole point is the wall-clock number | the engineer running it |
+| 5 | **`rclone` and `age` installed on the drill host**, and this repository's `deploy/production/backup/r1-archive-list.sh`, `r1-archive-fetch.sh` and `restore.sh` copied to it | operator |
+
+Row 5 is on the stopwatch too, and it was missing. Step 2 exports `BACKUP_LIST_COMMAND` and
+`BACKUP_FETCH_COMMAND` as `/usr/local/bin/...` on a host this page describes as clean; nothing put
+them there, and nothing installed the two binaries all three scripts invoke. `restore.sh` runs
+under `set -eu` with `:?` on both variables, so the drill halts on its own first command — with the
+clock running, which is exactly the number the drill exists to measure. Do it before you start:
+
+```bash
+sudo apt-get install -y rclone age
+sudo install -m 0755 deploy/production/backup/r1-archive-list.sh \
+                     deploy/production/backup/r1-archive-fetch.sh /usr/local/bin/
+```
 
 **Start the clock when you start step 1, not when the restore command runs.** The recovery-time
 objective is four hours "by one engineer following the runbook", and fetching the key from its

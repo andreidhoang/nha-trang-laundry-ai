@@ -195,7 +195,13 @@ order → intake → production → released → settlement → `COMPLETED`.
 
 ## 6. The week
 
-Cron every five minutes, from day one:
+Cron every five minutes, from day one.
+
+**The paths below are the checkout from §"The code" — `~/laundry`, written `$HOME/laundry` because
+that is what a crontab expands.** They used to read `/srv/nha-trang-laundry`, a directory no step on
+this page creates, so both entries failed on `cd` from the first run and said so nowhere: cron mails
+its output to a local mailbox nobody on this machine reads. If you cloned somewhere else, change all
+four occurrences, not the two obvious ones.
 
 **The checks split, because the things they look at live in different places.** Three of them read
 the database and its volumes, which on the self-managed branch nothing on the host can reach; two of
@@ -205,7 +211,7 @@ entries, not one, and the split is a consequence of the topology rather than a p
 ```bash
 # Every five minutes. The data checks, inside the database's own network, as the postgres uid --
 # the base-backup marker lives in a 0700 directory owned by it.
-*/5 * * * * cd /srv/nha-trang-laundry && docker run --rm \
+*/5 * * * * cd $HOME/laundry && docker run --rm \
   --network nha-trang-laundry-shop_database-private --user 70:70 \
   -v "$PWD:/repo:ro" -w /repo -e HOME=/tmp \
   -v nha-trang-laundry-shop_pgdata:/pgdata:ro \
@@ -220,10 +226,10 @@ entries, not one, and the split is a consequence of the topology rather than a p
 
 # Every five minutes. The host checks: capability flags need the Docker socket, and the console
 # check has to reach the console the way a tablet does, by name, over TLS.
-*/5 * * * * cd /srv/nha-trang-laundry && \
+*/5 * * * * cd $HOME/laundry && \
   R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
-  R1_CONSOLE_CA_FILE=/srv/nha-trang-laundry/.shop/ca/ca.crt \
-  R1_ALERT_TELEGRAM_TOKEN_FILE=/srv/nha-trang-laundry/.shop/alert-telegram-token \
+  R1_CONSOLE_CA_FILE=$HOME/laundry/.shop/ca/ca.crt \
+  R1_ALERT_TELEGRAM_TOKEN_FILE=$HOME/laundry/.shop/alert-telegram-token \
   R1_ALERT_TELEGRAM_CHAT_ID='<your chat>' \
   uv run python scripts/check_shop_operations.py --check flags --check console
 ```

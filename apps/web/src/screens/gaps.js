@@ -145,7 +145,10 @@ const GROUPS = [
           "cho khách.",
         missing:
           "Không có remedies, credit_grants hay credit_ledger_entries. Bồi hoàn là một lệnh có " +
-          "duyệt, không phải một trạng thái tự do, nên không thể thay bằng một ô ghi chú.",
+          "duyệt, không phải một trạng thái tự do, nên không thể thay bằng một ô ghi chú. " +
+          "Hệ quả ở màn hình Sự cố: mọi sự cố đứng yên ở OPEN. Chỉ có một chỗ ghi trạng thái và " +
+          "nó luôn ghi OPEN, nên danh sách chỉ dài thêm chứ không đóng lại được — đó là thiếu " +
+          "đường xử lý, không phải sự cố bị bỏ quên.",
         // DEC-004 is RESOLVED (18/08) and carries the operative figures. Naming it as the blocker
         // made staff read "chưa có chính sách" under a "Bị chặn bởi" label and improvise at the
         // counter, when the owner had already set the window, the cap and the approval ceiling.

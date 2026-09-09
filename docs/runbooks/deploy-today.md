@@ -174,9 +174,15 @@ docker compose -f compose.r1.yaml exec postgres psql -U laundry_migrate -d postg
 docker compose -f compose.r1.yaml up -d migrate          # runs once and exits; must exit 0
 docker compose -f compose.r1.yaml --profile self-managed-database up -d api worker keycloak tls
 
-SUPERUSER_DATABASE_URL=... uv run python scripts/apply_demo_grants.py
+./scripts/shop-admin apply_demo_grants.py
 ./scripts/shop-admin verify_database_grants.py
 ```
+
+The grant line runs through `shop-admin` for the same reason the line under it does: on the
+self-managed branch `postgres` publishes no port and sits only on `internal: true` networks, so
+`SUPERUSER_DATABASE_URL=... uv run python ...` names a database nothing on this host can open a
+socket to. `shop-admin` runs the same script inside the database's own network, in the API image.
+On a provider-managed database the plain `uv run` form is correct and `shop-admin` is unnecessary.
 
 **`apply_demo_grants.py` is the production grant script despite its name, and it must run after
 every migration** — `GRANT ... ON ALL TABLES` is a one-shot snapshot, and skipping it surfaces as
@@ -224,16 +230,21 @@ install -m 0600 /dev/null /etc/nha-trang-laundry/alert-telegram-token
 printf '%s' '<bot token from @BotFather>' > /etc/nha-trang-laundry/alert-telegram-token
 ```
 
-```bash
-DATABASE_URL=... R1_PGDATA_PATH=/var/lib/docker/volumes/nha-trang-laundry-shop_pgdata/_data \
-R1_BASE_BACKUP_MARKER=/var/lib/docker/volumes/nha-trang-laundry-shop_pgbackupstaging/_data/last-success \
-R1_RECOVERY_MODE=self-managed \
-R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
-  R1_CONSOLE_CA_FILE=/srv/nha-trang-laundry/.shop/ca/ca.crt \
-R1_ALERT_TELEGRAM_TOKEN_FILE=/etc/nha-trang-laundry/alert-telegram-token \
-R1_ALERT_TELEGRAM_CHAT_ID=<your chat> \
-  uv run python scripts/check_shop_operations.py
-```
+**The checks split into two cron entries, and that is a consequence of the topology rather than a
+preference.** Three of them read the database and its volumes, which on the self-managed branch
+nothing on the host can reach; two need the Docker socket and the console's TLS name, which nothing
+inside the database network has. A single host-run invocation of all five — which this page used to
+carry — fails three of them on every run, for the same reason the grant line above could not run.
+
+`docs/runbooks/shop-pilot.md` §"Cron every five minutes" holds both entries in full; copy them from
+there rather than from here, so there is one copy to keep correct. Two things to get right when you
+do:
+
+- `R1_CONSOLE_CA_FILE` is the CA you made in §3, which lives beside the checkout — `/opt/laundry/ca.crt`
+  if you cloned where §2 says. This page used to point it at `/srv/nha-trang-laundry/.shop/ca/ca.crt`,
+  a path no step in any runbook creates.
+- the data checks run as uid 70 inside `nha-trang-laundry-shop_database-private`, because the
+  base-backup marker lives in a `0700` directory owned by postgres.
 
 Every five minutes from cron. **Five** checks now, and the one most likely to save you is the
 volume: a failing `archive_command` pins WAL segments forever, the disk fills, PostgreSQL stops

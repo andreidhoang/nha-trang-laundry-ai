@@ -137,6 +137,10 @@ def main() -> int:
             "quote_snapshot_hash": acc["snapshot_hash"],
             "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
             "customer_final_quote_accepted_at": datetime.now(UTC).isoformat(),
+            # ACQUISITION-ATTRIBUTION-001. Required, with no server-side default, so a walk that
+            # omitted it would fail here rather than silently recording a source nobody attested.
+            # WALK_IN is what this walk actually is: a person at the counter with no prior contact.
+            "acquisition_source": "WALK_IN",
         },
     )
     oid, v = order["order_id"], order["row_version"]

@@ -523,6 +523,13 @@ export function gated(control, verdict) {
   if (verdict.allowed) return control;
   control.setAttribute("disabled", "");
   control.setAttribute("aria-disabled", "true");
+  // `data-denied` records *why* the control is disabled, because a second owner of the disabled
+  // attribute exists: `syncNetworkAffordance` in app.js re-applies after every render and used to
+  // clear this one whenever the browser was online. An AUDITOR -- a read-only role -- was shown a
+  // live "Tạo đơn" button under its own explanation of why they may not use it, and the server
+  // answered 403. Authorization was never at risk; the interface was lying about it. Two writers
+  // of one attribute need a shared reason, and this is it.
+  control.setAttribute("data-denied", "true");
   return h("div", { class: "stack stack--tight" }, control, h("p", { class: "hint" }, verdict.reason));
 }
 

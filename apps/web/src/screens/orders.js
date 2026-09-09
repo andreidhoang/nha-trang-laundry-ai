@@ -927,7 +927,23 @@ export function render_(_context) {
     labelled({ id: "leg-order", label: "Mã đơn hàng", control: legOrderInput }),
     labelled({ id: "leg-kind", label: "Chuyến", control: legKindSelect }),
     labelled({ id: "leg-outcome", label: "Kết quả", control: legOutcomeSelect }),
-    h("div", { class: "form__actions" }, h("button", { type: "submit", class: "button" }, "Ghi nhận")),
+    // Gated like every other write on this screen. It was not, until the console was driven as an
+    // AUDITOR: a read-only session was shown a live "Ghi nhận" that records a delivery leg, and the
+    // server answered 403. The two forms above it were disabled and explained; this one was simply
+    // missed, which is the failure mode `core/rbac.js` opens by naming -- a button that always
+    // fails is worse than no button.
+    h(
+      "div",
+      { class: "form__actions" },
+      gated(
+        h(
+          "button",
+          { type: "submit", class: "button", dataRequiresNetwork: "true" },
+          "Ghi nhận",
+        ),
+        writeVerdict,
+      ),
+    ),
   );
 
   return h(

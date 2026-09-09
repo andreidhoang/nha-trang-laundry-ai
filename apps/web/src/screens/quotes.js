@@ -401,7 +401,16 @@ function revisionResult(result, store, onAccepted) {
       : null,
     warningBadges([...(result.reason_codes || []), ...(result.required_approvals || [])]),
     facts([
-      ["Mã báo giá", shortId(result.quote_id), { mono: true }],
+      // The order form needs this verbatim, exactly as it needs the seal below, and until
+      // 2026-09-09 only the seal could be copied. The id was shortened for reading with no way to
+      // get the full string out of the screen -- a `title` is a hover, and the counter is a tablet.
+      // So the one hand-off the order form requires was half-supported: staff could carry the
+      // seal and not the id, which is the same as not being able to create the order at all.
+      [
+        "Mã báo giá",
+        copyable({ value: String(result.quote_id), display: shortId(result.quote_id) }),
+        { mono: true },
+      ],
       ["Trạng thái", enumVi(result.status)],
       ["Phiên bản dòng", `v${result.row_version}`],
       [
@@ -467,7 +476,9 @@ function quoteCard(item, onPickRevision) {
     h(
       "div",
       { class: "spread" },
-      h("strong", { class: "mono", title: item.quote_id }, shortId(item.quote_id)),
+      // Copyable for the same reason as on the result card: an operator coming back to a quote
+      // taken earlier in the day needs the id itself, not a hover.
+      copyable({ value: String(item.quote_id), display: shortId(item.quote_id) }),
       priceStateBadge(item.finality),
     ),
     facts([

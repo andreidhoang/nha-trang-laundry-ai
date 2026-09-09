@@ -1,0 +1,660 @@
+"""One shop day, clicked through in a real browser against a running stack.
+
+Three verification scripts now sit beside each other and each proves something the others cannot:
+
+    verify_counter_transaction.py   the whole day as API calls -- the deterministic core, no browser
+    verify_console_interaction.py   the console in a browser with the API stubbed -- typing, focus,
+                                    caret, and what survives a 401
+    this script                     the console in a browser against a *real* API and a *real*
+                                    database, signed in as a real role
+
+The gap this one closes is the one that keeps producing defects. Both of the others pass while a
+staff member cannot actually work: the API script never renders a screen, and the stubbed browser
+check signs in as nobody in particular and invents every response. Writing this found two defects on
+its first run, both invisible to the rest of the suite and to every contract test:
+
+  * the quote id was displayed shortened and could not be copied, while the order form the counter
+    must paste it into demands it verbatim. The seal beside it had a copy button; the id did not, so
+    the one hand-off the order flow requires was half supported.
+  * every RBAC-disabled control was silently re-armed. `syncNetworkAffordance` re-applies after each
+    render and owned the `disabled` attribute outright, so being online cleared what `gated()` had
+    set. An AUDITOR was shown a live "Tạo đơn" sitting directly above the sentence
+    explaining why they may not create an order. The server refused with 403 throughout --
+    they may not create an order. The server refused with 403 throughout -- authorization was never
+    at risk -- but the interface was lying about it, and a third write control was not gated at all.
+
+Neither is reachable without signing in, as a specific role, against a server that answers for real.
+
+Run it against the demo stack, or against any host serving the console and an identity provider that
+mints demo subjects::
+
+    uv run --with playwright python scripts/verify_daily_operations.py \
+        --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9101
+
+It trades: it issues a ticket, prices a bag, takes the money and closes the order. Point it at a
+shop that is meant to receive real orders and it will add one.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import sys
+import urllib.request
+
+from playwright.sync_api import sync_playwright
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--base-url", default="http://127.0.0.1:8100")
+parser.add_argument("--idp-url", default="http://127.0.0.1:9101")
+parser.add_argument("--store-id", default="11111111-2222-4333-8444-555555555555")
+parser.add_argument("--subject", default="demo-owner")
+parser.add_argument("--auditor-subject", default="demo-auditor")
+parser.add_argument("--shots", default="", help="directory for screenshots; omitted means none")
+arguments = parser.parse_args()
+
+BASE = arguments.base_url.rstrip("/")
+CONSOLE = f"{BASE}/staff/"
+IDP = arguments.idp_url.rstrip("/")
+STORE = arguments.store_id
+SHOTS = pathlib.Path(arguments.shots) if arguments.shots else None
+if SHOTS:
+    SHOTS.mkdir(parents=True, exist_ok=True)
+
+PASS: list[str] = []
+FAIL: list[str] = []
+
+
+def ok(name: str, cond: bool, detail: object = "") -> None:
+    (PASS if cond else FAIL).append(name)
+    print(
+        f"  {'ok  ' if cond else 'FAIL'} {name}" + (f"  — {detail}" if detail else ""), flush=True
+    )
+
+
+def note(text: str) -> None:
+    print(f"  ··   {text}", flush=True)
+
+
+def head(n: int, title: str) -> None:
+    print(f"\n{'=' * 78}\n{n}. {title}\n{'=' * 78}", flush=True)
+
+
+def token(subject: str) -> str:
+    with urllib.request.urlopen(f"{IDP}/token?sub={subject}") as response:
+        return json.load(response)["id_token"]
+
+
+def shot(page, name: str) -> None:
+    """Screenshots are opt-in: this runs in CI where a filesystem write is not always wanted."""
+    if SHOTS:
+        page.screenshot(path=str(SHOTS / name), full_page=True)
+
+
+with sync_playwright() as pw:
+    browser = pw.chromium.launch(channel="chrome", headless=True)
+    ctx = browser.new_context(
+        viewport={"width": 1280, "height": 900}, permissions=["clipboard-read", "clipboard-write"]
+    )
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    api_calls = []
+
+    def _record(resp):
+        if "/internal/v1/" in resp.url:
+            try:
+                body = resp.text()[:400]
+            except Exception:
+                body = "<unreadable>"
+            api_calls.append(
+                (resp.request.method, resp.status, resp.url.split("/internal")[1], body)
+            )
+
+    page.on("response", _record)
+    page.on(
+        "console",
+        lambda m: errors.append(f"console.{m.type}: {m.text}") if m.type == "error" else None,
+    )
+
+    head(1, "MỞ BẢNG — what a staff member sees before signing in")
+    page.goto(CONSOLE, wait_until="networkidle")
+    page.wait_for_timeout(800)
+    shot(page, "01-signed-out.png")
+    ok("the console loads without being signed in", "Chưa đăng nhập" in page.content())
+    ok(
+        "and it does not silently sign anyone in",
+        "Bảng vận hành không tự đăng nhập" in page.content(),
+    )
+    signin_button = page.locator("a.button", has_text="Tới trang đăng nhập")
+    if signin_button.count():
+        note(
+            f"sign-in button points at {signin_button.first.get_attribute('href')} "
+            "(Caddy serves this in the real stack; this local run exchanges the token directly)"
+        )
+
+    head(2, "ĐĂNG NHẬP — token exchanged for a session cookie, as the sign-in page does")
+    tok = token(arguments.subject)
+    result = page.evaluate(
+        """async (t) => {
+        const r = await fetch('/internal/v1/auth/session', {
+            method: 'POST', credentials: 'include',
+            headers: {'Authorization': 'Bearer ' + t}
+        });
+        return {status: r.status, body: await r.text()};
+    }""",
+        tok,
+    )
+    ok(
+        "the API accepts the identity provider's token",
+        result["status"] in (200, 201),
+        f"HTTP {result['status']} {result['body'][:120]}",
+    )
+    page.reload(wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    shot(page, "02-signed-in.png")
+    ok("the console now shows a signed-in session", "Chưa đăng nhập" not in page.content())
+    body = page.content()
+    ok(
+        "and names the role it granted",
+        "OWNER" in body or "Chủ" in body,
+        "role visible in app bar",
+    )
+
+    head(3, "HÔM NAY — the owner's morning board")
+    page.goto(f"{CONSOLE}#/", wait_until="networkidle")
+    page.wait_for_timeout(1500)
+    shot(page, "03-today.png")
+    body = page.content()
+    ok("the morning board renders", "screen" in body and len(body) > 2000)
+    ok(
+        "takings lead the screen and are named as money collected, not revenue",
+        "Đã thu tại quầy" in body,
+        "",
+    )
+    print("\n  --- what the board says ---")
+    for line in (page.locator("main").first.inner_text() or "").splitlines():
+        if line.strip():
+            print(f"      {line.strip()[:110]}")
+
+    head(4, "TIẾP NHẬN — a walk-in arrives with a bag of laundry")
+    page.goto(f"{CONSOLE}#/order-requests", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    shot(page, "04-intake-empty.png")
+
+    ticket_btn = page.locator("button", has_text="Phát phiếu")
+    ok(
+        "the counter can issue a ticket without typing anything about the customer",
+        ticket_btn.count() == 1,
+    )
+    ticket_btn.first.click()
+    page.wait_for_timeout(1500)
+    contact = page.locator("#intake-contact")
+    ticket_ref = contact.input_value()
+    ok(
+        "issuing a ticket fills the customer reference by itself",
+        len(ticket_ref) == 36,
+        repr(ticket_ref),
+    )
+    row_text = page.locator(
+        "div.row", has=page.locator("button", has_text="Phát phiếu")
+    ).first.inner_text()
+    print(f"      counter says: {row_text.strip()[:120]}")
+    ok(
+        "and the counter is told a number to say out loud",
+        any(ch.isdigit() for ch in row_text),
+        repr(row_text.strip()[:80]),
+    )
+    shot(page, "05-ticket-issued.png")
+
+    page.locator("button[type=submit]", has_text="Ghi nhận tiếp nhận").first.click()
+    page.wait_for_timeout(1500)
+    ok("the intake is recorded", "Đã tiếp nhận" in page.content())
+    shot(page, "06-intake-recorded.png")
+    quote_now = page.locator("#intake-quote-now")
+    ok("and offers a one-tap path to pricing", quote_now.count() == 1)
+
+    head(5, "BÁO GIÁ — pricing the bag, including the 6 kg cliff")
+    quote_now.first.click()
+    page.wait_for_timeout(2000)
+    shot(page, "07-quote-prefilled.png")
+    ok(
+        "the quote screen prefills from the intake with no typing",
+        "Đang báo giá cho yêu cầu" in page.content(),
+    )
+
+    code = page.locator("#quote-line-0-code")
+    ok("the service is picked from the published pricebook, not typed", code.count() == 1)
+    options = code.locator("option").all_text_contents()
+    print(
+        f"      pricebook offers {len(options)} services: "
+        + ", ".join(o.strip()[:28] for o in options[:4])
+        + "…"
+    )
+    code.select_option(index=1 if len(options) > 1 else 0)
+    page.wait_for_timeout(300)
+    qty = page.locator("#quote-line-0-qty")
+    qty.click()
+    page.keyboard.type("5.9", delay=8)
+    page.wait_for_timeout(600)
+    ok(
+        "typing a weight below 6 kg raises the cliff warning",
+        "Gần ngưỡng 6kg" in page.content() or "6kg" in page.content(),
+        "the confirmed pricing rule is surfaced at the counter",
+    )
+    shot(page, "08-quote-cliff.png")
+
+    # Price it properly: clear the item line and use the by-weight service the shop actually sells.
+    labels = [o.strip() for o in options]
+    wash = next((i for i, o in enumerate(labels) if "Giặt sấy" in o or "giặt sấy" in o), 1)
+    code.select_option(index=wash)
+    page.wait_for_timeout(400)
+    qty.fill("")
+    qty.click()
+    page.keyboard.type("6.4", delay=8)
+    page.wait_for_timeout(500)
+    print(f"      pricing '{labels[wash][:40]}' at 6.4 kg")
+    page.locator("button[type=submit]", has_text="Tính giá").first.click()
+    page.wait_for_timeout(2500)
+    shot(page, "09-quote-result.png")
+    result_text = page.locator("main").first.inner_text()
+    ok(
+        "the server returns a price",
+        "₫" in result_text or "VND" in result_text.upper(),
+        [line_ for line_ in result_text.splitlines() if "₫" in line_][:2],
+    )
+    print("\n  --- the quote as the counter reads it ---")
+    for line in result_text.splitlines():
+        s = line.strip()
+        if s and any(k in s for k in ("₫", "Mã báo giá", "Bản", "ƯỚC TÍNH", "ĐÃ DUYỆT")):
+            print(f"      {s[:110]}")
+
+    head(6, "CHỐT GIÁ — the customer agrees, and that becomes the only orderable price")
+    accept = page.locator("button", has_text="Khách đã chốt giá")
+    ok("the counter can attest that the customer agreed", accept.count() >= 1)
+    if accept.count():
+        accept.first.click()
+        page.wait_for_timeout(2000)
+        page.wait_for_timeout(1200)
+        heads = page.locator("h3").all_text_contents()
+        rev_heads = [h for h in heads if "Bản sửa đổi" in h]
+        m = None
+        accepted_revision = rev_heads[0].split()[-1] if rev_heads else "1"
+        print(f"      after accepting, the card heading reads: {rev_heads[:1]}")
+        ok(
+            "the card names the revision the counter must type into the order form",
+            accepted_revision == "2",
+            f"shows r{accepted_revision}; the accepted final is r2",
+        )
+        ok(
+            "the acceptance is recorded as the final price",
+            "Đã chốt" in page.content(),
+            [
+                line_.strip()
+                for line_ in page.locator("main").first.inner_text().splitlines()
+                if "chốt" in line_
+            ][:2],
+        )
+        shot(page, "10-quote-accepted.png")
+
+        # What the counter must carry to the order screen. The card renders shortened forms with the
+        # full value in a title/copy affordance, which is what an operator taps.
+        probe = page.evaluate("""() => {
+            const out = {ids: [], hashes: [], reasons: []};
+            document.querySelectorAll('[title]').forEach(el => {
+                const v = el.getAttribute('title') || '';
+                if (/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(v)) out.ids.push(v);
+                if (v.startsWith('JCS-SHA256-V1:')) out.hashes.push(v);
+            });
+            document.querySelectorAll('[data-copy-value],[data-value]').forEach(el => {
+                const v = el.getAttribute('data-copy-value') || el.getAttribute('data-value') || '';
+                if (v.startsWith('JCS-SHA256-V1:')) out.hashes.push(v);
+                if (/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(v)) out.ids.push(v);
+            });
+            document.querySelectorAll('.notice, .badge, [data-state]').forEach(el => {
+                const s = (el.innerText||'').trim();
+                if (s && s.length < 160) out.reasons.push(s);
+            });
+            return out;
+        }""")
+        print(f"      ids found on the card: {sorted(set(probe['ids']))[:4]}")
+        print(f"      hashes found: {[h[:34] + '…' for h in sorted(set(probe['hashes']))[:2]]}")
+        print("      why the price is still an estimate, as the screen explains it:")
+        for r in dict.fromkeys(probe["reasons"]):
+            if any(
+                k in r
+                for k in (
+                    "ƯỚC",
+                    "HUMAN",
+                    "CAPACITY",
+                    "TAX",
+                    "PROMOTION",
+                    "DELIVERY",
+                    "duyệt",
+                    "chưa",
+                )
+            ):
+                print(f"        · {r[:120]}")
+
+    head(7, "MANG SANG MÀN ĐƠN — the counter copies the quote's seal, as it must")
+    copyables = page.locator("span.copyable")
+    print(f"      {copyables.count()} copyable values on the quote card")
+    carried = {}
+    for i in range(copyables.count()):
+        item = copyables.nth(i)
+        shown = (item.locator("span.copyable__text").inner_text() or "").strip()
+        item.locator("button", has_text="Sao chép").click()
+        page.wait_for_timeout(300)
+        value = page.evaluate("() => navigator.clipboard.readText()")
+        carried[shown] = value
+        print(f"      copied {shown!r} -> {value[:46]}{'…' if len(value) > 46 else ''}")
+    quote_id = next((v for v in carried.values() if len(v) == 36 and v.count("-") == 4), None)
+    seal = next((v for v in carried.values() if v.startswith("JCS-SHA256-V1:")), None)
+    ok("the quote id can be carried to the order screen", quote_id is not None, str(quote_id))
+    ok("the quote's seal can be carried to the order screen", seal is not None, (seal or "")[:30])
+
+    head(8, "TẠO ĐƠN — the order, with where the customer came from")
+    page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
+    page.wait_for_timeout(1500)
+    page.locator("#order-contact").fill(ticket_ref)
+    if quote_id:
+        page.locator("#order-quote").fill(quote_id)
+    page.locator("#order-revision").fill(accepted_revision)
+    if seal:
+        page.locator("#order-hash").fill(seal)
+    page.locator("#order-source").select_option("WALK_IN")
+    page.locator("#order-accepted").fill("2026-09-09T09:00")
+    page.wait_for_timeout(300)
+    shot(page, "11-order-form.png")
+    form = page.locator("form.form").filter(has=page.locator("#order-source"))
+    form.locator("button[type=submit]").first.click()
+    page.wait_for_timeout(2500)
+    shot(page, "12-order-created.png")
+    said = (form.locator("p.result, .notice, [data-state]").first.inner_text() or "").strip()
+    created = "Đã tạo đơn" in page.content()
+    ok("the order is created from the accepted quote", created, said[:160])
+    if not created:
+        print("      the refusal notice, as the counter reads it:")
+        for n in range(page.locator("div.notice").count()):
+            txt = (page.locator("div.notice").nth(n).inner_text() or "").strip()
+            if txt and (
+                "chối" in txt or "không" in txt.lower() or "Mã" in txt or "lỗi" in txt.lower()
+            ):
+                for line in txt.splitlines():
+                    if line.strip():
+                        print(f"        | {line.strip()[:150]}")
+        print(
+            f"      carried: quote={quote_id} rev={accepted_revision} "
+            f"seal={(seal or '')[:26]}… contact={ticket_ref}"
+        )
+        for m, s, u, b in api_calls:
+            if m == "POST" and "/orders" in u:
+                print(f"      API {m} {u} -> {s}")
+                print(f"      body: {b}")
+
+    def move(dimension, target, label, slot=False):
+        """Pick the order off the board and move one dimension, as staff do."""
+        page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
+        page.wait_for_timeout(1400)
+        pick = page.locator("button", has_text="Chọn để chuyển trạng thái")
+        if pick.count() == 0:
+            ok(label, False, "no order on the board to select")
+            return False
+        pick.first.click()
+        page.wait_for_timeout(500)
+        page.locator("#move-dimension").select_option(dimension)
+        page.wait_for_timeout(400)
+        page.locator("#move-target").select_option(target)
+        if slot and page.locator("#move-slot").count():
+            page.locator("#move-slot").check()
+        page.wait_for_timeout(200)
+        form = page.locator("form.form").filter(has=page.locator("#move-dimension"))
+        form.locator("button[type=submit]").first.click()
+        page.wait_for_timeout(1800)
+        latest = [c for c in api_calls if c[0] in ("POST", "PATCH", "PUT") and "/orders/" in c[2]]
+        status = latest[-1][1] if latest else 0
+        body = latest[-1][3] if latest else ""
+        good = 200 <= status < 300
+        ok(label, good, f"HTTP {status} {body[:110] if not good else ''}")
+        return good
+
+    head(9, "NHẬN ĐỒ — the bag is taken in and inspected")
+    move("intake", "RECEIVED_PENDING_INSPECTION", "the bag is received and awaiting inspection")
+    move("intake", "ACCEPTED", "the bag is inspected and accepted", slot=True)
+    shot(page, "13-intake-accepted.png")
+
+    head(10, "XÁC NHẬN ĐƠN — the commercial promise catches up with the bag")
+    move("commercial", "STORE_CONFIRMATION_PENDING", "the shop takes the order for confirmation")
+    move("commercial", "CONFIRMED", "the order is confirmed")
+    move("commercial", "ACTIVE", "the order goes active")
+
+    head(11, "SẢN XUẤT — the machines")
+    for target, label in [
+        ("QUEUED", "queued for washing"),
+        ("IN_PROCESS", "in the machine"),
+        ("QUALITY_CHECK", "checked"),
+        ("READY_AT_STORE", "ready at the counter"),
+        ("RELEASED", "handed to the customer"),
+    ]:
+        move("production", target, f"production: {label}")
+    shot(page, "14-released.png")
+
+    head(12, "TẤT TOÁN — the money")
+    page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    card_link = page.locator("a[href*='#/orders/']")
+    ok(
+        "the board links through to an order's own screen",
+        card_link.count() >= 1,
+        f"{card_link.count()} links",
+    )
+    if card_link.count():
+        card_link.first.click()
+        page.wait_for_timeout(1800)
+        shot(page, "15-order-detail.png")
+        amount_field = page.locator("#settlement-amount")
+        ok("the order screen offers a settlement", amount_field.count() == 1)
+        if amount_field.count():
+            amount_field.fill("128000")
+            # A walk-in collects at the counter, so this checkbox is what closes fulfilment.
+            if page.locator("#settlement-collected").count():
+                page.locator("#settlement-collected").check()
+            page.wait_for_timeout(200)
+            sform = page.locator("form.form").filter(has=page.locator("#settlement-amount"))
+            sform.locator("button[type=submit]").first.click()
+            page.wait_for_timeout(2000)
+            settled = [c for c in api_calls if c[0] == "POST" and "settlement" in c[2]]
+            st = settled[-1] if settled else None
+            ok(
+                "the payment is recorded",
+                bool(st) and 200 <= st[1] < 300,
+                f"HTTP {st[1]} {st[3][:120]}" if st else "no settlement call was made",
+            )
+            shot(page, "16-settled.png")
+
+    head(13, "HOÀN TẤT — the order closes")
+    move("commercial", "COMPLETED", "the order reaches COMPLETED")
+    shot(page, "17-completed.png")
+
+    head(14, "CÁC MÀN CÒN LẠI — every other screen a staff member can open")
+    for route, name in [
+        ("#/approvals", "Duyệt"),
+        ("#/exceptions", "Ngoại lệ"),
+        ("#/incidents", "Sự cố"),
+        ("#/shadow", "Bản nháp AI"),
+        ("#/staff", "Nhân sự"),
+        ("#/system", "Hệ thống"),
+        ("#/gaps", "Chưa hỗ trợ"),
+        ("#/assistant", "Trợ lý"),
+    ]:
+        page.goto(f"{CONSOLE}{route}", wait_until="networkidle")
+        page.wait_for_timeout(1200)
+        text = page.locator("main").first.inner_text() or ""
+        broke = "Không tải được" in text or len(text.strip()) < 40
+        ok(
+            f"{name} ({route}) opens and says something",
+            not broke,
+            text.strip().splitlines()[0][:80] if text.strip() else "empty",
+        )
+        shot(page, f"18-{route.lstrip('#/').replace('/', '-')}.png")
+
+    head(15, "NHỮNG LẦN PHẢI TỪ CHỐI — what must not be possible at a counter")
+
+    # 1. An unknown customer code is refused, never quietly turned into a customer.
+    page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    page.locator("#order-contact").fill("00000000-0000-4000-8000-000000000999")
+    page.locator("#order-quote").fill(quote_id or "00000000-0000-4000-8000-000000000001")
+    page.locator("#order-revision").fill("2")
+    page.locator("#order-hash").fill(seal or ("JCS-SHA256-V1:" + "0" * 64))
+    page.locator("#order-source").select_option("WALK_IN")
+    page.locator("#order-accepted").fill("2026-09-09T09:00")
+    f = page.locator("form.form").filter(has=page.locator("#order-source"))
+    f.locator("button[type=submit]").first.click()
+    page.wait_for_timeout(1800)
+    last = [c for c in api_calls if c[0] == "POST" and c[2].endswith("/orders")][-1]
+    ok(
+        "a customer code the shop never issued is refused, not created",
+        last[1] >= 400,
+        f"HTTP {last[1]} {last[3][:110]}",
+    )
+
+    # 2. A tampered seal is refused even with a real quote id.
+    page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    page.locator("#order-contact").fill(ticket_ref)
+    page.locator("#order-quote").fill(quote_id)
+    page.locator("#order-revision").fill("2")
+    page.locator("#order-hash").fill("JCS-SHA256-V1:" + "b" * 64)
+    page.locator("#order-source").select_option("WALK_IN")
+    page.locator("#order-accepted").fill("2026-09-09T09:00")
+    f = page.locator("form.form").filter(has=page.locator("#order-source"))
+    f.locator("button[type=submit]").first.click()
+    page.wait_for_timeout(1800)
+    last = [c for c in api_calls if c[0] == "POST" and c[2].endswith("/orders")][-1]
+    ok(
+        "a price seal that does not match the accepted revision is refused",
+        last[1] >= 400,
+        f"HTTP {last[1]} {last[3][:110]}",
+    )
+
+    # 3. A stale row version is refused — two staff on one order at the same time.
+    stale = page.evaluate(
+        """async (store) => {
+        const url = `/internal/v1/stores/${store}/orders`;
+        const list = await (await fetch(url, {credentials:'include'})).json();
+        const o = (list.items || list)[0];
+        const jar = document.cookie.split('; ');
+        const csrf = jar.find(c => c.startsWith('staff_csrf='))?.split('=')[1];
+        const r = await fetch(`/internal/v1/orders/${o.order_id}/intake-transition`, {
+            method: 'POST', credentials: 'include',
+            headers: {'Content-Type':'application/json','If-Match':'1',
+                      'Idempotency-Key':'stale-'+Math.random(),
+                      'X-CSRF-Token':csrf||'','Origin':location.origin},
+            body: JSON.stringify({target:'ACCEPTED'})
+        });
+        return {status: r.status, body: (await r.text()).slice(0,140)};
+    }""",
+        STORE,
+    )
+    ok(
+        "an order changed by someone else meanwhile is refused, not overwritten",
+        stale["status"] >= 400,
+        f"HTTP {stale['status']} {stale['body']}",
+    )
+
+    head(16, "PHÂN QUYỀN — the auditor may look and may not touch")
+    actx = browser.new_context(viewport={"width": 1280, "height": 900})
+    apage = actx.new_page()
+    apage.goto(CONSOLE, wait_until="networkidle")
+    atok = token(arguments.auditor_subject)
+    r = apage.evaluate(
+        """async (t) => {
+        const r = await fetch('/internal/v1/auth/session', {method:'POST', credentials:'include',
+            headers:{'Authorization':'Bearer '+t}});
+        return {status:r.status, body:await r.text()};
+    }""",
+        atok,
+    )
+    ok("the auditor can sign in", r["status"] == 200, r["body"][:90])
+    apage.reload(wait_until="networkidle")
+    apage.wait_for_timeout(1000)
+    apage.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
+    apage.wait_for_timeout(1500)
+    shot(apage, "19-auditor.png")
+    atext = apage.locator("main").first.inner_text() or ""
+    submits = apage.locator("form.form button[type=submit]")
+    print(f"      the auditor's submit buttons ({submits.count()}):")
+    for i in range(submits.count()):
+        b = submits.nth(i)
+        print(
+            f"        · {b.inner_text()!r} disabled={b.is_disabled()} "
+            f"aria-disabled={b.get_attribute('aria-disabled')}"
+        )
+    sess = apage.evaluate("""async () => {
+        const r = await fetch('/internal/v1/session', {credentials:'include'});
+        return {status: r.status, body: await r.text()};
+    }""")
+    print(f"      what the console reads about itself: {sess}")
+    hints = apage.locator("form.form p.hint").all_text_contents()
+    print(
+        "      gated() hints on the forms: " + str([h[:60] for h in hints if "Vai trò" in h]) + ""
+    )
+    write = apage.evaluate(
+        """async (store) => {
+        const jar = document.cookie.split('; ');
+        const csrf = jar.find(c => c.startsWith('staff_csrf='))?.split('=')[1];
+        const r = await fetch(`/internal/v1/stores/${store}/orders`, {
+            method:'POST', credentials:'include',
+            headers:{'Content-Type':'application/json','Idempotency-Key':'aud-'+Math.random(),
+                     'X-CSRF-Token':csrf||'','Origin':location.origin},
+            body: JSON.stringify({bound_contact_id:'00000000-0000-4000-8000-000000000001',
+                quote_id:'00000000-0000-4000-8000-000000000002', quote_revision:1,
+                quote_snapshot_hash:'JCS-SHA256-V1:'+'a'.repeat(64),
+                fulfillment_mode:'SELF_DROP_SELF_COLLECT',
+                customer_final_quote_accepted_at:'2026-09-09T02:00:00+00:00',
+                acquisition_source:'WALK_IN'})});
+        return {status:r.status, body:(await r.text()).slice(0,140)};
+    }""",
+        STORE,
+    )
+    ok(
+        "the SERVER refuses an auditor's write regardless of what the screen offers",
+        write["status"] in (401, 403),
+        f"HTTP {write['status']} {write['body']}",
+    )
+    disabled = (
+        all(submits.nth(i).is_disabled() for i in range(submits.count()))
+        if submits.count()
+        else True
+    )
+    ok(
+        "the auditor is told they may not write, and the write controls are disabled",
+        disabled,
+        f"{submits.count()} submit buttons, all disabled={disabled}",
+    )
+    hints = apage.locator("form.form p.hint").all_text_contents()
+    print("      what the auditor's order screen actually says:")
+    for line in atext.splitlines()[:14]:
+        if line.strip():
+            print(f"        | {line.strip()[:120]}")
+    ok(
+        "and the screen says why rather than just hiding the controls",
+        len([h for h in hints if "Vai trò được phép" in h]) >= 3,
+        f"{len([h for h in hints if 'Vai trò được phép' in h])} of 3 explain the refusal",
+    )
+    actx.close()
+
+    print(f"\n{'=' * 78}\nRESULT: {len(PASS)} ok, {len(FAIL)} failed\n{'=' * 78}")
+    for f in FAIL:
+        print(f"  - {f}")
+    ctx.close()
+    browser.close()
+    if errors:
+        print("\n  page errors:", errors[:5])
+
+print()
+if FAIL:
+    print(f"{len(FAIL)} of {len(PASS) + len(FAIL)} checks failed.")
+sys.exit(1 if FAIL else 0)

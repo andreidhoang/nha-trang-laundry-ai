@@ -735,7 +735,7 @@ class ShadowConsoleRepository:
             )
             cursor.execute(
                 """
-                SELECT id, store_id, production_accepted_at
+                SELECT id, store_id, production_accepted_at, production_ready_at
                 FROM orders
                 WHERE store_id = %s
                   AND production_accepted_at IS NOT NULL
@@ -750,8 +750,16 @@ class ShadowConsoleRepository:
         board = []
         for row in rows:
             accepted_at = row[2]
+            # `0037`. Without this the clock never stopped: `comparison_at = ready_at_store or
+            # evaluated_at`, and the population holds every order until it is physically RELEASED --
+            # so a washed order waiting overnight for its owner accrued elapsed time until it read
+            # SLA_BREACHED, and SLA_MET was unreachable from this surface entirely.
+            ready_at = row[3]
             result = evaluate_production_sla(
-                policy, evaluated_at=timestamp, production_accepted_at=accepted_at
+                policy,
+                evaluated_at=timestamp,
+                production_accepted_at=accepted_at,
+                ready_at_store=ready_at,
             )
             board.append(
                 SlaRisk(

@@ -586,7 +586,7 @@ def test_the_sla_board_reports_exactly_what_the_domain_engine_computed() -> None
             self._rows = (
                 [(1,)]
                 if "staff_store_assignments" in statement
-                else [(order_id, store_id, accepted_at)]
+                else [(order_id, store_id, accepted_at, None)]
             )
 
         def fetchone(self) -> tuple[Any, ...] | None:
@@ -793,3 +793,79 @@ def test_paging_the_review_log_is_exact_across_a_shared_timestamp(
         repository.list_reviewed_drafts(
             postgres_connection, store_id=store_id, principal=approver, before=uuid4()
         )
+
+
+def test_the_sla_board_stops_the_clock_when_the_laundry_was_finished() -> None:
+    """`0037`. A washed order waiting to be collected is not a late order.
+
+    Before the `production_ready_at` column existed no caller could supply `ready_at_store`, so
+    `evaluate_production_sla` compared against `now` -- and the board's population holds every order
+    until it is physically RELEASED. A bag washed in six hours and collected the next morning
+    therefore reported SLA_BREACHED, and SLA_MET was unreachable from this surface at all. For a
+    shop whose customers mostly collect the next day that is every order, every morning, which is
+    how a real alert gets trained out of somebody.
+    """
+    store_id = uuid4()
+    order_id = uuid4()
+    accepted_at = NOW - timedelta(hours=20)
+    ready_at = accepted_at + timedelta(hours=6)
+    principal = StaffPrincipal(
+        staff_user_id=uuid4(),
+        oidc_subject="oidc-stub",
+        roles=frozenset({StaffRole.OPERATOR}),
+        mfa_verified=True,
+        session_id=uuid4(),
+    )
+
+    class _Cursor:
+        def __init__(self) -> None:
+            self._rows: list[tuple[Any, ...]] = []
+
+        def __enter__(self) -> _Cursor:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def execute(self, statement: str, _parameters: Any = None) -> None:
+            self._rows = (
+                [(1,)]
+                if "staff_store_assignments" in statement
+                else [(order_id, store_id, accepted_at, ready_at)]
+            )
+
+        def fetchone(self) -> tuple[Any, ...] | None:
+            return self._rows[0] if self._rows else None
+
+        def fetchall(self) -> list[tuple[Any, ...]]:
+            return self._rows
+
+    class _Connection:
+        def cursor(self) -> _Cursor:
+            return _Cursor()
+
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+
+    board = ShadowConsoleRepository().sla_risk_board(
+        _Connection(), store_id=store_id, principal=principal, policy=STANDARD_WASH_SLA, now=NOW
+    )
+
+    assert len(board) == 1
+    # Twenty hours since washing started, six hours to finish it, an eight-hour target. The reason
+    # codes are what changed and what the assistant counts -- `assistant.py` tallies orders whose
+    # codes contain SLA_BREACHED and reads the number out to the owner. `overall_outcome` is not
+    # the SLA verdict: it folds in `promise_outcome`, which is REQUIRE_HUMAN on every order because
+    # this shop never promises a ready time automatically, so it cannot move and is not the signal.
+    assert "SLA_MET" in board[0].reason_codes
+    assert "SLA_BREACHED" not in board[0].reason_codes
+
+    # And the alarm still fires for one that really was late, so the fix did not silence it.
+    late = evaluate_production_sla(
+        STANDARD_WASH_SLA,
+        evaluated_at=NOW,
+        production_accepted_at=accepted_at,
+        ready_at_store=accepted_at + timedelta(hours=12),
+    )
+    assert late.outcome.value == "BREACHED"

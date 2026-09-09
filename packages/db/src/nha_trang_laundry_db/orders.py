@@ -508,6 +508,12 @@ class OrderRepository:
             closed_at = (
                 occurred_at if next_state.commercial is CommercialOrderStatus.COMPLETED else None
             )
+            # `0037`. The moment production first said the laundry was finished, which is what stops
+            # the SLA clock. COALESCE in the UPDATE keeps the first one, so a later ON_HOLD and
+            # resume does not move it and passing NULL on every other transition is a no-op.
+            ready_at = (
+                occurred_at if next_state.production is ProductionStatus.READY_AT_STORE else None
+            )
 
             def mutation(cursor: Any) -> None:
                 cursor.execute(
@@ -515,6 +521,7 @@ class OrderRepository:
                     UPDATE orders
                     SET commercial_status = %s, intake_status = %s, production_status = %s,
                         production_resume_status = %s, production_accepted_at = %s,
+                        production_ready_at = COALESCE(production_ready_at, %s),
                         closed_at = COALESCE(closed_at, %s), row_version = row_version + 1
                     WHERE id = %s AND row_version = %s
                     RETURNING id
@@ -529,6 +536,7 @@ class OrderRepository:
                             else None
                         ),
                         next_state.production_accepted_at,
+                        ready_at,
                         closed_at,
                         command.order_id,
                         command.expected_row_version,

@@ -167,7 +167,7 @@ SESSION_OK = {
     "mfa_verified": True,
 }
 
-state = {"authenticated": True}
+state = {"authenticated": True, "hold_ticket": False}
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(channel="chrome", headless=True)
@@ -216,6 +216,22 @@ with sync_playwright() as playwright:
             # The quote form refuses to build without this, so an empty stub would leave every
             # assertion below looking at a refusal notice rather than a form.
             body = PRICEBOOK_SERVICES
+        elif "/counter-tickets" in url and route.request.method == "POST":
+            # Held open on request, so a test can observe a button while its write is in flight.
+            if state.get("hold_ticket"):
+                return
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "ticket_id": "66666666-7777-4333-8444-aaaaaaaaaaaa",
+                        "ticket_number": 1,
+                        "issued_on": "2026-09-09",
+                    }
+                ),
+            )
+            return
         elif url.endswith("/orders") and route.request.method == "POST":
             route.fulfill(
                 status=201,
@@ -704,6 +720,59 @@ with sync_playwright() as playwright:
         page.locator("#order-source").input_value() == "UNKNOWN",
         repr(page.locator("#order-source").input_value()),
     )
+
+    print()
+    print("=" * 74)
+    print("8. BA NGUỒN VÔ HIỆU HOÁ — coming back online must undo only its own doing")
+    print("=" * 74)
+
+    # Three separate things disable a control here: a permission refusal from `gated()`, an
+    # in-flight write, and being offline. `syncNetworkAffordance` re-applies after every render and
+    # used to own the `disabled` attribute outright, so `online` cleared whatever anyone else had
+    # set. That produced two defects a week apart: a read-only AUDITOR offered a live "Tạo đơn",
+    # and a button re-armed mid-write for a second submit of a command already in flight. Neither
+    # is visible without driving the events, which is why this section exists.
+    page.goto(f"http://localhost:{PORT}/#/order-requests", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+
+    ticket_button = page.locator("button", has_text="Phát phiếu")
+    check(
+        "the walk-in ticket button is declared network-dependent",
+        ticket_button.count() == 1
+        and ticket_button.first.get_attribute("data-requires-network") == "true",
+        ticket_button.first.get_attribute("data-requires-network")
+        if ticket_button.count()
+        else "absent",
+    )
+
+    # `context.set_offline` is what actually flips `navigator.onLine`; dispatching the event alone
+    # leaves it true, and `syncNetworkAffordance` reads the property rather than the event.
+    context.set_offline(True)
+    page.evaluate("() => window.dispatchEvent(new Event('offline'))")
+    page.wait_for_timeout(300)
+    offline_disabled = ticket_button.first.is_disabled()
+    context.set_offline(False)
+    page.evaluate("() => window.dispatchEvent(new Event('online'))")
+    page.wait_for_timeout(300)
+    check(
+        "it goes dead when the connection drops and comes back when it returns",
+        offline_disabled and not ticket_button.first.is_disabled(),
+        f"offline={offline_disabled} online={not ticket_button.first.is_disabled()}",
+    )
+
+    # Hold its request open so the button is genuinely in flight, then fire `online` underneath it.
+    state["hold_ticket"] = True
+    ticket_button.first.click()
+    page.wait_for_timeout(400)
+    in_flight = ticket_button.first.is_disabled()
+    page.evaluate("() => window.dispatchEvent(new Event('online'))")
+    page.wait_for_timeout(400)
+    check(
+        "a button disabled by its own in-flight write is not re-armed by an `online` event",
+        in_flight and ticket_button.first.is_disabled(),
+        f"in_flight={in_flight} still_disabled={ticket_button.first.is_disabled()}",
+    )
+    state["hold_ticket"] = False
 
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))
     browser.close()

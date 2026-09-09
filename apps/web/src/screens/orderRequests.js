@@ -313,6 +313,11 @@ export function render_() {
       {
         type: "button",
         class: "button button--quiet",
+        // It POSTs a counter ticket, so it has to go dead with the network like every other write.
+        // Without this it stayed lit while the form's own submit greyed out and explained itself --
+        // and this is the first button of the shop's day, so an operator with no wifi would press
+        // it, get nothing, and press it again.
+        dataRequiresNetwork: "true",
         onClick: async () => {
           ticketButton.disabled = true;
           ticketNote.textContent = "Đang phát phiếu…";

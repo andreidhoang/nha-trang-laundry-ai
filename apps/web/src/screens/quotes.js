@@ -335,6 +335,10 @@ function acceptControl(result, store, onAccepted, writeVerdict) {
     {
       type: "button",
       class: "button",
+      // Without this the attestation stayed lit while every other write on the screen greyed out
+      // and explained itself -- so an operator reading the offline banner would see one live button
+      // and press it, and the price the customer agreed would be lost with the request.
+      dataRequiresNetwork: "true",
       onClick: async () => {
         button.disabled = true;
         setResult(host, "warn", "Đang ghi lời xác nhận…");
@@ -1114,8 +1118,9 @@ export function render_(context) {
           label: "Khách nhận đồ thế nào?",
           hint:
             "Khách tự mang đến và tự lấy về thì không có phí giao, và báo giá ra tổng tiền ngay. " +
-            "Có giao hàng thì cần quãng đường đã đo; trên 6km, và với đơn chỉ có một chiều ở " +
-              "mọi quãng đường, phí do nhân viên và khách thỏa thuận.",
+            "Đơn có cả lấy và trả thì cần quãng đường đã đo: dưới 2km miễn phí, 2–6km 10.000đ, " +
+            "trên 6km nhân viên và khách thỏa thuận. Đơn “Chỉ lấy” hoặc “Chỉ trả” không dùng bảng " +
+            "quãng đường — phí luôn do nhân viên và khách thỏa thuận, ở mọi quãng đường.",
           control: fulfillmentSelect,
         }),
         distanceField,

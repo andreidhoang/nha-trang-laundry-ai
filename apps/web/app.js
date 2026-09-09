@@ -474,24 +474,50 @@ function guard(_context, route) {
 }
 
 /**
- * Enable or disable every control that cannot work without the network.
+ * Disable every control that cannot work without the network, and re-enable only those.
  *
  * Applied live rather than baked in at render time, and re-applied after each render. A control
  * that read `navigator.onLine` once when its screen was built would keep whatever value it saw for
  * as long as the operator stayed on that screen.
+ *
+ * **Three things disable a control here and this function owns exactly one of them.** Until
+ * 2026-09-09 it owned the attribute outright, and re-applying it while online cleared whatever
+ * anyone else had set:
+ *
+ *   - a permission refusal from `gated()` -- an AUDITOR, read-only, was shown a live "Tạo đơn"
+ *     sitting directly above the sentence explaining why they may not create an order;
+ *   - an in-flight write. Six places set `.disabled = true` for the duration of a request
+ *     (`exceptions.js:116`, `assistant.js:453`, `orderRequests.js:317`, `quotes.js:339`), and a
+ *     tablet that drops and rejoins wifi mid-write fires `online` -- which re-armed the button and
+ *     invited a second submit of a command already in flight;
+ *   - being offline, which is this function's own concern.
+ *
+ * Rather than teach it every other reason, it now only undoes what it did: it disables what it
+ * finds enabled, marks that with `data-offline-disabled`, and on the way back clears exactly those.
+ * Anything already disabled when the network drops stays disabled, whoever disabled it and why.
  */
 function syncNetworkAffordance() {
   const offline = !navigator.onLine;
   for (const control of document.querySelectorAll("[data-requires-network]")) {
-    // A control can be disabled for two independent reasons, and this function owns only one of
-    // them. Until 2026-09-09 it owned the attribute outright, so coming back online re-armed every
-    // button `gated()` had disabled for lack of a role -- found by signing into the running console
-    // as AUDITOR, which is read-only, and being offered "Tạo đơn", "Chuyển trạng thái" and
-    // "Ghi nhận", each sitting directly above the sentence explaining why it was not allowed.
-    const denied = control.getAttribute("data-denied") === "true";
-    const blocked = offline || denied;
-    control.toggleAttribute("disabled", blocked);
-    control.setAttribute("aria-disabled", blocked ? "true" : "false");
+    if (offline) {
+      // Disable only what is not already disabled, and remember that we were the one who did it.
+      if (!control.hasAttribute("disabled")) {
+        control.toggleAttribute("disabled", true);
+        control.setAttribute("data-offline-disabled", "true");
+      }
+      control.setAttribute("aria-disabled", "true");
+      continue;
+    }
+    // Back online: undo our own doing and nothing else.
+    if (control.getAttribute("data-offline-disabled") === "true") {
+      control.removeAttribute("data-offline-disabled");
+      // `data-denied` is belt and braces: a permission refusal must survive even if some future
+      // code clears `disabled` between the two branches.
+      if (control.getAttribute("data-denied") !== "true") {
+        control.toggleAttribute("disabled", false);
+      }
+    }
+    control.setAttribute("aria-disabled", control.hasAttribute("disabled") ? "true" : "false");
   }
 }
 

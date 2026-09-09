@@ -25,9 +25,19 @@ import pytest
 from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
-from nha_trang_laundry_db.orders import CreateOrderCommand, OrderRepository
+from nha_trang_laundry_db.orders import (
+    CreateOrderCommand,
+    OrderRepository,
+    OrderTransitionCommand,
+)
 from nha_trang_laundry_db.stores import StoreRepository
-from nha_trang_laundry_domain.catalog import AcquisitionSource, FulfillmentMode
+from nha_trang_laundry_domain.catalog import (
+    AcquisitionSource,
+    FulfillmentMode,
+    IntakeStatus,
+    ProductionStatus,
+)
+from nha_trang_laundry_domain.orders import IntakeReadiness
 from quote_test_data import accepted_quote
 
 NOW = datetime(2026, 9, 8, 3, tzinfo=UTC)
@@ -200,3 +210,107 @@ def test_a_replay_that_changes_the_source_is_a_conflict_not_a_replay(connection:
 
     with pytest.raises(IdempotencyConflictError):
         OrderRepository().create(connection, command(AcquisitionSource.WALK_IN))
+
+
+def test_the_ready_clock_clears_for_a_rewash_and_restamps_when_it_is_finished_again(
+    connection: Any,
+) -> None:
+    """`0037`, corrected. A rewashed order is not a finished order.
+
+    `DEC-024` makes READY_AT_STORE -> EXCEPTION -> IN_PROCESS legal on purpose: a stain found at
+    quality check needs a rewash, and that is backward movement through the sequence. The first
+    version of this column kept the earliest stamp forever, which froze the SLA board at MET for
+    precisely the order most likely to be late -- the inverse of the defect the column was added to
+    fix. It now names the LAST completion, and holds nothing while the work is being redone.
+    """
+
+    order_id, store_id = _order(connection, AcquisitionSource.WALK_IN)
+    principal = _staff_for_store(connection, store_id)
+    repository = OrderRepository()
+
+    def move(**kwargs: Any) -> None:
+        stored = _current(connection, order_id)
+        repository.transition(
+            connection,
+            OrderTransitionCommand(
+                order_id,
+                stored,
+                principal,
+                f"ready-clock-{uuid4().hex}",
+                uuid4(),
+                **kwargs,
+            ),
+        )
+
+    move(intake_target=IntakeStatus.RECEIVED_PENDING_INSPECTION)
+    move(
+        intake_target=IntakeStatus.ACCEPTED,
+        intake_readiness=IntakeReadiness(
+            custody_recorded=True,
+            quantity_basis_approved=True,
+            service_classified=True,
+            exact_price_approved=True,
+            customer_reconfirmation_satisfied=True,
+            slot_approved=True,
+        ),
+        production_accepted_at=NOW,
+    )
+    for target in (
+        ProductionStatus.QUEUED,
+        ProductionStatus.IN_PROCESS,
+        ProductionStatus.QUALITY_CHECK,
+        ProductionStatus.READY_AT_STORE,
+    ):
+        move(production_target=target)
+    first_ready = _ready_at(connection, order_id)
+    assert first_ready is not None, "reaching READY_AT_STORE must stamp the clock"
+
+    # A stain is found. The order goes to EXCEPTION and back to the machine.
+    move(production_target=ProductionStatus.EXCEPTION)
+    assert _ready_at(connection, order_id) is None, (
+        "an order being rewashed is not finished, so the clock must not still name a completion"
+    )
+
+    move(production_target=ProductionStatus.IN_PROCESS)
+    assert _ready_at(connection, order_id) is None
+
+    move(production_target=ProductionStatus.QUALITY_CHECK)
+    move(production_target=ProductionStatus.READY_AT_STORE)
+    second_ready = _ready_at(connection, order_id)
+    assert second_ready is not None
+    assert second_ready > first_ready, "the second completion is the one that counts"
+
+    # And releasing keeps it: the laundry left, nothing was redone.
+    move(production_target=ProductionStatus.RELEASED)
+    assert _ready_at(connection, order_id) == second_ready
+
+
+def _current(connection: Any, order_id: UUID) -> int:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT row_version FROM orders WHERE id = %s", (order_id,))
+        row = cursor.fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def _ready_at(connection: Any, order_id: UUID) -> datetime | None:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT production_ready_at FROM orders WHERE id = %s", (order_id,))
+        row = cursor.fetchone()
+    assert row is not None
+    stamped = row[0]
+    assert stamped is None or isinstance(stamped, datetime)
+    return stamped
+
+
+def _staff_for_store(connection: Any, store_id: UUID) -> StaffPrincipal:
+    """The principal `_order` already created for this store, re-derived from its assignment."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT staff_user_id FROM staff_store_assignments WHERE store_id = %s LIMIT 1",
+            (store_id,),
+        )
+        row = cursor.fetchone()
+    assert row is not None
+    staff_id = row[0] if isinstance(row[0], UUID) else UUID(str(row[0]))
+    return StaffPrincipal(staff_id, f"oidc-{staff_id}", frozenset({StaffRole.OWNER_ADMIN}), True)

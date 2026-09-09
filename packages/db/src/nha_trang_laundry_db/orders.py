@@ -516,12 +516,25 @@ class OrderRepository:
             closed_at = (
                 occurred_at if next_state.commercial is CommercialOrderStatus.COMPLETED else None
             )
-            # `0037`. The moment production first said the laundry was finished, which is what stops
-            # the SLA clock. COALESCE in the UPDATE keeps the first one, so a later ON_HOLD and
-            # resume does not move it and passing NULL on every other transition is a no-op.
-            ready_at = (
+            # `0037`. When production last said the laundry was finished, which is what stops the
+            # SLA clock. Three cases, and the middle one is why this is not a plain COALESCE:
+            #
+            #   READY_AT_STORE  stamp it now, replacing any earlier stamp. `DEC-024` makes
+            #                   READY_AT_STORE -> EXCEPTION -> IN_PROCESS legal on purpose, because
+            #                   a stain found at quality check needs a rewash. The first "finished"
+            #                   was wrong, so keeping it would be wrong.
+            #   RELEASED        keep what is there. The laundry left; nothing was redone.
+            #   anything else   clear it. While an order is being rewashed it is NOT finished, and
+            #                   a stale stamp made the risk board report SLA_MET for exactly the
+            #                   order most likely to be late.
+            #
+            # A first version kept the earliest stamp forever, on the reasoning that the question is
+            # when the laundry was done rather than how often the board was touched. That reasoning
+            # is wrong the moment a rewash exists: it freezes MET permanently for a rewashed order.
+            ready_now = (
                 occurred_at if next_state.production is ProductionStatus.READY_AT_STORE else None
             )
+            ready_keep = next_state.production is ProductionStatus.RELEASED
 
             def mutation(cursor: Any) -> None:
                 cursor.execute(
@@ -529,7 +542,9 @@ class OrderRepository:
                     UPDATE orders
                     SET commercial_status = %s, intake_status = %s, production_status = %s,
                         production_resume_status = %s, production_accepted_at = %s,
-                        production_ready_at = COALESCE(production_ready_at, %s),
+                        production_ready_at = COALESCE(
+                            %s, CASE WHEN %s THEN production_ready_at ELSE NULL END
+                        ),
                         closed_at = COALESCE(closed_at, %s), row_version = row_version + 1
                     WHERE id = %s AND row_version = %s
                     RETURNING id
@@ -544,7 +559,8 @@ class OrderRepository:
                             else None
                         ),
                         next_state.production_accepted_at,
-                        ready_at,
+                        ready_now,
+                        ready_keep,
                         closed_at,
                         command.order_id,
                         command.expected_row_version,

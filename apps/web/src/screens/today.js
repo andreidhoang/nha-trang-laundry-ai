@@ -158,16 +158,22 @@ function takingsCard() {
       h(
         "p",
         null,
-        "Gồm: các đơn đã tất toán tại quầy hôm nay — khách trả đủ số tiền trên báo giá. Có cả đơn " +
-          "khách trả trước rồi tiệm giao tận nơi, nên tiền đã thu không có nghĩa là đồ đã ra khỏi " +
-          "tiệm. Máy chủ cộng trực tiếp từ sổ ghi tất toán; màn hình này không tự cộng.",
+        "Gồm: các đơn đã tất toán tại quầy hôm nay — khách trả đủ số tiền trên báo giá, một lần, " +
+          "tại quầy. Có hai trường hợp và cả hai đều đã trả đủ: khách tự lấy đồ về, hoặc đã trả " +
+          "đủ rồi tiệm giao tận nơi sau. Nên tiền đã thu không có nghĩa là đồ đã ra khỏi tiệm. " +
+          "Máy chủ cộng trực tiếp từ sổ ghi tất toán; màn hình này không tự cộng.",
       ),
       h(
         "p",
         null,
-        "Không gồm: đơn đang giặt, đơn đã giao nhưng chưa thu tiền, và mọi khoản trả trước, trả " +
-          "một phần hay công nợ doanh nghiệp — hệ thống chưa hỗ trợ những hình thức đó. " +
-          "Vì vậy đây không phải doanh thu.",
+        // "mọi khoản trả trước" collided with the paragraph above the moment that one started
+        // naming prepaid deliveries: both supported settlements are paid IN FULL at the counter,
+        // and what differs is only where the goods go afterwards. What is refused is a part
+        // payment -- a deposit, instalments, or shop credit -- which is what this now says, in the
+        // same words the settlement panel itself uses.
+        "Không gồm: đơn đang giặt, đơn đã giao nhưng chưa thu tiền, và mọi hình thức đặt cọc, " +
+          "trả thiếu, trả thừa, trả góp hay ghi nợ doanh nghiệp — hệ thống chưa hỗ trợ những " +
+          "hình thức đó. Vì vậy đây không phải doanh thu.",
       ),
       h("p", null, h("a", { href: "#/gaps" }, "Xem danh sách năng lực chưa hỗ trợ")),
     ),

@@ -1,6 +1,7 @@
 """Staff-only API entry point. Public customer endpoints are intentionally absent."""
 
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from datetime import date, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -78,7 +79,7 @@ from nha_trang_laundry_observability import (
 from opentelemetry import metrics, trace
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.responses import StreamingResponse
+from starlette.responses import JSONResponse, StreamingResponse
 
 from nha_trang_laundry_api.assistant import (
     AssistantService,
@@ -597,7 +598,19 @@ def logout(
 
     session_token = request.cookies.get(_AUTH_SETTINGS.staff_session_cookie_name)
     if session_token is not None and principal is not None and service is not None:
-        service.logout(session_token, principal)
+        # Signing out twice is not a failure. `revoke_session` raises when the session is already
+        # gone, and that escaped as a 500.
+        #
+        # Measured: a *sequential* second sign-out answers 401, because `current_principal` rejects
+        # the revoked session before this body runs. The 500 needs two requests genuinely in
+        # flight together -- the same person on two tablets, or a retry racing its own original --
+        # where both pass authentication and only one wins the revoke. Rare, and worth fixing for
+        # what it did rather than how often: the exception fired before the two `delete_cookie`
+        # calls below, so the loser kept its cookies and was shown an error for a session that had
+        # in fact ended. The goal state is "not signed in", and it is already reached.
+        with suppress(IdentityStateError):
+            service.logout(session_token, principal)
+    # Outside the guard on purpose: whatever happened above, this browser stops holding a session.
     response.delete_cookie(_AUTH_SETTINGS.staff_session_cookie_name, path="/")
     response.delete_cookie(_AUTH_SETTINGS.staff_csrf_cookie_name, path="/")
     return {"end_session_url": _end_session_url()}
@@ -680,7 +693,44 @@ def _record_authorization_denial(reason_code: str) -> None:
 # wrong" from "you are not in this store" — and the second is a fact about our data, not about them.
 # The specific reason is still recorded, in the structured log, where the operator can read it and
 # the caller cannot.
+#: Every write route takes this header, and it is constrained here rather than in nineteen places.
+#:
+#: An empty one used to reach the repository, where `_required_text` raised a bare `ValueError` that
+#: no route's except tuple names -- so `Idempotency-Key: ` answered HTTP 500, measured. A blank
+#: header is not exotic: it is a template variable that did not interpolate, or a proxy that
+#: stripped the value. 500 tells the client to retry a write, which is the one thing an idempotency
+#: key exists to make safe.
+#:
+#: FastAPI answers a violation with 422 and names the header, before any handler runs.
+IdempotencyKey = Annotated[
+    str, Header(alias="Idempotency-Key", min_length=1, max_length=300, pattern=r"\S")
+]
+
 AUTHORIZATION_DENIED = "operation denied"
+
+
+@app.exception_handler(StoreAccessError)
+def _store_access_denied(_request: Request, error: StoreAccessError) -> JSONResponse:
+    """A membership refusal is 403 everywhere, whether or not the route remembered to catch it.
+
+    Per-route `except` tuples cannot carry this invariant, and trying made a test that looked
+    stronger than it was. `require_store_membership` is called from deep inside the repositories --
+    `orders.py`, `approvals.py`, `assistant.py`, `delivery_legs.py`, `intake.py` and more -- so the
+    set of routes that can raise it is not the set whose own body mentions it, and enumerating that
+    set by scanning `operations.py` covered six of at least nine. It had already shipped twice as a
+    500: on `create_order`, and on `record_settlement`, which is the route that moves money. A 500
+    tells the client to retry.
+
+    So it is answered once, here, for the whole surface. The route-level catches stay -- they
+    produce the same status and read where the refusal is expected -- but nothing depends on a
+    future route remembering to add one.
+    """
+
+    del _request, error
+    _record_authorization_denial("STORE_MEMBERSHIP_REQUIRED")
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN, content={"detail": AUTHORIZATION_DENIED}
+    )
 
 
 def require_owner(
@@ -772,7 +822,7 @@ def assign_staff_role(
 def assign_staff_store(
     staff_user_id: UUID,
     store_id: UUID,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_owner)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> None:
@@ -806,7 +856,7 @@ def assign_staff_store(
 def revoke_staff_store(
     staff_user_id: UUID,
     store_id: UUID,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_owner)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> None:
@@ -871,7 +921,7 @@ def revoke_session(
 def create_order(
     store_id: UUID,
     request: OrderCreateRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> OrderResponse:
@@ -940,7 +990,7 @@ def list_orders(
 def transition_order(
     order_id: UUID,
     request: CommercialTransitionRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
@@ -966,7 +1016,7 @@ def transition_order(
 def transition_order_intake(
     order_id: UUID,
     request: IntakeTransitionRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
@@ -1003,7 +1053,7 @@ def transition_order_intake(
 def transition_order_production(
     order_id: UUID,
     request: ProductionTransitionRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
@@ -1038,7 +1088,7 @@ def transition_order_production(
 def record_settlement(
     order_id: UUID,
     request: SettlementRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> SettlementResponse:
@@ -1102,7 +1152,7 @@ def record_settlement(
 )
 def request_approval(
     request: ApprovalRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> ApprovalResponse:
@@ -1152,7 +1202,7 @@ def list_pending_approvals(
 def decide_approval(
     approval_id: UUID,
     request: ApprovalDecisionRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> ApprovalResponse:
@@ -1183,7 +1233,7 @@ def decide_approval(
 def create_quote(
     store_id: UUID,
     request: QuoteCreateRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
@@ -1268,7 +1318,7 @@ class CounterTicketResponse(BaseModel):
 )
 def issue_counter_ticket(
     store_id: UUID,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> CounterTicketResponse:
@@ -1316,7 +1366,7 @@ class DeliveryLegResponse(BaseModel):
 def record_delivery_leg(
     order_id: UUID,
     request: DeliveryLegRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> DeliveryLegResponse:
@@ -1368,7 +1418,7 @@ def accept_quote(
     store_id: UUID,
     quote_id: UUID,
     request: QuoteAcceptRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> QuoteRevisionResponse:
@@ -1579,7 +1629,7 @@ class OrderRequestSummaryResponse(BaseModel):
 def create_order_request(
     store_id: UUID,
     request: OrderRequestCreateRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> OrderRequestResponse:
@@ -1685,7 +1735,7 @@ def _order_request_summary_response(item: OrderRequestSummary) -> OrderRequestSu
 def prepare_manual_send(
     approval_id: UUID,
     request: ManualSendPrepareRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> ManualSendResponse:
@@ -1714,7 +1764,7 @@ def prepare_manual_send(
 def attest_manual_send(
     manual_send_id: UUID,
     request: ManualSendAttestationRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
@@ -1744,7 +1794,7 @@ def attest_manual_send(
 def open_incident(
     store_id: UUID,
     request: IncidentOpenRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> IncidentResponse:
@@ -2059,7 +2109,7 @@ def list_shadow_drafts(
 def decide_shadow_draft(
     agent_run_id: UUID,
     request: DraftDecisionRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> DraftDecisionResponse:
@@ -2231,7 +2281,7 @@ def get_assistant_service() -> AssistantService:
 def post_assistant_turn(
     store_id: UUID,
     request: AssistantTurnRequest,
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[AssistantService | None, Depends(get_assistant_service)] = None,
 ) -> AssistantTurnResponse:

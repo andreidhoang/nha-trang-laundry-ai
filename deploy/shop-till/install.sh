@@ -1,0 +1,125 @@
+#!/bin/bash
+# Schedule the pilot week's checks and its daily base backup, as launch agents.
+#
+# `cron` is the wrong mechanism here: on macOS a job whose time passes while the machine is asleep
+# is not run, and never catches up. A laptop at a shop counter is asleep every night, so the daily
+# base backup would simply never happen and nothing would report that. `launchd` runs a missed
+# `StartCalendarInterval` job once on wake, which is the behaviour a shop needs.
+#
+# See deploy/shop-till/README.md for the two macOS traps that produce a job which looks scheduled
+# and never runs.
+
+set -euo pipefail
+
+LABEL_PREFIX="com.giatlasachcong"
+AGENT_DIRECTORY="$HOME/Library/LaunchAgents"
+LOG_DIRECTORY="$HOME/Library/Logs/giatlasachcong"
+REPOSITORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PROJECT="nha-trang-laundry-shop"
+
+agents=(checks-data checks-host base-backup)
+
+uninstall() {
+    for name in "${agents[@]}"; do
+        local plist="$AGENT_DIRECTORY/$LABEL_PREFIX.$name.plist"
+        launchctl bootout "gui/$(id -u)/$LABEL_PREFIX.$name" 2>/dev/null || true
+        rm -f "$plist"
+        echo "removed $LABEL_PREFIX.$name"
+    done
+    exit 0
+}
+
+[ "${1:-}" = "--uninstall" ] && uninstall
+
+: "${R1_LOCAL_ARCHIVE_PATH:?set R1_LOCAL_ARCHIVE_PATH to the archive directory before installing}"
+
+if [ ! -d "$R1_LOCAL_ARCHIVE_PATH" ]; then
+    echo "install: $R1_LOCAL_ARCHIVE_PATH does not exist." >&2
+    echo "  If that is an external drive, attach it first. A bind mount to a missing path is" >&2
+    echo "  created as an empty root-owned directory and every archive write then fails." >&2
+    exit 1
+fi
+
+case "$REPOSITORY" in
+    "$HOME"/Documents/*|"$HOME"/Desktop/*|"$HOME"/Downloads/*)
+        echo "install: warning — the checkout is under a TCC-protected directory." >&2
+        echo "  macOS will refuse these agents access with no useful error. Either grant" >&2
+        echo "  /bin/bash Full Disk Access in System Settings → Privacy & Security, or move the" >&2
+        echo "  checkout somewhere else (~/laundry) and re-run." >&2
+        ;;
+esac
+
+mkdir -p "$AGENT_DIRECTORY" "$LOG_DIRECTORY"
+
+write_agent() {
+    local name="$1" schedule="$2" script="$3"
+    local plist="$AGENT_DIRECTORY/$LABEL_PREFIX.$name.plist"
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL_PREFIX.$name</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>$script</string>
+  </array>
+  $schedule
+  <key>WorkingDirectory</key><string>$REPOSITORY</string>
+  <key>StandardOutPath</key><string>$LOG_DIRECTORY/$name.log</string>
+  <key>StandardErrorPath</key><string>$LOG_DIRECTORY/$name.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>R1_LOCAL_ARCHIVE_PATH</key><string>$R1_LOCAL_ARCHIVE_PATH</string>
+  </dict>
+</dict>
+</plist>
+PLIST
+    launchctl bootout "gui/$(id -u)/$LABEL_PREFIX.$name" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+    echo "installed $LABEL_PREFIX.$name"
+}
+
+every_five_minutes='<key>StartInterval</key><integer>300</integer>'
+# `StartCalendarInterval`, not an interval: a missed calendar job runs once on the next wake, which
+# is exactly what a laptop that sleeps overnight needs. 02:30 is chosen because the shop is shut.
+nightly='<key>StartCalendarInterval</key><dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>'
+
+# The data checks run inside the database's own network, as the postgres uid: `postgres` publishes
+# no port and sits only on `internal: true` networks, so nothing on the host can reach it, and the
+# base-backup marker lives in a 0700 directory owned by that uid.
+data_checks="docker run --rm \
+  --network ${PROJECT}_database-private --user 70:70 \
+  -v \"$REPOSITORY:/repo:ro\" -w /repo -e HOME=/tmp \
+  -v ${PROJECT}_pgdata:/pgdata:ro \
+  -v ${PROJECT}_pgbackupstaging:/staging:ro \
+  -e DATABASE_URL=\"\$(cat $REPOSITORY/.shop/secrets/migration_database_url)\" \
+  -e R1_RECOVERY_MODE=self-managed \
+  -e R1_PGDATA_PATH=/pgdata -e R1_BASE_BACKUP_MARKER=/staging/last-success \
+  --entrypoint python nha-trang-laundry-api:local \
+  scripts/check_shop_operations.py --check wal --check base --check volume"
+
+# The host checks need the Docker socket and the console's own name over TLS, neither of which
+# exists inside the network. On the till the console is on loopback, so the name resolves through
+# /etc/hosts rather than the router.
+host_checks="cd $REPOSITORY && \
+  R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
+  R1_CONSOLE_CA_FILE=$REPOSITORY/.shop/ca/ca.crt \
+  .venv/bin/python scripts/check_shop_operations.py --check flags --check console"
+
+base_backup="cd $REPOSITORY && docker compose \
+  -f compose.r1.yaml -f compose.shop-local.yaml -f compose.shop-till.yaml \
+  --profile self-managed-database exec -T postgres /usr/local/bin/base-backup.sh"
+
+write_agent checks-data "$every_five_minutes" "$data_checks"
+write_agent checks-host "$every_five_minutes" "$host_checks"
+write_agent base-backup "$nightly" "$base_backup"
+
+echo
+echo "archive:  $R1_LOCAL_ARCHIVE_PATH"
+echo "logs:     $LOG_DIRECTORY"
+echo "watch:    tail -f $LOG_DIRECTORY/checks-data.log"
+echo "status:   launchctl list | grep giatlasachcong"

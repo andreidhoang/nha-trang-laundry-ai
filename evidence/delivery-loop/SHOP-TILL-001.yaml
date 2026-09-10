@@ -1,0 +1,193 @@
+schema_version: 1
+work_item: SHOP-TILL-001
+recorded_at: '2026-09-10T22:05:00+07:00'
+requirement_contract: >-
+  Make the deterministic console genuinely runnable for a week of real trading on the shop's own
+  Mac, used as the till itself, with an encrypted archive on a drive the owner already has, and fix
+  whatever stands in the way of that.
+rollback_impact: >-
+  Reverting removes the till overlay, the macOS schedule and the two documents, and returns WAL
+  archiving to refusing an already-archived segment with a non-zero exit. That last one is the only
+  behavioural revert and it is the one that matters: `archive_command` failing on a segment
+  PostgreSQL re-offers makes PostgreSQL retry that segment indefinitely, so WAL is never recycled,
+  the volume fills, and the server stops accepting writes -- with the counter unable to take an
+  order. Nothing else in this item changes what the application does.
+unresolved_assumptions: >-
+  **Nothing here has been run against the pilot stack, because the pilot stack has never been fully
+  brought up.** Four of its six containers are running and are three days old; `tls` has never been
+  created, so the console is currently unreachable on this machine. Building and starting it is one
+  command and it belongs to the owner: an agent may not run a deployment. Everything in this item is
+  therefore verified against the shipped image and the compose configuration rather than against a
+  live pilot.
+
+
+  **The checkout is inside iCloud Drive and must move before the week starts.** `CLOUDDESKTOP` is
+  enabled on this Mac and the repository is on the Desktop. Three separate failures follow, each
+  intermittent and none with a useful error: iCloud evicts files to dataless placeholders and Docker
+  bind mounts of them fail with `EDEADLK`; the file provider sets `UF_HIDDEN` on `.venv/*.pth` and
+  CPython silently skips them; and macOS TCC refuses a launch agent read access to `~/Desktop`. The
+  move is `mv`, never a fresh clone -- `.shop/` holds the database passwords the running PostgreSQL
+  already has and is gitignored, so a clone would arrive without them and the bootstrap would mint
+  new ones that open nothing.
+
+
+  **The archive round trip used a throwaway `age` identity generated inside the container.** It
+  proves the chain, not the shop's key custody. The shop's own identity must be generated on a
+  different device and only its public half brought here (`DEC-026`).
+
+
+  **The two paper procedures are unchanged and are not defects.** Twenty of the forty-three
+  published services are price ranges and the engine refuses to collapse one into a number
+  (`DEC-001`); the incident form cannot be completed at all. Both are owner decisions, both are on
+  the console's own `Chưa hỗ trợ` screen, and both are written into the counter guide as procedures
+  rather than left to be discovered mid-shift.
+evidence:
+  the_topology_a_single_till_needs_and_what_it_removes: >-
+    `compose.shop-till.yaml`, a second overlay beside `compose.shop-local.yaml` rather than an
+    edit to it -- a contract test asserts that file changes only where secrets are read from, and
+    folding a volume mount into it would make that assertion false.
+
+
+    The till shape *removes* configuration rather than adding it. `compose.r1.yaml` already
+    publishes the console on `127.0.0.1` by default, so there is no LAN address, no router DNS, no
+    certificate to install on tablets and no port on the shop wifi. ADR-0007 §1 asks that the
+    console be unreachable from the internet and reached by staff over the shop network; a single
+    till satisfies that more strictly, because there is no network path to it at all.
+
+
+    The one thing the overlay adds is the archive destination, as a bind mount, and
+    `R1_LOCAL_ARCHIVE_PATH` is required rather than defaulted: a default would put the shop's only
+    backup on the same disk as the database it protects, silently. Verified by `docker compose
+    config` both ways -- the mount lands on `postgres`, and the composition refuses with the reason
+    when the variable is unset.
+  the_archive_chain_proven_by_a_round_trip: >-
+    Not read, run. Against the shipped `nha-trang-laundry-postgres:local` image, with the real
+    `archive-wal.sh` as `archive_command` and the real `r1-archive-upload.sh` as its client:
+
+
+    a 16 MiB segment of random bytes carrying a recognisable marker was compressed, integrity-
+    checked with `gzip -t`, encrypted with `age -R` to a generated recipient, and uploaded to a
+    local directory through an rclone local remote. It was then fetched, decrypted with the private
+    half, decompressed, and compared: **byte-for-byte identical, sha256
+    `cba158316fa3132138b1d19186b0869c5d7aec3074ac03f1a3f61c13155f6417`.**
+
+
+    That the local destination works at all is worth stating: `rclone` has been in the image since
+    the archiving contract was given an implementation, and it speaks a filesystem remote natively,
+    so a drive needs a two-line configuration holding no secret and no code change anywhere.
+
+
+    The guards were exercised too. An empty artifact is refused (exit 66). An existing object is
+    never overwritten -- the content was verified unchanged after a second attempt. A base-backup
+    collision is still a hard refusal (exit 65), because a base label carries a timestamp and two
+    cannot legitimately share a name.
+  an_already_archived_segment_used_to_wedge_the_archiver: >-
+    The defect this item exists to have found, and it was found by running the mechanism rather
+    than reading it.
+
+
+    `r1-archive-upload.sh` exited **65 for any existing object**, and `archive-wal.sh` justified the
+    strictness in a comment: "a segment name is unique by construction, so a collision means
+    something is wrong rather than something is repeated". The premise is false. A WAL segment name
+    is unique per *timeline*, and PostgreSQL re-offers a segment whenever it stops between the
+    archive succeeding and the `.ready` file being renamed -- an unclean shutdown, which on a laptop
+    at a shop counter means a closed lid or one of the power cuts `shop-pilot.md` itself warns
+    about.
+
+
+    A non-zero `archive_command` makes PostgreSQL retry **that same segment, indefinitely**. It
+    never advances, WAL is never recycled, the volume fills, and the server stops accepting writes.
+    `deploy-today.md` names that exact sequence as the failure that stops the counter taking an
+    order, and the pilot's own documentation calls this mechanism the point its safety rests on.
+
+
+    Fixed by splitting the contract in two: `--if-not-exists` stays strict for base backups, and
+    `--idempotent` is what WAL uses -- an existing, non-empty object means the segment is already
+    archived, which is success. `DEC-026` is untouched: nothing is overwritten, the upload is
+    skipped, and the segment genuinely is archived; only what PostgreSQL is told about an
+    already-true fact changes. An *empty* stored object stays a hard refusal in both modes, because
+    that is a broken earlier write and waving it through would report a segment safe when what is
+    stored cannot be replayed.
+
+
+    Three tests execute the wrapper against an rclone stand-in modelled on what the real client
+    prints (`lsf` a basename, `lsf --format s` a size, nothing for a missing object -- checked
+    against rclone 1.69.3 in the image). The re-archive test fails against the previous script and
+    passes against this one; the two strict cases pass against both.
+  the_schedule_a_mac_actually_honours: >-
+    `docs/runbooks/shop-pilot.md` schedules the checks and the nightly base backup with `crontab`,
+    which is correct on the Linux server that page was written for and wrong here in a way that says
+    nothing: on macOS a job whose time passes while the machine is asleep is **not run and never
+    catches up**. A laptop at a shop counter is asleep every night, so the 02:30 base backup would
+    never happen -- and cron mails its complaint to a local mailbox nobody on that machine reads.
+    WAL would accumulate with no base backup to replay it onto, which is a backup that cannot
+    restore.
+
+
+    `deploy/shop-till/install.sh` writes three launch agents instead. `StartCalendarInterval` runs a
+    missed job once on wake, which is the behaviour this needs. The installer refuses to run when
+    the archive path does not exist -- a bind mount to a missing path is created as an empty
+    root-owned directory and every archive write then fails -- and warns when the checkout sits in a
+    TCC-protected directory, which is the other way an agent looks scheduled and never runs.
+  what_the_counter_holds_in_its_own_language: >-
+    `docs/HUONG_DAN_CA_LAM_VIEC_VI.md`: one printed page for the person at the till. Opening the
+    shift, the thirteen steps of a customer in order, the three things easiest to get wrong -- the
+    6 kg threshold, money having to equal the quoted total to the đồng, and delivery being paid
+    before the goods leave -- closing the shift against the till, and a table of what each refusal
+    on screen means and what to do about it.
+
+
+    Every Vietnamese phrase it quotes is asserted against the client source by a test. A guide that
+    quotes a sentence the console does not say is worse than no guide: staff look for words that are
+    not there, conclude the page is wrong, and stop using it -- including for the two procedures
+    that exist only on paper this week. Rewording a message in `apps/web` now fails that test until
+    the printed page is updated with it.
+  what_still_needs_the_owner: >-
+    Four things, none of which an agent may do, and one of which decides whether the week works at
+    all.
+
+
+    **Move the checkout out of iCloud** (`mv`, not a clone), then `uv sync`. Named first because the
+    three failures it causes are intermittent and unrecognisable.
+
+
+    **Bring the stack up** -- one `docker compose ... up -d --build` with the till overlay. The
+    running containers are three days old and `tls` has never been created, so the console is
+    unreachable on this machine today.
+
+
+    **Two `sudo` lines**: the console name in `/etc/hosts`, and the private CA trusted in the system
+    keychain. Without the second the console does not load and the service worker does not register,
+    with no error that explains why.
+
+
+    **The backup identity**, generated on a different device, with only its public half brought
+    here.
+
+
+    And the two standing decisions that keep work on paper: the exact price inside a published range
+    (`DEC-001`, twenty of forty-three services) and how a staff-opened incident identifies the
+    customer (`docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md`).
+  rollback_assessment: >-
+    Two new files, one new overlay, one new work item, two documentation pages, and one behavioural
+    change to the WAL archive path. No migration, nothing forward-only, no capability moved, no flag
+    changed.
+
+
+    The behavioural change is the one to think about when reverting: going back reinstates an
+    archiver that wedges on a segment PostgreSQL re-offers after an unclean shutdown. On a laptop
+    till that is the likeliest single cause of the shop being unable to take an order, so a revert
+    should be accompanied by not trading on that machine.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

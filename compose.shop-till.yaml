@@ -1,0 +1,39 @@
+# The shop's own Mac, used as the till itself, for the pilot week.
+#
+#   docker compose -f compose.r1.yaml -f compose.shop-local.yaml -f compose.shop-till.yaml \
+#       --profile self-managed-database up -d --build
+#
+# **A second overlay, and it changes two things.** `compose.shop-local.yaml` changes where secrets
+# are read from and nothing else. This one changes where the archive is written, and it is separate
+# for the same reason that one is: a contract test asserts the shop-local overlay touches only
+# secrets, and folding a volume mount into it would make that assertion false.
+#
+# **What this shape is.** One machine at the counter, staff working on it directly. The console is
+# published on loopback only -- which is `compose.r1.yaml`'s default, so nothing here has to say it
+# -- and therefore reachable from this Mac and from nowhere else. No LAN address, no router DNS, no
+# certificate to install on tablets, and no port on the shop wifi for a guest's phone to find.
+#
+# ADR-0007 §1 asks that the console be unreachable from the internet and reached by staff over the
+# shop network. A single till satisfies that more strictly rather than less: there is no network
+# path to it at all. The LAN shape in `docs/runbooks/shop-pilot.md` §2 remains the documented next
+# step, and moving to it is this file plus two environment variables, not a rebuild.
+#
+# **Why the archive is a bind mount.** `DEC-026` and ADR-0007 §3 require the archive to be encrypted
+# with a key that is not stored on the machine that writes it, and to live somewhere the machine's
+# own failure does not take with it. An external drive satisfies the second; `age -R` satisfies the
+# first, unchanged from the cloud shape. `rclone` is already in the postgres image and speaks a
+# local filesystem remote natively, so the shipped `r1-archive-upload.sh` needs no change at all --
+# only a destination it can see, which is what this mount is.
+#
+# **The drive must be attached before the stack starts.** A bind mount to a path that does not exist
+# is created by Docker as an empty directory owned by root, and then `archive_command` fails on
+# every segment with a permission error. `scripts/check_shop_operations.py --check wal` is what
+# notices; §"The week" in the runbook explains why that check is the one that saves the week.
+
+services:
+  postgres:
+    volumes:
+      # `R1_LOCAL_ARCHIVE_PATH` is required rather than defaulted. A default would put the shop's
+      # only backup inside the repository checkout on the same disk as the database it protects,
+      # which is not a backup -- and it would do it silently.
+      - ${R1_LOCAL_ARCHIVE_PATH:?set R1_LOCAL_ARCHIVE_PATH to the archive directory, on a different disk from the database}:/archive:rw

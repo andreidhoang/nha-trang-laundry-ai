@@ -80,8 +80,16 @@ if ! age -R "$recipients" -o "$encrypted" < "$compressed"; then
 fi
 [ -s "$encrypted" ] || { echo "archive-wal: produced an empty artifact for ${segment_name}" >&2; exit 1; }
 
-# `--if-not-exists`: the repository is versioned and append-only, and an archive command that
-# overwrites is an archive command that can destroy history on a retry. A segment name is unique
-# by construction, so a collision means something is wrong rather than something is repeated.
+# `--idempotent`, not `--if-not-exists`: the repository is versioned and append-only, and an
+# archive command that overwrites is an archive command that can destroy history on a retry -- so
+# this still never overwrites. What changed is what happens when the segment is *already there*.
+#
+# This line used to be strict, on the reasoning that "a segment name is unique by construction, so
+# a collision means something is wrong rather than something is repeated". A name is unique per
+# timeline, and PostgreSQL re-offers a segment whenever it stops between the archive succeeding and
+# the `.ready` file being renamed. On the shop's own Mac that is a closed lid or a power cut, and
+# the strict refusal made `archive_command` fail forever on that one segment: WAL never recycled,
+# the volume filled, and the server stopped accepting writes -- with the counter unable to take an
+# order and the cause three layers down.
 "${BACKUP_UPLOAD_COMMAND:?BACKUP_UPLOAD_COMMAND is required}" \
-    --if-not-exists "$encrypted" "${repository}/wal/${segment_name}.gz.age"
+    --idempotent "$encrypted" "${repository}/wal/${segment_name}.gz.age"

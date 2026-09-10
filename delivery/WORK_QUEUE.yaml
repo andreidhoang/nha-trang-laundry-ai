@@ -3836,3 +3836,35 @@ items:
   - the_ai_system_still_refuses_everything
   - rollback_assessment
   blocked_by_decisions: []
+- id: SHOP-TILL-001
+  phase: PRODUCTION_HARDENING
+  title: The pilot week with the shop's own Mac as the till
+  status: COMPLETE
+  priority: 280
+  depends_on:
+  - WORKFLOW-CONFORMANCE-001
+  context_domains:
+  - platform
+  - business_truth
+  normative_sources:
+  - AGENTS.md
+  - docs/adr/0007-production-deployment-topology.md
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-shop-till-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_topology_a_single_till_needs_and_what_it_removes
+  - the_archive_chain_proven_by_a_round_trip
+  - an_already_archived_segment_used_to_wedge_the_archiver
+  - the_schedule_a_mac_actually_honours
+  - what_the_counter_holds_in_its_own_language
+  - what_still_needs_the_owner
+  - rollback_assessment
+  blocked_by_decisions: []

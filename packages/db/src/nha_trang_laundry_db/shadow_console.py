@@ -181,8 +181,9 @@ class ShadowConsoleRepository:
                 raise ShadowStateError("no such store")
             # The same pre-check the role path has had all along (`identity._lock_staff_version`),
             # missing here. An owner tidying up after somebody leaves got two different answers from
-            # two panels on the same screen: "Gán vai trò" refused the departed person, and "Gán cửa
-            # hàng" accepted them and wrote a live membership row. Nobody gained access -- a disabled
+            # two panels on the same screen: "Gán vai trò" refused the departed person, and
+            # "Gán cửa hàng" accepted them and wrote a live membership row. Nobody gained access --
+            # a disabled
             # account cannot authenticate -- but the shop's record then said a person who had left
             # belonged to the shop, and the two panels disagreed about who that person was.
             cursor.execute("SELECT status FROM staff_users WHERE id = %s", (staff_user_id,))

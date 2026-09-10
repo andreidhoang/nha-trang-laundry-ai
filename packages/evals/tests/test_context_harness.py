@@ -206,7 +206,14 @@ def test_context_drift_check_passes() -> None:
     # each sat at a seam where both sides were individually correct -- a structured refusal the
     # server phrased precisely and the client dropped; a clock written by the wrong dimension's
     # command; an acceptance that checked expiry one step too late.
-    assert "122 work items" in result.stdout
+    # 123 with SHOP-TILL-001: the pilot week on the shop's own Mac, used as the till itself. It
+    # exists because `shop-pilot.md` is written for a small server on the shop LAN with staff on
+    # tablets, and the owner chose one machine at the counter with an encrypted archive on a drive.
+    # Both are strictly safer than the documented shape and neither was buildable from the existing
+    # pages without guessing. It also carries the defect that shape found: WAL archiving refused an
+    # already-archived segment, and PostgreSQL answers a failing `archive_command` by retrying that
+    # segment forever until the disk fills and the counter cannot take an order.
+    assert "123 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

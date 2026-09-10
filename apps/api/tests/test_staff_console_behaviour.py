@@ -232,3 +232,59 @@ def test_a_stale_settlement_is_classified_as_stale_and_not_as_an_unsupported_cas
     assert got["staleCodes"] == ["STALE_VERSION"]
     # And the policy refusals keep their own kind: this narrows one code, it does not collapse them.
     assert got["policy"] == "NOT_SUPPORTED"
+
+
+def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
+    """`docs/HUONG_DAN_CA_LAM_VIEC_VI.md` is printed and taped next to the till.
+
+    It tells the person at the counter what to do when the screen says a particular thing. A guide
+    that quotes a sentence the console does not say is worse than no guide: staff look for words
+    that are not there, decide the page is wrong, and stop using it — including for the two
+    procedures that only exist on paper this week.
+
+    So the quotes are checked against the client source. Rewording a message in `apps/web` fails
+    here until the guide is updated with it, which is the only way a printed page stays true.
+    """
+
+    guide = (ROOT / "docs/HUONG_DAN_CA_LAM_VIEC_VI.md").read_text(encoding="utf-8")
+    assert guide.strip(), "the counter guide is missing"
+
+    client = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "apps/web").rglob("*.js"))
+        if "sw.js" not in path.name
+    )
+
+    # Every control the guide tells staff to press, and every message it tells them how to react to.
+    quoted = [
+        "Phát phiếu",
+        "Ghi nhận tiếp nhận",
+        "Tính giá",
+        "Khách đã chốt giá",
+        "Tạo đơn",
+        "Đã duyệt lịch",
+        "Ghi nhận tất toán",
+        "Khách đã tự lấy đồ",
+        "Đã thu tại quầy",
+        "Đang ngoại tuyến",
+        "Chưa biết lệnh có tới máy chủ hay không",
+        "Đơn này vừa được người khác đổi",
+        "Máy chủ không ghi nhận khoản này",
+        "Cần người duyệt trước khi chuyển",
+        "Phiên đăng nhập đã kết thúc",
+        "Máy chủ gặp lỗi",
+        "Chưa đọc được danh sách cửa hàng",
+        "Chưa hỗ trợ",
+    ]
+
+    absent_from_guide = [phrase for phrase in quoted if phrase not in guide]
+    assert not absent_from_guide, (
+        "this test's list has drifted from the guide it checks; add or remove the phrase in both: "
+        f"{absent_from_guide}"
+    )
+
+    absent_from_console = [phrase for phrase in quoted if phrase not in client]
+    assert not absent_from_console, (
+        "the counter guide quotes words the console no longer says, so a staff member following it "
+        f"would look for text that is not on screen: {absent_from_console}"
+    )

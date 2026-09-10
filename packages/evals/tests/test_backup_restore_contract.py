@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -436,3 +438,154 @@ def test_the_console_check_can_verify_a_private_certificate() -> None:
         runbook = (ROOT / "docs/runbooks" / name).read_text("utf-8")
         if "R1_CONSOLE_HEALTH_URL" in runbook:
             assert "R1_CONSOLE_CA_FILE" in runbook, name
+
+
+def _rclone_shim(directory: Path) -> Path:
+    """A stand-in for the two rclone verbs the wrapper uses, so its logic can be executed.
+
+    The wrapper's behaviour is the property under test and no text assertion can reach it: whether
+    an already-archived segment is reported to PostgreSQL as success or as failure is decided by an
+    exit code, and the difference between those two is a shop that keeps trading and a shop that
+    cannot take an order by the afternoon.
+    """
+
+    # Modelled on what rclone 1.69 really prints against a local remote, checked in the shipped
+    # image: `lsf` prints the basename, `lsf --format s` prints the size in bytes, and both print
+    # nothing at all for an object that is not there.
+    shim = directory / "rclone"
+    shim.write_text(
+        """#!/bin/sh
+format=""
+verb=""
+first=""
+second=""
+# Flags appear on both sides of the verb -- `--config` before it, `--format` after -- so the loop
+# runs to the end rather than stopping at the verb.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --config) shift 2 ;;
+    --immutable) shift ;;
+    --format) format="$2"; shift 2 ;;
+    lsf|copyto) verb="$1"; shift ;;
+    *)
+      if [ -z "$first" ]; then first="$1"; else second="$1"; fi
+      shift ;;
+  esac
+done
+first=$(printf '%s' "$first" | sed 's/^archive://')
+second=$(printf '%s' "$second" | sed 's/^archive://')
+case "$verb" in
+  lsf)
+    [ -e "$first" ] || exit 0
+    if [ "$format" = "s" ]; then wc -c < "$first" | tr -d ' '; else basename "$first"; fi
+    ;;
+  copyto)
+    mkdir -p "$(dirname "$second")"
+    cp "$first" "$second"
+    ;;
+esac
+exit 0
+""",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    return shim
+
+
+def _run_upload(
+    work: Path, flag: str, source: Path, destination: Path
+) -> subprocess.CompletedProcess[str]:
+    environment = dict(os.environ)
+    environment["PATH"] = f"{work}:{environment['PATH']}"
+    environment["RCLONE_CONFIG"] = str(work / "credential")
+    (work / "credential").write_text("[archive]\ntype = local\n", encoding="utf-8")
+    return subprocess.run(
+        [
+            "sh",
+            str(ROOT / "deploy/production/backup/r1-archive-upload.sh"),
+            flag,
+            str(source),
+            f"archive:{destination}",
+        ],
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+
+def test_a_re_archived_wal_segment_is_success_rather_than_a_wedged_archiver(
+    tmp_path: Path,
+) -> None:
+    """PostgreSQL re-archives a segment it has already archived, and must not be told that failed.
+
+    It happens whenever the server stops between the archive succeeding and the `.ready` file being
+    renamed -- an unclean shutdown, which on the shop's own Mac means a closed lid or one of the
+    power cuts `shop-pilot.md` warns about. On restart the segment is offered again.
+
+    `archive_command` returning non-zero makes PostgreSQL retry **that same segment, indefinitely**.
+    It never advances, WAL is never recycled, the volume fills, and the server stops accepting
+    writes -- which `deploy-today.md` names as the failure that stops the counter taking orders. The
+    wrapper refused with exit 65 on any existing object, and `archive-wal.sh`'s comment justified it
+    with "a segment name is unique by construction, so a collision means something is wrong rather
+    than something is repeated". The premise is false: a name is unique per timeline, and the same
+    name being offered twice is ordinary.
+
+    Reporting success here does not weaken `DEC-026`. Nothing is overwritten -- the upload does not
+    happen -- and the segment genuinely is archived. What changes is only what PostgreSQL is told
+    about a fact that was already true.
+    """
+
+    _rclone_shim(tmp_path)
+    segment = tmp_path / "000000010000000000000009.gz.age"
+    segment.write_bytes(b"an encrypted segment")
+    destination = tmp_path / "repository/wal/000000010000000000000009.gz.age"
+
+    first = _run_upload(tmp_path, "--idempotent", segment, destination)
+    assert first.returncode == 0, first.stderr
+    assert destination.read_bytes() == b"an encrypted segment"
+
+    # The same segment, offered again exactly as PostgreSQL offers it after an unclean shutdown.
+    again = _run_upload(tmp_path, "--idempotent", segment, destination)
+    assert again.returncode == 0, (
+        "an already-archived segment must report success, or PostgreSQL retries it forever and "
+        f"the disk fills: {again.stderr}"
+    )
+    assert destination.read_bytes() == b"an encrypted segment", "and nothing may be overwritten"
+
+
+def test_a_base_backup_collision_is_still_a_hard_refusal(tmp_path: Path) -> None:
+    """The strict mode stays strict, because a base backup label carries a timestamp.
+
+    Two base backups cannot legitimately share a name, so a collision there is the administrator
+    error the PostgreSQL manual has in mind and must not be waved through.
+    """
+
+    _rclone_shim(tmp_path)
+    archive = tmp_path / "base.tar.gz.age"
+    archive.write_bytes(b"a base backup")
+    destination = tmp_path / "repository/base/2026-09-10T02-30-00Z.tar.gz.age"
+
+    assert _run_upload(tmp_path, "--if-not-exists", archive, destination).returncode == 0
+    collision = _run_upload(tmp_path, "--if-not-exists", archive, destination)
+    assert collision.returncode != 0, "a second base backup under one label must refuse"
+    assert "refusing to overwrite" in collision.stderr
+
+
+def test_an_empty_object_already_in_the_repository_is_never_waved_through(
+    tmp_path: Path,
+) -> None:
+    """A zero-length object is a broken earlier write, not an archived segment.
+
+    Idempotence must not extend to it: reporting success would tell PostgreSQL a segment is safe
+    when what is stored cannot be replayed, and the first anyone would learn of it is a restore.
+    """
+
+    _rclone_shim(tmp_path)
+    segment = tmp_path / "000000010000000000000010.gz.age"
+    segment.write_bytes(b"an encrypted segment")
+    destination = tmp_path / "repository/wal/000000010000000000000010.gz.age"
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(b"")
+
+    result = _run_upload(tmp_path, "--idempotent", segment, destination)
+    assert result.returncode != 0, "an empty object already in the repository must be reported"

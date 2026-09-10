@@ -86,6 +86,27 @@ export R1_BACKUP_REPOSITORY='archive:/archive'
 shipped `r1-archive-upload.sh` needs no change — only a destination it can see, which is what
 `compose.shop-till.yaml` mounts.
 
+## 1b. Check it before you build
+
+```bash
+uv run python scripts/preflight_shop_till.py
+```
+
+Eight checks, none of which changes anything and none of which reads a secret. It exists because
+six of the steps on this page fail in ways that do not name themselves — a bind mount to a missing
+directory becomes an empty root-owned one and every archive write fails; an untrusted certificate
+authority makes the console refuse to load with no error a person would recognise.
+
+The exit status is the number of blocking problems, so it composes:
+
+```bash
+uv run python scripts/preflight_shop_till.py && docker compose $C up -d --build
+```
+
+One check it deliberately cannot make: whether the archive credential is the *local* remote. It
+reads no secrets, so it can only say the file is there. If you have used this checkout against an
+object store before, replace it with the two lines in §1.
+
 ## 2. Bring it up
 
 ```bash

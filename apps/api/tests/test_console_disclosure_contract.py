@@ -245,7 +245,29 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # it back, so a mis-tap at the counter is invisible from the moment it is made. Naming that
     # here was cheaper than a read path threaded through the order list and the board, and the
     # counter is warned in the field's own hint that the entry is final.
-    assert sum(counts.values()) == _registry()["total"] == 179
+    # 183 since WORKFLOW-CONFORMANCE-001, and the delta is +5 new against -1 re-keyed. The five are
+    # the settlement refusal vocabulary: `MESSAGES.NOT_SUPPORTED` and one `REASON_NOTE` gloss for
+    # each member of the domain's `SettlementRefusal`. They exist because driving the counter found
+    # that a part payment -- the commonest thing a customer does wrong at a till -- reached the
+    # screen as "Dữ liệu nhập không hợp lệ", which is both untrue and the one sentence that makes a
+    # staff member retype a number that was never wrong.
+    #
+    # The one that went is `ui/components.js#notice:9525c4bc0839`, re-keyed rather than deleted: the
+    # slot extractor's capture window shifted when `errorNotice` gained a paragraph, and the same
+    # sentence is now registered whole ("…đã được lưu trong khi không có gì được lưu cả") instead of
+    # cut off mid-clause. The source sentence did not change; what it is registered as did, which is
+    # this registry doing its job.
+    # 187 with the same item's second finding: opening an incident cannot be done by anybody. The
+    # request requires `contact_scope_hash` and `evidence_summary_hash` and nothing in this
+    # repository produces either, so the form was unfinishable while its hints told staff to "chép
+    # nguyên văn" from somewhere. Four slots: the two paragraphs of the new warning on `#/incidents`
+    # and the `missing`/`blockedBy` of the `#/gaps` entry that now names it.
+    # 191 after the reconciliation round found the first fix half-done. `record_settlement` raises
+    # four reason codes that are not members of `SettlementRefusal` -- ORDER_NOT_FOUND,
+    # ORDER_NOT_ACTIVE, ALREADY_SETTLED, STALE_VERSION -- and they reach the same panel by the same
+    # route with `decision: null`. Glossing only the enum shipped a fix that looked complete and
+    # still put a bare English token in front of a counter holding somebody's money.
+    assert sum(counts.values()) == _registry()["total"] == 191
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

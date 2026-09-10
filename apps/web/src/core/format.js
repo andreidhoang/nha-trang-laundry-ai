@@ -85,10 +85,13 @@ export function money(amount, unknownLabel = UNKNOWN) {
  * having copied the number the application showed them. The same parse sits behind the negotiated
  * delivery fee, where a fractional entry was silently truncated instead of refused.
  *
- * So: `.` and any spacing are grouping and are removed, `₫` is decoration and is removed, and what
- * must remain is digits. A `,` is rejected rather than stripped -- in Vietnamese it is the decimal
- * separator, and đồng have no minor unit here, so "132,5" is a mistake to report and not a number
- * to round.
+ * So: spacing and `₫` are decoration and are removed; `.` is accepted only where it is doing the
+ * job of a grouping mark, meaning exactly three digits follow it. A `,` is rejected rather than
+ * stripped -- in Vietnamese it is the decimal separator, and đồng have no minor unit here, so
+ * "132,5" is a mistake to report and not a number to round. `170000.5` is the same mistake wearing
+ * the other separator, and stripping the dot from it produced 1.700.005: ten times the amount, with
+ * no sign that anything had been reinterpreted. Both are now refused, which is also what the
+ * settlement field's own hint has always promised.
  *
  * @param {string} value what the operator typed
  * @returns {number|null} the amount, or null when it is not one
@@ -97,8 +100,14 @@ export function parseDong(value) {
   const trimmed = String(value ?? "").trim();
   if (!trimmed) return null;
   if (trimmed.includes(",")) return null;
-  const digits = trimmed.replace(/[₫\s\u00a0.]/g, "");
-  if (!/^\d+$/.test(digits)) return null;
+  const bare = trimmed.replace(/[₫\s\u00a0]/g, "");
+  // A dot is a *grouping* mark here, and grouping has a shape: three digits after every dot. That
+  // shape is what separates "170.000" from "170000.5". Stripping every dot unconditionally read
+  // the second as 1.700.005 -- ten times the amount, silently -- while the field's own hint says
+  // decimals are not accepted. A typed decimal is now refused and says so, rather than becoming a
+  // different number that the server then rejects for a reason the operator cannot see.
+  if (!/^\d{1,3}(\.\d{3})*$/.test(bare) && !/^\d+$/.test(bare)) return null;
+  const digits = bare.replace(/\./g, "");
   const amount = Number.parseInt(digits, 10);
   return Number.isSafeInteger(amount) ? amount : null;
 }

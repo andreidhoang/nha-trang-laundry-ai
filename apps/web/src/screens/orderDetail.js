@@ -474,7 +474,8 @@ export function render_(context) {
           "p",
           { class: "hint" },
           "Tác nhân không phải STAFF — OUTBOX_WORKER, AGENT_RUNNER, BOOTSTRAP — không gắn với " +
-            "người dùng nào, nên cột định danh người thực hiện để trống.",
+            "người dùng nào, nên cột định danh người thực hiện hiện dấu “—”. Đó là “không có " +
+            "người nào”, không phải “thiếu dữ liệu”.",
         ),
         timelineTruncation,
         timelineHost,

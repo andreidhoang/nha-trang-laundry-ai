@@ -698,7 +698,14 @@ export function render_(_context) {
             "Đừng bấm lại — hãy tải lại bảng đơn và xem trạng thái thật."
           : error.kind === "REQUIRE_HUMAN"
             ? "Cần người duyệt trước khi chuyển. Trạng thái đơn không đổi."
-            : "Máy chủ từ chối chuyển trạng thái. Trạng thái đơn không đổi.",
+            : // The commonest refusal in a shop with two tablets, and the one with a different
+              // next action: nothing is wrong with the command, somebody else got there first.
+              // "Máy chủ từ chối" reads as "you did something wrong" and sends staff to re-check a
+              // form that was correct, when the only thing that helps is a fresh board.
+              error.kind === "STALE" || error.kind === "PRECONDITION_REQUIRED"
+              ? "Đơn này vừa được người khác đổi trong lúc bạn đang xem, nên lệnh của bạn bị từ " +
+                "chối và trạng thái đơn không đổi. Tải lại bảng đơn rồi làm lại theo số mới."
+              : "Máy chủ từ chối chuyển trạng thái. Trạng thái đơn không đổi.",
       );
       const notice = errorNotice(error);
       render(

@@ -104,6 +104,33 @@ export const REASON_NOTE = {
   AMBIGUOUS_SERVICE: "Mã dịch vụ khớp nhiều mục; cần chọn rõ.",
   INCOMPATIBLE_UNIT: "Đơn vị không dùng được với dịch vụ này.",
   VALIDATION_ERROR: "Dữ liệu vào không hợp lệ với quy tắc miền.",
+  // `SettlementRefusal`, exactly as packages/domain/.../settlement.py names them. Each says what
+  // the counter should do now, because a staff member holding a customer's money needs a next
+  // action and not only a refusal.
+  AMOUNT_IS_NOT_THE_EXACT_TOTAL:
+    "Chỉ nhận đúng tổng đã báo, đủ một lần. Trả thiếu, trả thừa, đặt cọc hay trả góp đều chưa " +
+    "được hỗ trợ. Hãy thu đúng tổng, hoặc báo giá lại nếu con số đã thay đổi.",
+  COLLECTION_WAS_NOT_BY_THE_CUSTOMER:
+    "Ô “khách đã tự lấy đồ” phải khớp với hình thức của đơn: khách tự lấy thì tích, đơn giao tận " +
+    "nơi thì để trống và chặng giao mới là thứ đóng đơn.",
+  NO_PRESENTABLE_TOTAL:
+    "Báo giá gắn với đơn này chưa có tổng cuối, thường vì phí giao chưa chốt. Chưa có tổng thì " +
+    "chưa thu được tiền.",
+  TOTAL_IS_A_RANGE:
+    "Báo giá này là một khoảng giá, chưa phải một số. Nhân viên phải chốt giá chính xác trước.",
+  // The rest of what `record_settlement` can answer. These are not open decisions -- they are
+  // states -- and they arrive with `decision: null`. Leaving them unglossed put a bare English
+  // token in front of a counter holding a customer's money.
+  ORDER_NOT_FOUND:
+    "Không có đơn nào mang mã này ở cửa hàng đang chọn. Kiểm tra lại mã đơn trên bảng đơn.",
+  ORDER_NOT_ACTIVE:
+    "Chỉ đơn đang chạy mới tất toán được. Đơn chưa xác nhận thì xác nhận trước; đơn đã đóng hoặc " +
+    "đã huỷ thì không thu tiền qua màn hình này.",
+  ALREADY_SETTLED:
+    "Đơn này đã được tất toán rồi — không phải lỗi của bạn, và không thu thêm lần nữa. Mở lại đơn " +
+    "để xem lần tất toán đã ghi.",
+  STALE_VERSION:
+    "Có người vừa đổi đơn này trong lúc bạn đang xem. Tải lại đơn rồi ghi nhận theo số mới.",
   CONTACT_BINDING_UNKNOWN:
     "Không có liên hệ nào mang mã này. Liên hệ chỉ được tạo từ một hội thoại kênh đã xác minh; " +
     "màn hình tiếp nhận không tạo liên hệ mới.",

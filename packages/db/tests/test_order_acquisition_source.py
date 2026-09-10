@@ -34,6 +34,7 @@ from nha_trang_laundry_db.orders import (
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
+    CommercialOrderStatus,
     FulfillmentMode,
     IntakeStatus,
     ProductionStatus,
@@ -284,6 +285,178 @@ def test_the_ready_clock_clears_for_a_rewash_and_restamps_when_it_is_finished_ag
     # And releasing keeps it: the laundry left, nothing was redone.
     move(production_target=ProductionStatus.RELEASED)
     assert _ready_at(connection, order_id) == second_ready
+
+
+def test_a_commercial_move_does_not_restamp_the_clock_of_finished_laundry(
+    connection: Any,
+) -> None:
+    """When the laundry was finished is a fact about the laundry, not about the order screen.
+
+    One UPDATE serves all three dimensions, and it derived the clock from the order's *resulting*
+    production status without asking which dimension had moved. So an order whose washing was
+    finished at 09:00 and whose commercial state was touched at 16:00 -- sent to cancellation
+    review, or brought back from it -- recorded 16:00 as the moment the laundry was done. Nothing
+    happened to the laundry at 16:00.
+
+    It matters because this column exists to stop the SLA board reporting a breach for work that
+    was finished on time. A restamp seven hours later turns an order that met its promise into one
+    that missed it, in the record, permanently, with no event saying so.
+    """
+
+    order_id, store_id = _order(connection, AcquisitionSource.WALK_IN)
+    principal = _staff_for_store(connection, store_id)
+    repository = OrderRepository()
+
+    def move(**kwargs: Any) -> None:
+        repository.transition(
+            connection,
+            OrderTransitionCommand(
+                order_id,
+                _current(connection, order_id),
+                principal,
+                f"clock-{uuid4().hex}",
+                uuid4(),
+                **kwargs,
+            ),
+        )
+
+    move(intake_target=IntakeStatus.RECEIVED_PENDING_INSPECTION)
+    move(
+        intake_target=IntakeStatus.ACCEPTED,
+        intake_readiness=IntakeReadiness(
+            custody_recorded=True,
+            quantity_basis_approved=True,
+            service_classified=True,
+            exact_price_approved=True,
+            customer_reconfirmation_satisfied=True,
+            slot_approved=True,
+        ),
+        production_accepted_at=NOW,
+    )
+    move(commercial_target=CommercialOrderStatus.STORE_CONFIRMATION_PENDING)
+    move(commercial_target=CommercialOrderStatus.CONFIRMED)
+    move(commercial_target=CommercialOrderStatus.ACTIVE)
+    for target in (
+        ProductionStatus.QUEUED,
+        ProductionStatus.IN_PROCESS,
+        ProductionStatus.QUALITY_CHECK,
+        ProductionStatus.READY_AT_STORE,
+    ):
+        move(production_target=target)
+
+    finished = _ready_at(connection, order_id)
+    assert finished is not None
+
+    # The customer rings up and asks to cancel; the shop puts the order into review and then, when
+    # they change their mind again, back into service. Two commercial moves, no laundry touched.
+    move(commercial_target=CommercialOrderStatus.CANCELLATION_REVIEW)
+    assert _ready_at(connection, order_id) == finished, (
+        "a commercial move must not claim the laundry was finished at the moment somebody "
+        "pressed a button on the order board"
+    )
+    move(commercial_target=CommercialOrderStatus.ACTIVE)
+    assert _ready_at(connection, order_id) == finished
+
+
+def test_holding_finished_laundry_does_not_forget_when_it_was_finished(
+    connection: Any,
+) -> None:
+    """A hold is a pause, not a rewash, and `0037` says so in as many words.
+
+    `ON_HOLD` from `READY_AT_STORE` records `production_resume_status = READY_AT_STORE` and the
+    domain permits exactly one exit, back to where it was held from -- so nothing happens to the
+    laundry while it is held. The clock cleared anyway, and restamped on resume, because the write
+    treated every production state that is not READY_AT_STORE or RELEASED as rework.
+
+    What that costs: a finished bag on the shelf, put on hold for a shelf audit or a disputed item
+    and then resumed, loses its real finish time and re-enters the risk population while held.
+    """
+
+    order_id, store_id = _order(connection, AcquisitionSource.WALK_IN)
+    principal = _staff_for_store(connection, store_id)
+    repository = OrderRepository()
+
+    def move(**kwargs: Any) -> None:
+        repository.transition(
+            connection,
+            OrderTransitionCommand(
+                order_id,
+                _current(connection, order_id),
+                principal,
+                f"hold-clock-{uuid4().hex}",
+                uuid4(),
+                **kwargs,
+            ),
+        )
+
+    move(intake_target=IntakeStatus.RECEIVED_PENDING_INSPECTION)
+    move(
+        intake_target=IntakeStatus.ACCEPTED,
+        intake_readiness=IntakeReadiness(
+            custody_recorded=True,
+            quantity_basis_approved=True,
+            service_classified=True,
+            exact_price_approved=True,
+            customer_reconfirmation_satisfied=True,
+            slot_approved=True,
+        ),
+        production_accepted_at=NOW,
+    )
+    for target in (
+        ProductionStatus.QUEUED,
+        ProductionStatus.IN_PROCESS,
+        ProductionStatus.QUALITY_CHECK,
+        ProductionStatus.READY_AT_STORE,
+    ):
+        move(production_target=target)
+    finished = _ready_at(connection, order_id)
+    assert finished is not None
+
+    move(production_target=ProductionStatus.ON_HOLD)
+    assert _ready_at(connection, order_id) == finished, (
+        "holding a finished order does nothing to the laundry, so it cannot change when the "
+        "laundry was finished"
+    )
+
+    move(production_target=ProductionStatus.READY_AT_STORE)
+    assert _ready_at(connection, order_id) == finished, (
+        "resuming from a hold returns to the same finished state; restamping would date the work "
+        "to the moment somebody lifted the hold"
+    )
+
+    # And a hold placed on work that is NOT finished still leaves the clock empty, as it was.
+    other_id, other_store = _order(connection, AcquisitionSource.WALK_IN)
+    other_principal = _staff_for_store(connection, other_store)
+
+    def move_other(**kwargs: Any) -> None:
+        repository.transition(
+            connection,
+            OrderTransitionCommand(
+                other_id,
+                _current(connection, other_id),
+                other_principal,
+                f"hold-clock-{uuid4().hex}",
+                uuid4(),
+                **kwargs,
+            ),
+        )
+
+    move_other(intake_target=IntakeStatus.RECEIVED_PENDING_INSPECTION)
+    move_other(
+        intake_target=IntakeStatus.ACCEPTED,
+        intake_readiness=IntakeReadiness(
+            custody_recorded=True,
+            quantity_basis_approved=True,
+            service_classified=True,
+            exact_price_approved=True,
+            customer_reconfirmation_satisfied=True,
+            slot_approved=True,
+        ),
+        production_accepted_at=NOW,
+    )
+    move_other(production_target=ProductionStatus.QUEUED)
+    move_other(production_target=ProductionStatus.ON_HOLD)
+    assert _ready_at(connection, other_id) is None
 
 
 def _current(connection: Any, order_id: UUID) -> int:

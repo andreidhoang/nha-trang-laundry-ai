@@ -1,10 +1,34 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-09-06 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **106 queue items: 73 complete, 16 blocked, 17 pending.** The suite runs
-**1135 passing, 3 skipped** with the guarded PostgreSQL suite; migrations run `0001`–`0035`.
+**Last reconciled:** 2026-09-10 (Asia/Ho_Chi_Minh)
+**Active work item:** none. **122 queue items.** The suite runs **1.178 passing, 3 skipped** with
+the guarded PostgreSQL suite; migrations run `0001`–`0037`.
 
-## Where R1 stands — 2026-09-06
+## Where R1 stands — 2026-09-10
+
+The workflows the shop performs are written down for the first time, as a reviewed document rather
+than as knowledge distributed across tests: **`docs/CORE_BUSINESS_WORKFLOWS_V1.md`**. Read it before
+planning console work; it is the only place the spine — a walk-in from the door to a closed order —
+exists as a sequence, and its §8 and §9 are the honest boundary of what R1 builds.
+
+`WORKFLOW-CONFORMANCE-001` then drove every one of those workflows through the console in a browser
+against a real API and a real database, and fixed six defects that were invisible to the whole test
+suite, to the contract checks and to a happy-path browser run. All six sat at a seam where both
+sides were individually correct — the clearest being the money route, where the server answers a
+part payment with a precise refusal naming `DEC-010` and the console dropped every part of it and
+said "invalid input" to a staff member holding a customer's cash.
+
+The lesson worth carrying: **the previous two audit rounds were organised by layer, and a layer
+audit cannot find a defect that lives between two correct layers.** A workflow audit can, and this
+one did on its first pass.
+
+Two things did not move and are the same two as before. Incident intake cannot be completed by
+anybody — the request demands two hashes nothing in the system produces — and that is now stated on
+the screen, listed in `#/gaps`, guarded by a test, and put to the owner as
+`docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md`. And `SHOP-CUTOVER-001` is still BLOCKED on a
+provisioned host, a TLS certificate, the first staff accounts and a signed gate manifest.
+
+## Where R1 stood — 2026-09-06
 
 `DEC-027` scoped R1 to the deterministic staff console: no channel, no agent, no public ingress,
 all thirteen capabilities `NOT_AUTHORIZED`. That is not a scope cut — G2 requires 30 completed real

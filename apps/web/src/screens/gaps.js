@@ -139,6 +139,25 @@ const GROUPS = [
       },
       {
         ref: "M3",
+        title: "Mở sự cố tại quầy",
+        what:
+          "Ghi lại khiếu nại của khách ngay lúc khách đứng ở quầy: đồ hỏng, mất món, giặt chưa " +
+          "sạch — gắn với đúng đơn hàng.",
+        missing:
+          "Yêu cầu HTTP mở sự cố đòi hai mã băm sha256: contact_scope_hash và " +
+          "evidence_summary_hash. Không màn hình nào, không API nào và không script nào trong hệ " +
+          "thống này sinh ra hai giá trị đó — chúng thuộc đường agent (fact_refs trong " +
+          "agent-tools-v1), nơi máy chủ tự tính, và đường đó chưa được cấp phép. Nhân viên không " +
+          "có chỗ nào để chép hai mã này, nên biểu mẫu bên màn hình Sự cố không hoàn tất được. " +
+          "Danh sách sự cố vẫn đọc được bình thường.",
+        blockedBy:
+          "Cần chủ tiệm quyết định (đề xuất tại docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md): " +
+          "một sự cố do nhân viên mở gắn với phạm vi liên hệ nào, và bản tóm tắt bằng chứng được " +
+          "lưu ở đâu — hay chỉ lưu mã băm. Hai câu đó quyết định máy chủ tính hai mã băm thế nào. " +
+          "Cho tới lúc đó: ghi khiếu nại ra sổ kèm số phiếu, và báo chủ tiệm trong ngày.",
+      },
+      {
+        ref: "M3",
         title: "Bồi hoàn sự cố",
         what:
           "Quyết định và ghi nhận bồi hoàn cho một sự cố: giảm trừ, giặt lại, hoặc cấp tín dụng " +

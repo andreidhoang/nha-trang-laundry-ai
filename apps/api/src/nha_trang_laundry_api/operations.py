@@ -886,6 +886,22 @@ class OperationsService:
                     raise QuoteStateError("quote content changed since it was read")
 
                 priced = parse_quote_revision(json.loads(stored.document.canonical_json))
+                # `FR-QTE-010`: an expired quote may not be accepted until it is repriced. The
+                # guard existed only at order creation, which is one step too late -- the customer
+                # has already been read yesterday's price and has already said yes, and the shop
+                # discovers the problem while writing the order. Refusing here is refusing at the
+                # moment the price is quoted aloud, which is the only moment a reprice is free.
+                #
+                # `valid_until` is read from the immutable snapshot rather than the row, because the
+                # snapshot is what the customer was quoted from (`P-03`), and against the server's
+                # clock rather than any caller-supplied time, for the reason `COUNTER-DEFECTS-001`
+                # recorded: a client that decides whether its own request is late decides nothing.
+                valid_until = priced.data.valid_until
+                if valid_until is not None and accepted_at >= valid_until:
+                    raise QuoteStateError(
+                        "QUOTE_EXPIRED: this price is out of date and cannot be accepted; "
+                        "price the bag again before the customer agrees"
+                    )
                 composition = accept_quote_revision(priced=priced, revision=current_revision + 1)
                 if isinstance(composition, UnresolvedQuote):
                     # Refused before anything is written. The reason codes name the missing
@@ -1466,21 +1482,40 @@ class OperationsService:
         )
         return {"staff_user_id": str(staff_user_id), "store_id": str(store_id)}
 
-    def list_member_stores(self, *, principal: StaffPrincipal) -> tuple[UUID, ...]:
-        """Return the stores this principal is assigned to, in a stable order.
+    def list_member_stores(
+        self, *, principal: StaffPrincipal
+    ) -> tuple[tuple[UUID, str | None], ...]:
+        """Return the stores this principal is assigned to, in a stable order, with their names.
 
         Every store-scoped route refuses a principal who is not an assigned member, and until this
         existed the console had no way to learn which stores those are — the runbook told staff to
-        paste a UUID by hand. It reads `staff_store_assignments` directly and returns nothing else:
-        there is no `stores` table yet, so a name would have to be invented, and an invented name
-        next to a real identifier is worse than the identifier alone.
+        paste a UUID by hand.
+
+        It used to return identifiers alone, because when it was written there was no `stores` table
+        and a name would have had to be invented. `STORE-REGISTRY-001` created that table and every
+        store now has the name the people who work there use, so the identifier alone is no longer
+        the honest maximum — it is just less than what the database knows. An owner with two shops
+        was choosing between `11111111…5555` and `5442b740…aaa7` in the app bar, and picking the
+        wrong one files a real order against the wrong shop.
+
+        The name is left nullable rather than defaulted: a `store_id` that predates the registry has
+        no row to name it, and `null` is the accurate answer there. The console shows the identifier
+        in that case, which is exactly what it did for every store before.
         """
 
         with (
             self._connection_factory(self._database_url) as connection,
             connection.cursor() as cursor,
         ):
-            return tuple(sorted(member_store_ids(cursor, staff_user_id=principal.staff_user_id)))
+            assigned = sorted(member_store_ids(cursor, staff_user_id=principal.staff_user_id))
+            if not assigned:
+                return ()
+            cursor.execute(
+                "SELECT id, name FROM stores WHERE id = ANY(%s)",
+                (list(assigned),),
+            )
+            names = {row[0]: row[1] for row in cursor.fetchall()}
+            return tuple((store_id, names.get(store_id)) for store_id in assigned)
 
     def list_incidents(
         self, *, store_id: UUID, principal: StaffPrincipal, limit: int

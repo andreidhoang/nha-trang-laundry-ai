@@ -91,6 +91,46 @@ class StoredOrder:
     replayed: bool = False
 
 
+def _ready_clock_effect(
+    *,
+    moving_production: bool,
+    before: ProductionStatus,
+    after: ProductionStatus,
+    resume_to: ProductionStatus | None,
+    moment: datetime,
+) -> tuple[datetime | None, bool]:
+    """When `orders.production_ready_at` may change, and to what.
+
+    The column answers one question -- when the laundry was last reported finished -- and three
+    separate defects came from writing it as a side effect of whatever command happened to run.
+
+    * A commercial or intake move must not touch it at all. An order finished at 09:00 and sent to
+      cancellation review at 16:00 recorded 16:00, because one UPDATE serves all three dimensions
+      and the write read the resulting production status without asking which dimension had moved.
+    * A hold is a pause, not rework. `ON_HOLD` from `READY_AT_STORE` records
+      `production_resume_status = READY_AT_STORE` and the domain permits exactly one exit, back to
+      where it was held from, so nothing happens to the laundry while it is held -- and lifting the
+      hold is not a second completion either.
+    * A rewash is the one case that must move it. `DEC-024` makes
+      `READY_AT_STORE -> EXCEPTION -> IN_PROCESS` legal because a stain found at quality check needs
+      one, and while the work is being redone the order is not finished at all.
+
+    Returns `(stamp, keep)`: `stamp` is written when it is not None, and `keep` decides whether the
+    existing value survives when nothing is stamped.
+    """
+
+    if not moving_production:
+        return None, True
+    if after is ProductionStatus.READY_AT_STORE:
+        # Resuming a hold returns to the state the hold interrupted; it is the same completion.
+        return (None, True) if before is ProductionStatus.ON_HOLD else (moment, False)
+    if after is ProductionStatus.RELEASED:
+        return None, True
+    if after is ProductionStatus.ON_HOLD and resume_to is ProductionStatus.READY_AT_STORE:
+        return None, True
+    return None, False
+
+
 class OrderRepository:
     """Create and transition orders with authorization, stale checks, audit, and outbox."""
 
@@ -551,10 +591,31 @@ class OrderRepository:
             # A first version kept the earliest stamp forever, on the reasoning that the question is
             # when the laundry was done rather than how often the board was touched. That reasoning
             # is wrong the moment a rewash exists: it freezes MET permanently for a rewashed order.
-            ready_now = (
-                occurred_at if next_state.production is ProductionStatus.READY_AT_STORE else None
+            #
+            # All three of those cases are about the *production* dimension, and the second version
+            # read them off the resulting production status without asking which dimension had
+            # actually moved. One UPDATE serves all three, so an order finished at 09:00 and sent to
+            # cancellation review at 16:00 recorded 16:00 as the moment its laundry was done --
+            # nothing had happened to the laundry at 16:00, and this column exists precisely so the
+            # SLA board can tell those two times apart. A commercial or intake move now leaves the
+            # clock exactly as it found it.
+            #
+            # A hold is the third case, and it is not rework. `ON_HOLD` from `READY_AT_STORE`
+            # records `production_resume_status = READY_AT_STORE` and the domain permits exactly one
+            # exit, back to where it was held from -- so nothing happens to the laundry while it is
+            # held. Treating every state that is not READY_AT_STORE or RELEASED as rework cleared
+            # the clock for a finished bag put on hold for a shelf audit, and restamped it when
+            # somebody lifted the hold. `0037`'s own comment says a hold does not reset it; the code
+            # did. (That comment also still says "write-once" and "the first moment", which the
+            # rewash correction replaced with the last completion. The migration is applied and
+            # checksummed, so it is not edited; the rule lives here.)
+            ready_now, ready_keep = _ready_clock_effect(
+                moving_production=command.production_target is not None,
+                before=current.production,
+                after=next_state.production,
+                resume_to=next_state.production_resume_status,
+                moment=occurred_at,
             )
-            ready_keep = next_state.production is ProductionStatus.RELEASED
 
             def mutation(cursor: Any) -> None:
                 cursor.execute(

@@ -30,6 +30,8 @@ const state = {
   status: "unknown",
   // Whether the member-store list is an answer. False means the question was not answered.
   storeScopeKnown: false,
+  /** @type {Record<string, string>} store id → the name the people who work there use */
+  storeNames: {},
   /** @type {string|null} */
   storeId: null,
   /** @type {string[]} */
@@ -92,6 +94,7 @@ export async function refresh() {
   } catch (error) {
     state.principal = null;
     state.memberStoreIds = [];
+    state.storeNames = {};
     state.storeScopeKnown = false;
     if (error && error.kind === "SESSION_ENDED") {
       // A 401 is an answer: there is no session, which is the application's normal first state.
@@ -124,6 +127,15 @@ export async function loadMemberStores() {
   try {
     const body = await request("/internal/v1/stores");
     state.memberStoreIds = Array.isArray(body?.store_ids) ? body.store_ids.map(String) : [];
+    // The names, when the server knows them. A store minted before the registry has none, and the
+    // shell falls back to the shortened identifier for exactly those.
+    state.storeNames = Array.isArray(body?.stores)
+      ? Object.fromEntries(
+          body.stores
+            .filter((entry) => entry && entry.store_id && entry.name)
+            .map((entry) => [String(entry.store_id), String(entry.name)]),
+        )
+      : {};
     state.storeScopeKnown = true;
   } catch (error) {
     // An empty list and an unanswered question are different facts, and the shell says something
@@ -131,6 +143,7 @@ export async function loadMemberStores() {
     // request made the console tell a member of staff that their account has no shop and to go and
     // ask the owner -- about an assignment that exists. `storeScopeKnown` is what separates them.
     state.memberStoreIds = [];
+    state.storeNames = {};
     state.storeScopeKnown = error?.kind === "SESSION_ENDED";
   }
 

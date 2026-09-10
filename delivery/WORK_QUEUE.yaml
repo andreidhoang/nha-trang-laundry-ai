@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-09'
+last_updated: '2026-09-10'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -3798,5 +3798,41 @@ items:
   - a_truncated_wal_segment_was_archived_and_reported_as_success
   - what_the_second_round_found_in_the_first_rounds_fixes
   - no_ai_capability_moved_and_no_consent_state_became_reachable
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: WORKFLOW-CONFORMANCE-001
+  phase: PRODUCTION_HARDENING
+  title: Write down the shop's core workflows, then prove the console runs every one
+  status: COMPLETE
+  priority: 279
+  depends_on:
+  - SHOP-READINESS-AUDIT-001
+  context_domains:
+  - platform
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - AGENTS.md
+  - specs/ENGINEERING_SPEC_V1.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - docs/STAFF_CONSOLE_ENGINEERING_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-workflow-conformance-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_workflows_the_shop_actually_runs_written_down_with_citations
+  - every_interactive_control_enumerated_and_claimed_by_a_test
+  - where_the_spec_and_the_code_disagreed
+  - what_driving_each_workflow_in_a_browser_revealed
+  - what_the_adversarial_round_refuted
+  - the_ai_system_still_refuses_everything
   - rollback_assessment
   blocked_by_decisions: []

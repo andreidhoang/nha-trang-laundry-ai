@@ -144,6 +144,42 @@ function recordOnlyNotice() {
  *
  * @returns {HTMLElement}
  */
+/**
+ * The two fields nothing produces.
+ *
+ * `WORKFLOW-CONFORMANCE-001` drove this form as a member of staff and could not finish it. The
+ * request requires `contact_scope_hash` and `evidence_summary_hash`, and a search of the whole
+ * repository finds no producer of either: no route returns one, no screen renders one, no script
+ * computes one. They are agent-pipeline values — `agent-tools-v1.openapi.yaml` binds a fact to the
+ * contact it was resolved for — and that pipeline is `NOT_AUTHORIZED` in this release.
+ *
+ * The hints used to say "chép nguyên văn", which tells a staff member there is somewhere to copy
+ * from. There is not, and a person hunting for a screen that does not exist is worse off than one
+ * told plainly that this form cannot be completed yet.
+ *
+ * @returns {HTMLElement}
+ */
+function unproducibleHashesNotice() {
+  return h(
+    "div",
+    { class: "notice", dataState: "danger" },
+    h("p", { class: "notice__title" }, "Biểu mẫu này chưa dùng được — không phải do bạn"),
+    h(
+      "p",
+      null,
+      "Máy chủ đòi hai mã băm sha256 cho mỗi sự cố, và không có màn hình, API hay công cụ nào " +
+        "trong hệ thống sinh ra chúng. Chúng thuộc đường agent, đường đó chưa được cấp phép, nên " +
+        "hiện không có cách nào điền đúng hai ô dưới đây.",
+    ),
+    h(
+      "p",
+      null,
+      "Hôm nay: ghi khiếu nại của khách ra sổ kèm số phiếu, và báo chủ tiệm trong ngày. " +
+        "Danh sách sự cố bên dưới vẫn đọc được. Chi tiết ở màn hình “Chưa hỗ trợ”.",
+    ),
+  );
+}
+
 function hardcodedFieldsNotice() {
   return h(
     "div",
@@ -432,6 +468,7 @@ export function render_() {
     "form",
     { class: "form", onSubmit: submit },
     recordOnlyNotice(),
+    unproducibleHashesNotice(),
     hardcodedFieldsNotice(),
     labelled({
       id: "incident-order",
@@ -445,16 +482,17 @@ export function render_() {
       id: "incident-contact-hash",
       label: "Mã băm phạm vi liên hệ",
       hint:
-        "contact_scope_hash — chép nguyên văn, gồm tiền tố sha256: rồi 64 ký tự hex thường — KHÔNG phải JCS-SHA256-V1: như mã băm của " +
-        "báo giá hay phiếu duyệt. Dán nhầm loại sẽ bị máy chủ trả 422 khó hiểu.",
+        "contact_scope_hash — sha256: rồi 64 ký tự hex thường. Không có màn hình nào trong bảng " +
+        "vận hành này sinh ra giá trị đó; xem khối cảnh báo ở trên.",
       control: contactInput,
     }),
     labelled({
       id: "incident-evidence-hash",
       label: "Mã băm tóm tắt bằng chứng",
       hint:
-        "evidence_summary_hash — chép nguyên văn, gồm tiền tố sha256: rồi 64 ký tự hex thường. Đây là mã băm của bản tóm tắt bằng chứng, " +
-        "không phải bản thân bằng chứng — không dán nội dung khách gửi vào đây.",
+        "evidence_summary_hash — sha256: rồi 64 ký tự hex thường. Đây là mã băm của bản tóm tắt " +
+        "bằng chứng, không phải bản thân bằng chứng — không dán nội dung khách gửi vào đây. " +
+        "Cũng không có chỗ nào sinh ra nó.",
       control: evidenceInput,
     }),
     h("div", { class: "action-bar" }, gated(submitButton, writeVerdict)),

@@ -1,0 +1,243 @@
+schema_version: 1
+work_item: WORKFLOW-CONFORMANCE-001
+recorded_at: '2026-09-10T17:40:00+07:00'
+requirement_contract: >-
+  State the shop's core operating workflows explicitly, with citations to the specifications and the
+  deterministic code that implement them; then drive every one of them through the staff console in
+  a real browser against a real API and a real database, control by control, and fix whatever fails
+  to behave as the workflow says it must.
+rollback_impact: >-
+  Reverting returns ten behaviours, seven of which a shop meets in its first week: a part payment
+  reported to the counter as "invalid input" with the server's reason code, its Vietnamese
+  explanation and its owning decision all discarded; a money field that reads "170000.5" as
+  1.700.005 while its own hint promises decimals are refused; a store picker that offers an owner a
+  choice between two truncated UUIDs; a production-completion timestamp rewritten by any commercial
+  move on a finished order; an expired price that can still be accepted, with the refusal arriving
+  one step later after the customer has agreed; a stale-version refusal reported as a generic server
+  rejection; and a second reviewer on the same AI draft receiving HTTP 500 for what is an ordinary
+  race; a hold placed on finished laundry losing the time it was finished; a lost settlement race
+  presented as an unsupported case; and a store grant that writes a live membership for a person who
+  has left. It also returns an incident form whose hints tell staff to copy two values from a screen
+  that does not exist, and a daily-operations driver that silently assumes the shop has one store.
+
+
+  No migration was written. Every change is code, copy, or a test, and every one reverts cleanly.
+  The two generated artefacts -- `specs/contracts/console-disclosures-v1.yaml` and `apps/web/sw.js`
+  -- are regenerated from source by their own scripts and follow the revert.
+unresolved_assumptions: >-
+  **This was the local stack, not the pilot host.** Real API, real PostgreSQL, real Chrome, four
+  real roles, today's code -- but the issuer was the development one rather than Keycloak, and Caddy
+  was not in front of it. The sign-in page and the console over TLS by its own hostname remain
+  unexercised end to end, as they were for `SHOP-READINESS-AUDIT-001`.
+
+
+  **Incident intake is not fixed and cannot be by an agent.** `contact_scope_hash` and
+  `evidence_summary_hash` have no producer anywhere in this repository, and choosing how the server
+  would derive them binds the agent contract and, for the evidence summary, a retention question
+  (`DEC-008`/`DEC-009` adjacent). The console now says the form cannot be completed, `#/gaps` names
+  it, a test asserts the "no producer" claim so it cannot go stale quietly, and
+  `docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md` puts the two questions to the owner.
+
+
+  **The draft-decision race is fixed but unreachable today.** No agent draft exists in this release,
+  because every AI capability is `NOT_AUTHORIZED`. The repository-level test proves the typed
+  refusal; the route's mapping of `ShadowStateError` to 409 is pre-existing behaviour and was not
+  separately re-tested, because seeding a draft through the API test client costs more than it
+  proves about FastAPI wiring.
+
+
+  **One of the four drivers could not be run in this environment, and is not counted.** The task
+  packet names `verify_counter_transaction.py`; it defaults to the demo stack at
+  `https://staging.internal:8443` over a private CA, and those containers predate this work by two
+  days -- it refused the order creation with `extra_forbidden: acquisition_source`, a field that
+  landed on 2026-09-09. Rebuilding them needs `docker compose up`, which an agent may not run here.
+  So it is recorded as NOT RUN rather than as a pass, and the three that did run are named with
+  their counts. The other three cover its path: `verify_daily_operations.py` drives the same
+  transaction through the console against a current stack.
+
+
+  **The control coverage claim is bounded and says so.** The conformance driver exercises the
+  controls on the workflow paths it drives and reports, by name, any declared control it did not
+  touch. It does not claim to have pressed every control on every screen; the enumeration in
+  `docs/CORE_BUSINESS_WORKFLOWS_V1.md` and the driver's own report are what make the boundary
+  visible rather than assumed.
+evidence:
+  the_workflows_the_shop_actually_runs_written_down_with_citations: >-
+    `docs/CORE_BUSINESS_WORKFLOWS_V1.md`. The spine of the business -- a walk-in from the door to a
+    closed order -- is a thirteen-step table naming the screen, the control, the request and the
+    result at each step, with the two SLA clocks marked at the steps that start and stop them. Round
+    it: the delivery trade and its three differences; the exact prices and fee bands as the code
+    fixes them; the one supported settlement shape and the five refusals around it; every way an
+    order ends, including the ones that must be refused; the shop day, the network drop, the stale
+    version and the replay; hiring somebody, in the three commands it really takes; and the AI
+    surfaces, where the correct behaviour today is to decline.
+
+
+    It was derived by thirteen readers working one family each over the specifications, the domain
+    code, the API contract and the console, and then adversarially reconciled against the code by a
+    second reader per family whose default was that the first was wrong. Roughly eighty workflows
+    were described; the document carries the ones a shop performs, and §8 carries what the
+    specifications describe and this release does not build.
+  every_interactive_control_enumerated_and_claimed_by_a_test: >-
+    `scripts/verify_workflow_conformance.py` names every control it drives in `DECLARED_CONTROLS`,
+    records what it actually touched, and fails if any declared control went untouched. The first
+    run reported 42 of 46 and named the four; the navigation links, the store picker and the
+    intake slot checkbox were then driven for real rather than removed from the list, and the run
+    reports full coverage of what it declares: 49 of 49 on the final run.
+
+
+    Three browser drivers ran green against the committed tree: `verify_console_interaction.py`
+    59/59 (stubbed API -- typing, focus, what survives a 401), `verify_daily_operations.py` 70/70
+    (the walk-in and delivery trades against a real stack) and `verify_workflow_conformance.py`
+    107/107. The fourth is accounted for under `unresolved_assumptions`.
+
+
+    That is a bounded claim and the driver makes the boundary visible: it exercises the controls on
+    the workflow paths, not every control on every screen. Where a control cannot be exercised on
+    this deployment -- the store picker renders only for an account assigned more than one shop --
+    the driver says so in words instead of passing silently.
+  where_the_spec_and_the_code_disagreed: >-
+    Recorded in `CORE_BUSINESS_WORKFLOWS_V1.md` §9.1 rather than resolved in code, because in every
+    case the code is the authority and the document is the stale one. Seven, of which four matter to
+    a reader planning work: the staff-console spec still says payment is not built and no order can
+    reach `COMPLETED` (both landed), that intake, production and delivery have no surface (all three
+    shipped), and that store assignment has no route (it has two); and the security spec's role
+    matrix grants `AUDITOR` reads that the API refuses, which is why `rbac.js` is measured from the
+    server rather than copied from the matrix.
+
+
+    `docs/STAFF_CONSOLE_ENGINEERING_SPEC_V1.md` §12.4 now carries those corrections in the document
+    that was wrong, including one I nearly introduced myself: a first draft of that section claimed
+    Playwright had been adopted as a repository dependency. It has not -- it appears in no
+    `pyproject.toml` and no lock file -- and the corrected text says so.
+  what_driving_each_workflow_in_a_browser_revealed: >-
+    Ten defects, each invisible to 1.178 passing tests, to `verify_contracts.py`, and to a
+    happy-path browser run, because each sits at a seam where both sides are individually correct.
+
+
+    **The money route's refusal never reached the counter.** `record_settlement` answers a part
+    payment with `{"outcome": "NOT_SUPPORTED", "reason_code": "AMOUNT_IS_NOT_THE_EXACT_TOTAL",
+    "decision": "DEC-010"}` and its comment says the reason travels intact. It travelled as far as
+    `classify()`, which recognised only the *plural* `reason_codes` of `create_quote`, so the screen
+    said "Dữ liệu nhập không hợp lệ" -- the one sentence guaranteed to make a staff member holding a
+    customer's money retype a number that was never wrong. Found by paying 5.000 ₫ short of the
+    total in a browser.
+
+
+    **And the fix was half done.** The reconciliation round found that four more reason codes reach
+    the same panel by the same route -- `ORDER_NOT_FOUND`, `ORDER_NOT_ACTIVE`, `ALREADY_SETTLED`,
+    `STALE_VERSION` -- which are states rather than open decisions and arrive with `decision: null`.
+    Glossing only the `SettlementRefusal` enum shipped a fix that looked complete and still put a
+    bare English token in front of the counter. All four are glossed, the kind's message no longer
+    calls a settled order "not supported yet", and the guard test now reads both the enum and every
+    literal `reason_code=` in the repository.
+
+
+    **`parseDong` read a decimal as a tenfold amount.** `parseDong("170000.5")` returned 1.700.005
+    while the field's own hint said decimals were refused. No wrong amount could reach the ledger --
+    the server compares against the quote to the đồng -- but the operator was refused for a number
+    they never typed. A dot is now accepted only where it groups three digits.
+
+
+    **The store picker offered a choice nobody can make.** `stores` has had a `name` column since
+    `0035`; `GET /internal/v1/stores` returned identifiers only, and `app.js` still carried a
+    comment saying there was no `stores` table. An owner with two shops chose between `11111111…5555`
+    and `5442b740…aaa7` at the top of the screen. The response now carries names and the picker shows
+    them.
+
+
+    **A commercial move restamped finished laundry.** One UPDATE serves all three order dimensions,
+    and it derived `production_ready_at` from the resulting production status without asking which
+    dimension had moved -- so an order finished at 09:00 and sent to cancellation review at 16:00
+    recorded 16:00 as the moment its washing was done. The column exists precisely so the SLA board
+    can tell those two times apart.
+
+
+    **An expired price could still be accepted.** `FR-QTE-010` says an expired quote may not be
+    accepted until it is repriced; the guard existed only at order creation, one step too late --
+    the customer has already been read yesterday's price and has already agreed. Acceptance now
+    refuses against the server's clock and the console tells the counter to price the bag again.
+
+
+    **A stale version read as a fault.** The commonest refusal in a shop with two tablets was
+    reported as "Máy chủ từ chối chuyển trạng thái", which reads as "you did something wrong". It
+    now names what happened: somebody else changed this order, reload the board.
+
+
+    **And four more from the reconciliation round**, three of them in the first round's own work.
+    A hold placed on finished laundry cleared its completion time and restamped it when the hold was
+    lifted -- the same defect as the commercial-move rewrite, in the branch the first fix left
+    alone, and contradicting `0037`'s own comment. A settlement refused for a lost race
+    (`STALE_VERSION`) arrived under the "not supported" heading rather than as the stale refusal it
+    is, so the operator was told the shop does not do this when a reload was the only useful move.
+    The two panels of the staff screen disagreed about a departed member: `Gán vai trò` refused them
+    and `Gán cửa hàng` wrote a live membership row, because the role path has always checked that
+    the staff user is ACTIVE and the store path never did. And a second reviewer deciding the same
+    agent draft received HTTP 500 from an unhandled `UNIQUE` violation -- `0021`'s comment says a
+    second review "loses at the constraint, not in the UI", and `shadow.js:476` already carried the
+    right words for the 409 the server never sent.
+
+
+    **One more, found by the drivers themselves rather than by reading.** `verify_daily_operations.py`
+    silently depended on the account being assigned to exactly one store, because that is when the
+    console auto-selects one. The moment a second branch existed, every store-scoped screen rendered
+    "Chưa chọn cửa hàng" and the script failed at the first control it touched. It now scopes itself
+    to the store it was given, which is what the app bar's picker does for a person.
+  what_the_adversarial_round_refuted: >-
+    Two claims of mine, and both mattered.
+
+
+    **"The custody-contradiction refusal shows a bare code."** It does not. The specific sentence --
+    "the order records custody of the goods, so they cannot be resolved as never received" --
+    renders in the notice under the result line, with the correlation id. My check had read only
+    `output.form__result` and reported the generic summary line as if it were the whole message.
+    Re-checked by reading every notice on the screen; no change was made.
+
+
+    **"Assigning a role silently failed."** Observed once and not reproducible in five subsequent
+    runs; the role landed with HTTP 204 every time and the database agreed. Recorded as a test flake
+    rather than a defect, and the driver now settles-then-reads rather than reading once on the
+    wrong side of the commit window -- which is what produced a failure whose own detail line
+    printed the value the assertion had just been told was missing.
+
+
+    The reconciliation round also produced roughly a hundred spec-versus-code observations. Most are
+    the specifications describing a larger system than R1 builds, and those are recorded in §8 and
+    §9 of the workflows document rather than treated as defects; several agent HIGHs describe
+    behaviour that is working as decided -- range-priced services refusing to quote is `DEC-001`
+    failing closed, and the unwired promotion engine is a deliberate deferral whose window closed on
+    2026-08-31.
+  the_ai_system_still_refuses_everything: >-
+    Verified by execution rather than by reading a flag. All thirteen capabilities report
+    `NOT_AUTHORIZED`; the shadow draft queue is empty because nothing in this release produces a
+    draft; the assistant answers from the shop's own records and states on screen that it calls no
+    language model and computes no money; and the one code change on an AI surface -- the draft
+    double-decision -- converts an unhandled constraint violation into a typed refusal, which
+    narrows what that surface can do rather than widening it.
+
+
+    No capability moved, no gate manifest was produced or requested, no feature flag changed, and no
+    consent state became reachable.
+  rollback_assessment: >-
+    Every change is code, copy, generated output or a test; no migration was written and nothing is
+    forward-only. Reverting restores the seven behaviours named under `rollback_impact`, of which
+    the settlement refusal and the ready-clock rewrite are the two that touch money and the SLA
+    record respectively.
+
+
+    The one irreversible act is social rather than technical: `docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md`
+    puts two questions to the owner that were not previously asked. Reverting the code would leave
+    the questions standing and correct.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+- command: uv run ruff format --check .
+  status: PASSED
+- command: uv run mypy apps packages
+  status: PASSED
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED

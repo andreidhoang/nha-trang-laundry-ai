@@ -308,8 +308,18 @@ class IncidentOpenRequest(StrictRequest):
     evidence_summary_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
+class MemberStore(BaseModel):
+    """One store the caller belongs to. `name` is null for a store minted before the registry."""
+
+    store_id: UUID
+    name: str | None
+
+
 class MemberStoresResponse(BaseModel):
+    #: Kept as the primitive every existing caller reads; `stores` carries the same identifiers in
+    #: the same order, with the name beside each so a person can tell two shops apart.
     store_ids: list[UUID]
+    stores: list[MemberStore]
 
 
 class OrderResponse(BaseModel):
@@ -965,7 +975,11 @@ def list_member_stores(
 
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
-    return MemberStoresResponse(store_ids=list(service.list_member_stores(principal=principal)))
+    assigned = service.list_member_stores(principal=principal)
+    return MemberStoresResponse(
+        store_ids=[store_id for store_id, _name in assigned],
+        stores=[MemberStore(store_id=store_id, name=name) for store_id, name in assigned],
+    )
 
 
 @app.get("/internal/v1/stores/{store_id}/orders", response_model=list[OrderResponse])

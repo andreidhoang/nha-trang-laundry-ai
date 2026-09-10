@@ -270,9 +270,15 @@ function renderAppbar() {
 /**
  * The store scope selector.
  *
- * There is no `stores` table and therefore no store name anywhere in the system. A shortened
- * identifier with the full value in the title is the honest maximum; inventing "Cửa hàng 1" would
- * be this console making up a fact about the business.
+ * It showed a shortened identifier for years because there was no `stores` table and any name would
+ * have been invented. `STORE-REGISTRY-001` created that table, so the name the people who work
+ * there use is a fact the server holds — and an owner choosing between `11111111…5555` and
+ * `5442b740…aaa7` at the top of the screen is one mis-read hex digit away from filing a real order
+ * against the wrong shop.
+ *
+ * The name is shown when the server sent one, with the identifier kept in `title` for anyone who
+ * needs to quote it. A store minted before the registry has no name, and those still show the
+ * shortened identifier — the fallback is the old behaviour, not an invented label.
  *
  * @returns {HTMLElement|null}
  */
@@ -311,7 +317,11 @@ function storeBanner() {
     },
     h("option", { value: "" }, "— chọn cửa hàng —"),
     state.memberStoreIds.map((id) =>
-      h("option", { value: id, selected: id === state.storeId, title: id }, shortId(id)),
+      h(
+        "option",
+        { value: id, selected: id === state.storeId, title: id },
+        state.storeNames?.[id] ? `${state.storeNames[id]} · ${shortId(id)}` : shortId(id),
+      ),
     ),
   );
 

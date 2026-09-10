@@ -15,7 +15,7 @@
  * @module core/errors
  */
 
-/** @typedef {"OFFLINE"|"NETWORK"|"TIMEOUT"|"SESSION_ENDED"|"DENIED"|"MISSING"|"CONFLICT"|"STALE"|"IDEMPOTENCY_CONFLICT"|"REQUIRE_HUMAN"|"INVALID"|"PRECONDITION_REQUIRED"|"TOO_LARGE"|"RATE_LIMITED"|"UNAVAILABLE"|"PRICEBOOK_UNAVAILABLE"|"FAULT"} ErrorKind */
+/** @typedef {"OFFLINE"|"NETWORK"|"TIMEOUT"|"SESSION_ENDED"|"DENIED"|"MISSING"|"CONFLICT"|"STALE"|"IDEMPOTENCY_CONFLICT"|"REQUIRE_HUMAN"|"NOT_SUPPORTED"|"INVALID"|"PRECONDITION_REQUIRED"|"TOO_LARGE"|"RATE_LIMITED"|"UNAVAILABLE"|"PRICEBOOK_UNAVAILABLE"|"FAULT"} ErrorKind */
 
 export class ApiError extends Error {
   /**
@@ -25,6 +25,7 @@ export class ApiError extends Error {
    * @param {string} init.message operator-facing Vietnamese text
    * @param {string} [init.detail] the server's own string, kept verbatim for the details panel
    * @param {string[]} [init.reasonCodes] domain reason codes, never paraphrased
+   * @param {string} [init.decision] the open business decision that owns a `NOT_SUPPORTED` refusal
    * @param {{field: string, message: string}[]} [init.fieldErrors]
    * @param {number} [init.retryAfterSeconds]
    * @param {string} [init.correlationId]
@@ -36,6 +37,7 @@ export class ApiError extends Error {
     this.status = init.status;
     this.detail = init.detail || "";
     this.reasonCodes = init.reasonCodes || [];
+    this.decision = init.decision || "";
     this.fieldErrors = init.fieldErrors || [];
     this.retryAfterSeconds = init.retryAfterSeconds ?? null;
     this.correlationId = init.correlationId || "";
@@ -71,6 +73,15 @@ const MESSAGES = {
   STALE: "Dữ liệu đã thay đổi từ khi bạn mở màn hình. Hãy tải lại rồi làm lại.",
   IDEMPOTENCY_CONFLICT: "Cùng một khoá thao tác đã dùng cho nội dung khác. Hãy tải lại rồi nhập lại.",
   REQUIRE_HUMAN: "Cần người quyết định. Máy chủ không tự chọn.",
+  // Not the same thing as invalid input, and rendering it as one is what sends a staff member
+  // looking for a workaround. The data was fine; either the shop has not decided that this case is
+  // allowed, or the order is not in a state where it applies. `reason_code` says which, and
+  // `decision` names the open question when there is one -- there is not always: `ALREADY_SETTLED`
+  // and `ORDER_NOT_ACTIVE` come with `decision: null`, and calling those "not supported yet" would
+  // be its own small lie.
+  NOT_SUPPORTED:
+    "Máy chủ không ghi nhận khoản này, và dữ liệu bạn nhập không sai. Mã lý do bên dưới nói rõ " +
+    "vì sao; đừng nhập lại kiểu khác để lách.",
   INVALID: "Dữ liệu nhập không hợp lệ.",
   PRECONDITION_REQUIRED: "Thiếu phiên bản dòng dữ liệu. Hãy tải lại màn hình.",
   TOO_LARGE: "Nội dung quá lớn.",
@@ -91,15 +102,23 @@ export function apiError(kind, extra = {}) {
 }
 
 /**
- * Pull `reason_codes` out of whatever shape the server used.
+ * Pull reason codes out of whatever shape the server used.
+ *
+ * Two shapes exist and both are load-bearing. `create_quote` and the assistant send
+ * `reason_codes` as an array; `record_settlement` sends a single `reason_code` alongside the
+ * `decision` that owns it (`main.py:1125-1131`). Reading only the plural one threw the singular
+ * away, and the route it belongs to is the one that takes money: a customer paying 165.000 against
+ * a 170.000 total produced `AMOUNT_IS_NOT_THE_EXACT_TOTAL`/`DEC-010` on the wire and the words
+ * "Dữ liệu nhập không hợp lệ" on the screen — which is not true, and tells the operator to correct
+ * a keystroke that was never wrong.
  *
  * @param {unknown} detail
  * @returns {string[]}
  */
 function reasonCodesOf(detail) {
-  if (detail && typeof detail === "object" && Array.isArray(detail.reason_codes)) {
-    return detail.reason_codes.map(String);
-  }
+  if (!detail || typeof detail !== "object") return [];
+  if (Array.isArray(detail.reason_codes)) return detail.reason_codes.map(String);
+  if (typeof detail.reason_code === "string" && detail.reason_code) return [detail.reason_code];
   return [];
 }
 
@@ -168,6 +187,20 @@ export function classify(status, detail, context = {}) {
     if (detail && typeof detail === "object" && !Array.isArray(detail)) {
       if (detail.outcome === "REQUIRE_HUMAN") {
         return of("REQUIRE_HUMAN", { reasonCodes: reasonCodesOf(detail) });
+      }
+      // `NOT_SUPPORTED` is the settlement route's word for "the shop has not decided this case".
+      // It shares the 422 status with validation failures and is the opposite of one.
+      if (detail.outcome === "NOT_SUPPORTED") {
+        const codes = reasonCodesOf(detail);
+        // One of that route's codes is not a policy question at all: somebody else changed the
+        // order while this screen had it open. It arrives wearing the same envelope as the rest,
+        // and under the NOT_SUPPORTED heading the operator is told the shop does not do this --
+        // when the only useful next move is the one `STALE` already offers, a reload.
+        if (codes.includes("STALE_VERSION")) return of("STALE", { reasonCodes: codes });
+        return of("NOT_SUPPORTED", {
+          reasonCodes: codes,
+          decision: typeof detail.decision === "string" ? detail.decision : "",
+        });
       }
       return of("INVALID", { reasonCodes: reasonCodesOf(detail) });
     }

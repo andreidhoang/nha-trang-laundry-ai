@@ -979,3 +979,92 @@ def test_an_unresolved_acceptance_does_not_consume_the_key(
             "SELECT count(*) FROM command_idempotency_records WHERE idempotency_key = %s", (key,)
         )
         assert cursor.fetchone()[0] == 0
+
+
+def test_an_expired_price_cannot_be_accepted_and_the_refusal_names_the_reprice(
+    connection: Any, service: OperationsService
+) -> None:
+    """`FR-QTE-010`. A price that has run out is refused when it is quoted, not when it is billed.
+
+    The guard existed one step downstream, at order creation, which is the wrong step: by then the
+    customer has been read yesterday's price, has agreed to it, and the shop is refusing after the
+    handshake. A quote is valid for a day (`QUOTE_VALIDITY`), and the bag priced on Tuesday evening
+    that the customer collects on Thursday is an ordinary shop event, not an edge case.
+
+    The revision here is composed with an aged `priced_at` rather than by altering a stored row,
+    because `0005` makes `quote_revisions` immutable — which is also why the expiry has to be a
+    property of the snapshot the customer was read.
+    """
+
+    from datetime import UTC, datetime, timedelta
+
+    from nha_trang_laundry_db.quotes import QuoteRevisionCommand
+    from nha_trang_laundry_domain.quote_composition import (
+        ComposedQuote,
+        compose_quote_revision,
+    )
+
+    _publish(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    request_id = uuid4()
+    quote_id = uuid4()
+
+    # The same pricebook the service would price against, resolved the same way, so the revision
+    # this test stores is one the running system could have produced on the day it was priced.
+    with connection.cursor() as cursor:
+        rules, provenance = service._published_pricebook(cursor)
+
+    priced_at = datetime.now(UTC) - timedelta(days=2)
+    composition = compose_quote_revision(
+        quote_id=quote_id,
+        revision=1,
+        rules=rules,
+        requested=(
+            RequestedLine(
+                service_code=STANDARD,
+                quantity="6",
+                unit=Unit.KG,
+                quantity_basis=QuantityBasis.STAFF_MEASUREMENT,
+            ),
+        ),
+        pricebook=provenance,
+        priced_at=priced_at,
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
+    )
+    assert isinstance(composition, ComposedQuote), composition
+    snapshot = composition.snapshot
+    assert snapshot.data.valid_until is not None
+    assert snapshot.data.valid_until < datetime.now(UTC), "the fixture must really be expired"
+
+    QuoteRepository().create_revision(
+        connection,
+        QuoteRevisionCommand(
+            store_id=store_id,
+            bound_order_request_id=request_id,
+            snapshot=snapshot,
+            expected_current_revision=0,
+            expected_row_version=0,
+            created_by=staff.staff_user_id,
+            correlation_id=uuid4(),
+            occurred_at=priced_at,
+        ),
+    )
+    connection.commit()
+
+    with pytest.raises(QuoteStateError) as refusal:
+        service.accept_quote(
+            store_id=store_id,
+            quote_id=quote_id,
+            expected_current_revision=1,
+            expected_snapshot_hash=snapshot.document.snapshot_hash,
+            idempotency_key=f"accept-expired-{uuid4().hex}",
+            principal=staff,
+        )
+    assert "QUOTE_EXPIRED" in str(refusal.value)
+
+    # And nothing was written: an attestation that a customer accepted an expired price is exactly
+    # the record this refusal exists to prevent.
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM quote_acceptances WHERE quote_id = %s", (quote_id,))
+        assert cursor.fetchone()[0] == 0

@@ -141,7 +141,12 @@ def test_an_owner_grants_and_the_member_immediately_passes_store_scoped_routes(
         app.dependency_overrides.clear()
 
     assert allowed.status_code == 200
-    assert stores.json() == {"store_ids": [str(store_id)]}
+    # The name matters as much as the identifier here: an owner of two shops picks between them in
+    # the app bar, and two shortened UUIDs are not a choice a person can make correctly.
+    assert stores.json() == {
+        "store_ids": [str(store_id)],
+        "stores": [{"store_id": str(store_id), "name": "Cửa hàng thử nghiệm"}],
+    }
 
 
 def test_a_non_owner_cannot_grant_and_is_told_nothing_extra(
@@ -264,7 +269,7 @@ def test_revoking_removes_access_on_the_next_request(
     assert before.status_code == 200
     assert revoked.status_code == 204
     assert after.status_code == 403, "revocation must take effect on the very next request"
-    assert stores.json() == {"store_ids": []}
+    assert stores.json() == {"store_ids": [], "stores": []}
 
 
 def test_granting_access_to_a_store_that_does_not_exist_is_a_typed_refusal(
@@ -308,3 +313,58 @@ def test_granting_access_to_a_store_that_does_not_exist_is_a_typed_refusal(
         f"a mistyped store must be refused, not crash the route: {response.status_code}"
     )
     assert response.status_code in {404, 409, 422}, response.status_code
+
+
+def test_a_departed_staff_member_cannot_be_granted_a_store(
+    connection: Any, service: OperationsService
+) -> None:
+    """The two panels on the Nhân sự screen must agree about who a person is.
+
+    `assign_role` has refused a missing-or-disabled staff user since it was written
+    (`identity._lock_staff_version`). `assign_store` had no such check, so an owner tidying up after
+    somebody left got 404 from "Gán vai trò" and 204 from "Gán cửa hàng" for the same person, and
+    the shop's record then said a departed member belonged to the store.
+
+    Nobody gained access either way -- a disabled account cannot authenticate -- which is exactly
+    why this was invisible: the wrong answer had no immediate consequence, only a wrong row.
+    """
+
+    owner = _owner(connection)
+    operator = _operator(connection, owner)
+    store_id = uuid4()
+    _ensure_store(connection, store_id)
+
+    IdentityRepository().disable_staff(
+        connection,
+        staff_user_id=operator.staff_user_id,
+        actor_id=owner.staff_user_id,
+        correlation_id=uuid4(),
+    )
+
+    app.dependency_overrides[current_principal] = lambda: owner
+    app.dependency_overrides[get_operations_service] = lambda: service
+    try:
+        with TestClient(
+            app,
+            cookies={"staff_session": "token", "staff_csrf": CSRF},
+            raise_server_exceptions=False,
+        ) as as_owner:
+            granted = as_owner.post(
+                f"/internal/v1/staff/{operator.staff_user_id}/stores/{store_id}",
+                headers=_headers(f"grant-{uuid4().hex}"),
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert granted.status_code < 500, granted.status_code
+    assert granted.status_code in {404, 409, 422}, granted.status_code
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM staff_store_assignments WHERE revoked_at IS NULL"
+            " AND staff_user_id = %s AND store_id = %s",
+            (operator.staff_user_id, store_id),
+        )
+        rows = cursor.fetchone()
+    assert rows is not None
+    assert rows[0] == 0, "a refused grant must not leave a live membership row behind"

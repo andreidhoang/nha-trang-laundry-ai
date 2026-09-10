@@ -288,7 +288,12 @@ def test_a_draft_cannot_be_decided_twice(
         correlation_id=uuid4(),
     )
 
-    with pytest.raises(psycopg.errors.UniqueViolation):
+    # A typed refusal, not the driver's exception. `0021`'s comment says a second review "loses at
+    # the constraint, not in the UI" -- and it lost as an unhandled `UniqueViolation`, which the
+    # route answered with a 500 and the console rendered as "Máy chủ gặp lỗi. Đừng thử lại". Two
+    # reviewers pressing Duyệt on the same draft is the ordinary case this queue exists for, and
+    # the second one was being told the system had broken.
+    with pytest.raises(ShadowStateError) as refusal:
         repository.decide_draft(
             postgres_connection,
             agent_run_id=agent_run_id,
@@ -296,6 +301,16 @@ def test_a_draft_cannot_be_decided_twice(
             principal=principal,
             correlation_id=uuid4(),
         )
+    assert "already been decided" in str(refusal.value)
+
+    # And exactly one review survives: the refusal is a refusal, not a silent second write.
+    with postgres_connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM agent_draft_reviews WHERE agent_run_id = %s", (agent_run_id,)
+        )
+        reviews = cursor.fetchone()
+    assert reviews is not None
+    assert reviews[0] == 1
 
 
 # --- RBAC and IDOR ---------------------------------------------------------------------------

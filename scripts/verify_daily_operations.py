@@ -172,6 +172,13 @@ with sync_playwright() as pw:
         result["status"] in (200, 201),
         f"HTTP {result['status']} {result['body'][:120]}",
     )
+    # Scope the session to the store this run trades in, the way the app bar's picker does. The
+    # console auto-selects only when the account is assigned to exactly ONE store
+    # (`session.js:140-144`), so on a deployment with a second branch -- which this business now has
+    # -- every store-scoped screen renders "Chưa chọn cửa hàng" and the counter has no controls at
+    # all. The script used to depend on the single-store case without saying so, and started failing
+    # the day a second store existed.
+    page.evaluate("(id) => localStorage.setItem('staff_store_id', id)", STORE)
     page.reload(wait_until="networkidle")
     page.wait_for_timeout(1200)
     shot(page, "02-signed-in.png")
@@ -230,7 +237,15 @@ with sync_playwright() as pw:
     shot(page, "05-ticket-issued.png")
 
     page.locator("button[type=submit]", has_text="Ghi nhận tiếp nhận").first.click()
-    page.wait_for_timeout(1500)
+    # Wait for the card the server's answer produces, not for a stopwatch. 1.500 ms is plenty on an
+    # idle laptop and not on a busy one: this step failed twice while a test suite was running
+    # beside it, and a verification script that reports a defect because the machine was busy is
+    # worse than no script. The rest of this walk still paces itself; this is the step that showed
+    # it mattered.
+    try:
+        page.wait_for_selector("text=Đã tiếp nhận", timeout=15000)
+    except Exception:
+        page.wait_for_timeout(1500)
     ok("the intake is recorded", "Đã tiếp nhận" in page.content())
     shot(page, "06-intake-recorded.png")
     quote_now = page.locator("#intake-quote-now")
@@ -616,6 +631,10 @@ with sync_playwright() as pw:
         atok,
     )
     ok("the auditor can sign in", r["status"] == 200, r["body"][:90])
+    # The auditor's context needs the same scoping as the owner's, and for the same reason: with
+    # more than one assigned store nothing is auto-selected, and every store-scoped screen renders
+    # "Chưa chọn cửa hàng" — which is a correct screen, and not the one this section is about.
+    apage.evaluate("(id) => localStorage.setItem('staff_store_id', id)", STORE)
     apage.reload(wait_until="networkidle")
     apage.wait_for_timeout(1000)
     apage.goto(f"{CONSOLE}#/orders", wait_until="networkidle")

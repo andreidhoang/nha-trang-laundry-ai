@@ -26,6 +26,7 @@ from uuid import UUID, uuid4
 
 from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
 from nha_trang_laundry_domain.sla import ProductionSlaPolicy, evaluate_production_sla
+from psycopg.errors import UniqueViolation
 
 from .identity import StaffPrincipal, StaffRole
 from .store_access import require_store_membership
@@ -178,6 +179,16 @@ class ShadowConsoleRepository:
             # COUNTER-DEFECTS-001 closed. The refusal is decided here so it reads as one.
             if not StoreRepository.exists(cursor, store_id):
                 raise ShadowStateError("no such store")
+            # The same pre-check the role path has had all along (`identity._lock_staff_version`),
+            # missing here. An owner tidying up after somebody leaves got two different answers from
+            # two panels on the same screen: "Gán vai trò" refused the departed person, and "Gán cửa
+            # hàng" accepted them and wrote a live membership row. Nobody gained access -- a disabled
+            # account cannot authenticate -- but the shop's record then said a person who had left
+            # belonged to the shop, and the two panels disagreed about who that person was.
+            cursor.execute("SELECT status FROM staff_users WHERE id = %s", (staff_user_id,))
+            staff_row = cursor.fetchone()
+            if staff_row is None or str(staff_row[0]) != "ACTIVE":
+                raise ShadowStateError("staff user is missing or disabled")
             version = _next_assignment_version(cursor, staff_user_id)
 
         def mutation(cursor: Any) -> None:
@@ -558,6 +569,52 @@ class ShadowConsoleRepository:
                 ),
             )
 
+        try:
+            self._commit_draft_review(
+                connection,
+                agent_run_id=agent_run_id,
+                review_id=review_id,
+                decision=decision,
+                reason_code=reason_code,
+                edited_text=edited_text,
+                principal=principal,
+                correlation_id=correlation_id,
+                timestamp=timestamp,
+                mutation=mutation,
+            )
+        except UniqueViolation as error:
+            # `0021` puts `UNIQUE (agent_run_id)` on the review table so a draft has one terminal
+            # decision, and its comment says "a second review loses at the constraint, not in the
+            # UI". It lost as an unhandled driver exception, which the route turned into a 500 and
+            # the console into "Máy chủ gặp lỗi. Đừng thử lại" -- telling the second reviewer the
+            # system is broken when what happened is that a colleague decided first. The client
+            # already had the right words for this (`shadow.js:476`, "nhiều khả năng đã có người
+            # quyết định bản nháp này"); it was waiting for a 409 the server never sent.
+            raise ShadowStateError("this draft has already been decided") from error
+        return DraftDecision(
+            review_id=review_id,
+            agent_run_id=agent_run_id,
+            decision=decision,
+            reason_code=reason_code,
+            edited_text=edited_text,
+            decided_by_staff_id=principal.staff_user_id,
+            decided_at=timestamp,
+        )
+
+    @staticmethod
+    def _commit_draft_review(
+        connection: Any,
+        *,
+        agent_run_id: UUID,
+        review_id: UUID,
+        decision: str,
+        reason_code: str | None,
+        edited_text: str | None,
+        principal: StaffPrincipal,
+        correlation_id: UUID,
+        timestamp: datetime,
+        mutation: Any,
+    ) -> None:
         commit_material_change(
             connection,
             MaterialChange(
@@ -588,15 +645,6 @@ class ShadowConsoleRepository:
                 occurred_at=timestamp,
             ),
             mutation,
-        )
-        return DraftDecision(
-            review_id=review_id,
-            agent_run_id=agent_run_id,
-            decision=decision,
-            reason_code=reason_code,
-            edited_text=edited_text,
-            decided_by_staff_id=principal.staff_user_id,
-            decided_at=timestamp,
         )
 
     # --- unknown-outcome reconciliation -------------------------------------------------------

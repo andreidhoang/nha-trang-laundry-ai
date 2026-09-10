@@ -369,13 +369,21 @@ function acceptControl(result, store, onAccepted, writeVerdict) {
           if (onAccepted) await onAccepted(accepted);
         } catch (error) {
           button.disabled = false;
+          // An expired price is the one refusal here that has a next action, and it is the same
+          // action every time: price the bag again. The server marks it with a prefix so this does
+          // not have to match on prose (`FR-QTE-010`).
+          const expired = String(error.detail || "").startsWith("QUOTE_EXPIRED");
           setResult(
             host,
             error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
-            error.kind === "REQUIRE_HUMAN"
-              ? "Chưa chốt được. Máy chủ nêu lý do bên dưới — thường là khối lượng mới là khách " +
-                "ước lượng, cần cân lại rồi báo giá lại."
-              : "Không ghi được lời xác nhận.",
+            expired
+              ? "Báo giá này đã quá hạn (mỗi báo giá có giá trị một ngày), nên không chốt được " +
+                "nữa. Hãy cân lại và bấm “Tính giá” để ra giá hôm nay, rồi đọc lại cho khách. " +
+                "Không có gì được ghi."
+              : error.kind === "REQUIRE_HUMAN"
+                ? "Chưa chốt được. Máy chủ nêu lý do bên dưới — thường là khối lượng mới là khách " +
+                  "ước lượng, cần cân lại rồi báo giá lại."
+                : "Không ghi được lời xác nhận.",
           );
           render(host.parentElement || host, errorNotice(error));
         }

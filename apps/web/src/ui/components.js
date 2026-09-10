@@ -430,6 +430,18 @@ export function errorNotice(error, options = {}) {
       ? h("p", { class: "mono" }, api.detail)
       : null,
     isApi && api.reasonCodes.length ? reasonCodeList(api.reasonCodes, "Mã lý do") : null,
+    // A `NOT_SUPPORTED` refusal is owned by an open decision. Naming it is what separates "the
+    // owner has not decided this yet" from "you did something wrong", and it is the string the
+    // operator repeats when they ask.
+    isApi && api.decision
+      ? h(
+          "p",
+          null,
+          "Quyết định còn bỏ ngỏ: ",
+          h("span", { class: "mono" }, api.decision),
+          ". Chủ tiệm là người trả lời câu này, không phải quầy.",
+        )
+      : null,
     isApi && api.fieldErrors.length
       ? h(
           "ul",

@@ -246,4 +246,4 @@ def test_a_staff_member_with_no_assignment_gets_an_empty_store_list_not_an_error
     response = client.get("/internal/v1/stores")
 
     assert response.status_code == 200
-    assert response.json() == {"store_ids": []}
+    assert response.json() == {"store_ids": [], "stores": []}

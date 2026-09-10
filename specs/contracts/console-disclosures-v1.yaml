@@ -10,14 +10,14 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 5
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 154
+  DESCRIPTIVE: 166
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   READ_ONLY_MODULE: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 11
-total: 179
+total: 191
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -71,6 +71,15 @@ disclosures:
   module: core/errors.js
   key: MESSAGES.REQUIRE_HUMAN
   text: Cần người quyết định. Máy chủ không tự chọn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#MESSAGES.NOT_SUPPORTED:ae91f0ded8aa
+  module: core/errors.js
+  key: MESSAGES.NOT_SUPPORTED
+  text: Máy chủ không ghi nhận khoản này, và dữ liệu bạn nhập không sai. Mã lý do bên dưới nói rõ vì sao;
+    đừng nhập lại kiểu khác để lách.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -159,6 +168,75 @@ disclosures:
   module: core/i18n.js
   key: REASON_NOTE.VALIDATION_ERROR
   text: Dữ liệu vào không hợp lệ với quy tắc miền.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.AMOUNT_IS_NOT_THE_EXACT_TOTAL:804d7c23361e
+  module: core/i18n.js
+  key: REASON_NOTE.AMOUNT_IS_NOT_THE_EXACT_TOTAL
+  text: Chỉ nhận đúng tổng đã báo, đủ một lần. Trả thiếu, trả thừa, đặt cọc hay trả góp đều chưa được
+    hỗ trợ. Hãy thu đúng tổng, hoặc báo giá lại nếu con số đã thay đổi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.COLLECTION_WAS_NOT_BY_THE_CUSTOMER:7acdc9ac1684
+  module: core/i18n.js
+  key: REASON_NOTE.COLLECTION_WAS_NOT_BY_THE_CUSTOMER
+  text: 'Ô “khách đã tự lấy đồ” phải khớp với hình thức của đơn: khách tự lấy thì tích, đơn giao tận nơi
+    thì để trống và chặng giao mới là thứ đóng đơn.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.NO_PRESENTABLE_TOTAL:f265ffc994e0
+  module: core/i18n.js
+  key: REASON_NOTE.NO_PRESENTABLE_TOTAL
+  text: Báo giá gắn với đơn này chưa có tổng cuối, thường vì phí giao chưa chốt. Chưa có tổng thì chưa
+    thu được tiền.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.TOTAL_IS_A_RANGE:eafb3632ab76
+  module: core/i18n.js
+  key: REASON_NOTE.TOTAL_IS_A_RANGE
+  text: Báo giá này là một khoảng giá, chưa phải một số. Nhân viên phải chốt giá chính xác trước.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.ORDER_NOT_FOUND:e4a74a45818d
+  module: core/i18n.js
+  key: REASON_NOTE.ORDER_NOT_FOUND
+  text: Không có đơn nào mang mã này ở cửa hàng đang chọn. Kiểm tra lại mã đơn trên bảng đơn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.ORDER_NOT_ACTIVE:374a72b4a66b
+  module: core/i18n.js
+  key: REASON_NOTE.ORDER_NOT_ACTIVE
+  text: Chỉ đơn đang chạy mới tất toán được. Đơn chưa xác nhận thì xác nhận trước; đơn đã đóng hoặc đã
+    huỷ thì không thu tiền qua màn hình này.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.ALREADY_SETTLED:3ff249cbf32b
+  module: core/i18n.js
+  key: REASON_NOTE.ALREADY_SETTLED
+  text: Đơn này đã được tất toán rồi — không phải lỗi của bạn, và không thu thêm lần nữa. Mở lại đơn để
+    xem lần tất toán đã ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.STALE_VERSION:c4a652965d44
+  module: core/i18n.js
+  key: REASON_NOTE.STALE_VERSION
+  text: Có người vừa đổi đơn này trong lúc bạn đang xem. Tải lại đơn rồi ghi nhận theo số mới.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -611,6 +689,29 @@ disclosures:
     - custody_events
     - batches
     why: 'Same shape: the custody context is measured empty and the disclosure says so.'
+- slot_id: screens/gaps.js#missing:412bbd8484b5
+  module: screens/gaps.js
+  key: missing
+  text: 'Yêu cầu HTTP mở sự cố đòi hai mã băm sha256: contact_scope_hash và evidence_summary_hash. Không
+    màn hình nào, không API nào và không script nào trong hệ thống này sinh ra hai giá trị đó — chúng
+    thuộc đường agent (fact_refs trong agent-tools-v1), nơi máy chủ tự tính, và đường đó chưa được cấp
+    phép. Nhân viên không có chỗ nào để chép hai mã này, nên biểu mẫu bên màn hình Sự cố không hoàn tất
+    được. Danh sách sự cố vẫn đọc được bình thường.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#blockedBy:62dda7aa075c
+  module: screens/gaps.js
+  key: blockedBy
+  text: 'Cần chủ tiệm quyết định (đề xuất tại docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md): một sự
+    cố do nhân viên mở gắn với phạm vi liên hệ nào, và bản tóm tắt bằng chứng được lưu ở đâu — hay chỉ
+    lưu mã băm. Hai câu đó quyết định máy chủ tính hai mã băm thế nào. Cho tới lúc đó: ghi khiếu nại ra
+    sổ kèm số phiếu, và báo chủ tiệm trong ngày.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/gaps.js#missing:455dba33f5c7
   module: screens/gaps.js
   key: missing
@@ -978,6 +1079,24 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/incidents.js#notice:56de1d6b10b2
+  module: screens/incidents.js
+  key: notice
+  text: Máy chủ đòi hai mã băm sha256 cho mỗi sự cố, và không có màn hình, API hay công cụ nào trong hệ
+    thống sinh ra chúng. Chúng thuộc đường agent, đường đó chưa được cấp phép, nên hiện không có cách
+    nào điền đúng hai ô dưới đây.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/incidents.js#notice__title:74cb36ae48cf
+  module: screens/incidents.js
+  key: notice__title
+  text: Biểu mẫu này chưa dùng được — không phải do bạn
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/incidents.js#notice__title:a726e37ae527
   module: screens/incidents.js
   key: notice__title
@@ -1149,11 +1268,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#hint:3ab4a35e058e
+- slot_id: screens/orderDetail.js#hint:77c8e73fa0e4
   module: screens/orderDetail.js
   key: hint
   text: Tác nhân không phải STAFF — OUTBOX_WORKER, AGENT_RUNNER, BOOTSTRAP — không gắn với người dùng
-    nào, nên cột định danh người thực hiện để trống.
+    nào, nên cột định danh người thực hiện hiện dấu “—”. Đó là “không có người nào”, không phải “thiếu
+    dữ liệu”.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1636,14 +1756,6 @@ disclosures:
   module: ui/components.js
   key: hint
   text: Không tách bao hay tách dòng để lách bậc giá. Số tiền do máy chủ tính; màn hình này không tính.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: ui/components.js#notice:9525c4bc0839
-  module: ui/components.js
-  key: notice
-  text: Không có API phía sau. Hiển thị một biểu mẫu ở đây sẽ tạo cảm giác dữ liệu đã được lưu
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

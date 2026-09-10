@@ -301,6 +301,30 @@ rebuilt the form on every keystroke: `STANDARD_WASH_DRY` entered character by ch
 by a browser check that types with `keyboard.type()` and asserts focus survives — the lesson being
 that a UI check which never types has not tested the UI.
 
+## 12.4 Four more corrections, from `WORKFLOW-CONFORMANCE-001` (2026-09-10)
+
+This document says at the top that it describes what was built. Four of its statements were true
+when written and are false now, and a reader who trusts them plans the wrong work.
+
+1. **§2 and §4: "no aggregate. No order can reach `COMPLETED`."** Settlement landed with
+   `SETTLEMENT-001` and `DEC-023`; orders are paid and closed daily. §4's rows for payment, intake,
+   production and delivery legs are all out of date — intake and production transitions shipped in
+   `CONSOLE-LIFECYCLE-001`, delivery legs in `FULFILMENT-001`.
+2. **§11 D8: "No route creates a `staff_store_assignments` row."** `POST /internal/v1/staff/{id}/
+   stores/{store_id}` and its `DELETE` both exist, and the Nhân sự screen drives them.
+3. **§11 D2, D6, D14: the three cross-store holes.** Closed by `CROSS-STORE-INTEGRITY-001`.
+4. **§12.2: "Ten scripted journeys remain owed."** Three committed browser drivers now cover them:
+   `verify_console_interaction.py` (stubbed API — typing, focus, what survives a 401),
+   `verify_daily_operations.py` (the walk-in and delivery trades against a real stack) and
+   `verify_workflow_conformance.py` (every other workflow, and the refusals). The decision **not**
+   to adopt Playwright as a repository dependency still stands: it appears in no `pyproject.toml`
+   and in no lock file, and each script is run with `uv run --with playwright`, which is the cheap
+   way to get the evidence without paying the standing CI cost.
+
+The current description of what the console does, workflow by workflow, is
+[`CORE_BUSINESS_WORKFLOWS_V1.md`](CORE_BUSINESS_WORKFLOWS_V1.md). Where that document and this one
+disagree, that one is newer and was verified by driving the software.
+
 ## 13. Open questions for the owner
 
 1. **Store assignment (D8).** Nothing works for a new staff member until this is provisioned. Route

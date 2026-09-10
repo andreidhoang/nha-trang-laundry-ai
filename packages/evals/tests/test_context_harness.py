@@ -200,7 +200,13 @@ def test_context_drift_check_passes() -> None:
     # findings were fixed. Four of them were defects in the first round's own fixes. The item exists
     # because the work needed a queue record and an evidence file like everything else here -- and
     # because the re-derived local evidence bundle names a work item, and had to name a true one.
-    assert "121 work items" in result.stdout
+    # 122 with WORKFLOW-CONFORMANCE-001: the workflows the shop performs were written down as a
+    # reviewed document for the first time, and then every one of them was driven through the
+    # console in a browser. That found six defects the layer-by-layer rounds could not, because
+    # each sat at a seam where both sides were individually correct -- a structured refusal the
+    # server phrased precisely and the client dropped; a clock written by the wrong dimension's
+    # command; an acceptance that checked expiry one step too late.
+    assert "122 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

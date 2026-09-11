@@ -77,6 +77,30 @@ success and failed hours later, when PostgreSQL was started, inside the four-hou
 fine — `/Volumes/USB DRIVE/age-identity.txt` works, and is the expected shape given the key arrives
 on removable media.
 
+**The target must also not be in the future of your archive, and that is the easier mistake.**
+Under pressure the instinct is "restore to now" — and `now` is always later than the last
+transaction that has reached the archive, because WAL lags by up to `archive_timeout` (300s here).
+PostgreSQL replays everything it has, discovers it never reached the target, and answers:
+
+```
+FATAL:  recovery ended before configured recovery target was reached
+LOG:  startup process exited with exit code 1
+LOG:  database system is shut down
+```
+
+Measured on 2026-09-11 driving this procedure end to end. It is not a warning and there is no
+partial success: the server shuts down, and the data directory has to be thrown away and restored
+again, inside the four-hour clock. Read the last archived segment before choosing:
+
+```bash
+# on the source, if it is still alive
+psql -c "select last_archived_wal, last_archived_time from pg_stat_archiver"
+```
+
+Pick a target **at or before** `last_archived_time`. When the source is gone, pick a target a few
+minutes before the incident rather than at it — `archive_timeout` is the width of what you cannot
+have.
+
 **The base backup is chosen by the target, not by recency.** A backup taken *after* the recovery
 target cannot be recovered from -- PostgreSQL refuses with `could not locate required checkpoint
 record` -- and that is the ordinary case, not an edge one: backups run nightly, so undoing

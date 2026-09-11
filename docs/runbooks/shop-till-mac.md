@@ -47,6 +47,24 @@ Verify it took:
 uv run python scripts/workspace_env.py --check     # exits non-zero while .pth files are hidden
 ```
 
+**If any container from the old path is already running, stop it first.** Compose resolves bind
+mounts when a container is *created*, so a stack started from the old location keeps pointing there
+after the move. It does not fail loudly: the container stays up and the files simply are not there
+any more. Measured on 2026-09-11 — PostgreSQL kept running and its `archive_command` began failing
+every ten seconds with `sh: /usr/local/bin/archive-wal.sh: not found`, exit 127, while WAL piled up
+behind it. `pg_stat_archiver` still read `failed_count = 0`, because the failures land in the log
+rather than that counter, so the one number an operator would check looked fine.
+
+```bash
+docker compose -f compose.r1.yaml -f compose.shop-local.yaml --profile self-managed-database stop
+# ... move, then bring it up from the new path with §2, which recreates every container.
+```
+
+Nothing is lost by getting this wrong — the data lives in named volumes, which are not affected by
+where the checkout is, and PostgreSQL recovers cleanly from an unclean stop because
+`full_page_writes` is on. But the stack has to be **recreated**, not restarted: `docker start` on a
+container whose bind-mount source has moved does not repair it.
+
 ## 1. The archive drive
 
 Attach it, and make a directory on it. **A different disk from the database** — an archive on the

@@ -496,6 +496,30 @@ function signedOutScreen() {
 }
 
 /**
+ * Hold route rendering until both the session and its store scope have been resolved.
+ *
+ * Deep-linking to a store-scoped screen used to build that screen while `refresh()` was still
+ * asking who the operator was. Eager list views then requested `/stores/null/...`, logged a 422,
+ * and rebuilt themselves a moment later when the store arrived. It looked harmless, but it made
+ * every cold start begin with a failed backend call and taught monitoring to ignore real 422s.
+ *
+ * @returns {HTMLElement}
+ */
+function sessionLoadingScreen() {
+  return h(
+    "section",
+    { class: "screen", "aria-busy": "true" },
+    h(
+      "div",
+      { class: "screen__header" },
+      h("p", { class: "eyebrow" }, "PHIÊN LÀM VIỆC"),
+      h("h1", null, "Đang kiểm tra phiên"),
+    ),
+    h("div", { class: "card skeleton", "aria-hidden": "true" }),
+  );
+}
+
+/**
  * Refuse a screen before it renders, with the reason.
  *
  * A courtesy, not a control. The server re-checks every call, and a screen that slips through this
@@ -507,7 +531,7 @@ function signedOutScreen() {
  */
 function guard(_context, route) {
   const state = session.snapshot();
-  if (state.status === "unknown") return null;
+  if (state.status === "unknown") return sessionLoadingScreen();
   // Before the signed-out branch on purpose: `unreachable` also has a null principal, and telling
   // an operator they are signed out when the truth is "we could not ask" is the defect this exists
   // to prevent.

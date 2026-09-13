@@ -28,6 +28,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONSOLE_HOST = os.environ.get("R1_CONSOLE_HOST", "console.giatlasachcong.lan")
 CONSOLE_PORT = 8443
+SHOP_COMPOSE_PROJECT = "nha-trang-laundry-shop"
+SHOP_TLS_SERVICE = "tls"
 
 
 @dataclass(frozen=True)
@@ -215,11 +217,33 @@ def check_port_free() -> Result:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.settimeout(1)
         busy = probe.connect_ex(("127.0.0.1", CONSOLE_PORT)) == 0
+
+    if not busy:
+        return Result(f"Port {CONSOLE_PORT} is available", True, "free")
+
+    code, output = _run(
+        "docker",
+        "ps",
+        "--filter",
+        f"publish={CONSOLE_PORT}",
+        "--format",
+        '{{.Label "com.docker.compose.project"}}/{{.Label "com.docker.compose.service"}}',
+    )
+    expected_owner = f"{SHOP_COMPOSE_PROJECT}/{SHOP_TLS_SERVICE}"
+    owners = {line.strip() for line in output.splitlines() if line.strip()}
+    if code == 0 and expected_owner in owners:
+        return Result(
+            f"Port {CONSOLE_PORT} is owned by the shop console",
+            True,
+            expected_owner,
+        )
+
+    owner_detail = ", ".join(sorted(owners)) if owners else "an unknown process"
     return Result(
-        f"Port {CONSOLE_PORT} is available or already ours",
-        True,
-        "something is already listening" if busy else "free",
-        blocking=False,
+        f"Port {CONSOLE_PORT} is available or owned by the shop console",
+        False,
+        f"occupied by {owner_detail}",
+        f"Stop the conflicting listener before starting {expected_owner}.",
     )
 
 

@@ -35,9 +35,10 @@ import threading
 import time
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Route, sync_playwright
 
-WEB = Path("/Users/danghuyhoang/Desktop/nha-trang-laundry-ai/apps/web")
+ROOT = Path(__file__).resolve().parents[1]
+WEB = ROOT / "apps" / "web"
 PORT = 8912
 STORE = "11111111-2222-4333-8444-555555555555"
 
@@ -168,6 +169,7 @@ SESSION_OK = {
 }
 
 state = {"authenticated": True, "hold_ticket": False}
+held_ticket_routes: list[Route] = []
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(channel="chrome", headless=True)
@@ -219,6 +221,7 @@ with sync_playwright() as playwright:
         elif "/counter-tickets" in url and route.request.method == "POST":
             # Held open on request, so a test can observe a button while its write is in flight.
             if state.get("hold_ticket"):
+                held_ticket_routes.append(route)
                 return
             route.fulfill(
                 status=201,
@@ -773,6 +776,20 @@ with sync_playwright() as playwright:
         f"in_flight={in_flight} still_disabled={ticket_button.first.is_disabled()}",
     )
     state["hold_ticket"] = False
+    for held_route in held_ticket_routes:
+        held_route.fulfill(
+            status=201,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "ticket_id": "66666666-7777-4333-8444-aaaaaaaaaaaa",
+                    "ticket_number": 1,
+                    "issued_on": "2026-09-09",
+                }
+            ),
+        )
+    held_ticket_routes.clear()
+    page.wait_for_timeout(200)
 
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))
     browser.close()

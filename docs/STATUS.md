@@ -1,5 +1,9 @@
 # Project status
 
+> **Current onboarding and operational handoff (2026-09-13):** read
+> [`CODEX_CROSS_MACHINE_HANDOFF.md`](CODEX_CROSS_MACHINE_HANDOFF.md). The historical detail below
+> remains useful, but machine-readable delivery and capability files override its dated counts.
+
 **Last updated:** 2026-08-18
 **Authoritative machine status:** [`delivery/CAPABILITY_STATUS.yaml`](../delivery/CAPABILITY_STATUS.yaml)
 **Measured distance to production:** [`PRODUCTION_READINESS_ASSESSMENT.md`](PRODUCTION_READINESS_ASSESSMENT.md)

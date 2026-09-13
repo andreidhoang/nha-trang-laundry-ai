@@ -53,6 +53,7 @@ future browser PWA.
 
 ## Start here
 
+- [Codex and engineer cross-machine handoff](./docs/CODEX_CROSS_MACHINE_HANDOFF.md)
 - [English build engineering specification](./BUILD_ENGINEERING_SPEC.md)
 - [Current delivery and production status](./docs/STATUS.md)
 - [Engineering continuation brief](./context/PROJECT_CONTINUATION.md)

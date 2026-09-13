@@ -1,8 +1,26 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-09-10 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **122 queue items.** The suite runs **1.178 passing, 3 skipped** with
+**Last reconciled:** 2026-09-13 (Asia/Ho_Chi_Minh)
+**Active work item:** none. **123 queue items.** The suite runs **1,189 passing, 3 skipped** with
 the guarded PostgreSQL suite; migrations run `0001`–`0037`.
+
+## Cross-machine and shop-Mac handoff — 2026-09-13
+
+`docs/CODEX_CROSS_MACHINE_HANDOFF.md` is now the starting point for a fresh GitHub clone and
+`context/tasks/TASK-cross-machine-bootstrap-001.md` is the bounded Codex/engineer verification task.
+Git reproduces the complete synthetic engineering environment; it deliberately excludes `.shop/`,
+`.demo/`, `.env`, credentials, certificates and Docker database volumes.
+
+The chosen shop Mac's checkout was moved out of iCloud to `/Users/danghuyhoang/laundry`. Its shop
+stack is stopped. Loopback hostname resolution is configured and port 8443 is free; the two current
+preflight blockers are an unset archive directory on a not-yet-attached external disk and a private
+CA that macOS has not yet trusted. The production stack must not start until both pass. A new clone
+on another machine is a synthetic demo or a replacement-host restore target, never a second live
+shop ledger.
+
+The cross-machine pass also removed an operational absolute path from
+`scripts/verify_console_interaction.py`; it now resolves `apps/web` from its own checkout, with a
+regression test preventing a `/Users/...` path from returning.
 
 ## Where R1 stands — 2026-09-10
 

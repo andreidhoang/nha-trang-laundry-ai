@@ -32,7 +32,7 @@
 
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UUID, dateTime, parseDong, shortHash, shortId } from "../core/format.js";
+import { UUID, dateTime, matchesFilter, parseDong, shortHash, shortId } from "../core/format.js";
 import { enumVi, serviceCategoryVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -316,6 +316,58 @@ function lineEditor({ catalog, lines, onStructuralChange, onValueChange, onAddLi
  * @returns {HTMLElement}
  */
 /**
+ * The step after "Khách đã chốt giá": carry this quote into the order form.
+ *
+ * The counter journey used to stop dead here. Intake to an accepted quote is seven clicks and
+ * about thirteen seconds — genuinely fast — and then `Tạo đơn` on the order board asked the
+ * operator to hand-assemble four values: the contact id, the quote id, the revision number and a
+ * 78-character `JCS-SHA256-V1:` seal. Three of those could be copied from this card. The fourth,
+ * the contact id, was rendered shortened with no copy control anywhere in the console, so for any
+ * intake older than the one on screen the form could not be completed at all — while its own hint
+ * said "chép từ màn hình Tiếp nhận", an instruction nobody could follow.
+ *
+ * So the hand-off moves to where the data already is. This is the same pattern the intake picker
+ * one screen earlier already uses ("Dùng yêu cầu này"): the operator picks a row, the console
+ * carries the identifiers, and nothing opaque is typed. The manual form on the order board stays
+ * exactly as it was, for the case where a quote was accepted in an earlier session.
+ *
+ * `contactId` is null when the quote was reached by typing a quote id rather than by picking an
+ * intake — there is then no bound request on screen to take it from, and the link says so instead
+ * of carrying three of four values and letting the order form fail on the fourth.
+ *
+ * @param {any} result an accepted `QuoteRevisionResponse`
+ * @param {string|null} contactId
+ * @returns {HTMLElement}
+ */
+function createOrderHandoff(result, contactId) {
+  if (!contactId) {
+    return h(
+      "p",
+      { class: "hint" },
+      "Để tạo đơn ngay từ đây, hãy chọn lượt tiếp nhận của khách ở trên trước — bảng vận hành " +
+        "cần mã khách, mà bản báo giá không mang theo.",
+    );
+  }
+  return h(
+    "div",
+    { class: "form__actions" },
+    h(
+      "a",
+      {
+        class: "button",
+        dataVariant: "primary",
+        href:
+          `#/orders?quote=${encodeURIComponent(result.quote_id)}` +
+          `&revision=${encodeURIComponent(String(result.revision))}` +
+          `&hash=${encodeURIComponent(result.snapshot_hash)}` +
+          `&contact=${encodeURIComponent(contactId)}`,
+      },
+      "Tạo đơn từ báo giá này",
+    ),
+  );
+}
+
+/**
  * "Khách đã chốt giá" — the attestation control. `DEC-021`, resolved by the owner 2026-08-25.
  *
  * Shown only on a revision that can still be accepted. An already-accepted revision shows what was
@@ -326,12 +378,17 @@ function lineEditor({ catalog, lines, onStructuralChange, onValueChange, onAddLi
  * their screen, and the server refuses if either has moved — a quote reprised while the customer was
  * deciding must be read to them again, not silently accepted.
  */
-function acceptControl(result, store, onAccepted, writeVerdict) {
+function acceptControl(result, store, onAccepted, writeVerdict, contactId) {
   if (result.finality === "APPROVED_EXACT") {
     return h(
-      "p",
-      { class: "hint" },
-      "Đã chốt. Bản này không sửa được nữa, và người chốt đã được ghi lại.",
+      "div",
+      { class: "stack stack--tight" },
+      h(
+        "p",
+        { class: "hint" },
+        "Đã chốt. Bản này không sửa được nữa, và người chốt đã được ghi lại.",
+      ),
+      createOrderHandoff(result, contactId),
     );
   }
   const accepting = new Submission(`quote-accept-${result.quote_id}-${result.revision}`);
@@ -400,7 +457,7 @@ function acceptControl(result, store, onAccepted, writeVerdict) {
   );
 }
 
-function revisionResult(result, store, onAccepted, writeVerdict) {
+function revisionResult(result, store, onAccepted, writeVerdict, contactId = null) {
   return h(
     "div",
     { class: "card stack" },
@@ -410,7 +467,7 @@ function revisionResult(result, store, onAccepted, writeVerdict) {
       h("h3", null, `Bản sửa đổi ${result.revision}`),
       h("div", { class: "row" }, priceStateBadge(result.finality)),
     ),
-    acceptControl(result, store, onAccepted, writeVerdict),
+    acceptControl(result, store, onAccepted, writeVerdict, contactId),
     result.replayed
       ? h(
           "div",
@@ -777,9 +834,7 @@ export function render_(context) {
       placeholder: "Lọc theo mã, bản, trạng thái…",
       noun: "báo giá",
       matches: (item, needle) =>
-        [item.quote_id, String(item.revision), item.finality].some(
-          (value) => value && String(value).toLowerCase().includes(needle),
-        ),
+        matchesFilter([item.quote_id, item.revision, item.finality], needle),
     },
   });
 
@@ -1039,13 +1094,30 @@ export function render_(context) {
       setResult(result, "ok", `Đã ghi bản sửa đổi ${created.revision}.`);
       render(
         resultHost,
-        revisionResult(created, store, async (accepted) => {
-          // Repaint from the accepted revision so the screen shows the final price and the
-          // control is replaced by the record, rather than leaving a button that would only
-          // be refused a second time.
-          render(resultHost, revisionResult(accepted, store, null, writeVerdict));
-          await list.reload();
-        }, writeVerdict),
+        revisionResult(
+          created,
+          store,
+          async (accepted) => {
+            // Repaint from the accepted revision so the screen shows the final price and the
+            // control is replaced by the record, rather than leaving a button that would only
+            // be refused a second time. The contact id is read again here rather than captured
+            // above: an operator can unbind the intake while the customer is deciding, and a
+            // stale capture would build a hand-off link pointing at somebody else.
+            render(
+              resultHost,
+              revisionResult(
+                accepted,
+                store,
+                null,
+                writeVerdict,
+                draft.requestSummary?.contact_binding_id ?? null,
+              ),
+            );
+            await list.reload();
+          },
+          writeVerdict,
+          draft.requestSummary?.contact_binding_id ?? null,
+        ),
       );
       await list.reload();
     } catch (error) {

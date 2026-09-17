@@ -32,7 +32,7 @@
 
 import { MAX_LIMIT, Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UUID, shortId } from "../core/format.js";
+import { UUID, matchesFilter, shortId } from "../core/format.js";
 import { ACQUISITION_SOURCE_VI, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -260,10 +260,10 @@ function readModelNotice() {
 }
 
 /**
- * @param {import("../core/router.js").RouteContext} [_context]
+ * @param {import("../core/router.js").RouteContext} [context]
  * @returns {HTMLElement}
  */
-export function render_(_context) {
+export function render_(context) {
   const store = storeId();
   const me = principal();
   const writeVerdict = can(me, "ORDERS_WRITE");
@@ -277,11 +277,25 @@ export function render_(_context) {
    *
    * @type {{contactId: string, quoteId: string, revision: string, hash: string, mode: string, acceptedAt: string}}
    */
+  // The hand-off from `#/quotes`, which is the only path a counter shift actually takes: the
+  // accepted-quote card links here carrying the four values this form needs, so none of them is
+  // typed or pasted. Read through the same `query` the intake hand-off into `#/quotes` uses.
+  //
+  // Nothing is trusted because it arrived in a URL. These are prefill only: the shapes are
+  // re-checked below exactly as typed input is, and the server re-checks all four again --
+  // `create_order` refuses a quote that is not `APPROVED_EXACT`, a revision that is not the one
+  // accepted, and a seal that does not match the stored snapshot byte for byte.
+  const handoff = context?.query;
+  const prefill = (key, pattern) => {
+    const value = String(handoff?.get(key) || "").trim();
+    return pattern.test(value) ? value : "";
+  };
+
   const draft = {
-    contactId: "",
-    quoteId: "",
-    revision: "1",
-    hash: "",
+    contactId: prefill("contact", UUID),
+    quoteId: prefill("quote", UUID),
+    revision: prefill("revision", /^[1-9][0-9]{0,5}$/) || "1",
+    hash: prefill("hash", SNAPSHOT_HASH),
     mode: FULFILLMENT_MODES[0],
     acceptedAt: "",
     // Rests on "nobody asked" until somebody says otherwise, which is what is actually true before
@@ -343,8 +357,9 @@ export function render_(_context) {
       label: "Lọc bảng đơn",
       noun: "đơn",
       matches: (item, needle) =>
-        [item.order_id, item.commercial, item.intake, item.production, item.balance].some(
-          (value) => String(value).toLowerCase().includes(needle),
+        matchesFilter(
+          [item.order_id, item.commercial, item.intake, item.production, item.balance],
+          needle,
         ),
       filteredEmptyText: "Không có đơn nào khớp bộ lọc.",
     },
@@ -574,7 +589,15 @@ export function render_(_context) {
       labelled({
         id: "order-contact",
         label: "Mã khách",
-        hint: "Chép từ màn hình Tiếp nhận. Màn hình này chưa tra cứu được khách theo tên hay số điện thoại.",
+        // The old hint said "Chép từ màn hình Tiếp nhận" and was impossible to follow: that
+        // screen rendered the contact id shortened, with no copy control anywhere, and cleared
+        // the one input that ever held it in full. Both halves are fixed -- the intake rows are
+        // copyable now, and the accepted-quote card links here with the value already filled --
+        // so the hint names the path that works and keeps the copy path as the fallback.
+        hint:
+          "Thường không phải gõ: bấm “Tạo đơn từ báo giá này” ở màn hình Báo giá thì ô này đã " +
+          "có sẵn. Cần điền tay thì chép ở màn hình Tiếp nhận. Màn hình này chưa tra cứu được " +
+          "khách theo tên hay số điện thoại.",
         control: contactInput,
       }),
       labelled({

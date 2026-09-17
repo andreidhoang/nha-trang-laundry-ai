@@ -340,6 +340,19 @@ class ApprovalResponse(BaseModel):
     required_role: str
     expires_at: str
     replayed: bool
+    # The binding an approver has to hand back. `ApprovalDecisionRequest` requires
+    # `resource_version`, `snapshot_hash` and `rendered_hash`, and `ManualSendPrepareRequest`
+    # requires the same three as `observed_*`. Until these were projected neither could be built
+    # from anything a client could read, so the queue rendered decision controls that could never
+    # be pressed and the manual-send envelope could never be opened.
+    #
+    # Null on the request and decision paths, which answer about a state change. The queue read
+    # populates them, and the queue read is what the console acts from.
+    resource_type: str | None = None
+    resource_id: UUID | None = None
+    resource_version: int | None = None
+    snapshot_hash: str | None = None
+    rendered_hash: str | None = None
 
 
 class ManualSendResponse(BaseModel):
@@ -1925,6 +1938,11 @@ def _approval_response(stored: StoredApproval) -> ApprovalResponse:
         required_role=stored.required_role.value,
         expires_at=stored.expires_at.isoformat(),
         replayed=stored.replayed,
+        resource_type=stored.resource_type,
+        resource_id=stored.resource_id,
+        resource_version=stored.resource_version,
+        snapshot_hash=stored.snapshot_hash,
+        rendered_hash=stored.rendered_hash,
     )
 
 

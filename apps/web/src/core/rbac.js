@@ -85,6 +85,15 @@ export const CAPABILITIES = {
     mfa: true,
     why: "Hàng chờ duyệt chỉ dành cho người có quyền duyệt.",
   },
+  APPROVALS_DECIDE: {
+    roles: [OWNER, APPROVER],
+    mfa: true,
+    // Same gate as reading the queue -- `decide_approval` depends on `require_approval_staff` --
+    // plus two checks no client-side predicate can make: the server refuses a decision from the
+    // staff member who requested it (maker-checker), and refuses one whose resource version or
+    // digests have moved. Both surface as a refusal on the button, not as a hidden control.
+    why: "Quyết định phê duyệt cần vai trò duyệt và đã xác thực hai bước.",
+  },
   QUEUE_READ: {
     roles: [OWNER, APPROVER],
     mfa: true,

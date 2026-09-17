@@ -82,7 +82,15 @@ def test_subprocess_without_pythonpath_imports_every_workspace_package() -> None
     assert "ok" in result.stdout
 
 
-@pytest.mark.skipif(not hasattr(stat, "UF_HIDDEN"), reason="UF_HIDDEN is a BSD file flag")
+# Guarded on `os.chflags`, not on `stat.UF_HIDDEN`.
+#
+# `stat.UF_HIDDEN` is a plain integer constant CPython defines on **every** platform; only
+# `os.chflags` is BSD-only. Guarding on the constant therefore admitted this test on Linux, where
+# line 93 raised `AttributeError: module 'os' has no attribute 'chflags'` -- so `uv run pytest`,
+# the command `CLAUDE.md` documents, could not go green on any Linux machine or CI runner. The
+# companion test below had the same predicate inverted, so it skipped on exactly the platforms it
+# was written to cover. One wrong symbol, both directions wrong.
+@pytest.mark.skipif(not hasattr(os, "chflags"), reason="os.chflags is a BSD-only call")
 def test_hidden_path_configuration_files_are_reported(tmp_path: Path) -> None:
     site_packages = tmp_path / ".venv" / "lib" / "python3.12" / "site-packages"
     site_packages.mkdir(parents=True)
@@ -90,7 +98,10 @@ def test_hidden_path_configuration_files_are_reported(tmp_path: Path) -> None:
     hidden = site_packages / "hidden.pth"
     visible.write_text("/tmp\n", encoding="utf-8")
     hidden.write_text("/tmp\n", encoding="utf-8")
-    os.chflags(hidden, stat.UF_HIDDEN)
+    # Reached only on BSD, per the skipif above; the stubs mypy checks against are Linux's, which
+    # have no `os.chflags` at all, so the call needs the ignore to typecheck on the platform CI
+    # actually runs on.
+    os.chflags(hidden, stat.UF_HIDDEN)  # type: ignore[attr-defined,unused-ignore]
 
     reported = workspace_env.hidden_path_configuration_files(tmp_path)
 
@@ -102,7 +113,7 @@ def test_hidden_path_configuration_files_are_reported(tmp_path: Path) -> None:
     assert workspace_env.hidden_path_configuration_files(tmp_path) == ()
 
 
-@pytest.mark.skipif(hasattr(stat, "UF_HIDDEN"), reason="platforms without the BSD hidden flag")
+@pytest.mark.skipif(hasattr(os, "chflags"), reason="platforms that have the BSD hidden flag")
 def test_hidden_detection_is_inert_without_the_flag(tmp_path: Path) -> None:
     assert workspace_env.hidden_path_configuration_files(tmp_path) == ()
     assert workspace_env.clear_hidden_flags(tmp_path) == ()

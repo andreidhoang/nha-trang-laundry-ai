@@ -276,3 +276,47 @@ export function count(items, limit) {
   const size = Array.isArray(items) ? items.length : 0;
   return size >= limit ? `${size}+` : String(size);
 }
+
+/**
+ * Fold a string for Vietnamese-insensitive comparison: case, diacritics and đ/Đ.
+ *
+ * Four screens had grown the same predicate independently —
+ * `String(value).toLowerCase().includes(needle)` in `orders`, `incidents`, `quotes` and
+ * `orderRequests` — and all four carried the same defect: typing `nguyen` did not match `Nguyễn`,
+ * and typing `don` did not match `đơn`. A Vietnamese operator types without tone marks because it
+ * is faster, so the filter missed the row that was on screen.
+ *
+ * Two steps, and the second is the one that gets forgotten. NFD splits a base letter from its
+ * combining marks, so stripping `U+0300–U+036F` removes the tones and the circumflex/breve/horn.
+ * But `đ` is **not** a decomposable form — it is its own codepoint with no combining mark — so NFD
+ * leaves it untouched and it has to be mapped explicitly. A folder that only does NFD looks right
+ * on `Nguyễn` and silently fails on `đơn hàng`, which is the more common word here.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function fold(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+}
+
+/**
+ * Whether any of `values` contains `needle`, compared with Vietnamese folding on both sides.
+ *
+ * The needle is folded here rather than at the call site so a caller cannot forget: `listView`
+ * hands its filter a `.trim().toLowerCase()` string, which is folded for ASCII and not for
+ * Vietnamese, and that half-normalisation is exactly what made the old predicates look correct.
+ *
+ * @param {unknown[]} values
+ * @param {string} needle
+ * @returns {boolean}
+ */
+export function matchesFilter(values, needle) {
+  const wanted = fold(needle);
+  if (!wanted) return true;
+  return values.some((value) => value != null && fold(value).includes(wanted));
+}

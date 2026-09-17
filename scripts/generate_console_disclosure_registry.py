@@ -60,6 +60,11 @@ CAPABILITY_GATES: dict[str, str] = {
     "INCIDENTS_READ": "require_operations_staff",
     "INCIDENTS_WRITE": "require_operations_staff",
     "APPROVALS_READ": "require_approval_staff",
+    # `decide_approval` depends on the same route gate as the queue read. The two checks the gate
+    # does not make -- maker-checker separation, and the exact resource version and digests -- are
+    # made inside `_authorize_decision` and `_require_exact_binding`, and neither can be predicted
+    # client-side, so the console does not try: it presents the control and lets the refusal speak.
+    "APPROVALS_DECIDE": "require_approval_staff",
     "QUEUE_READ": "require_approval_staff",
     "MANUAL_SEND": "require_operations_staff",
     "STAFF_ADMIN": "require_owner",
@@ -144,12 +149,18 @@ BINDINGS: dict[str, dict[str, Any]] = {
         "table cannot name a session to revoke. Verified: the model declares staff_user_id, roles "
         "and mfa_verified and nothing else.",
     },
-    "screens/approvals.js#guardrail:2807c7bbd43b": {
-        "kind": "READ_ONLY_MODULE",
-        "module": "screens/approvals.js",
-        "why": "Claims the screen writes nothing to the server. Checked by scanning the module for "
-        "a mutating request; it issues one GET and nothing else.",
-    },
+    # The `READ_ONLY_MODULE` binding that stood here is deliberately gone rather than re-keyed.
+    #
+    # It bound the sentence "Đây là màn hình chỉ đọc. Không có thao tác nào ở đây ghi vào máy chủ"
+    # to a scan proving `approvals.js` issued no mutating request. The scan was right and the
+    # sentence was true, and both were a symptom: the screen was read-only because
+    # `GET /internal/v1/approvals` withheld the three fields a decision needs, so no client could
+    # build one. The queue showed envelopes counting down to an expiry nobody could prevent.
+    #
+    # The fields are projected now and the screen decides. The claim it guarded is false, so the
+    # binding is removed with it -- re-keying it to the new guardrail would assert the opposite of
+    # what that guardrail says. This is the intended lifecycle: a disclosure binding dies when the
+    # limitation it documents is lifted, and its test failing is how the repository finds out.
     "screens/assistant.js#notice:383d2d025f90": {
         "kind": "MODEL_SEAM",
         "service": "AssistantService",

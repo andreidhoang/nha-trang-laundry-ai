@@ -226,3 +226,52 @@ Re-verified at runtime **after** the registry change, not assumed:
 one new capability; it did **not** do the larger job of promoting the unbound majority, and the two
 empty categories (`ABSENT_ROUTE`, `ABSENT_WRITER`) are still empty, so those two parametrised tests
 still assert nothing. That is now the whole of B-03 and it remains open.
+
+## Update — commit `2d05aca`: R-09 done, D-05 reclassified
+
+**R-09 done.** `gatedFields()` disables every field in a region the caller may not submit, carrying
+the same `data-denied` contract `gated()` uses. Verified as AUDITOR: `/exceptions` 0 of 11 fields
+enabled, `/orders` 1 of 15 — the board filter, which is a read and correctly stays live. As
+OWNER_ADMIN: 15/15 and 11/11, all 5 submits enabled.
+
+**D-05 was mis-scoped in this plan and in commit `1ee6002`. Correcting it.**
+
+`03-TRACE.md` D-05 said the manual-send envelope was blocked by the same missing projection as
+F-01, and R-01 claimed to unblock both. The cause was right; the fix was not:
+
+- `prepare` refuses any approval that is not already `APPROVED` (`manual_sends.py`)
+- the queue lists `WHERE s.status = 'REQUESTED'`
+
+The two sets are **disjoint**. The row carrying `resource_version` / `snapshot_hash` /
+`rendered_hash` is never the row that may be sent. Projecting them does not make the manual-send
+form fillable, and no prefill was ever wired.
+
+**D-05 remains open.** Closing it needs a read route for approved approvals — its own item, with
+its own store-scope and status reasoning. It is not a UI change.
+
+### And it falsified a live disclosure
+
+The manual-send panel told operators those four values *"không đọc lại được từ bất kỳ đường nào của
+bảng điều khiển: danh sách duyệt chỉ trả phong bì_hash"*. R-01 made half of that false. Nothing
+caught it — the sentence is one of the 169 `DESCRIPTIVE` entries with no machine binding, so
+`verify_contracts.py` passed green over a false statement on a compliance surface.
+
+This is **B-03 demonstrated rather than argued**, inside the branch that caused it, and it raises
+R-07's remaining work from a tidiness item to a correctness one. The sentence is corrected by hand
+in `2d05aca`; the class of failure is not.
+
+### Withdrawn from this plan
+
+- **R-12** — not a defect (`10-RETRACTED.md` R-05).
+- **R-11, R-13** — still valid, deliberately not in this branch. R-11 needs a dependency refactor
+  across every store-scoped write route; R-13 adds a column via migration and belongs sequenced
+  with the delivery queue. Bundling either into a 33-file branch closing two P0s would trade a
+  reviewable change for an unreviewable one.
+
+### CI reality
+
+`quality.yml` and `release-supply-chain.yml` are both `active` with **zero runs, ever**. GitHub
+Actions has never executed on this repository, so no check gates any PR here. Every step of
+`quality.yml` was run locally instead, including `report_delivery_status.py` and the Node plugin
+build and tests. That is a gap worth its own item: this repository's quality bar is currently
+enforced by whoever remembers to run it.

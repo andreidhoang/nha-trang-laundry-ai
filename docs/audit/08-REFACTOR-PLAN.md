@@ -196,3 +196,33 @@ The UI boundary is now the server's own trust boundary rather than a separate ju
 `1186 passed, 3 failed, 3 skipped`. All three failures are the stale generated disclosure registry,
 and they are the framework working: `approvals.js` now issues a `POST` while still carrying a
 `READ_ONLY_MODULE` claim, and its copy changed. R-07 clears all three.
+
+## Update — commit `71f5d08`: suite green
+
+`1189 passed, 4 skipped, 0 failed.`
+
+R-07 is done. The three tests left red by `1ee6002` were the disclosure framework refusing a stale
+honesty claim, and clearing them meant retiring the claim rather than re-pointing it:
+
+| Was | Now | Why |
+|---|---|---|
+| `READ_ONLY_MODULE: 1` | **absent**, asserted absent | the screen decides; the claim died with the limitation |
+| `SERVER_GATE: 11` | **12** | `APPROVALS_DECIDE` binds to `require_approval_staff` rather than landing as prose |
+| bound total `15` | **16** | |
+| registry total `191` | **194** | the approvals refusal narrowed rather than vanished, and a narrower true sentence costs more slots |
+
+`verify_contracts.py`: 19 JSON + 3 YAML contracts, 669 combinatorial cases, 44 API operations, 194
+disclosures. `ruff`, `ruff format`, `mypy` clean. `check_context_drift.py` passes.
+
+Re-verified at runtime **after** the registry change, not assumed:
+
+- counter journey — 10 actions, 17s, 0 clipboard, order created
+- approval decision — `OPS_APPROVER` opens, `OWNER_ADMIN` approves, `200 APPROVED`, confirmation
+  rendered above the queue and surviving the reload
+
+### Honest note on B-03
+
+`DESCRIPTIVE` is **169 of 194 (87%)** — unchanged in proportion. R-07 cleared the red and bound the
+one new capability; it did **not** do the larger job of promoting the unbound majority, and the two
+empty categories (`ABSENT_ROUTE`, `ABSENT_WRITER`) are still empty, so those two parametrised tests
+still assert nothing. That is now the whole of B-03 and it remains open.

@@ -395,7 +395,7 @@ decisions:
       printed. Everything else DEC-017 blocked is unblocked.
   - id: DEC-018
     title: What purge means when the same bytes are both disposable payload and retained evidence
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW, PUBLIC_FAQ, LIST_PRICE_INFO, ORDER_STATUS]
     fail_closed_behavior: NOT_SUPPORTED
@@ -417,9 +417,39 @@ decisions:
       SUPPORTED_PURGE_CLASSES stays empty and every class refuses, so nothing is disposed of and
       nothing claims to be. RETENTION-STORE-001 is BLOCKED on this: the two classes with a
       separable backing store today are exactly the two this question governs.
+    resolved_at: '2026-09-17'
+    decision_record: docs/DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record on 2026-09-17 ("I ratify
+      DEC-018/019/020"). The reasoning was written by the engineering role and put to the owner
+      rather than recorded as decided; the ratification is what closes this entry.
+
+      Evidence wins. When a payload is also evidence, a purge run holds back the rows it may not
+      delete, records the count and the reason in its own run record, and reports
+      COMPLETED_WITH_EXEMPTIONS — never COMPLETED over a silent exemption. The rule applies
+      identically to inbox_replay_conflicts.webhook_event_id and agent_runs.source_webhook_event_id:
+      a pointer from a longer-lived record pins its target. The reason is asymmetry of harm —
+      deleting the ciphertext of a DỪNG destroys the only proof the shop was told to stop, and its
+      absence is indistinguishable from never having been told; keeping a payload longer than
+      scheduled harms nobody in a way anyone can point at.
+
+      A partial purge is not a purge. ASSISTANT_TRANSCRIPT stays NOT_SUPPORTED until the duplicate
+      in command_idempotency_records.response stops being written, because deleting assistant_turns
+      while a byte-identical copy survives under protect_idempotency_record would be a false
+      statement made by software.
+
+      The corrective item is opened as ASSISTANT-RETENTION-001. ASSISTANT-001 stays COMPLETE and is
+      not rewritten. Preferred but non-binding direction: an idempotency record answers a retry, a
+      horizon of minutes to hours, so giving those records their own short purgeable lifetime
+      removes the duplicate by expiry rather than surgery.
+
+      Accepted residual with a scheduled fix: request_hash and payload_hash are unsalted SHA-256
+      commitments that outlive every purge and are dictionary-reversible for short Vietnamese
+      messages. Both move to a keyed HMAC under a per-deployment secret, which preserves equality
+      comparison exactly and therefore replay defence. Scheduled as HASH-KEYING-001, not blocking.
   - id: DEC-019
     title: Which retention class covers AI-generated draft text and a human's edit of it
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW]
     fail_closed_behavior: NOT_SUPPORTED
@@ -438,9 +468,38 @@ decisions:
     blocking_today: >-
       Nothing, because none of those columns holds real customer data yet. SHADOW-001 is the point
       at which that stops being true, so the obligation attaches before that item, not after it.
+    resolved_at: '2026-09-17'
+    decision_record: docs/DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record on 2026-09-17 ("I ratify
+      DEC-018/019/020").
+
+      The class follows what the customer received, not which process produced the bytes. A draft
+      that was sent is CONVERSATION_BODY (180 days, REDACT); a draft never sent is AGENT_RUN_PAYLOAD
+      (90 days). A human's edit takes the same rule — sent is CONVERSATION_BODY, never-sent is
+      AGENT_RUN_PAYLOAD. Treating a human's edit as staff work product with a longer rule was
+      considered and rejected: it looks like a principled distinction and is in fact a longer-lived
+      copy of customer-facing text, which is the DEC-018 failure in a different costume.
+
+      Every uncovered column is named. approval_decisions.note and
+      channel_send_receipts.resolution_note are evidence, retained and access-restricted — they are
+      the recorded reason a send or a sum of money was approved, and how an ambiguous send outcome
+      was settled. contact_channel_bindings.provider_user_ref is retained and access-restricted
+      because it is the join key suppression_entries uses; purging it would lose the ability to
+      honour a STOP already given. The jsonb payloads on approval_requests, outbox_events and
+      domain_events are ledger, retained. command_idempotency_records.response is governed by
+      ASSISTANT-RETENTION-001.
+
+      New class STAFF_IDENTITY covers staff_users.display_name and email: retained while the account
+      is active, then redacted to a non-identifying staff reference 90 days after deactivation. Audit
+      rows bind actor_id, a UUID, not a name, so the audit chain survives the redaction intact —
+      which is what makes it safe. Staff are data subjects under Luật 91/2025/QH15 exactly as
+      customers are. Deliberately not decided: whether Vietnamese labour or tax law requires a longer
+      hold on employment records, which attaches to the shop's personnel records rather than this
+      database.
   - id: DEC-020
     title: Which identity may execute a retention purge, and what the database grants it
-    status: OPEN
+    status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW]
     fail_closed_behavior: NOT_SUPPORTED
@@ -459,6 +518,30 @@ decisions:
       No purge can execute regardless of schedule, which is fail-closed and correct. It also means
       RETENTION-STORE-001 cannot be completed by engineering alone, which is why it is recorded as a
       blocker rather than worked around.
+    resolved_at: '2026-09-17'
+    decision_record: docs/DECISION_REQUEST_RETENTION_EXECUTION_2026-08.md
+    resolution: >-
+      Owner ratified the engineering recommendation on record on 2026-09-17 ("I ratify
+      DEC-018/019/020").
+
+      A dedicated retention_purge database role executes purges, granted DELETE on exactly the
+      disposable side tables and nothing else. Not the API role and not the worker role:
+      apply_demo_grants.py deliberately REVOKEs DELETE from both and a test pins it, and that stays.
+      The identity that serves customers must not be the identity that can delete their records,
+      because a compromise of the API must not be able to erase the evidence of itself.
+
+      A purge may run unattended, but only for classes explicitly listed in SUPPORTED_PURGE_CLASSES,
+      and the first run of any newly-enabled class is attended and its output reviewed by a named
+      person before that class runs on its own. Requiring a human to start every run means it will
+      not happen, and a retention schedule nobody executes is worse than none — it is a written
+      promise being quietly broken. Requiring none means the first bug deletes at scale before
+      anyone looks. Every run records its actor, its per-class counts, and its held-back exemptions.
+
+      The two disposable side tables are the only tables in the schema with DELETE granted to
+      anyone, and the GRANT ships in the same migration that creates the separable store. A
+      purgeable table and the permission to purge it are created in one change or they drift, and
+      the drift is silent in the direction that matters: a table the schedule promises to purge,
+      that no identity may delete from, reports a schedule it cannot honour.
   - id: DEC-021
     title: When a quote becomes final, who may make it so, and how that is recorded
     status: RESOLVED

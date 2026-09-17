@@ -1,7 +1,7 @@
 schema_version: 1
-last_updated: '2026-09-10T14:44:40.717981+00:00'
+last_updated: '2026-09-17T07:04:24.694676+00:00'
 current_work_item: null
-last_result: COMPLETE
+last_result: UNBLOCKED
 blocker: null
 evidence_records:
 - work_item: IDENTITY-001
@@ -498,3 +498,10 @@ unblocked_records:
     no longer binds. Candidate research is done against live provider pages and Vietnamese
     data-localisation guidance rather than recalled figures.'
   recorded_at: '2026-09-06T05:40:28.742336+00:00'
+- work_item: RETENTION-STORE-001
+  reason: DEC-018, DEC-019 and DEC-020 answered 2026-09-17; no decision gates this
+    item. Evidence wins over a shorter purge with COMPLETED_WITH_EXEMPTIONS reporting;
+    ASSISTANT_TRANSCRIPT stays NOT_SUPPORTED pending ASSISTANT-RETENTION-001; a dedicated
+    retention_purge role holds DELETE on the disposable side tables only, granted
+    in the migration that creates them.
+  recorded_at: '2026-09-17T07:04:24.694676+00:00'

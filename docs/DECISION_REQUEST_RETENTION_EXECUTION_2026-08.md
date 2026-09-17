@@ -176,3 +176,153 @@ Of `DEC-008`'s ten classes, exactly **two** have a backing store that could be s
 Four have no backing store at all, two are retained indefinitely, one is not due for ten years, and
 one — `DEBUG_LOG` — is not in the database, so this control plane can never dispose of it and that
 obligation belongs to whoever owns the log collector.
+
+---
+
+# Answers, 2026-09-17
+
+**Nothing above is edited.** The request stays as written so that what was asked, and what was known
+when it was asked, both stay readable. This section records what was answered.
+
+**Owner ratified the engineering recommendation on record**, in these words on 2026-09-17: *"I
+ratify DEC-018/019/020."* The reasoning below was written by the engineering role the same day and
+put to the owner for ratification rather than recorded as decided; the owner's ratification is what
+closes the three entries. The distinction is kept visible because provenance is the thing this
+repository spends most of its effort protecting.
+
+**These answers close `DEC-018`, `DEC-019` and `DEC-020`. They authorize no capability and sign no
+gate.** Capability authorization still requires a signed, unexpired manifest with two distinct
+actors (ADR-0006), and a ratification is not a signature.
+
+## `DEC-018` — RESOLVED. Evidence wins, and an exemption is never silent
+
+### 1. When a payload is also evidence, the longer retention wins
+
+**Evidence wins.** A purge run holds back the rows it may not delete, records the count and the
+reason in its own run record, and **may never report `COMPLETED` over a silent exemption**. A run
+that holds rows back reports `COMPLETED_WITH_EXEMPTIONS`.
+
+The reason is asymmetry of harm. `consent_events.evidence_webhook_id` is `NOT NULL` against
+`webhook_events(id)`, so the ciphertext of a customer's `DỪNG` **is** the evidence that they withdrew
+consent. Deleting it to honour a 30-day payload schedule destroys the one record whose absence is
+indistinguishable from never having been told — and the shop would then message someone who had
+already said stop, with no way to know it had been told. Keeping a payload 150 days longer than
+scheduled harms nobody in a way anyone can point at.
+
+`inbox_replay_conflicts.webhook_event_id` and `agent_runs.source_webhook_event_id` take the same
+rule. No special cases: a pointer from a longer-lived record pins its target.
+
+A retention report that overstates what it deleted is worse than no report, because it is relied on.
+
+### 2. A partial purge is not a purge
+
+**`ASSISTANT_TRANSCRIPT` stays `NOT_SUPPORTED` until the duplicate stops being written.**
+
+Deleting `assistant_turns` at 180 days while a byte-identical answer survives in
+`command_idempotency_records.response` — permanently, under `protect_idempotency_record` — would be
+exactly the silent no-op this module was built to prevent. Shipping it as a purge would be a false
+statement made by software, which is the category of defect this repository spends the most effort
+refusing.
+
+### 3. The corrective item is opened
+
+**Yes.** `ASSISTANT-RETENTION-001` — make the assistant transcript genuinely purgeable without
+weakening replay defence.
+
+`ASSISTANT-001` stays `COMPLETE`; per `context/CONTINUATION_PROTOCOL.md` the change arrives as a new
+corrective item, never as a rewrite of closed history.
+
+Preferred direction, **not binding on the item's design**: an idempotency record exists to answer a
+*retry*, whose horizon is minutes to hours, not 180 days. Giving those records their own short,
+purgeable lifetime removes the duplicate by expiry rather than by surgery, and is a smaller change
+than restructuring the response document.
+
+### 4. The unsalted-hash residual — accepted, with a fix scheduled
+
+`command_idempotency_records.request_hash` and `webhook_events.payload_hash` are unsalted SHA-256
+commitments that outlive every purge. For short Vietnamese messages — `DỪNG`, `ok`, a phone number —
+they are dictionary-reversible, which makes each one a weak copy of the plaintext the purge just
+removed.
+
+**Move both to a keyed HMAC under a per-deployment secret.** Equality comparison is preserved
+exactly, so replay defence is untouched; dictionary reversal stops working. Scheduled as
+`HASH-KEYING-001`. Not blocking, because it changes nothing a customer or the ledger observes.
+
+## `DEC-019` — RESOLVED. The class follows what the customer received
+
+### 1 and 2. AI drafts, and a human's edit of one
+
+**A draft that was sent is `CONVERSATION_BODY` (180 days, REDACT). A draft that was never sent is
+`AGENT_RUN_PAYLOAD` (90 days). A human's edit takes the same rule: sent is `CONVERSATION_BODY`,
+never-sent is `AGENT_RUN_PAYLOAD`.**
+
+The principle generalises past these two tables: **retention attaches to what the customer actually
+received, not to which process produced the bytes.** A sent draft is one half of a conversation and
+must share that conversation's schedule, or the shop deletes the customer's half and keeps its own.
+A rejected draft never existed for the customer and is an artifact of the run that produced it.
+
+Classifying a human's edit as "staff work product" with a longer rule was considered and rejected.
+It looks like a principled distinction and is actually a longer-lived copy of customer-facing text —
+the `DEC-018` failure wearing a different hat.
+
+### 3. Every uncovered column is named
+
+Naming a column out of scope is a legitimate answer. Leaving it unnamed is not, because the module
+then reports a complete schedule covering less than the database holds.
+
+| Column | Class | Reason |
+|---|---|---|
+| `approval_decisions.note` | evidence, retained, access-restricted | The recorded reason a send or a sum of money was approved. That is the audit record, not a comment on it. |
+| `channel_send_receipts.resolution_note` | evidence, retained, access-restricted | How an unknown send outcome was resolved and by whom. Deleting it reopens a settled ambiguity. |
+| `contact_channel_bindings.provider_user_ref` | retained, access-restricted | It is the join key `suppression_entries` uses. Purge it and the shop loses the ability to honour a STOP it was already given. `DEC-018`'s rule applied consistently. |
+| `staff_users.display_name`, `.email` | new class `STAFF_IDENTITY` | See below. |
+| `approval_requests.payload`, `outbox_events`, `domain_events` | ledger, retained | Append-only by trigger and by design; this is the evidence the audit chain is made of. |
+| `command_idempotency_records.response` | governed by `ASSISTANT-RETENTION-001` | See `DEC-018` §2. |
+
+**`STAFF_IDENTITY`:** retained while the account is active; **90 days after deactivation**,
+`display_name` and `email` are redacted to a non-identifying staff reference. Audit rows bind
+`actor_id`, a UUID, not a name — which is precisely what makes the redaction safe: the audit chain
+survives intact. Staff are data subjects under `Luật 91/2025/QH15` exactly as customers are, and a
+departed employee's name sitting in a production database indefinitely has no operational
+justification.
+
+*Deliberately not decided here:* if Vietnamese labour or tax law requires a longer hold on employment
+records, that obligation attaches to the shop's personnel records, not to this database, and is a
+question for the owner's accountant.
+
+## `DEC-020` — RESOLVED. A dedicated role, and the grant ships with the table
+
+### 1. Which identity executes a purge
+
+**A dedicated `retention_purge` database role**, granted `DELETE` on exactly the disposable side
+tables and nothing else.
+
+Not the API role and not the worker role. `scripts/apply_demo_grants.py` deliberately `REVOKE`s
+`DELETE` from both and a test pins that — correct, and it stays. The identity that serves customers
+must not be the identity that can delete their records: a compromise of the API must not be able to
+erase the evidence of itself.
+
+### 2. May a purge run unattended?
+
+**Yes, but only for classes explicitly listed in `SUPPORTED_PURGE_CLASSES`, and the first run of any
+newly-enabled class is attended and its output reviewed by a named person before that class is left
+to run on its own.**
+
+Requiring a human to start every run means it will not happen, and a retention schedule nobody
+executes is worse than none — it is a written promise the shop is quietly breaking. Requiring none
+means the first bug deletes at scale before anyone looks. Every run records its actor, its per-class
+counts, and its held-back exemptions.
+
+### 3. Are the two disposable side tables the only tables anyone may DELETE from?
+
+**Yes — and the `GRANT` ships in the same migration that creates the separable store.**
+
+A purgeable table and the permission to purge it are created in one change or they drift, and the
+drift is silent in the direction that matters: a table the schedule promises to purge, that no
+identity may delete from, reports a schedule it cannot honour.
+
+## What this unblocks
+
+`RETENTION-STORE-001` was `BLOCKED` on `DEC-018` and `DEC-020` alone. Both are now answered, so the
+item is buildable. Two new items follow from these answers — `ASSISTANT-RETENTION-001` and
+`HASH-KEYING-001` — and neither blocks it.

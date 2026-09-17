@@ -151,3 +151,48 @@ P2 subtraction → P3 polish.
   `127.0.0.1:8443` that `docs/runbooks/private-staging.md` promises does not exist and nothing
   errors. Out of this audit's scope (deployment topology), but it invalidates STAGING-001's evidence
   and should be its own queue item.
+
+---
+
+# Execution log — 2026-09-17, commit `1ee6002`
+
+Approved and executed. Every claim below was verified by driving the running application; none is
+from reading code.
+
+| Item | State | Evidence |
+|---|---|---|
+| **R-01** projection + decision controls | **DONE** | `POST /decisions` → `200 APPROVED` from a real click; maker `OPS_APPROVER`, checker `OWNER_ADMIN` |
+| **R-02** what an approver sees | **RESOLVED IN ENGINEERING, no owner decision needed** | see below |
+| **R-03** `Tạo đơn từ báo giá này` | **DONE** | 10 actions, 17s, 0 clipboard uses, `201 POST /orders` |
+| **R-04** copyable contact id | **DONE** | intake result card and every list row |
+| **R-05** platform guard | **DONE** | `5 passed, 1 skipped`; `mypy` clean on Linux (223 files) |
+| **R-06** phone overflow | **DONE** | 390px: **0px overflow, 0 clipped** on all 12 screens (was 82–92px on three) |
+| **R-08** Vietnamese filter | **DONE** | `nguyen`→`Nguyễn`, `don`→`đơn hàng`, `ĐƠN`→`đơn`, negative case all pass |
+| **R-07** bind disclosures | **BLOCKED** | needs `scripts/generate_console_disclosure_registry.py`; permission refused |
+| R-09, R-10, R-11, R-13 | not started | P2/P3, unblocked, next |
+| **R-12** tap targets | **WITHDRAWN** | not a defect — `10-RETRACTED.md` R-05 |
+| **D-04** incident intake | **BLOCKED** | open owner decision; not guessed |
+
+## R-02 resolved without an owner decision
+
+The question was: returning the three hashes makes the button pressable, but approving a
+`MESSAGE_DRAFT` you cannot read is still blind approval. Rather than put that to you, it is
+answered by a rule the server already implements — **decide only what the console can show you**:
+
+- `ORDER` → `_require_resolvable_resource` verifies at request time that the order exists, belongs
+  to the store, and that its stored digest is the one being approved. `#/orders/:orderId` renders
+  it. **Enabled**, with a link to the resource beside the buttons.
+- `QUOTE_REVISION` → deliberately excluded. `#/quotes` shows a total and a hash but there is no GET
+  for a single revision and no endpoint returns `quote_lines`, so the approver would never see the
+  lines being priced. Blind approval in a politer font.
+- `MESSAGE_DRAFT` → **disabled**, type named. Nothing stores the body, and `approvals.py:616`
+  states that comparing `rendered_hash` against anything "would be theatre".
+
+The UI boundary is now the server's own trust boundary rather than a separate judgment. If you want
+`MESSAGE_DRAFT` decidable, the work is a draft-content read model — not a UI change.
+
+## Test state at `1ee6002`
+
+`1186 passed, 3 failed, 3 skipped`. All three failures are the stale generated disclosure registry,
+and they are the framework working: `approvals.js` now issues a `POST` while still carrying a
+`READ_ONLY_MODULE` claim, and its copy changed. R-07 clears all three.

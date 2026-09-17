@@ -45,3 +45,24 @@ identity rows, and sign-in began returning `401 identity exchange rejected`. Thi
 the application's. The database was re-seeded and all subsequent test runs used an isolated
 `ntl_test` database. No finding in this audit derives from the contaminated window; the
 `1188 passed / 1 failed` figure in `02-BACKEND.md` is from the clean isolated run.
+
+## R-05 — "Tap targets below 40px on five screens" (was U-08 / R-12) — RETRACTED
+
+Measured again with the containing element recorded, not just the size. All five are `<a>` links
+**inside a sentence** (`inProse: true`), 209–294px wide and 15–35px tall:
+
+```
+/           A 239x15  inProse=true
+/orders     A 209x15  inProse=true   A 235x35 inProse=true
+/approvals  A 255x19  inProse=true
+/incidents  A 279x35  "xem danh sách khoảng trống"
+/system     A 294x19  "Xem danh sách năng lực chưa hỗ trợ"
+```
+
+WCAG 2.5.8 exempts a target that is inline in a block of text, precisely because forcing a 40px
+box around it breaks the line box it sits in. Padding these would damage the prose to satisfy a
+rule that does not apply to them. **No standalone control in the console is under the minimum** —
+`base.css` sets `min-height: var(--tap-min)` on every button.
+
+The finding was an artifact of measuring size without measuring context. R-12 is withdrawn from the
+plan rather than implemented.

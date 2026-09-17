@@ -99,15 +99,33 @@ The console would not answer a single request. `SHOP-DEPLOY-001` fixed that in `
 and left the staging file alone, because its acceptance commands are cited by closed evidence.
 
 **Three database URLs, deliberately.** The migration identity owns the schema; the API and worker
-identities do not. The migrations still do not create the roles — that part of `DEC-020` is open —
-so create them once, by hand, before step 2:
+identities do not. The migrations create no **login** identity — a migration is a repository file
+and may not carry a credential — so create these once, by hand, before step 2:
 
 ```sql
-CREATE ROLE laundry_migrate LOGIN PASSWORD '...';
+CREATE ROLE laundry_migrate LOGIN PASSWORD '...' CREATEROLE;
 CREATE ROLE laundry_api     LOGIN PASSWORD '...';
 CREATE ROLE laundry_worker  LOGIN PASSWORD '...';
 CREATE DATABASE nha_trang_laundry OWNER laundry_migrate;
 ```
+
+**`CREATEROLE` on the migration identity is required as of migration `0038`.** `DEC-020` resolved on
+2026-09-17 and put a dedicated `retention_purge` role behind the retention schedule, holding DELETE
+on exactly the disposable payload side tables and nothing else — so that the identity serving
+customers is not the identity that can erase their records. The decision requires that grant to ship
+in the same migration that creates the purgeable table, because a table the schedule promises to
+purge that no identity may delete from reports a schedule the database cannot honour, and that drift
+is silent. `0038` therefore creates the role itself, guarded by `pg_roles` so re-applying is a no-op.
+It is `NOLOGIN` and has no password: it is a group role carrying one privilege, and you attach a
+real login identity to it here, at deployment time.
+
+```sql
+CREATE ROLE laundry_retention LOGIN PASSWORD '...' IN ROLE retention_purge;
+```
+
+Nothing schedules a purge yet. Every class ships refusing, `DEC-008` requires enabling to be a
+separate published-configuration act, and `DEC-020` requires the first run of any newly-enabled
+class to be attended and its output read by a named person before that class runs unattended.
 
 Then, **after** the migration in step 2 and again after every future migration:
 

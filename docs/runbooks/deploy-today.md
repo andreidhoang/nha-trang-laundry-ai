@@ -171,11 +171,23 @@ docker compose -f compose.r1.yaml exec postgres psql -U laundry_migrate -d postg
   CREATE ROLE keycloak       LOGIN PASSWORD '<...>';
   CREATE DATABASE keycloak OWNER keycloak;"
 
+# As of migration 0038, `laundry_migrate` needs CREATEROLE: DEC-020 puts a dedicated
+# `retention_purge` group role behind the retention schedule and requires its grant to ship in the
+# same migration as the purgeable table. The migration creates that role (NOLOGIN, no password,
+# guarded by pg_roles so re-applying is a no-op); you attach a login identity to it below.
+docker compose -f compose.r1.yaml exec postgres psql -U postgres -d postgres -c "
+  ALTER ROLE laundry_migrate CREATEROLE;"
+
 docker compose -f compose.r1.yaml up -d migrate          # runs once and exits; must exit 0
 docker compose -f compose.r1.yaml --profile self-managed-database up -d api worker keycloak tls
 
 ./scripts/shop-admin apply_demo_grants.py
 ./scripts/shop-admin verify_database_grants.py
+
+# Optional until a retention class is enabled; required before the first purge. DEC-020 keeps the
+# purge identity separate from the identities that serve customers.
+docker compose -f compose.r1.yaml exec postgres psql -U laundry_migrate -d postgres -c "
+  CREATE ROLE laundry_retention LOGIN PASSWORD '<...>' IN ROLE retention_purge;"
 ```
 
 The grant line runs through `shop-admin` for the same reason the line under it does: on the

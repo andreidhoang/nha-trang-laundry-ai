@@ -107,14 +107,21 @@ class InboxRepository:
                 consent_event_id = uuid4() if _creates_suppression(command) else None
 
                 def mutation(change_cursor: Any) -> None:
+                    # The ledger row and its payload are written by two statements and one
+                    # transaction. `RETENTION-STORE-001` moved the ciphertext into
+                    # `webhook_event_payloads` so the retention schedule can dispose of it without
+                    # touching a row `protect_webhook_event` forbids anyone to change; splitting the
+                    # write must not split the durability guarantee that invariant 6 rests on, so
+                    # both statements run inside `commit_material_change`'s transaction and a
+                    # failure of either leaves neither.
                     change_cursor.execute(
                         """
                         INSERT INTO webhook_events (
                             id, provider, channel_account_id, provider_event_id, payload_hash,
-                            encrypted_payload, event_type, contact_binding_id, channel,
+                            event_type, contact_binding_id, channel,
                             opt_out_disposition, opt_out_registry_version, processing_status,
                             received_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             event_id,
@@ -122,7 +129,6 @@ class InboxRepository:
                             command.channel_account_id,
                             command.provider_event_id,
                             command.payload.plaintext_hash,
-                            command.payload.ciphertext,
                             command.event_type,
                             command.contact_binding_id,
                             command.channel,
@@ -131,6 +137,13 @@ class InboxRepository:
                             processing_status,
                             received_at,
                         ),
+                    )
+                    change_cursor.execute(
+                        """
+                        INSERT INTO webhook_event_payloads (webhook_event_id, encrypted_payload)
+                        VALUES (%s, %s)
+                        """,
+                        (event_id, command.payload.ciphertext),
                     )
                     if consent_event_id is not None:
                         _insert_suppression(

@@ -37,6 +37,7 @@ from nha_trang_laundry_db.retention import (
     RetentionClass,
     RetentionDisposition,
     RetentionRepository,
+    UnsupportedStoreReason,
 )
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_db.store_access import StoreAccessError
@@ -408,12 +409,19 @@ def test_only_the_redacted_text_reaches_the_table(
 def test_the_transcript_retention_class_refuses_ledger_purge_and_records_every_run(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    """ASSISTANT_TRANSCRIPT behaves exactly like every other append-only ledger class.
+    """ASSISTANT_TRANSCRIPT still refuses, and now for a sharper reason than a ledger trigger.
 
-    The window is published configuration. With an enabled schedule the purge runs, is refused by
-    the ledger-backed store (matching existing class behavior — no class in this system purges
-    yet), and the refusal still writes its run record and audit event. A legal hold refuses
-    earlier, and no turn is ever silently deleted.
+    The window is published configuration. With an enabled schedule the purge runs and is refused,
+    and the refusal still writes its run record and audit event; a legal hold refuses earlier, and
+    no turn is ever silently deleted.
+
+    What changed is why. It used to be "the backing table is an append-only ledger", which is the
+    condition `RETENTION-STORE-001` now knows how to resolve -- `assistant_turns` could be split
+    exactly as `webhook_events` was. `DEC-018` holds it back for a different reason that a
+    separable store does not touch: `command_idempotency_records.response` carries a byte-identical
+    copy of the answer and `protect_idempotency_record` forbids deleting it, so purging the
+    original would report a disposal that did not happen. `ASSISTANT-RETENTION-001` removes the
+    duplicate; until it does, refusing is the only honest outcome.
     """
     owner = _staff(postgres_connection, roles=frozenset({StaffRole.OWNER_ADMIN}))
     store_id = uuid4()
@@ -440,7 +448,9 @@ def test_the_transcript_retention_class_refuses_ledger_purge_and_records_every_r
     )
 
     assert run.outcome is PurgeOutcome.REFUSED_UNSUPPORTED_STORE
-    assert run.detail is not None and "append-only ledger" in run.detail
+    assert run.detail is not None
+    assert run.detail.startswith(UnsupportedStoreReason.BLOCKED_BY_UNDELETABLE_DUPLICATE.value)
+    assert "command_idempotency_records.response" in run.detail
     assert run.affected_row_count == 0
 
     repository.place_legal_hold(

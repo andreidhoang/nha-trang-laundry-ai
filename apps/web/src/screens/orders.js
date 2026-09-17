@@ -32,7 +32,7 @@
 
 import { MAX_LIMIT, Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UUID, shortId } from "../core/format.js";
+import { UUID, matchesFilter, shortId } from "../core/format.js";
 import { ACQUISITION_SOURCE_VI, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -43,6 +43,7 @@ import {
   explain,
   facts,
   gated,
+  gatedFields,
   labelled,
   listView,
   panel,
@@ -260,10 +261,10 @@ function readModelNotice() {
 }
 
 /**
- * @param {import("../core/router.js").RouteContext} [_context]
+ * @param {import("../core/router.js").RouteContext} [context]
  * @returns {HTMLElement}
  */
-export function render_(_context) {
+export function render_(context) {
   const store = storeId();
   const me = principal();
   const writeVerdict = can(me, "ORDERS_WRITE");
@@ -277,11 +278,25 @@ export function render_(_context) {
    *
    * @type {{contactId: string, quoteId: string, revision: string, hash: string, mode: string, acceptedAt: string}}
    */
+  // The hand-off from `#/quotes`, which is the only path a counter shift actually takes: the
+  // accepted-quote card links here carrying the four values this form needs, so none of them is
+  // typed or pasted. Read through the same `query` the intake hand-off into `#/quotes` uses.
+  //
+  // Nothing is trusted because it arrived in a URL. These are prefill only: the shapes are
+  // re-checked below exactly as typed input is, and the server re-checks all four again --
+  // `create_order` refuses a quote that is not `APPROVED_EXACT`, a revision that is not the one
+  // accepted, and a seal that does not match the stored snapshot byte for byte.
+  const handoff = context?.query;
+  const prefill = (key, pattern) => {
+    const value = String(handoff?.get(key) || "").trim();
+    return pattern.test(value) ? value : "";
+  };
+
   const draft = {
-    contactId: "",
-    quoteId: "",
-    revision: "1",
-    hash: "",
+    contactId: prefill("contact", UUID),
+    quoteId: prefill("quote", UUID),
+    revision: prefill("revision", /^[1-9][0-9]{0,5}$/) || "1",
+    hash: prefill("hash", SNAPSHOT_HASH),
     mode: FULFILLMENT_MODES[0],
     acceptedAt: "",
     // Rests on "nobody asked" until somebody says otherwise, which is what is actually true before
@@ -343,8 +358,9 @@ export function render_(_context) {
       label: "Lọc bảng đơn",
       noun: "đơn",
       matches: (item, needle) =>
-        [item.order_id, item.commercial, item.intake, item.production, item.balance].some(
-          (value) => String(value).toLowerCase().includes(needle),
+        matchesFilter(
+          [item.order_id, item.commercial, item.intake, item.production, item.balance],
+          needle,
         ),
       filteredEmptyText: "Không có đơn nào khớp bộ lọc.",
     },
@@ -353,7 +369,7 @@ export function render_(_context) {
   /** Any structural change to the transition form invalidates its key and redraws it. */
   const redrawMove = () => {
     transitionSubmission.reset();
-    render(moveBody, moveForm());
+    render(moveBody, gatedFields(moveForm(), writeVerdict));
   };
 
   // --- create ---------------------------------------------------------------------------------
@@ -435,7 +451,7 @@ export function render_(_context) {
       // screen reads back. `mode` is deliberately left sticky: a wrong fulfilment mode surfaces
       // downstream when nobody comes to collect, and a wrong source surfaces nowhere, ever.
       draft.source = "UNKNOWN";
-      render(createBody, createForm());
+      render(createBody, gatedFields(createForm(), writeVerdict));
       await board.reload();
     } catch (error) {
       // Same rule as the transition below, and it matters more here: an order is not cheaply
@@ -574,7 +590,15 @@ export function render_(_context) {
       labelled({
         id: "order-contact",
         label: "Mã khách",
-        hint: "Chép từ màn hình Tiếp nhận. Màn hình này chưa tra cứu được khách theo tên hay số điện thoại.",
+        // The old hint said "Chép từ màn hình Tiếp nhận" and was impossible to follow: that
+        // screen rendered the contact id shortened, with no copy control anywhere, and cleared
+        // the one input that ever held it in full. Both halves are fixed -- the intake rows are
+        // copyable now, and the accepted-quote card links here with the value already filled --
+        // so the hint names the path that works and keeps the copy path as the fallback.
+        hint:
+          "Thường không phải gõ: bấm “Tạo đơn từ báo giá này” ở màn hình Báo giá thì ô này đã " +
+          "có sẵn. Cần điền tay thì chép ở màn hình Tiếp nhận. Màn hình này chưa tra cứu được " +
+          "khách theo tên hay số điện thoại.",
         control: contactInput,
       }),
       labelled({
@@ -679,7 +703,7 @@ export function render_(_context) {
           `Bản ghi giờ là v${moved.row_version}.`,
       );
       render(moveResultHost, orderCard(moved));
-      render(moveBody, moveForm());
+      render(moveBody, gatedFields(moveForm(), writeVerdict));
       await board.reload();
     } catch (error) {
       // "Trạng thái đơn không đổi" is a claim about the server, and for a TIMEOUT or a NETWORK
@@ -884,8 +908,12 @@ export function render_(_context) {
     );
   }
 
-  render(createBody, createForm());
-  render(moveBody, moveForm());
+  // `gatedFields` as well as `gated`: the submit was disabled with a reason and every field above
+  // it stayed live, so an AUDITOR could fill in an order id, a version and a seal and only then
+  // meet the refusal. Both forms are rebuilt on state changes, so this wraps the render rather
+  // than running once.
+  render(createBody, gatedFields(createForm(), writeVerdict));
+  render(moveBody, gatedFields(moveForm(), writeVerdict));
   void board.reload();
 
   // FULFILMENT-001 / DEC-023. No amount field, deliberately: the money was taken at the counter.
@@ -1024,7 +1052,11 @@ export function render_(_context) {
         "Khách đã trả đủ tại quầy trước khi đồ rời tiệm, nên ghi nhận ở đây không có tiền — chỉ " +
         "ghi đồ đã đến tay khách hay chưa. Giao hụt thì ghi thất bại, không tính thêm phí, và " +
         "lần giao sau là một dòng mới. Chỉ chuyến TRẢ ĐỒ thành công mới cho phép đóng đơn.",
-      children: h("div", { class: "stack" }, legBody, legResultHost),
+      // Gated like the other two forms on this screen. Driving the console as an AUDITOR caught
+      // that the submit was disabled here while the order id and both selects stayed live -- the
+      // same half-measure `gated()` alone leaves everywhere, and the third form is where it is
+      // easiest to miss because it is built once rather than re-rendered.
+      children: h("div", { class: "stack" }, gatedFields(legBody, writeVerdict), legResultHost),
     }),
     panel({
       eyebrow: "Lệnh",

@@ -83,8 +83,13 @@
   font-weight: var(--weight-heavy);
   gap: var(--space-1);
   letter-spacing: 0.04em;
+  /* `nowrap` was right when a badge held one short token. These hold a Vietnamese gloss *and* the
+   * verbatim enum -- "đã ghi nhận người gửi tay MANUAL_SEND_RECORDED" is 355px at 390px wide --
+   * and the dual-language rule is not negotiable, so the badge wraps instead of being clipped. */
+  flex-wrap: wrap;
+  max-width: 100%;
   padding: 0.2rem var(--space-2);
-  white-space: nowrap;
+  white-space: normal;
 }
 
 /* A small state dot alongside the word. The word remains the carrier of meaning — the dot only
@@ -298,6 +303,13 @@
   display: inline-flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  /* Same `inline-flex` sizing trap as a button: a 78-character `JCS-SHA256-V1:` hash beside a
+   * copy control is wider than a phone, and without a max-width the row pushes the whole card. */
+  max-width: 100%;
+}
+
+.copyable__text {
+  overflow-wrap: anywhere;
 }
 
 .copyable--manual .copyable__text {
@@ -310,6 +322,19 @@
 .stack {
   display: grid;
   gap: var(--space-3);
+}
+
+/* Grid and flex items default to `min-width: auto`, which resolves to min-content -- so a single
+ * long Vietnamese button label or an un-broken hash makes every ancestor refuse to shrink below
+ * it, and the page scrolls sideways instead of the text wrapping. Capping the item's own width
+ * (`max-width: 100%` on the button) cannot help while its container is already wider than the
+ * viewport, which is why fixing only the leaf moved `/quotes` from 92px of overflow to 58px and
+ * left `/exceptions` untouched. This is the line that actually lets the chain shrink. */
+.stack > *,
+.form__actions,
+.field,
+.field > * {
+  min-width: 0;
 }
 
 .stack--tight {
@@ -326,6 +351,11 @@
 .spread {
   align-items: center;
   display: flex;
+  /* A card header is an id on the left and a badge on the right. At 390px a `JCS-SHA256-V1:` id
+   * plus a countdown badge does not fit on one line, and without wrapping the pair simply pushed
+   * the card past the viewport. Wrapping puts the badge on its own line, which is also where a
+   * phone reader expects it. */
+  flex-wrap: wrap;
   gap: var(--space-3);
   justify-content: space-between;
 }

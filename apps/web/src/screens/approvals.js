@@ -1,41 +1,60 @@
 /**
- * Approvals: the envelopes waiting for a human, and an honest account of what this screen cannot do.
+ * Approvals: the envelopes waiting for a human, and an honest account of what may be decided here.
  *
- * This is the only screen in the console that shows a queue and then refuses to let the operator
- * work it. That is deliberate, and the reasons are load-bearing rather than incidental:
+ * Until 2026-09-17 this screen showed a queue and then refused to let anyone work it. The refusal
+ * was real rather than an oversight — `ApprovalDecisionRequest` demands `resource_version`,
+ * `snapshot_hash` and `rendered_hash`, and `GET /internal/v1/approvals` returned none of the three,
+ * only `envelope_hash`, which is a different value and not a substitute. No approver could build a
+ * valid decision from anything any client could read, so the A2 gate had a queue and no human side:
+ * an envelope expired unactioned and nobody could have prevented it.
  *
- *   - **The queue is a filtered view, and the filter is invisible server-side.** `list_pending`
- *     resolves each request through `approval_requests → orders → staff_store_assignments`, so an
- *     approval whose resource is a `QUOTE_REVISION`, a `MESSAGE_DRAFT`, a `SLOT_PROPOSAL` or a
- *     `DELIVERY_FEE_PROPOSAL` never appears — its `resource_id` is not an order id and the join
- *     drops it. An empty list here does not mean nothing is pending, so the screen says so in copy
- *     rather than letting the absence speak.
+ * The three values were stored `NOT NULL` on `approval_requests` from the first migration and were
+ * simply never projected. They are now, and the rules that survive are these:
+ *
+ *   - **Decide only what the console can show you.** Pressing "Duyệt" on a digest of content you
+ *     were never shown is blind approval, and returning the hashes does not by itself fix that. So
+ *     the controls enable for a resource type this console can actually render — today `ORDER`,
+ *     which `#/orders/:orderId` opens — and stay disabled, with the resource type named, for every
+ *     type it cannot. `MESSAGE_DRAFT` is the one that matters: nothing stores the message body, and
+ *     `rendered_hash` is explicitly not verified server-side, so there is nothing to show and
+ *     nothing to check it against. That is fail-closed in the same direction the server chose.
+ *   - **The server is the authority, not this list.** `_require_exact_binding` re-checks the
+ *     version and both digests at decision time, `_authorize_decision` re-checks store membership,
+ *     role, MFA and maker-checker separation. A stale card cannot approve anything: the decision is
+ *     refused, which is why a `STALE` refusal here offers a reload rather than a retry.
  *   - **Only `REQUESTED` is listed.** The `WHERE s.status = 'REQUESTED'` clause means approved,
  *     rejected and expired envelopes are not in this list and cannot be reviewed from it.
- *   - **Deciding is not offered, and not because a button was forgotten.** A decision requires
- *     `resource_version`, `snapshot_hash` and `rendered_hash`. The queue response carries none of
- *     the three — only `envelope_hash`, which is a *different* value and not a substitute. An
- *     approver therefore cannot construct a valid decision from anything this screen can see, and a
- *     form asking someone to paste three hashes for content they have not been shown is blind
- *     approval of a message that goes to a customer. So the controls are present, disabled, and
- *     explained. There is no paste field, on purpose.
  *   - **The countdown is the point.** Approval TTLs are 10, 15 or 30 minutes by action
  *     (`SECURITY_RELIABILITY_SPEC_V1.md:354`) and an expiry never extends implicitly, so remaining
  *     time matters far more than a wall-clock timestamp. One interval drives every badge and stops
  *     itself the moment the screen leaves the document — a console is left open all day, and a
  *     leaked timer per navigation is a real bug rather than a tidiness complaint.
  *
- * Nothing here mutates. There is no `Submission` and no idempotency key in this module because
- * there is no write to carry one.
+ * The bullet this docstring used to carry first — that the queue joins through `orders` and so
+ * hides every non-order resource type — was stale from migration `0034`, which gave
+ * `approval_requests` its own `store_id`. The limits panel on this same screen had already been
+ * corrected; the docstring had not, and the two halves of one module contradicted each other.
  *
  * @module screens/approvals
  */
 
-import { request } from "../core/api.js";
+import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { countdown, dateTime, shortHash, shortId } from "../core/format.js";
 import { enumVi } from "../core/i18n.js";
-import { badge, explain, facts, listView, panel } from "../ui/components.js";
+import { can } from "../core/rbac.js";
+import { principal } from "../core/session.js";
+import {
+  badge,
+  errorNotice,
+  explain,
+  facts,
+  gated,
+  listView,
+  panel,
+  resultLine,
+  setResult,
+} from "../ui/components.js";
 
 const LIST_LIMIT = 100;
 
@@ -67,38 +86,167 @@ function countdownBadge(expiresAt) {
 }
 
 /**
- * The two controls an approver would use, if the API let them.
+ * Resource types whose content this console can put in front of an approver before they decide.
  *
- * Not wrapped in `gated()`. `gated()` says "your role may not"; this is not a role problem — an
- * `OWNER_ADMIN` with MFA is refused by the same missing fields, so a role-conditional control would
- * enable itself for exactly the person most able to do harm with it.
+ * The key is the server's `resource_type`; the value builds the route that shows it. A type absent
+ * from this table is not decidable here, and the card says which type it is rather than a generic
+ * refusal — "không xem được nội dung loại MESSAGE_DRAFT" tells an approver what to go and fix,
+ * "không quyết được" does not.
  *
+ * `QUOTE_REVISION` is deliberately absent even though `#/quotes` lists quotes: there is no GET for
+ * a single revision and no endpoint returns `quote_lines` (`gaps.js`), so the approver would see a
+ * total and a hash, never the lines being priced. That is the same blind approval in a politer
+ * font.
+ *
+ * @type {Record<string, (resourceId: string) => string>}
+ */
+const VIEWABLE_RESOURCES = {
+  ORDER: (resourceId) => `#/orders/${encodeURIComponent(resourceId)}`,
+};
+
+/** What this console records as its reason; the server only constrains the shape. */
+const DECISION_REASONS = {
+  APPROVED: "APPROVED_AFTER_CONSOLE_REVIEW",
+  REJECTED: "REJECTED_AFTER_CONSOLE_REVIEW",
+};
+
+/**
+ * Whether one queue row carries everything a valid decision needs.
+ *
+ * All three are required by `ApprovalDecisionRequest`, and a row missing any of them is a row this
+ * client must not try to decide from — sending a partial binding would be refused server-side
+ * anyway, and the refusal would read as a bug rather than as a missing field.
+ *
+ * @param {any} item
+ * @returns {boolean}
+ */
+function hasBinding(item) {
+  return (
+    Number.isInteger(item.resource_version) &&
+    typeof item.snapshot_hash === "string" &&
+    typeof item.rendered_hash === "string"
+  );
+}
+
+/**
+ * The two controls an approver uses, enabled only when this console can show the thing being
+ * approved.
+ *
+ * Still not wrapped in `gated()` for the disabled case: `gated()` says "your role may not", and a
+ * type this screen cannot render is refused for `OWNER_ADMIN` too. The role verdict is applied on
+ * top, for the enabled case only, so an auditor sees the role reason and an owner looking at a
+ * `MESSAGE_DRAFT` sees the content reason.
+ *
+ * @param {any} item
+ * @param {() => Promise<void>} onDecided
+ * @param {{allowed: boolean, reason: string}} verdict
  * @returns {HTMLElement}
  */
-function decisionControls() {
-  /** @param {string} label */
-  const control = (label) =>
-    h(
-      "button",
-      {
-        type: "button",
-        disabled: true,
-        "aria-disabled": "true",
-        "aria-describedby": BLOCK_ID,
-      },
-      label,
+function decisionControls(item, onDecided, verdict) {
+  const viewer = VIEWABLE_RESOURCES[String(item.resource_type)];
+  const decidable = Boolean(viewer) && hasBinding(item);
+  const host = resultLine();
+
+  if (!decidable) {
+    const control = (label) =>
+      h(
+        "button",
+        { type: "button", disabled: true, "aria-disabled": "true", "aria-describedby": BLOCK_ID },
+        label,
+      );
+    return h(
+      "div",
+      { class: "stack stack--tight" },
+      h("div", { class: "form__actions" }, control("Duyệt"), control("Từ chối")),
+      h(
+        "p",
+        { class: "hint" },
+        !viewer
+          ? `Không bấm được: bảng vận hành chưa mở được nội dung loại ${item.resource_type} để ` +
+            "bạn xem trước khi quyết. Duyệt một nội dung chưa xem là duyệt mù. Xem “Tại sao nút " +
+            "Duyệt đang tắt?” bên dưới."
+          : "Không bấm được: phiếu này thiếu phiên bản hoặc mã niêm phong, nên không dựng được " +
+            "một quyết định hợp lệ. Tải lại hàng chờ.",
+      ),
+      host,
     );
+  }
+
+  const submission = new Submission(`approval-decision-${item.approval_request_id}`);
+
+  /** @param {"APPROVED"|"REJECTED"} decision */
+  const send = async (decision, button, sibling) => {
+    button.disabled = true;
+    sibling.disabled = true;
+    setResult(host, "warn", decision === "APPROVED" ? "Đang ghi phê duyệt…" : "Đang ghi từ chối…");
+    try {
+      await request(
+        `/internal/v1/approvals/${encodeURIComponent(item.approval_request_id)}/decisions`,
+        {
+          method: "POST",
+          body: {
+            decision,
+            reason_code: DECISION_REASONS[decision],
+            // Sent back exactly as the queue gave them. The server re-checks all three against the
+            // stored row, so a card that went stale while the approver was reading is refused
+            // rather than silently deciding about an older version.
+            resource_version: item.resource_version,
+            snapshot_hash: item.snapshot_hash,
+            rendered_hash: item.rendered_hash,
+          },
+          idempotencyKey: submission.key(),
+        },
+      );
+      submission.reset();
+      // Reported to the screen, not to this card. `onDecided()` reloads the queue and a decided
+      // envelope is no longer `REQUESTED`, so the card this line lives in is removed a moment
+      // later -- the operator would watch the row vanish with no statement that their decision
+      // was recorded, which is the one thing they need to know.
+      setResult(host, "ok", decision === "APPROVED" ? "Đã phê duyệt." : "Đã từ chối.");
+      await onDecided(
+        decision === "APPROVED"
+          ? `Đã phê duyệt phiếu ${shortId(item.approval_request_id)}. Phiếu rời khỏi hàng chờ.`
+          : `Đã từ chối phiếu ${shortId(item.approval_request_id)}. Phiếu rời khỏi hàng chờ.`,
+      );
+    } catch (error) {
+      button.disabled = false;
+      sibling.disabled = false;
+      const stale = error.kind === "STALE" || error.kind === "PRECONDITION_REQUIRED";
+      setResult(
+        host,
+        error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
+        stale
+          ? "Phiếu này vừa đổi trong lúc bạn đang xem, nên quyết định của bạn bị từ chối và " +
+            "không có gì được ghi. Tải lại hàng chờ rồi đọc lại phiếu mới."
+          : "Không ghi được quyết định. Máy chủ nêu lý do bên dưới, nguyên văn. Không có gì " +
+            "được ghi.",
+      );
+      render(host.parentElement || host, errorNotice(error));
+    }
+  };
+
+  const approve = h("button", { type: "button", dataRequiresNetwork: "true" }, "Duyệt");
+  const reject = h("button", { type: "button", dataRequiresNetwork: "true" }, "Từ chối");
+  approve.addEventListener("click", () => void send("APPROVED", approve, reject));
+  reject.addEventListener("click", () => void send("REJECTED", reject, approve));
 
   return h(
     "div",
     { class: "stack stack--tight" },
-    h("div", { class: "form__actions" }, control("Duyệt"), control("Từ chối")),
     h(
       "p",
       { class: "hint" },
-      "Không bấm được: quyết định cần ba giá trị mà danh sách này không trả về. Xem “Tại sao nút " +
-        "Duyệt đang tắt?” trong bảng giới hạn bên dưới.",
+      h("a", { href: viewer(String(item.resource_id)) }, "Mở nội dung này trước khi quyết"),
+      " — máy chủ kiểm lại phiên bản và cả hai mã niêm phong khi bạn bấm.",
     ),
+    h("div", { class: "form__actions" }, gated(approve, verdict), gated(reject, verdict)),
+    h(
+      "p",
+      { class: "hint" },
+      "Máy chủ từ chối quyết định của chính người đã tạo yêu cầu, nên phiếu do bạn mở sẽ bị từ " +
+        "chối ở bước này.",
+    ),
+    host,
   );
 }
 
@@ -107,9 +255,11 @@ function decisionControls() {
  *
  * @param {any} item
  * @param {(host: HTMLElement, expiresAt: string) => void} registerClock
+ * @param {() => Promise<void>} onDecided
+ * @param {{allowed: boolean, reason: string}} verdict
  * @returns {HTMLElement}
  */
-function approvalCard(item, registerClock) {
+function approvalCard(item, registerClock, onDecided, verdict) {
   const clockHost = h("span", { class: "row" }, countdownBadge(item.expires_at));
   registerClock(clockHost, item.expires_at);
 
@@ -129,6 +279,14 @@ function approvalCard(item, registerClock) {
     facts([
       ["Trạng thái", enumVi(item.status)],
       ["Ai được quyết", enumVi(item.required_role), { span: true }],
+      // What is actually being approved. Absent until the decision binding was projected, which is
+      // why the queue read as a list of opaque envelope hashes rather than a list of decisions.
+      ["Loại nội dung", item.resource_type || "—", { mono: true }],
+      [
+        "Phiên bản",
+        item.resource_version == null ? "—" : `v${item.resource_version}`,
+        { mono: true },
+      ],
       ["Hết hạn lúc", dateTime(item.expires_at)],
       [
         "Mã niêm phong",
@@ -143,7 +301,7 @@ function approvalCard(item, registerClock) {
           "Lệnh này đã chạy trước đó — đây là bản ghi cũ hiện lại.",
         )
       : null,
-    decisionControls(),
+    decisionControls(item, onDecided, verdict),
   );
 }
 
@@ -163,8 +321,9 @@ function limitsPanel() {
     eyebrow: "Giới hạn",
     title: "Giới hạn của màn hình này",
     guardrail:
-      "Đây là màn hình chỉ đọc. Không có thao tác nào ở đây ghi vào máy chủ, kể cả khi một việc " +
-      "sắp hết hạn.",
+      "Quyết định ở đây ghi thẳng vào máy chủ và không hoàn tác được. Trước khi ghi, máy chủ " +
+      "kiểm lại phiên bản, cả hai mã niêm phong, quyền của bạn, và quy tắc người tạo yêu cầu " +
+      "không được tự duyệt.",
     children: h(
       "div",
       { class: "stack" },
@@ -206,21 +365,22 @@ function limitsPanel() {
         h(
           "div",
           { class: "notice", dataState: "warn", id: BLOCK_ID },
-          h("p", { class: "notice__title" }, "Vì sao không quyết định được ở đây"),
+          h("p", { class: "notice__title" }, "Khoá theo loại nội dung, không phải theo vai trò"),
           h(
             "p",
             null,
-            "Để duyệt, máy chủ đòi ba mã niêm phong chứng minh bạn đã xem đúng nội dung đó. " +
-              "Danh sách trên không trả về mã nào trong ba mã ấy — nó chỉ có mã của chính phong " +
-              "bì, là một giá trị khác và không thay được. Nên từ những gì màn hình này thấy, " +
-              "không dựng nổi một quyết định hợp lệ.",
+            "Máy chủ đòi phiên bản và hai mã niêm phong để chứng minh bạn quyết đúng nội dung đó. " +
+              "Hàng chờ nay trả về đủ cả ba, nên phiếu nào bảng vận hành mở ra xem được thì bấm " +
+              "quyết được ngay — hôm nay là phiếu gắn với một đơn hàng.",
           ),
           h(
             "p",
             null,
-            "Gõ tay mấy mã đó để duyệt một nội dung bạn chưa được xem chính là duyệt mù một tin " +
-              "nhắn sắp gửi tới khách. Nên màn hình này cố ý không có ô để dán, và hai nút " +
-              "Duyệt / Từ chối để hiện nhưng khoá — không phải quên làm.",
+            "Loại nào bảng vận hành chưa mở ra xem được thì nút vẫn khoá, và đó là cố ý. " +
+              "MESSAGE_DRAFT là loại đáng nói nhất: hệ thống không lưu nội dung tin nhắn, và máy " +
+              "chủ cũng không đối chiếu được mã niêm phong nội dung với bất cứ thứ gì. Bấm duyệt " +
+              "một tin sắp gửi cho khách mà chưa ai đọc được nó chính là duyệt mù — có đủ ba mã " +
+              "cũng không làm điều đó thành an toàn.",
           ),
           h(
             "p",
@@ -303,6 +463,13 @@ export function render_() {
    */
   const clocks = [];
 
+  // Read once per screen build rather than per card: the principal cannot change under a rendered
+  // screen without the router replacing it, and `can()` is not free enough to run per row.
+  const decideVerdict = can(principal(), "APPROVALS_DECIDE");
+
+  // Lives above the queue, so a decision's confirmation outlives the card that carried the button.
+  const decisionStatus = resultLine();
+
   /**
    * The queue. One `listView` owns the fetch–truncate–skeleton cycle; what stays here is the clock
    * registry above. Server order is `ORDER BY expires_at, id` — the envelope dying soonest is
@@ -312,7 +479,15 @@ export function render_() {
     limit: LIST_LIMIT,
     fetch: () => request(`/internal/v1/approvals?limit=${LIST_LIMIT}`),
     renderItem: (item) =>
-      approvalCard(item, (host, expiresAt) => clocks.push({ host, expiresAt })),
+      approvalCard(
+        item,
+        (host, expiresAt) => clocks.push({ host, expiresAt }),
+        async (message) => {
+          setResult(decisionStatus, "ok", message);
+          await queue.reload();
+        },
+        decideVerdict,
+      ),
     // "gắn với đơn hàng" was true before migration 0034, when the queue joined through `orders` and
     // could only ever show order-linked approvals. Since 0034 the server joins on the approval's
     // own `store_id`, so every resource type in the caller's stores appears -- and the limits panel
@@ -338,20 +513,28 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "Chỉ đọc"),
+      h("p", { class: "eyebrow" }, "Cần bạn quyết"),
       h("h1", null, "Duyệt"),
       h(
         "p",
         { class: "screen__lede" },
-        "Việc đang chờ duyệt và còn bao lâu nữa hết hạn. Chưa quyết được từ màn hình này; " +
-          "phần bên dưới nói rõ vì sao.",
+        "Việc đang chờ duyệt và còn bao lâu nữa hết hạn. Quyết được ngay tại đây với loại nội " +
+          "dung bảng vận hành mở ra xem được; loại nào chưa xem được thì nút vẫn khoá và phiếu " +
+          "nói rõ đó là loại nào.",
       ),
     ),
     panel({
       eyebrow: "Đang chờ",
       title: "Việc chờ bạn quyết",
       count: queue.count,
-      children: h("div", { class: "stack" }, queue.bar.node, queue.truncation, queue.host),
+      children: h(
+        "div",
+        { class: "stack" },
+        queue.bar.node,
+        decisionStatus,
+        queue.truncation,
+        queue.host,
+      ),
     }),
     limitsPanel(),
   );

@@ -10,14 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 5
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 166
+  DESCRIPTIVE: 169
   MODEL_SEAM: 2
   POLICY_BOUND: 1
-  READ_ONLY_MODULE: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
-  SERVER_GATE: 11
-total: 191
+  SERVER_GATE: 12
+total: 194
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -342,6 +341,16 @@ disclosures:
     gate: require_approval_staff
     why: The console declares which roles and MFA state this capability needs. The test probes the named
       server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:180ece371ce2
+  module: core/rbac.js
+  key: why
+  text: Quyết định phê duyệt cần vai trò duyệt và đã xác thực hai bước.
+  binding:
+    kind: SERVER_GATE
+    capability: APPROVALS_DECIDE
+    gate: require_approval_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
 - slot_id: core/rbac.js#why:13a623d045d0
   module: core/rbac.js
   key: why
@@ -407,11 +416,11 @@ disclosures:
     gate: require_operations_staff
     why: The console declares which roles and MFA state this capability needs. The test probes the named
       server gate and requires the console to be no more permissive than it is.
-- slot_id: screens/approvals.js#hint:b0c7ac83b054
+- slot_id: screens/approvals.js#hint:870f30f59141
   module: screens/approvals.js
   key: hint
-  text: 'Không bấm được: quyết định cần ba giá trị mà danh sách này không trả về. Xem “Tại sao nút Duyệt
-    đang tắt?” trong bảng giới hạn bên dưới.'
+  text: Máy chủ từ chối quyết định của chính người đã tạo yêu cầu, nên phiếu do bạn mở sẽ bị từ chối ở
+    bước này.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -435,16 +444,15 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/approvals.js#guardrail:2807c7bbd43b
+- slot_id: screens/approvals.js#guardrail:77b10ba34aa6
   module: screens/approvals.js
   key: guardrail
-  text: Đây là màn hình chỉ đọc. Không có thao tác nào ở đây ghi vào máy chủ, kể cả khi một việc sắp hết
-    hạn.
+  text: Quyết định ở đây ghi thẳng vào máy chủ và không hoàn tác được. Trước khi ghi, máy chủ kiểm lại
+    phiên bản, cả hai mã niêm phong, quyền của bạn, và quy tắc người tạo yêu cầu không được tự duyệt.
   binding:
-    kind: READ_ONLY_MODULE
-    module: screens/approvals.js
-    why: Claims the screen writes nothing to the server. Checked by scanning the module for a mutating
-      request; it issues one GET and nothing else.
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/approvals.js#notice__title:6abccb9d7489
   module: screens/approvals.js
   key: notice__title
@@ -471,12 +479,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/approvals.js#notice:2ebfcb11400a
+- slot_id: screens/approvals.js#notice:30c8720d4911
   module: screens/approvals.js
   key: notice
-  text: Để duyệt, máy chủ đòi ba mã niêm phong chứng minh bạn đã xem đúng nội dung đó. Danh sách trên
-    không trả về mã nào trong ba mã ấy — nó chỉ có mã của chính phong bì, là một giá trị khác và không
-    thay được. Nên từ những gì màn hình này thấy, không dựng nổi một quyết định hợp lệ.
+  text: Máy chủ đòi phiên bản và hai mã niêm phong để chứng minh bạn quyết đúng nội dung đó. Hàng chờ
+    nay trả về đủ cả ba, nên phiếu nào bảng vận hành mở ra xem được thì bấm quyết được ngay — hôm nay
+    là phiếu gắn với một đơn hàng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice__title:916ae4bc1427
+  module: screens/approvals.js
+  key: notice__title
+  text: Khoá theo loại nội dung, không phải theo vai trò
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -491,11 +507,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/approvals.js#screen__lede:eaeda53c3add
+- slot_id: screens/approvals.js#screen__lede:110cc8eacfc7
   module: screens/approvals.js
   key: screen__lede
-  text: Việc đang chờ duyệt và còn bao lâu nữa hết hạn. Chưa quyết được từ màn hình này; phần bên dưới
-    nói rõ vì sao.
+  text: Việc đang chờ duyệt và còn bao lâu nữa hết hạn. Quyết được ngay tại đây với loại nội dung bảng
+    vận hành mở ra xem được; loại nào chưa xem được thì nút vẫn khoá và phiếu nói rõ đó là loại nào.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1167,11 +1183,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/manualSend.js#hint:3cff2232a609
+- slot_id: screens/manualSend.js#hint:4047ddb68f97
   module: screens/manualSend.js
   key: hint
-  text: 'Bốn giá trị trên không đọc lại được từ bất kỳ đường nào của bảng điều khiển: danh sách duyệt
-    chỉ trả phong bì_hash. Xin chúng từ người đã tạo yêu cầu duyệt.'
+  text: Bốn giá trị trên phải xin từ người đã tạo yêu cầu duyệt. Hàng chờ duyệt có trả về phiên bản và
+    hai mã niêm phong, nhưng chỉ cho phiếu đang chờ quyết — mà gửi tay thì chỉ làm được sau khi phiếu
+    đã được duyệt, nên phiếu hiện ở đó không phải phiếu gửi được ở đây.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1377,6 +1394,15 @@ disclosures:
   text: Đơn chỉ được tạo từ một báo giá khách đã chốt. Bấm \u201cKhách đã chốt giá\u201d ở màn hình Báo
     giá trước, rồi mới tạo đơn ở đây. Máy chủ kiểm lại toàn bộ điều kiện; màn hình này chỉ bắt lỗi gõ
     trước khi gửi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#hint:d45cb9beaa9e
+  module: screens/quotes.js
+  key: hint
+  text: Để tạo đơn ngay từ đây, hãy chọn lượt tiếp nhận của khách ở trên trước — bảng vận hành cần mã
+    khách, mà bản báo giá không mang theo.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

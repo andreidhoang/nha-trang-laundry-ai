@@ -25,12 +25,13 @@
 
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { count, dateTime, shortId } from "../core/format.js";
+import { count, dateTime, matchesFilter, shortId } from "../core/format.js";
 import { enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
   badge,
+  copyable,
   empty,
   errorNotice,
   explain,
@@ -88,7 +89,19 @@ function createdCard(result) {
       : null,
     facts([
       ["Tiếp nhận lúc", dateTime(result.created_at)],
-      ["Khách", shortId(result.contact_binding_id), { mono: true }],
+      // Copyable, not just shortened. `Tạo đơn` on the order board asks for this exact value and
+      // its own hint says "chép từ màn hình Tiếp nhận" -- but this card rendered `shortId()` with
+      // no title and no copy control, and the form clears the input it was typed into, so for any
+      // intake older than the current one the full id existed nowhere a human could reach it. The
+      // instruction was real and impossible to follow.
+      [
+        "Khách",
+        copyable({
+          value: String(result.contact_binding_id),
+          display: shortId(result.contact_binding_id),
+        }),
+        { mono: true, span: true },
+      ],
     ]),
     h(
       "div",
@@ -142,7 +155,14 @@ function intakeList(items) {
         ),
         facts([
           ["Tiếp nhận lúc", dateTime(item.created_at)],
-          ["Liên hệ", shortId(item.contact_binding_id), { mono: true }],
+          [
+            "Liên hệ",
+            copyable({
+              value: String(item.contact_binding_id),
+              display: shortId(item.contact_binding_id),
+            }),
+            { mono: true, span: true },
+          ],
           ["Phiên bản dòng", `v${item.row_version}`],
         ]),
         h(
@@ -189,12 +209,10 @@ export function render_() {
   let filterText = "";
 
   function visibleItems() {
-    const needle = filterText.trim().toLowerCase();
+    const needle = filterText.trim();
     if (!needle) return fetched;
     return fetched.filter((item) =>
-      [item.order_request_id, item.status, item.contact_binding_id].some(
-        (value) => value && String(value).toLowerCase().includes(needle),
-      ),
+      matchesFilter([item.order_request_id, item.status, item.contact_binding_id], needle),
     );
   }
 

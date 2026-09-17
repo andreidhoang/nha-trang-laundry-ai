@@ -92,6 +92,24 @@ class StoredApproval:
     required_role: ActorRole
     expires_at: datetime
     replayed: bool = False
+    # The binding `decide` demands back, carried so a queue read can hand it to the approver.
+    #
+    # These were stored from the first migration and simply never projected, so the console could
+    # render the queue and could not act on it: `ApprovalDecisionRequest` requires
+    # `resource_version`, `snapshot_hash` and `rendered_hash`, none of which any read returned.
+    # The decision route was therefore unreachable from the list route's own data, and so was the
+    # manual-send envelope, which asks for the same three as `observed_*`. That is the whole of
+    # the human side of the A2 gate.
+    #
+    # Optional, and populated by `list_pending` only. `decide` and `claim_execution` answer about
+    # a state change rather than about an envelope, and the request path's return value is
+    # persisted for idempotent replay -- adding required keys there would invalidate every
+    # already-stored result.
+    resource_type: str | None = None
+    resource_id: UUID | None = None
+    resource_version: int | None = None
+    snapshot_hash: str | None = None
+    rendered_hash: str | None = None
 
 
 class ApprovalRepository:
@@ -517,7 +535,9 @@ class ApprovalRepository:
         # membership against at all.
         cursor.execute(
             """
-            SELECT r.id, s.status, r.envelope_hash, r.required_role, r.expires_at
+            SELECT r.id, s.status, r.envelope_hash, r.required_role, r.expires_at,
+                   r.resource_type, r.resource_id, r.resource_version, r.snapshot_hash,
+                   r.rendered_hash
             FROM approval_requests r
             JOIN approval_request_states s ON s.approval_request_id = r.id
             JOIN staff_store_assignments a
@@ -531,7 +551,16 @@ class ApprovalRepository:
         )
         return tuple(
             StoredApproval(
-                _uuid(row[0]), str(row[1]), str(row[2]), ActorRole(str(row[3])), _datetime(row[4])
+                _uuid(row[0]),
+                str(row[1]),
+                str(row[2]),
+                ActorRole(str(row[3])),
+                _datetime(row[4]),
+                resource_type=str(row[5]),
+                resource_id=_uuid(row[6]),
+                resource_version=int(str(row[7])),
+                snapshot_hash=str(row[8]),
+                rendered_hash=str(row[9]),
             )
             for row in cursor.fetchall()
         )

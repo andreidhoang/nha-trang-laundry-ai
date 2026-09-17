@@ -193,7 +193,11 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     This fails if bindings are silently dropped, which is the cheap way to make a red suite green.
     """
     counts = _registry()["counts"]
-    assert counts.get("SERVER_GATE") == 11
+    # 12 since APPROVAL-DECIDE-001: `APPROVALS_DECIDE` joined `core/rbac.js`, and its role claim
+    # binds to the same `require_approval_staff` gate the queue read does. The floor moves up
+    # because a new console capability without a server gate behind it is exactly what this count
+    # exists to notice.
+    assert counts.get("SERVER_GATE") == 12
     assert counts.get("REPOSITORY_ROLES") == 3
     assert counts.get("ALL_AUTHENTICATED") == 1
     assert counts.get("ABSENT_TABLE") == 5
@@ -201,7 +205,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # had no route, and both became false on 2026-08-29 when the routes were added.
     assert "ABSENT_ROUTE" not in counts
     assert counts.get("RESPONSE_SHAPE") == 1
-    assert counts.get("READ_ONLY_MODULE") == 1
+    # READ_ONLY_MODULE is gone entirely, like ABSENT_ROUTE and ABSENT_WRITER before it, and for the
+    # same reason: its one slot said the approvals screen writes nothing to the server, which was
+    # true only because `GET /internal/v1/approvals` withheld the three fields a decision needs.
+    # APPROVAL-DECIDE-001 projected them, the screen decides, and the claim died with the
+    # limitation. Asserted absent rather than deleted from this list so that re-adding a read-only
+    # claim has to be a deliberate act.
+    assert "READ_ONLY_MODULE" not in counts
     assert counts.get("MODEL_SEAM") == 2
     # ABSENT_WRITER is gone entirely, not reduced. Both slots claimed that nothing raises a
     # quote revision to APPROVED_EXACT; DEC-021 resolved on 2026-08-25 and the acceptance path
@@ -267,7 +277,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # ORDER_NOT_ACTIVE, ALREADY_SETTLED, STALE_VERSION -- and they reach the same panel by the same
     # route with `decision: null`. Glossing only the enum shipped a fix that looked complete and
     # still put a bare English token in front of a counter holding somebody's money.
-    assert sum(counts.values()) == _registry()["total"] == 191
+    # 194 after APPROVAL-DECIDE-001. The approvals screen stopped being read-only, so its copy was
+    # rewritten where it had described the limitation rather than the screen: the eyebrow, the lede,
+    # the guardrail, the per-card refusal and the "why is Duyệt disabled" notice. The refusal did
+    # not disappear -- it narrowed from "this screen cannot decide anything" to "this screen cannot
+    # show you a MESSAGE_DRAFT, so it will not let you approve one" -- and a narrower true sentence
+    # costs more slots than a broad one. Net +3 against the READ_ONLY_MODULE slot that went.
+    assert sum(counts.values()) == _registry()["total"] == 194
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -276,7 +292,7 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 15
+        == 16
     )
 
 

@@ -546,6 +546,36 @@ export function gated(control, verdict) {
 }
 
 /**
+ * Disable every field inside a region the caller may not submit.
+ *
+ * `gated()` disables one control, which is the submit button, and that left the fields above it
+ * live. An AUDITOR on `#/orders` could type an order id, a row version and a 78-character seal
+ * into a form whose button was disabled with a reason — the work was thrown away on the press
+ * that never came. A read-only role should meet the refusal before spending the typing, not after.
+ *
+ * Applied to the region rather than folded into `gated()` on purpose: `gated()` returns a wrapper
+ * around one control and is called from inside the tree it decorates, so it cannot see its own
+ * siblings. This runs once on the built form, after the fields exist.
+ *
+ * Carries the same `data-denied` contract `gated()` uses, so `syncNetworkAffordance` in app.js
+ * will not re-enable these when connectivity returns — the two writers of `disabled` share one
+ * reason, which is the defect that contract was introduced to prevent.
+ *
+ * @param {HTMLElement} region
+ * @param {{allowed: boolean, reason: string}} verdict
+ * @returns {HTMLElement} the same region, for chaining into a tree
+ */
+export function gatedFields(region, verdict) {
+  if (verdict.allowed) return region;
+  for (const field of region.querySelectorAll("input, select, textarea")) {
+    field.setAttribute("disabled", "");
+    field.setAttribute("aria-disabled", "true");
+    field.setAttribute("data-denied", "true");
+  }
+  return region;
+}
+
+/**
  * Bring a just-rendered failure into view.
  *
  * A submit that fails below the fold used to leave the operator staring at an apparently dead

@@ -30,7 +30,7 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UUID, dateTime, shortId } from "../core/format.js";
+import { UUID, dateTime, matchesFilter, shortId } from "../core/format.js";
 import { WARNING, enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -342,9 +342,7 @@ export function render_() {
       placeholder: "Lọc theo mã sự cố, mã đơn, trạng thái…",
       noun: "sự cố",
       matches: (item, needle) =>
-        [item.incident_id, item.order_id, item.status].some(
-          (value) => typeof value === "string" && value.toLowerCase().includes(needle),
-        ),
+        matchesFilter([item.incident_id, item.order_id, item.status], needle),
     },
   });
 

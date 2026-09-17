@@ -273,8 +273,18 @@ button,
   font-weight: var(--weight-bold);
   gap: var(--space-2);
   justify-content: center;
+  /* A button is `inline-flex`, so its label is an anonymous flex item and sizes to `max-content`:
+   * without these two it simply refuses to wrap and grows past its container. Vietnamese labels
+   * run 15-30% longer than the English they are translated from, and the honest ones here are
+   * long on purpose -- "Chứng thực rằng tôi đã gửi tin này" is an attestation in the first person
+   * and shortening it would cost the meaning. Measured at 390px before this: three screens
+   * (`/quotes`, `/approvals`, `/exceptions`) scrolled sideways by 82-92px, on the device
+   * `apps/web/README.md` names as the primary one. The fix belongs in the layout, not the copy. */
+  max-width: 100%;
   min-height: var(--tap-min);
+  overflow-wrap: anywhere;
   padding: var(--space-2) var(--space-4);
+  text-align: center;
   text-decoration: none;
   transition: background var(--motion-fast) var(--easing),
     border-color var(--motion-fast) var(--easing);

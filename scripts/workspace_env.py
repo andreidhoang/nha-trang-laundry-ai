@@ -93,8 +93,15 @@ def hidden_path_configuration_files(root: Path = ROOT) -> tuple[Path, ...]:
     for directory in site_packages_directories(root):
         for candidate in sorted(directory.glob("*.pth")):
             try:
-                flags = candidate.lstat().st_flags
-            except (OSError, AttributeError):
+                # `getattr`, not attribute access: `os.stat_result.st_flags` exists only on BSD,
+                # so on Linux the typed stubs have no such attribute and `mypy apps packages` --
+                # which follows the import into this file -- failed on the direct read. The
+                # runtime behaviour is unchanged; `None` takes the same path the `AttributeError`
+                # branch took.
+                flags = getattr(candidate.lstat(), "st_flags", None)
+            except OSError:
+                continue
+            if flags is None:
                 continue
             if flags & HIDDEN_FLAG:
                 hidden.append(candidate)
@@ -114,9 +121,11 @@ def clear_hidden_flags(root: Path = ROOT) -> tuple[Path, ...]:
     cleared = []
     for candidate in hidden_path_configuration_files(root):
         try:
-            flags = candidate.lstat().st_flags
+            flags = getattr(candidate.lstat(), "st_flags", None)
+            if flags is None:
+                continue
             change_flags(candidate, flags & ~HIDDEN_FLAG)
-        except (OSError, AttributeError):
+        except OSError:
             continue
         cleared.append(candidate)
     return tuple(cleared)

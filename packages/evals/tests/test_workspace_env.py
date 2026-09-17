@@ -82,7 +82,7 @@ def test_subprocess_without_pythonpath_imports_every_workspace_package() -> None
     assert "ok" in result.stdout
 
 
-@pytest.mark.skipif(not hasattr(stat, "UF_HIDDEN"), reason="UF_HIDDEN is a BSD file flag")
+@pytest.mark.skipif(not hasattr(os, "chflags"), reason="setting UF_HIDDEN needs the BSD chflags")
 def test_hidden_path_configuration_files_are_reported(tmp_path: Path) -> None:
     site_packages = tmp_path / ".venv" / "lib" / "python3.12" / "site-packages"
     site_packages.mkdir(parents=True)
@@ -102,7 +102,7 @@ def test_hidden_path_configuration_files_are_reported(tmp_path: Path) -> None:
     assert workspace_env.hidden_path_configuration_files(tmp_path) == ()
 
 
-@pytest.mark.skipif(hasattr(stat, "UF_HIDDEN"), reason="platforms without the BSD hidden flag")
+@pytest.mark.skipif(hasattr(os, "chflags"), reason="platforms that cannot carry the BSD flag")
 def test_hidden_detection_is_inert_without_the_flag(tmp_path: Path) -> None:
     assert workspace_env.hidden_path_configuration_files(tmp_path) == ()
     assert workspace_env.clear_hidden_flags(tmp_path) == ()

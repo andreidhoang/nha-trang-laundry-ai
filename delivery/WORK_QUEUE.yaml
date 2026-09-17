@@ -2219,7 +2219,7 @@ items:
 - id: RETENTION-STORE-001
   phase: PRODUCTION_HARDENING
   title: Separate disposable payload from the append-only ledger
-  status: PENDING
+  status: COMPLETE
   priority: 225
   depends_on:
   - RETENTION-001

@@ -1,0 +1,263 @@
+schema_version: 1
+work_item: RETENTION-STORE-001
+recorded_at: '2026-09-17T21:30:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-retention-store-001.md requires the conflict between the append-only ledger and
+  the section 15 retention schedule to be resolved so that a purge job can actually dispose of
+  something, without weakening the ledger guarantee in any way. The required design is a split: the
+  sanitized ledger row stays immutable and never expires, the disposable payload moves to a mutable
+  side table keyed by it, and deleting a side row leaves the ledger row and its audit meaning
+  intact. SUPPORTED_PURGE_CLASSES may contain a class only once its side table exists and its purge
+  is tested, and must never be widened ahead of the implementation. No existing ledger trigger may
+  be dropped, relaxed or bypassed; migrations are forward-only; a purge stays irreversible except
+  through backup policy, so no soft-delete and no tombstone that quietly retains the data; and
+  RETENTION-001's fail-closed behaviour is preserved exactly. DEC-008 remains the authority on what
+  is disposed of and when; this item changes only whether disposal is mechanically possible.
+
+  Three owner decisions resolved on 2026-09-17 bind the work and were read from
+  context/DECISION_REGISTRY.yaml rather than from the packet, which predates them. DEC-018 decides
+  what a purge means when the same bytes are also retained evidence. DEC-019 decides which class
+  covers AI-generated draft text and a human's edit of it. DEC-020 decides which identity may
+  execute a purge and what the database grants it. Each changed the shape of this item; see
+  unresolved_assumptions for the two places they narrowed it.
+rollback_impact: >-
+  Rollback is NOT free, and the packet's own sentence -- "rollback is reverting to refusal-only,
+  which disposes of nothing and destroys nothing" -- is true only for the retention half of the change
+  and false for the ingress half. This is stated plainly because an adversarial design review of
+  this item (docs/RETENTION_STORE_001_DESIGN_REVIEW_2026-08.md) called the equivalent claim false as
+  written, and it was right.
+
+  The retention half does roll back cleanly. Reverting retention.py to its previous revision empties
+  DISPOSABLE_PAYLOAD_STORES, so every class refuses again and nothing is disposed of. Nothing that a
+  purge had already removed comes back, but nothing new is destroyed, and no purge can have run
+  without a human first publishing an enabled schedule carrying DEC-008 -- which has not happened on
+  any database, since every class still ships refusing.
+
+  The ingress half does not. Migration 0038 drops webhook_events.encrypted_payload, and the
+  pre-0038 inbox.py writes that column, so a code-only revert leaves every inbound webhook failing
+  at INSERT. Recovery is a new forward migration, never a re-run of an old one: migrations are
+  checksum-locked and 0038 cannot be edited after application. On a database that has already run a
+  purge, that forward migration cannot restore the disposed bytes either -- by design, since a
+  purge is irreversible except through backup policy.
+
+  The safe rollback is therefore: revert the retention module and leave the schema in place. The
+  side table, the purge role and the disposal-record table become unused and harm nothing. Reverting
+  the schema is a deploy-level operation with an ingress outage for its duration and is not a
+  developer action.
+
+  No capability, decision or release state moves with this record. All 13 capabilities remain
+  NOT_AUTHORIZED, and enabling any retention class remains a separate publish_configuration act
+  carrying DEC-008, which this item does not perform.
+unresolved_assumptions: >-
+  This item was expected to make two classes disposable and makes one. Both narrowings are owner
+  decisions rather than engineering shortfalls, and neither is silent: each refusing class names a
+  specific reason that is recorded in its run record.
+
+  ASSISTANT_TRANSCRIPT is held back by DEC-018 in terms: it "stays NOT_SUPPORTED until the duplicate
+  in command_idempotency_records.response stops being written, because deleting assistant_turns
+  while a byte-identical copy survives under protect_idempotency_record would be a false statement
+  made by software". The corrective item DEC-018 names, ASSISTANT-RETENTION-001, does not exist in
+  delivery/WORK_QUEUE.yaml; neither does HASH-KEYING-001, which the same decision schedules. That is
+  drift between the decision registry and the queue and is reported here rather than reconciled by
+  this session, because adding queue items is not this item's scope.
+
+  DEC-020's resolution says "the two disposable side tables are the only tables in the schema with
+  DELETE granted to anyone". There is one, because DEC-018 -- ratified in the same sitting -- blocks
+  the second. The grant, the registry and verify_database_grants.py all agree on one and derive it
+  from a single source, so nothing claims two; the discrepancy is in the decision's prose and is
+  reported rather than papered over by inventing a second table to match a count.
+
+  DEC-019 assigned agent_drafts.draft_text and agent_draft_reviews.edited_text to CONVERSATION_BODY
+  when sent and AGENT_RUN_PAYLOAD when never sent. Both classes refuse here and say so. Separating
+  that text is not a small addition to this change: CONVERSATION_BODY is REDACT under DEC-008 and
+  this job performs PURGE only and now refuses REDACT explicitly, and the sent/never-sent
+  determination spans the review, manual-send and receipt tables. It is a separate item.
+
+  What is therefore NOT claimed: that every class holding customer text is disposable. What is
+  claimed: the class holding raw inbound customer message content is, the mechanism generalises, and
+  every other class refuses with a reason an auditor can act on.
+
+  Verification honesty: the adversarial pass was performed inline in the implementing session, which
+  is the weaker form. It was materially strengthened by an independent prior review -- six
+  investigators and three adversarial reviewers, recorded in
+  docs/RETENTION_STORE_001_DESIGN_REVIEW_2026-08.md, which refuted an earlier design for this same
+  item. That document was not found during initial scoping (it is named by neither the packet nor
+  the context packet) and was read only after a first implementation existed. Four of its must-fix
+  findings were live defects in that implementation and were fixed before this record: absent
+  per-record disposal evidence, the unlocked legal-hold race, audit events missing the facts that
+  justified the disposal, and the loss of payload immutability in the move. Three more it raised
+  were already satisfied. Finding it late was a scoping failure; not acting on it would have been
+  worse.
+evidence:
+  ledger_row_survives_payload_purge: >-
+    test_a_purge_removes_the_payload_and_leaves_the_ledger_row_intact seeds two webhook events, one
+    90 days old and one 1 day old, against a 30-day schedule. After the run the stale payload row is
+    gone, the fresh one remains, and both webhook_events rows are present -- asserted by querying the
+    database, never by reading the return value, so a purge that reported success without deleting
+    fails here. The paired negative is
+    test_a_purge_is_idempotent_and_the_second_run_finds_nothing_left: the second run reports 0.
+
+    test_the_purge_and_its_record_commit_together_or_not_at_all proves the disposal and its record
+    are one transaction, by aborting an enclosing transaction after run_purge returns and asserting
+    the payload row is back and no COMPLETED run record exists. psycopg turns the inner transaction
+    into a savepoint; that behaviour is proven here rather than assumed.
+
+    test_a_legal_hold_still_suspends_a_class_that_can_now_really_delete is the first time a hold
+    stands between a real DELETE and real rows, which is the only situation it was built for, and
+    test_a_purge_waits_for_a_legal_hold_being_placed_concurrently proves the check is binding: a
+    second connection holds the class advisory lock and the purge blocks on it (LockNotAvailable
+    under a 250ms lock_timeout) instead of racing through.
+  audit_chain_reconstructable_after_purge: >-
+    The account of a disposal is a record, not an inference from absence. The design review refuted
+    absence-as-evidence in both directions and both refutations survive: any holder of DELETE
+    produces the same observable state, and DEC-018 exemptions mean past-the-cutoff does not imply
+    absent either. So retention_disposal_records is written in the same statement that performs the
+    DELETE -- one CTE, so a disposal without its record is not expressible -- and is append-only.
+    It retains no payload: every column is a key or timestamp that already lives forever in the
+    ledger row beside it, which is why it is not the tombstone the packet prohibits.
+
+    test_a_disposal_is_a_recorded_fact_an_auditor_can_read_per_record reads it back through
+    RetentionRepository.disposal_record() and asserts the run, the class, the schedule version, the
+    decision_ref (DEC-008), the executing role, and that subject_occurred_at precedes the run's
+    cutoff_at -- the fact that justified the disposal, copied from the immutable ledger column and
+    therefore surviving it. test_a_payload_that_was_never_purged_has_no_disposal_record and
+    test_an_evidence_pinned_payload_gets_no_disposal_record_because_it_was_not_disposed_of prove the
+    read can say no, and test_a_disposal_record_cannot_be_rewritten_or_removed proves the evidence
+    of destruction cannot itself be destroyed.
+
+    test_the_audit_chain_is_reconstructable_after_the_payload_is_gone reconstructs the whole account
+    for a purged row in one query: payload_hash still equals sha256 of the bytes that arrived, the
+    run names class, version, outcome and cutoff, and the audit row exists.
+    test_the_audit_event_carries_what_justified_destroying_the_data asserts cutoff_at,
+    configuration_version and decision_ref reach both the domain event and audit_details, which
+    previously held only {"event_type": ...} while the cutoff reached no immutable ledger at all.
+
+    Stated limit: ShadowConsoleRepository.audit_timeline is store-scoped and resolves an aggregate's
+    owning store from a fixed list of store-bearing tables. webhook_events has no store column, so a
+    webhook id returns an empty timeline there before and after any purge. disposal_record() is the
+    per-record read for this class and its docstring says why, rather than inventing a store for a
+    storeless table.
+  ledger_triggers_still_reject_direct_mutation: >-
+    No trigger is dropped, relaxed or bypassed. protect_webhook_event is re-created by CREATE OR
+    REPLACE solely because one column it named stops existing; every other column it guarded it
+    still guards, DELETE is still refused outright, and the only permitted UPDATE is still
+    DISPATCH_PENDING -> PROCESSED. The trigger object itself is never dropped and 0008 is never
+    edited, so its checksum is untouched.
+
+    test_the_ledger_still_refuses_mutation_after_the_payload_is_separated proves this on a POPULATED
+    database rather than an empty one: DELETE raises, an UPDATE of payload_hash raises, and the side
+    table's DELETE succeeds while the ledger row survives.
+    test_the_append_only_trigger_really_does_refuse_a_purge continues to hold.
+
+    The move also added a guard rather than only removing one. encrypted_payload was in
+    protect_webhook_event's immutable-column list, so before this change nobody could rewrite the
+    ciphertext; a side table with no guard would have handed that power to every identity holding
+    UPDATE. webhook_event_payloads therefore carries a BEFORE UPDATE trigger and no delete guard --
+    immutability is added alongside disposability, not traded for it -- proven by
+    test_the_disposable_payload_is_immutable_for_as_long_as_it_exists.
+
+    DEC-020's role separation is enforced and verified rather than described.
+    test_only_the_purge_role_may_delete_and_only_from_the_side_table reads the catalog: the role
+    exists, it is NOLOGIN, and the complete list of tables it may DELETE from is exactly
+    [webhook_event_payloads]. verify_database_grants.py audits the same role and derives its
+    permitted tables from DISPOSABLE_PAYLOAD_STORES, so a class gaining a store without gaining its
+    grant fails a gate instead of failing a purge in production.
+  supported_classes_match_tested_purges: >-
+    SUPPORTED_PURGE_CLASSES is now derived -- frozenset(DISPOSABLE_PAYLOAD_STORES) -- so it cannot
+    name a class the code has no way to dispose of. RETENTION-001's own evidence names widening that
+    set ahead of an implementation as the failure mode to prevent, and a second hand-maintained
+    constant is how that happens, so there is only one.
+    test_the_supported_set_is_derived_from_the_registry_rather_than_maintained_beside_it asserts
+    both the derivation and the current membership: exactly {RAW_WEBHOOK_PAYLOAD}.
+
+    test_every_retention_class_is_either_supported_or_explained asserts the registry and
+    UNSUPPORTED_STORE_REASONS partition RetentionClass exactly -- union equal, intersection empty --
+    so a class added to the enum without a decision behind it fails the suite rather than refusing
+    anonymously at runtime. DEC-019 opens STAFF_IDENTITY next, which is precisely the case this
+    guards.
+
+    The single refusal sentence about append-only triggers is replaced by five specific reasons,
+    because "nothing is stored, so the obligation is already discharged" and "a payload is sitting
+    under a trigger and nobody moved it" are opposite states of the world and a run record that
+    cannot tell them apart cannot be audited. The previous string was also factually false for four
+    classes: DEC-008 decided CONSENT_EVIDENCE and SECURITY_AUDIT_EVENT are retained indefinitely, so
+    "a schema decision is required" was untrue of them, and customer_incidents carries a
+    DELETE-only guard rather than an append-only one.
+    test_a_class_with_no_store_refuses_and_names_the_reason_it_refuses is parametrised over all nine
+    and asserts each run record starts with its own reason.
+
+    Disposition is now read. run_purge ignored configuration.disposition entirely, which was
+    harmless only while no class was supported; with a store behind a REDACT class it would have
+    deleted what DEC-008 scheduled to be rewritten. REFUSED_DISPOSITION_NOT_EXECUTABLE is checked
+    before the store is consulted, so the refusal does not depend on what happens to be implemented:
+    test_a_class_scheduled_for_redaction_is_refused_rather_than_purged.
+
+    DEC-018's rule is enforced by the schema, not by convention: COMPLETED_WITH_EXEMPTIONS is a
+    distinct outcome and a CHECK makes COMPLETED mean exactly zero held-back rows
+    (test_a_run_that_held_rows_back_cannot_be_recorded_as_completed). All three pinning pointers are
+    covered, not only the one that motivated the rule:
+    test_retained_evidence_pins_a_payload_past_its_cutoff for consent_events and
+    test_a_replay_conflict_and_an_agent_run_pin_their_payloads_the_same_way for
+    inbox_replay_conflicts and agent_runs.
+  payload_migration_loses_nothing: >-
+    packages/db/tests/test_migration_populated.py creates a scratch database, applies 0001-0037
+    through the real migration runner, seeds five webhook events with payload bytes chosen so a
+    comparison cannot pass by accident (two identical values, one a prefix of another, one
+    non-ASCII "DỪNG", one all 256 byte values), and only then applies 0038. It asserts the
+    webhook_event_id -> bytes mapping is identical on both sides, that encrypted_payload is really
+    gone from webhook_events rather than merely copied out of it, and that every ledger row's
+    payload_hash still equals sha256 of the bytes now held beside it.
+
+    This test exists because the suite structurally could not otherwise see this class of defect.
+    0034's own header records why: its first version reasoned correctly that ADD COLUMN is DDL and
+    fires no row trigger, then issued UPDATEs that are DML and do -- applying cleanly to the empty
+    database every fixture creates and failing on every database holding a single row. 0038 has no
+    DML against a protected table at all (INSERT ... SELECT into a brand-new table, then DROP
+    COLUMN), so no trigger is disabled anywhere in it, but the claim is proven rather than argued.
+
+    The mechanism was also exercised by hand against a populated database before the tests were
+    written: two seeded rows, payload digest 766b0794eb31399f2c1e5f807ebe4283 before and after.
+  rollback_assessment: >-
+    Recorded in rollback_impact above, including the half that does not roll back cleanly. Summary:
+    reverting the retention module returns every class to refusing and destroys nothing; reverting
+    the schema is a deploy-level operation with an ingress outage, because inbox.py and
+    webhook_events.encrypted_payload are coupled by this change and a checksum-locked migration
+    cannot be re-run. Disposed bytes are not recoverable by any rollback, which is section 15
+    working as specified rather than a gap.
+
+    No purge can have run anywhere yet: every class ships refusing, enabling one is a separate
+    publish_configuration act carrying DEC-008, and DEC-020 additionally requires the first run of
+    any newly-enabled class to be attended and read by a named person. So the rollback surface today
+    is code and schema only, with no destroyed data behind it.
+checks:
+  - command: uv run ruff check .
+    status: PASSED
+    result: All checks passed!
+  - command: uv run ruff format --check .
+    status: PASSED
+    result: 526 files already formatted
+  - command: uv run mypy apps packages
+    status: PASSED
+    result: 'Success: no issues found in 224 source files'
+  - command: uv run pytest --require-postgres-integration
+    status: PASSED
+    result: >-
+      1204 passed, 4 skipped, 0 failed. The baseline before this item was 1189 passed, 4 skipped.
+      The 4 skips are unchanged and unrelated: 3 disclosure-contract parametrisations with empty
+      parameter sets, and the BSD chflags guard that cannot run on Linux.
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED
+    result: >-
+      19 JSON and 3 YAML contracts, 669 synthetic combinatorial cases, 44 served internal API
+      operations, 194 staff-console disclosures, 16 pinned public-runtime artifacts.
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED
+    result: >-
+      126 source references, 27 decisions, 4 gates, 9 phases, 123 work items, 13 capabilities,
+      5 decision-gated items.
+supplementary_checks:
+  - command: uv run python scripts/verify_database_grants.py
+    result: >-
+      'OK retention_purge: DELETE on 1 separable store(s) and nothing else across 47 tables'.
+      Not a declared acceptance check for this item; run because DEC-020 makes the grant surface
+      part of what this change is responsible for.

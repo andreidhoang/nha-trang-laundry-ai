@@ -74,6 +74,15 @@
     assembler (deterministic compiler) và public corpus release. Không cấp phép implementation hay
     capability nào cho tới khi được phê duyệt.
 
+19. [`CUSTOMER_SUPPORT_AND_ACQUISITION_SPEC_V1.md`](./CUSTOMER_SUPPORT_AND_ACQUISITION_SPEC_V1.md) —
+    **DRAFT, chưa được owner phê duyệt**
+    Hỗ trợ khách hàng hằng ngày và thu hút khách, viết theo **seam** thay vì theo tầng: mười một
+    đường ghép giữa channel, inbox, PDP, Tool Facade, domain, phê duyệt của người, egress và
+    attribution. Ánh xạ mọi tin nhắn nghiệp vụ vào `channel_send_receipts.message_kind` đã có, ghi
+    rõ vì sao **không cần thêm tool thứ mười một**, và tách bạch gửi-marketing-có-người-duyệt (không
+    thuộc gate nào) khỏi `MARKETING_FOLLOWUP` tự động (G4). Không cấp phép implementation hay
+    capability nào cho tới khi được phê duyệt.
+
 ## Contracts có thể chạy bằng máy
 
 - [`contracts/canonical-enums-v1.json`](./contracts/canonical-enums-v1.json) — enum, canonicalization

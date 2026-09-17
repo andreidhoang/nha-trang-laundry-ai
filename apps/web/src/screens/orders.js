@@ -43,6 +43,7 @@ import {
   explain,
   facts,
   gated,
+  gatedFields,
   labelled,
   listView,
   panel,
@@ -368,7 +369,7 @@ export function render_(context) {
   /** Any structural change to the transition form invalidates its key and redraws it. */
   const redrawMove = () => {
     transitionSubmission.reset();
-    render(moveBody, moveForm());
+    render(moveBody, gatedFields(moveForm(), writeVerdict));
   };
 
   // --- create ---------------------------------------------------------------------------------
@@ -450,7 +451,7 @@ export function render_(context) {
       // screen reads back. `mode` is deliberately left sticky: a wrong fulfilment mode surfaces
       // downstream when nobody comes to collect, and a wrong source surfaces nowhere, ever.
       draft.source = "UNKNOWN";
-      render(createBody, createForm());
+      render(createBody, gatedFields(createForm(), writeVerdict));
       await board.reload();
     } catch (error) {
       // Same rule as the transition below, and it matters more here: an order is not cheaply
@@ -702,7 +703,7 @@ export function render_(context) {
           `Bản ghi giờ là v${moved.row_version}.`,
       );
       render(moveResultHost, orderCard(moved));
-      render(moveBody, moveForm());
+      render(moveBody, gatedFields(moveForm(), writeVerdict));
       await board.reload();
     } catch (error) {
       // "Trạng thái đơn không đổi" is a claim about the server, and for a TIMEOUT or a NETWORK
@@ -907,8 +908,12 @@ export function render_(context) {
     );
   }
 
-  render(createBody, createForm());
-  render(moveBody, moveForm());
+  // `gatedFields` as well as `gated`: the submit was disabled with a reason and every field above
+  // it stayed live, so an AUDITOR could fill in an order id, a version and a seal and only then
+  // meet the refusal. Both forms are rebuilt on state changes, so this wraps the render rather
+  // than running once.
+  render(createBody, gatedFields(createForm(), writeVerdict));
+  render(moveBody, gatedFields(moveForm(), writeVerdict));
   void board.reload();
 
   // FULFILMENT-001 / DEC-023. No amount field, deliberately: the money was taken at the counter.
@@ -1047,7 +1052,11 @@ export function render_(context) {
         "Khách đã trả đủ tại quầy trước khi đồ rời tiệm, nên ghi nhận ở đây không có tiền — chỉ " +
         "ghi đồ đã đến tay khách hay chưa. Giao hụt thì ghi thất bại, không tính thêm phí, và " +
         "lần giao sau là một dòng mới. Chỉ chuyến TRẢ ĐỒ thành công mới cho phép đóng đơn.",
-      children: h("div", { class: "stack" }, legBody, legResultHost),
+      // Gated like the other two forms on this screen. Driving the console as an AUDITOR caught
+      // that the submit was disabled here while the order id and both selects stayed live -- the
+      // same half-measure `gated()` alone leaves everywhere, and the third form is where it is
+      // easiest to miss because it is built once rather than re-rendered.
+      children: h("div", { class: "stack" }, gatedFields(legBody, writeVerdict), legResultHost),
     }),
     panel({
       eyebrow: "Lệnh",

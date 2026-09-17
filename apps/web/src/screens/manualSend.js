@@ -20,6 +20,7 @@ import {
   errorNotice,
   facts,
   gated,
+  gatedFields,
   labelled,
   panel,
   resultLine,
@@ -435,11 +436,23 @@ export function manualSendPanel({ sendVerdict }) {
           "và từ chối mọi giá trị khác. Không có tin nào tới khách qua đường này.",
         control: channelField,
       }),
+      // This used to say the four values "không đọc lại được từ bất kỳ đường nào" because the
+      // approval list returned only `envelope_hash`. APPROVAL-DECIDE-001 projected the other
+      // three, which made half of that sentence false -- and nothing caught it, because the
+      // sentence is a DESCRIPTIVE disclosure with no machine binding. It is corrected by hand
+      // here, and it is a live example of what the unbound majority of the registry costs.
+      //
+      // The remaining half is still true and is the reason this form still has no picker: the
+      // queue lists `WHERE s.status = 'REQUESTED'`, and `prepare` refuses any approval that is
+      // not already `APPROVED` (`manual_sends.py`). The two sets are disjoint, so the row that
+      // carries these values is never the row that may be sent.
       h(
         "p",
         { class: "hint" },
-        "Bốn giá trị trên không đọc lại được từ bất kỳ đường nào của bảng điều khiển: danh sách " +
-          "duyệt chỉ trả phong bì_hash. Xin chúng từ người đã tạo yêu cầu duyệt.",
+        "Bốn giá trị trên phải xin từ người đã tạo yêu cầu duyệt. Hàng chờ duyệt có trả về " +
+          "phiên bản và hai mã niêm phong, nhưng chỉ cho phiếu đang chờ quyết — mà gửi tay thì " +
+          "chỉ làm được sau khi phiếu đã được duyệt, nên phiếu hiện ở đó không phải phiếu gửi " +
+          "được ở đây.",
       ),
       h(
         "div",
@@ -585,10 +598,10 @@ export function manualSendPanel({ sendVerdict }) {
 
   function redrawAttest() {
     attestSubmission.reset();
-    render(attestBody, buildAttestForm());
+    render(attestBody, gatedFields(buildAttestForm(), sendVerdict));
   }
 
-  render(attestBody, buildAttestForm());
+  render(attestBody, gatedFields(buildAttestForm(), sendVerdict));
 
   return panel({
     eyebrow: "Gửi tay · Có người chịu trách nhiệm",
@@ -624,7 +637,7 @@ export function manualSendPanel({ sendVerdict }) {
       // No panel-level refusal notice here, unlike the unknown queue. There are exactly two
       // controls in this panel and `gated()` already states the server's rule under each of them;
       // a third copy at the top would be the same paragraph three times on one screen.
-      h("div", { class: "card" }, buildPrepareForm()),
+      h("div", { class: "card" }, gatedFields(buildPrepareForm(), sendVerdict)),
       h("div", { class: "card" }, attestBody),
     ),
   });

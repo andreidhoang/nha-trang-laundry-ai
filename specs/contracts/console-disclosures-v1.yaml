@@ -1183,11 +1183,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/manualSend.js#hint:3cff2232a609
+- slot_id: screens/manualSend.js#hint:4047ddb68f97
   module: screens/manualSend.js
   key: hint
-  text: 'Bốn giá trị trên không đọc lại được từ bất kỳ đường nào của bảng điều khiển: danh sách duyệt
-    chỉ trả phong bì_hash. Xin chúng từ người đã tạo yêu cầu duyệt.'
+  text: Bốn giá trị trên phải xin từ người đã tạo yêu cầu duyệt. Hàng chờ duyệt có trả về phiên bản và
+    hai mã niêm phong, nhưng chỉ cho phiếu đang chờ quyết — mà gửi tay thì chỉ làm được sau khi phiếu
+    đã được duyệt, nên phiếu hiện ở đó không phải phiếu gửi được ở đây.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

@@ -21,10 +21,10 @@
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git show:*)",
-      "Bash(git branch:*)"
+      "Bash(git branch:*)",
+      "Bash(git push -u origin claude/:*)"
     ],
     "deny": [
-      "Bash(git push:*)",
       "Bash(gh pr create:*)",
       "Bash(gh workflow run:*)",
       "Bash(docker compose up:*)",

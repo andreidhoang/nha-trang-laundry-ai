@@ -4,6 +4,17 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Manual trigger, so the gate can be proved to work without inventing a pull request to test it.
+  #
+  # Added because an audit on 2026-09-17 found this workflow had run **zero times since it was
+  # registered on 2026-08-12**, across every pull request and every push to main in that window.
+  # The workflow was never the problem -- the API reports it `active` -- so Actions itself was off
+  # above it, and nothing in the repository said so. A `pull_request` status of "pending" with no
+  # checks reads identically to "CI is still running", which is how five weeks passed.
+  #
+  # With this, `Actions → quality → Run workflow` answers "is the gate on?" in one click, on any
+  # branch, without opening a throwaway pull request to find out.
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -48,6 +48,29 @@ class QuoteContainerBinding:
     row_version: int
 
 
+@dataclass(frozen=True, slots=True)
+class QuoteContainer:
+    """One store's quote container, located by the quote's own id.
+
+    `find_container` locates a container by the order request it is bound to, which is what opening
+    a quote needs. Acting on a quote that already exists -- closing a price band, reading its lines
+    for a console -- starts from the quote id instead, and needs the bound order request back
+    because `QuoteRepository.create_revision` writes it. `store_id` is in the lookup rather than
+    checked afterwards, for the reason the repricing UPDATE records: authority established over one
+    shop must not be exercisable on another's quote.
+    """
+
+    quote_id: UUID
+    bound_order_request_id: UUID
+    current_revision: int
+    row_version: int
+    #: `OPEN`, `CONVERTED` or `CLOSED`. Returned rather than filtered on, because the two callers
+    #: want different things from it: a command may only touch an open quote, and a read must still
+    #: answer for one that has become an order -- which is exactly when somebody asks what was
+    #: charged.
+    lifecycle: str
+
+
 @dataclass(frozen=True)
 class StoredQuoteRevision:
     quote_id: UUID
@@ -232,6 +255,33 @@ class QuoteRepository:
             return None
         identifier = row[0] if isinstance(row[0], UUID) else UUID(str(row[0]))
         return QuoteContainerBinding(identifier, int(row[1]), int(row[2]))
+
+    @staticmethod
+    def find_container_by_id(cursor: Any, store_id: UUID, quote_id: UUID) -> QuoteContainer | None:
+        """Locate one quote of this store by its own id, or `None`.
+
+        A quote of another store and a quote that does not exist are the same answer here, which is
+        the rule `store_access` states: the failures are indistinguishable to the caller, so probing
+        identifiers teaches nobody which stores exist.
+        """
+
+        cursor.execute(
+            """
+            SELECT id, bound_order_request_id, current_revision, row_version, lifecycle
+            FROM quotes WHERE id = %s AND store_id = %s
+            """,
+            (quote_id, store_id),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return QuoteContainer(
+            quote_id=row[0] if isinstance(row[0], UUID) else UUID(str(row[0])),
+            bound_order_request_id=(row[1] if isinstance(row[1], UUID) else UUID(str(row[1]))),
+            current_revision=int(row[2]),
+            row_version=int(row[3]),
+            lifecycle=str(row[4]),
+        )
 
     @staticmethod
     def get_revision(cursor: Any, quote_id: UUID, revision: int) -> StoredQuoteRevision | None:

@@ -114,6 +114,30 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("GET", "/internal/v1/stores/{store_id}/quotes"): store_scoped(
         "quotes", "QuoteRepository.list_for_store"
     ),
+    ("GET", "/internal/v1/stores/{store_id}/quotes/{quote_id}"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "membership enforced in OperationsService.read_quote before the container is located, "
+        "and QuoteRepository.find_container_by_id carries store_id in its predicate, so another "
+        "store's quote id is indistinguishable from one that does not exist",
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/quotes/{quote_id}/range-prices"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "membership enforced in OperationsService.propose_range_prices before the band is read, "
+        "and again inside ApprovalRepository.request; the approval is written with the store it "
+        "belongs to, which is what ApprovalRepository.decide checks membership against",
+    ),
+    (
+        "POST",
+        "/internal/v1/stores/{store_id}/quotes/{quote_id}/range-prices/{approval_id}",
+    ): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "membership enforced in OperationsService.apply_range_prices before the approval or the "
+        "revision is read, and _require_range_price_approval refuses an envelope whose own "
+        "store_id is not this store, so an approval raised elsewhere cannot price this quote",
+    ),
     ("POST", "/internal/v1/stores/{store_id}/incidents"): store_scoped(
         "incidents", "IncidentRepository.open"
     ),

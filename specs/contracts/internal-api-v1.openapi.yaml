@@ -616,6 +616,29 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/quotes/{quote_id}:
+    get:
+      operationId: read_quote
+      summary: One revision with its lines, so a console can draw the band it is asking staff to price
+        in.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: quote_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/quotes/{quote_id}/acceptance:
     post:
       operationId: accept_quote
@@ -628,6 +651,55 @@ paths:
         '201':
           description: Success response.
       parameters:
+      - name: quote_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/quotes/{quote_id}/range-prices:
+    post:
+      operationId: propose_range_prices
+      summary: Propose exact amounts inside the bands this quote revision published, for approval.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: quote_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/quotes/{quote_id}/range-prices/{approval_id}:
+    post:
+      operationId: apply_range_prices
+      summary: Write the approved amounts into a new revision derived from the band the customer saw.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: approval_id
+        in: path
+        required: true
+        schema:
+          type: string
       - name: quote_id
         in: path
         required: true

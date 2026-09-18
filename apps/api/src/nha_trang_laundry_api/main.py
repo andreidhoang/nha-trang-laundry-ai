@@ -67,6 +67,7 @@ from nha_trang_laundry_domain.catalog import (
     Unit,
 )
 from nha_trang_laundry_domain.quote_composition import RequestedLine
+from nha_trang_laundry_domain.range_prices import RangePriceChoice
 from nha_trang_laundry_observability import (
     CORRELATION_HEADER,
     CorrelationContext,
@@ -423,6 +424,11 @@ class QuoteCreateRequest(StrictRequest):
     # new revision, never an update to an existing one.
     quote_id: UUID | None = None
     expected_current_revision: int = Field(default=0, ge=0)
+    # Off unless asked for. A range-priced service is refused by default -- which is what every
+    # caller before `RANGE-PRICE-001` relied on -- and storing the band instead is a deliberate
+    # act: it produces a revision with a minimum and a maximum and no single total, which a caller
+    # expecting a price must not receive by accident.
+    present_range_as_band: bool = False
 
 
 class QuoteRevisionResponse(BaseModel):
@@ -439,6 +445,69 @@ class QuoteRevisionResponse(BaseModel):
     reason_codes: list[str]
     required_approvals: list[str]
     replayed: bool
+
+
+class RangePriceChoiceRequest(StrictRequest):
+    """One amount a staff member chose for one range-priced line.
+
+    An integer of dong, like every other money field on this surface. A float would introduce a
+    representation the currency does not have, on a field that decides what a customer pays.
+
+    There is no band here, and there must never be: the interval comes from the stored revision the
+    server itself read. A client that could state its own bounds would be authorising its own price.
+    """
+
+    service_code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,62}$")
+    amount_vnd: int = Field(ge=0, le=MAX_CANONICAL_INT)
+
+
+class RangePriceRequest(StrictRequest):
+    """The amounts, and the caller's evidence that it is pricing the revision it was shown."""
+
+    expected_current_revision: int = Field(ge=1)
+    expected_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
+    choices: list[RangePriceChoiceRequest] = Field(min_length=1, max_length=20)
+
+
+class RangePriceProposalResponse(BaseModel):
+    """The raised envelope plus the exact binding its approver must hand back."""
+
+    approval_request_id: UUID
+    status: str
+    envelope_hash: str
+    required_role: str
+    expires_at: str
+    resource_version: int
+    snapshot_hash: str
+    rendered_hash: str
+    replayed: bool
+
+
+class QuoteLineResponse(BaseModel):
+    line_id: str
+    service_code: str
+    quantity: str
+    unit: str
+    #: "EXACT" or "RANGE". A RANGE line has the two bounds and no amount, because there is no
+    #: amount until a person chooses one.
+    price_kind: str
+    net_amount_vnd: int | None
+    band_minimum_vnd: int | None
+    band_maximum_vnd: int | None
+
+
+class QuoteRevisionDetailResponse(BaseModel):
+    quote_id: UUID
+    revision: int
+    row_version: int
+    finality: str
+    status: str
+    snapshot_hash: str
+    display_total_min_vnd: int | None
+    display_total_max_vnd: int | None
+    valid_until: datetime | None
+    reason_codes: list[str]
+    lines: list[QuoteLineResponse]
 
 
 class QuoteSummaryResponse(BaseModel):
@@ -1309,6 +1378,7 @@ def create_quote(
             quote_id=request.quote_id,
             expected_current_revision=request.expected_current_revision,
             expected_row_version=0 if request.quote_id is None else _parse_if_match(if_match),
+            present_range_as_band=request.present_range_as_band,
         )
     except QuotePricingUnavailable as error:
         # No approved price list means no price. This is a refusal, not an outage of convenience.
@@ -1502,6 +1572,194 @@ def accept_quote(
         reason_codes=list(result.reason_codes),
         required_approvals=list(result.required_approvals),
         replayed=result.replayed,
+    )
+
+
+# --- RANGE-PRICE-001: closing a published price band ------------------------------------------
+#
+# Two routes, and the second cannot be reached without the existing approval-decision route in
+# between. Neither does arithmetic on money: the first hands the amounts to the domain and persists
+# an envelope, the second hands them to the domain again and persists what comes back.
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/quotes/{quote_id}/range-prices",
+    response_model=RangePriceProposalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def propose_range_prices(
+    store_id: UUID,
+    quote_id: UUID,
+    request: RangePriceRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RangePriceProposalResponse:
+    """Propose exact amounts inside the bands this quote revision published, for approval.
+
+    The published band is the bound and the server owns it: this function forwards amounts and
+    nothing else. An amount outside the band is refused here, before any approval row exists, and
+    the refusal carries the domain's own code so the console can name it in Vietnamese.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.propose_range_prices(
+            store_id=store_id,
+            quote_id=quote_id,
+            expected_current_revision=request.expected_current_revision,
+            expected_snapshot_hash=request.expected_snapshot_hash,
+            choices=tuple(
+                RangePriceChoice(service_code=choice.service_code, amount_vnd=choice.amount_vnd)
+                for choice in request.choices
+            ),
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (
+        ApprovalEnvelopeError,
+        ApprovalStateError,
+        ApprovalAuthorizationError,
+        IdempotencyConflictError,
+        StoreAccessError,
+        QuoteStateError,
+        QuoteIntegrityError,
+        ValueError,
+    ) as error:
+        _raise_operations_error(error)
+    if isinstance(result, UnresolvedQuoteResult):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "REQUIRE_HUMAN", "reason_codes": list(result.reason_codes)},
+        )
+    return RangePriceProposalResponse(
+        approval_request_id=result.approval.approval_request_id,
+        status=result.approval.status,
+        envelope_hash=result.approval.envelope_hash,
+        required_role=result.approval.required_role.value,
+        expires_at=result.approval.expires_at.isoformat(),
+        resource_version=result.resource_version,
+        snapshot_hash=result.snapshot_hash,
+        rendered_hash=result.rendered_hash,
+        replayed=result.approval.replayed,
+    )
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/quotes/{quote_id}/range-prices/{approval_id}",
+    response_model=QuoteRevisionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def apply_range_prices(
+    store_id: UUID,
+    quote_id: UUID,
+    approval_id: UUID,
+    request: RangePriceRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> QuoteRevisionResponse:
+    """Write the approved amounts into a new revision derived from the band the customer saw.
+
+    The amounts are sent again because the envelope stores a digest, not the content. The server
+    re-derives the digest and refuses unless it is the one the approver bound, which is invariant 8
+    and is also why editing a line invalidates the approval: an edit is a new revision.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.apply_range_prices(
+            store_id=store_id,
+            quote_id=quote_id,
+            approval_id=approval_id,
+            expected_current_revision=request.expected_current_revision,
+            expected_snapshot_hash=request.expected_snapshot_hash,
+            choices=tuple(
+                RangePriceChoice(service_code=choice.service_code, amount_vnd=choice.amount_vnd)
+                for choice in request.choices
+            ),
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (
+        ApprovalStateError,
+        ApprovalAuthorizationError,
+        IdempotencyConflictError,
+        StoreAccessError,
+        QuoteStateError,
+        QuoteIntegrityError,
+        ValueError,
+    ) as error:
+        _raise_operations_error(error)
+    if isinstance(result, UnresolvedQuoteResult):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "REQUIRE_HUMAN", "reason_codes": list(result.reason_codes)},
+        )
+    return QuoteRevisionResponse(
+        quote_id=result.quote_id,
+        revision=result.revision,
+        row_version=result.row_version,
+        finality=result.finality,
+        status=result.status,
+        snapshot_hash=result.snapshot_hash,
+        list_service_subtotal_vnd=result.list_service_subtotal_vnd,
+        net_service_subtotal_vnd=result.net_service_subtotal_vnd,
+        display_total_min_vnd=result.display_total_min_vnd,
+        display_total_max_vnd=result.display_total_max_vnd,
+        reason_codes=list(result.reason_codes),
+        required_approvals=list(result.required_approvals),
+        replayed=result.replayed,
+    )
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/quotes/{quote_id}",
+    response_model=QuoteRevisionDetailResponse,
+)
+def read_quote(
+    store_id: UUID,
+    quote_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+    revision: int | None = None,
+) -> QuoteRevisionDetailResponse:
+    """One revision with its lines, so a console can draw the band it is asking staff to price in.
+
+    The list read returns totals, which is enough to show a quote and not enough to close one.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        view = service.read_quote(
+            store_id=store_id, quote_id=quote_id, principal=principal, revision=revision
+        )
+    except (StoreAccessError, QuoteStateError, QuoteIntegrityError, ValueError) as error:
+        _raise_operations_error(error)
+    return QuoteRevisionDetailResponse(
+        quote_id=view.quote_id,
+        revision=view.revision,
+        row_version=view.row_version,
+        finality=view.finality,
+        status=view.status,
+        snapshot_hash=view.snapshot_hash,
+        display_total_min_vnd=view.display_total_min_vnd,
+        display_total_max_vnd=view.display_total_max_vnd,
+        valid_until=view.valid_until,
+        reason_codes=list(view.reason_codes),
+        lines=[
+            QuoteLineResponse(
+                line_id=line.line_id,
+                service_code=line.service_code,
+                quantity=line.quantity,
+                unit=line.unit,
+                price_kind=line.price_kind,
+                net_amount_vnd=line.net_amount_vnd,
+                band_minimum_vnd=line.band_minimum_vnd,
+                band_maximum_vnd=line.band_maximum_vnd,
+            )
+            for line in view.lines
+        ],
     )
 
 

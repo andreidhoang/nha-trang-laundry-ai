@@ -167,47 +167,44 @@ def test_every_settlement_refusal_the_counter_can_meet_is_glossed_for_them() -> 
     assert not missing, f"settlement refusals with no Vietnamese note in i18n.js: {missing}"
 
 
-def test_nothing_in_this_system_produces_an_incident_scope_or_evidence_hash() -> None:
-    """The claim `#/incidents` and `#/gaps` now make, kept true by a check rather than by memory.
+def test_the_incident_scope_and_evidence_hash_are_produced_and_only_by_the_server() -> None:
+    """The inverse of the test this replaces, which is what that test asked for.
 
-    `POST /internal/v1/stores/{id}/incidents` requires `contact_scope_hash` and
-    `evidence_summary_hash`, both `^sha256:[0-9a-f]{64}$`. Driving the console as a member of staff
-    found there is nowhere to get either: they are agent-pipeline values (a fact bound to the
-    contact it was resolved for, `agent-tools-v1.openapi.yaml`), and that pipeline is
-    `NOT_AUTHORIZED`. So the console says the form cannot be completed and the gap register names
-    the decision that would unblock it.
+    Until `DEC-028` nothing in this repository produced `contact_scope_hash` or
+    `evidence_summary_hash`, both of which `POST /internal/v1/stores/{id}/incidents` required, so a
+    staff member facing a customer could not complete the form. A test asserted that absence and its
+    docstring said: "The day a producer is built, this test fails and that copy has to be rewritten
+    — which is the point." A producer was built; this is the rewrite.
 
-    The day a producer is built, this test fails and that copy has to be rewritten — which is the
-    point. A search for the literal is enough: a producer has to name the field to fill it.
+    Two claims now, and the second matters more than the first. A producer exists, and it is the
+    server. A staff member who could name a contact scope could file an incident against a customer
+    of their choosing, which is why invariant 9 keeps server-derived contact binding out of client
+    control and why the field left the request model rather than becoming optional.
     """
 
-    producers: list[str] = []
-    searched = 0
-    for directory in ("apps", "packages", "scripts"):
-        for path in (ROOT / directory).rglob("*.py"):
-            parts = set(path.parts)
-            if "tests" in parts or "__pycache__" in parts or ".venv" in parts:
-                continue
-            searched += 1
-            source = path.read_text(encoding="utf-8")
-            for field in ("contact_scope_hash", "evidence_summary_hash"):
-                if field not in source:
-                    continue
-                # Declaring the field on a request model, a command or an INSERT is carrying a
-                # value somebody else supplied. Producing one means computing a digest.
-                for line in source.splitlines():
-                    if field not in line:
-                        continue
-                    if any(
-                        marker in line
-                        for marker in ("sha256(", "hashlib", "canonical_document", "digest(")
-                    ):
-                        producers.append(f"{path.relative_to(ROOT)}: {line.strip()[:100]}")
-    assert searched > 50, "the search walked almost nothing; it is looking in the wrong place"
-    assert not producers, (
-        "something now produces an incident scope or evidence hash, so the console's warning on "
-        f"#/incidents and the #/gaps entry are out of date: {producers}"
+    incidents = (ROOT / "packages/db/src/nha_trang_laundry_db/incidents.py").read_text(
+        encoding="utf-8"
     )
+    assert "def contact_scope_digest(" in incidents
+    assert "def evidence_summary_digest(" in incidents
+    assert "sha256(" in incidents
+
+    # The staff request model carries neither hash, so neither can arrive from a client.
+    main = (ROOT / "apps/api/src/nha_trang_laundry_api/main.py").read_text(encoding="utf-8")
+    request_model = main[main.index("class IncidentOpenRequest(") :]
+    request_model = request_model[: request_model.index("\nclass ")]
+    assert "evidence_summary: str" in request_model
+    assert "contact_scope_hash" not in request_model
+    assert "evidence_summary_hash" not in request_model
+
+    # And the console computes nothing: no digest call anywhere in the staff application.
+    for path in (ROOT / "apps/web/src").rglob("*.js"):
+        source = path.read_text(encoding="utf-8")
+        for field in ("contact_scope_hash", "evidence_summary_hash"):
+            assert field not in source, (
+                f"{path.relative_to(ROOT)} names {field}; DEC-028 makes both digests server-side "
+                "and a console that carries one has become a place to forge a contact scope"
+            )
 
 
 def test_a_stale_settlement_is_classified_as_stale_and_not_as_an_unsupported_case() -> None:

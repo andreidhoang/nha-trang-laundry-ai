@@ -99,15 +99,47 @@ The console would not answer a single request. `SHOP-DEPLOY-001` fixed that in `
 and left the staging file alone, because its acceptance commands are cited by closed evidence.
 
 **Three database URLs, deliberately.** The migration identity owns the schema; the API and worker
-identities do not. The migrations still do not create the roles — that part of `DEC-020` is open —
-so create them once, by hand, before step 2:
+identities do not. The migrations create no **login** identity — a migration is a repository file
+and may not carry a credential — so create these once, by hand, before step 2:
 
 ```sql
-CREATE ROLE laundry_migrate LOGIN PASSWORD '...';
+CREATE ROLE laundry_migrate LOGIN PASSWORD '...' CREATEROLE;
 CREATE ROLE laundry_api     LOGIN PASSWORD '...';
 CREATE ROLE laundry_worker  LOGIN PASSWORD '...';
 CREATE DATABASE nha_trang_laundry OWNER laundry_migrate;
 ```
+
+**`CREATEROLE` on the migration identity is required as of migration `0038`.** `DEC-020` resolved on
+2026-09-17 and put a dedicated `retention_purge` role behind the retention schedule, holding DELETE
+on exactly the disposable payload side tables and nothing else — so that the identity serving
+customers is not the identity that can erase their records. The decision requires that grant to ship
+in the same migration that creates the purgeable table, because a table the schedule promises to
+purge that no identity may delete from reports a schedule the database cannot honour, and that drift
+is silent. `0038` therefore creates the role itself, guarded by `pg_roles` so re-applying is a no-op.
+It is `NOLOGIN` and has no password: it is a group role carrying one privilege, and you attach a
+real login identity to it here, at deployment time.
+
+```sql
+CREATE ROLE laundry_retention LOGIN PASSWORD '...' IN ROLE retention_purge;
+```
+
+**The deployment hash key is generated, never chosen.** `bootstrap_shop_local.py` writes
+`.shop/secrets/hash_key` and `compose.shop-local.yaml` mounts it at `/run/secrets/hash_key`;
+`HASH-KEYING-001` makes `webhook_events.payload_hash` and
+`command_idempotency_records.request_hash` keyed HMACs rather than plain SHA-256, because both
+commitments are designed to outlive the customer content they describe and an unsalted one over a
+short Vietnamese message is reversible by anyone who tries. A service with no key **refuses the
+write** rather than falling back — that is deliberate, and a `HashKeyUnavailable` on first start
+means the secret did not reach the container, not that the code is wrong.
+
+Do not rotate it on a trading shop. Equality under the old key is what deduplicates provider events
+and detects idempotent replays; a new key makes every stored commitment incomparable with every new
+one. Rotation is a between-deployments operation, and existing rows are never re-keyed — they keep
+their `V1` prefix, because re-keying would mean reading the plaintext they commit to.
+
+Nothing schedules a purge yet. Every class ships refusing, `DEC-008` requires enabling to be a
+separate published-configuration act, and `DEC-020` requires the first run of any newly-enabled
+class to be attended and its output read by a named person before that class runs unattended.
 
 Then, **after** the migration in step 2 and again after every future migration:
 

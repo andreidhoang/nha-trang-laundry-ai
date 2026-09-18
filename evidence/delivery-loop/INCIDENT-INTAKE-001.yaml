@@ -1,0 +1,201 @@
+schema_version: 1
+work_item: INCIDENT-INTAKE-001
+recorded_at: '2026-09-18T22:10:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-incident-intake-001.md requires that a staff member standing in front of a
+  customer be able to complete `#/incidents`, by deriving the contact scope on the server and giving
+  the evidence summary a purgeable home. `DEC-028` decides both halves and this item implements that
+  decision; the packet's constraints are that no client computes either digest, that the summary is
+  treated as personal data from the first commit, that `customer_incidents` keeps its existing
+  guards, and that the agent path's request model is not changed.
+
+  `WORKFLOW-CONFORMANCE-001` established the defect by measurement on 2026-09-10:
+  `POST /internal/v1/stores/{store_id}/incidents` required `contact_scope_hash` and
+  `evidence_summary_hash`, both `^sha256:[0-9a-f]{64}$`, and a search of the whole repository found
+  no producer of either. A customer complaining at the counter -- a week-one event -- could not be
+  recorded by anybody.
+rollback_impact: >-
+  Two halves with different rollback shapes, and the honest summary is that they must move together.
+
+  Reverting the console alone leaves a form that sends two digests the server no longer accepts, and
+  a screen that renders a false sentence about needing them. Reverting the server alone leaves a
+  console that sends words to a route demanding hashes. Either single-sided revert is worse than the
+  state before this item, so the rollback unit is the commit, not a file.
+
+  Reverting both restores the refusing form. No incident already recorded is lost: `0039` adds a
+  table and a per-column guard and alters no existing column, so leaving the schema applied under a
+  code revert is safe and the new table becomes unused. What is lost is the ability to record new
+  ones, which returns the shop to paper.
+
+  `INCIDENT_EVIDENCE` leaving `DISPOSABLE_PAYLOAD_STORES` on a revert returns that class to
+  refusing, which disposes of nothing and destroys nothing. No purge can have run: every class ships
+  refusing, enabling one is a separate `publish_configuration` act carrying `DEC-008`, and `DEC-020`
+  additionally requires the first run of a newly-enabled class to be attended.
+
+  No capability, decision or release state moves with this record. All 13 capabilities remain
+  NOT_AUTHORIZED.
+unresolved_assumptions: >-
+  `DEC-028` was decided under delegated engineering authority rather than by the business owner, and
+  the registry entry says so in its own field rather than borrowing the words of a ratification. The
+  delegation is quoted there. It commits no money, accepts no terms, asserts no legal basis and
+  names no person; those remain outside what any delegation here moves.
+
+  The decision request asked not to be settled as a side effect of a screen change, and this was not
+  one: it was taken deliberately, both answers are written down with their rejected alternatives,
+  and the implementation followed the ruling rather than the reverse.
+
+  **This item's own packet was wrong about `orders.incident_open` and is corrected in place.** The
+  packet said opening an incident would set it. `enforce_order_projection_update` raises on any
+  UPDATE to an order already `COMPLETED` or `CANCELLED`, which is when laundry complaints arrive, so
+  the flag could only ever be set for the minority of incidents. Relaxing a terminal-order guard is
+  forbidden here and should not be wanted; a boolean meaning "no incident, or an incident while the
+  order was still open" is worse than none. `customer_incidents.order_id` answers the question
+  exactly and nothing reads the column -- verified by search. Left unset, recorded in the packet.
+
+  **`DEC-018` was generalised, not merely applied.** Its stated rule is that a pointer from a
+  longer-lived record pins its target. An incident that is not `CLOSED` is not such a pointer, but
+  it is the same asymmetry of harm: deleting the description of a complaint whose fault and remedy
+  nobody has decided destroys the only account of what was wrong, and `DEC-004` governs remedies
+  that can be owed later. So an incident holds its own evidence until `CLOSED`. That is an
+  engineering extension of a decided principle; it is named here so a reader can disagree with it.
+
+  **The category is fixed at `SERVICE_QUALITY`.** The counter cannot open an
+  `AUTOMATED_MESSAGE_ERROR`, which is correct today because no automated message has ever been sent,
+  and will need revisiting the day one is.
+
+  Verification honesty: the adversarial pass was performed inline in the implementing session, which
+  is the weaker form. The `apps/web` half was written by a delegated console agent and was not taken
+  on trust: its disclosure-registry diff and its change to the contract test were read line by line
+  for weakening before anything was committed, and the browser run below is the implementing
+  session's own, not the agent's -- the agent reported it could not run Playwright at all.
+evidence:
+  contact_scope_derived_by_the_server: >-
+    `IncidentRepository.open_from_counter` reads `orders.bound_contact_id` inside the opening
+    transaction and hashes it through `contact_scope_digest`, which is domain-separated by a
+    `CONTACT-SCOPE-V1:` prefix so it cannot collide with another `sha256:` commitment in the system.
+    `test_a_staff_member_can_record_a_complaint_against_an_order` asserts the stored value equals
+    that digest over the order's binding.
+
+    `test_two_orders_of_one_walk_in_ticket_share_a_scope_and_two_tickets_do_not` asserts the
+    consequence rather than assuming it: `DEC-013` decided the counter ticket IS the walk-in
+    customer, so two complaints from the same person on two visits hash differently. That is a
+    grouping limit the privacy posture chose, and it is better asserted than discovered.
+
+    The read happens in the transaction that writes, so the binding hashed is the binding that
+    exists when the row lands. `test_an_order_from_another_store_cannot_be_complained_about` proves
+    store membership alone is not enough -- the order must belong to the store naming it -- and
+    `test_an_incident_in_another_store_is_refused_before_anything_is_written` proves the refusal
+    precedes any write.
+  client_supplied_hash_is_refused: >-
+    The field is gone rather than optional, which is the stronger form: `IncidentOpenRequest` now
+    carries `order_id` and `evidence_summary` only, and it is a `StrictRequest`, so a client sending
+    `contact_scope_hash` gets a 422 rather than being quietly ignored.
+
+    `test_the_incident_scope_and_evidence_hash_are_produced_and_only_by_the_server` replaces the
+    test that asserted no producer existed -- whose own docstring said "The day a producer is built,
+    this test fails and that copy has to be rewritten, which is the point". It asserts three things:
+    the digest functions exist, the request model names neither hash, and no file under
+    `apps/web/src` contains either string anywhere, because a console carrying one has become a
+    place to forge a contact scope.
+
+    In the browser: `it sends exactly order_id and evidence_summary, and no hash` -- the POST body
+    is captured and its key set asserted, not merely that a 201 came back.
+  evidence_summary_is_readable_and_purgeable: >-
+    `customer_incident_evidence` holds the text, keyed 1:1 to the incident, with a BEFORE UPDATE
+    guard and no delete guard: immutable while it exists, and DELETE is the purge.
+    `test_a_recorded_complaint_cannot_be_rewritten` proves the summary, the evidence hash and
+    `opened_at` all refuse rewriting while `status` and the decision flags still move.
+
+    `INCIDENT_EVIDENCE` is in `SUPPORTED_PURGE_CLASSES` with a real purge.
+    `test_a_closed_complaint_loses_its_description_and_keeps_its_record` runs it end to end at the
+    365-day schedule `DEC-008` signed: the summary is gone, the incident row and its hash survive,
+    the incident still lists, and `disposal_record()` returns the run, the schedule version and
+    `DEC-008`. `test_an_unfinished_complaint_holds_its_own_evidence` proves the exemption reports as
+    `COMPLETED_WITH_EXEMPTIONS` rather than as a clean run over a silent hold-back.
+
+    The hash commits to what was kept, not to something discarded: `evidence_summary_digest`
+    normalizes to NFC and the same normalized string is stored, proven by
+    `test_the_summary_is_normalized_before_it_is_hashed_and_stored`, which submits the NFD spelling
+    and asserts both the stored text and the stored hash.
+
+    `test_an_empty_complaint_is_refused` covers the empty, whitespace and newline cases: an incident
+    with no description is the tally mark `DEC-028` rejected.
+  incident_open_set_atomically: >-
+    NOT DONE, and deliberately. See unresolved_assumptions: the orders projection guard forbids any
+    UPDATE to a `COMPLETED` or `CANCELLED` order, which is the state most complaints arrive in.
+    `orders.incident_open` is left unset, `customer_incidents.order_id` answers the question
+    exactly, and nothing in the repository reads the column.
+
+    What this evidence key is renamed to in substance, and what is proven instead, is that the
+    complaint text never reaches a ledger that outlives its own schedule.
+    `test_the_summary_never_reaches_a_ledger_that_outlives_its_schedule` searches `domain_events`,
+    `audit_events` and `outbox_events` for the text and asserts zero hits. A copy in any of those
+    would sit under `reject_ledger_mutation` forever and make the 365-day purge a false statement --
+    the exact shape `DEC-018` found in `command_idempotency_records.response` and the reason
+    `ASSISTANT_TRANSCRIPT` is still unsupported. Avoided here rather than discovered later.
+
+    The idempotency payload carries `evidence_summary_digest(...)` rather than the text, for the
+    same reason: `request_hash` is an unsalted commitment in a row `protect_idempotency_record`
+    never lets anyone delete.
+  console_form_completes_against_a_real_api: >-
+    Driven in a real browser (Chromium 1194, headless), not asserted from source.
+    `scripts/verify_console_interaction.py` gained section 9 and now reports **66 passed, 0 failed**.
+
+    Seven checks on this path: the screen no longer says the form cannot be completed and contains
+    no `sha256`; an incident whose description was purged renders the muted retention sentence
+    rather than an empty cell; the complaint is a textarea rather than a hash field; the text
+    survives being **typed one character at a time** rather than `fill()`-ed, which is the defect
+    this whole script exists to catch and which once shipped; the form submits; the captured POST
+    body is exactly `{order_id, evidence_summary}`; and the complaint arrives as the words typed.
+
+    Stated limit: the API is route-stubbed, as every section of this script is. The stub is what
+    makes the strongest assertion here possible -- the exact outgoing request body -- and the server
+    side of the same contract is proven against a real PostgreSQL by the 12 tests in
+    `test_incident_intake.py` and by the API tests that exercise the real route. A full demo-stack
+    run was not performed: it is `compose.demo.yaml`, and `docker compose up` is denied to this
+    session by `.claude/settings.json`.
+
+    Two harness defects were found and fixed in the course of this, both mine: the stub initially
+    answered every `/incidents` read with rows, which made the home screen's all-clear line
+    correctly stop claiming its queues were empty and failed section 6 -- the check was right and
+    the harness was the defect, so the stub is now scoped to its own section. And the script could
+    not launch at all in this container, because it pins `channel="chrome"` and only Chromium is
+    installed; `CONSOLE_BROWSER_PATH` now names a binary, so the one check that can see a form a
+    human cannot use is no longer the one check nobody can run.
+  rollback_assessment: >-
+    Recorded in rollback_impact above, including that the two halves must revert together and that a
+    single-sided revert is worse than the state before this item.
+checks:
+  - command: uv run ruff check .
+    status: PASSED
+    result: All checks passed!
+  - command: uv run ruff format --check .
+    status: PASSED
+    result: 530 files already formatted
+  - command: uv run mypy apps packages
+    status: PASSED
+    result: 'Success: no issues found in 225 source files'
+  - command: uv run pytest --require-postgres-integration
+    status: PASSED
+    result: >-
+      1215 passed, 4 skipped, 0 failed. Baseline before this item was 1204 passed, 4 skipped. The 4
+      skips are unchanged and unrelated: three disclosure-contract parametrisations with empty
+      parameter sets, and the BSD chflags guard that cannot run on Linux.
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED
+    result: >-
+      19 JSON and 3 YAML contracts, 669 synthetic combinatorial cases, 44 served internal API
+      operations, 191 staff-console disclosures (194 before: four retired because the limitation
+      they described closed, one added for the purged-evidence state), 16 pinned public-runtime
+      artifacts.
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED
+    result: >-
+      127 source references, 28 decisions, 4 gates, 9 phases, 126 work items, 13 capabilities,
+      5 decision-gated items.
+supplementary_checks:
+  - command: CONSOLE_BROWSER_PATH=/opt/pw-browsers/chromium python scripts/verify_console_interaction.py
+    result: >-
+      66 passed, 0 failed. Not a declared acceptance check for this item and not part of the default
+      suite -- Playwright is deliberately not a repository dependency -- but it is the only check
+      that can see whether a staff member can actually use this form.

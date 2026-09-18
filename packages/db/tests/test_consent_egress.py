@@ -71,9 +71,9 @@ def _clear(connection: psycopg.Connection[Any], contact_binding_id: UUID) -> Non
             """
             INSERT INTO webhook_events (
                 id, provider, channel_account_id, provider_event_id, payload_hash,
-                encrypted_payload, event_type, contact_binding_id, channel,
+                event_type, contact_binding_id, channel,
                 opt_out_disposition, processing_status, received_at
-            ) VALUES (%s, 'TEST_PROVIDER', %s, %s, %s, %s, 'MESSAGE', %s, %s,
+            ) VALUES (%s, 'TEST_PROVIDER', %s, %s, %s, 'MESSAGE', %s, %s,
                       'NONE', 'DISPATCH_PENDING', %s)
             """,
             (
@@ -81,11 +81,15 @@ def _clear(connection: psycopg.Connection[Any], contact_binding_id: UUID) -> Non
                 f"account-{uuid4().hex}",
                 f"event-{uuid4().hex}",
                 f"RAW-SHA256-V1:{'a' * 64}",
-                b"sealed",
                 contact_binding_id,
                 CHANNEL,
                 NOW,
             ),
+        )
+        cursor.execute(
+            "INSERT INTO webhook_event_payloads (webhook_event_id, encrypted_payload) "
+            "VALUES (%s, %s)",
+            (webhook_id, b"sealed"),
         )
         cursor.execute(
             """

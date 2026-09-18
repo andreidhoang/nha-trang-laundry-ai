@@ -15,7 +15,7 @@
  * @module core/errors
  */
 
-/** @typedef {"OFFLINE"|"NETWORK"|"TIMEOUT"|"SESSION_ENDED"|"DENIED"|"MISSING"|"CONFLICT"|"STALE"|"IDEMPOTENCY_CONFLICT"|"REQUIRE_HUMAN"|"NOT_SUPPORTED"|"INVALID"|"PRECONDITION_REQUIRED"|"TOO_LARGE"|"RATE_LIMITED"|"UNAVAILABLE"|"PRICEBOOK_UNAVAILABLE"|"FAULT"} ErrorKind */
+/** @typedef {"OFFLINE"|"NETWORK"|"TIMEOUT"|"SESSION_ENDED"|"DENIED"|"MISSING"|"DISPOSED"|"CONFLICT"|"STALE"|"IDEMPOTENCY_CONFLICT"|"REQUIRE_HUMAN"|"NOT_SUPPORTED"|"INVALID"|"PRECONDITION_REQUIRED"|"TOO_LARGE"|"RATE_LIMITED"|"UNAVAILABLE"|"PRICEBOOK_UNAVAILABLE"|"FAULT"} ErrorKind */
 
 export class ApiError extends Error {
   /**
@@ -69,6 +69,13 @@ const MESSAGES = {
   SESSION_ENDED: "Phiên đăng nhập đã kết thúc. Hãy đăng nhập lại.",
   DENIED: "Bạn không có quyền cho thao tác này.",
   MISSING: "Không tìm thấy đối tượng.",
+  // Not the same thing as MISSING, and rendering it as one would be a small lie in the direction
+  // that matters: "không tìm thấy" says the thing never existed, while a 410 says it existed, is
+  // still on the books, and only its text was disposed of on a published schedule. The assistant
+  // stream route answers this for a turn whose words `ASSISTANT_TRANSCRIPT` purged at 180 days.
+  DISPOSED:
+    "Phần chữ của mục này đã bị xoá theo lịch giữ dữ liệu. Bản ghi thì vẫn còn — đây là chuyện " +
+    "bình thường, không phải mất dữ liệu.",
   CONFLICT: "Máy chủ từ chối vì trạng thái hiện tại.",
   STALE: "Dữ liệu đã thay đổi từ khi bạn mở màn hình. Hãy tải lại rồi làm lại.",
   IDEMPOTENCY_CONFLICT: "Cùng một khoá thao tác đã dùng cho nội dung khác. Hãy tải lại rồi nhập lại.",
@@ -167,6 +174,7 @@ export function classify(status, detail, context = {}) {
   if (status === 401) return of("SESSION_ENDED");
   if (status === 403) return of("DENIED");
   if (status === 404) return of("MISSING");
+  if (status === 410) return of("DISPOSED");
   if (status === 413) return of("TOO_LARGE");
   if (status === 428) return of("PRECONDITION_REQUIRED");
   if (status === 429) return of("RATE_LIMITED");

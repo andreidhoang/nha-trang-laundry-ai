@@ -283,6 +283,28 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # not disappear -- it narrowed from "this screen cannot decide anything" to "this screen cannot
     # show you a MESSAGE_DRAFT, so it will not let you approve one" -- and a narrower true sentence
     # costs more slots than a broad one. Net +3 against the READ_ONLY_MODULE slot that went.
+    # 191 after INCIDENT-INTAKE-001 implemented DEC-028: net -3, being -4 removed, +1 added and one
+    # re-keyed. The four that went are the four this file's note above counted in at 187 -- the two
+    # paragraphs of the "biểu mẫu này chưa dùng được" warning on `#/incidents` and the
+    # `missing`/`blockedBy` of the `#/gaps` entry naming the decision request. They were deleted
+    # rather than reworded because the claim they made -- nothing in this repository produces
+    # `contact_scope_hash` or `evidence_summary_hash`, so the form cannot be completed -- stopped
+    # being true: the server derives both, and the counter sends the complaint in words. This is a
+    # disclosure retiring because the limitation behind it closed, which is the only legitimate way
+    # one leaves. The one added is its replacement in kind: an incident whose evidence was purged at
+    # 365 days, or which the agent path opened with no summary, now renders a sentence saying the
+    # description is no longer kept and that this is the retention schedule rather than data loss.
+    # The re-keyed one is the screen lede, which no longer promises two hash fields.
+    # 194 after ASSISTANT-RETENTION-001: net +3, all additions, nothing reworded and nothing
+    # retired. `ASSISTANT_TRANSCRIPT` became a real 180-day PURGE class, so `question` and `answer`
+    # are `str | None` on the assistant routes and the stream route answers 410 for a turn whose
+    # words are gone. A null used to render an empty chat bubble -- a silent gap, which is the
+    # failure this console treats as worse than an error. The three new slots are the two bubbles'
+    # replacement sentences on `#/assistant` and `MESSAGES.DISPOSED` in `core/errors.js`, and all
+    # three say the same true thing in different registers: the turn is still on the books with its
+    # intent, its reason codes, its actor and its timestamp, and only the text was disposed of on a
+    # published schedule. This is the same kind of slot INCIDENT-INTAKE-001 added for a purged
+    # `evidence_summary`, for the same reason, which is why they are worded to match.
     assert sum(counts.values()) == _registry()["total"] == 194
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002

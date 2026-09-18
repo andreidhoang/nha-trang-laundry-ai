@@ -50,6 +50,15 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#MESSAGES.DISPOSED:749dfff7bb65
+  module: core/errors.js
+  key: MESSAGES.DISPOSED
+  text: Phần chữ của mục này đã bị xoá theo lịch giữ dữ liệu. Bản ghi thì vẫn còn — đây là chuyện bình
+    thường, không phải mất dữ liệu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: core/errors.js#MESSAGES.STALE:6e0156a13dcf
   module: core/errors.js
   key: MESSAGES.STALE
@@ -516,6 +525,24 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/assistant.js#hint:4c5316e8754b
+  module: screens/assistant.js
+  key: hint
+  text: Không còn giữ nguyên văn câu hỏi. Chữ của lượt hỏi bị xoá sau 180 ngày theo lịch giữ dữ liệu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/assistant.js#hint:1cc6ea6ce490
+  module: screens/assistant.js
+  key: hint
+  text: 'Không còn giữ nguyên văn câu trả lời. Chữ của lượt hỏi bị xoá sau 180 ngày theo lịch giữ dữ liệu,
+    còn bản thân lượt hỏi thì vẫn nguyên: máy hiểu câu hỏi thế nào, mã lý do, ai hỏi và hỏi lúc nào đều
+    được giữ lại. Đây là chuyện bình thường theo lịch, không phải mất dữ liệu.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/assistant.js#hint:70a54c570c37
   module: screens/assistant.js
   key: hint
@@ -705,29 +732,6 @@ disclosures:
     - custody_events
     - batches
     why: 'Same shape: the custody context is measured empty and the disclosure says so.'
-- slot_id: screens/gaps.js#missing:412bbd8484b5
-  module: screens/gaps.js
-  key: missing
-  text: 'Yêu cầu HTTP mở sự cố đòi hai mã băm sha256: contact_scope_hash và evidence_summary_hash. Không
-    màn hình nào, không API nào và không script nào trong hệ thống này sinh ra hai giá trị đó — chúng
-    thuộc đường agent (fact_refs trong agent-tools-v1), nơi máy chủ tự tính, và đường đó chưa được cấp
-    phép. Nhân viên không có chỗ nào để chép hai mã này, nên biểu mẫu bên màn hình Sự cố không hoàn tất
-    được. Danh sách sự cố vẫn đọc được bình thường.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:62dda7aa075c
-  module: screens/gaps.js
-  key: blockedBy
-  text: 'Cần chủ tiệm quyết định (đề xuất tại docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md): một sự
-    cố do nhân viên mở gắn với phạm vi liên hệ nào, và bản tóm tắt bằng chứng được lưu ở đâu — hay chỉ
-    lưu mã băm. Hai câu đó quyết định máy chủ tính hai mã băm thế nào. Cho tới lúc đó: ghi khiếu nại ra
-    sổ kèm số phiếu, và báo chủ tiệm trong ngày.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/gaps.js#missing:455dba33f5c7
   module: screens/gaps.js
   key: missing
@@ -1095,24 +1099,6 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/incidents.js#notice:56de1d6b10b2
-  module: screens/incidents.js
-  key: notice
-  text: Máy chủ đòi hai mã băm sha256 cho mỗi sự cố, và không có màn hình, API hay công cụ nào trong hệ
-    thống sinh ra chúng. Chúng thuộc đường agent, đường đó chưa được cấp phép, nên hiện không có cách
-    nào điền đúng hai ô dưới đây.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/incidents.js#notice__title:74cb36ae48cf
-  module: screens/incidents.js
-  key: notice__title
-  text: Biểu mẫu này chưa dùng được — không phải do bạn
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/incidents.js#notice__title:a726e37ae527
   module: screens/incidents.js
   key: notice__title
@@ -1138,11 +1124,21 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/incidents.js#screen__lede:a4289d8c133d
+- slot_id: screens/incidents.js#hint:3cf7559e87da
+  module: screens/incidents.js
+  key: hint
+  text: 'Không còn giữ lời khách phàn nàn. Sự cố do đường agent ghi vốn không kèm mô tả, còn mô tả do
+    nhân viên ghi bị xoá sau 365 ngày theo lịch giữ dữ liệu. Bản ghi sự cố thì vẫn nguyên: đây là chuyện
+    bình thường, không phải mất dữ liệu.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/incidents.js#screen__lede:a2183fce3f71
   module: screens/incidents.js
   key: screen__lede
-  text: Ghi lại rằng có chuyện xảy ra, kèm mã băm phạm vi liên hệ và mã băm tóm tắt bằng chứng. Việc quy
-    lỗi và bồi hoàn không diễn ra ở đây.
+  text: 'Ghi lại rằng có chuyện xảy ra: khách phàn nàn gì, về đơn nào. Việc quy lỗi và bồi hoàn không
+    diễn ra ở đây.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

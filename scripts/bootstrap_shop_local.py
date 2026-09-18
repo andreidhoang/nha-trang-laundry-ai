@@ -208,6 +208,12 @@ def main() -> int:
             existing=existing,
         )
     write("postgres_password", roles["laundry_migrate"], existing=existing)
+    # `HASH-KEYING-001`. The commitments this key produces outlive the data they describe, so it is
+    # generated here rather than typed: a human-chosen key would be guessable, and a manual step
+    # between cloning and running is a step somebody skips. It is written once and never rotated by
+    # a re-run -- `write` refuses to overwrite -- because rotating it under a trading shop makes
+    # every previously stored commitment incomparable.
+    write("hash_key", _secrets.token_urlsafe(48), existing=existing)
     write("keycloak_database_password", password(), existing=existing)
     # `laundry_backup`'s password. `pg_basebackup --no-password` never prompts and `pg_hba` demands
     # scram for the replication connection, so this file is the only way the base backup can

@@ -1,0 +1,124 @@
+schema_version: 1
+work_item: CLONE-AND-RUN-001
+recorded_at: '2026-09-19T02:40:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-clone-and-run-001.md requires that a person who has just cloned this repository
+  reaches a working staff console with one command, and that a gate proves the claim still holds.
+  Constraints: no credential is ever written to a tracked file; the script performs no deployment
+  and selects no vendor; the runbook and the script must not be able to drift; the real-shop path
+  keeps its own entry point so that one command cannot become a way to skip DEC-026; and the test
+  must not require Docker, because a test that only runs where the thing already works is not a
+  guard.
+rollback_impact: >-
+  The most reversible item in this sequence. Deleting `scripts/start_demo.py`,
+  `packages/evals/tests/test_start_demo.py` and the two documentation sections returns the project
+  to the eight-command sequence, which still works and is still written down -- the script runs those
+  commands rather than replacing them.
+
+  No product code changed. No migration. No schema. No capability, decision or release state moves
+  with this record, and all 13 capabilities remain NOT_AUTHORIZED.
+unresolved_assumptions: >-
+  **The bring-up itself was not executed here, and that is stated rather than implied.** Docker is
+  denied to this session by `.claude/settings.json`, so `docker compose up` never ran. What is
+  proven is everything up to it: the preflight refuses correctly and by name, the step list is
+  ordered correctly, the script and the runbook agree, and a preflight run leaves the working tree
+  byte-identical. The compose bring-up the script wraps is itself covered by `DEMO-STACK-001` and
+  `verify_demo_stack.py`, which this script calls as its last step.
+
+  So the honest claim is: the sequence is now executable as one command and guarded against drift;
+  the first end-to-end run on a machine with Docker is still owed, and it is the one thing a reader
+  of this record should not assume happened.
+
+  **The synced-directory refusal is a judgement call with a cost.** It refuses any checkout whose
+  path contains `desktop`, `documents`, `downloads`, `icloud drive`, `mobile documents`, `onedrive`,
+  `dropbox` or `google drive`. A person with a legitimately-named directory is refused and has to
+  move. That is deliberate: `ENV-INTEGRITY-001` is measured, not theorised -- 37 phantom test
+  failures where the true count was 0 -- and the failure it prevents is unattributable, which is the
+  worst kind to meet in your first hour with a repository. The refusal costs one `mv`.
+
+  **`bootstrap_shop_local.py` is deliberately not wrapped.** It needs an `age` public key generated
+  on the owner's own device, because `DEC-026` keeps the private half off the machine that writes
+  the archive. A one-command real-shop bring-up would be a one-command way to skip that, so the two
+  modes keep separate entry points and the script says which one it is.
+
+  Verification honesty: the adversarial pass was inline in the implementing session. One defect was
+  found that way and is worth recording because it was mine and it was live: the `__main__` line
+  shipped as `(os.environ.get(...) and 0) or main()`, which calls `main()` whether the variable is
+  set or not -- clever code that did not do what it looked like. It was deleted rather than fixed.
+evidence:
+  one_command_reaches_a_running_console: >-
+    `uv run python scripts/start_demo.py` runs preflight, `uv sync --all-packages --all-groups`,
+    `generate_demo_material.py`, the Docker network (created only if absent), the compose bring-up
+    and `verify_demo_stack.py`, then prints the console URL, where the synthetic credentials were
+    written, and that every AI capability is NOT_AUTHORIZED -- because that is the correct day-one
+    state and a reader who does not know it will read it as a broken install.
+
+    `test_the_entry_point_exists_and_names_its_steps_in_order` asserts the four steps and, more
+    importantly, the two orderings that carry the safety: credentials are minted before the stack
+    starts, and the stack is verified after it starts. A reordering that still ran every step would
+    start a stack on material from a previous run.
+
+    Not executed end to end here; see unresolved_assumptions.
+  preflight_names_what_is_missing: >-
+    Demonstrated, not asserted. Run in this container:
+
+      $ uv run python scripts/start_demo.py --preflight-only
+      Cannot start: Docker is installed but not running, or this user cannot reach its socket.
+      Start Docker Desktop, or add yourself to the docker group on Linux, then run this again.
+      exit=1
+
+    One sentence, a named cause, a named remedy, exit 1, no traceback. The packet says a traceback
+    is a failure of this item rather than a diagnostic, and this is the path a person is most likely
+    to meet first.
+
+    `test_preflight_names_a_missing_prerequisite_instead_of_raising_a_traceback` covers the
+    missing-tool case with `shutil.which` stubbed, so it runs anywhere.
+  the_runbook_and_the_script_cannot_drift: >-
+    `test_the_script_and_the_runbook_cannot_drift_apart` asserts every command the script runs is
+    named in `docs/runbooks/demo-stack.md`, and that the Docker network name matches.
+
+    It earned its place immediately: on its first run it failed, because the runbook documented the
+    bring-up but never documented installing the workspace -- a fresh clone following that page
+    would have run `generate_demo_material.py` with no workspace installed. The runbook gained the
+    step. That is the drift this test exists to catch, caught on day one.
+  the_synthetic_stack_cannot_be_mistaken_for_a_shop: >-
+    `test_the_synthetic_stack_cannot_be_mistaken_for_a_shop` asserts the script states it is not a
+    shop, names `shop-till-mac.md` as the real path, cites `DEC-026`, and starts no real-shop
+    topology.
+
+    The distinction is written where somebody will read it -- the module docstring, the runbook's new
+    first section and the handoff's §4 -- and it is the one from
+    `CODEX_CROSS_MACHINE_HANDOFF.md` §2: two machines each running this demo are two independent
+    demos, which is fine; two machines each running a real shop database are two competing sources
+    of truth about money, which is not. Several devices serving one shop is a different topology and
+    is already built as `compose.r1.yaml`.
+  a_bring_up_leaves_no_diff: >-
+    `test_running_the_preflight_leaves_the_working_tree_clean` captures `git status --porcelain`,
+    executes the script's `--preflight-only` path as a subprocess, and asserts the output is
+    byte-identical.
+
+    Everything the full run writes goes to `.demo/`, which is gitignored before it exists, so no
+    credential can reach a tracked file. That property is `DEMO-STACK-001`'s and is unchanged here;
+    this item adds no new secret and no new place to put one.
+  rollback_assessment: >-
+    Recorded in rollback_impact above: delete one script, one test and two documentation sections.
+    No product code, no migration, nothing destroyed.
+checks:
+  - command: uv run ruff check .
+    status: PASSED
+    result: All checks passed!
+  - command: uv run ruff format --check .
+    status: PASSED
+    result: 535 files already formatted
+  - command: uv run mypy apps packages
+    status: PASSED
+    result: 'Success: no issues found in 228 source files'
+  - command: uv run pytest --require-postgres-integration
+    status: PASSED
+    result: 1230 passed, 4 skipped, 0 failed
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED
+    result: 19 JSON and 3 YAML contracts, 669 combinatorial cases, 44 API operations, 194 disclosures
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED
+    result: 127 source references, 28 decisions, 4 gates, 9 phases, 127 work items, 13 capabilities

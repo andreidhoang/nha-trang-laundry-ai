@@ -220,8 +220,12 @@ def test_inbox_replay_and_stop_suppression_are_durable_before_dispatch(
             )
             is SuppressionState.SUPPRESSED
         )
+        # The payload moved to `webhook_event_payloads` in `0038` so the retention schedule can
+        # dispose of it; the assertion below is unchanged in meaning -- a replay must not overwrite
+        # the bytes that first arrived.
         cursor.execute(
-            "SELECT encrypted_payload FROM webhook_events WHERE id = %s", (first.webhook_event_id,)
+            "SELECT encrypted_payload FROM webhook_event_payloads WHERE webhook_event_id = %s",
+            (first.webhook_event_id,),
         )
         encrypted = cursor.fetchone()
         cursor.execute(

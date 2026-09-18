@@ -1,5 +1,5 @@
 schema_version: 1
-last_reviewed: 2026-08-10
+last_reviewed: 2026-09-18
 decisions:
   - id: DEC-001
     title: Weight precision and rounding policy
@@ -897,3 +897,64 @@ decisions:
       What R1 still needs from the owner is recorded as its own decisions: `DEC-024` order exit,
       `DEC-025` alert routing, `DEC-026` backup key custody, and the hosting selection tracked as
       `DECISION-HOSTING-001`.
+  - id: DEC-028
+    title: How a staff member opens an incident at the counter
+    status: RESOLVED
+    owner: PRODUCT_ENGINEERING_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, INCIDENT_RECEIPT]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md
+    opened_at: '2026-09-10'
+    question: >-
+      POST /internal/v1/stores/{store_id}/incidents requires contact_scope_hash and
+      evidence_summary_hash and nothing in this repository produces either value, so a staff member
+      facing a customer whose shirt came back stained cannot complete the form. Both fields are
+      agent-pipeline concepts the staff console inherited by calling the same command. The two
+      questions are what a staff-opened incident's contact scope is, and where the evidence summary
+      lives.
+    blocking_today: >-
+      Nothing. The console states on #/incidents that the form cannot be completed and why, #/gaps
+      carries the entry, and a test asserts the no-producer claim. The shop records complaints on
+      paper against the ticket number.
+    resolved_at: '2026-09-18'
+    decision_record: docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md
+    decided_under: >-
+      Delegated engineering authority, not an owner ratification, and recorded as such so the
+      registry stays true. The business owner wrote on 2026-09-18: "you are founder and lead
+      engineer and you have all business thinking and research and full authorities and permissions
+      as long as the decisions best for our app running correctly don't force me to make any
+      decision anymore". The request itself asked for a deliberate ruling rather than a side effect
+      of a screen change, and this is that ruling. It commits no money, accepts no terms, asserts no
+      legal basis and names no person, which is the boundary this delegation does not move.
+    resolution: >-
+      Question one, the contact scope: answer A, derived by the server from the order the incident
+      names. The route already requires an order, so orders.bound_contact_id is defined for every
+      incident the console can open, and DEC-013 already decided that for a walk-in the counter
+      ticket IS the customer and no name, phone or address is stored. So this invents no convention;
+      it applies the one DEC-013 set. contact_scope_hash is removed from the staff request model
+      entirely, because invariant 9 puts server-derived contact binding outside client control and a
+      staff member must not be able to name a scope for a customer of their choosing.
+
+      Question two, the evidence summary: answer B, stored, in a disposable payload side table.
+      Answer A, hashing text that is then discarded, proves only that a string nobody can read did
+      not change, and leaves the owner making a DEC-004 remedy decision with nothing to read. Answer
+      C records a complaint with no description, which is a tally mark. The objection to B was that
+      it brings a new personal-data class into scope and so needs a retention answer alongside
+      DEC-008. That objection was correct on 2026-09-10 and is spent: DEC-008 already schedules
+      INCIDENT_EVIDENCE at 365 days PURGE, and RETENTION-STORE-001 shipped the mechanism that
+      executes such a schedule on 2026-09-17. The summary therefore lives in
+      customer_incident_evidence, keyed to the incident, immutable while it exists and deletable by
+      the retention_purge role alone, and INCIDENT_EVIDENCE enters SUPPORTED_PURGE_CLASSES with a
+      tested purge. The hash on the append-only incident row is computed by the server over the text
+      that was actually stored, so it commits to what was kept rather than to something thrown away.
+
+      Consequence worth stating: this makes INCIDENT_EVIDENCE the second disposable side table, which
+      is what DEC-020's resolution assumed when it wrote "the two disposable side tables". That
+      sentence was reported as a discrepancy against RETENTION-STORE-001, where DEC-018 permitted
+      only one; it resolves here rather than by inventing a table to match a count.
+
+      Also settled, because it is the same question: opening an incident sets orders.incident_open,
+      which exists in the schema and which no code has ever set, in the same atomic envelope. DEC-024's
+      SHOP_FAULT_NO_CHARGE exit is the case that column was added for.
+
+      Implemented by INCIDENT-INTAKE-001.

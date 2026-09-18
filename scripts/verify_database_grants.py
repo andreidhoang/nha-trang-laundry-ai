@@ -12,8 +12,18 @@ application roles with *no privileges on it* until somebody re-runs the grants. 
 any stack provisioned before those dates has exactly this waiting.
 
 This script answers the question the deploy needs answered: *for every table, does each application
-role have what it needs and nothing it must not have?* It decides no policy. DELETE stays revoked
-from everyone, which is the state `DEC-020` exists to decide and is deliberately left alone here.
+role have what it needs and nothing it must not have?* It decides no policy.
+
+`DEC-020` resolved on 2026-09-17 and changed what "nothing it must not have" means. DELETE is no
+longer revoked from everyone: a dedicated `retention_purge` role holds it on exactly the disposable
+payload side tables, so that the identity serving customers is not the identity that can erase their
+records. The application roles are unchanged and still hold no DELETE anywhere.
+
+The purge role is therefore audited here too, and its permitted table set is read from
+`DISPOSABLE_PAYLOAD_STORES` rather than restated. `DEC-020` calls out the failure mode by name -- a
+purgeable table whose permission lives somewhere else drifts silently in the direction that matters,
+leaving a schedule the database cannot honour. Deriving the list means a class entering the registry
+without its grant fails this check instead of failing a purge in production.
 
 Usage:
     DATABASE_URL=postgresql://... uv run python scripts/verify_database_grants.py \
@@ -32,6 +42,7 @@ import os
 
 import psycopg
 import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
+from nha_trang_laundry_db.retention import DISPOSABLE_PAYLOAD_STORES
 
 #: What an application role must be able to do on every table it serves.
 REQUIRED: tuple[str, ...] = ("SELECT", "INSERT", "UPDATE")
@@ -39,6 +50,19 @@ REQUIRED: tuple[str, ...] = ("SELECT", "INSERT", "UPDATE")
 #: What it must never hold. DELETE and TRUNCATE are the purge surface `DEC-020` governs; REFERENCES
 #: and TRIGGER are DDL-adjacent and have no place in an application identity.
 FORBIDDEN: tuple[str, ...] = ("DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
+
+#: `DEC-020`: the one identity permitted to delete, and only from the separable stores.
+PURGE_ROLE = "retention_purge"
+
+#: Derived from the retention registry, never restated. A class gaining a store without gaining its
+#: grant fails here rather than in production.
+PURGE_DELETE_TABLES: frozenset[str] = frozenset(
+    store.payload_table for store in DISPOSABLE_PAYLOAD_STORES.values()
+)
+
+#: The purge identity deletes rows. It has no business rewriting them, truncating a table, or
+#: holding anything DDL-adjacent.
+PURGE_FORBIDDEN: tuple[str, ...] = ("TRUNCATE", "REFERENCES", "TRIGGER")
 
 QUERY = """
 SELECT c.relname, p.privilege, has_table_privilege(%s, c.oid, p.privilege) AS held
@@ -61,6 +85,31 @@ def audit(connection: object, role: str) -> tuple[list[str], list[str]]:
             if not held:
                 missing.append(f"{table}.{privilege}")
         cursor.execute(QUERY, (role, list(FORBIDDEN)))
+        for table, privilege, held in cursor.fetchall():
+            if held:
+                excess.append(f"{table}.{privilege}")
+    return missing, excess
+
+
+def audit_purge_role(connection: object, role: str = PURGE_ROLE) -> tuple[list[str], list[str]]:
+    """Return (missing, excess) for the purge identity: DELETE on the side tables and nowhere else.
+
+    `has_table_privilege` rather than a scan of `information_schema.role_table_grants`, because the
+    former accounts for privileges held through role membership and the latter does not -- and
+    membership is exactly how an operator attaches a login identity to this group role.
+    """
+
+    missing: list[str] = []
+    excess: list[str] = []
+    with connection.cursor() as cursor:  # type: ignore[attr-defined]
+        cursor.execute(QUERY, (role, ["DELETE"]))
+        for table, privilege, held in cursor.fetchall():
+            permitted = table in PURGE_DELETE_TABLES
+            if permitted and not held:
+                missing.append(f"{table}.{privilege}")
+            elif held and not permitted:
+                excess.append(f"{table}.{privilege}")
+        cursor.execute(QUERY, (role, list(PURGE_FORBIDDEN)))
         for table, privilege, held in cursor.fetchall():
             if held:
                 excess.append(f"{table}.{privilege}")
@@ -115,14 +164,43 @@ def main() -> int:
                 for item in excess[:20]:
                     print(f"       excess   {item}")
                 print(
-                    "       DELETE and TRUNCATE are the purge surface DEC-020 governs. No "
-                    "application identity may hold them while that decision is open."
+                    "       DELETE and TRUNCATE are the purge surface DEC-020 governs, and it "
+                    "grants them to retention_purge alone. No application identity holds them."
                 )
             if not missing and not excess:
                 print(
                     f"OK   {role}: {len(REQUIRED)} required and 0 forbidden "
                     f"across {table_count} tables"
                 )
+        # DEC-020: the purge identity, audited against the registry it exists to serve.
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (PURGE_ROLE,))
+            purge_role_exists = cursor.fetchone() is not None
+        if not purge_role_exists:
+            failures += 1
+            print(
+                f"FAIL {PURGE_ROLE}: the role does not exist. Migration 0038 creates it beside "
+                "the table it governs; a database without it reports a retention schedule it "
+                "cannot honour."
+            )
+        else:
+            missing, excess = audit_purge_role(connection)
+            if missing:
+                failures += 1
+                print(f"FAIL {PURGE_ROLE}: cannot delete from {len(missing)} separable store(s)")
+                for item in missing:
+                    print(f"       missing  {item}")
+            if excess:
+                failures += 1
+                print(f"FAIL {PURGE_ROLE}: holds {len(excess)} privilege(s) DEC-020 withholds")
+                for item in excess[:20]:
+                    print(f"       excess   {item}")
+            if not missing and not excess:
+                print(
+                    f"OK   {PURGE_ROLE}: DELETE on {len(PURGE_DELETE_TABLES)} separable store(s) "
+                    f"and nothing else across {table_count} tables"
+                )
+
     if failures:
         print(
             f"\n{failures} role check(s) failed. "

@@ -32,6 +32,27 @@ def _bootstrap_workspace_imports() -> None:
 
 _bootstrap_workspace_imports()
 
+
+def _ensure_deployment_hash_key() -> None:
+    """Give the test run a deployment key, because `HASH-KEYING-001` fails closed without one.
+
+    The keyed commitments in `webhook_events.payload_hash` and
+    `command_idempotency_records.request_hash` refuse to be written when no key is configured, which
+    is the correct production behaviour and would otherwise make every inbox and idempotency test
+    fail for a reason that has nothing to do with what it is testing. A test run is a deployment
+    like any other and gets a key like any other; it is set here rather than in each test so that no
+    test can accidentally assert the unkeyed shape.
+
+    Deliberately a fixed literal and deliberately not secret: these digests never leave the test
+    database, and a random per-run key would make a failure's stored hashes unreproducible between
+    runs. `test_keyed_digest.py` unsets it to prove the refusal still happens.
+    """
+
+    os.environ.setdefault("NTL_HASH_KEY", "test-only-deployment-key-not-a-secret-000000000000")
+
+
+_ensure_deployment_hash_key()
+
 POSTGRES_SKIP_REASON = "DATABASE_URL is required for PostgreSQL integration tests"
 POSTGRES_SKIP_FAILURE = (
     "PostgreSQL integration coverage is required; a database-backed test attempted to skip."

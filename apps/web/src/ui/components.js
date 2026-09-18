@@ -420,7 +420,16 @@ export function skeleton(rows = 3) {
 export function errorNotice(error, options = {}) {
   const api = /** @type {import("../core/errors.js").ApiError} */ (error);
   const isApi = typeof api?.kind === "string";
-  const state = isApi && (api.kind === "REQUIRE_HUMAN" || api.kind === "DENIED") ? "warn" : "danger";
+  // `DISPOSED` is the one kind that is neither. A 410 says the record is intact and only its text
+  // was disposed of on the published schedule -- nothing is broken, so `danger` would be false, and
+  // nobody owes an answer, so `warn` would be false too.
+  const state = !isApi
+    ? "danger"
+    : api.kind === "DISPOSED"
+      ? "info"
+      : api.kind === "REQUIRE_HUMAN" || api.kind === "DENIED"
+        ? "warn"
+        : "danger";
 
   return h(
     "div",

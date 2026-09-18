@@ -17,7 +17,7 @@
  *   - **The vocabulary is the same one `unsupported()` uses** — what the spec asks, what is
  *     missing, what blocks it, what to do today — so a full-screen refusal and a line in this
  *     catalogue read as the same statement at two sizes. The cards are built here rather than by
- *     calling `unsupported()` nineteen times because nineteen full screens is not a catalogue.
+ *     calling `unsupported()` once per entry because seventeen full screens is not a catalogue.
  *
  * Nothing here fetches. There is no request, no `Submission` and no loading state in this module,
  * because every fact on it is a fact about code that does not exist.
@@ -136,25 +136,6 @@ const GROUPS = [
           "được “đồ của khách đang ở đâu”.",
         missing: "Không có custody_units, custody_events hay batches.",
         blockedBy: "SHOP-INSTRUMENT-001",
-      },
-      {
-        ref: "M3",
-        title: "Mở sự cố tại quầy",
-        what:
-          "Ghi lại khiếu nại của khách ngay lúc khách đứng ở quầy: đồ hỏng, mất món, giặt chưa " +
-          "sạch — gắn với đúng đơn hàng.",
-        missing:
-          "Yêu cầu HTTP mở sự cố đòi hai mã băm sha256: contact_scope_hash và " +
-          "evidence_summary_hash. Không màn hình nào, không API nào và không script nào trong hệ " +
-          "thống này sinh ra hai giá trị đó — chúng thuộc đường agent (fact_refs trong " +
-          "agent-tools-v1), nơi máy chủ tự tính, và đường đó chưa được cấp phép. Nhân viên không " +
-          "có chỗ nào để chép hai mã này, nên biểu mẫu bên màn hình Sự cố không hoàn tất được. " +
-          "Danh sách sự cố vẫn đọc được bình thường.",
-        blockedBy:
-          "Cần chủ tiệm quyết định (đề xuất tại docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md): " +
-          "một sự cố do nhân viên mở gắn với phạm vi liên hệ nào, và bản tóm tắt bằng chứng được " +
-          "lưu ở đâu — hay chỉ lưu mã băm. Hai câu đó quyết định máy chủ tính hai mã băm thế nào. " +
-          "Cho tới lúc đó: ghi khiếu nại ra sổ kèm số phiếu, và báo chủ tiệm trong ngày.",
       },
       {
         ref: "M3",

@@ -7,7 +7,6 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -16,8 +15,11 @@ from nha_trang_laundry_domain.consent import OptOutDisposition, SuppressionState
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
 from .consent_egress import suppression_lock
+from .keyed_digest import raw_payload_digest
 
-RAW_HASH_PATTERN = re.compile(r"^RAW-SHA256-V1:[0-9a-f]{64}$")
+#: Both generations, because `0041` admits both and a V1 row written before the key existed is
+#: still a valid row that must still be readable and comparable.
+RAW_HASH_PATTERN = re.compile(r"^(RAW-SHA256-V1|RAW-HMAC-V2):[0-9a-f]{64}$")
 
 
 class InboxOutcome(StrEnum):
@@ -107,14 +109,21 @@ class InboxRepository:
                 consent_event_id = uuid4() if _creates_suppression(command) else None
 
                 def mutation(change_cursor: Any) -> None:
+                    # The ledger row and its payload are written by two statements and one
+                    # transaction. `RETENTION-STORE-001` moved the ciphertext into
+                    # `webhook_event_payloads` so the retention schedule can dispose of it without
+                    # touching a row `protect_webhook_event` forbids anyone to change; splitting the
+                    # write must not split the durability guarantee that invariant 6 rests on, so
+                    # both statements run inside `commit_material_change`'s transaction and a
+                    # failure of either leaves neither.
                     change_cursor.execute(
                         """
                         INSERT INTO webhook_events (
                             id, provider, channel_account_id, provider_event_id, payload_hash,
-                            encrypted_payload, event_type, contact_binding_id, channel,
+                            event_type, contact_binding_id, channel,
                             opt_out_disposition, opt_out_registry_version, processing_status,
                             received_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             event_id,
@@ -122,7 +131,6 @@ class InboxRepository:
                             command.channel_account_id,
                             command.provider_event_id,
                             command.payload.plaintext_hash,
-                            command.payload.ciphertext,
                             command.event_type,
                             command.contact_binding_id,
                             command.channel,
@@ -131,6 +139,13 @@ class InboxRepository:
                             processing_status,
                             received_at,
                         ),
+                    )
+                    change_cursor.execute(
+                        """
+                        INSERT INTO webhook_event_payloads (webhook_event_id, encrypted_payload)
+                        VALUES (%s, %s)
+                        """,
+                        (event_id, command.payload.ciphertext),
                     )
                     if consent_event_id is not None:
                         _insert_suppression(
@@ -202,8 +217,19 @@ class InboxRepository:
 
 
 def raw_payload_hash(authenticated_plaintext: bytes) -> str:
-    """Hash authenticated raw bytes without logging or persisting their plaintext."""
-    return f"RAW-SHA256-V1:{sha256(authenticated_plaintext).hexdigest()}"
+    """Commit to authenticated raw bytes without logging, persisting or exposing their plaintext.
+
+    Keyed since `HASH-KEYING-001`. The unkeyed SHA-256 this used to return survived the 30-day
+    disposal of the ciphertext it described, and for a short Vietnamese message it was
+    dictionary-reversible -- so the purge removed the payload and left a commitment from which it
+    could be recovered. `DEC-018` recorded that as an accepted residual and scheduled this.
+
+    Equality is preserved exactly, so inbox deduplication is unchanged. A deployment with no key
+    raises rather than falling back to the unkeyed form: an unkeyed fallback is how a system spends
+    a year writing reversible commitments without anyone noticing.
+    """
+
+    return raw_payload_digest(authenticated_plaintext)
 
 
 def _validate_command(command: InboundWebhook) -> None:

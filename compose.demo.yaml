@@ -197,6 +197,8 @@ secrets:
     file: ./.demo/secrets/oidc_mfa_claim
   staging_oidc_mfa_value: !override
     file: ./.demo/secrets/oidc_mfa_value
+  staging_hash_key: !override
+    file: ./.demo/secrets/hash_key
   staging_tls_certificate: !override
     file: ./.demo/secrets/tls_certificate
   staging_tls_private_key: !override

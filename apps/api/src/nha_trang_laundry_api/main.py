@@ -303,9 +303,16 @@ class ManualSendAttestationRequest(StrictRequest):
 
 
 class IncidentOpenRequest(StrictRequest):
+    """`DEC-028`. What the customer said, and which order it is about. Nothing else.
+
+    The two `sha256:` fields this model used to require were agent-pipeline concepts the counter
+    inherited, and nothing in the system produced either, so the form could not be completed by
+    anybody. They are now derived by the server. `StrictRequest` forbids unknown fields, so a client
+    that tries to supply one is refused rather than quietly ignored.
+    """
+
     order_id: UUID
-    contact_scope_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    evidence_summary_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    evidence_summary: str = Field(min_length=1, max_length=2000)
 
 
 class MemberStore(BaseModel):
@@ -465,6 +472,10 @@ class IncidentSummaryResponse(BaseModel):
     fault_decided: bool
     remedy_decided: bool
     opened_at: datetime
+    #: Null for an incident the agent path opened, which stores no summary, and for one whose
+    #: evidence has been disposed of under `INCIDENT_EVIDENCE`. The incident itself never
+    #: disappears; only its description does, and only on the published schedule.
+    evidence_summary: str | None = None
 
 
 class QueueRecoveryResponse(BaseModel):
@@ -1832,8 +1843,7 @@ def open_incident(
             service.open_incident(
                 store_id=store_id,
                 order_id=request.order_id,
-                contact_scope_hash=request.contact_scope_hash,
-                evidence_summary_hash=request.evidence_summary_hash,
+                evidence_summary=request.evidence_summary,
                 idempotency_key=idempotency_key,
                 principal=principal,
             )
@@ -2277,7 +2287,9 @@ class AssistantTurnResponse(BaseModel):
 
     turn_id: UUID
     intent: str
-    answer: str
+    #: Null once `ASSISTANT_TRANSCRIPT` has disposed of this turn's text at 180 days. The turn, its
+    #: intent and its reason codes are ledger and are kept; only the words go.
+    answer: str | None
     links: list[AssistantLinkResponse]
     reason_codes: list[str]
     created_at: datetime
@@ -2288,9 +2300,9 @@ class AssistantHistoryItemResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     turn_id: UUID
-    question: str
+    question: str | None
     intent: str
-    answer: str
+    answer: str | None
     links: list[AssistantLinkResponse]
     reason_codes: list[str]
     created_at: datetime
@@ -2413,6 +2425,14 @@ def stream_assistant_turn(
         _raise_assistant_error(error)
     if turn is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="assistant turn not found")
+    if turn.answer is None:
+        # The turn exists and the caller may see it; its words were disposed of under the published
+        # schedule. A 404 would say it never happened and a stream of nothing would look like a
+        # stalled connection, so this is its own refusal, phrased as the fact it is.
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            detail="assistant turn text was disposed of under ASSISTANT_TRANSCRIPT",
+        )
     return StreamingResponse(
         answer_sse_frames(turn.answer),
         media_type="text/event-stream",

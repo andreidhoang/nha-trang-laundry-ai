@@ -1,0 +1,132 @@
+schema_version: 1
+work_item: HASH-KEYING-001
+recorded_at: '2026-09-19T01:35:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-hash-keying-001.md requires `webhook_events.payload_hash` and
+  `command_idempotency_records.request_hash` to move to a keyed HMAC under a per-deployment secret,
+  so that disposing of a payload disposes of the ability to recover it. DEC-018 recorded both as an
+  accepted residual and scheduled this fix by name, explicitly not blocking.
+
+  Constraints: equality comparison is preserved exactly, because deduplication and replay defence
+  are equality tests over these values; the key lives in the environment or /run/secrets and never
+  in a repository file; a missing key fails closed rather than falling back to an unkeyed digest;
+  existing rows are never re-keyed, because doing so would mean reading the plaintext they commit
+  to; and no plaintext is read, logged or re-derived to perform the change.
+rollback_impact: >-
+  The most reversible change in this sequence, by design.
+
+  Reverting the code resumes writing V1 values. `0041` widened four CHECK constraints to admit both
+  generations and rewrote nothing, so both shapes stay legal and every row written under either
+  remains readable and comparable with rows of its own generation. Leaving 0041 applied under a code
+  revert is safe and inert.
+
+  What a revert does not undo is the safety it provided: commitments written while the key was in
+  use stay keyed, which is the desired direction. Nothing is lost and nothing becomes unreadable.
+
+  The one operational hazard is rotation rather than rollback, and it is documented in
+  `docs/runbooks/production-deploy-day.md`: equality under one key is what deduplicates provider
+  events and detects idempotent replays, so a new key makes every stored commitment incomparable
+  with every new one. Rotation is a between-deployments operation. A trading shop must not rotate.
+
+  No capability, decision or release state moves with this record. All 13 capabilities remain
+  NOT_AUTHORIZED.
+unresolved_assumptions: >-
+  **Keyed at the two producers, not inside `canonical_document`.** That function also produces quote
+  snapshot hashes, which are content addresses an approver must be able to recompute and verify;
+  keying those would make a published quote unverifiable by anyone but this deployment. Same shape,
+  different thing. The boundary was checked by search: every remaining `JCS-SHA256-V1` in the tree
+  is a quote snapshot or a pricebook manifest, and every one is deliberately unkeyed.
+
+  **The residual is narrowed, not closed.** Rows written before the key existed keep their V1 prefix
+  and their reversibility, permanently. That is the honest outcome: the alternative is reading the
+  plaintext they commit to, which is either already disposed of or is exactly the material this
+  protects. The residual stops growing; it does not disappear.
+
+  **A rotation is deliberately not a code path.** A script that re-keyed history would have to read
+  the plaintext, so none exists, and the runbook says why rather than leaving a future engineer to
+  discover it.
+
+  **The key's shape was a judgement call.** 32 bytes minimum, checked at load, so a truncated or
+  half-written secret file becomes a refusal rather than a weak key. The generators mint 48 bytes.
+
+  **The cache is restart-scoped.** `load_hash_key` is `lru_cache`d because it is read on the inbound
+  path of every provider event; a per-deployment secret does not change under a running process by
+  design, and rotation is a restart. `reset()` exists for tests.
+
+  Verification honesty: the adversarial pass was inline in the implementing session, the weaker
+  form. No provider was involved and no real customer payload was used at any point; the tests hash
+  the four bytes of `DỪNG`, which is the message the reversibility concern is actually about.
+evidence:
+  keyed_digest_preserves_equality_comparison: >-
+    `test_the_same_input_under_the_same_key_is_stable_and_under_another_key_is_not` asserts all
+    three properties that matter: the same input under the same key collides, a different input does
+    not, and the same input under a different key does not. That is the whole safety argument for
+    the change, because deduplication and replay detection are equality tests over these values.
+
+    `test_the_digest_is_not_the_unsalted_sha256_of_the_plaintext` states the property as the thing
+    that must no longer be true: before this, anyone holding a purged record's `payload_hash` could
+    confirm the message was DỪNG by hashing four bytes themselves. That specific attack is asserted
+    dead.
+
+    `test_the_request_digest_is_domain_separated_from_the_payload_digest` -- without distinct
+    prefixes, a value proving "this request document" would also prove "this provider payload", and
+    a comparison across the two would silently succeed.
+  deduplication_and_replay_conflict_unchanged: >-
+    Proved by the existing suite rather than by new assertions, which is the stronger result: the
+    entire inbox and idempotency test surface passes unmodified against keyed values.
+    `packages/db` and the two domain packages run 472 passed with no change to a dedup or
+    replay-conflict test, and the full suite is 1224 passed / 4 skipped / 0 failed.
+
+    The replay-conflict path is unchanged in behaviour and in honesty: a conflict spanning the
+    cutover reads as a hash mismatch, which is the true answer -- the two values were produced by
+    different generations and the record says so rather than guessing.
+  missing_key_refuses_the_write: >-
+    `test_a_deployment_with_no_key_refuses_rather_than_degrading` unsets both variables and points
+    `KEY_SECRET_PATH` at a nonexistent file, then asserts `HashKeyUnavailable` and that the message
+    names both the variable and the script that generates one -- a refusal nobody can act on is a
+    refusal that gets worked around.
+
+    `test_a_key_too_short_to_be_a_key_is_refused` covers the truncated-secret case.
+
+    There is no fallback path to test, because there is none: an unkeyed fallback is how a system
+    spends a year writing reversible commitments and nobody notices until the first purge.
+  no_plaintext_is_read_to_migrate: >-
+    `0041` contains no SELECT, no UPDATE and no data movement whatsoever. It drops and re-adds four
+    CHECK constraints and nothing else, verified by reading the file: `webhook_events.payload_hash`,
+    both columns of `inbox_replay_conflicts`, and `command_idempotency_records.request_hash`.
+
+    No re-keying routine exists anywhere in the change, deliberately, because one would have to read
+    the plaintext to run.
+  existing_rows_are_never_rewritten: >-
+    Both generations are permanently legal. `RAW_HASH_PATTERN` admits
+    `^(RAW-SHA256-V1|RAW-HMAC-V2):[0-9a-f]{64}$` and `test_both_generations_remain_readable`
+    asserts a V1 literal, a freshly keyed value, and that a third shape is still refused.
+
+    `protect_webhook_event` still names `payload_hash` in its immutable-column list and
+    `protect_idempotency_record` still refuses to update a completed record, so a rewrite is
+    impossible at the database even if code attempted one. Neither trigger was touched.
+  rollback_assessment: >-
+    Recorded in rollback_impact above. Reverting resumes V1 writes; both generations stay readable;
+    nothing is destroyed. The operational hazard is rotation, not rollback, and it is documented.
+checks:
+  - command: uv run ruff check .
+    status: PASSED
+    result: All checks passed!
+  - command: uv run ruff format --check .
+    status: PASSED
+    result: 532 files already formatted
+  - command: uv run mypy apps packages
+    status: PASSED
+    result: 'Success: no issues found in 227 source files'
+  - command: uv run pytest --require-postgres-integration
+    status: PASSED
+    result: 1224 passed, 4 skipped, 0 failed
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED
+    result: 19 JSON and 3 YAML contracts, 669 combinatorial cases, 44 API operations, 194 disclosures
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED
+    result: 127 source references, 28 decisions, 4 gates, 9 phases, 126 work items, 13 capabilities
+supplementary_checks:
+  - command: CONSOLE_BROWSER_PATH=/opt/pw-browsers/chromium python scripts/verify_console_interaction.py
+    result: 69 passed, 0 failed

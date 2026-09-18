@@ -213,7 +213,28 @@ def test_context_drift_check_passes() -> None:
     # pages without guessing. It also carries the defect that shape found: WAL archiving refused an
     # already-archived segment, and PostgreSQL answers a failing `archive_command` by retrying that
     # segment forever until the disk fills and the counter cannot take an order.
-    assert "123 work items" in result.stdout
+    # 124 with INCIDENT-INTAKE-001, 125 with ASSISTANT-RETENTION-001, 126 with HASH-KEYING-001.
+    # The last two were opened by name in `DEC-018`'s resolution on 2026-09-17 and existed nowhere
+    # in the queue for a day: a corrective item a resolved decision names, absent from machine
+    # truth, is a promise nothing tracks. `RETENTION-STORE-001` reported that drift in its evidence
+    # rather than quietly reconciling it, and this is the reconciliation.
+    #
+    # INCIDENT-INTAKE-001 is the one a shop about to open needs first. `WORKFLOW-CONFORMANCE-001`
+    # measured on 2026-09-10 that `POST .../incidents` required two `sha256:` fields nothing in the
+    # repository produced, so a customer complaining at the counter -- a week-one event -- could not
+    # be recorded by anybody, and the console honestly said so. `DEC-028` resolved both questions on
+    # 2026-09-18: the contact scope is derived by the server from the order's binding, which
+    # `DEC-013` already settled is the counter ticket for a walk-in, and the evidence summary is
+    # stored in a disposable side table on the `INCIDENT_EVIDENCE` schedule `DEC-008` signed. That
+    # second answer was the risky one in September and is not now, because `RETENTION-STORE-001`
+    # shipped the mechanism that can actually execute such a schedule the day before.
+    # 127 with CLONE-AND-RUN-001, opened from the owner's goal of 2026-09-18: push the project to
+    # GitHub and have any machine pull it and run it. Most of that already worked -- the generators
+    # mint every credential fresh into gitignored directories, which is why a clone is safe to run
+    # at all -- but the path was eight commands in a runbook and nothing executed them on a clean
+    # checkout, so the first person to find a broken step would have been somebody opening a shop.
+    # `RUNBOOK-TRUTH-001` and `-002` are already in this list for that exact failure.
+    assert "127 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

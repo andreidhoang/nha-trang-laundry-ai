@@ -14,6 +14,30 @@ exchange against the unmodified verifier, containers stay non-root with read-onl
 capabilities dropped, CSRF and origin checks are untouched, and every feature flag stays false.
 `packages/evals/tests/test_demo_stack.py` fails if any of that stops being true.
 
+## One command
+
+`CLONE-AND-RUN-001`. From a fresh clone on any machine:
+
+```text
+uv run python scripts/start_demo.py
+```
+
+It runs every step below in order, stops at the first thing that is wrong and names it, and prints
+the console URL when the stack is verified healthy. `--preflight-only` checks the prerequisites and
+changes nothing. `packages/evals/tests/test_start_demo.py` asserts that the script and this page
+name the same steps, so neither can quietly become wrong on its own.
+
+**This starts a demo, not a shop.** Everything it creates is synthetic and every credential is
+minted fresh into the gitignored `.demo/`. A real till is `bootstrap_shop_local.py` and
+`shop-till-mac.md`, and it is deliberately not one command: it needs an `age` public key generated
+on the owner's own device, because `DEC-026` keeps the private half off the machine that writes the
+archive. Two machines each running this demo are two independent demos, which is fine; two machines
+each running a real shop database are two competing sources of truth about money, which is not --
+see `docs/CODEX_CROSS_MACHINE_HANDOFF.md` §2.
+
+The steps below are what that command runs. Follow them by hand when a step has failed and you want
+to see it alone.
+
 ## Prerequisites
 
 Docker Desktop (or another Compose runtime) and `uv`. One host-level line is required, because the
@@ -28,6 +52,13 @@ Use Chrome or Firefox. The session and CSRF cookies are `Secure`, and Safari wil
 for this certificate.
 
 ## Bring it up
+
+A fresh clone installs the workspace first; an existing checkout has already done this and `uv sync`
+is a no-op:
+
+```text
+uv sync --all-packages --all-groups
+```
 
 ```text
 docker network create --internal nha-trang-laundry-staging-database-private

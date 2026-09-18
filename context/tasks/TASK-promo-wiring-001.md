@@ -99,6 +99,25 @@ reimplement them.
 automatic in-interval discount on an `AUTO_IF_TARGETED` line needs no per-quote approval, because
 publishing the program was the approval.
 
+## A wall RANGE-PRICE-001 left for you, deliberately
+
+`close_range_prices` returns `VALIDATION_ERROR` if a stored band line carries a non-zero discount,
+because "the amount" would then be ambiguous between list and net. No path can produce that today —
+promotions are not evaluated — so it is a wall for this item to walk into rather than a bug.
+
+Decide it explicitly and write the reasoning down. The question is whether a promotion applies to
+the **list** amount of a band line or to the **staff-chosen** amount inside the band, and they are
+different numbers with different authority behind them: the list band is the owner's published
+authorisation, and the chosen amount is a staff attestation under `DEC-021`.
+
+The safer reading, and the recommendation unless you can show otherwise: a promotion applies to the
+**closed** amount, because that is the price the customer was read, and `DEC-002` keys eligibility to
+`accepted_at`, which is necessarily after the band was closed. A promotion computed against a band
+that was never charged would discount a price nobody paid.
+
+Whatever you decide, the `VALIDATION_ERROR` must be replaced by a stated rule and a test, not by
+removing the check.
+
 ## Constraints
 
 - Do not modify the allocation arithmetic in `promotion.py`. It is tested and correct.

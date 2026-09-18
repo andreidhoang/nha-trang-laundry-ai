@@ -48,6 +48,26 @@ That mapping was written when nothing used it. It is now on the shop's commonest
 | **B. `_COUNTER_ATTESTATION`** — `OPERATOR`, attribution, 30 min, no MFA (recommended) | The staff member on duty chooses, and the record is their name against the number, immutable, owner-reviewable. Identical to how `DEC-021` already lets that same person finalise a quote. |
 | **C. A threshold** — staff below some amount, owner above | Matches `DEC-004`'s shape, where staff may approve compensation to 100.000 ₫. Needs one number this document does not supply, and the number would sit oddly against bands whose *minimum* already exceeds it. |
 
+## 2a. What the ten-minute window costs, measured after building it
+
+`RANGE-PRICE-001` shipped on 2026-09-18 against option A, and building it surfaced a cost the table
+above understates.
+
+`_OWNER_FINANCIAL` gives the envelope a **ten-minute TTL**, and the implementation enforces expiry at
+*application* as well as at the decision — deliberately, because a money envelope outliving its own
+TTL is precisely what a TTL is for. The consequence at the counter: the owner's approval and the
+staff member's application of it must both fall inside one ten-minute window, per garment.
+
+That window was inert while nothing used `SET_RANGE_PRICE`. It is now load-bearing on the shop's
+commonest high-value path. A customer with three items to price — an áo dài, a pair of suede shoes
+and a coat — needs the owner available and responsive three times inside ten minutes each, or the
+envelope expires and the proposal starts again.
+
+A related constraint, decided in the same work and worth knowing before you sign: **every band on a
+quote must be closed in one attestation.** A quote with two band lines where staff price only one is
+refused in full. That is the right refusal — a total that is half decision and half guess is worse
+than no total — but it means the window covers the whole quote, not one line at a time.
+
 ## 3. The argument for B
 
 **The band is already the owner's authorisation.** `min_price_vnd` and `max_price_vnd` are published

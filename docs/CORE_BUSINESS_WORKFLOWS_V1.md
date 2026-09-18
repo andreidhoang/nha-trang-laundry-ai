@@ -244,11 +244,11 @@ Recorded so the gap is visible rather than discovered at the counter. Each is in
 | Capability | Status |
 |---|---|
 | Customer records, names, phone numbers, addresses | Not built. A walk-in is a ticket number (`DEC-013`), and no customer aggregate exists (`DEC-015`) |
-| **Opening an incident at the counter** | **Impossible today.** The request requires two sha256 hashes that nothing in the system produces. Decision packet: `docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md` |
+| ~~Opening an incident at the counter~~ | **Built, 2026-09-18.** `DEC-028` derives the contact scope on the server from the order's binding and stores the complaint in a disposable side table on the `INCIDENT_EVIDENCE` schedule. The two sha256 fields left the request model entirely: a staff member who could name a contact scope could file against a customer of their choosing. `INCIDENT-INTAKE-001` |
 | Remedies: rewash, discount, credit | No tables. Every incident stays `OPEN`. The policy is settled (`DEC-004`) and is applied on paper |
 | Naming the exact price inside a published range | No path. Range-priced services refuse to quote |
 | Promotions | The engine exists and is not wired into the quote path. Every revision discounts 0 |
-| Deciding an approval from the console | Read-only. The queue cannot return the fields a valid decision needs |
+| ~~Deciding an approval from the console~~ | **Built.** `list_pending` projects `resource_version`, `snapshot_hash` and `rendered_hash`, so a decision can bind exactly what it approved. `ORDER` is decidable with a link to the resource; `QUOTE_REVISION` and `MESSAGE_DRAFT` stay disabled by name, because approving what the console cannot show you is blind approval in a politer font |
 | An SLA board | The read model exists, unrouted. The assistant answers today's counts instead |
 | Payment methods, part payments, deposits, credit | One shape only (§4) |
 | Batches, chain of custody, machine cycles, delivery cost capture | Blocked on `SHOP-INSTRUMENT-001` |

@@ -2249,6 +2249,106 @@ items:
   - payload_migration_loses_nothing
   - rollback_assessment
   blocked_by_decisions: []
+- id: INCIDENT-INTAKE-001
+  phase: PRODUCTION_HARDENING
+  title: Let a staff member open an incident at the counter
+  status: PENDING
+  priority: 226
+  depends_on:
+  - RETENTION-STORE-001
+  context_domains:
+  - orders_audit
+  - privacy_consent
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - CUSTOMER_SERVICE_POLICY_DRAFT.md
+  - docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md
+  - docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - contact_scope_derived_by_the_server
+  - client_supplied_hash_is_refused
+  - evidence_summary_is_readable_and_purgeable
+  - incident_open_set_atomically
+  - console_form_completes_against_a_real_api
+  - rollback_assessment
+  blocked_by_decisions: []
+  task_packet: context/tasks/TASK-incident-intake-001.md
+- id: ASSISTANT-RETENTION-001
+  phase: PRODUCTION_HARDENING
+  title: Stop storing the assistant answer twice
+  status: PENDING
+  priority: 227
+  depends_on:
+  - RETENTION-STORE-001
+  context_domains:
+  - privacy_consent
+  - orders_audit
+  normative_sources:
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - packages/db/src/nha_trang_laundry_db/retention.py
+  - packages/db/migrations/0026_assistant_turns.sql
+  - packages/db/migrations/0027_assistant_transcript_retention.sql
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - no_new_response_row_carries_payload
+  - replay_returns_the_identical_document
+  - transcript_purge_removes_question_and_answer
+  - turn_visibility_rule_unchanged
+  - assistant_transcript_leaves_the_unsupported_set
+  - rollback_assessment
+  blocked_by_decisions: []
+  task_packet: context/tasks/TASK-assistant-retention-001.md
+- id: HASH-KEYING-001
+  phase: PRODUCTION_HARDENING
+  title: Make the hashes that outlive a purge stop being reversible
+  status: PENDING
+  priority: 228
+  depends_on:
+  - RETENTION-STORE-001
+  context_domains:
+  - privacy_consent
+  - runtime_architecture
+  normative_sources:
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  - packages/db/src/nha_trang_laundry_db/retention.py
+  - docs/runbooks/provider-credentials.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - keyed_digest_preserves_equality_comparison
+  - deduplication_and_replay_conflict_unchanged
+  - missing_key_refuses_the_write
+  - no_plaintext_is_read_to_migrate
+  - existing_rows_are_never_rewritten
+  - rollback_assessment
+  blocked_by_decisions: []
+  task_packet: context/tasks/TASK-hash-keying-001.md
 - id: STORE-SCOPING-001
   phase: PRODUCTION_HARDENING
   title: Enforce staff store membership on the pre-existing console routes

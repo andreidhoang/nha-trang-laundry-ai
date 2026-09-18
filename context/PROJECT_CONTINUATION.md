@@ -3,6 +3,53 @@
 **Last reconciled:** 2026-09-18 (Asia/Ho_Chi_Minh)
 **Active work item:** `INCIDENT-INTAKE-001`. **126 queue items.** Migrations run `0001`–`0039`.
 
+## Owner-directed, outside the queue — the unified customer agent, 2026-09-18
+
+The ask was whether to build a unified multi-channel 24/7 customer-support agent with customer
+profiles, and whether to integrate OpenClaw for it. Full artifact:
+**`docs/UNIFIED_CUSTOMER_AGENT_DECISION_2026-09.md`** (analysis, not normative; enqueues nothing).
+Read it before re-deriving any of the below.
+
+**Verdict: GO, and it is not the next action.** The mechanism layer is largely built — envelope,
+consent/STOP, retention, the Responses FSM, the ten-op facade with a real backend, the deterministic
+money authority. The authority layer is at zero: `DEC-006` open, 13/13 capabilities
+`NOT_AUTHORIZED`, 0 real orders against `G2`'s 30, and 800 of 1,300 eval cases missing. Only one of
+those two layers is accelerated by engineering effort.
+
+**Three facts worth not re-deriving:**
+
+1. **"Track customers and their profiles" is the missing spine, not a feature.** `DEC-013` makes a
+   walk-in a ticket number with no name, phone or address; `contact_channel_bindings` is keyed on a
+   *messaging* identity. There is no join between the person who drops off laundry and the person who
+   sends a message. `DEC-015` is RESOLVED as "not yet" and names its own reopen trigger — an official
+   channel — which is exactly what this proposal is. The shape it must take is channel-identity-first:
+   the profile is created by the customer's own message with a versioned consent string, never by
+   staff typing a phone number. §5.2 of the artifact.
+2. **OpenClaw is No for the customer path, now on three independent grounds.** `ADR-0003`'s workload
+   argument and `ADR-0004`'s perpetual-fork argument both still hold, and 2026 added external
+   evidence neither ADR had: nine CVEs in four days, ~135,000 exposed instances, a CVSS 8.8 one-click
+   RCE, and 341 of 2,857 marketplace skills confirmed malicious. It also would not solve the channel
+   problem — its Zalo plugin is the Bot API, not OA. Private owner-side OpenClaw in a separate trust
+   cell is untouched, per `ADR-0003` §7.
+3. **Inference cost is not a constraint and should not appear in the business case.** A bounded
+   Concierge turn costs on the order of 30–160đ; Zalo replies inside the 48-hour window are largely
+   free. Break-even is ~1–4 recovered orders per week. The real bill is 800 eval cases, 14 shadow
+   days, 100 interactions, 30 real orders, a Zone P host and a three-actor signed manifest.
+
+**It composes, and does not supersede, `specs/CUSTOMER_SUPPORT_AND_ACQUISITION_SPEC_V1.md`**
+(2026-09-17 draft): that one describes *how* support and acquisition compose at the seams, this one
+answers *whether*, at what value, and with which runtime. Written independently, they agree on the
+rollout order and on refusing a second agent runtime. Their one apparent conflict — its §14 declines
+a CRM in PostgreSQL — is reconciled in §0a: it refuses a *prospect* CRM in R1, while the profile
+aggregate here concerns a customer who has already messaged, which is `DEC-015`'s own reopen trigger.
+Neither authorizes a migration.
+
+**What it recommends starting, and who owns it:** owner — finish `DEC-016`, submit the Zalo OA
+application (2–8 weeks, external, nothing shortens it), resolve `DEC-006`, select a host so
+`SHOP-CUTOVER-001` clears, reopen `DEC-015`. Agent — the eval corpus first, then
+`PUBLIC-POLICY-001`, then `CHANNEL-TELEGRAM-001`. **Nothing was enqueued**; enqueueing is a delivery
+mutation requiring the controller and a fresh generation digest.
+
 ## Where the project actually stands — 2026-09-18
 
 **Two decisions are open, out of twenty-eight, and neither is a judgement call.** `DEC-006` needs a

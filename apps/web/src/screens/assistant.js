@@ -17,6 +17,13 @@
  *     must get the same answer whoever asks from wherever, so matching lives in one place.
  *   - **No local persistence.** The transcript is server-side history (`assistant_turns`), loaded
  *     on entry. Nothing is written to the device — a counter phone is shared and often unlocked.
+ *   - **The words have a lifetime, and the screen says so rather than going blank.**
+ *     `ASSISTANT_TRANSCRIPT` disposes of a turn's question and answer at 180 days under `DEC-008`,
+ *     and since ASSISTANT-RETENTION-001 that purge actually runs — which is why both fields are
+ *     `string | null` on the wire. What stays is the turn itself: its intent, its reason codes, its
+ *     links, who asked and when. A null therefore renders the muted "no longer kept" statement, not
+ *     an empty bubble, because a silent gap is the one failure this console treats as worse than an
+ *     error.
  *   - **No money.** The assistant cannot answer revenue questions and this screen carries no
  *     amount field at all, so there is nothing here to misrender.
  *   - **No raw HTML.** Streamed deltas are appended as text nodes only, through the same safe
@@ -37,7 +44,7 @@
 
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { dateTime, shortId } from "../core/format.js";
+import { UNKNOWN, dateTime, shortId } from "../core/format.js";
 import { NAV, enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -128,9 +135,81 @@ function paragraphs(text) {
 }
 
 /**
- * One of the operator's questions, rendered as their own words in a right-aligned bubble.
+ * What the retention schedule says about a turn whose words are gone.
  *
- * @param {string} question
+ * `ASSISTANT_TRANSCRIPT` disposes of a turn's question and answer at 180 days under `DEC-008`, and
+ * as of ASSISTANT-RETENTION-001 that purge actually runs — which is why both fields are now
+ * `string | null` on the wire. What survives is not a stub: the turn row, the intent the
+ * deterministic brain matched, its reason codes, its links, who asked and when are ledger and are
+ * kept. So the sentence an operator reads has to carry both halves of the fact, because "câu trả
+ * lời không còn" on its own reads as a message that went missing.
+ *
+ * Both sentences are written inline at the element that renders them, not hoisted into a constant
+ * and passed in. That is not style: `scripts/console_disclosures.py` enumerates a claim by finding
+ * a string literal immediately after a classed props object, so a disclosure handed in through a
+ * variable is a disclosure the registry cannot see — unregistered, and therefore free to go stale
+ * without failing anything. The shape below is the one `incidents.js` uses for a purged
+ * `evidence_summary`: the em dash this console gives every absent value, then the reason in `hint`.
+ * The wrapper is a `<p>` rather than that screen's `<span>` only because it stands where a
+ * paragraph of text stood.
+ *
+ * The answer bubble carries the full statement and the question bubble the short one. The two sit
+ * one directly above the other — the payload row holds both halves and the purge takes them
+ * together — and printing the whole schedule twice on a counter phone is noise, not honesty.
+ *
+ * @param {string|null|undefined} question
+ * @returns {HTMLElement[]}
+ */
+function questionBody(question) {
+  const text = typeof question === "string" ? question.trim() : "";
+  if (text) return paragraphs(text);
+  return [
+    h(
+      "p",
+      null,
+      `${UNKNOWN} `,
+      h(
+        "span",
+        { class: "hint" },
+        "Không còn giữ nguyên văn câu hỏi. Chữ của lượt hỏi bị xoá sau 180 ngày theo lịch giữ " +
+          "dữ liệu.",
+      ),
+    ),
+  ];
+}
+
+/**
+ * The server's answer, or an honest statement that it is no longer kept. An empty bubble would be a
+ * silent gap, which this console treats as worse than an error.
+ *
+ * @param {string|null|undefined} answer
+ * @returns {HTMLElement[]}
+ */
+function answerBody(answer) {
+  const text = typeof answer === "string" ? answer.trim() : "";
+  if (text) return paragraphs(text);
+  return [
+    h(
+      "p",
+      null,
+      `${UNKNOWN} `,
+      h(
+        "span",
+        { class: "hint" },
+        "Không còn giữ nguyên văn câu trả lời. Chữ của lượt hỏi bị xoá sau 180 ngày theo lịch " +
+          "giữ dữ liệu, còn bản thân lượt hỏi thì vẫn nguyên: máy hiểu câu hỏi thế nào, mã lý " +
+          "do, ai hỏi và hỏi lúc nào đều được giữ lại. Đây là chuyện bình thường theo lịch, " +
+          "không phải mất dữ liệu.",
+      ),
+    ),
+  ];
+}
+
+/**
+ * One of the operator's questions, rendered as their own words in a right-aligned bubble — or, once
+ * the retention schedule has taken those words, as the statement that it did.
+ *
+ * @param {string|null} question
  * @returns {HTMLElement}
  */
 function questionBubble(question) {
@@ -138,7 +217,7 @@ function questionBubble(question) {
     "article",
     { class: "chat__user" },
     h("p", { class: "eyebrow" }, "Bạn hỏi"),
-    ...paragraphs(question),
+    ...questionBody(question),
   );
 }
 
@@ -176,7 +255,7 @@ function answerBlock(item) {
       h("p", { class: "eyebrow" }, "Trợ lý AI"),
       intentRow(String(item.intent || "")),
     ),
-    h("div", { class: "chat__answer stack stack--tight" }, paragraphs(item.answer || "")),
+    h("div", { class: "chat__answer stack stack--tight" }, answerBody(item.answer)),
     reasonCodeList(Array.isArray(item.reason_codes) ? item.reason_codes : []),
     linkRow(item),
     provenance(item),
@@ -258,14 +337,15 @@ function liveAnswer(store, clearance) {
   }
 
   /**
-   * The stream could not run or broke mid-way: render the whole answer from the POST response.
+   * The stream could not run, broke mid-way, or has nothing to replay: render whatever the POST
+   * response holds — the whole answer, or the statement that its words are no longer kept.
    *
    * @param {any} turn
    */
   function renderWhole(turn) {
     render(
       body,
-      h("div", { class: "chat__answer stack stack--tight" }, paragraphs(turn.answer || "")),
+      h("div", { class: "chat__answer stack stack--tight" }, answerBody(turn.answer)),
     );
     finishChrome(turn);
   }
@@ -276,6 +356,15 @@ function liveAnswer(store, clearance) {
    * @param {any} turn
    */
   function begin(turn) {
+    // A replay of a turn whose text `ASSISTANT_TRANSCRIPT` disposed of comes back with a null
+    // answer, and the stream route answers 410 for exactly that turn. There is nothing to pace, so
+    // no stream is opened: the dots and the caret would promise words that are not coming, and
+    // `EventSource` cannot read a status code — the refusal would arrive as `onerror`,
+    // indistinguishable from a dropped connection. The fact is already in hand; it renders whole.
+    if (typeof turn.answer !== "string" || turn.answer.trim() === "") {
+      renderWhole(turn);
+      return;
+    }
     render(body, answerNode, caret);
     if (typeof EventSource !== "function") {
       renderWhole(turn);

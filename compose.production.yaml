@@ -90,6 +90,11 @@ services:
         uid: "10001"
         gid: "10001"
         mode: 0400
+      - source: staging_hash_key
+        target: hash_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -109,6 +114,11 @@ services:
     secrets:
       - source: staging_worker_database_url
         target: database_url
+        uid: "10002"
+        gid: "10002"
+        mode: 0400
+      - source: staging_hash_key
+        target: hash_key
         uid: "10002"
         gid: "10002"
         mode: 0400
@@ -180,6 +190,11 @@ secrets:
   staging_oidc_mfa_claim:
     external: true
   staging_oidc_mfa_value:
+    external: true
+  # HASH-KEYING-001. The API and the worker both write keyed commitments -- the inbox writes
+  # `payload_hash`, and every idempotent command writes `request_hash` -- so both need it, and
+  # a service without it refuses the write rather than falling back to an unkeyed digest.
+  staging_hash_key:
     external: true
   staging_tls_certificate:
     external: true

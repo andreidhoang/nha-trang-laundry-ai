@@ -40,6 +40,8 @@ secrets:
     file: ./.shop/secrets/oidc_mfa_claim
   r1_oidc_mfa_value: !override
     file: ./.shop/secrets/oidc_mfa_value
+  r1_hash_key: !override
+    file: ./.shop/secrets/hash_key
   r1_tls_certificate: !override
     file: ./.shop/secrets/tls_certificate
   r1_tls_private_key: !override

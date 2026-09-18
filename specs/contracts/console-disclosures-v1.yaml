@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 5
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 166
+  DESCRIPTIVE: 169
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 12
-total: 191
+total: 194
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -46,6 +46,15 @@ disclosures:
   module: core/errors.js
   key: MESSAGES.SESSION_ENDED
   text: Phiên đăng nhập đã kết thúc. Hãy đăng nhập lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#MESSAGES.DISPOSED:749dfff7bb65
+  module: core/errors.js
+  key: MESSAGES.DISPOSED
+  text: Phần chữ của mục này đã bị xoá theo lịch giữ dữ liệu. Bản ghi thì vẫn còn — đây là chuyện bình
+    thường, không phải mất dữ liệu.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -512,6 +521,24 @@ disclosures:
   key: screen__lede
   text: Việc đang chờ duyệt và còn bao lâu nữa hết hạn. Quyết được ngay tại đây với loại nội dung bảng
     vận hành mở ra xem được; loại nào chưa xem được thì nút vẫn khoá và phiếu nói rõ đó là loại nào.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/assistant.js#hint:4c5316e8754b
+  module: screens/assistant.js
+  key: hint
+  text: Không còn giữ nguyên văn câu hỏi. Chữ của lượt hỏi bị xoá sau 180 ngày theo lịch giữ dữ liệu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/assistant.js#hint:1cc6ea6ce490
+  module: screens/assistant.js
+  key: hint
+  text: 'Không còn giữ nguyên văn câu trả lời. Chữ của lượt hỏi bị xoá sau 180 ngày theo lịch giữ dữ liệu,
+    còn bản thân lượt hỏi thì vẫn nguyên: máy hiểu câu hỏi thế nào, mã lý do, ai hỏi và hỏi lúc nào đều
+    được giữ lại. Đây là chuyện bình thường theo lịch, không phải mất dữ liệu.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

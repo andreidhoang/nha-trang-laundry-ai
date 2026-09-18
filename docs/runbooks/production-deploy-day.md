@@ -123,6 +123,20 @@ real login identity to it here, at deployment time.
 CREATE ROLE laundry_retention LOGIN PASSWORD '...' IN ROLE retention_purge;
 ```
 
+**The deployment hash key is generated, never chosen.** `bootstrap_shop_local.py` writes
+`.shop/secrets/hash_key` and `compose.shop-local.yaml` mounts it at `/run/secrets/hash_key`;
+`HASH-KEYING-001` makes `webhook_events.payload_hash` and
+`command_idempotency_records.request_hash` keyed HMACs rather than plain SHA-256, because both
+commitments are designed to outlive the customer content they describe and an unsalted one over a
+short Vietnamese message is reversible by anyone who tries. A service with no key **refuses the
+write** rather than falling back — that is deliberate, and a `HashKeyUnavailable` on first start
+means the secret did not reach the container, not that the code is wrong.
+
+Do not rotate it on a trading shop. Equality under the old key is what deduplicates provider events
+and detects idempotent replays; a new key makes every stored commitment incomparable with every new
+one. Rotation is a between-deployments operation, and existing rows are never re-keyed — they keep
+their `V1` prefix, because re-keying would mean reading the plaintext they commit to.
+
 Nothing schedules a purge yet. Every class ships refusing, `DEC-008` requires enabling to be a
 separate published-configuration act, and `DEC-020` requires the first run of any newly-enabled
 class to be attended and its output read by a named person before that class runs unattended.

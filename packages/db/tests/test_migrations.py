@@ -48,6 +48,7 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0038", "disposable_payload_store"),
         ("0039", "incident_evidence_store"),
         ("0040", "assistant_transcript_store"),
+        ("0041", "keyed_commitments"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

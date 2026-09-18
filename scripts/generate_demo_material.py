@@ -205,6 +205,11 @@ def generate(force: bool) -> None:
         dsn = f"postgresql://{role}:{passwords[role]}@{DATABASE_HOST}:5432/{DATABASE_NAME}"
         _write(secrets_directory / secret_name, dsn)
 
+    # `HASH-KEYING-001`. Regenerated with everything else on each run, because a demo's keys are
+    # deliberately disposable -- and because a fresh clone must reach a running application without
+    # anyone being asked to invent a secret.
+    _write(secrets_directory / "hash_key", secrets.token_urlsafe(48))
+
     _write(secrets_directory / "oidc_issuer", ISSUER_URL)
     _write(secrets_directory / "oidc_audience", AUDIENCE)
     _write(secrets_directory / "oidc_jwks_url", JWKS_URL)

@@ -11,6 +11,8 @@ from typing import Any
 
 from nha_trang_laundry_domain.canonical import canonical_document
 
+from .keyed_digest import request_digest
+
 
 class IdempotencyConflictError(ValueError):
     """Raised when one logical key is reused with different canonical input."""
@@ -50,6 +52,13 @@ class IdempotencyRepository:
         scope = _required_text(command.scope, "idempotency scope")
         key = _required_text(command.key, "idempotency key")
         request = canonical_document(command.payload)
+        # Keyed since `HASH-KEYING-001`, and keyed here rather than inside `canonical_document`.
+        # That function also produces quote snapshot hashes, which are content addresses an
+        # approver must be able to recompute and verify; keying those would make a published
+        # quote unverifiable by anyone but this deployment. This hash is a different thing in
+        # the same shape: a private commitment to a command document that may carry a
+        # customer's words, in a row `protect_idempotency_record` lets nobody ever delete.
+        request_hash = request_digest(request.canonical_json)
         occurred_at = command.occurred_at or datetime.now(UTC)
 
         with connection.transaction(), connection.cursor() as cursor:
@@ -61,7 +70,7 @@ class IdempotencyRepository:
                 ON CONFLICT (scope, idempotency_key) DO NOTHING
                 RETURNING scope
                 """,
-                (scope, key, request.snapshot_hash, occurred_at),
+                (scope, key, request_hash, occurred_at),
             )
             if cursor.fetchone() is None:
                 cursor.execute(
@@ -73,12 +82,12 @@ class IdempotencyRepository:
                     (scope, key),
                 )
                 row = cursor.fetchone()
-                if row is None or not hmac.compare_digest(str(row[0]), request.snapshot_hash):
+                if row is None or not hmac.compare_digest(str(row[0]), request_hash):
                     raise IdempotencyConflictError("IDEMPOTENCY_CONFLICT")
                 response = row[1]
                 if not isinstance(response, dict):
                     raise IdempotencyStateError("idempotency result is incomplete or invalid")
-                return IdempotentResult(_string_keyed_object(response), True, request.snapshot_hash)
+                return IdempotentResult(_string_keyed_object(response), True, request_hash)
 
             response_mapping = executor()
             response_document = canonical_document(response_mapping)
@@ -101,9 +110,7 @@ class IdempotencyRepository:
             )
             if cursor.fetchone() is None:
                 raise IdempotencyStateError("idempotency claim was lost")
-            return IdempotentResult(
-                _string_keyed_object(response_value), False, request.snapshot_hash
-            )
+            return IdempotentResult(_string_keyed_object(response_value), False, request_hash)
 
 
 def _required_text(value: str, field: str) -> str:

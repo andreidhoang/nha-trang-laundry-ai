@@ -262,7 +262,10 @@ with sync_playwright() as playwright:
                     "replayed": False,
                 }
             else:
-                body = []
+                # Empty until a check asks for history. The four-chip empty-transcript assertions
+                # earlier in section 4 depend on this being empty, so the purged-turn check below
+                # opts in rather than changing the world for everything before it.
+                body = state.get("assistant_history") or []
         elif "/incidents" in url:
             if route.request.method == "POST":
                 # Captured rather than merely answered. The seam this section exists to test is the
@@ -584,6 +587,50 @@ with sync_playwright() as playwright:
         composer.input_value() == "Còn gì chờ duyệt?",
         repr(composer.input_value()),
     )
+
+    # `ASSISTANT-RETENTION-001`. `DEC-008` disposes of a transcript's words at 180 days and keeps
+    # the turn -- its intent, reason codes, actor and timestamp are ledger. Before this the console
+    # rendered `item.answer || ""`, so a disposed turn appeared as an empty bubble: a silent gap,
+    # which this project treats as worse than an error. `#/incidents` already has this check in
+    # section 9 and the assistant had no sibling, which is the asymmetry being closed.
+    state["assistant_history"] = [
+        {
+            "turn_id": "00000000-0000-4000-8000-0000000000cc",
+            "question": None,
+            "intent": "TODAY_OVERVIEW",
+            "answer": None,
+            "links": [],
+            "reason_codes": ["NO_ORDERS_TODAY"],
+            "created_at": "2026-03-01T03:00:00+00:00",
+        }
+    ]
+    # `reload`, not `goto`: section 4 is already on `#/assistant`, and navigating to a URL that
+    # differs only in its hash does not re-fetch anything -- the stub would never be asked and every
+    # assertion below would pass against the screen as it already was.
+    page.reload(wait_until="networkidle")
+    page.wait_for_timeout(900)
+
+    transcript = page.inner_text("body").replace("\n", " ")
+    check(
+        "a transcript whose words were disposed of says so instead of rendering an empty bubble",
+        "Không còn giữ nguyên văn" in transcript and "không phải mất dữ liệu" in transcript,
+        transcript[:160],
+    )
+    check(
+        "and the turn itself is still on the books",
+        "TODAY_OVERVIEW" in transcript or "NO_ORDERS_TODAY" in transcript,
+        "expected the intent or reason code to survive the disposal",
+    )
+    empty_bubbles = page.evaluate(
+        "() => Array.from(document.querySelectorAll('.chat__user, .chat__answer'))"
+        ".filter((node) => !node.innerText.trim()).length"
+    )
+    check(
+        "no bubble is left empty by a disposed turn",
+        empty_bubbles == 0,
+        f"{empty_bubbles} empty",
+    )
+    state["assistant_history"] = []
 
     print()
     print("=" * 74)

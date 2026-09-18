@@ -77,7 +77,12 @@ from nha_trang_laundry_domain.range_prices import (
     RangePriceAttestation,
     RangePriceChoice,
 )
-from nha_trang_laundry_domain.remedies import REMEDY_CREDIT_APPLIED, RemedyCredit
+from nha_trang_laundry_domain.remedies import (
+    REMEDY_CREDIT_APPLIED,
+    REMEDY_REFUSAL_AUTHORITIES,
+    RemedyCredit,
+    RemedyRefusal,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 TEMPLATE = ROOT / "templates/promotion-policy-dec-002.json"
@@ -1073,6 +1078,46 @@ def test_a_programme_published_after_the_band_was_approved_sends_the_price_back(
     assert refused.reason_codes == (PROMOTION_PUBLISHED_SINCE_APPROVAL,)
 
 
+def test_a_programme_published_since_the_approval_that_takes_nothing_off_does_not_refuse() -> None:
+    """Invariant 8 protects the amount the owner signed, so the test is what the programme costs it.
+
+    The refusal above used to key on whether the band revision cited a programme at all: a band
+    approved with nothing published, plus any programme published before the close, refused. That is
+    wider than the invariant. A signature is weakened when the number it authorises moves, and a
+    programme that takes nothing off the closed amount moves nothing -- the owner's 200.000 d is
+    still 200.000 d, the `rendered_hash` still binds the same money, and there is nothing for
+    invariant 8 to protect. Refusing anyway spends a re-quote, a proposal and a second owner
+    signature to arrive back at the same total, with a customer waiting.
+
+    So the evaluation runs first and its own dong decide. Here the programme published since the
+    approval is the shipped one, which ended on 31/08/2026: `PROMOTION_OUTSIDE_INTERVAL`, 0 d, and
+    the close goes through at exactly the amount that was signed. The refusal keeps its teeth in
+    `test_a_programme_published_after_the_band_was_approved_sends_the_price_back`, where a live 40%
+    programme would have moved the same signature by 80.000 d.
+    """
+
+    quote_id = uuid4()
+    banded = band(quote_id, None)
+    assert PROMOTION_NOT_PUBLISHED in banded.snapshot.data.reason_codes
+
+    closed = close_range_prices(
+        priced=banded.snapshot,
+        revision=2,
+        attestation=attestation(quote_id, 200_000),
+        promotion=expired(),
+        closed_at=NOW,
+    )
+    assert isinstance(closed, ComposedQuote)
+    data = closed.snapshot.data
+    assert data.totals.discount_amount_max_vnd == 0
+    # The amount the owner signed, unchanged and unrounded.
+    assert data.totals.display_total_max_vnd == 200_000
+    # And the close says which zero it is, rather than leaving the programme unmentioned.
+    assert PromotionReason.PROMOTION_OUTSIDE_INTERVAL.value in data.reason_codes
+    assert PROMOTION_PUBLISHED_SINCE_APPROVAL not in data.reason_codes
+    assert verify_quote_snapshot(closed.snapshot)
+
+
 def test_re_proposing_the_band_under_the_new_programme_picks_it_up_and_sells() -> None:
     """The discharge path the refusal above depends on, walked end to end.
 
@@ -1178,8 +1223,8 @@ def credited(priced: ComposedQuote, amount_vnd: int) -> ComposedQuote:
     return result
 
 
-def test_a_programme_that_forbids_stacking_is_withdrawn_when_the_credit_lands() -> None:
-    """The money defect `PROMO-FIX-001` left behind, and where it is now settled.
+def test_a_credit_presented_against_a_non_stacking_promotion_is_refused_not_absorbed() -> None:
+    """The money defect `PROMO-FIX-001` left, and the two wrong answers before this one.
 
     `other_promotion_present` was never passed to the engine, so `stacking_allowed` was compared
     against a hardcoded "nothing else is discounting this bag". The owner's confirmed programme sets
@@ -1187,84 +1232,109 @@ def test_a_programme_that_forbids_stacking_is_withdrawn_when_the_credit_lands() 
     bill against the programme's own document -- real dong, on every credited quote, for as long as
     a programme ran.
 
-    An earlier pass refused the *acceptance* instead, and that was worse than the bug: the db layer
+    `PROMO-FIX-002` refused the *acceptance* instead, which was worse than the bug: the db layer
     burns a one-shot credit in the same transaction that writes the credited revision, so the
-    customer's credit was spent and the sale was then blocked, with no way to un-burn it. The
-    refusal is deleted and the question is answered where the two instruments actually meet --
-    inside `redeem_remedy_credit`, before the new total is read to anybody.
+    customer's credit was spent and the sale was then blocked, with no way to un-burn it.
 
-    **The credit wins.** It is a debt this shop owes this customer for a past failure of its own;
-    the programme is an offer the shop chose to make. So the promotion comes off, the credit stays.
+    `PROMO-FIX-003` then withdrew the promotion as the credit landed, and that was worse again,
+    because it was wrong at the counter rather than only in the code:
 
-    The arithmetic, which is the whole reason the numbers below moved:
+    - 6 kg of standard wash is 120.000 d (`STD_WASH_DRY_GE6`), discounted 30% to **84.000 d**, which
+      is the number read to the customer.
+    - the customer presents an 8.400 d credit -- 10% of what was left to pay, the shape `DEC-004`
+      issues.
+    - withdrawing the programme and applying the credit to the restored 120.000 d gave **111.600 d**
+      to pay. Spending a credit raised the bill by 27.600 d. A customer who kept their credit in
+      their pocket paid less than one who used it.
 
-    - 6 kg of standard wash is 120.000 d (`STD_WASH_DRY_GE6`), discounted 30% to 84.000 d at quote
-      time, because no credit was on the bag when the price was computed.
-    - the customer presents an 8.400 d credit -- 10% of the 84.000 d that was left to pay, which is
-      the shape `DEC-004` issues.
-    - the programme forbids compounding, so the 36.000 d is taken back out and the 8.400 d applied
-      to the restored 120.000 d: **8.400 d off, 111.600 d to pay**, which is exactly what this
-      customer would owe if no programme were running at all. That is the promise `DEC-004` made,
-      kept in full, and it is the most a shop that cannot keep both promises can offer.
-    - the old assertion was 44.400 d (36.000 + 8.400) on a revision that then could not be sold. It
-      is not bumped: it named a bill that combined two instruments the programme's own document says
-      may not combine, and no such bill exists any more.
+    And it decided policy. `stacking_allowed: false` is the owner's clause; the engine's answer to
+    it is `PROMOTION_STACKING_REQUIRES_HUMAN`, a `REQUIRE_HUMAN` outcome; `CLAUDE.md` says this code
+    may not turn that into an automatic one. So the redemption refuses, names `DEC-004` as what
+    would have to change, and a person chooses which instrument this customer gets.
 
-    `PROMOTION_STACKING_REQUIRES_HUMAN` stays on the revision, now as a statement of fact rather
-    than a question: it is why this bill carries no programme discount.
+    Nothing is computed and nothing is composed: the assertions below are that the refusal carries
+    exactly one code and that the quote it was presented against is untouched, still worth the
+    84.000 d it was read at.
     """
 
     programme = live()
     priced = priced_under(programme)
     assert priced.snapshot.data.totals.discount_amount_max_vnd == 36_000
+    assert priced.snapshot.data.totals.display_total_max_vnd == 84_000
+
+    refused = redeem_remedy_credit(
+        priced=priced.snapshot,
+        revision=2,
+        credit=RemedyCredit(
+            credit_id=CREDIT_ID, amount_vnd=8_400, policy_version_id=REMEDY_POLICY_ID
+        ),
+    )
+    assert isinstance(refused, UnresolvedQuote)
+    assert refused.reason_codes == (RemedyRefusal.REMEDY_CREDIT_PROMOTION_NOT_STACKABLE.value,)
+    # The refusal names its authority the way every other remedy refusal does, so the caller is told
+    # what would have to change: the owner ranking the two instruments, not this module.
+    assert (
+        REMEDY_REFUSAL_AUTHORITIES[RemedyRefusal.REMEDY_CREDIT_PROMOTION_NOT_STACKABLE] == "DEC-004"
+    )
+    # Untouched. The quote is still the one the customer was read, to the dong.
+    assert priced.snapshot.data.totals.display_total_max_vnd == 84_000
+    assert verify_quote_snapshot(priced.snapshot)
+
+
+def test_the_refused_credit_still_spends_on_a_bill_that_carries_no_programme_discount() -> None:
+    """The other half of refusing: the credit has to survive it and still be worth what it was.
+
+    The domain half is asserted here -- `redeem_remedy_credit` is a pure function and cannot burn
+    anything, so what this pins is that the same credit composes cleanly against an unpromoted quote
+    for the full 8.400 d. That the *stored* credit is still unredeemed after the refusal, and can be
+    presented again, is asserted against PostgreSQL in
+    `packages/db/tests/test_remedies.py::test_a_credit_refused_over_a_non_stacking_programme_survives_and_spends_later`.
+
+    120.000 d of wash, no programme, 8.400 d off: **111.600 d**. That is the same figure
+    `PROMO-FIX-003` charged a customer who was quoted 84.000 d -- which is exactly why it is the
+    wrong answer there and the right one here. Here nobody was read 84.000 d.
+    """
+
+    priced = priced_under_no_programme()
+    assert priced.snapshot.data.totals.display_total_max_vnd == 120_000
 
     spent = credited(priced, 8_400)
     data = spent.snapshot.data
     assert data.totals.discount_amount_min_vnd == data.totals.discount_amount_max_vnd == 8_400
     assert data.totals.display_total_max_vnd == 111_600
-    assert PromotionReason.PROMOTION_STACKING_REQUIRES_HUMAN.value in data.reason_codes
-    assert PromotionReason.PROMOTION_APPLIED.value not in data.reason_codes
-    # The promotion's own credit row went with its dong; the credit's row is the only one left.
     assert [item.kind for item in data.adjustments] == [QuoteAdjustmentKind.REMEDY_CREDIT]
-    # And the frozen trace agrees with the money, rather than still claiming 36.000 d came off.
-    withheld = frozen_promotion(spent.snapshot)
-    assert withheld is not None
-    assert withheld.discount_amount_vnd == 0
-    granted = frozen_promotion(priced.snapshot)
-    assert granted is not None and withheld.policy_code == granted.policy_code
+    assert REMEDY_CREDIT_APPLIED in data.reason_codes
     assert verify_quote_snapshot(spent.snapshot)
 
+    accepted = accept_quote_revision(
+        priced=spent.snapshot, revision=3, promotion=None, accepted_at=NOW + timedelta(minutes=3)
+    )
+    assert isinstance(accepted, ComposedQuote)
+    assert accepted.snapshot.data.totals.display_total_max_vnd == 111_600
 
-def test_the_credited_quote_under_a_non_stacking_programme_accepts() -> None:
-    """The dead end, closed. The sale completes and the credit is not taken back.
 
-    This is the same bag as the test above, carried one step further: the acceptance that used to
-    be refused. Nothing is left for it to object to, because the withdrawal already happened -- the
-    recomputation at the real `accepted_at` withholds the same promotion and arrives at the same
-    zero, so the frozen figure and the re-verified one agree to the dong and `DEC-021` is satisfied
-    by the number the customer actually heard.
+def test_a_promotion_that_took_nothing_off_does_not_strand_the_credit() -> None:
+    """Both halves of the guard are load-bearing, and this is the one that costs the customer.
+
+    A programme that forbids stacking but granted this revision no dong is not compounding with
+    anything: there is no second discount for the owner to rank against the credit. Refusing on
+    `stacking_allowed: false` alone would strand a `DEC-004` credit -- a debt the shop owes -- over
+    a promotion that took nothing off the bill, which is the same class of error as the withdrawal
+    this pass deleted, pointed the other way.
+
+    Ironing is `OUT_OF_SCOPE` in the owner's own document, so the 15.000 d bag takes no discount and
+    the 5.000 d credit lands normally.
     """
 
     programme = live()
-    spent = credited(priced_under(programme), 8_400)
+    priced = priced_under(programme, line(IRONING, "1", Unit.ITEM))
+    frozen = frozen_promotion(priced.snapshot)
+    assert frozen is not None
+    assert frozen.stacking_allowed is False and frozen.discount_amount_vnd == 0
 
-    accepted = accept_quote_revision(
-        priced=spent.snapshot,
-        revision=3,
-        promotion=programme,
-        accepted_at=NOW + timedelta(minutes=3),
-    )
-    assert isinstance(accepted, ComposedQuote)
-    data = accepted.snapshot.data
-    assert data.finality is QuoteFinality.APPROVED_EXACT
-    assert data.status is QuoteRevisionStatus.ACCEPTED_FINAL
-    assert data.totals.discount_amount_max_vnd == 8_400
-    assert data.totals.display_total_max_vnd == 111_600
-    assert PromotionReason.PROMOTION_STACKING_REQUIRES_HUMAN.value in data.reason_codes
-    assert PromotionReason.PROMOTION_APPLIED.value not in data.reason_codes
-    assert REMEDY_CREDIT_APPLIED in data.reason_codes
-    assert data.promotion_eligibility_event is PromotionEligibilityEvent.STORE_COMMERCIAL_ACCEPTED
-    assert verify_quote_snapshot(accepted.snapshot)
+    spent = credited(priced, 5_000)
+    assert spent.snapshot.data.totals.discount_amount_max_vnd == 5_000
+    assert verify_quote_snapshot(spent.snapshot)
 
 
 def test_stacking_is_never_an_acceptance_refusal() -> None:

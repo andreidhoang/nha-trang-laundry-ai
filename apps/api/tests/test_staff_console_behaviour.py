@@ -22,6 +22,7 @@ import tempfile
 from typing import Any
 
 import pytest
+from nha_trang_laundry_domain.approvals import APPROVAL_RESOURCE_TYPES
 from nha_trang_laundry_domain.promotion import PromotionReason
 from nha_trang_laundry_domain.quote_composition import (
     APPROVAL_OUTSTANDING_PREFIX,
@@ -351,12 +352,16 @@ def test_every_promotion_answer_the_counter_can_meet_is_glossed_for_them() -> No
     fails on this line instead of at a counter. The module-level codes are named, because they are
     what `quote_composition.py` emits on the engine's behalf and there is no enum to read them from.
 
-    `APPROVAL_OUTSTANDING_APPLY_PROMOTION` is deliberately not in this list and deliberately not in
-    `REASON_NOTE`. `_outstanding_approvals` can still mint it, but no path populates
-    `required_approvals`, so no server can send it -- and glossing a code no server can send is the
-    dead entry PROMO-WIRING-001 named as its reason for deleting `PROMOTION_NOT_EVALUATED`. The rule
-    has to bind to this item's own work or it is not a rule. `test_reason_notes_gloss_only_codes_a_
-    server_can_send` is the assertion in the other direction.
+    `APPROVAL_OUTSTANDING_APPLY_PROMOTION` is deliberately not in this list, and it *is* glossed,
+    which is the correction PROMO-FIX-004 made. PROMO-FIX-002 deleted the gloss on the ground that
+    no server can send the code, while the same change shipped
+    `test_the_outstanding_approval_guard_still_refuses_what_it_is_there_for`, which watches
+    `accept_quote_revision` send exactly that. Both could not be true. What is true is narrower:
+    `_outstanding_approvals` is live and the guard refuses, but no *composer* populates
+    `required_approvals`, so the code cannot reach a counter from a revision this system wrote. That
+    keeps it out of the promotion vocabulary a quote can carry -- this list -- while leaving it
+    glossed, because a live guard's refusal must not reach a Vietnamese counter as a bare token.
+    `test_reason_notes_gloss_only_codes_a_server_can_send` is the assertion in the other direction.
     """
 
     expected = [
@@ -415,16 +420,23 @@ def test_reason_notes_gloss_only_codes_a_server_can_send() -> None:
     """The other direction of the rule above, for the promotion vocabulary this item owns.
 
     A gloss for a code no server can emit is not harmless decoration. It is the failure
-    PROMO-WIRING-001 named when it deleted `PROMOTION_NOT_EVALUATED`: the console keeps answering a
-    question nobody asks, and the entry that is genuinely missing is hidden behind a table that
-    looks complete. PROMO-FIX-001 then created a fresh one --
-    `APPROVAL_OUTSTANDING_APPLY_PROMOTION`, glossed and registered as a disclosure while no path
-    populated `required_approvals` at all.
+    PROMO-WIRING-001 named when it deleted the retired "promotion not assessed" code: the console
+    keeps answering a question nobody asks, and the entry that is genuinely missing is hidden behind
+    a table that looks complete.
 
-    So every `PROMOTION`-prefixed and `APPROVAL_OUTSTANDING_`-prefixed key in `REASON_NOTE` has to
-    be a string the domain can actually produce. The domain's side of that list is built from the
-    engine's enum plus the module constants, not typed out here, so the two cannot drift apart
-    silently.
+    **"No server can emit it" is a claim about the server, and PROMO-FIX-004 had to make it one.**
+    PROMO-FIX-002 read the rule as covering `APPROVAL_OUTSTANDING_APPLY_PROMOTION` and deleted its
+    gloss, while shipping `test_the_outstanding_approval_guard_still_refuses_what_it_is_there_for`
+    in the same change -- a test whose whole content is `accept_quote_revision` returning that exact
+    code. The test and the reality disagreed, and the reality is that the guard is live code with a
+    live call site. The retired code was different in kind: its producer had been deleted outright,
+    so no argument and no stored row could bring it back.
+
+    So the emittable set is built from what the domain can return, not from what today's composers
+    happen to populate: the engine's enum, the module constants, and one
+    `APPROVAL_OUTSTANDING_<action>` for every approval action whose resource is a `QUOTE_REVISION`,
+    since those are the actions a revision's `required_approvals` can name. Both halves are read out
+    of the domain rather than typed out here, so they cannot drift apart silently.
     """
 
     emittable = {
@@ -433,6 +445,11 @@ def test_reason_notes_gloss_only_codes_a_server_can_send() -> None:
         PROMOTION_PENDING_BAND_CLOSE,
         PROMOTION_CHANGED_SINCE_QUOTE,
         PROMOTION_PUBLISHED_SINCE_APPROVAL,
+        *(
+            f"{APPROVAL_OUTSTANDING_PREFIX}{action}"
+            for action, resource in APPROVAL_RESOURCE_TYPES.items()
+            if resource == "QUOTE_REVISION"
+        ),
     }
     glossed = _run(
         "import { REASON_NOTE } from './src/core/i18n.js';\n"

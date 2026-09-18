@@ -102,11 +102,14 @@ const REASON_TO_WARNING = {
   // badge sent staff looking for an approval screen this system does not have — and would have sat
   // on the accepted, paid, immutable revision afterwards.
   //
-  // `PROMOTION_STACKING_REQUIRES_HUMAN` joined it in PROMO-FIX-003, and for the same reason. It
-  // once offered the counter two instruments to choose between; the domain now chooses, and always
-  // the same way — a `DEC-004` remedy credit is a debt owed for the shop's own past failure, so it
-  // is kept and the programme's discount is withdrawn where the two meet. Nothing is pending, the
-  // quote sells, and the code survives only to say why the bill carries no programme discount.
+  // `PROMOTION_STACKING_REQUIRES_HUMAN` joined it in PROMO-FIX-003 and stays there after
+  // PROMO-FIX-004, for a reason that moved. It once offered the counter two instruments to choose
+  // between, and PROMO-FIX-003 had the domain choose for them, which turned out to raise the bill
+  // above the total the customer had just been read. The choice is a person's again — but it is
+  // taken at the redemption, which `REMEDY_CREDIT_PROMOTION_NOT_STACKABLE` refuses outright while
+  // the credit is still unspent. What is left wearing this code is a quote that was already
+  // carrying a credit when it was priced: the programme is withheld, the bag is charged at list
+  // less the credit, nothing is pending and the quote sells.
   //
   // The rest are genuinely unfinished: eligibility resolves at acceptance, a band has to be closed
   // before a promotion can be computed against it, a discount that moved between the quote and the
@@ -185,10 +188,9 @@ export const REASON_NOTE = {
     "Muốn dòng này được giảm thì chủ tiệm công bố lại chương trình có tên dịch vụ; đừng tự giảm ở quầy.",
   PROMOTION_STACKING_REQUIRES_HUMAN:
     "Bản báo giá này có phiếu bồi hoàn, mà chương trình khuyến mãi không cho cộng dồn hai khoản " +
-    "giảm. Máy chủ đã giữ phiếu bồi hoàn và gỡ khuyến mãi ra: số tiền giảm trên bản này là của " +
-    "phiếu bồi hoàn, không phải của chương trình. Khách trả đúng bằng lúc không có chương trình " +
-    "nào chạy. Không phải chờ ai duyệt — cứ nhận đồ, và nói trước với khách rằng lần này không " +
-    "cộng thêm khuyến mãi.",
+    "giảm, nên khuyến mãi không được tính vào: số tiền giảm trên bản này là của phiếu bồi hoàn, " +
+    "không phải của chương trình. Khách trả đúng bằng lúc không có chương trình nào chạy. Không " +
+    "phải chờ ai duyệt — cứ nhận đồ, và nói trước với khách rằng lần này không cộng thêm khuyến mãi.",
   PROMOTION_PENDING_BAND_CLOSE:
     "Dòng khoảng giá chưa được chốt nên chưa xét khuyến mãi được: khuyến mãi áp trên số tiền nhân viên " +
     "chọn, không áp trên khoảng. Chốt giá trong khoảng xong thì mức giảm mới hiện ra.",
@@ -202,6 +204,16 @@ export const REASON_NOTE = {
     "Chủ tiệm đã duyệt giá trong khoảng khi chưa có chương trình khuyến mãi nào, mà bây giờ đã có " +
     "một chương trình đang chạy. Áp nó vào sẽ làm số tiền chủ tiệm đã duyệt đổi khác, nên phải đề " +
     "xuất lại giá. Đề xuất lại xong thì chương trình được tính vào như mọi báo giá khác.",
+  // `_outstanding_approvals` mints this and `accept_quote_revision` returns it, so the console
+  // glosses it. It is not the dead entry the retired promotion code above was: that one's producer
+  // had been deleted from the domain outright, while this guard is live, enforced, and has a test
+  // that watches it refuse. What is true is narrower, and is what the sentence says out loud — no
+  // composer writes an outstanding approval onto a quote revision today, so meeting this means a
+  // stored revision is not what this system writes, and the counter is told not to press again.
+  APPROVAL_OUTSTANDING_APPLY_PROMOTION:
+    "Bản báo giá gốc còn một phiếu duyệt khuyến mãi chưa dứt điểm, nên không chốt được bản này và " +
+    "không có gì được ghi. Hiện không có màn hình nào trong hệ thống tạo ra tình huống này: đây " +
+    "là lỗi dữ liệu chứ không phải chữ bạn gõ. Chụp màn hình và báo kỹ thuật, đừng bấm lại.",
   MISSING_REQUIRED_FACT: "Thiếu dữ kiện bắt buộc; máy chủ không đoán.",
   RANGE_PRICE_REQUIRES_HUMAN: "Dịch vụ này có khoảng giá; nhân viên phải chọn giá chính xác.",
   // `RangePriceRefusal`, exactly as packages/domain/.../range_prices.py names them. Each says what
@@ -306,6 +318,12 @@ export const REASON_NOTE = {
   REMEDY_CREDIT_REVISION_NOT_OPEN:
     "Bản báo giá định trừ vào đang là khoảng giá hoặc khách đã chốt rồi. Giảm trừ chỉ đổi tổng " +
     "trước khi báo cho khách, không đổi tổng đã thoả thuận. Lập bản mới rồi trừ vào bản đó.",
+  REMEDY_CREDIT_PROMOTION_NOT_STACKABLE:
+    "Bản báo giá này đang có mức giảm của chương trình khuyến mãi, mà chương trình đó không cho " +
+    "cộng dồn với phiếu giảm trừ. Phiếu CHƯA bị trừ, vẫn còn nguyên và vẫn dùng được — không có " +
+    "gì được ghi và tổng vừa đọc cho khách không đổi. Phải có người chọn một trong hai: để khách " +
+    "hưởng khuyến mãi lần này và giữ phiếu cho hoá đơn sau, hoặc lập báo giá không có khuyến mãi " +
+    "rồi trừ phiếu vào bản đó. Hỏi chủ tiệm; máy không chọn thay.",
   REMEDY_CREDIT_ALREADY_REDEEMED:
     "Phiếu giảm trừ này đã dùng rồi. Phiếu là vật cầm tay, dùng đúng một lần — không phải lỗi của " +
     "bạn, và không trừ thêm lần nữa. Mở lại báo giá cũ để xem lần đã trừ.",

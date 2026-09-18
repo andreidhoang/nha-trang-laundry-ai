@@ -90,9 +90,7 @@ from nha_trang_laundry_domain.quote_composition import (
     RequestedLine,
     accept_quote_revision,
     compose_quote_revision,
-    frozen_promotion,
 )
-from nha_trang_laundry_domain.quotes import parse_quote_revision
 from nha_trang_laundry_domain.remedies import (
     RemedyKind,
     RemedyRefusal,
@@ -1212,33 +1210,44 @@ def _promoted_quote(
     return quote_id, composition.snapshot, contact_id
 
 
-def test_a_credit_beats_a_programme_that_forbids_stacking_and_the_sale_still_completes(
+def test_a_credit_refused_over_a_non_stacking_programme_survives_and_spends_later(
     connection: psycopg.Connection[Any],
 ) -> None:
-    """`DEC-004` against the programme's own document, end to end, through every real write.
+    """`DEC-004` against the programme's own document, through every real write, including no write.
 
-    This is the dead end PROMO-FIX-002 left and PROMO-FIX-003 closed. A quote priced under a live
-    `stacking_allowed: false` programme carried a 36.000 d discount; the customer then presented a
-    remedy credit; `RemedyCreditRepository.redeem` burnt the credit and wrote the credited revision
-    in one transaction; and `accept_quote_revision` then refused the sale because the two
-    instruments could not compound. The credit was spent, the order could not be created, and
-    nothing in this system can un-burn a credit.
+    This is the dead end three passes walked into. A quote priced under a live
+    `stacking_allowed: false` programme carries a 36.000 d discount; the customer then presents a
+    remedy credit. `PROMO-FIX-002` let `RemedyCreditRepository.redeem` burn the credit and write the
+    credited revision in one transaction, and then had `accept_quote_revision` refuse the sale: the
+    credit was spent, the order could not be created, and nothing in this system can un-burn a
+    credit. `PROMO-FIX-003` took the promotion back off the revision instead, which sold the order
+    and raised the bill from the 84.000 d the customer had just been read to 109.000 d -- spending a
+    credit cost this customer 25.000 d more than keeping it.
 
-    The rule that closes it: **when a remedy credit and a non-stacking promotion meet, the credit
-    wins.** The credit is a debt this shop owes this customer for a past failure of its own; the
-    programme is an offer the shop chose to make. So the promotion is withdrawn where the two meet
-    -- inside the composition the redemption writes, before any new total is read to anybody -- and
-    the sale completes.
+    Both were this code answering a question the promotion engine had already answered with
+    `REQUIRE_HUMAN`, and that the owner's clause reserves. **So the redemption refuses, and the
+    refusal has to cost the customer nothing.** What that means in PostgreSQL is what this test is
+    for, because the refusal is returned from inside the same call that would otherwise burn the
+    credit:
 
-    The arithmetic, which is what "the credit wins" costs the shop:
+    - `redeem` composes before it burns, so `RemedyStateError` is raised with `remedy_credits`
+      untouched. `redeemed_at` is still null.
+    - the quote it was presented against still has exactly one revision. No second number exists for
+      anybody to read out by mistake.
+    - the same credit, presented later against a bill with no programme discount on it, spends for
+      its full 11.000 d and burns exactly once, against *that* quote.
 
-    - 120.000 d of standard wash, 36.000 d off under the programme, 84.000 d at quote time.
-    - the credit is 11.000 d, issued by `DEC-004` for a late return on an earlier order.
-    - the promotion comes back out and the credit applies to the restored 120.000 d: 11.000 d off,
-      **109.000 d to pay**, exactly what this customer would owe with no programme running.
+    The arithmetic, which is the whole reason the old assertions are gone rather than bumped:
 
-    What must be true at the end is the whole point: the credit is burnt exactly once, the revision
-    says why it carries no programme discount, and an order exists.
+    - promoted bag: 120.000 d of standard wash (`STD_WASH_DRY_GE6`), 36.000 d off under the
+      programme, **84.000 d** -- the number the customer was read, and the number they still pay.
+      The 109.000 d `PROMO-FIX-003` asserted named a bill this shop must never present.
+    - unpromoted bag: 100.000 d of service less the 11.000 d credit, plus the 10.000 d delivery fee,
+      **99.000 d**. The credit is worth its face value, which is what `DEC-004` promised.
+
+    The counter's other option -- the customer keeps the promotion and the credit stays in their
+    pocket -- is the acceptance and the order at the end: the promoted sale still completes, at the
+    84.000 d it was quoted at.
     """
 
     store_id, credit_id, staff, credit_vnd = _issued_credit(connection)
@@ -1249,52 +1258,81 @@ def test_a_credit_beats_a_programme_that_forbids_stacking_and_the_sale_still_com
     assert priced.data.totals.discount_amount_max_vnd == PROMOTED_DISCOUNT_VND
     assert priced.data.totals.display_total_max_vnd == PROMOTED_LIST_VND - PROMOTED_DISCOUNT_VND
 
+    with pytest.raises(RemedyStateError) as refused:
+        RemedyCreditRepository().redeem(
+            connection,
+            RemedyCreditRedemptionCommand(
+                store_id=store_id,
+                quote_id=quote_id,
+                credit_id=credit_id,
+                expected_current_revision=1,
+                expected_snapshot_hash=priced.document.snapshot_hash,
+                principal=staff,
+                correlation_id=uuid4(),
+                redeemed_at=NOW,
+            ),
+        )
+    assert refused.value.reason_code == RemedyRefusal.REMEDY_CREDIT_PROMOTION_NOT_STACKABLE.value
+
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT redeemed_at FROM remedy_credits WHERE id = %s", (credit_id,))
+        unspent = cursor.fetchone()
+        cursor.execute("SELECT count(*) FROM quote_revisions WHERE quote_id = %s", (quote_id,))
+        counted = cursor.fetchone()
+    # Nothing was burnt and nothing was written. This is the assertion the whole pass turns on: the
+    # composition refuses inside the transaction that would have spent the credit.
+    assert unspent is not None and unspent[0] is None
+    assert counted is not None and counted[0] == 1
+
+    # The same credit, on a bill that carries no programme discount. Full face value, one burn.
+    plain_quote_id, plain_revision, plain_hash = _next_quote(connection, store_id, staff)
     redeemed = RemedyCreditRepository().redeem(
         connection,
         RemedyCreditRedemptionCommand(
             store_id=store_id,
-            quote_id=quote_id,
+            quote_id=plain_quote_id,
             credit_id=credit_id,
-            expected_current_revision=1,
-            expected_snapshot_hash=priced.document.snapshot_hash,
+            expected_current_revision=plain_revision,
+            expected_snapshot_hash=plain_hash,
             principal=staff,
             correlation_id=uuid4(),
             redeemed_at=NOW,
         ),
     )
-    # The credit applied and the programme did not: 120.000 - 11.000, not 84.000 - 11.000.
     assert redeemed.credit_vnd == LATE_CREDIT
-    assert redeemed.net_service_subtotal_vnd == PROMOTED_LIST_VND - LATE_CREDIT
-    assert redeemed.display_total_vnd == PROMOTED_LIST_VND - LATE_CREDIT
+    assert redeemed.net_service_subtotal_vnd == LINE_AMOUNT - LATE_CREDIT
+    assert redeemed.display_total_vnd == LINE_AMOUNT - LATE_CREDIT + 10_000
 
     with connection.cursor() as cursor:
-        stored = QuoteRepository.get_revision(cursor, quote_id, 2)
-    assert stored is not None
-    credited = parse_quote_revision(json.loads(stored.document.canonical_json))
-    assert PromotionReason.PROMOTION_STACKING_REQUIRES_HUMAN.value in credited.data.reason_codes
-    assert PromotionReason.PROMOTION_APPLIED.value not in credited.data.reason_codes
-    # The frozen trace agrees with the money rather than still claiming 36.000 d came off.
-    withheld = frozen_promotion(credited)
-    assert withheld is not None and withheld.discount_amount_vnd == 0
+        cursor.execute(
+            "SELECT redeemed_at, redeemed_quote_id, redeemed_quote_revision FROM remedy_credits "
+            "WHERE id = %s",
+            (credit_id,),
+        )
+        burnt = cursor.fetchone()
+    assert burnt is not None
+    assert burnt[0] is not None
+    assert UUID(str(burnt[1])) == plain_quote_id and int(burnt[2]) == 2
 
+    # And the promoted bag the credit was refused against still sells, at the price it was quoted.
     accepted_at = NOW + timedelta(minutes=2)
     composition = accept_quote_revision(
-        priced=credited, revision=3, promotion=published, accepted_at=accepted_at
+        priced=priced, revision=2, promotion=published, accepted_at=accepted_at
     )
-    assert isinstance(composition, ComposedQuote), "the credited quote has to be sellable"
+    assert isinstance(composition, ComposedQuote), "the refusal must not block the promoted sale"
     final = composition.snapshot
-    assert final.data.totals.display_total_max_vnd == PROMOTED_LIST_VND - LATE_CREDIT
-    assert PromotionReason.PROMOTION_STACKING_REQUIRES_HUMAN.value in final.data.reason_codes
+    assert final.data.totals.display_total_max_vnd == PROMOTED_LIST_VND - PROMOTED_DISCOUNT_VND
+    assert PromotionReason.PROMOTION_APPLIED.value in final.data.reason_codes
 
     QuoteAcceptanceRepository().record(
         connection,
         QuoteAcceptanceCommand(
             store_id=store_id,
             quote_id=quote_id,
-            accepted_revision=2,
-            accepted_snapshot_hash=stored.document.snapshot_hash,
-            final_revision=3,
-            display_total_vnd=PROMOTED_LIST_VND - LATE_CREDIT,
+            accepted_revision=1,
+            accepted_snapshot_hash=priced.document.snapshot_hash,
+            final_revision=2,
+            display_total_vnd=PROMOTED_LIST_VND - PROMOTED_DISCOUNT_VND,
             accepted_by=staff.staff_user_id,
             correlation_id=uuid4(),
             policy_version="quote-acceptance-dec-021-v1",
@@ -1304,7 +1342,7 @@ def test_a_credit_beats_a_programme_that_forbids_stacking_and_the_sale_still_com
     QuoteRepository().create_revision(
         connection,
         QuoteRevisionCommand(
-            store_id, uuid4(), final, 2, 2, staff.staff_user_id, uuid4(), accepted_at
+            store_id, uuid4(), final, 1, 1, staff.staff_user_id, uuid4(), accepted_at
         ),
     )
     order_id = (
@@ -1315,7 +1353,7 @@ def test_a_credit_beats_a_programme_that_forbids_stacking_and_the_sale_still_com
                 store_id,
                 contact_id,
                 quote_id,
-                3,
+                2,
                 final.document.snapshot_hash,
                 FulfillmentMode.SELF_DROP_SELF_COLLECT,
                 staff,
@@ -1327,34 +1365,7 @@ def test_a_credit_beats_a_programme_that_forbids_stacking_and_the_sale_still_com
         )
         .order_id
     )
-
     with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT redeemed_at, redeemed_quote_id, redeemed_quote_revision FROM remedy_credits "
-            "WHERE id = %s",
-            (credit_id,),
-        )
-        burnt = cursor.fetchone()
         cursor.execute("SELECT count(*) FROM orders WHERE id = %s", (order_id,))
-        counted = cursor.fetchone()
-    assert burnt is not None
-    assert burnt[0] is not None and UUID(str(burnt[1])) == quote_id and int(burnt[2]) == 2
-    assert counted is not None and counted[0] == 1
-
-    # Exactly once. A second presentation of the same credit is refused, and nothing is written.
-    second_quote_id, second_priced, _ = _promoted_quote(connection, store_id, staff, published)
-    with pytest.raises(RemedyStateError) as refused:
-        RemedyCreditRepository().redeem(
-            connection,
-            RemedyCreditRedemptionCommand(
-                store_id=store_id,
-                quote_id=second_quote_id,
-                credit_id=credit_id,
-                expected_current_revision=1,
-                expected_snapshot_hash=second_priced.document.snapshot_hash,
-                principal=staff,
-                correlation_id=uuid4(),
-                redeemed_at=NOW,
-            ),
-        )
-    assert refused.value.reason_code == RemedyRefusal.REMEDY_CREDIT_ALREADY_REDEEMED.value
+        orders = cursor.fetchone()
+    assert orders is not None and orders[0] == 1

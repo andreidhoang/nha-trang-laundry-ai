@@ -165,6 +165,12 @@ class RemedyRefusal(StrEnum):
     REMEDY_CREDIT_REVISION_NOT_OPEN = "REMEDY_CREDIT_REVISION_NOT_OPEN"
     #: A credit is a bearer instrument redeemable exactly once, and this one is spent.
     REMEDY_CREDIT_ALREADY_REDEEMED = "REMEDY_CREDIT_ALREADY_REDEEMED"
+    #: The revision this credit would land on already carries a discount from a programme whose own
+    #: document forbids compounding. Two instruments, one bill, and only one of them may be taken:
+    #: `DEC-004` does not rank a debt the shop owes this customer against an offer the shop chose to
+    #: make, and this code will not rank them on the owner's behalf. Refused before the credit is
+    #: touched, so it stays unredeemed and a person can spend it on a bill with no programme on it.
+    REMEDY_CREDIT_PROMOTION_NOT_STACKABLE = "REMEDY_CREDIT_PROMOTION_NOT_STACKABLE"
 
 
 #: Which invariant or decision owns each refusal, in the shape `settlement.REFUSAL_DECISIONS` and
@@ -192,6 +198,11 @@ REMEDY_REFUSAL_AUTHORITIES: Final = {
     RemedyRefusal.REMEDY_CREDIT_REVISION_NOT_OPEN: "INVARIANT-4",
     # DEC-015: there is no customer ledger, so the credit is a bearer instrument spent once.
     RemedyRefusal.REMEDY_CREDIT_ALREADY_REDEEMED: "DEC-015",
+    # DEC-004 owns what a credit is worth and when it may be given. It does not say what happens
+    # when the shop's own promotion forbids compounding with it, and the promotion engine's answer
+    # to that question is REQUIRE_HUMAN. Naming DEC-004 as the authority is the caller being told
+    # exactly what would have to change: the owner deciding which instrument wins, not this code.
+    RemedyRefusal.REMEDY_CREDIT_PROMOTION_NOT_STACKABLE: "DEC-004",
 }
 
 

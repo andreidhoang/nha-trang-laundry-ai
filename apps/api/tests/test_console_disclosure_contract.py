@@ -418,7 +418,25 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # That third one is load-bearing rather than decoration: the difference between "runs until
     # 01/09" and "ran through 31/08" is one day at the boundary, and the screen must not be the
     # place that quietly picks one.
-    assert sum(counts.values()) == _registry()["total"] == 289
+    #
+    # 291 after PROMO-FIX-004: +2, both in `core/i18n.js`, and one more sentence rewritten in place.
+    # The rewrite is `REASON_NOTE.PROMOTION_STACKING_REQUIRES_HUMAN` again -- its slot id moved and
+    # its count did not -- because the behaviour it described was reversed: PROMO-FIX-003 had the
+    # server withdraw a non-stacking promotion as a credit landed, and the sentence said so. That
+    # raised the bill above the total the customer had just been read, so the withdrawal is gone and
+    # the code now only ever means "the programme was not counted into this price".
+    #
+    # The two additions are the codes that behaviour left behind. One is
+    # `REMEDY_CREDIT_PROMOTION_NOT_STACKABLE`, the refusal that replaced the withdrawal, and its
+    # sentence is the whole of what the counter must be told: the credit was NOT used, it is still
+    # good, and a person picks between it and the programme for this order. Rendering that as
+    # anything vaguer would leave a staff member believing a bearer instrument had been spent when
+    # it had not. The other is `APPROVAL_OUTSTANDING_APPLY_PROMOTION`, which PROMO-FIX-002 deleted
+    # on the ground that no server can send it while the same change shipped a test watching
+    # `accept_quote_revision` send exactly that. The narrower true statement -- that no composer
+    # populates `required_approvals` today -- is now in the gloss itself, which tells the counter it
+    # is looking at a data fault and must not press again.
+    assert sum(counts.values()) == _registry()["total"] == 291
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

@@ -9,6 +9,7 @@ reasons applies to it. The tests below are written so that the difference betwee
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
@@ -30,7 +31,6 @@ from nha_trang_laundry_db.retention import (
     RetentionDisposition,
     RetentionRepository,
     RetentionStateError,
-    UnsupportedStoreReason,
     retention_class_lock,
 )
 
@@ -401,6 +401,7 @@ def test_the_supported_set_is_derived_from_the_registry_rather_than_maintained_b
     assert {
         RetentionClass.RAW_WEBHOOK_PAYLOAD,
         RetentionClass.INCIDENT_EVIDENCE,
+        RetentionClass.ASSISTANT_TRANSCRIPT,
     } == SUPPORTED_PURGE_CLASSES
 
 
@@ -456,27 +457,93 @@ def test_a_class_scheduled_for_redaction_is_refused_rather_than_purged(
     assert run.affected_row_count == 0
 
 
-def test_the_assistant_transcript_stays_unsupported_for_the_reason_dec_018_gave(
+def test_a_transcript_whose_answer_survives_undeletably_is_held_back_not_purged(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    """A separable payload is not sufficient; a surviving duplicate makes the purge a false claim.
+    """The inverse of the test this replaces, and the harder half of ASSISTANT-RETENTION-001.
 
-    `assistant_turns` could be split exactly as `webhook_events` was. It is not, because
-    `command_idempotency_records.response` holds a byte-identical copy of the answer and
-    `protect_idempotency_record` forbids deleting it. Deleting the original would report a disposal
-    that did not happen. `ASSISTANT-RETENTION-001` removes the duplicate; until then this refuses.
+    `DEC-018` held `ASSISTANT_TRANSCRIPT` at NOT_SUPPORTED because every answer was stored twice,
+    the second copy in `command_idempotency_records.response` under a trigger that refuses DELETE
+    outright. Stopping new copies being written unblocks the class -- but the copies already written
+    are still there and still undeletable, and purging their turns would report a disposal that did
+    not happen.
+
+    So those turns are pinned, exactly as an evidence-bearing webhook payload is, and the run says
+    how many and why. The exemption self-heals: no record written from now on has an `answer` key.
     """
-    reason, explanation = UNSUPPORTED_STORE_REASONS[RetentionClass.ASSISTANT_TRANSCRIPT]
+    owner = _staff(postgres_connection, roles=frozenset({StaffRole.OWNER_ADMIN}))
+    store_id = uuid4()
+    staff_user_id = owner.staff_user_id
+    pinned, ordinary = uuid4(), uuid4()
+    old = datetime.now(UTC) - timedelta(days=200)
+    with postgres_connection.transaction(), postgres_connection.cursor() as cursor:
+        cursor.execute("INSERT INTO stores (id, created_at) VALUES (%s, %s)", (store_id, NOW))
+        for turn_id in (pinned, ordinary):
+            cursor.execute(
+                """
+                INSERT INTO assistant_turns (turn_id, store_id, staff_user_id, intent, links,
+                                             reason_codes, correlation_id, created_at)
+                VALUES (%s, %s, %s, 'TODAY_OVERVIEW', '[]', '[]', %s, %s)
+                """,
+                (turn_id, store_id, staff_user_id, str(uuid4()), old),
+            )
+            cursor.execute(
+                "INSERT INTO assistant_turn_payloads (turn_id, question, answer) "
+                "VALUES (%s, 'Hôm nay thế nào?', 'Chưa có đơn nào.')",
+                (turn_id,),
+            )
+        # A record in the shape `_turn_mapping` produced before this item: it carries the answer,
+        # and `protect_idempotency_record` will not let anyone remove it.
+        cursor.execute(
+            """
+            INSERT INTO command_idempotency_records (
+                scope, idempotency_key, request_hash, response, created_at, completed_at
+            ) VALUES (%s, %s, %s, %s::jsonb, %s, %s)
+            """,
+            (
+                f"assistant-turn:{staff_user_id}",
+                f"legacy-{pinned}",
+                f"JCS-SHA256-V1:{'a' * 64}",
+                json.dumps({"turn_id": str(pinned), "answer": "Chưa có đơn nào."}),
+                old,
+                old,
+            ),
+        )
 
-    assert reason is UnsupportedStoreReason.BLOCKED_BY_UNDELETABLE_DUPLICATE
-    assert "command_idempotency_records.response" in explanation
-    assert "ASSISTANT-RETENTION-001" in explanation
+    repository = RetentionRepository()
+    repository.publish_configuration(
+        postgres_connection,
+        class_name=RetentionClass.ASSISTANT_TRANSCRIPT,
+        disposition=RetentionDisposition.PURGE,
+        principal=owner,
+        correlation_id=uuid4(),
+        enabled=True,
+        retention_days=180,
+        decision_ref="DEC-008",
+    )
+    for hold_id in repository.active_hold_ids(
+        postgres_connection, class_name=RetentionClass.ASSISTANT_TRANSCRIPT
+    ):
+        repository.release_legal_hold(
+            postgres_connection, hold_id=hold_id, principal=owner, correlation_id=uuid4()
+        )
+
+    run = repository.run_purge(
+        postgres_connection,
+        class_name=RetentionClass.ASSISTANT_TRANSCRIPT,
+        correlation_id=uuid4(),
+    )
+
+    assert run.outcome is PurgeOutcome.COMPLETED_WITH_EXEMPTIONS
+    assert (run.affected_row_count, run.exempt_row_count) == (1, 1)
+    assert run.detail is not None and "command_idempotency_records" in run.detail
     with postgres_connection.cursor() as cursor:
         cursor.execute(
-            "SELECT count(*) FROM information_schema.columns "
-            "WHERE table_name = 'command_idempotency_records' AND column_name = 'response'"
+            "SELECT turn_id FROM assistant_turn_payloads WHERE turn_id = ANY(%s)",
+            ([pinned, ordinary],),
         )
-        assert _row(cursor) == (1,)
+        surviving = [row[0] for row in cursor.fetchall()]
+    assert surviving == [pinned]
 
 
 def test_the_append_only_trigger_really_does_refuse_a_purge(

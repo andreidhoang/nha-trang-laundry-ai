@@ -45,7 +45,7 @@ import json
 import re
 import time
 import unicodedata
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -137,7 +137,11 @@ class StoredAssistantTurn:
 
     turn_id: UUID
     intent: str
-    answer: str
+    #: `None` only for a replay of a turn whose text `ASSISTANT_TRANSCRIPT` disposed of at 180 days.
+    #: An idempotency key answers a retry, a horizon of minutes to hours, so this is not a case a
+    #: caller meets in practice -- but it is the true type once the answer is disposable, and a type
+    #: that says otherwise is how "cannot realistically happen" becomes an outage.
+    answer: str | None
     links: tuple[AssistantLink, ...]
     reason_codes: tuple[str, ...]
     created_at: datetime
@@ -541,7 +545,27 @@ class AssistantService:
                 ),
                 commit,
             )
-        return _stored_turn(result.response, replayed=result.replayed)
+            # Read back under the same visibility rule any other read of this turn obeys, rather
+            # than trusting the identifier the record handed us: the scope is keyed by staff user,
+            # so a turn a caller may not see cannot be reached this way even on a replay.
+            stored = result.response.get("turn_id")
+            turn = self._turns.get_scoped(
+                connection,
+                store_id=store_id,
+                principal=principal,
+                turn_id=UUID(str(stored)),
+            )
+            if turn is None:
+                raise AssistantUnavailable("the recorded assistant turn is not readable")
+        return StoredAssistantTurn(
+            turn_id=turn.turn_id,
+            intent=turn.intent,
+            answer=turn.answer,
+            links=turn.links,
+            reason_codes=turn.reason_codes,
+            created_at=turn.created_at,
+            replayed=result.replayed,
+        )
 
     def list_turns(
         self, *, principal: StaffPrincipal, store_id: UUID, limit: int, before: UUID | None = None
@@ -596,32 +620,20 @@ class AssistantService:
 
 
 def _turn_mapping(turn: AssistantTurn) -> dict[str, object]:
-    return {
-        "turn_id": str(turn.turn_id),
-        "intent": turn.intent,
-        "answer": turn.answer,
-        "links": [{"label": link.label, "href": link.href} for link in turn.links],
-        "reason_codes": list(turn.reason_codes),
-        "created_at": turn.created_at.isoformat(),
-    }
+    """What an idempotency record may remember about a turn: which one it was, and nothing else.
 
+    `ASSISTANT-RETENTION-001`. This used to carry `answer` and `links`, and
+    `IdempotencyRepository.execute` persists whatever it returns verbatim into
+    `command_idempotency_records.response`, where `protect_idempotency_record` rejects DELETE
+    outright and rejects any UPDATE once the response is non-NULL. So every assistant answer existed
+    twice, and the second copy could never be removed by anybody -- which is why `DEC-018` held
+    `ASSISTANT_TRANSCRIPT` at NOT_SUPPORTED rather than let a 180-day purge report a disposal that
+    had not happened.
 
-def _stored_turn(response: Mapping[str, object], *, replayed: bool) -> StoredAssistantTurn:
-    """Rebuild the wire shape from the idempotent response, which may be a replay's copy."""
-    links = response["links"]
-    reason_codes = response["reason_codes"]
-    if not isinstance(links, list) or not isinstance(reason_codes, list):
-        raise ValueError("stored assistant turn response is invalid")
-    return StoredAssistantTurn(
-        turn_id=UUID(str(response["turn_id"])),
-        intent=str(response["intent"]),
-        answer=str(response["answer"]),
-        links=tuple(
-            AssistantLink(label=str(item["label"]), href=str(item["href"]))
-            for item in links
-            if isinstance(item, dict)
-        ),
-        reason_codes=tuple(str(code) for code in reason_codes),
-        created_at=datetime.fromisoformat(str(response["created_at"])),
-        replayed=replayed,
-    )
+    A replay now rehydrates from `assistant_turns`, which is the authoritative row and the one the
+    schedule governs. The caller's contract is unchanged: the same document comes back, assembled
+    rather than remembered. `assistant_turns` is append-only, so the answer it assembles from cannot
+    have changed between the first call and the replay.
+    """
+
+    return {"turn_id": str(turn.turn_id)}

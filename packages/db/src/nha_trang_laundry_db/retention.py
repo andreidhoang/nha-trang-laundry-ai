@@ -285,6 +285,65 @@ def _purge_incident_evidence(cursor: Any, execution: PurgeExecution) -> PurgeCou
     return PurgeCounts(deleted=deleted, exempt=int(row[0]) if row is not None else 0)
 
 
+#: Dispose of the transcripts past the cutoff whose answer does not survive somewhere undeletable.
+#:
+#: DEC-018 held this class NOT_SUPPORTED because every answer was stored twice, the second copy in
+#: `command_idempotency_records.response` under a trigger that refuses DELETE outright and refuses
+#: UPDATE once the response is non-NULL. `ASSISTANT-RETENTION-001` stopped that copy being written:
+#: `_turn_mapping` now returns the turn id alone and a replay rehydrates from `assistant_turns`.
+#:
+#: Records written before that change still carry an answer and still cannot be deleted, so those
+#: turns are pinned and the run says so. This is DEC-018's own rule -- a longer-lived record pins
+#: its target -- applied to the record that motivated it. It self-heals: nothing written from now on
+#: has an `answer` key, so no new turn can be pinned this way, and the exemption count falls to zero
+#: as the old records age past their own retention.
+_PURGE_ASSISTANT_PAYLOADS = """
+WITH disposed AS (
+    DELETE FROM assistant_turn_payloads p
+     USING assistant_turns t
+     WHERE t.turn_id = p.turn_id
+       AND t.created_at < %(cutoff)s
+       AND NOT EXISTS (
+           SELECT 1 FROM command_idempotency_records c
+            WHERE c.response ? 'answer'
+              AND c.response->>'turn_id' = t.turn_id::text
+       )
+    RETURNING p.turn_id AS subject_key, t.created_at AS subject_occurred_at
+)
+INSERT INTO retention_disposal_records (
+    run_id, class_name, subject_table, subject_key, subject_occurred_at, disposed_at
+)
+SELECT %(run_id)s, %(class_name)s, 'assistant_turns', subject_key, subject_occurred_at,
+       %(disposed_at)s
+  FROM disposed
+"""
+
+_COUNT_ASSISTANT_EXEMPTIONS = """
+SELECT count(*)
+  FROM assistant_turn_payloads p
+  JOIN assistant_turns t ON t.turn_id = p.turn_id
+ WHERE t.created_at < %(cutoff)s
+"""
+
+
+def _purge_assistant_payloads(cursor: Any, execution: PurgeExecution) -> PurgeCounts:
+    """Dispose, record each disposal, then count what an undeletable copy held in place."""
+
+    cursor.execute(
+        _PURGE_ASSISTANT_PAYLOADS,
+        {
+            "cutoff": execution.cutoff_at,
+            "run_id": execution.run_id,
+            "class_name": execution.class_name.value,
+            "disposed_at": execution.disposed_at,
+        },
+    )
+    deleted = int(cursor.rowcount)
+    cursor.execute(_COUNT_ASSISTANT_EXEMPTIONS, {"cutoff": execution.cutoff_at})
+    row = cursor.fetchone()
+    return PurgeCounts(deleted=deleted, exempt=int(row[0]) if row is not None else 0)
+
+
 @dataclass(frozen=True, slots=True)
 class DisposablePayloadStore:
     """A side table holding exactly what section 15 schedules, keyed to an immutable ledger row."""
@@ -353,6 +412,28 @@ DISPOSABLE_PAYLOAD_STORES: Mapping[RetentionClass, DisposablePayloadStore] = {
         ),
         purge=_purge_incident_evidence,
     ),
+    RetentionClass.ASSISTANT_TRANSCRIPT: DisposablePayloadStore(
+        class_name=RetentionClass.ASSISTANT_TRANSCRIPT,
+        payload_table="assistant_turn_payloads",
+        ledger_table="assistant_turns",
+        ledger_retains=(
+            "turn_id",
+            "store_id",
+            "staff_user_id",
+            "intent",
+            "links",
+            "reason_codes",
+            "correlation_id",
+            "created_at",
+        ),
+        exemption_rule=(
+            "held back transcripts whose answer survives in a command_idempotency_records row "
+            "written before ASSISTANT-RETENTION-001, which protect_idempotency_record forbids "
+            "anyone to delete; purging the original would report a disposal that did not happen "
+            "(DEC-018)"
+        ),
+        purge=_purge_assistant_payloads,
+    ),
 }
 
 #: Classes for which a purge target is actually implemented. Derived, never hand-written.
@@ -398,13 +479,6 @@ UNSUPPORTED_STORE_REASONS: Mapping[RetentionClass, tuple[UnsupportedStoreReason,
         UnsupportedStoreReason.RETAINED_INDEFINITELY_BY_DECISION,
         "DEC-008 retains security audit events indefinitely under access restriction; audit_events "
         "is the chain every other record is reconstructed from",
-    ),
-    RetentionClass.ASSISTANT_TRANSCRIPT: (
-        UnsupportedStoreReason.BLOCKED_BY_UNDELETABLE_DUPLICATE,
-        "DEC-018 holds this NOT_SUPPORTED until command_idempotency_records.response stops "
-        "carrying a byte-identical copy of the answer; protect_idempotency_record forbids "
-        "deleting it, so purging assistant_turns would be a false statement made by software. "
-        "Corrective item: ASSISTANT-RETENTION-001",
     ),
 }
 

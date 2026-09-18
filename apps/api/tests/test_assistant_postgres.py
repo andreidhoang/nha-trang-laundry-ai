@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -37,7 +38,6 @@ from nha_trang_laundry_db.retention import (
     RetentionClass,
     RetentionDisposition,
     RetentionRepository,
-    UnsupportedStoreReason,
 )
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_db.store_access import StoreAccessError
@@ -163,7 +163,8 @@ def test_record_turn_commits_turn_event_audit_and_outbox_atomically(
     assert turn.turn_id == command.turn_id
     with postgres_connection.cursor() as cursor:
         cursor.execute(
-            "SELECT question, intent, links, reason_codes FROM assistant_turns WHERE turn_id = %s",
+            "SELECT p.question, t.intent, t.links, t.reason_codes FROM assistant_turns t "
+            "JOIN assistant_turn_payloads p ON p.turn_id = t.turn_id WHERE t.turn_id = %s",
             (command.turn_id,),
         )
         row = cursor.fetchone()
@@ -217,7 +218,7 @@ def test_the_ledger_trigger_rejects_update_and_delete(
         postgres_connection.cursor() as cursor,
     ):
         cursor.execute(
-            "UPDATE assistant_turns SET answer = 'khác' WHERE turn_id = %s",
+            "UPDATE assistant_turns SET intent = 'KHAC' WHERE turn_id = %s",
             (command.turn_id,),
         )
     with (
@@ -389,10 +390,12 @@ def test_only_the_redacted_text_reaches_the_table(
     )
 
     assert stored.intent == "TODAY_OVERVIEW"
-    assert "0901234567" not in stored.answer
+    assert stored.answer is not None and "0901234567" not in stored.answer
     with postgres_connection.cursor() as cursor:
+        # The text moved to `assistant_turn_payloads` in `0040` so the 180-day schedule can dispose
+        # of it. Redaction still happens before it is written, which is what this test is about.
         cursor.execute(
-            "SELECT question, answer FROM assistant_turns WHERE turn_id = %s",
+            "SELECT question, answer FROM assistant_turn_payloads WHERE turn_id = %s",
             (stored.turn_id,),
         )
         row = cursor.fetchone()
@@ -402,33 +405,39 @@ def test_only_the_redacted_text_reaches_the_table(
     assert "0901234567" not in str(row[1])
 
     history = service.list_turns(principal=member, store_id=store_id, limit=50)
+    assert history[0].question is not None
     assert "0901234567" not in history[0].question
     assert "[REDACTED]" in history[0].question
 
 
-def test_the_transcript_retention_class_refuses_ledger_purge_and_records_every_run(
+def test_the_transcript_is_disposable_now_that_the_answer_is_stored_only_once(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    """ASSISTANT_TRANSCRIPT still refuses, and now for a sharper reason than a ledger trigger.
+    """The inverse of the test this replaces, and the acceptance test for ASSISTANT-RETENTION-001.
 
-    The window is published configuration. With an enabled schedule the purge runs and is refused,
-    and the refusal still writes its run record and audit event; a legal hold refuses earlier, and
-    no turn is ever silently deleted.
+    This class used to refuse. Not because `assistant_turns` was append-only -- `0040` moved the
+    text out from under that trigger exactly as `0038` did for the webhook payload -- but because
+    `DEC-018` found the answer stored a second time in `command_idempotency_records.response`, in a
+    row `protect_idempotency_record` lets nobody delete. Purging the first while the second survived
+    would have reported a disposal that had not happened.
 
-    What changed is why. It used to be "the backing table is an append-only ledger", which is the
-    condition `RETENTION-STORE-001` now knows how to resolve -- `assistant_turns` could be split
-    exactly as `webhook_events` was. `DEC-018` holds it back for a different reason that a
-    separable store does not touch: `command_idempotency_records.response` carries a byte-identical
-    copy of the answer and `protect_idempotency_record` forbids deleting it, so purging the
-    original would report a disposal that did not happen. `ASSISTANT-RETENTION-001` removes the
-    duplicate; until it does, refusing is the only honest outcome.
+    `_turn_mapping` now returns the turn id alone, so no new record carries an answer, and a replay
+    rehydrates from `assistant_turns`. With the duplicate gone the schedule can finally execute.
+
+    One turn past the 180-day cutoff and one inside it, so a purge that took everything or nothing
+    fails here as loudly as one that took the wrong row.
     """
     owner = _staff(postgres_connection, roles=frozenset({StaffRole.OWNER_ADMIN}))
     store_id = uuid4()
     member = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPERATOR}))
-    turn = AssistantTurnRepository().record_turn(
-        postgres_connection, _command(member, store_id, "Hôm nay thế nào?")
+    repository_turns = AssistantTurnRepository()
+    stale = _command(member, store_id, "Câu hỏi cũ")
+    fresh = _command(member, store_id, "Câu hỏi mới")
+    repository_turns.record_turn(
+        postgres_connection, replace(stale, created_at=datetime.now(UTC) - timedelta(days=200))
     )
+    repository_turns.record_turn(postgres_connection, fresh)
+
     repository = RetentionRepository()
     repository.publish_configuration(
         postgres_connection,
@@ -437,22 +446,33 @@ def test_the_transcript_retention_class_refuses_ledger_purge_and_records_every_r
         principal=owner,
         correlation_id=uuid4(),
         enabled=True,
-        retention_days=30,
+        retention_days=180,
         decision_ref="DEC-008",
     )
-
     run = repository.run_purge(
         postgres_connection,
         class_name=RetentionClass.ASSISTANT_TRANSCRIPT,
         correlation_id=uuid4(),
     )
 
-    assert run.outcome is PurgeOutcome.REFUSED_UNSUPPORTED_STORE
-    assert run.detail is not None
-    assert run.detail.startswith(UnsupportedStoreReason.BLOCKED_BY_UNDELETABLE_DUPLICATE.value)
-    assert "command_idempotency_records.response" in run.detail
-    assert run.affected_row_count == 0
+    assert (run.outcome, run.affected_row_count) == (PurgeOutcome.COMPLETED, 1)
+    record = repository.disposal_record(
+        postgres_connection, subject_table="assistant_turns", subject_key=stale.turn_id
+    )
+    assert record is not None and record.decision_ref == "DEC-008"
 
+    # The words are gone. Everything that makes the turn auditable is not.
+    history = AssistantTurnRepository.list_recent(
+        postgres_connection, store_id=store_id, principal=member, limit=50
+    )
+    by_id = {item.turn_id: item for item in history}
+    assert by_id[stale.turn_id].question is None
+    assert by_id[stale.turn_id].answer is None
+    assert by_id[stale.turn_id].intent == "TODAY_OVERVIEW"
+    assert by_id[stale.turn_id].staff_user_id == member.staff_user_id
+    assert by_id[fresh.turn_id].question == "Câu hỏi mới"
+
+    # And a legal hold still suspends the class, now that suspending it means something.
     repository.place_legal_hold(
         postgres_connection,
         class_name=RetentionClass.ASSISTANT_TRANSCRIPT,
@@ -468,18 +488,16 @@ def test_the_transcript_retention_class_refuses_ledger_purge_and_records_every_r
     assert held.outcome is PurgeOutcome.REFUSED_LEGAL_HOLD
 
     with postgres_connection.cursor() as cursor:
-        # Nothing was purged: the turn is still there, verbatim.
-        cursor.execute("SELECT count(*) FROM assistant_turns WHERE turn_id = %s", (turn.turn_id,))
-        assert cursor.fetchone() == (1,)
-        # Both runs left their records, and the purge run left its audit event.
+        cursor.execute(
+            "SELECT count(*) FROM assistant_turns WHERE turn_id = ANY(%s)",
+            ([stale.turn_id, fresh.turn_id],),
+        )
+        assert cursor.fetchone() == (2,)
         cursor.execute(
             "SELECT outcome FROM retention_purge_runs WHERE run_id = ANY(%s) ORDER BY executed_at",
             ([run.run_id, held.run_id],),
         )
-        assert [str(row[0]) for row in cursor.fetchall()] == [
-            "REFUSED_UNSUPPORTED_STORE",
-            "REFUSED_LEGAL_HOLD",
-        ]
+        assert [str(row[0]) for row in cursor.fetchall()] == ["COMPLETED", "REFUSED_LEGAL_HOLD"]
         cursor.execute(
             """
             SELECT count(*) FROM audit_events
@@ -489,6 +507,54 @@ def test_the_transcript_retention_class_refuses_ledger_purge_and_records_every_r
             ([run.run_id, held.run_id],),
         )
         assert cursor.fetchone() == (2,)
+
+
+def test_no_idempotency_record_carries_an_assistant_answer_any_more(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """The DEC-018 blocker itself, asserted on the table that held the duplicate.
+
+    A replay must still return the identical document -- that is the whole point of the idempotency
+    layer -- but it must do so by reading the turn rather than by remembering a copy nothing can
+    delete.
+    """
+    store_id = uuid4()
+    member = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPERATOR}))
+    # The service opens its own connections and sees only committed rows.
+    postgres_connection.commit()
+    service = AssistantService(AuthSettings(database_url=os.environ["DATABASE_URL"]))
+
+    first = service.post_turn(
+        principal=member,
+        store_id=store_id,
+        question="Hôm nay thế nào?",
+        idempotency_key="assistant-no-duplicate",
+    )
+    replay = service.post_turn(
+        principal=member,
+        store_id=store_id,
+        question="Hôm nay thế nào?",
+        idempotency_key="assistant-no-duplicate",
+    )
+
+    assert replay.replayed is True
+    assert (replay.turn_id, replay.answer, replay.intent) == (
+        first.turn_id,
+        first.answer,
+        first.intent,
+    )
+    assert replay.links == first.links and replay.created_at == first.created_at
+
+    with postgres_connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT response FROM command_idempotency_records WHERE scope = %s",
+            (f"assistant-turn:{member.staff_user_id}",),
+        )
+        rows = [row[0] for row in cursor.fetchall()]
+
+    assert rows, "the idempotency record must exist; only its contents changed"
+    for response in rows:
+        assert set(response) == {"turn_id"}, f"a record still carries payload: {sorted(response)}"
 
 
 def test_paging_backwards_is_exact_across_a_shared_timestamp(
@@ -521,19 +587,18 @@ def test_paging_backwards_is_exact_across_a_shared_timestamp(
         for index, turn_id in enumerate(tied):
             cursor.execute(
                 """
-                INSERT INTO assistant_turns (turn_id, store_id, staff_user_id, question, intent,
-                                             answer, links, reason_codes, correlation_id,
-                                             created_at)
-                VALUES (%s, %s, %s, %s, 'GREETING', 'xin chào', '[]', '[]', %s, %s)
+                INSERT INTO assistant_turns (turn_id, store_id, staff_user_id, intent,
+                                             links, reason_codes, correlation_id, created_at)
+                VALUES (%s, %s, %s, 'GREETING', '[]', '[]', %s, %s)
                 """,
-                (
-                    turn_id,
-                    store_id,
-                    owner.staff_user_id,
-                    f"Cùng mốc thời gian {index}",
-                    str(uuid4()),
-                    shared_at,
-                ),
+                (turn_id, store_id, owner.staff_user_id, str(uuid4()), shared_at),
+            )
+            cursor.execute(
+                """
+                INSERT INTO assistant_turn_payloads (turn_id, question, answer)
+                VALUES (%s, %s, 'xin chào')
+                """,
+                (turn_id, f"Cùng mốc thời gian {index}"),
             )
 
     whole = repository.list_recent(

@@ -62,9 +62,12 @@ class AssistantTurn:
     turn_id: UUID
     store_id: UUID
     staff_user_id: UUID
-    question: str
+    #: `None` once `ASSISTANT_TRANSCRIPT` has disposed of this turn's text at 180 days. The turn
+    #: itself never disappears -- its intent, reason codes, actor and timestamp are the ledger and
+    #: are kept -- so a reader can still see that a question of this kind was asked and answered.
+    question: str | None
     intent: str
-    answer: str
+    answer: str | None
     links: tuple[AssistantLink, ...]
     reason_codes: tuple[str, ...]
     correlation_id: str
@@ -102,25 +105,35 @@ class AssistantTurnRepository:
                 store_id=command.store_id,
                 error=AssistantAuthorizationError,
             )
+            # Two statements, one transaction. `ASSISTANT-RETENTION-001` moved the free text into
+            # `assistant_turn_payloads` so the 180-day schedule can dispose of it without touching a
+            # row `reject_ledger_mutation` forbids anyone to change. Splitting the write must not
+            # split the atomicity, so both run inside `commit_material_change` and a failure of
+            # either leaves neither.
             cursor.execute(
                 """
                 INSERT INTO assistant_turns (
-                    turn_id, store_id, staff_user_id, question, intent, answer, links,
+                    turn_id, store_id, staff_user_id, intent, links,
                     reason_codes, correlation_id, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
                 """,
                 (
                     command.turn_id,
                     command.store_id,
                     command.principal.staff_user_id,
-                    command.question,
                     command.intent,
-                    command.answer,
                     json.dumps([_link_mapping(link) for link in command.links]),
                     json.dumps(list(command.reason_codes)),
                     str(command.correlation_id),
                     occurred_at,
                 ),
+            )
+            cursor.execute(
+                """
+                INSERT INTO assistant_turn_payloads (turn_id, question, answer)
+                VALUES (%s, %s, %s)
+                """,
+                (command.turn_id, command.question, command.answer),
             )
 
         commit_material_change(
@@ -219,18 +232,22 @@ class AssistantTurnRepository:
             # compare would order the tie the wrong way and silently drop or repeat turns that
             # share a timestamp. `assistant_turns_store_idx` is `(store_id, created_at DESC,
             # turn_id)`, so this reads as a range on that index rather than a sort.
+            # LEFT JOIN, never an inner one: a turn whose text was disposed of at 180 days must
+            # stay in the history. Dropping it would turn a retention schedule into data loss, and
+            # would do it silently -- the page would simply be shorter.
             cursor.execute(
                 """
-                SELECT turn_id, store_id, staff_user_id, question, intent, answer, links,
-                       reason_codes, correlation_id, created_at
-                FROM assistant_turns
-                WHERE store_id = %s AND (%s OR staff_user_id = %s)
+                SELECT t.turn_id, t.store_id, t.staff_user_id, p.question, t.intent, p.answer,
+                       t.links, t.reason_codes, t.correlation_id, t.created_at
+                FROM assistant_turns t
+                LEFT JOIN assistant_turn_payloads p ON p.turn_id = t.turn_id
+                WHERE t.store_id = %s AND (%s OR t.staff_user_id = %s)
                   AND (
                     %s::timestamptz IS NULL
-                    OR created_at < %s
-                    OR (created_at = %s AND turn_id > %s)
+                    OR t.created_at < %s
+                    OR (t.created_at = %s AND t.turn_id > %s)
                   )
-                ORDER BY created_at DESC, turn_id
+                ORDER BY t.created_at DESC, t.turn_id
                 LIMIT %s
                 """,
                 (
@@ -270,10 +287,11 @@ class AssistantTurnRepository:
             owner = StaffRole.OWNER_ADMIN in principal.roles
             cursor.execute(
                 """
-                SELECT turn_id, store_id, staff_user_id, question, intent, answer, links,
-                       reason_codes, correlation_id, created_at
-                FROM assistant_turns
-                WHERE store_id = %s AND turn_id = %s AND (%s OR staff_user_id = %s)
+                SELECT t.turn_id, t.store_id, t.staff_user_id, p.question, t.intent, p.answer,
+                       t.links, t.reason_codes, t.correlation_id, t.created_at
+                FROM assistant_turns t
+                LEFT JOIN assistant_turn_payloads p ON p.turn_id = t.turn_id
+                WHERE t.store_id = %s AND t.turn_id = %s AND (%s OR t.staff_user_id = %s)
                 """,
                 (store_id, turn_id, owner, principal.staff_user_id),
             )
@@ -380,9 +398,9 @@ def _turn(row: tuple[object, ...]) -> AssistantTurn:
         turn_id=_uuid(row[0]),
         store_id=_uuid(row[1]),
         staff_user_id=_uuid(row[2]),
-        question=str(row[3]),
+        question=None if row[3] is None else str(row[3]),
         intent=str(row[4]),
-        answer=str(row[5]),
+        answer=None if row[5] is None else str(row[5]),
         links=tuple(
             AssistantLink(label=str(item["label"]), href=str(item["href"]))
             for item in links

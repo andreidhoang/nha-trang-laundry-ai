@@ -2286,7 +2286,7 @@ items:
 - id: ASSISTANT-RETENTION-001
   phase: PRODUCTION_HARDENING
   title: Stop storing the assistant answer twice
-  status: PENDING
+  status: IN_PROGRESS
   priority: 227
   depends_on:
   - RETENTION-STORE-001

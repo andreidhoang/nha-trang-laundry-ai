@@ -49,6 +49,25 @@ The decision packet is explicit:
 No test may assert a loss ceiling. "Unknown means stop", applied to the one sub-case the owner did not
 answer.
 
+## What already exists — scoped 2026-09-18, do not rebuild these
+
+| Piece | Where | Note |
+|---|---|---|
+| `fault_decided`, `remedy_decided` columns | `customer_incidents`, migration `0014` lines 12-13 | both default FALSE and nothing ever sets them |
+| the columns you may update | `protect_customer_incident()`, migration `0039:53` | the guard freezes id, store, order, message, contact scope, category, evidence hash and opened_at. It permits exactly `status`, `fault_decided`, `remedy_decided`, `affected_policy_version`. The remedy flow fits inside that permission; widening the guard is not this item's business. |
+| incident status ladder | `0014:11` | `OPEN` → `UNDER_REVIEW` → `CLOSED` |
+| **the rewash production mechanic** | `domain/orders.py:276`, `db/orders.py:584-610`, migration `0037` | `EXCEPTION` → backward transition to `IN_PROCESS` already works, and `0037` already handles the ready-clock for a rewashed order: "an order being rewashed is not finished, so the clock must not still name a completion". `DEC-004` is already cited at `orders.py:276`. **Do not rebuild this.** `FREE_REWASH` records the authority, the fault finding and the window, then triggers the transition that exists. |
+| the remedy event vocabulary | `packages/evals/.../synthetic_incidents.py:135` | `REFUND_EXECUTED`, `CREDIT_EXECUTED`, `REWASH_COMMANDED`. Use exactly these names; the eval already queries `domain_events` for them and currently proves the count is zero. |
+| the quote-adjustment primitive | `domain/quotes.py:89` | `QuoteAdjustmentSnapshot`, see "A credit is a quote adjustment" below |
+| the approval | `approvals.py:107`, `:125` | `APPROVE_REMEDY` → `_OWNER_FINANCIAL` → `REMEDY_PROPOSAL` |
+
+So what this item genuinely adds is the **accountability layer**, not the state machine: a
+`remedy_proposals` record saying who decided store fault, on what evidence, within which window,
+against which published policy version, and with which approval — plus the ceilings that make a
+proposal refusable, and the credit that outlives the order.
+
+A migration **is** required here, unlike `RANGE-PRICE-001`: no `remedy_proposals` table exists.
+
 ## Required design
 
 **Four kinds, each with a server-computed ceiling.**

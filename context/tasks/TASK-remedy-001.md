@@ -120,6 +120,14 @@ with no published remedy policy version, every remedy request fails closed with
 `REMEDY_POLICY_UNPUBLISHED`. Hardcoding `100_000` would make the shop's liability ceiling a code
 deploy and would repeat the `CURRENT_PROMOTION` mistake.
 
+**The publication vehicle, named precisely.** `ConfigurationRepository` in
+`packages/db/src/nha_trang_laundry_db/configurations.py` is the CONFIG-001 primitive: generic,
+versioned, hash-addressed, with a per-type validator registry and
+`ConfigurationRepository.latest_published(cursor, config_type)`. `config_type` matches
+`^[A-Z][A-Z0-9_]{1,62}$` and the `(config_type, version)` pair is unique (migration `0002`). Publish
+under `config_type = 'REMEDY_POLICY'` and register a validator for it, so a malformed policy is refused at
+publication rather than discovered at the counter.
+
 **Approval, unchanged.** `APPROVE_REMEDY` already maps to `_OWNER_FINANCIAL` with `REMEDY_PROPOSAL`.
 Use it as-is; do not edit `APPROVAL_POLICIES`.
 

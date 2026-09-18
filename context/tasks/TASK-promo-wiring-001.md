@@ -78,6 +78,14 @@ price and taking the laundry without somebody seeing it.
 **Delete `PROMOTION_NOT_EVALUATED`** from `BASE_REASON_CODES`. It will no longer be true, and a false
 reason code on an immutable revision is permanent misinformation.
 
+**The publication vehicle, named precisely.** `ConfigurationRepository` in
+`packages/db/src/nha_trang_laundry_db/configurations.py` is the CONFIG-001 primitive: generic,
+versioned, hash-addressed, with a per-type validator registry and
+`ConfigurationRepository.latest_published(cursor, config_type)`. `config_type` matches
+`^[A-Z][A-Z0-9_]{1,62}$` and the `(config_type, version)` pair is unique (migration `0002`). Publish
+under `config_type = 'PROMOTION_POLICY'` and register a validator for it, so a malformed policy is refused at
+publication rather than discovered at the counter.
+
 **Fail closed with no policy.** Invariant 11. With no promotion configuration published, quotes
 compose normally at list price and carry a reason code stating that no program is running — which is a
 different fact from "not evaluated".

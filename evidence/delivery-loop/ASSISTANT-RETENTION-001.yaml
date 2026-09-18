@@ -1,0 +1,138 @@
+schema_version: 1
+work_item: ASSISTANT-RETENTION-001
+recorded_at: '2026-09-19T01:20:00+07:00'
+requirement_contract: >-
+  context/tasks/TASK-assistant-retention-001.md requires the undeletable duplicate of every
+  assistant answer to be removed, so that the 180-day ASSISTANT_TRANSCRIPT purge DEC-008 signed can
+  become a true statement. DEC-018 opened this item by name and holds the class NOT_SUPPORTED until
+  it lands. Constraints: a replay must return exactly what the first call returned;
+  protect_idempotency_record is not dropped, relaxed or bypassed; assistant_turns keeps
+  reject_ledger_mutation; the store-scoped visibility rule is a security property and a join that
+  changes which rows a non-owner sees is a defect, not a refactor; and a purged turn renders as its
+  intent and reason codes with the text absent, never as an error or a gap.
+rollback_impact: >-
+  Same shape as RETENTION-STORE-001 and for the same reason: the schema and the code are coupled by
+  one migration, so the rollback unit is the pair of commits, not a file.
+
+  Reverting the code alone leaves `_turn_mapping` writing `answer` into a response document whose
+  columns no longer exist on `assistant_turns`, and every assistant write fails. Reverting the
+  schema is a new forward migration, never a re-run: 0040 is checksum-locked once applied.
+
+  Reverting both returns ASSISTANT_TRANSCRIPT to refusing, which disposes of nothing and destroys
+  nothing. Turns already recorded are untouched; only the ability to dispose of their text goes.
+
+  Nothing has been disposed of anywhere. Every class still ships refusing, enabling one is a
+  separate publish_configuration act carrying DEC-008, and DEC-020 requires the first run of a
+  newly-enabled class to be attended.
+
+  No capability, decision or release state moves with this record. All 13 capabilities remain
+  NOT_AUTHORIZED.
+unresolved_assumptions: >-
+  **`links` deliberately stays on the ledger row.** The earlier design review for RETENTION-STORE-001
+  proposed moving `question`, `answer` and `links`. Only the first two moved. `links` are navigation
+  built from the deterministic brain's intent, and their hrefs name identifiers the ledger keeps
+  forever, so they are not the free text section 15 schedules -- and leaving them is part of what
+  makes a purged turn still read as a turn rather than a blank row. A reader may disagree; the
+  choice is named rather than silent.
+
+  **The exemption is a generalisation, not a literal reading of DEC-018.** DEC-018 says the duplicate
+  must stop being written, and it has. It does not say what to do about records already written,
+  which cannot be deleted. Purging their turns would report a disposal that did not happen, so they
+  are pinned and counted -- DEC-018's own rule applied to the record that motivated it. It
+  self-heals, since nothing written from now on carries an `answer` key.
+
+  **`answer` and `question` became `str | None` everywhere.** mypy propagated that to every consumer,
+  which is the point: the type now says what is true. One consequence is a new refusal --
+  `GET .../turns/{id}/stream` answers 410 for a disposed turn, where before it could only 404.
+
+  **The `apps/web` half was delegated** to a console agent and not taken on trust: its disclosure
+  diff and its change to the pinned registry total were read for weakening before anything was
+  committed, and the browser check below is this session's own. That agent found a real trap worth
+  recording -- `scripts/console_disclosures.py` enumerates a disclosure by matching a string literal
+  immediately after a classed props object, so copy hoisted into a module constant is invisible to
+  the registry and free to go stale without failing anything. Its first cut did exactly that and the
+  regeneration caught it.
+
+  **Stated exposure, unresolved:** the Vietnamese copy names "180 ngày", but the effective window is
+  `retention_class_configurations.retention_days`, not a constant. If that is ever published as a
+  different number, the sentence goes stale silently. `#/incidents` already carries the identical
+  exposure for 365 days. It is a DESCRIPTIVE disclosure with no machine binding -- the B-03 class of
+  problem this repository has open, not a new one.
+
+  Verification honesty: the adversarial pass was inline in the implementing session, the weaker form.
+evidence:
+  no_new_response_row_carries_payload: >-
+    `_turn_mapping` returns `{"turn_id": ...}` and nothing else.
+    `test_no_idempotency_record_carries_an_assistant_answer_any_more` posts a turn, replays it, then
+    reads every `command_idempotency_records.response` in that scope and asserts each has exactly
+    one key. Asserted on the table that held the duplicate, not on the function that wrote it.
+  replay_returns_the_identical_document: >-
+    The same test asserts the replay's turn_id, answer, intent, links and created_at all equal the
+    first call's, and that `replayed` is True. `test_service_post_turn_replays_and_conflicts`
+    continues to pass unchanged, including the conflict case where the same key arrives with a
+    different payload.
+
+    The rehydration goes through `get_scoped`, so a replay passes the same store-membership and
+    visibility check as any other read of that turn rather than trusting the identifier the record
+    handed back. `assistant_turns` is append-only, so what it assembles from cannot have changed
+    between the first call and the replay.
+  transcript_purge_removes_question_and_answer: >-
+    `test_the_transcript_is_disposable_now_that_the_answer_is_stored_only_once` records one turn 200
+    days old and one recent, runs the purge at the 180-day schedule, and asserts COMPLETED with
+    exactly one row affected, the stale turn's question and answer both None, its intent and actor
+    intact, and the recent turn's question untouched. `disposal_record()` returns the run and
+    DEC-008.
+
+    `test_a_transcript_whose_answer_survives_undeletably_is_held_back_not_purged` seeds a legacy
+    idempotency record in the pre-change shape and asserts COMPLETED_WITH_EXEMPTIONS, 1 disposed and
+    1 held back, with `command_idempotency_records` named in the run detail.
+  turn_visibility_rule_unchanged: >-
+    Not re-proved by new tests, and stated that way on purpose: the rule is already covered and the
+    change had to leave it alone. `test_list_recent_scopes_a_non_owner_to_their_own_turns`,
+    `test_get_scoped_makes_an_invisible_turn_indistinguishable_from_a_missing_one`,
+    `test_paging_backwards_is_exact_across_a_shared_timestamp` and
+    `test_a_cursor_the_caller_may_not_see_is_refused_rather_than_restarting_them` all pass unchanged
+    against the joined query.
+
+    The join is a LEFT JOIN, never an inner one, so a turn whose text was disposed of stays in the
+    history -- an inner join would have turned a retention schedule into silent data loss, and the
+    only symptom would have been a shorter page. The keyset predicate's `created_at` and `turn_id`
+    were qualified to `t.`, because `turn_id` became ambiguous the moment the payload table joined
+    and an unqualified reference would have failed at runtime rather than at review.
+  assistant_transcript_leaves_the_unsupported_set: >-
+    `UNSUPPORTED_STORE_REASONS` no longer contains ASSISTANT_TRANSCRIPT and
+    `DISPOSABLE_PAYLOAD_STORES` does. `test_every_retention_class_is_either_supported_or_explained`
+    asserts the two mappings still partition `RetentionClass` exactly, and
+    `test_the_supported_set_is_derived_from_the_registry_rather_than_maintained_beside_it` pins the
+    membership at three classes. `test_only_the_purge_role_may_delete_and_only_from_the_side_table`
+    derives its expected table list from the registry, so the DEC-020 grant cannot drift behind it.
+
+    Console: a purged turn renders the muted absent-value idiom `#/incidents` uses, and the stream
+    is not opened at all for one -- `EventSource` cannot read a status code, so a 410 would arrive
+    as an indistinguishable `onerror` and read as a stalled connection. 410 became its own
+    `DISPOSED` kind rather than falling through to CONFLICT's "the server refused because of current
+    state", which was false. Proven in a real browser: `verify_console_interaction.py` section 4 now
+    asserts the sentences render, the intent survives, and no bubble is left empty. 69 passed, 0
+    failed.
+  rollback_assessment: >-
+    Recorded in rollback_impact above, including that the two halves revert together and that a
+    code-only revert stops every assistant write.
+checks:
+  - command: uv run ruff check .
+    status: PASSED
+    result: All checks passed!
+  - command: uv run ruff format --check .
+    status: PASSED
+    result: 532 files already formatted
+  - command: uv run mypy apps packages
+    status: PASSED
+    result: 'Success: no issues found in 227 source files'
+  - command: uv run pytest --require-postgres-integration
+    status: PASSED
+    result: 1224 passed, 4 skipped, 0 failed (baseline 1215 before this item and HASH-KEYING-001)
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED
+    result: 19 JSON and 3 YAML contracts, 669 combinatorial cases, 44 API operations, 194 disclosures
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED
+    result: 127 source references, 28 decisions, 4 gates, 9 phases, 126 work items, 13 capabilities

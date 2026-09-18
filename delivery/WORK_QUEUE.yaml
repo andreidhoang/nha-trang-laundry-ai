@@ -2286,7 +2286,7 @@ items:
 - id: ASSISTANT-RETENTION-001
   phase: PRODUCTION_HARDENING
   title: Stop storing the assistant answer twice
-  status: IN_PROGRESS
+  status: COMPLETE
   priority: 227
   depends_on:
   - RETENTION-STORE-001
@@ -2320,7 +2320,7 @@ items:
 - id: HASH-KEYING-001
   phase: PRODUCTION_HARDENING
   title: Make the hashes that outlive a purge stop being reversible
-  status: PENDING
+  status: COMPLETE
   priority: 228
   depends_on:
   - RETENTION-STORE-001
@@ -2349,6 +2349,37 @@ items:
   - rollback_assessment
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-hash-keying-001.md
+- id: CLONE-AND-RUN-001
+  phase: PRODUCTION_HARDENING
+  title: One command from a fresh clone to a running application
+  status: COMPLETE
+  priority: 229
+  depends_on:
+  - HASH-KEYING-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/runbooks/local-development.md
+  - docs/runbooks/container-deployment.md
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  - docs/adr/0007-production-deployment-topology.md
+  contracts: []
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - one_command_reaches_a_running_console
+  - preflight_names_what_is_missing
+  - the_runbook_and_the_script_cannot_drift
+  - the_synthetic_stack_cannot_be_mistaken_for_a_shop
+  - a_bring_up_leaves_no_diff
+  - rollback_assessment
+  blocked_by_decisions: []
+  task_packet: context/tasks/TASK-clone-and-run-001.md
 - id: STORE-SCOPING-001
   phase: PRODUCTION_HARDENING
   title: Enforce staff store membership on the pre-existing console routes

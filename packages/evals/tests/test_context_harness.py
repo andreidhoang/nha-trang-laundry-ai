@@ -228,7 +228,13 @@ def test_context_drift_check_passes() -> None:
     # stored in a disposable side table on the `INCIDENT_EVIDENCE` schedule `DEC-008` signed. That
     # second answer was the risky one in September and is not now, because `RETENTION-STORE-001`
     # shipped the mechanism that can actually execute such a schedule the day before.
-    assert "126 work items" in result.stdout
+    # 127 with CLONE-AND-RUN-001, opened from the owner's goal of 2026-09-18: push the project to
+    # GitHub and have any machine pull it and run it. Most of that already worked -- the generators
+    # mint every credential fresh into gitignored directories, which is why a clone is safe to run
+    # at all -- but the path was eight commands in a runbook and nothing executed them on a clean
+    # checkout, so the first person to find a broken step would have been somebody opening a shop.
+    # `RUNBOOK-TRUTH-001` and `-002` are already in this list for that exact failure.
+    assert "127 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

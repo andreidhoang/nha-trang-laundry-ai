@@ -94,7 +94,18 @@ contracts, environment names or Compose topology. The production shop-till runbo
 
 ## 4. Reproduce the application with synthetic data
 
-The localhost demo needs no trusted certificate or `/etc/hosts` entry:
+One command, from a fresh clone, on any machine (`CLONE-AND-RUN-001`):
+
+```bash
+uv run python scripts/start_demo.py
+```
+
+It runs the sequence below in order, stops at the first failure and names it, and prints the console
+URL once the stack verifies healthy. `--preflight-only` checks the prerequisites and changes
+nothing. `packages/evals/tests/test_start_demo.py` keeps the script and `docs/runbooks/demo-stack.md`
+from drifting apart.
+
+The individual steps, for when one of them has failed and you want to run it alone:
 
 ```bash
 docker network create --internal nha-trang-laundry-staging-database-private

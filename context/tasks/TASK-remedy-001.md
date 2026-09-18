@@ -56,7 +56,7 @@ answer.
 | `fault_decided`, `remedy_decided` columns | `customer_incidents`, migration `0014` lines 12-13 | both default FALSE and nothing ever sets them |
 | the columns you may update | `protect_customer_incident()`, migration `0039:53` | the guard freezes id, store, order, message, contact scope, category, evidence hash and opened_at. It permits exactly `status`, `fault_decided`, `remedy_decided`, `affected_policy_version`. The remedy flow fits inside that permission; widening the guard is not this item's business. |
 | incident status ladder | `0014:11` | `OPEN` → `UNDER_REVIEW` → `CLOSED` |
-| **the rewash production mechanic** | `domain/orders.py:276`, `db/orders.py:584-610`, migration `0037` | `EXCEPTION` → backward transition to `IN_PROCESS` already works, and `0037` already handles the ready-clock for a rewashed order: "an order being rewashed is not finished, so the clock must not still name a completion". `DEC-004` is already cited at `orders.py:276`. **Do not rebuild this.** `FREE_REWASH` records the authority, the fault finding and the window, then triggers the transition that exists. |
+| **the rewash production mechanic** | `domain/orders.py:276`, `db/orders.py:584-610`, migration `0037` | `EXCEPTION` → backward transition to `IN_PROCESS` already works, and `0037` already handles the ready-clock for a rewashed order: "an order being rewashed is not finished, so the clock must not still name a completion". `DEC-004` is already cited at `orders.py:276`. **Do not rebuild this.** `FREE_REWASH` records the authority, the fault finding and the window. **Corrected 2026-09-18:** it does *not* then trigger that transition. `RELEASED` is terminal in `transition_production`, and the 7-day rewash window runs *from* `RELEASED` — so every in-window rewash is on an order whose production dimension cannot legally move. The guard was not widened. Reopening production on a released order is a state-machine change, and probably a decision of its own; a rewash is recorded and authorised here, and carried out as new work. |
 | the remedy event vocabulary | `packages/evals/.../synthetic_incidents.py:135` | `REFUND_EXECUTED`, `CREDIT_EXECUTED`, `REWASH_COMMANDED`. Use exactly these names; the eval already queries `domain_events` for them and currently proves the count is zero. |
 | the quote-adjustment primitive | `domain/quotes.py:89` | `QuoteAdjustmentSnapshot`, see "A credit is a quote adjustment" below |
 | the approval | `approvals.py:107`, `:125` | `APPROVE_REMEDY` → `_OWNER_FINANCIAL` → `REMEDY_PROPOSAL` |
@@ -142,10 +142,31 @@ ticket. This is deliberately a bearer instrument, like a paper voucher. It is re
 once**, enforced by the server, and an unredeemed credit expires with the order financial record's
 retention schedule.
 
-**Windows run from recorded events, not from staff input.** 7 days from pickup is 7 days from
-`RELEASED` on the production dimension; 24 hours from receipt is from the recorded intake event. Both
-timestamps already exist on the order. An out-of-window request is refused **naming the window that
-was missed**, so staff can tell the customer why rather than only that.
+**Windows run from recorded events, not from staff input.** An out-of-window request is refused
+**naming the window that was missed**, so staff can tell the customer why rather than only that.
+
+> **Corrected 2026-09-18, during implementation.** This paragraph originally said the 24-hour defect
+> window runs "from the recorded intake event" and that "both timestamps already exist on the order".
+> Both statements were wrong, and the implementing engineer was right to refuse them.
+>
+> *Intake is the wrong anchor.* In this codebase intake is **shop-side receipt** — the moment the
+> shop takes the bag. A 24-hour window from there would close before the laundry is washed, making
+> damage compensation unreachable by construction. `DEC-004` ratifies
+> `CUSTOMER_SERVICE_POLICY_DRAFT.md` §5 as written, and that line reads *"Mục tiêu báo lỗi nhìn thấy
+> được: trong 24 giờ sau khi nhận đồ"* — **the customer** receiving, not the shop. Both windows run
+> from the handover back to the customer.
+>
+> *Neither timestamp existed.* `orders` carried `production_accepted_at` (intake accepted),
+> `production_ready_at` (work finished) and `closed_at` (order completed). None is the handover, and
+> `production_ready_at` can precede it by days — a washed order waiting overnight for its owner is
+> exactly the case migration `0037` already had to reason about. Migration `0042` adds
+> `orders.production_released_at`, write-once when production first records `RELEASED`; a delivered
+> order uses the succeeded `RETURN` leg instead.
+>
+> *The honest consequence.* Every order released before `0042` carries `NULL`, and a remedy against
+> one refuses with `REMEDY_WINDOW_EVIDENCE_MISSING`. That is what "we do not know when this customer
+> got their laundry" actually is. Back-filling from the row's creation, the settlement or `now` would
+> invent a measurement nobody made.
 
 **Configuration, not constants.** The six figures are published as one immutable, hash-addressed
 configuration document through the CONFIG-001 primitive, exactly as the pricebook is. Invariant 11:

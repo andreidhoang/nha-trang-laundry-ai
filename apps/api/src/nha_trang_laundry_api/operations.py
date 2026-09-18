@@ -70,6 +70,14 @@ from nha_trang_laundry_db.quotes import (
     QuoteStateError,
     QuoteSummary,
 )
+from nha_trang_laundry_db.remedies import (
+    RemedyCreditRedemptionCommand,
+    RemedyCreditRepository,
+    RemedyExecutionCommand,
+    RemedyOptions,
+    RemedyProposalCommand,
+    RemedyProposalRepository,
+)
 from nha_trang_laundry_db.settlement import (
     CollectedToday,
     SettlementCommand,
@@ -127,6 +135,7 @@ from nha_trang_laundry_domain.range_prices import (
     range_price_rendered_document,
     resolve_range_prices,
 )
+from nha_trang_laundry_domain.remedies import RemedyKind
 
 from nha_trang_laundry_api.auth import AuthSettings
 
@@ -263,6 +272,58 @@ class StoredIncidentResult:
 
 
 @dataclass(frozen=True, slots=True)
+class StoredRemedyProposalResult:
+    """A recorded remedy proposal and what the server decided about it. `REMEDY-001`.
+
+    `outcome` is `REQUIRE_HUMAN` for exactly one case -- a loss, which `DEC-004` carries forward as
+    undecided -- and `reason_code` then says `LOSS_POLICY_UNRESOLVED`. Both are on the success
+    response rather than an error, because the complaint *was* recorded: the record is the outcome.
+    """
+
+    proposal_id: UUID
+    incident_id: UUID
+    order_id: UUID
+    kind: str
+    status: str
+    outcome: str
+    proposal_hash: str
+    policy_version: int
+    amount_vnd: int | None
+    ceiling_vnd: int | None
+    window_opened_at: str | None
+    window_closes_at: str | None
+    approval_id: UUID | None
+    reason_code: str | None
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StoredRemedyExecutionResult:
+    proposal_id: UUID
+    incident_id: UUID
+    order_id: UUID
+    kind: str
+    status: str
+    #: `REWASH_COMMANDED` or `CREDIT_EXECUTED`, the domain-event names the incident eval queries.
+    event_type: str
+    credit_id: UUID | None
+    amount_vnd: int | None
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StoredCreditRedemptionResult:
+    credit_id: UUID
+    quote_id: UUID
+    revision: int
+    snapshot_hash: str
+    credit_vnd: int
+    net_service_subtotal_vnd: int
+    display_total_vnd: int | None
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class StoredOrderRequestResult:
     """A committed intake draft, described by what the repository persisted."""
 
@@ -338,6 +399,8 @@ class OperationsService:
         self._approvals = ApprovalRepository()
         self._manual_sends = ManualSendRepository()
         self._incidents = IncidentRepository()
+        self._remedies = RemedyProposalRepository()
+        self._remedy_credits = RemedyCreditRepository()
         self._idempotency = IdempotencyRepository()
 
     def create_order(
@@ -1685,6 +1748,162 @@ class OperationsService:
             )
         return _stored_incident_result(result.response, replayed=result.replayed)
 
+    # --- REMEDY-001 --------------------------------------------------------------------------
+    #
+    # Four methods and no arithmetic. Every ceiling, window and rate is decided by
+    # `nha_trang_laundry_domain.remedies` from a published `REMEDY_POLICY` version; this layer
+    # resolves a connection, forwards, and returns what the repository gives back.
+
+    def remedy_options(
+        self, *, store_id: UUID, incident_id: UUID, principal: StaffPrincipal
+    ) -> RemedyOptions:
+        """What the server would allow for this incident, before anybody types anything.
+
+        The form has to show the kind, the computed ceiling, the window and whether the owner will
+        be needed *first*. Staff discovering after filling a form in that the owner is required is
+        the failure this read exists to prevent, and it is a read: nothing is written and nothing is
+        reserved by asking.
+        """
+
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return self._remedies.options(
+                cursor, store_id=store_id, incident_id=incident_id, principal=principal
+            )
+
+    def propose_remedy(
+        self,
+        *,
+        store_id: UUID,
+        incident_id: UUID,
+        kind: RemedyKind,
+        store_fault_attested: bool,
+        order_line_id: str | None,
+        amount_vnd: int | None,
+        attested_late_by_minutes: int | None,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> StoredRemedyProposalResult:
+        """Record what a staff member proposed, after the server checked it against `DEC-004`."""
+
+        proposed_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-remedy-propose:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    # The amount and the line are part of what makes this request this request: the
+                    # same key with a different figure must conflict rather than replay the old one.
+                    payload={
+                        "store_id": str(store_id),
+                        "incident_id": str(incident_id),
+                        "kind": kind.value,
+                        "store_fault_attested": store_fault_attested,
+                        "order_line_id": order_line_id,
+                        "amount_vnd": amount_vnd,
+                        "attested_late_by_minutes": attested_late_by_minutes,
+                    },
+                    occurred_at=proposed_at,
+                ),
+                lambda: _remedy_proposal_mapping(
+                    self._remedies.propose(
+                        connection,
+                        RemedyProposalCommand(
+                            store_id=store_id,
+                            incident_id=incident_id,
+                            kind=kind,
+                            store_fault_attested=store_fault_attested,
+                            principal=principal,
+                            correlation_id=uuid4(),
+                            order_line_id=order_line_id,
+                            amount_vnd=amount_vnd,
+                            attested_late_by_minutes=attested_late_by_minutes,
+                            proposed_at=proposed_at,
+                        ),
+                    )
+                ),
+            )
+        return _stored_remedy_proposal_result(result.response, replayed=result.replayed)
+
+    def execute_remedy(
+        self, *, proposal_id: UUID, idempotency_key: str, principal: StaffPrincipal
+    ) -> StoredRemedyExecutionResult:
+        """Carry out an authorised remedy: issue the credit, or command the rewash."""
+
+        executed_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-remedy-execute:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={"proposal_id": str(proposal_id)},
+                    occurred_at=executed_at,
+                ),
+                lambda: _remedy_execution_mapping(
+                    self._remedies.execute(
+                        connection,
+                        RemedyExecutionCommand(
+                            proposal_id=proposal_id,
+                            principal=principal,
+                            correlation_id=uuid4(),
+                            executed_at=executed_at,
+                        ),
+                    )
+                ),
+            )
+        return _stored_remedy_execution_result(result.response, replayed=result.replayed)
+
+    def redeem_remedy_credit(
+        self,
+        *,
+        store_id: UUID,
+        quote_id: UUID,
+        credit_id: UUID,
+        expected_current_revision: int,
+        expected_snapshot_hash: str,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> StoredCreditRedemptionResult:
+        """Spend one credit against the next bill, as a revision that carries its discount."""
+
+        redeemed_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-remedy-redeem:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={
+                        "store_id": str(store_id),
+                        "quote_id": str(quote_id),
+                        "credit_id": str(credit_id),
+                        "expected_current_revision": expected_current_revision,
+                        "expected_snapshot_hash": expected_snapshot_hash,
+                    },
+                    occurred_at=redeemed_at,
+                ),
+                lambda: _credit_redemption_mapping(
+                    self._remedy_credits.redeem(
+                        connection,
+                        RemedyCreditRedemptionCommand(
+                            store_id=store_id,
+                            quote_id=quote_id,
+                            credit_id=credit_id,
+                            expected_current_revision=expected_current_revision,
+                            expected_snapshot_hash=expected_snapshot_hash,
+                            principal=principal,
+                            correlation_id=uuid4(),
+                            redeemed_at=redeemed_at,
+                        ),
+                    )
+                ),
+            )
+        return _stored_credit_redemption_result(result.response, replayed=result.replayed)
+
     # --- SETTLEMENT-001 ----------------------------------------------------------------------
 
     def record_settlement(
@@ -2077,6 +2296,113 @@ def _stored_incident_result(value: dict[str, object], *, replayed: bool) -> Stor
         bool(value["remedy_decided"]),
         replayed,
     )
+
+
+def _remedy_proposal_mapping(value: Any) -> dict[str, object]:
+    """Flatten a stored proposal for the idempotency record, which holds JSON and not objects."""
+
+    return {
+        "proposal_id": str(value.proposal_id),
+        "incident_id": str(value.incident_id),
+        "order_id": str(value.order_id),
+        "kind": value.kind.value,
+        "status": value.status.value,
+        "outcome": value.outcome.value,
+        "proposal_hash": value.proposal_hash,
+        "policy_version": value.policy_version,
+        "amount_vnd": value.amount_vnd,
+        "ceiling_vnd": value.ceiling_vnd,
+        "window_opened_at": _isoformat(value.window_opened_at),
+        "window_closes_at": _isoformat(value.window_closes_at),
+        "approval_id": None if value.approval_id is None else str(value.approval_id),
+        "reason_code": value.reason_code,
+    }
+
+
+def _stored_remedy_proposal_result(
+    value: dict[str, object], *, replayed: bool
+) -> StoredRemedyProposalResult:
+    return StoredRemedyProposalResult(
+        proposal_id=UUID(str(value["proposal_id"])),
+        incident_id=UUID(str(value["incident_id"])),
+        order_id=UUID(str(value["order_id"])),
+        kind=str(value["kind"]),
+        status=str(value["status"]),
+        outcome=str(value["outcome"]),
+        proposal_hash=str(value["proposal_hash"]),
+        policy_version=int(str(value["policy_version"])),
+        amount_vnd=_optional_vnd(value["amount_vnd"]),
+        ceiling_vnd=_optional_vnd(value["ceiling_vnd"]),
+        window_opened_at=_optional_text(value["window_opened_at"]),
+        window_closes_at=_optional_text(value["window_closes_at"]),
+        approval_id=(None if value["approval_id"] is None else UUID(str(value["approval_id"]))),
+        reason_code=_optional_text(value["reason_code"]),
+        replayed=replayed,
+    )
+
+
+def _remedy_execution_mapping(value: Any) -> dict[str, object]:
+    return {
+        "proposal_id": str(value.proposal_id),
+        "incident_id": str(value.incident_id),
+        "order_id": str(value.order_id),
+        "kind": value.kind.value,
+        "status": value.status.value,
+        "event_type": value.event_type,
+        "credit_id": None if value.credit_id is None else str(value.credit_id),
+        "amount_vnd": value.amount_vnd,
+    }
+
+
+def _stored_remedy_execution_result(
+    value: dict[str, object], *, replayed: bool
+) -> StoredRemedyExecutionResult:
+    return StoredRemedyExecutionResult(
+        proposal_id=UUID(str(value["proposal_id"])),
+        incident_id=UUID(str(value["incident_id"])),
+        order_id=UUID(str(value["order_id"])),
+        kind=str(value["kind"]),
+        status=str(value["status"]),
+        event_type=str(value["event_type"]),
+        credit_id=None if value["credit_id"] is None else UUID(str(value["credit_id"])),
+        amount_vnd=_optional_vnd(value["amount_vnd"]),
+        replayed=replayed,
+    )
+
+
+def _credit_redemption_mapping(value: Any) -> dict[str, object]:
+    return {
+        "credit_id": str(value.credit_id),
+        "quote_id": str(value.quote_id),
+        "revision": value.revision,
+        "snapshot_hash": value.snapshot_hash,
+        "credit_vnd": value.credit_vnd,
+        "net_service_subtotal_vnd": value.net_service_subtotal_vnd,
+        "display_total_vnd": value.display_total_vnd,
+    }
+
+
+def _stored_credit_redemption_result(
+    value: dict[str, object], *, replayed: bool
+) -> StoredCreditRedemptionResult:
+    return StoredCreditRedemptionResult(
+        credit_id=UUID(str(value["credit_id"])),
+        quote_id=UUID(str(value["quote_id"])),
+        revision=int(str(value["revision"])),
+        snapshot_hash=str(value["snapshot_hash"]),
+        credit_vnd=int(str(value["credit_vnd"])),
+        net_service_subtotal_vnd=int(str(value["net_service_subtotal_vnd"])),
+        display_total_vnd=_optional_vnd(value["display_total_vnd"]),
+        replayed=replayed,
+    )
+
+
+def _isoformat(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat()
+
+
+def _optional_text(value: object) -> str | None:
+    return None if value is None else str(value)
 
 
 def _stored_order_request_result(

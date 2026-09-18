@@ -72,6 +72,12 @@ const REASON_TO_WARNING = {
   SLOT_APPROVAL_REQUIRED: WARNING.CAPACITY_NOT_CONFIRMED,
   CUSTOMER_RECONFIRMATION_REQUIRED: WARNING.CUSTOMER_RECONFIRMATION,
   RANGE_PRICE_REQUIRES_HUMAN: WARNING.HUMAN_REQUIRED,
+  // `RangePriceRefusal`, from RANGE-PRICE-001. All three are the deterministic engine refusing an
+  // amount rather than pricing it, which is `HUMAN REQUIRED` in the mandated vocabulary: a person
+  // has to supply a different number, or republish the pricebook. None of them is a price.
+  RANGE_PRICE_OUT_OF_BAND: WARNING.HUMAN_REQUIRED,
+  RANGE_PRICE_NOT_APPLICABLE: WARNING.HUMAN_REQUIRED,
+  RANGE_PRICE_PRICEBOOK_MISMATCH: WARNING.HUMAN_REQUIRED,
   PRICE_RULE_UNRESOLVED: WARNING.HUMAN_REQUIRED,
   MEASUREMENT_POLICY_UNRESOLVED: WARNING.HUMAN_REQUIRED,
   HUMAN_APPROVAL_REQUIRED: WARNING.HUMAN_REQUIRED,
@@ -99,8 +105,28 @@ export const REASON_NOTE = {
   PROMOTION_NOT_EVALUATED: "Chưa xét khuyến mãi cho bản báo giá này.",
   MISSING_REQUIRED_FACT: "Thiếu dữ kiện bắt buộc; máy chủ không đoán.",
   RANGE_PRICE_REQUIRES_HUMAN: "Dịch vụ này có khoảng giá; nhân viên phải chọn giá chính xác.",
+  // `RangePriceRefusal`, exactly as packages/domain/.../range_prices.py names them. Each says what
+  // the counter should do next, because a staff member standing in front of a customer needs an
+  // action and not only a refusal — and because none of these three is fixable by retyping harder.
+  RANGE_PRICE_OUT_OF_BAND:
+    "Số tiền nằm ngoài khoảng giá đã niêm yết cho dòng này. Khoảng lấy từ đúng bản báo giá khách " +
+    "đã nghe, và cả hai đầu đều nhận. Không có gì được ghi: nhập lại một số trong khoảng, hoặc " +
+    "báo chủ tiệm nếu khoảng giá cần đổi.",
+  RANGE_PRICE_NOT_APPLICABLE:
+    "Dòng này đã có giá cố định trong bảng giá, nên không chốt giá trong khoảng cho nó được. " +
+    "Kiểm lại xem bạn có gửi số cho đúng dòng hay không.",
+  RANGE_PRICE_PRICEBOOK_MISMATCH:
+    "Khoảng giá được đọc từ một phiên bản bảng giá khác với phiên bản đã dùng để tính bản báo giá " +
+    "này. Bảng giá đã công bố là bất biến, nên bản cũ vẫn giữ khoảng cũ. Tải lại bản báo giá.",
   PRICE_RULE_UNRESOLVED: "Không có quy tắc giá áp dụng được cho dòng này.",
   MEASUREMENT_POLICY_UNRESOLVED: "Chưa có chính sách đo lường được công bố cho cơ sở khối lượng này.",
+  // `core/errors.js` mints this code itself for a 409 whose detail starts `HUMAN_APPROVAL_REQUIRED`,
+  // and the domain emits it for a price submitted with no approval envelope behind it. It reached
+  // `reasonCodeList` as a bare English token in both cases, which is the one thing this table
+  // exists to stop.
+  HUMAN_APPROVAL_REQUIRED:
+    "Việc này cần một người thứ hai duyệt trước, và chưa có phiếu duyệt nào hợp lệ gắn với đúng " +
+    "nội dung đang gửi. Không có gì được ghi. Mở màn hình Duyệt để xem phiếu, hoặc gửi lại đề nghị.",
   AMBIGUOUS_SERVICE: "Mã dịch vụ khớp nhiều mục; cần chọn rõ.",
   INCOMPATIBLE_UNIT: "Đơn vị không dùng được với dịch vụ này.",
   VALIDATION_ERROR: "Dữ liệu vào không hợp lệ với quy tắc miền.",

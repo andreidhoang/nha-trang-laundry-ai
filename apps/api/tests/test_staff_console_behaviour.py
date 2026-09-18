@@ -26,6 +26,13 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 WEB = ROOT / "apps" / "web"
 DOMAIN_SETTLEMENT = ROOT / "packages/domain/src/nha_trang_laundry_domain/settlement.py"
+DOMAIN_RANGE_PRICES = ROOT / "packages/domain/src/nha_trang_laundry_domain/range_prices.py"
+
+#: `DC_AO_DAI_TRADITIONAL` as `templates/services-pricebook.csv` publishes it, and the worked
+#: example in the task packet and in `CORE_OPERATIONS_COMPLETION_SPEC_V1.md` §3. Held here so the
+#: client-side checks below are exercised against a real published band rather than a round number
+#: chosen to make them pass.
+AO_DAI_BAND = (80_000, 240_000)
 
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None, reason="node is not installed on this host"
@@ -167,6 +174,156 @@ def test_every_settlement_refusal_the_counter_can_meet_is_glossed_for_them() -> 
     assert not missing, f"settlement refusals with no Vietnamese note in i18n.js: {missing}"
 
 
+def test_both_ends_of_a_published_band_are_accepted_and_neither_step_outside_is() -> None:
+    """The console's copy of the bound, checked against the band the pricebook really publishes.
+
+    This is the client half of the property the domain suite pins over all twenty range services.
+    It matters separately because the client check is what a staff member meets *first*: the server
+    is the authority and refuses `RANGE_PRICE_OUT_OF_BAND` regardless, but a console that warned at
+    80.000 ₫ -- a price the shop charges -- would teach the counter to ignore the warning, and then
+    the one that mattered would be ignored too.
+
+    Both ends are inside because the owner published both. `PriceBand` says so in as many words.
+    """
+
+    minimum, maximum = AO_DAI_BAND
+    cases = [
+        str(minimum),
+        str(maximum),
+        "150000",
+        "150.000",
+        str(minimum - 1),
+        str(maximum + 1),
+        "0",
+        "250000",
+        "150,000",
+        "170000.5",
+        "",
+        "   ",
+        "abc",
+    ]
+    got = _run(
+        "import { bandVerdict } from './src/core/bands.js';\n"
+        f"const cases = {json.dumps(cases)};\n"
+        f"const band = {json.dumps(list(AO_DAI_BAND))};\n"
+        "console.log(JSON.stringify(cases.map((value) => bandVerdict(value, band[0], band[1]))));\n"
+    )
+    assert [item["state"] for item in got] == [
+        "INSIDE",
+        "INSIDE",
+        "INSIDE",
+        "INSIDE",
+        "BELOW",
+        "ABOVE",
+        "BELOW",
+        "ABOVE",
+        "NOT_AN_AMOUNT",
+        "NOT_AN_AMOUNT",
+        "EMPTY",
+        "EMPTY",
+        "NOT_AN_AMOUNT",
+    ]
+    # `150.000` is the amount the console itself prints, and it has to read back as the same
+    # number the customer was told -- the defect `parseDong` was rewritten to end.
+    assert got[2]["amount"] == got[3]["amount"] == 150_000
+    # An empty box is empty. Not the minimum, not the maximum, not the midpoint: the whole item
+    # exists to keep a named person responsible for the number.
+    assert got[10]["amount"] is None and got[11]["amount"] is None
+
+
+def test_the_console_refuses_to_send_a_half_closed_revision() -> None:
+    """`close_range_prices` refuses the whole revision when one band is still open.
+
+    The console asks the same question before it sends, so the operator is told which line is
+    missing instead of pressing and reading `RANGE_PRICE_REQUIRES_HUMAN` back about the revision.
+    A revision with no banded lines at all is not ready either -- there would be nothing to close,
+    and answering "ready" would let a caller send an empty attestation.
+    """
+
+    minimum, maximum = AO_DAI_BAND
+    lines = [
+        {
+            "service_code": "DC_AO_DAI_TRADITIONAL",
+            "band_minimum_vnd": minimum,
+            "band_maximum_vnd": maximum,
+        },
+        {"service_code": "DC_FUR_COAT", "band_minimum_vnd": 200_000, "band_maximum_vnd": 400_000},
+    ]
+    got = _run(
+        "import { bandReadiness } from './src/core/bands.js';\n"
+        f"const lines = {json.dumps(lines)};\n"
+        "const half = bandReadiness(lines, {DC_AO_DAI_TRADITIONAL: '150000'});\n"
+        "const whole = bandReadiness(lines, "
+        "{DC_AO_DAI_TRADITIONAL: '150000', DC_FUR_COAT: '250000'});\n"
+        "const outside = bandReadiness(lines, "
+        "{DC_AO_DAI_TRADITIONAL: '150000', DC_FUR_COAT: '500000'});\n"
+        "const none = bandReadiness([], {});\n"
+        "console.log(JSON.stringify({half, whole, outside, none}));\n"
+    )
+    assert got["half"]["ready"] is False
+    assert got["half"]["blocked"] == [{"serviceCode": "DC_FUR_COAT", "state": "EMPTY"}]
+    assert got["whole"]["ready"] is True and got["whole"]["blocked"] == []
+    assert got["outside"]["ready"] is False
+    assert got["outside"]["blocked"] == [{"serviceCode": "DC_FUR_COAT", "state": "ABOVE"}]
+    assert got["none"]["ready"] is False
+
+
+def test_the_console_never_checks_an_amount_against_a_band_it_was_not_given() -> None:
+    """A missing bound is "unknown", never "fine".
+
+    `QuoteLineView` promises that `net_amount_vnd` and the band are mutually exclusive and never
+    both absent, so an unbounded banded line means the read model or the screen is wrong. Treating
+    that as acceptable would let an unchecked amount reach the propose button wearing a green
+    field, and the operator would have no way to know the check had not run.
+    """
+
+    got = _run(
+        "import { bandVerdict } from './src/core/bands.js';\n"
+        "const cases = [bandVerdict('150000', null, null), "
+        "bandVerdict('150000', 80000, null), bandVerdict('150000', null, 240000)];\n"
+        "console.log(JSON.stringify(cases.map((item) => item.state)));\n"
+    )
+    assert got == ["UNBOUNDED", "UNBOUNDED", "UNBOUNDED"]
+
+
+def test_every_range_price_refusal_the_counter_can_meet_is_glossed_for_them() -> None:
+    """The settlement rule, applied to the second vocabulary that decides what a customer pays.
+
+    `RangePriceRefusal` is read out of the domain rather than restated, so a fourth member added
+    later fails here instead of reaching a counter as a bare English token. Two older codes that
+    reach the same panel by the same route are asserted alongside it:
+    `RANGE_PRICE_REQUIRES_HUMAN`, which the engine answers for a line nobody has priced, and
+    `HUMAN_APPROVAL_REQUIRED`, which `core/errors.js` mints itself for a 409 and which nothing
+    glossed until this item.
+    """
+
+    domain = DOMAIN_RANGE_PRICES.read_text(encoding="utf-8")
+    block = domain.split("class RangePriceRefusal(StrEnum):", 1)[1].split("\n\n\n", 1)[0]
+    members = [
+        value
+        for _name, value in re.findall(
+            r'^\s{4}([A-Z][A-Z0-9_]+) = "([A-Z0-9_]+)"', block, re.MULTILINE
+        )
+    ]
+    assert members, "the refusal enum was not found; this test is reading the wrong file"
+
+    glossed = _run(
+        "import { REASON_NOTE, warningFor } from './src/core/i18n.js';\n"
+        "const codes = Object.keys(REASON_NOTE);\n"
+        "const warnings = Object.fromEntries("
+        "codes.map((code) => [code, warningFor(code).token]));\n"
+        "console.log(JSON.stringify({codes, warnings}));\n"
+    )
+    expected = [*members, "RANGE_PRICE_REQUIRES_HUMAN", "HUMAN_APPROVAL_REQUIRED"]
+    missing = sorted({code for code in expected if code not in glossed["codes"]})
+    assert not missing, f"range-price refusals with no Vietnamese note in i18n.js: {missing}"
+
+    # And each is badged as needing a person. None of the three is a transient fault, and none is
+    # fixable by retyping the same number harder -- `HUMAN REQUIRED` is the mandated token for that.
+    for code in members:
+        assert glossed["warnings"][code] == "HUMAN REQUIRED", code
+
+
 def test_the_incident_scope_and_evidence_hash_are_produced_and_only_by_the_server() -> None:
     """The inverse of the test this replaces, which is what that test asked for.
 
@@ -257,6 +414,14 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Phát phiếu",
         "Ghi nhận tiếp nhận",
         "Tính giá",
+        # RANGE-PRICE-001. The three presses that close a published band, in the order the counter
+        # meets them. They are pinned for the same reason as the rest: the guide is printed and
+        # taped next to the till, and this procedure is the one a staff member has never done
+        # before -- if the words on the page and the words on the screen drift apart, they will
+        # fall back to the paper ticket the guide used to tell them to keep.
+        "Lập bản khoảng giá",
+        "Gửi giá cho chủ duyệt",
+        "Áp dụng giá đã duyệt",
         "Khách đã chốt giá",
         "Tạo đơn",
         "Đã duyệt lịch",

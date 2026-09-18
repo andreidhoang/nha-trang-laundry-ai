@@ -34,6 +34,7 @@ import socketserver
 import sys
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from playwright.sync_api import Route, sync_playwright
@@ -147,8 +148,115 @@ PRICEBOOK_SERVICES = [
         "category": "ironing",
         "unit": "ITEM",
     },
+    # `RANGE-PRICE-001`. One of the twenty services the published pricebook prices by inspection,
+    # with the band the owner really published: `templates/services-pricebook.csv` carries
+    # `DC_AO_DAI_TRADITIONAL,dry_cleaning,"Áo dài truyền thống",bộ,80000,240000`. Section 10 closes
+    # this band, so the fixture is the real row rather than a round number chosen to pass.
+    {
+        "code": "DC_AO_DAI_TRADITIONAL",
+        "display_name": "Áo dài truyền thống",
+        "category": "dry_cleaning",
+        "unit": "SET",
+    },
 ]
 MISSING_REQUEST = "99999999-9999-4999-8999-999999999999"
+
+#: The quote section 10 drives, and the three responses the band flow needs.
+#:
+#: The shapes are `QuoteRevisionResponse`, `QuoteRevisionDetailResponse` and
+#: `RangePriceProposalResponse` from `main.py`, field for field. What matters most about them is
+#: what the first one does *not* carry: a revision presented as a band has no single service
+#: subtotal, and the two scalar fields that look like one are the range maximum under a scalar
+#: name. The stub sends the maximum in both, exactly as the server does, so the check below that
+#: the console withholds them is checking against the real hazard.
+BAND_QUOTE = "55555555-6666-4333-8444-999999999999"
+BAND_SNAPSHOT = "JCS-SHA256-V1:" + "a" * 64
+BAND_APPROVAL = "77777777-8888-4333-8444-bbbbbbbbbbbb"
+AO_DAI_MIN_VND = 80_000
+AO_DAI_MAX_VND = 240_000
+CHOSEN_VND = 150_000
+
+BAND_REVISION = {
+    "quote_id": BAND_QUOTE,
+    "revision": 1,
+    "row_version": 1,
+    "finality": "RANGE",
+    "status": "REVIEW_REQUIRED",
+    "snapshot_hash": BAND_SNAPSHOT,
+    "list_service_subtotal_vnd": AO_DAI_MAX_VND,
+    "net_service_subtotal_vnd": AO_DAI_MAX_VND,
+    "display_total_min_vnd": AO_DAI_MIN_VND,
+    "display_total_max_vnd": AO_DAI_MAX_VND,
+    "reason_codes": ["RANGE_PRICE_REQUIRES_HUMAN", "TAX_TREATMENT_UNVERIFIED"],
+    "required_approvals": [],
+    "replayed": False,
+}
+
+BAND_DETAIL = {
+    "quote_id": BAND_QUOTE,
+    "revision": 1,
+    "row_version": 1,
+    "finality": "RANGE",
+    "status": "REVIEW_REQUIRED",
+    "snapshot_hash": BAND_SNAPSHOT,
+    "display_total_min_vnd": AO_DAI_MIN_VND,
+    "display_total_max_vnd": AO_DAI_MAX_VND,
+    "valid_until": "2026-09-19T03:00:00+00:00",
+    "reason_codes": ["RANGE_PRICE_REQUIRES_HUMAN"],
+    "lines": [
+        {
+            "line_id": "line-1",
+            "service_code": "DC_AO_DAI_TRADITIONAL",
+            "quantity": "1",
+            "unit": "SET",
+            "price_kind": "RANGE",
+            "net_amount_vnd": None,
+            "band_minimum_vnd": AO_DAI_MIN_VND,
+            "band_maximum_vnd": AO_DAI_MAX_VND,
+        }
+    ],
+}
+
+#: The revision `apply_range_prices` writes: an exact price nobody has agreed to yet. `status` is
+#: `APPROVED`, not `ACCEPTED_FINAL`, and the difference is the whole of the check at the end of
+#: section 10 -- the console used to read `finality === "APPROVED_EXACT"` as "the customer has
+#: agreed", which was exact only while nothing else could produce that finality.
+CLOSED_REVISION = {
+    "quote_id": BAND_QUOTE,
+    "revision": 2,
+    "row_version": 2,
+    "finality": "APPROVED_EXACT",
+    "status": "APPROVED",
+    "snapshot_hash": "JCS-SHA256-V1:" + "d" * 64,
+    "list_service_subtotal_vnd": CHOSEN_VND,
+    "net_service_subtotal_vnd": CHOSEN_VND,
+    "display_total_min_vnd": CHOSEN_VND,
+    "display_total_max_vnd": CHOSEN_VND,
+    "reason_codes": ["TAX_TREATMENT_UNVERIFIED"],
+    "required_approvals": [],
+    "replayed": False,
+}
+
+
+def range_price_approval() -> dict[str, object]:
+    """The raised envelope, expiring ten minutes from now.
+
+    Built at call time rather than as a constant: `_OWNER_FINANCIAL` is a ten-minute TTL and the
+    console renders the time remaining, so a fixed timestamp would make the countdown read "đã hết
+    hạn" the day after this file was written and the section would fail for the wrong reason.
+    """
+
+    return {
+        "approval_request_id": BAND_APPROVAL,
+        "status": "REQUESTED",
+        "envelope_hash": "JCS-SHA256-V1:" + "b" * 64,
+        "required_role": "OWNER_ADMIN",
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+        "resource_version": 1,
+        "snapshot_hash": BAND_SNAPSHOT,
+        "rendered_hash": "JCS-SHA256-V1:" + "c" * 64,
+        "replayed": False,
+    }
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -342,6 +450,52 @@ with sync_playwright() as playwright:
                 )
                 return
             body = [ORDER_REQUEST]
+        elif "/range-prices" in url:
+            # Two routes share this prefix and the suffix is what tells them apart: the bare path
+            # raises the envelope, the one carrying an approval id applies it. Both bodies are
+            # captured, because the property section 10 exists to prove is that the amounts sent
+            # the second time are byte-identical to the amounts the owner signed -- the console
+            # holds them, nothing on the server does.
+            state.setdefault("range_posts", []).append(route.request.post_data)
+            applying = not url.split("?")[0].rstrip("/").endswith("range-prices")
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(CLOSED_REVISION if applying else range_price_approval()),
+            )
+            return
+        elif "/quotes/" in url:
+            # `GET /internal/v1/stores/{store}/quotes/{quote}` -- one revision with its lines, the
+            # read that makes a band drawable at all. Nothing else returns `band_minimum_vnd`.
+            body = BAND_DETAIL
+        elif url.split("?")[0].endswith("/quotes") and route.request.method == "POST":
+            sent = json.loads(route.request.post_data or "{}")
+            state.setdefault("quote_posts", []).append(sent)
+            if not sent.get("present_range_as_band"):
+                # What the engine really answers for a banded service asked for as a price: it
+                # refuses rather than choosing a number in the interval. The console has no way to
+                # know in advance -- the catalog route carries no price kind -- so this refusal is
+                # the only thing that can tell it, and section 10 checks what it does with it.
+                route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "detail": {
+                                "outcome": "REQUIRE_HUMAN",
+                                "reason_codes": [
+                                    "RANGE_PRICE_REQUIRES_HUMAN",
+                                    "TAX_TREATMENT_UNVERIFIED",
+                                ],
+                            }
+                        }
+                    ),
+                )
+                return
+            route.fulfill(
+                status=201, content_type="application/json", body=json.dumps(BAND_REVISION)
+            )
+            return
         else:
             body = []
         route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
@@ -972,6 +1126,173 @@ with sync_playwright() as playwright:
         "the complaint reaches the server as the words the staff member typed",
         sent.get("evidence_summary") == "Áo sơ mi trắng bị ố vàng ở cổ.",
         f"got {sent.get('evidence_summary')!r}",
+    )
+
+    print()
+    print("=" * 74)
+    print("10. KHOẢNG GIÁ — the counter closes a band, and is warned before it sends")
+    print("=" * 74)
+
+    # `RANGE-PRICE-001`. Twenty of the forty-four published services are priced by inspection, and
+    # until this item none of them could be quoted at all. The whole path is here because every
+    # step of it is a place the console could quietly decide money: choosing a number inside the
+    # band, showing the top of an interval as a price, or treating an owner's approval as the
+    # customer's agreement. Each is checked below as a refusal rather than as a feature.
+
+    page.evaluate(f"location.hash = '#/quotes?request={ORDER_REQUEST['order_request_id']}'")
+    page.wait_for_timeout(1500)
+
+    band_code = page.locator("#quote-line-0-code")
+    band_code.select_option(label="Áo dài truyền thống")
+    page.wait_for_timeout(200)
+    band_qty = page.locator("#quote-line-0-qty")
+    band_qty.click()
+    band_qty.type("1", delay=12)
+    page.wait_for_timeout(150)
+
+    page.locator("form button[type=submit]", has_text="Tính giá").first.click()
+    page.wait_for_timeout(900)
+
+    content = page.content()
+    check(
+        "a banded service is refused rather than priced at a number nobody chose",
+        "Món này niêm yết theo khoảng giá" in content,
+    )
+    check(
+        "the refusal keeps its code and gains a Vietnamese reason",
+        "RANGE_PRICE_REQUIRES_HUMAN" in content and "nhân viên phải chọn giá chính xác" in content,
+    )
+    first_post = (state.get("quote_posts") or [{}])[-1]
+    check(
+        "and the first attempt did not ask for a band on the console's own initiative",
+        first_post.get("present_range_as_band") is None,
+        f"sent {first_post.get('present_range_as_band')!r}",
+    )
+
+    page.locator("button", has_text="Lập bản khoảng giá").first.click()
+    page.wait_for_timeout(1400)
+
+    banded_post = (state.get("quote_posts") or [{}])[-1]
+    check(
+        "asking for a band is a deliberate press, and it is what sets the flag",
+        banded_post.get("present_range_as_band") is True,
+        f"sent {banded_post.get('present_range_as_band')!r}",
+    )
+
+    content = page.content()
+    check(
+        "the stored band is shown whole, both ends, under the KHOẢNG GIÁ badge",
+        "80.000" in content and "240.000" in content and "KHOẢNG GIÁ" in content,
+    )
+    check(
+        "the two scalar subtotals are withheld on a band instead of printing its maximum",
+        "Vì sao hai dòng trên" in content,
+        "expected the console to refuse to print net_service_subtotal_vnd on a RANGE revision",
+    )
+    check(
+        "a band cannot be accepted, because there is no single number to agree to",
+        "Bản này là một khoảng giá, chưa phải một số" in content
+        and page.locator("button", has_text="Khách đã chốt giá").count() == 0,
+    )
+
+    band_field = page.locator("#quote-band-0")
+    check("the band gets a money box of its own", band_field.count() == 1)
+    check(
+        "with no placeholder, because any example inside the band is a suggestion",
+        band_field.get_attribute("placeholder") in (None, ""),
+        repr(band_field.get_attribute("placeholder")),
+    )
+
+    # The `pricingCliffNotice` property, applied to money: the warning has to arrive while the
+    # number is being typed, not after a round trip refuses it in front of a customer.
+    band_field.click()
+    page.keyboard.type("250000", delay=12)
+    page.wait_for_timeout(300)
+    check(
+        "an amount above the band is caught in the browser, before anything is sent",
+        "Số này cao hơn khoảng giá đã niêm yết" in page.content(),
+    )
+    check(
+        "the warning names the band and the code the server would answer with",
+        "RANGE_PRICE_OUT_OF_BAND" in page.content() and "80.000" in page.content(),
+    )
+    check(
+        "and nothing was sent while it was being typed",
+        not state.get("range_posts"),
+        f"{len(state.get('range_posts') or [])} request(s)",
+    )
+    check(
+        "focus stayed in the money box while the warning appeared",
+        page.evaluate("document.activeElement?.id") == "quote-band-0",
+        f"activeElement={page.evaluate('document.activeElement?.id')}",
+    )
+
+    for _ in range(6):
+        page.keyboard.press("Backspace")
+    page.keyboard.type("150000", delay=12)
+    page.wait_for_timeout(300)
+    check(
+        "an amount inside the band is accepted, and reads as a proposal rather than a price",
+        "Số này cao hơn khoảng giá đã niêm yết" not in page.content()
+        and "Giá bạn chọn cho dòng này" in page.content(),
+    )
+    check(
+        "the typed amount survives being typed one character at a time",
+        band_field.input_value() == "150000",
+        repr(band_field.input_value()),
+    )
+
+    page.locator("button", has_text="Gửi giá cho chủ duyệt").first.click()
+    page.wait_for_timeout(900)
+
+    proposed = json.loads((state.get("range_posts") or ["{}"])[-1] or "{}")
+    check("the proposal actually reaches the server", bool(state.get("range_posts")))
+    check(
+        "it carries the amount the staff member chose and no band of its own",
+        proposed.get("choices")
+        == [{"service_code": "DC_AO_DAI_TRADITIONAL", "amount_vnd": CHOSEN_VND}],
+        repr(proposed.get("choices")),
+    )
+    check(
+        "bound to the exact revision and digest the customer was read",
+        proposed.get("expected_current_revision") == 1
+        and proposed.get("expected_snapshot_hash") == BAND_SNAPSHOT,
+        repr(proposed.get("expected_snapshot_hash")),
+    )
+
+    content = page.content()
+    check(
+        "the screen then says a second person has to decide it",
+        "Đang chờ chủ tiệm duyệt" in content and "Đừng rời màn hình này" in content,
+    )
+    check(
+        "with the remaining time on the envelope, not a wall-clock stamp alone",
+        "còn " in content and "phút" in content,
+    )
+
+    page.locator("button", has_text="Áp dụng giá đã duyệt").first.click()
+    page.wait_for_timeout(900)
+
+    applied = json.loads((state.get("range_posts") or ["{}"])[-1] or "{}")
+    check(
+        "applying re-sends exactly the content the owner signed, because nothing stored it",
+        applied == proposed,
+        "the applied body differs from the proposed one",
+    )
+
+    content = page.content()
+    check(
+        "the closed band becomes one exact price",
+        "Đã ghi giá vào bản sửa đổi 2" in content and "150.000" in content,
+    )
+    check(
+        "an owner's approval is not the customer's agreement: the quote still has to be accepted",
+        page.locator("button", has_text="Khách đã chốt giá").count() == 1,
+        "expected the acceptance control on an APPROVED_EXACT revision that is not ACCEPTED_FINAL",
+    )
+    check(
+        "and it is not yet offered as an order",
+        page.locator("a", has_text="Tạo đơn từ báo giá này").count() == 0,
     )
 
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

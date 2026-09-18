@@ -9,8 +9,9 @@
  */
 
 import { isTruncated } from "../core/api.js";
+import { BAND, bandVerdict } from "../core/bands.js";
 import { field, h, render } from "../core/dom.js";
-import { UNKNOWN, count, moneyRange, timeOnly } from "../core/format.js";
+import { UNKNOWN, count, money, moneyRange, timeOnly } from "../core/format.js";
 import { PRICE_STATE, REASON_NOTE, enumLabel, enumVi, warningFor } from "../core/i18n.js";
 
 /**
@@ -312,6 +313,173 @@ export function pricingCliffNotice(quantityText, unit) {
       "p",
       { class: "hint" },
       "Không tách bao hay tách dòng để lách bậc giá. Số tiền do máy chủ tính; màn hình này không tính.",
+    ),
+  );
+}
+
+/**
+ * The money box for one line whose published price is a band, with its bound shown and enforced.
+ *
+ * `pricingCliffNotice` above sets the precedent this follows: warn while the operator is typing,
+ * not after the server refuses. The difference matters more here than at the 6 kg boundary,
+ * because a band is closed with a customer standing at the counter — a round trip that ends in
+ * `RANGE_PRICE_OUT_OF_BAND` costs the staff member the conversation, and the server's refusal is
+ * correct but late.
+ *
+ * Three choices are deliberate:
+ *
+ *   1. **No placeholder.** Every other money field on this console shows an example ("45000"), and
+ *      here any example is a suggestion: the minimum, the maximum and the midpoint are all numbers
+ *      nobody chose, and `resolve_range_prices` exists precisely so that a person chooses. An
+ *      empty box stays visibly empty.
+ *   2. **The bound is rendered as a range, never as two fields.** `moneyRange` is what the price
+ *      rules require (`ENGINEERING_SPEC_V1.md:233` — the UI shows the entire range), and a floor
+ *      shown apart from a ceiling reads as two separate offers.
+ *   3. **The warning names the band and the server's code.** An operator who can repeat
+ *      `RANGE_PRICE_OUT_OF_BAND` is giving engineering something exact; one who can only say "it
+ *      went red" is not.
+ *
+ * @param {object} spec
+ * @param {string} spec.id the field id, for the label
+ * @param {string} spec.label what this line is, in words the counter uses
+ * @param {string} [spec.hint] shown under the label, above the warning slot
+ * @param {number|null|undefined} spec.minimum the published floor, inclusive
+ * @param {number|null|undefined} spec.maximum the published ceiling, inclusive
+ * @param {string} spec.value the current text, so a rebuild does not lose typing
+ * @param {(value: string) => void} spec.onInput called with the raw text on every keystroke
+ * @returns {HTMLElement}
+ */
+export function bandInput(spec) {
+  const bound = moneyRange(spec.minimum, spec.maximum);
+  const warningHost = h("div");
+
+  const input = h("input", {
+    // `text`, not `number`, for the same reason the quantity field is: a number input lets the
+    // browser localize and step the value, and `parseDong` is the only reader of money this
+    // console has.
+    type: "text",
+    inputmode: "numeric",
+    autocomplete: "off",
+    maxlength: "16",
+    value: spec.value || "",
+    onInput: (event) => {
+      const text = /** @type {HTMLInputElement} */ (event.target).value;
+      spec.onInput(text);
+      refresh(text);
+    },
+  });
+
+  /** @param {string} text */
+  function refresh(text) {
+    const verdict = bandVerdict(text, spec.minimum, spec.maximum);
+    const offending = verdict.state === BAND.BELOW || verdict.state === BAND.ABOVE;
+    input.setAttribute(
+      "aria-invalid",
+      offending || verdict.state === BAND.NOT_AN_AMOUNT ? "true" : "false",
+    );
+    render(warningHost, bandVerdictNotice(verdict, bound.text));
+  }
+
+  refresh(spec.value || "");
+
+  return h(
+    "div",
+    { class: "stack stack--tight" },
+    labelled({
+      id: spec.id,
+      label: spec.label,
+      hint: spec.hint,
+      control: input,
+    }),
+    h(
+      "p",
+      { class: "hint" },
+      `Khoảng giá đã niêm yết cho dòng này: ${bound.text}. Cả hai đầu đều nhận. ` +
+        "Máy chủ kiểm lại khoảng này trên đúng bản báo giá khách đã nghe.",
+    ),
+    warningHost,
+  );
+}
+
+/**
+ * The sentence that goes with one band verdict.
+ *
+ * Split out so the wording lives next to the component that shows it and can be read whole, and
+ * so an `INSIDE` verdict is worded as a *proposal* rather than as a price: an amount inside the
+ * band is not money until an owner approves it, and a line that reads "150.000 ₫" with no
+ * qualifier is the screen deciding what this item exists to stop it deciding.
+ *
+ * @param {{state: string, amount: number|null}} verdict
+ * @param {string} bound the band, already formatted
+ * @returns {HTMLElement|null}
+ */
+function bandVerdictNotice(verdict, bound) {
+  if (verdict.state === BAND.EMPTY) return null;
+
+  if (verdict.state === BAND.NOT_AN_AMOUNT) {
+    return h(
+      "div",
+      { class: "notice", dataState: "danger" },
+      h("p", { class: "notice__title" }, "Chưa đọc được số tiền"),
+      h(
+        "p",
+        null,
+        "Giá phải là số nguyên đồng. “150.000” đọc là 150000; không nhận dấu phẩy và không nhận " +
+          "số lẻ. Chưa có gì được gửi đi.",
+      ),
+    );
+  }
+
+  if (verdict.state === BAND.UNBOUNDED) {
+    return h(
+      "div",
+      { class: "notice", dataState: "warn" },
+      h("p", { class: "notice__title" }, "Chưa biết khoảng giá của dòng này"),
+      h(
+        "p",
+        null,
+        "Máy chủ không gửi kèm hai đầu khoảng giá cho dòng này, nên bảng vận hành không kiểm được " +
+          "trước. Tải lại bản báo giá; đừng gửi số khi chưa thấy khoảng.",
+      ),
+    );
+  }
+
+  if (verdict.state === BAND.BELOW || verdict.state === BAND.ABOVE) {
+    return h(
+      "div",
+      { class: "notice", dataState: "danger" },
+      h(
+        "p",
+        { class: "notice__title" },
+        verdict.state === BAND.BELOW
+          ? "Số này thấp hơn khoảng giá đã niêm yết"
+          : "Số này cao hơn khoảng giá đã niêm yết",
+      ),
+      h("p", null, `Khoảng giá của dòng này là ${bound}, tính cả hai đầu.`),
+      h(
+        "p",
+        null,
+        "Gửi đi thì máy chủ từ chối với mã ",
+        h("span", { class: "mono" }, "RANGE_PRICE_OUT_OF_BAND"),
+        " và không ghi gì cả. Muốn ra ngoài khoảng thì phải công bố lại bảng giá — không phải " +
+          "gõ một số khác ở đây.",
+      ),
+    );
+  }
+
+  return h(
+    "div",
+    { class: "notice", dataState: "info" },
+    h(
+      "p",
+      { class: "notice__title" },
+      `Giá bạn chọn cho dòng này: ${money(verdict.amount)}`,
+    ),
+    h(
+      "p",
+      null,
+      "Nằm trong khoảng đã niêm yết. Đây vẫn chưa phải giá: chủ tiệm phải duyệt, rồi bạn bấm áp " +
+        "dụng thì máy chủ mới ghi thành giá của bản báo giá.",
     ),
   );
 }

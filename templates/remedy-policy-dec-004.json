@@ -1,0 +1,13 @@
+{
+  "schema": "remedy-policy-v1",
+  "decision": "DEC-004",
+  "ratified_on": "2026-08-18",
+  "source": "docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md#5",
+  "defect_report_window_hours": 24,
+  "initial_response_window_hours": 24,
+  "free_rewash_window_days": 7,
+  "late_delivery_threshold_minutes": 120,
+  "late_delivery_credit_rate_bps": 1000,
+  "damage_compensation_multiple": 5,
+  "staff_approval_ceiling_vnd": 100000
+}

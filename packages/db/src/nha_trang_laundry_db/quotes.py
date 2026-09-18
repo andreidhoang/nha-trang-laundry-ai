@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -107,7 +108,27 @@ class QuoteSummary:
 class QuoteRepository:
     """Create-only quote revisions with optimistic container concurrency."""
 
-    def create_revision(self, connection: Any, command: QuoteRevisionCommand) -> None:
+    def create_revision(
+        self,
+        connection: Any,
+        command: QuoteRevisionCommand,
+        *,
+        also_mutate: Callable[[Any], None] | None = None,
+    ) -> None:
+        """Write one revision, and optionally one caller mutation in the same transaction.
+
+        `also_mutate` exists for invariant 5 and for one caller. `REMEDY-001` spends a remedy credit
+        by deriving a revision that carries its discount, and the credit's single-use
+        compare-and-swap has to commit with that revision or neither: burning the credit without the
+        discount robs the customer, and writing the discount without burning the credit lets one
+        voucher be spent twice. Two transactions cannot express that, and a second copy of the
+        INSERT above would put two writers of `quote_revisions` in the repository.
+
+        It runs on the same cursor, after the revision is written, inside
+        `commit_material_change`'s transaction. A caller that raises from it rolls the revision back
+        with it, which is the whole point.
+        """
+
         snapshot = command.snapshot
         data = snapshot.data
         if not verify_quote_snapshot(snapshot):
@@ -205,6 +226,8 @@ class QuoteRepository:
                     occurred_at,
                 ),
             )
+            if also_mutate is not None:
+                also_mutate(cursor)
 
         commit_material_change(
             connection,

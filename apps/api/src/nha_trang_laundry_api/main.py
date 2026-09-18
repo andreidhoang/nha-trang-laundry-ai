@@ -46,6 +46,7 @@ from nha_trang_laundry_db.orders import (
     StoredOrder,
 )
 from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
+from nha_trang_laundry_db.remedies import RemedyAuthorizationError, RemedyStateError
 from nha_trang_laundry_db.settlement import (
     BUSINESS_TIMEZONE,
     SettlementAuthorizationError,
@@ -68,6 +69,7 @@ from nha_trang_laundry_domain.catalog import (
 )
 from nha_trang_laundry_domain.quote_composition import RequestedLine
 from nha_trang_laundry_domain.range_prices import RangePriceChoice
+from nha_trang_laundry_domain.remedies import RemedyKind
 from nha_trang_laundry_observability import (
     CORRELATION_HEADER,
     CorrelationContext,
@@ -314,6 +316,115 @@ class IncidentOpenRequest(StrictRequest):
 
     order_id: UUID
     evidence_summary: str = Field(min_length=1, max_length=2000)
+
+
+class RemedyProposalRequest(StrictRequest):
+    """What a staff member proposes. `REMEDY-001`, `DEC-004`.
+
+    **There is no ceiling field and there must never be.** The 5x damage cap comes from the order's
+    own priced line and the 10% late-delivery credit from its settled total; a client that could
+    state either would be authorising its own bound. The same applies to the window: it is measured
+    from a recorded handover, not from a date a form supplies.
+
+    `amount_vnd` is an integer of dong and is legal for exactly one kind. `DAMAGE_COMPENSATION` is
+    the only remedy where a person chooses the figure -- a rewash moves no money, a late-delivery
+    credit is computed, and loss has no figure at all -- so supplying it anywhere else is refused
+    with `REMEDY_AMOUNT_NOT_APPLICABLE` rather than ignored.
+    """
+
+    kind: RemedyKind
+    #: The staff finding `DEC-004` rests every remedy on. Required, with no default: a remedy is
+    #: authorised by somebody deciding the store was at fault, and a default would decide it for
+    #: them in whichever direction the default pointed.
+    store_fault_attested: bool
+    order_line_id: str | None = Field(default=None, min_length=1, max_length=64)
+    amount_vnd: int | None = Field(default=None, ge=0, le=MAX_CANONICAL_INT)
+    #: How late the delivery was, attested by the staff member who handled it. The shop records no
+    #: promised arrival time, so this cannot be derived; that a return leg happened at all is
+    #: checked against the record, and this is refused unless it clears the published threshold.
+    attested_late_by_minutes: int | None = Field(default=None, ge=0, le=MAX_CANONICAL_INT)
+
+
+class RemedyCreditRedemptionRequest(StrictRequest):
+    """Which credit to spend, and the caller's evidence that it read the quote it is spending on."""
+
+    credit_id: UUID
+    expected_current_revision: int = Field(ge=1)
+    expected_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
+
+
+class RemedyProposalResponse(BaseModel):
+    """The recorded proposal, with the figures the server computed for it.
+
+    `outcome` is `REQUIRE_HUMAN` and `reason_code` is `LOSS_POLICY_UNRESOLVED` for a loss, on a 201
+    rather than an error: the complaint was recorded, and for a loss the record *is* the outcome.
+    Every other field is then null, because `DEC-004` gives loss no figure of any kind.
+    """
+
+    proposal_id: UUID
+    incident_id: UUID
+    order_id: UUID
+    kind: str
+    status: str
+    outcome: str
+    proposal_hash: str
+    policy_version: int
+    amount_vnd: int | None
+    #: What the server computed the bound to be. Null where the kind has none.
+    ceiling_vnd: int | None
+    window_opened_at: str | None
+    window_closes_at: str | None
+    #: The `APPROVE_REMEDY` envelope, present exactly when the amount is above the staff ceiling.
+    approval_id: UUID | None
+    reason_code: str | None
+    replayed: bool
+
+
+class RemedyExecutionResponse(BaseModel):
+    proposal_id: UUID
+    incident_id: UUID
+    order_id: UUID
+    kind: str
+    status: str
+    event_type: str
+    credit_id: UUID | None
+    amount_vnd: int | None
+    replayed: bool
+
+
+class RemedyOptionsResponse(BaseModel):
+    """What the form must show before a staff member types anything.
+
+    `policy_published` false means every remedy fails closed (invariant 11) and the console must say
+    that the owner has not published the figures -- not render an empty form. A null
+    `late_delivery_credit_vnd` means no delivery this system recorded could have been late, and is
+    rendered as unavailable rather than as 0.
+    """
+
+    incident_id: UUID
+    order_id: UUID
+    policy_published: bool
+    staff_approval_ceiling_vnd: int | None
+    goods_returned_at: str | None
+    rewash_window_closes_at: str | None
+    rewash_window_open: bool
+    defect_window_closes_at: str | None
+    defect_window_open: bool
+    damage_line_ceilings_vnd: dict[str, int] | None
+    late_delivery_credit_vnd: int | None
+    late_delivery_threshold_minutes: int | None
+    loss_reason_code: str
+
+
+class RemedyCreditRedemptionResponse(BaseModel):
+    credit_id: UUID
+    quote_id: UUID
+    revision: int
+    snapshot_hash: str
+    credit_vnd: int
+    net_service_subtotal_vnd: int
+    display_total_vnd: int | None
+    replayed: bool
 
 
 class MemberStore(BaseModel):
@@ -2131,6 +2242,185 @@ def list_incidents(
         _raise_operations_error(error)
 
 
+# --- REMEDY-001: DEC-004 expressed as configuration, and a surface to act on it ----------------
+#
+# Four routes and no arithmetic on money anywhere in them. Each forwards to the service, which
+# forwards to the repository, which hands the decision to `domain.remedies` and persists the answer.
+# A refusal comes back as 422 carrying the domain's own reason code plus the figure that would have
+# allowed it, so the console can tell staff *why* in Vietnamese rather than only that.
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-options",
+    response_model=RemedyOptionsResponse,
+)
+def remedy_options(
+    store_id: UUID,
+    incident_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RemedyOptionsResponse:
+    """The ceilings, the windows and the owner threshold, before anybody fills a form in.
+
+    The packet's requirement in one read: staff must never discover that the owner is required after
+    typing an amount. Nothing is written and nothing is reserved by asking.
+    """
+
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        options = service.remedy_options(
+            store_id=store_id, incident_id=incident_id, principal=principal
+        )
+    except (RemedyAuthorizationError, RemedyStateError, StoreAccessError, ValueError) as error:
+        _raise_remedy_error(error)
+    return RemedyOptionsResponse(
+        incident_id=options.incident_id,
+        order_id=options.order_id,
+        policy_published=options.policy_published,
+        staff_approval_ceiling_vnd=options.staff_approval_ceiling_vnd,
+        goods_returned_at=_isoformat_or_none(options.goods_returned_at),
+        rewash_window_closes_at=_isoformat_or_none(options.rewash_window_closes_at),
+        rewash_window_open=options.rewash_window_open,
+        defect_window_closes_at=_isoformat_or_none(options.defect_window_closes_at),
+        defect_window_open=options.defect_window_open,
+        damage_line_ceilings_vnd=(
+            None
+            if options.damage_line_ceilings_vnd is None
+            else dict(options.damage_line_ceilings_vnd)
+        ),
+        late_delivery_credit_vnd=options.late_delivery_credit_vnd,
+        late_delivery_threshold_minutes=options.late_delivery_threshold_minutes,
+        loss_reason_code=options.loss_reason_code,
+    )
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-proposals",
+    response_model=RemedyProposalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def propose_remedy(
+    store_id: UUID,
+    incident_id: UUID,
+    request: RemedyProposalRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RemedyProposalResponse:
+    """Propose a remedy against one incident, checked against the published `DEC-004` figures.
+
+    A loss is a 201 whose `outcome` is `REQUIRE_HUMAN`: the complaint is recorded, which is the
+    outcome the owner has decided for it, and no figure is computed anywhere.
+    """
+
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.propose_remedy(
+            store_id=store_id,
+            incident_id=incident_id,
+            kind=request.kind,
+            store_fault_attested=request.store_fault_attested,
+            order_line_id=request.order_line_id,
+            amount_vnd=request.amount_vnd,
+            attested_late_by_minutes=request.attested_late_by_minutes,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (
+        RemedyAuthorizationError,
+        RemedyStateError,
+        ApprovalEnvelopeError,
+        ApprovalStateError,
+        ApprovalAuthorizationError,
+        IdempotencyConflictError,
+        StoreAccessError,
+        ValueError,
+    ) as error:
+        _raise_remedy_error(error)
+    return RemedyProposalResponse.model_validate(result, from_attributes=True)
+
+
+@app.post(
+    "/internal/v1/remedy-proposals/{proposal_id}/execution",
+    response_model=RemedyExecutionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def execute_remedy(
+    proposal_id: UUID,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RemedyExecutionResponse:
+    """Carry out an authorised remedy: issue the credit, or command the rewash.
+
+    No body. Everything this needs was decided when the proposal was recorded and is immutable on
+    its row -- accepting an amount here would let the figure move between the owner approving it and
+    the shop paying it, which is precisely what invariant 8 binds the rendered hash to prevent.
+    """
+
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.execute_remedy(
+            proposal_id=proposal_id, idempotency_key=idempotency_key, principal=principal
+        )
+    except (
+        RemedyAuthorizationError,
+        RemedyStateError,
+        IdempotencyConflictError,
+        StoreAccessError,
+        ValueError,
+    ) as error:
+        _raise_remedy_error(error)
+    return RemedyExecutionResponse.model_validate(result, from_attributes=True)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/quotes/{quote_id}/remedy-credits",
+    response_model=RemedyCreditRedemptionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def redeem_remedy_credit(
+    store_id: UUID,
+    quote_id: UUID,
+    request: RemedyCreditRedemptionRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RemedyCreditRedemptionResponse:
+    """Spend one credit on the next bill, producing a revision that carries its discount.
+
+    The settlement ledger is untouched. A credit changes what a total *is* before the customer is
+    told it; `DEC-010` still keeps that path accepting only the exact quoted total, in full.
+    """
+
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.redeem_remedy_credit(
+            store_id=store_id,
+            quote_id=quote_id,
+            credit_id=request.credit_id,
+            expected_current_revision=request.expected_current_revision,
+            expected_snapshot_hash=request.expected_snapshot_hash,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (
+        RemedyAuthorizationError,
+        RemedyStateError,
+        QuoteStateError,
+        QuoteIntegrityError,
+        IdempotencyConflictError,
+        StoreAccessError,
+        ValueError,
+    ) as error:
+        _raise_remedy_error(error)
+    return RemedyCreditRedemptionResponse.model_validate(result, from_attributes=True)
+
+
 @app.get("/internal/v1/queue-recovery", response_model=QueueRecoveryResponse)
 def queue_recovery(
     principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
@@ -2183,6 +2473,36 @@ def _raise_operations_error(error: Exception) -> NoReturn:
     if isinstance(error, IdempotencyConflictError):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
     raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+def _raise_remedy_error(error: Exception) -> NoReturn:
+    """Map a remedy refusal onto a status and a body the console can render in Vietnamese.
+
+    422 rather than 409, and structured rather than a string. A refusal here is a policy answer with
+    a number attached -- "quá 5 lần phí giặt của món đó, tối đa 500.000 đ", "quá 7 ngày kể từ khi
+    nhận đồ" -- and a message the console has to parse would make that copy a regex. Authorization
+    failures keep the same opaque 403 as every other surface, so a caller still cannot tell "not a
+    member of this store" from "your role cannot do this".
+    """
+
+    if isinstance(error, (RemedyAuthorizationError, StoreAccessError)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="operation denied") from error
+    if isinstance(error, RemedyStateError):
+        detail: dict[str, object] = {"reason_code": error.reason_code}
+        if error.authority is not None:
+            detail["authority"] = error.authority
+        if error.ceiling_vnd is not None:
+            detail["ceiling_vnd"] = error.ceiling_vnd
+        if error.window_closes_at is not None:
+            detail["window_closes_at"] = error.window_closes_at.isoformat()
+        if error.threshold_minutes is not None:
+            detail["threshold_minutes"] = error.threshold_minutes
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail) from error
+    _raise_operations_error(error)
+
+
+def _isoformat_or_none(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat()
 
 
 def _order_response(stored: StoredOrder) -> OrderResponse:

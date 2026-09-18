@@ -37,6 +37,13 @@ class QuoteAdjustmentKind(StrEnum):
     MANUAL_DISCOUNT = "MANUAL_DISCOUNT"
     SURCHARGE = "SURCHARGE"
     DELIVERY = "DELIVERY"
+    #: `REMEDY-001`. A credit the shop owes a customer for a previous order, landing on this one.
+    #: It has its own member rather than reusing `MANUAL_DISCOUNT` because the two carry different
+    #: authority: a manual discount is a price somebody chose and always needs an approval envelope,
+    #: while a remedy credit is a figure the server computed from published `DEC-004` policy and is
+    #: escalated to the owner only above the staff ceiling. Collapsing them would make one of those
+    #: two rules unrepresentable. See `_validate_adjustments` for what this kind must satisfy.
+    REMEDY_CREDIT = "REMEDY_CREDIT"
 
 
 class QuoteSnapshotError(ValueError):
@@ -438,6 +445,34 @@ def _validate_adjustments(
                 raise QuoteSnapshotError("discount adjustments must be credits")
             if item.kind is QuoteAdjustmentKind.MANUAL_DISCOUNT and item.approval_id is None:
                 raise QuoteSnapshotError("manual discounts require approval")
+            credit_min += item.amount_min_vnd
+            credit_max += item.amount_max_vnd
+        elif item.kind is QuoteAdjustmentKind.REMEDY_CREDIT:
+            # `REMEDY-001`, and its own branch rather than a member added to the discount set above,
+            # because three of its rules differ from a manual discount's.
+            #
+            # It is exact. A credit is a settled number of dong the shop already owes -- it was
+            # computed when the remedy was approved, not while this quote was being priced -- so it
+            # has no minimum and maximum to differ. That is also why a credit may not land on a band
+            # revision: there would be no single subtotal for it to be allocated across.
+            #
+            # It names its source. `source_version_id` is the published `REMEDY_POLICY` version the
+            # figure came from, which is what makes a discount on a stored snapshot traceable to the
+            # owner's ratified figures years later. A credit citing nothing is indistinguishable
+            # from a number somebody typed.
+            #
+            # It does **not** require an `approval_id`, and that is deliberate rather than an
+            # oversight. `DEC-004` lets staff approve compensation up to 100.000 d *without
+            # escalation*; demanding an envelope on every credit would contradict the decision the
+            # figure comes from. The escalation is enforced where the decision puts it -- at
+            # proposal time, against the published staff ceiling -- and a credit that needed the
+            # owner carries the envelope that satisfied it.
+            if item.direction is not AdjustmentDirection.CREDIT:
+                raise QuoteSnapshotError("a remedy credit must be a credit")
+            if item.amount_min_vnd != item.amount_max_vnd:
+                raise QuoteSnapshotError("a remedy credit must be exact")
+            if item.source_version_id is None:
+                raise QuoteSnapshotError("a remedy credit must name its policy version")
             credit_min += item.amount_min_vnd
             credit_max += item.amount_max_vnd
         elif item.kind is QuoteAdjustmentKind.DELIVERY:

@@ -219,6 +219,23 @@ paths:
       responses:
         '200':
           description: Success response.
+  /internal/v1/remedy-proposals/{proposal_id}/execution:
+    post:
+      operationId: execute_remedy
+      summary: 'Carry out an authorised remedy: issue the credit, or command the rewash.'
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: proposal_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/session:
     get:
       operationId: get_session
@@ -495,6 +512,50 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-options:
+    get:
+      operationId: remedy_options
+      summary: The ceilings, the windows and the owner threshold, before anybody fills a form in.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: incident_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-proposals:
+    post:
+      operationId: propose_remedy
+      summary: Propose a remedy against one incident, checked against the published `DEC-004` figures.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: incident_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/order-requests:
     get:
       operationId: list_order_requests
@@ -700,6 +761,28 @@ paths:
         required: true
         schema:
           type: string
+      - name: quote_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/quotes/{quote_id}/remedy-credits:
+    post:
+      operationId: redeem_remedy_credit
+      summary: Spend one credit on the next bill, producing a revision that carries its discount.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
       - name: quote_id
         in: path
         required: true

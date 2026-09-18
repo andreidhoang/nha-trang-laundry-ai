@@ -305,7 +305,36 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # intent, its reason codes, its actor and its timestamp, and only the text was disposed of on a
     # published schedule. This is the same kind of slot INCIDENT-INTAKE-001 added for a purged
     # `evidence_summary`, for the same reason, which is why they are worded to match.
-    assert sum(counts.values()) == _registry()["total"] == 194
+    # 213 after RANGE-PRICE-001's console half: +22 added, -3 retired, 6 re-keyed, net +19.
+    #
+    # The additions are what a screen costs once it performs a procedure it previously only
+    # refused, and they divide into three:
+    #   * 4 in `core/i18n.js` -- one `REASON_NOTE` gloss per member of the domain's new
+    #     `RangePriceRefusal`, plus `HUMAN_APPROVAL_REQUIRED`, which `core/errors.js` has minted
+    #     itself for a 409 since long before this item and which no gloss covered. All four follow
+    #     the settlement vocabulary's rule: a refusal a staff member meets with a customer in front
+    #     of them may not arrive as a bare English token.
+    #   * 3 in `ui/components.js` -- the three sentences `bandInput` can show while an amount is
+    #     being typed (below the band, above it, and not a readable amount). This is the
+    #     `pricingCliffNotice` property applied to money: the warning arrives before the press,
+    #     not after the refusal.
+    #   * 15 in `screens/quotes.js` -- the band-mode offer, the three-step explanation, the
+    #     "do not leave this screen" warning, the half-closed-revision refusal, the two read-back
+    #     failures, the store-scope not-found notice on the read-only revision panel, and that
+    #     panel's guardrail.
+    #
+    # The three retired are one `#/gaps` entry, "Doc lai mot ban bao gia", deleted rather than
+    # reworded because what it claimed -- no GET for a single revision, no endpoint returning a
+    # quote's lines -- stopped being true when `GET /internal/v1/stores/{store}/quotes/{quote}`
+    # landed. That is the only legitimate way a disclosure leaves, and it is the same move
+    # QUOTE-ACCEPT-001 and INCIDENT-INTAKE-001 made before it.
+    #
+    # The six re-keyed are sentences whose content changed, which is this registry working rather
+    # than churn: the approvals screen's "why is Duyet disabled" notice and the neighbouring
+    # `#/gaps` entry both named an order as the only viewable resource type, and a quote revision
+    # is now viewable too; that `#/gaps` group lede counted four entries and now counts three; and
+    # the `#/quotes` lede no longer describes a screen that only reads prices back.
+    assert sum(counts.values()) == _registry()["total"] == 213
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

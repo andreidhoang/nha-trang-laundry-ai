@@ -609,6 +609,20 @@ class OrderRepository:
             # did. (That comment also still says "write-once" and "the first moment", which the
             # rewash correction replaced with the last completion. The migration is applied and
             # checksummed, so it is not edited; the rule lives here.)
+            # `0042`. When the customer physically took their laundry away, which is what starts
+            # the `DEC-004` remedy windows for a self-collected order. Distinct from
+            # `production_ready_at` (the work was finished, possibly days earlier) and from
+            # `closed_at` (the commercial order completed, possibly later still); a remedy window
+            # measured against either would be measured against the wrong event.
+            #
+            # Write-once through the COALESCE below: `RELEASED` is terminal on the production
+            # dimension, so there is no second release to record.
+            released_now = (
+                occurred_at
+                if command.production_target is not None
+                and next_state.production is ProductionStatus.RELEASED
+                else None
+            )
             ready_now, ready_keep = _ready_clock_effect(
                 moving_production=command.production_target is not None,
                 before=current.production,
@@ -626,6 +640,7 @@ class OrderRepository:
                         production_ready_at = COALESCE(
                             %s, CASE WHEN %s THEN production_ready_at ELSE NULL END
                         ),
+                        production_released_at = COALESCE(production_released_at, %s),
                         closed_at = COALESCE(closed_at, %s), row_version = row_version + 1
                     WHERE id = %s AND row_version = %s
                     RETURNING id
@@ -642,6 +657,7 @@ class OrderRepository:
                         next_state.production_accepted_at,
                         ready_now,
                         ready_keep,
+                        released_now,
                         closed_at,
                         command.order_id,
                         command.expected_row_version,

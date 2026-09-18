@@ -122,6 +122,15 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/orders/{}/production-transition",
         "/internal/v1/orders/{}/settlement",
         "/internal/v1/orders/{}/delivery-legs",
+        # RANGE-PRICE-001. Twenty of the forty-four published services are priced by inspection,
+        # and these three are the whole of the console's half of closing one: read the revision to
+        # learn the band the customer was shown, propose an amount inside it, and -- after a second
+        # person approves the envelope through `/internal/v1/approvals/{}/decisions`, which is
+        # already required above -- apply it. A screen that stops calling any one of the three
+        # leaves those services quotable and unsellable, which is the state this item ended.
+        "/internal/v1/stores/{}/quotes/{}",
+        "/internal/v1/stores/{}/quotes/{}/range-prices",
+        "/internal/v1/stores/{}/quotes/{}/range-prices/{}",
     }
     missing = sorted(required - referenced)
     assert not missing, f"no screen calls these routes any more: {missing}"

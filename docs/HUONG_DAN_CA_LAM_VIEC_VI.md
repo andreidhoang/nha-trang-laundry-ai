@@ -36,6 +36,27 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 12 | Thu tiền → nhập số tiền, tích **Khách đã tự lấy đồ**, bấm **Ghi nhận tất toán** | Chi tiết đơn |
 | 13 | Chuyển **thương mại** sang *Hoàn tất* | Đơn hàng |
 
+### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
+
+Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **khoảng giá**, vì phải nhìn món đồ mới
+định giá được. Bước 4 ở trên sẽ báo là máy không tự chọn số. Làm tiếp như sau, vẫn ở màn hình
+**Báo giá**:
+
+| | Làm gì |
+|---|---|
+| 4a | Bấm **Lập bản khoảng giá**. Đọc khoảng cho khách nghe (ví dụ *80.000 – 240.000 ₫*) |
+| 4b | Xem đồ, thoả thuận với khách, gõ **một số nằm trong khoảng** cho từng dòng |
+| 4c | Bấm **Gửi giá cho chủ duyệt**. Gọi chủ tiệm — phiếu duyệt chỉ sống **mười phút** |
+| 4d | Chủ tiệm mở màn hình **Duyệt**, mở bản báo giá xem, rồi bấm **Duyệt** |
+| 4e | Bạn bấm **Áp dụng giá đã duyệt** → quay lại bước 5 ở bảng trên |
+
+- **Người gửi không tự duyệt được.** Máy chủ từ chối. Phải là hai người.
+- **Đừng rời màn hình Báo giá** giữa 4c và 4e: những con số chỉ còn ở màn hình đó. Rời đi thì gửi
+  lại từ đầu — không mất gì, vì lúc đề nghị chưa có giá nào được ghi.
+- **Quá mười phút** thì phiếu chết hẳn, không gia hạn được. Gửi lại từ đầu.
+- Gõ số ngoài khoảng thì màn hình cảnh báo **ngay khi đang gõ**, trước khi gửi. Đừng lách: muốn ra
+  ngoài khoảng thì chủ tiệm phải công bố lại bảng giá.
+
 ### Ba điều dễ sai nhất
 
 - **Gần 6 kg.** Dưới 6 kg tính 25.000đ/kg, từ 6 kg tính 20.000đ/kg — nên **túi nhẹ hơn có thể đắt
@@ -54,23 +75,22 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 
 ---
 
-## Hai việc tuần này vẫn ghi ra sổ
+## Hai việc trước đây phải ghi ra sổ, nay làm được trên máy
 
-Không phải máy hỏng — chủ tiệm chưa chốt hai câu hỏi, nên phần mềm cố ý không đoán.
+Trang này trước đây dặn ghi tay hai việc. Cả hai đã làm được trên máy, và **ghi tay bây giờ là
+mất bản ghi** — vì bản trên máy mới là bản không sửa được.
 
-**1. Món có khoảng giá.** Vest, áo khoác, áo dài thêu, giày da, giày lộn, túi da, gối, ruột gối,
-thú bông, ghế sofa, thảm, và xử lý vết bẩn — 20 trong 43 dịch vụ được niêm yết theo **khoảng giá**.
-Màn hình cố ý không tự chọn một con số trong khoảng.
+**1. Món có khoảng giá.** Làm theo mục *Món niêm yết theo khoảng giá* ở trên. Vẫn là bạn thoả
+thuận giá với khách và chủ tiệm gật đầu — chỉ khác là được ghi lại kèm tên người chốt, thay vì
+nằm trên một tờ phiếu.
 
-> Thoả thuận giá với khách, **ghi giá lên phiếu, giữ lại phiếu**, và báo chủ tiệm cuối ngày.
-> Giặt sấy theo kg và các món giá cố định vẫn báo giá bình thường trên máy.
+**2. Khách khiếu nại.** Màn hình **Sự cố** dùng được rồi: chọn đơn, gõ nội dung khách phàn nàn
+bằng lời, bấm ghi nhận. Không phải gõ mã gì cả — máy chủ tự sinh.
 
-**2. Khách khiếu nại.** Màn hình **Sự cố** chưa dùng được — nó đòi hai mã mà không chỗ nào trong hệ
-thống sinh ra.
+> Mở sự cố **chỉ là ghi nhận**: máy không phán ai sai và không tự quyết bồi hoàn. Hai dòng đó hiện
+> là *chưa quyết định*, và đó là đúng. Vẫn **báo chủ tiệm ngay trong ngày**.
 
-> Ghi khiếu nại **ra sổ kèm số phiếu**, và **báo chủ tiệm ngay trong ngày**.
-
-Cả hai đều được ghi ở màn hình **Chưa hỗ trợ** trên bảng vận hành.
+Những việc thật sự chưa hỗ trợ được liệt kê ở màn hình **Chưa hỗ trợ** trên bảng vận hành.
 
 ---
 

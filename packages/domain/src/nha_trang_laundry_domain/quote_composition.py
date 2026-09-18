@@ -75,8 +75,20 @@ from nha_trang_laundry_domain.range_prices import (
     RangePriceRefused,
     resolve_range_prices,
 )
+from nha_trang_laundry_domain.remedies import (
+    REMEDY_CREDIT_APPLIED,
+    REMEDY_CREDIT_REASON_CODE,
+    RemedyCredit,
+    RemedyRefusal,
+    RemedyRefused,
+    allocate_remedy_credit,
+)
 
 QUOTE_ENGINE_VERSION: Final = "quote-engine-v1"
+#: Version of the allocation this module records when it spends a remedy credit. Separate from the
+#: quote engine's own version because the credit is applied to an already-priced revision and did
+#: not re-run the engine.
+REMEDY_CREDIT_COMPONENT_VERSION: Final = "remedy-credit-v1"
 QUOTE_ENGINE_HASH: Final = canonical_document({"engine": QUOTE_ENGINE_VERSION}).snapshot_hash
 PRICING_COMPONENT_VERSION: Final = "pricing-v1"
 QUOTE_VALIDITY: Final = timedelta(days=1)
@@ -673,6 +685,158 @@ def close_range_prices(
     return ComposedQuote(snapshot)
 
 
+#: Statuses a credit may not land on, because the total has already been agreed or withdrawn. It is
+#: `_UNACCEPTABLE_STATUSES` plus `APPROVED`: a credit changes what a total *is* before the customer
+#: is told it, and `APPROVED` means an owner has already authorised the number on the page.
+_UNCREDITABLE_STATUSES: Final = _UNACCEPTABLE_STATUSES | {QuoteRevisionStatus.APPROVED}
+
+
+def redeem_remedy_credit(
+    *,
+    priced: ImmutableQuoteSnapshot,
+    revision: int,
+    credit: RemedyCredit,
+) -> ComposedQuote | UnresolvedQuote:
+    """Spend one remedy credit against the next bill. `REMEDY-001`, `DEC-004`.
+
+    "10% credit on the next bill" needs a next bill, and this is where one gets it. The credit
+    becomes a `REMEDY_CREDIT` adjustment on a **new revision derived from the stored one**, never an
+    adjustment to a settlement: the settlement ledger is append-only, `reject_ledger_mutation()`
+    would refuse a rewrite anyway, and `DEC-010` keeps the settlement path accepting only the exact
+    quoted total in full. Nothing about what may be paid changes; what changes is what the total is,
+    before anybody is told it.
+
+    **The credit is allocated across lines before it can be stored at all.** `_validate_adjustments`
+    requires the summed credit adjustments to equal the revision's line-level discount totals, and
+    `net_service_subtotal = list_service_subtotal - discount` is a CHECK on `quote_revisions`
+    (migration `0005`) rather than merely a Python assertion. So an order-level credit has to become
+    line-level, using `promotion`'s own allocator through `allocate_remedy_credit` so that "who gets
+    the spare dong" has one answer in this system rather than two.
+
+    **A band is refused rather than credited**, and that refusal is load-bearing.
+    `stored_price_bands` returns `None` for a banded line carrying a non-zero discount, so
+    `close_range_prices` would answer `VALIDATION_ERROR` for a band this function had discounted --
+    a wall `RANGE-PRICE-001` put there deliberately. A remedy credit must not be the thing that
+    walks into it, so it never lands on a `RANGE` revision at all.
+
+    Allocation weights are each line's **net** amount, not its list amount. A line already carrying
+    a promotion discount can absorb only what is left of it, and weighting by list could push a net
+    below zero on a heavily discounted line while the revision as a whole still balanced.
+    """
+
+    data = priced.data
+    if data.finality is QuoteFinality.RANGE or data.status in _UNCREDITABLE_STATUSES:
+        return UnresolvedQuote((RemedyRefusal.REMEDY_CREDIT_REVISION_NOT_OPEN.value,))
+    weights: dict[str, int] = {}
+    for line in data.lines:
+        if not isinstance(line.amounts, ExactLineAmounts):
+            # Unreachable while finality is not RANGE -- `_validate_finality` ties the two together
+            # -- and refused rather than asserted, because a stored revision this cannot read must
+            # not be half-credited on the strength of an invariant holding somewhere else.
+            return UnresolvedQuote((RemedyRefusal.REMEDY_CREDIT_REVISION_NOT_OPEN.value,))
+        weights[line.line_id] = line.amounts.net_amount_vnd
+
+    allocated = allocate_remedy_credit(line_weights_vnd=weights, credit_vnd=credit.amount_vnd)
+    if isinstance(allocated, RemedyRefused):
+        # Carried, not capped. A credit bigger than the bill it is presented against stays owed in
+        # full; silently shrinking it to fit would cancel part of a debt nobody decided to cancel.
+        return UnresolvedQuote((allocated.reason_code,))
+
+    credited_lines = tuple(
+        replace(
+            line,
+            amounts=replace(
+                line.amounts,
+                discount_amount_vnd=line.amounts.discount_amount_vnd
+                + allocated.per_line_vnd[line.line_id],
+                net_amount_vnd=line.amounts.net_amount_vnd - allocated.per_line_vnd[line.line_id],
+            ),
+        )
+        if isinstance(line.amounts, ExactLineAmounts)
+        else line
+        for line in data.lines
+    )
+    discount = data.totals.discount_amount_min_vnd + allocated.total_vnd
+    subtotal = data.totals.list_service_subtotal_min_vnd - discount
+    fee = data.totals.delivery_fee_vnd
+    totals = replace(
+        data.totals,
+        discount_amount_min_vnd=discount,
+        discount_amount_max_vnd=data.totals.discount_amount_max_vnd + allocated.total_vnd,
+        net_service_subtotal_min_vnd=subtotal,
+        net_service_subtotal_max_vnd=subtotal,
+        # The pairing the validator enforces: an unresolved fee still presents no total. Crediting a
+        # quote does not resolve its transport.
+        display_total_min_vnd=(
+            None if fee is None else subtotal + fee + data.totals.approved_surcharge_vnd
+        ),
+        display_total_max_vnd=(
+            None if fee is None else subtotal + fee + data.totals.approved_surcharge_vnd
+        ),
+    )
+    adjustment = QuoteAdjustmentSnapshot(
+        # Scoped by the credit's own identifier, so two credits on one revision cannot collide and
+        # the adjustment on the stored snapshot names the instrument that was spent.
+        adjustment_id=f"remedy-credit-{credit.credit_id}",
+        kind=QuoteAdjustmentKind.REMEDY_CREDIT,
+        direction=AdjustmentDirection.CREDIT,
+        amount_min_vnd=allocated.total_vnd,
+        amount_max_vnd=allocated.total_vnd,
+        reason_code=REMEDY_CREDIT_REASON_CODE,
+        # The published `REMEDY_POLICY` version the figure came from, exactly as the specification's
+        # field table assigns it. It is the provenance a reader needs years later.
+        source_version_id=credit.policy_version_id,
+        approval_id=credit.approval_id,
+    )
+    try:
+        snapshot = build_quote_snapshot(
+            replace(
+                data,
+                revision=revision,
+                lines=credited_lines,
+                adjustments=(*data.adjustments, adjustment),
+                totals=totals,
+                reason_codes=(*data.reason_codes, REMEDY_CREDIT_APPLIED),
+                calculation_traces=(
+                    *data.calculation_traces,
+                    capture_calculation_trace(
+                        # Scoped by the credit's own id so a second credit on a later revision of
+                        # the same quote does not collide with this one: `_validate_traces` requires
+                        # component names to be unique within a revision, and a revision derived
+                        # from a credited one carries the earlier trace forward.
+                        f"REMEDY_CREDIT_{credit.credit_id.hex.upper()}",
+                        REMEDY_CREDIT_COMPONENT_VERSION,
+                        {
+                            "credit_id": str(credit.credit_id),
+                            "credit_vnd": allocated.total_vnd,
+                            "policy_version_id": str(credit.policy_version_id),
+                            "weights_vnd": [
+                                {"line_id": line_id, "net_amount_vnd": weights[line_id]}
+                                for line_id in allocated.allocation.ordered_ids
+                            ],
+                            "floor_allocations_vnd": list(
+                                allocated.allocation.floor_allocations_vnd
+                            ),
+                            "remainders": list(allocated.allocation.remainders),
+                            "remainder_award_order": list(
+                                allocated.allocation.remainder_award_order
+                            ),
+                            "final_allocations_vnd": list(
+                                allocated.allocation.final_allocations_vnd
+                            ),
+                            "rounding": allocated.rounding,
+                        },
+                    ),
+                ),
+            )
+        )
+    except QuoteSnapshotError:
+        # The validator refused an assembly the checks above did not anticipate. Reporting it as a
+        # priced quote would be worse than refusing, exactly as the other two derivations decide.
+        return UnresolvedQuote((ErrorCode.VALIDATION_ERROR.value,))
+    return ComposedQuote(snapshot)
+
+
 def _line_net(line: QuoteLineSnapshot) -> int:
     """The one number a closed line contributes. Every line is exact by the time this is called."""
 
@@ -841,6 +1005,7 @@ __all__ = [
     "BASE_REQUIRED_APPROVALS",
     "QUOTE_ENGINE_HASH",
     "QUOTE_ENGINE_VERSION",
+    "REMEDY_CREDIT_COMPONENT_VERSION",
     "ComposedQuote",
     "PricebookProvenance",
     "QuoteComposition",
@@ -849,5 +1014,6 @@ __all__ = [
     "accept_quote_revision",
     "close_range_prices",
     "compose_quote_revision",
+    "redeem_remedy_credit",
     "stored_price_bands",
 ]

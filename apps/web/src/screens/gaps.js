@@ -271,21 +271,28 @@ const GROUPS = [
   {
     heading: "Duyệt và phiên",
     lede:
-      "Bốn mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API " +
+      "Ba mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API " +
       "không trả về, và một bề mặt đoán bừa các trường đó sẽ là duyệt mù hoặc thao tác nhầm người.",
     entries: [
       {
         ref: "CONSOLE",
-        title: "Quyết định duyệt trong console",
-        what: "Duyệt hoặc từ chối một phong bì đang chờ, ngay tại hàng chờ.",
+        title: "Duyệt một tin nhắn soạn sẵn",
+        what: "Duyệt hoặc từ chối một phong bì MESSAGE_DRAFT ngay tại hàng chờ.",
+        // Narrowed twice, and both times because the limitation behind it closed rather than
+        // because the wording was improved. It first said the console could decide nothing,
+        // which stopped being true when APPROVAL-DECIDE-001 projected resource_version and both
+        // digests onto the queue read. It then named only orders as viewable, which stopped
+        // being true when RANGE-PRICE-001 added a read for one quote revision with its lines.
+        // What survives is the one type nothing can show: the message body is not stored
+        // anywhere, so there is no content to put in front of an approver.
         missing:
-          "Hàng chờ trả về envelope_hash nhưng không trả resource_version, snapshot_hash hay " +
-          "rendered_hash, nên không dựng được một quyết định hợp lệ. Và duyệt theo mã băm mà không " +
-          "xem được nội dung đứng sau nó là duyệt mù.",
-        blockedBy: "Route hàng chờ duyệt không trả resource_version, snapshot_hash và rendered_hash",
+          "Hệ thống không lưu nội dung tin nhắn ở đâu cả, và máy chủ cũng không đối chiếu " +
+          "rendered_hash với bất cứ thứ gì. Không có gì để cho người duyệt xem trước khi họ bấm.",
+        blockedBy: "Không có kho dữ liệu nào giữ nội dung bản tin đã soạn",
         today:
-          "Màn hình Duyệt hiển thị hàng chờ và thời gian còn lại; các nút quyết định hiện ra nhưng " +
-          "bị vô hiệu hoá kèm lý do.",
+          "Phiếu MESSAGE_DRAFT vẫn hiện trong hàng chờ kèm thời gian còn lại, nhưng hai nút quyết " +
+          "định bị khoá kèm lý do. Phiếu gắn với đơn hàng và phiếu chốt giá trong khoảng của báo " +
+          "giá thì bấm quyết được.",
       },
       {
         ref: "CONSOLE",
@@ -310,18 +317,12 @@ const GROUPS = [
           "Nút Thoát chỉ kết thúc phiên đang dùng. Muốn cắt mọi phiên của một người thì vô hiệu " +
           "hoá người đó ở màn hình Nhân sự — lệnh ấy thu hồi tất cả phiên của họ.",
       },
-      {
-        ref: "CONSOLE",
-        title: "Đọc lại một bản báo giá",
-        what: "Mở lại một bản báo giá đã tạo và xem đúng các dòng dịch vụ của nó.",
-        missing:
-          "Không có route GET cho một revision, và không endpoint nào trả các dòng của báo giá, " +
-          "nên không dựng lại được chính thứ vừa tạo ra.",
-        blockedBy: "Không có GET cho một quote revision và không có endpoint trả quote_lines",
-        today:
-          "Danh sách báo giá của cửa hàng trả về bản mới nhất kèm tổng, trạng thái giá và mã băm " +
-          "ảnh chụp — nhưng không có dòng chi tiết nào.",
-      },
+      // "Đọc lại một bản báo giá" was here until RANGE-PRICE-001 and is deleted rather than
+      // reworded, because the gap it described closed:
+      // `GET /internal/v1/stores/{store}/quotes/{quote}` returns one revision with its lines,
+      // each carrying price_kind and, for a banded line, both bounds. `#/quotes?quote=<id>`
+      // renders it, and the approvals queue links to it. A disclosure retires when the
+      // limitation behind it ends; that is the only way one may leave.
     ],
   },
 ];

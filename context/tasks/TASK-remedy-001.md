@@ -72,12 +72,23 @@ from the order's settled total, both already stored. A proposal above its comput
 refuse a rewrite anyway. An approved remedy creates a separate forward obligation. A test must assert
 the ledger is byte-identical before and after.
 
-**A credit attaches to a binding that already exists.** `LATE_DELIVERY_CREDIT` is "10% on the next
-bill" and there is no next bill. Attaching it to a customer record is impossible — `DEC-015` refuses
-to build one. So it is issued against the counter ticket or channel binding the order already carries,
-the same two sources `OrderRepository.create` checks per `DEC-015`'s consequence clause, and is
-redeemed by presenting that ticket. This creates a bearer credit, deliberately not a customer ledger.
-An unredeemed credit expires with the order financial record's retention schedule.
+**A credit is a quote adjustment, never a settlement adjustment.** Use the primitive that already
+exists: `QuoteAdjustmentSnapshot` (`quotes.py:89`) carries `kind`, `direction`, a non-negative
+`amount_min_vnd`/`amount_max_vnd` pair, `source_version_id` and `approval_id`. Add
+`QuoteAdjustmentKind.REMEDY_CREDIT` beside the existing `PROMOTION`, `MANUAL_DISCOUNT`, `SURCHARGE`
+and `DELIVERY`. The **direction** carries the sign; the amount stays non-negative, so invariant 2
+needs no special case.
+
+The credit therefore changes what the next quote's total *is*, before the customer is told it. It does
+not change what may be paid against a total already agreed, so `DEC-010` is untouched and the
+settlement path keeps accepting only the exact quoted total in full.
+
+Attaching it to a customer record is impossible — `DEC-015` refuses to build one. It is issued against
+the counter ticket or channel binding the order already carries, the same two sources
+`OrderRepository.create` checks per `DEC-015`'s consequence clause, and redeemed by presenting that
+ticket. This is deliberately a bearer instrument, like a paper voucher. It is redeemable **exactly
+once**, enforced by the server, and an unredeemed credit expires with the order financial record's
+retention schedule.
 
 **Windows run from recorded events, not from staff input.** 7 days from pickup is 7 days from
 `RELEASED` on the production dimension; 24 hours from receipt is from the recorded intake event. Both

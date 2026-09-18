@@ -212,19 +212,36 @@ The server computes every ceiling from published data. Staff never type a cap. `
 the order line's own priced amount; `10%` from the order's settled total. A proposal exceeding its
 computed ceiling is refused, not truncated.
 
-### 4.6 A credit is an obligation, not a discount
+### 4.6 A credit lands on the next quote, and never on a settlement
 
-`LATE_DELIVERY_CREDIT` is "10% credit on the next bill". There is no next bill yet. Modelling it as a
-discount on a future quote would require a customer record to attach it to, and `DEC-015` refuses to
-build one (§7.1).
+`LATE_DELIVERY_CREDIT` is "10% credit on the next bill". There is no next bill yet.
 
-So a credit is issued **against the counter ticket or channel binding that the order already carries**
-— the same two sources `OrderRepository.create` already checks, per `DEC-015`'s own consequence
-clause. It is redeemable by presenting that ticket. This deliberately does not create a customer
-ledger; it creates a bearer credit tied to a binding that already exists.
+The primitive for it already exists. `QuoteAdjustmentSnapshot` (`quotes.py:89`) carries exactly the
+right shape:
 
-A credit that is never redeemed expires under the order financial record's retention schedule and is
-purged with it. It is not a liability the system tracks forever.
+| field | use |
+|---|---|
+| `kind` | a new `QuoteAdjustmentKind.REMEDY_CREDIT`, beside the existing `PROMOTION`, `MANUAL_DISCOUNT`, `SURCHARGE`, `DELIVERY` |
+| `direction` | `AdjustmentDirection.CREDIT` |
+| `amount_min_vnd` / `amount_max_vnd` | non-negative integers — the **direction** carries the sign, not the amount, so invariant 2 holds without a special case |
+| `source_version_id` | the published remedy-policy version the figure came from |
+| `approval_id` | the `APPROVE_REMEDY` envelope, where one was required |
+
+So a credit is an adjustment on the **next quote**, not an adjustment to a settlement. This matters
+more than it looks: the settlement path keeps accepting only the exact quoted total, in full, in one
+payment. `DEC-010` is untouched, because the credit changes what the total *is* before the customer
+is ever told it — it does not change what may be paid against a total already agreed.
+
+**What the credit attaches to.** Not a customer record — `DEC-015` refuses to build one (§7.1). It is
+issued against the counter ticket or channel binding the order already carries, the same two sources
+`OrderRepository.create` already checks per `DEC-015`'s own consequence clause, and redeemed by
+presenting that ticket at the counter. This is deliberately a bearer instrument, like a paper voucher:
+whoever holds the ticket number can redeem it. At 10% of a laundry bill the exposure is proportionate,
+staff apply it by hand, and the alternative is the customer ledger this system has decided not to
+build.
+
+A credit is redeemable **exactly once**, enforced by the server, and an unredeemed credit expires with
+the order financial record's retention schedule. It is not a liability the system tracks forever.
 
 ### 4.7 Windows are checked against recorded facts, never "now" alone
 

@@ -29,6 +29,7 @@ from __future__ import annotations
 import http.server
 import itertools
 import json
+import os
 import socketserver
 import sys
 import threading
@@ -44,6 +45,34 @@ STORE = "11111111-2222-4333-8444-555555555555"
 
 PASS: list[str] = []
 FAIL: list[str] = []
+
+#: `INCIDENT-INTAKE-001`. Two rows, because the interesting one is the second: an incident whose
+#: description has been disposed of under `INCIDENT_EVIDENCE` at 365 days, or which the agent path
+#: opened with no summary at all. It must read as an expected retention state, not as a gap.
+INCIDENTS = [
+    {
+        "incident_id": "aaaaaaaa-1111-4333-8444-555555555555",
+        "store_id": STORE,
+        "order_id": "bbbbbbbb-2222-4333-8444-555555555555",
+        "category": "SERVICE_QUALITY",
+        "status": "OPEN",
+        "fault_decided": False,
+        "remedy_decided": False,
+        "opened_at": "2026-09-17T03:00:00+00:00",
+        "evidence_summary": "Áo sơ mi trắng bị ố vàng ở cổ.",
+    },
+    {
+        "incident_id": "cccccccc-3333-4333-8444-555555555555",
+        "store_id": STORE,
+        "order_id": "dddddddd-4444-4333-8444-555555555555",
+        "category": "SERVICE_QUALITY",
+        "status": "CLOSED",
+        "fault_decided": True,
+        "remedy_decided": True,
+        "opened_at": "2025-09-01T03:00:00+00:00",
+        "evidence_summary": None,
+    },
+]
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -172,7 +201,29 @@ state = {"authenticated": True, "hold_ticket": False}
 held_ticket_routes: list[Route] = []
 
 with sync_playwright() as playwright:
-    browser = playwright.chromium.launch(channel="chrome", headless=True)
+    # Real Chrome by default, because the staff console is opened in a real browser and the
+    # rendering defects this file exists to catch are browser behaviour, not DOM shape.
+    #
+    # `CONSOLE_BROWSER_CHANNEL=chromium` selects Playwright's bundled build instead, for a container
+    # that has one and no Chrome -- which is every container this repository is worked on in. Before
+    # this, the script did not run there at all: it raised "Chromium distribution 'chrome' is not
+    # found", so the one check that can see a form a human cannot use was the one check nobody
+    # could run. An opt-in that names what it selected is better than a silent fallback, and better
+    # than a verifier that only works on one machine.
+    # `CONSOLE_BROWSER_PATH` takes precedence over both: a container that ships a Chromium build
+    # Playwright's own version does not expect answers "Executable doesn't exist" and points at a
+    # download this environment blocks. Naming the binary is the documented way out and keeps the
+    # launch honest about which browser produced the result.
+    channel = os.environ.get("CONSOLE_BROWSER_CHANNEL", "chrome")
+    executable = os.environ.get("CONSOLE_BROWSER_PATH", "")
+    if executable:
+        options: dict[str, object] = {"executable_path": executable}
+    elif channel == "chromium":
+        options = {}
+    else:
+        options = {"channel": channel}
+    browser = playwright.chromium.launch(headless=True, **options)  # type: ignore[arg-type]
+    print(f"browser: {executable or channel}")
     context = browser.new_context(viewport={"width": 1280, "height": 900})
     context.add_cookies(
         [{"name": "staff_csrf", "value": "c" * 40, "url": f"http://localhost:{PORT}"}]
@@ -212,6 +263,33 @@ with sync_playwright() as playwright:
                 }
             else:
                 body = []
+        elif "/incidents" in url:
+            if route.request.method == "POST":
+                # Captured rather than merely answered. The seam this section exists to test is the
+                # request body itself: `IncidentOpenRequest` is a `StrictRequest`, so a third key is
+                # a 422 against the real server, and the two `sha256:` fields it used to demand are
+                # now the server's to derive. A stub that only returned 201 would certify a console
+                # that sends anything at all.
+                state.setdefault("incident_posts", []).append(route.request.post_data)
+                route.fulfill(
+                    status=201,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "incident_id": INCIDENTS[0]["incident_id"],
+                            "status": "OPEN",
+                            "fault_decided": False,
+                            "remedy_decided": False,
+                            "replayed": False,
+                        }
+                    ),
+                )
+                return
+            # Empty until section 9 asks for rows. The home screen reads this same endpoint, and
+            # section 6 asserts an all-clear line that claims only the queues it checked -- so a
+            # stub that always answered with incidents would fail that check for a reason that has
+            # nothing to do with it, and the harness would be the defect.
+            body = INCIDENTS if state.get("incidents_listed") else []
         elif "/settlements/today" in url:
             body = SETTLEMENTS_TODAY
         elif "/pricebook/services" in url:
@@ -790,6 +868,64 @@ with sync_playwright() as playwright:
         )
     held_ticket_routes.clear()
     page.wait_for_timeout(200)
+
+    print()
+    print("=" * 74)
+    print("9. OPENING AN INCIDENT — the counter path DEC-028 made completable")
+    print("=" * 74)
+
+    # Until DEC-028 this screen could not be completed by anybody: the request demanded
+    # `contact_scope_hash` and `evidence_summary_hash` and nothing in the repository produced
+    # either. Nothing in this file covered it, so the form that could not be submitted was also the
+    # form nothing drove. Both halves changed together.
+    state["incidents_listed"] = True
+    page.goto(f"http://localhost:{PORT}/#/incidents", wait_until="networkidle")
+    page.wait_for_timeout(700)
+
+    body_text = page.inner_text("body")
+    check(
+        "the screen no longer says the form cannot be completed",
+        "chưa dùng được" not in body_text and "sha256" not in body_text,
+        body_text[:160].replace("\n", " "),
+    )
+    check(
+        "an incident whose description was purged reads as retention, not as a gap",
+        "không phải mất dữ liệu" in body_text.replace("\n", " "),
+        "expected the muted absent-value sentence on the CLOSED row",
+    )
+
+    summary_box = page.locator("form textarea").first
+    order_box = page.locator("input[type=text]").first
+    check("the complaint is typed into a textarea, not a hash field", summary_box.count() > 0)
+
+    order_box.fill(INCIDENTS[0]["order_id"])
+    # Typed, not `fill()`. This whole file exists because a `fill()`-based check certified a screen
+    # that rebuilt its form on every keystroke and was unusable by a human.
+    summary_box.click()
+    summary_box.type("Áo sơ mi trắng bị ố vàng ở cổ.", delay=12)
+    typed = summary_box.input_value()
+    check(
+        "the complaint survives being typed one character at a time",
+        typed == "Áo sơ mi trắng bị ố vàng ở cổ.",
+        f"got {typed!r}",
+    )
+
+    page.locator("form button[type=submit]").last.click()
+    page.wait_for_timeout(600)
+
+    posts = state.get("incident_posts") or []
+    sent = json.loads(posts[-1]) if posts else {}
+    check("the form actually submits", bool(posts), f"{len(posts)} POST(s)")
+    check(
+        "it sends exactly order_id and evidence_summary, and no hash",
+        set(sent) == {"order_id", "evidence_summary"},
+        f"keys={sorted(sent)}",
+    )
+    check(
+        "the complaint reaches the server as the words the staff member typed",
+        sent.get("evidence_summary") == "Áo sơ mi trắng bị ố vàng ở cổ.",
+        f"got {sent.get('evidence_summary')!r}",
+    )
 
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))
     browser.close()

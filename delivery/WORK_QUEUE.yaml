@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-17'
+last_updated: '2026-09-18'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -2252,7 +2252,7 @@ items:
 - id: INCIDENT-INTAKE-001
   phase: PRODUCTION_HARDENING
   title: Let a staff member open an incident at the counter
-  status: PENDING
+  status: COMPLETE
   priority: 226
   depends_on:
   - RETENTION-STORE-001

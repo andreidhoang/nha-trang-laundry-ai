@@ -37,9 +37,10 @@ from nha_trang_laundry_db.delivery_legs import (
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.incidents import (
-    IncidentOpenCommand,
     IncidentRepository,
     IncidentSummary,
+    StaffIncidentOpenCommand,
+    evidence_summary_digest,
 )
 from nha_trang_laundry_db.intake import (
     CreateOrderRequestCommand,
@@ -1295,11 +1296,17 @@ class OperationsService:
         *,
         store_id: UUID,
         order_id: UUID,
-        contact_scope_hash: str,
-        evidence_summary_hash: str,
+        evidence_summary: str,
         idempotency_key: str,
         principal: StaffPrincipal,
     ) -> StoredIncidentResult:
+        """Take a complaint at the counter. `DEC-028`: both digests are the server's to compute.
+
+        The caller sends what the customer said and the order it is about. It does not send a
+        contact scope, because a staff member naming a scope is a staff member choosing whose
+        incident this is, and invariant 9 puts that outside client control.
+        """
+
         opened_at = datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
             result = self._idempotency.execute(
@@ -1307,29 +1314,28 @@ class OperationsService:
                 IdempotentCommand(
                     scope=f"staff-incident-open:{principal.staff_user_id}",
                     key=idempotency_key,
+                    # The digest, not the text. `request_hash` is an unsalted commitment stored in a
+                    # row `protect_idempotency_record` never lets anyone delete, so putting the
+                    # summary itself here would place a permanent commitment to a customer's
+                    # complaint beside a 365-day schedule -- the DEC-018 shape. Two calls with the
+                    # same summary still produce the same payload, so idempotency is unchanged.
                     payload={
                         "store_id": str(store_id),
                         "order_id": str(order_id),
-                        "contact_scope_hash": contact_scope_hash,
-                        "evidence_summary_hash": evidence_summary_hash,
+                        "evidence_summary_hash": evidence_summary_digest(evidence_summary),
                     },
                     occurred_at=opened_at,
                 ),
                 lambda: _incident_mapping(
-                    self._incidents.open(
+                    self._incidents.open_from_counter(
                         connection,
-                        IncidentOpenCommand(
+                        StaffIncidentOpenCommand(
                             store_id=store_id,
                             order_id=order_id,
-                            affected_message_id=None,
-                            affected_policy_version=None,
-                            contact_scope_hash=contact_scope_hash,
-                            category="SERVICE_QUALITY",
-                            evidence_summary_hash=evidence_summary_hash,
+                            evidence_summary=evidence_summary,
                             actor_id=principal.staff_user_id,
                             correlation_id=uuid4(),
                             opened_at=opened_at,
-                            actor_type="STAFF",
                         ),
                         principal=principal,
                     )

@@ -10,11 +10,14 @@
  *     there is no route in this API that ever sets either. So both are rendered as
  *     "chưa quyết định" everywhere they appear, never as a blank or an omitted row, and the missing
  *     remedy workflow is linked rather than implied.
- *   - **The hashes use a bare `sha256:` prefix.** Every other hash this API accepts is
- *     `JCS-SHA256-V1:` — approval envelopes, quote snapshots, rendered messages. Incident hashes are
- *     the exception (`0014_customer_incidents.sql:9,14`), and pasting the wrong kind produces a 422
- *     whose text an operator cannot act on. Both fields are therefore checked here before the round
- *     trip, marked `aria-invalid`, and their hint names the prefix explicitly.
+ *   - **The console sends words and computes no digest.** `DEC-028` moved both of this record's
+ *     `sha256:` commitments to the server: the contact scope is derived from the order's own
+ *     binding, and the evidence digest is taken over the summary that was actually stored. A form
+ *     that let a staff member name a contact scope would be a place to file an incident against a
+ *     customer of their choosing, so those fields left the request model rather than becoming
+ *     optional. What the counter types is the complaint itself, and it is kept in a side table the
+ *     retention schedule can empty — which is why a row on the list below can honestly have no
+ *     description years later.
  *   - **There is no category picker, because there is no category field.** The HTTP model has three
  *     members and none of them is `category`; the service hardcodes `SERVICE_QUALITY` and
  *     `actor_type=STAFF` (`operations.py:645,657`). Offering a choice the request cannot carry would
@@ -30,7 +33,7 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UUID, dateTime, matchesFilter, shortId } from "../core/format.js";
+import { UNKNOWN, UUID, dateTime, matchesFilter, shortId } from "../core/format.js";
 import { WARNING, enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -40,6 +43,7 @@ import {
   errorNotice,
   facts,
   gated,
+  gatedFields,
   labelled,
   listView,
   panel,
@@ -51,28 +55,29 @@ import {
 const LIST_LIMIT = 100;
 
 /**
- * `IncidentOpenRequest.contact_scope_hash` and `.evidence_summary_hash`.
+ * `IncidentOpenRequest.evidence_summary` is `1..2000` characters, and the domain re-checks that
+ * length after NFC normalisation and trimming.
  *
- * Matched here only to catch the wrong prefix before a round trip. The server checks the same
- * pattern, and the database checks it a third time; this copy exists to make the refusal legible,
- * not to be the authority.
+ * Held here so a staff member meets the limit while typing instead of as a 422 after the round
+ * trip. The server is the authority; this is the legible copy of its rule.
  */
-const INCIDENT_HASH = /^sha256:[0-9a-f]{64}$/;
+const SUMMARY_MAX = 2000;
 
 /**
  * The two domain refusals this route can answer with, keyed by the server's exact string.
  *
  * The string itself is always shown verbatim by `errorNotice` — it is what an engineer greps for.
  * These notes are rendered beside it, never instead of it, because "incident binding is invalid"
- * tells an operator nothing about which of the two hashes to look at.
+ * tells an operator nothing about what to do with the customer still standing there.
  */
 const REFUSAL_NOTE = {
   "incident order binding is unavailable":
     "Mã đơn không tồn tại trong cửa hàng đang chọn. Kiểm tra lại mã đơn, hoặc kiểm tra bạn đang " +
     "đứng đúng cửa hàng. Không có sự cố nào được ghi.",
   "incident binding is invalid":
-    "Ràng buộc của sự cố không qua được kiểm tra miền — thường là một trong hai mã băm sai định " +
-    "dạng. Không có sự cố nào được ghi.",
+    "Ràng buộc của sự cố không qua được kiểm tra miền. Lỗi này không nằm ở chữ bạn vừa gõ. " +
+    "Không có sự cố nào được ghi: bấm lại một lần, nếu vẫn vậy thì ghi ra sổ kèm số phiếu và " +
+    "báo kỹ thuật.",
 };
 
 /**
@@ -144,42 +149,6 @@ function recordOnlyNotice() {
  *
  * @returns {HTMLElement}
  */
-/**
- * The two fields nothing produces.
- *
- * `WORKFLOW-CONFORMANCE-001` drove this form as a member of staff and could not finish it. The
- * request requires `contact_scope_hash` and `evidence_summary_hash`, and a search of the whole
- * repository finds no producer of either: no route returns one, no screen renders one, no script
- * computes one. They are agent-pipeline values — `agent-tools-v1.openapi.yaml` binds a fact to the
- * contact it was resolved for — and that pipeline is `NOT_AUTHORIZED` in this release.
- *
- * The hints used to say "chép nguyên văn", which tells a staff member there is somewhere to copy
- * from. There is not, and a person hunting for a screen that does not exist is worse off than one
- * told plainly that this form cannot be completed yet.
- *
- * @returns {HTMLElement}
- */
-function unproducibleHashesNotice() {
-  return h(
-    "div",
-    { class: "notice", dataState: "danger" },
-    h("p", { class: "notice__title" }, "Biểu mẫu này chưa dùng được — không phải do bạn"),
-    h(
-      "p",
-      null,
-      "Máy chủ đòi hai mã băm sha256 cho mỗi sự cố, và không có màn hình, API hay công cụ nào " +
-        "trong hệ thống sinh ra chúng. Chúng thuộc đường agent, đường đó chưa được cấp phép, nên " +
-        "hiện không có cách nào điền đúng hai ô dưới đây.",
-    ),
-    h(
-      "p",
-      null,
-      "Hôm nay: ghi khiếu nại của khách ra sổ kèm số phiếu, và báo chủ tiệm trong ngày. " +
-        "Danh sách sự cố bên dưới vẫn đọc được. Chi tiết ở màn hình “Chưa hỗ trợ”.",
-    ),
-  );
-}
-
 function hardcodedFieldsNotice() {
   return h(
     "div",
@@ -260,6 +229,35 @@ function incidentResult(result) {
 }
 
 /**
+ * What the customer said, or an honest statement that it is no longer held.
+ *
+ * `evidence_summary` is null in two normal cases and in no abnormal one: an incident the agent path
+ * opened never had a summary, and one whose evidence reached 365 days had its summary purged under
+ * `INCIDENT_EVIDENCE` while the incident row and its digest survived. Rendering that as a blank cell
+ * would read as data lost; it is the retention schedule working, so the cell says so in the same
+ * muted register the rest of the console uses for an absent value.
+ *
+ * @param {string|null|undefined} summary
+ * @returns {HTMLElement|string}
+ */
+function summaryCell(summary) {
+  const text = typeof summary === "string" ? summary.trim() : "";
+  if (text) return text;
+  return h(
+    "span",
+    null,
+    `${UNKNOWN} `,
+    h(
+      "span",
+      { class: "hint" },
+      "Không còn giữ lời khách phàn nàn. Sự cố do đường agent ghi vốn không kèm mô tả, còn mô tả " +
+        "do nhân viên ghi bị xoá sau 365 ngày theo lịch giữ dữ liệu. Bản ghi sự cố thì vẫn " +
+        "nguyên: đây là chuyện bình thường, không phải mất dữ liệu.",
+    ),
+  );
+}
+
+/**
  * One incident on the list.
  *
  * @param {any} item
@@ -278,6 +276,7 @@ function incidentCard(item) {
       item.status === "OPEN" ? badge(WARNING.INCIDENT) : null,
     ),
     facts([
+      ["Khách phàn nàn gì", summaryCell(item.evidence_summary), { span: true }],
       ["Loại", enumLabel(item.category), { mono: true, span: true }],
       ["Trạng thái", enumLabel(item.status), { mono: true }],
       [
@@ -300,8 +299,8 @@ export function render_() {
   const submission = new Submission("incident-open");
   const writeVerdict = can(principal(), "INCIDENTS_WRITE");
 
-  /** @type {{orderId: string, contactScopeHash: string, evidenceSummaryHash: string}} */
-  const draft = { orderId: "", contactScopeHash: "", evidenceSummaryHash: "" };
+  /** @type {{orderId: string, evidenceSummary: string}} */
+  const draft = { orderId: "", evidenceSummary: "" };
 
   // A staged hand-off is consumed exactly once, here, before the inputs are built — the
   // order field opens holding the carried id.
@@ -327,8 +326,10 @@ export function render_() {
 
   /**
    * The recorded incidents. The filter narrows the rows already fetched, and nothing else: a
-   * case-insensitive substring test over the raw `incident_id`, `order_id` and `status` strings —
-   * the same values the row renders. It computes nothing and touches no money field; while it is
+   * case-insensitive substring test over the raw `incident_id`, `order_id`, `status` and
+   * `evidence_summary` strings — the same values the row renders. The summary is in that list
+   * because "cái áo sơ mi trắng" is how a customer refers to their own complaint, and a null
+   * summary simply never matches. It computes nothing and touches no money field; while it is
    * active both counts stay on screen so a shortened list never reads as lost data.
    */
   const list = listView({
@@ -339,10 +340,13 @@ export function render_() {
     emptyText: "Chưa có sự cố nào trong cửa hàng này.",
     skeletonRows: 2,
     filter: {
-      placeholder: "Lọc theo mã sự cố, mã đơn, trạng thái…",
+      placeholder: "Lọc theo mã sự cố, mã đơn, trạng thái, nội dung…",
       noun: "sự cố",
       matches: (item, needle) =>
-        matchesFilter([item.incident_id, item.order_id, item.status], needle),
+        matchesFilter(
+          [item.incident_id, item.order_id, item.status, item.evidence_summary],
+          needle,
+        ),
     },
   });
 
@@ -354,22 +358,26 @@ export function render_() {
     submission,
   });
 
-  const contactInput = boundInput({
-    target: draft,
-    key: "contactScopeHash",
-    pattern: INCIDENT_HASH,
-    placeholder: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-    submission,
-    format: "hash",
-  });
-
-  const evidenceInput = boundInput({
-    target: draft,
-    key: "evidenceSummaryHash",
-    pattern: INCIDENT_HASH,
-    placeholder: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-    submission,
-    format: "hash",
+  // Not `boundInput`: that helper is a single-line `<input>` matched against a pattern, and a
+  // complaint is prose. The binding it does keep is the same one — the draft key updates on every
+  // keystroke and the idempotency key is retired, so an edited body is never sent under the key of
+  // the body before it. The value is stored raw and trimmed at submit, because trimming as the
+  // operator types eats the space between two words.
+  const summaryInput = h("textarea", {
+    rows: "3",
+    maxlength: String(SUMMARY_MAX),
+    autocomplete: "off",
+    placeholder: "Khách báo áo sơ mi trắng bị ố vàng ở cổ, nhận đồ sáng nay.",
+    onInput: (event) => {
+      draft.evidenceSummary = event.target.value;
+      submission.reset();
+      // Marked only when there is something typed that still cannot be sent — whitespace alone.
+      // An untouched field is not an error yet, which is how `boundInput` treats an empty value.
+      event.target.setAttribute(
+        "aria-invalid",
+        event.target.value && !event.target.value.trim() ? "true" : "false",
+      );
+    },
   });
 
   /**
@@ -378,13 +386,11 @@ export function render_() {
   function validate() {
     if (!draft.orderId) return "Chưa nhập mã đơn (UUID). Máy chủ bắt buộc phải có đơn.";
     if (!UUID.test(draft.orderId)) return "Mã đơn phải là UUID đủ 36 ký tự.";
-    if (!draft.contactScopeHash) return "Chưa nhập mã băm phạm vi liên hệ (contact_scope_hash).";
-    if (!INCIDENT_HASH.test(draft.contactScopeHash)) {
-      return "Mã băm phạm vi liên hệ (contact_scope_hash) phải bắt đầu bằng sha256: và có đúng 64 ký tự hex thường.";
+    if (!draft.evidenceSummary.trim()) {
+      return "Chưa ghi khách phàn nàn chuyện gì. Viết ít nhất một câu, bằng lời của khách.";
     }
-    if (!draft.evidenceSummaryHash) return "Chưa nhập mã băm tóm tắt bằng chứng (evidence_summary_hash).";
-    if (!INCIDENT_HASH.test(draft.evidenceSummaryHash)) {
-      return "Mã băm tóm tắt bằng chứng (evidence_summary_hash) phải bắt đầu bằng sha256: và có đúng 64 ký tự hex thường.";
+    if (draft.evidenceSummary.trim().length > SUMMARY_MAX) {
+      return `Nội dung khách phàn nàn dài quá ${SUMMARY_MAX} ký tự. Rút gọn lại còn ý chính.`;
     }
     return "";
   }
@@ -400,10 +406,12 @@ export function render_() {
       return;
     }
 
+    // Exactly the two keys `IncidentOpenRequest` declares. It is a `StrictRequest`, so a third
+    // key is a 422 rather than a field quietly ignored — and the two digests on the stored row are
+    // the server's to compute from these.
     const payload = {
       order_id: draft.orderId,
-      contact_scope_hash: draft.contactScopeHash,
-      evidence_summary_hash: draft.evidenceSummaryHash,
+      evidence_summary: draft.evidenceSummary.trim(),
     };
     const signature = JSON.stringify(payload);
     if (signature === lastCommitted) {
@@ -462,39 +470,35 @@ export function render_() {
     "Ghi sự cố",
   );
 
-  const form = h(
-    "form",
-    { class: "form", onSubmit: submit },
-    recordOnlyNotice(),
-    unproducibleHashesNotice(),
-    hardcodedFieldsNotice(),
-    labelled({
-      id: "incident-order",
-      label: "Mã đơn (order_id)",
-      hint:
-        "Bắt buộc. Miền cho phép sự cố gắn với một tin nhắn thay vì một đơn, nhưng yêu cầu HTTP " +
-        "này không có trường đó, nên ở đây phải có đơn. Đơn phải thuộc đúng cửa hàng đang chọn.",
-      control: orderInput,
-    }),
-    labelled({
-      id: "incident-contact-hash",
-      label: "Mã băm phạm vi liên hệ",
-      hint:
-        "contact_scope_hash — sha256: rồi 64 ký tự hex thường. Không có màn hình nào trong bảng " +
-        "vận hành này sinh ra giá trị đó; xem khối cảnh báo ở trên.",
-      control: contactInput,
-    }),
-    labelled({
-      id: "incident-evidence-hash",
-      label: "Mã băm tóm tắt bằng chứng",
-      hint:
-        "evidence_summary_hash — sha256: rồi 64 ký tự hex thường. Đây là mã băm của bản tóm tắt " +
-        "bằng chứng, không phải bản thân bằng chứng — không dán nội dung khách gửi vào đây. " +
-        "Cũng không có chỗ nào sinh ra nó.",
-      control: evidenceInput,
-    }),
-    h("div", { class: "action-bar" }, gated(submitButton, writeVerdict)),
-    result,
+  // `gatedFields` beside `gated`: a role that may not write meets the refusal before typing a
+  // complaint out, not on the press that never comes.
+  const form = gatedFields(
+    h(
+      "form",
+      { class: "form", onSubmit: submit },
+      recordOnlyNotice(),
+      hardcodedFieldsNotice(),
+      labelled({
+        id: "incident-order",
+        label: "Mã đơn (order_id)",
+        hint:
+          "Bắt buộc. Miền cho phép sự cố gắn với một tin nhắn thay vì một đơn, nhưng yêu cầu HTTP " +
+          "này không có trường đó, nên ở đây phải có đơn. Đơn phải thuộc đúng cửa hàng đang chọn.",
+        control: orderInput,
+      }),
+      labelled({
+        id: "incident-summary",
+        label: "Khách phàn nàn chuyện gì",
+        hint:
+          "Bắt buộc. Viết ngắn theo lời khách: món đồ nào, hỏng hay thiếu thế nào, khách nhận ra " +
+          "lúc nào. Không cần ghi tên, số điện thoại hay địa chỉ — sự cố đã gắn với đơn rồi. " +
+          "Tối đa 2000 ký tự, và nội dung này bị xoá sau 365 ngày theo lịch giữ dữ liệu.",
+        control: summaryInput,
+      }),
+      h("div", { class: "action-bar" }, gated(submitButton, writeVerdict)),
+      result,
+    ),
+    writeVerdict,
   );
 
   void list.reload();
@@ -510,8 +514,8 @@ export function render_() {
       h(
         "p",
         { class: "screen__lede" },
-        "Ghi lại rằng có chuyện xảy ra, kèm mã băm phạm vi liên hệ và mã băm tóm tắt bằng chứng. " +
-          "Việc quy lỗi và bồi hoàn không diễn ra ở đây.",
+        "Ghi lại rằng có chuyện xảy ra: khách phàn nàn gì, về đơn nào. Việc quy lỗi và bồi hoàn " +
+          "không diễn ra ở đây.",
       ),
     ),
     panel({

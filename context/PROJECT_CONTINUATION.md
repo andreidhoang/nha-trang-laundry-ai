@@ -1,8 +1,31 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-09-13 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **123 queue items.** The suite runs **1,189 passing, 3 skipped** with
-the guarded PostgreSQL suite; migrations run `0001`–`0037`.
+**Last reconciled:** 2026-09-18 (Asia/Ho_Chi_Minh)
+**Active work item:** `INCIDENT-INTAKE-001`. **126 queue items.** Migrations run `0001`–`0039`.
+
+## Where the project actually stands — 2026-09-18
+
+**Two decisions are open, out of twenty-eight, and neither is a judgement call.** `DEC-006` needs a
+provider organisation and a legal check; `DEC-016` needs a named person to staff the inbound
+channel. Everything else the business had to decide is decided. So the thing standing between this
+repository and a trading shop is no longer a decision backlog.
+
+**`SHOP-CUTOVER-001` is blocked on physical artifacts only**, and its own blocking condition says so:
+"Everything buildable without one is done." What remains is a machine, a TLS certificate from a
+private CA trusted on every tablet, DNS for the console name, an off-host archive repository in a
+separate failure domain, the age key pair generated on the owner's own device, and a timed restore
+drill. An agent may not select a vendor, accept terms, hold the backup identity or run a deployment.
+
+**`DEC-001`–`DEC-004` do not block the shop from opening.** They gate `PUBLIC-POLICY-001`,
+`EVAL-PUBLIC-CORPUS-001`, `CHANNEL-001` and `AUTONOMY-001` — the public AI ladder, which `DEC-027`
+already deferred out of R1. The counter prices and creates orders today; `WORKFLOW-CONFORMANCE-001`
+drove that end to end.
+
+**Retention executes as of 2026-09-17.** `RETENTION-STORE-001` separated the disposable payload from
+the append-only ledger, so `RAW_WEBHOOK_PAYLOAD` really disposes and every other class refuses with
+a specific, auditable reason. `DEC-018`, `DEC-019` and `DEC-020` were resolved the same day and
+shape it; `ASSISTANT-RETENTION-001` and `HASH-KEYING-001` are the two corrective items that decision
+opened by name.
 
 ## Cross-machine and shop-Mac handoff — 2026-09-13
 
@@ -40,11 +63,14 @@ The lesson worth carrying: **the previous two audit rounds were organised by lay
 audit cannot find a defect that lives between two correct layers.** A workflow audit can, and this
 one did on its first pass.
 
-Two things did not move and are the same two as before. Incident intake cannot be completed by
-anybody — the request demands two hashes nothing in the system produces — and that is now stated on
-the screen, listed in `#/gaps`, guarded by a test, and put to the owner as
-`docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md`. And `SHOP-CUTOVER-001` is still BLOCKED on a
-provisioned host, a TLS certificate, the first staff accounts and a signed gate manifest.
+Two things did not move and are the same two as before. ~~Incident intake cannot be completed by
+anybody — the request demands two hashes nothing in the system produces.~~ **Closed 2026-09-18 by
+`DEC-028` and `INCIDENT-INTAKE-001`:** the contact scope is derived by the server from the order's
+binding, and the evidence summary is stored in a disposable side table on the `INCIDENT_EVIDENCE`
+schedule. The second answer was the risky one when the request was written and is not now, because
+`RETENTION-STORE-001` shipped a mechanism that can execute such a schedule the day before. And
+`SHOP-CUTOVER-001` is still BLOCKED on a provisioned host, a TLS certificate, the first staff
+accounts and a signed gate manifest.
 
 ## Where R1 stood — 2026-09-06
 

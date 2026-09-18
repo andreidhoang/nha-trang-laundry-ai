@@ -385,8 +385,7 @@ def test_staff_shadow_workflow_is_typed_hash_bound_and_observation_only() -> Non
             headers={"Idempotency-Key": "incident-open"},
             json={
                 "order_id": str(ORDER_ID),
-                "contact_scope_hash": SCOPE_HASH,
-                "evidence_summary_hash": EVIDENCE_HASH,
+                "evidence_summary": "Áo sơ mi trắng bị ố vàng ở cổ.",
             },
         )
         missing_reason = client.post(
@@ -454,8 +453,7 @@ def test_staff_mutations_require_mfa_before_service_dispatch() -> None:
             headers={"Idempotency-Key": "no-mfa-incident"},
             json={
                 "order_id": str(ORDER_ID),
-                "contact_scope_hash": SCOPE_HASH,
-                "evidence_summary_hash": EVIDENCE_HASH,
+                "evidence_summary": "Áo sơ mi trắng bị ố vàng ở cổ.",
             },
         )
     finally:

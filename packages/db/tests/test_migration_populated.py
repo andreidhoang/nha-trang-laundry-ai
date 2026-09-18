@@ -34,6 +34,10 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 SEPARATION_MIGRATION = "0038"
+#: Everything from the separation onwards is withheld from the "before" directory. Excluding only
+#: `0038` by name left `0039` in it, which then applied against a database that had no
+#: `reject_payload_rewrite` yet -- the fixture silently changed meaning the moment a later migration
+#: landed, which is the class of breakage this whole file exists to catch.
 
 #: Payload bytes chosen so a comparison cannot pass by accident: different lengths, a repeated
 #: value across two rows, non-ASCII, and one row whose bytes are a prefix of another's.
@@ -82,7 +86,7 @@ def migrations_before_separation(tmp_path: Path) -> Path:
     directory.mkdir()
     copied = 0
     for path in sorted(MIGRATIONS_DIRECTORY.glob("*.sql")):
-        if path.name.startswith(SEPARATION_MIGRATION):
+        if path.name[:4] >= SEPARATION_MIGRATION:
             continue
         shutil.copy2(path, directory / path.name)
         copied += 1

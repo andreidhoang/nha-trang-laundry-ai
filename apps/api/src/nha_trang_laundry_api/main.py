@@ -303,9 +303,16 @@ class ManualSendAttestationRequest(StrictRequest):
 
 
 class IncidentOpenRequest(StrictRequest):
+    """`DEC-028`. What the customer said, and which order it is about. Nothing else.
+
+    The two `sha256:` fields this model used to require were agent-pipeline concepts the counter
+    inherited, and nothing in the system produced either, so the form could not be completed by
+    anybody. They are now derived by the server. `StrictRequest` forbids unknown fields, so a client
+    that tries to supply one is refused rather than quietly ignored.
+    """
+
     order_id: UUID
-    contact_scope_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    evidence_summary_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    evidence_summary: str = Field(min_length=1, max_length=2000)
 
 
 class MemberStore(BaseModel):
@@ -465,6 +472,10 @@ class IncidentSummaryResponse(BaseModel):
     fault_decided: bool
     remedy_decided: bool
     opened_at: datetime
+    #: Null for an incident the agent path opened, which stores no summary, and for one whose
+    #: evidence has been disposed of under `INCIDENT_EVIDENCE`. The incident itself never
+    #: disappears; only its description does, and only on the published schedule.
+    evidence_summary: str | None = None
 
 
 class QueueRecoveryResponse(BaseModel):
@@ -1832,8 +1843,7 @@ def open_incident(
             service.open_incident(
                 store_id=store_id,
                 order_id=request.order_id,
-                contact_scope_hash=request.contact_scope_hash,
-                evidence_summary_hash=request.evidence_summary_hash,
+                evidence_summary=request.evidence_summary,
                 idempotency_key=idempotency_key,
                 principal=principal,
             )

@@ -398,7 +398,10 @@ def test_the_supported_set_is_derived_from_the_registry_rather_than_maintained_b
     prevent. A second hand-maintained constant is how that happens, so there is only one.
     """
     assert frozenset(DISPOSABLE_PAYLOAD_STORES) == SUPPORTED_PURGE_CLASSES
-    assert {RetentionClass.RAW_WEBHOOK_PAYLOAD} == SUPPORTED_PURGE_CLASSES
+    assert {
+        RetentionClass.RAW_WEBHOOK_PAYLOAD,
+        RetentionClass.INCIDENT_EVIDENCE,
+    } == SUPPORTED_PURGE_CLASSES
 
 
 def test_every_retention_class_is_either_supported_or_explained() -> None:
@@ -1025,7 +1028,10 @@ def test_only_the_purge_role_may_delete_and_only_from_the_side_table(
         )
         deletable = [str(row[0]) for row in cursor.fetchall()]
 
-    assert deletable == ["webhook_event_payloads"]
+    # Derived from the registry rather than listed here. DEC-020 names the drift it is guarding
+    # against -- a purgeable table whose permission lives somewhere else -- and a test that restates
+    # the list by hand is one more place for that drift to hide.
+    assert deletable == sorted(store.payload_table for store in DISPOSABLE_PAYLOAD_STORES.values())
 
 
 # --- positive disposal evidence, not an inference from absence -----------------------------------

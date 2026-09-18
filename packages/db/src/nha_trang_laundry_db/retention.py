@@ -232,6 +232,59 @@ def _purge_webhook_payloads(cursor: Any, execution: PurgeExecution) -> PurgeCoun
     return PurgeCounts(deleted=deleted, exempt=int(row[0]) if row is not None else 0)
 
 
+#: Dispose of the summaries of complaints that are finished and past the cutoff.
+#:
+#: DEC-018 generalises here rather than being confined to the case that motivated it. Its rule is
+#: that a pointer from a longer-lived record pins its target; the same asymmetry of harm applies to
+#: an unfinished matter. Deleting the description of a complaint whose fault or remedy nobody has
+#: decided destroys the only account of what was actually wrong, and `DEC-004` governs remedies that
+#: can be owed years later. Keeping it past its schedule harms nobody anyone can point at.
+#:
+#: So an incident holds its own evidence until it is CLOSED. That is not an open-ended exemption --
+#: incidents close, and the run reports every held-back row rather than passing over it in silence.
+_PURGE_INCIDENT_EVIDENCE = """
+WITH disposed AS (
+    DELETE FROM customer_incident_evidence e
+     USING customer_incidents i
+     WHERE i.id = e.incident_id
+       AND i.opened_at < %(cutoff)s
+       AND i.status = 'CLOSED'
+    RETURNING e.incident_id AS subject_key, i.opened_at AS subject_occurred_at
+)
+INSERT INTO retention_disposal_records (
+    run_id, class_name, subject_table, subject_key, subject_occurred_at, disposed_at
+)
+SELECT %(run_id)s, %(class_name)s, 'customer_incidents', subject_key, subject_occurred_at,
+       %(disposed_at)s
+  FROM disposed
+"""
+
+_COUNT_INCIDENT_EXEMPTIONS = """
+SELECT count(*)
+  FROM customer_incident_evidence e
+  JOIN customer_incidents i ON i.id = e.incident_id
+ WHERE i.opened_at < %(cutoff)s
+"""
+
+
+def _purge_incident_evidence(cursor: Any, execution: PurgeExecution) -> PurgeCounts:
+    """Dispose, record each disposal, then count what an unfinished matter held in place."""
+
+    cursor.execute(
+        _PURGE_INCIDENT_EVIDENCE,
+        {
+            "cutoff": execution.cutoff_at,
+            "run_id": execution.run_id,
+            "class_name": execution.class_name.value,
+            "disposed_at": execution.disposed_at,
+        },
+    )
+    deleted = int(cursor.rowcount)
+    cursor.execute(_COUNT_INCIDENT_EXEMPTIONS, {"cutoff": execution.cutoff_at})
+    row = cursor.fetchone()
+    return PurgeCounts(deleted=deleted, exempt=int(row[0]) if row is not None else 0)
+
+
 @dataclass(frozen=True, slots=True)
 class DisposablePayloadStore:
     """A side table holding exactly what section 15 schedules, keyed to an immutable ledger row."""
@@ -276,6 +329,30 @@ DISPOSABLE_PAYLOAD_STORES: Mapping[RetentionClass, DisposablePayloadStore] = {
         ),
         purge=_purge_webhook_payloads,
     ),
+    RetentionClass.INCIDENT_EVIDENCE: DisposablePayloadStore(
+        class_name=RetentionClass.INCIDENT_EVIDENCE,
+        payload_table="customer_incident_evidence",
+        ledger_table="customer_incidents",
+        ledger_retains=(
+            "id",
+            "store_id",
+            "order_id",
+            "affected_message_id",
+            "contact_scope_hash",
+            "category",
+            "status",
+            "fault_decided",
+            "remedy_decided",
+            "evidence_summary_hash",
+            "opened_at",
+        ),
+        exemption_rule=(
+            "held back summaries of incidents that are not CLOSED: an unfinished matter pins its "
+            "own evidence, because DEC-004 governs remedies that can be owed later and the "
+            "description is the only account of what was wrong (DEC-018, DEC-028)"
+        ),
+        purge=_purge_incident_evidence,
+    ),
 }
 
 #: Classes for which a purge target is actually implemented. Derived, never hand-written.
@@ -312,11 +389,6 @@ UNSUPPORTED_STORE_REASONS: Mapping[RetentionClass, tuple[UnsupportedStoreReason,
         "DEC-008 schedules 3650 days under the Vietnamese accounting retention period; the record "
         "is the orders ledger itself rather than a payload beside it, so disposal is a different "
         "design and no row is near the horizon",
-    ),
-    RetentionClass.INCIDENT_EVIDENCE: (
-        UnsupportedStoreReason.NO_DISPOSABLE_PAYLOAD_IS_STORED,
-        "customer_incidents stores contact_scope_hash and evidence_summary_hash and no evidence "
-        "body; there is nothing here to dispose of",
     ),
     RetentionClass.DEBUG_LOG: (
         UnsupportedStoreReason.NO_BACKING_STORE_EXISTS,

@@ -154,8 +154,7 @@ def test_opening_an_incident_in_an_unassigned_store_is_refused_not_crashed(
         headers=_write_headers(),
         json={
             "order_id": str(ORDER_ID),
-            "contact_scope_hash": SCOPE_HASH,
-            "evidence_summary_hash": EVIDENCE_HASH,
+            "evidence_summary": "Áo sơ mi trắng bị ố vàng ở cổ.",
         },
     )
 

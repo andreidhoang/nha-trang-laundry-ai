@@ -54,8 +54,22 @@ what it was when the request was written: on 2026-09-10 storing a summary meant 
 personal-data class into scope, so it needs a retention answer alongside DEC-008". That answer now
 exists and executes.
 
-**`orders.incident_open`.** The column exists and no code sets it. Opening an incident sets it in the
-same atomic envelope. `DEC-024`'s `SHOP_FAULT_NO_CHARGE` exit is the case the column was added for.
+**`orders.incident_open` — corrected during implementation, 2026-09-18.** This packet said opening an
+incident would set it. It does not, and the reason is a constraint the packet did not know about.
+
+`enforce_order_projection_update` raises on **any** UPDATE to an order whose `commercial_status` is
+already `COMPLETED` or `CANCELLED`. A laundry complaint is overwhelmingly about an order the customer
+has already collected, so setting the flag would work only for the minority of incidents and would
+fail loudly for the ones that matter. The three ways out were: relax a terminal-order guard, which
+this item may not do and should not want to; set the flag on some incidents and not others, which
+makes a boolean mean "either there is no incident, or there is one and the order was still open";
+or leave it.
+
+Left. `customer_incidents.order_id` already answers "does this order have an incident", exactly and
+for every order, and nothing in the repository reads `incident_open` — verified by search. The
+column is dead schema whose removal is a separate migration and whose presence harms nothing. The
+finding is recorded here rather than worked around in silence, because a flag that looks like it
+means something is worse than an absent one.
 
 ## Constraints
 
@@ -80,8 +94,8 @@ same atomic envelope. `DEC-024`'s `SHOP_FAULT_NO_CHARGE` exit is the case the co
   the same walk-in ticket carry the same scope, and of different tickets do not;
 - the evidence text is readable back through the incident read model, and disappears when
   `INCIDENT_EVIDENCE` is purged while the incident row and its hash survive;
-- `orders.incident_open` is set atomically with the incident, its event, its audit row and its
-  outbox row;
+- the complaint text never reaches `domain_events`, `audit_events` or `outbox_events`, because a
+  copy in a table nothing may delete would outlive the purge and make it a false statement;
 - the console form submits successfully in a browser against a real API.
 
 ## Done when

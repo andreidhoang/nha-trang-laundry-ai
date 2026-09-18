@@ -76,6 +76,64 @@ INCIDENTS = [
 ]
 
 
+#: `REMEDY-001`. One `RemedyOptionsResponse`, with `DEC-004`'s own figures rather than round
+#: numbers: the 100.000 d staff ceiling, both windows still open, and two priced lines whose 5x caps
+#: straddle that ceiling -- 90.000 d below it and 600.000 d above. The straddle is the whole point,
+#: because "will this need the owner?" has to be answerable per line *before* an amount exists.
+REMEDY_OPTIONS = {
+    "incident_id": INCIDENTS[0]["incident_id"],
+    "order_id": INCIDENTS[0]["order_id"],
+    "policy_published": True,
+    "staff_approval_ceiling_vnd": 100_000,
+    "goods_returned_at": "2026-09-17T03:00:00+00:00",
+    "rewash_window_closes_at": "2026-09-24T03:00:00+00:00",
+    "rewash_window_open": True,
+    "defect_window_closes_at": "2026-09-18T03:00:00+00:00",
+    "defect_window_open": True,
+    "damage_line_ceilings_vnd": {"line-large": 600_000, "line-small": 90_000},
+    "late_delivery_credit_vnd": 17_000,
+    "late_delivery_threshold_minutes": 120,
+    "loss_reason_code": "LOSS_POLICY_UNRESOLVED",
+}
+
+REMEDY_PROPOSAL_ID = "77777777-8888-4333-8444-bbbbbbbbbbbb"
+REMEDY_APPROVAL_ID = "88888888-9999-4333-8444-cccccccccccc"
+REMEDY_CREDIT_ID = "99999999-aaaa-4333-8444-dddddddddddd"
+
+#: What the server answers for a damage proposal above the staff ceiling: recorded, and stopped
+#: with an `APPROVE_REMEDY` envelope raised at proposal time. Section 11 exists mostly to prove the
+#: console said the owner would be needed *before* this response arrived.
+REMEDY_PROPOSAL_OWNER = {
+    "proposal_id": REMEDY_PROPOSAL_ID,
+    "incident_id": REMEDY_OPTIONS["incident_id"],
+    "order_id": REMEDY_OPTIONS["order_id"],
+    "kind": "DAMAGE_COMPENSATION",
+    "status": "OWNER_APPROVAL_REQUIRED",
+    "outcome": "ALLOW",
+    "proposal_hash": "JCS-SHA256-V1:" + "e" * 64,
+    "policy_version": 1,
+    "amount_vnd": 150_000,
+    "ceiling_vnd": 600_000,
+    "window_opened_at": REMEDY_OPTIONS["goods_returned_at"],
+    "window_closes_at": REMEDY_OPTIONS["defect_window_closes_at"],
+    "approval_id": REMEDY_APPROVAL_ID,
+    "reason_code": None,
+    "replayed": False,
+}
+
+REMEDY_EXECUTED = {
+    "proposal_id": REMEDY_PROPOSAL_ID,
+    "incident_id": REMEDY_OPTIONS["incident_id"],
+    "order_id": REMEDY_OPTIONS["order_id"],
+    "kind": "DAMAGE_COMPENSATION",
+    "status": "EXECUTED",
+    "event_type": "CREDIT_EXECUTED",
+    "credit_id": REMEDY_CREDIT_ID,
+    "amount_vnd": 150_000,
+    "replayed": False,
+}
+
+
 def check(name: str, ok: bool, detail: str = "") -> None:
     (PASS if ok else FAIL).append(name)
     print(f"{'  ok  ' if ok else ' FAIL '} {name}" + (f"  — {detail}" if detail else ""))
@@ -305,7 +363,7 @@ SESSION_OK = {
     "mfa_verified": True,
 }
 
-state = {"authenticated": True, "hold_ticket": False}
+state = {"authenticated": True, "hold_ticket": False, "owner_approved": False}
 held_ticket_routes: list[Route] = []
 
 with sync_playwright() as playwright:
@@ -374,6 +432,44 @@ with sync_playwright() as playwright:
                 # earlier in section 4 depend on this being empty, so the purged-turn check below
                 # opts in rather than changing the world for everything before it.
                 body = state.get("assistant_history") or []
+        elif "remedy-options" in url:
+            # A pure read. Nothing is written and nothing is reserved by asking, which is what lets
+            # the console put the ceiling and the owner requirement on screen before anything is
+            # typed rather than after a round trip that commits something.
+            body = REMEDY_OPTIONS
+        elif "remedy-proposals" in url and url.endswith("/execution"):
+            # The owner-approval branch, both halves. Until the envelope is decided the server
+            # refuses with a machine-readable reason and no `outcome` key at all -- the shape that
+            # used to reach this console as "Du lieu nhap khong hop le".
+            if not state.get("owner_approved"):
+                route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "detail": {
+                                "reason_code": "REMEDY_APPROVAL_REQUIRED",
+                                "authority": "DEC-004",
+                            }
+                        }
+                    ),
+                )
+                return
+            route.fulfill(
+                status=201, content_type="application/json", body=json.dumps(REMEDY_EXECUTED)
+            )
+            return
+        elif "remedy-proposals" in url and route.request.method == "POST":
+            # Captured rather than merely answered: the property section 11 proves is that the
+            # body carries exactly the keys this kind owns and no ceiling of its own. A stub that
+            # only returned 201 would certify a console that sends anything at all.
+            state.setdefault("remedy_posts", []).append(route.request.post_data)
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(REMEDY_PROPOSAL_OWNER),
+            )
+            return
         elif "/incidents" in url:
             if route.request.method == "POST":
                 # Captured rather than merely answered. The seam this section exists to test is the
@@ -1295,6 +1391,220 @@ with sync_playwright() as playwright:
         page.locator("a", has_text="Tạo đơn từ báo giá này").count() == 0,
     )
 
+    print()
+    print("=" * 74)
+    print("11. BỒI HOÀN — the ceiling and the owner, before a single digit is typed")
+    print("=" * 74)
+
+    # `REMEDY-001`'s whole claim is an ordering claim, and ordering is exactly what a source-text
+    # test cannot see: that the computed ceiling, the window and the owner requirement are on
+    # screen *before* the money box, not beside it and not after the refusal. A staff member who
+    # learns after filling the form in that the owner has to approve it has already told a customer
+    # something the shop cannot do, with that customer standing in front of them.
+
+    incident = str(INCIDENTS[0]["incident_id"])
+    page.evaluate(f"location.hash = '#/remedies?incident={incident}'")
+    page.wait_for_timeout(900)
+
+    content = page.content()
+    check(
+        "the deep link from an incident loads that incident's figures unasked",
+        page.locator("#remedy-incident").input_value() == incident,
+        repr(page.locator("#remedy-incident").input_value()),
+    )
+    check(
+        "the staff approval ceiling is stated as a figure, not as a rule to remember",
+        "100.000" in content,
+    )
+    check(
+        "a rewash says it has no ceiling rather than showing 0 ₫",
+        "Không có trần" in content and "0 ₫" not in content,
+    )
+    check(
+        "and its window is shown with whether it is still open",
+        "còn hạn" in content,
+    )
+
+    # Damage: the one kind where a person chooses the figure, and the only one with a money box.
+    kind = page.locator("#remedy-kind")
+    check(
+        "there is no money box until the kind that needs one is chosen",
+        page.locator("#remedy-amount").count() == 0,
+    )
+
+    kind.select_option(value="DAMAGE_COMPENSATION")
+    page.wait_for_timeout(300)
+    check(
+        "choosing damage asks which priced line was damaged before it asks for money",
+        page.locator("#remedy-line").count() == 1 and page.locator("#remedy-amount").count() == 0,
+        f"line={page.locator('#remedy-line').count()} "
+        f"amount={page.locator('#remedy-amount').count()}",
+    )
+    check(
+        "and it says why: the 5x cap belongs to one line, not to the order",
+        "Chưa chọn món bị hỏng" in page.content(),
+    )
+
+    page.locator("#remedy-line").select_option(value="line-large")
+    page.wait_for_timeout(300)
+    content = page.content()
+    check(
+        "the server-computed ceiling for that line is on screen with the box still empty",
+        "600.000" in content and page.locator("#remedy-amount").input_value() == "",
+        repr(page.locator("#remedy-amount").input_value()),
+    )
+    check(
+        "the box offers no example amount, because every example is a number nobody chose",
+        (page.locator("#remedy-amount").get_attribute("placeholder") or "") == "",
+        repr(page.locator("#remedy-amount").get_attribute("placeholder")),
+    )
+    check(
+        "the form warns that an amount on this line may need the owner — before any amount exists",
+        "Tuỳ số tiền" in content,
+    )
+    check(
+        "the defect window and its state are shown beside the ceiling, not discovered later",
+        "Cửa sổ thời gian" in content and "Khách nhận đồ lúc" in content,
+    )
+
+    # The boundary `DEC-004` sets, typed rather than filled, at the one đồng that decides it.
+    amount = page.locator("#remedy-amount")
+    amount.click()
+    page.keyboard.type("100000", delay=12)
+    page.wait_for_timeout(300)
+    check(
+        "100.000 d is inside what staff may approve, and the owner is not mentioned",
+        "sẽ lập phiếu chờ chủ tiệm duyệt" not in page.content(),
+    )
+    # One đồng over, and one đồng only. Typing a further "1" onto "100000" appends rather than
+    # increments and gives 1.000.001 ₫ -- above this line's 600.000 ₫ cap as well as above the
+    # staff ceiling, so the screen would answer about the cap and the boundary `DEC-004` actually
+    # sets would never be exercised. Backspace first, then retype the last digit: 100.000 -> 10.000
+    # -> 100.001.
+    page.keyboard.press("Backspace")
+    page.keyboard.type("1", delay=12)
+    page.wait_for_timeout(300)
+    check(
+        "100.001 ₫ crosses it, and the warning arrives while typing rather than after sending",
+        "sẽ lập phiếu chờ chủ tiệm duyệt" in page.content(),
+    )
+    check(
+        "the typed amount survives being typed one character at a time",
+        amount.input_value() == "100001",
+        repr(amount.input_value()),
+    )
+    # And it arrives before the attestation box is ticked. That box is the last thing a staff
+    # member touches, so a plan that stopped at it -- as this one did -- never read the amount, and
+    # the owner warning appeared only after the form was complete: exactly what the packet forbids.
+    check(
+        "the owner warning does not wait for the fault box to be ticked",
+        page.locator("#remedy-fault").is_checked() is False,
+    )
+    check(
+        "and focus stayed in the money box while the warning appeared",
+        page.evaluate("document.activeElement?.id") == "remedy-amount",
+        f"activeElement={page.evaluate('document.activeElement?.id')}",
+    )
+
+    # Above the line's own cap: refused here with the cap named, never reduced to it.
+    for _ in range(6):
+        page.keyboard.press("Backspace")
+    page.keyboard.type("600001", delay=8)
+    page.wait_for_timeout(300)
+    content = page.content()
+    check(
+        "an amount over the line's cap is refused with the cap named",
+        # The whole sentence, not the two words separately: "Vượt trần" is also in the money box's
+        # own hint and "600.000" is in the line picker, so testing for each on its own passed
+        # before the refusal was rendered at all.
+        "Vượt trần: trần của dòng này là 600.000" in content,
+    )
+    check(
+        "and the box still holds what was typed — nothing was silently reduced to the cap",
+        amount.input_value() == "600001",
+        repr(amount.input_value()),
+    )
+
+    for _ in range(6):
+        page.keyboard.press("Backspace")
+    page.keyboard.type("150000", delay=8)
+    page.locator("#remedy-fault").check()
+    page.wait_for_timeout(300)
+
+    page.locator("button", has_text="Gửi đề nghị bồi hoàn").first.click()
+    page.wait_for_timeout(900)
+
+    proposed = json.loads((state.get("remedy_posts") or ["{}"])[-1] or "{}")
+    check("the proposal actually reaches the server", bool(state.get("remedy_posts")))
+    check(
+        "it carries exactly the keys this kind owns, and no ceiling of its own",
+        proposed
+        == {
+            "kind": "DAMAGE_COMPENSATION",
+            "store_fault_attested": True,
+            "order_line_id": "line-large",
+            "amount_vnd": 150_000,
+        },
+        repr(proposed),
+    )
+
+    content = page.content()
+    check(
+        "the screen then says a second person has to decide it",
+        "Chờ chủ tiệm duyệt" in content,
+    )
+    check(
+        "and links the queue where that happens rather than leaving staff to find it",
+        page.locator("a[href='#/approvals']").count() >= 1,
+    )
+
+    # Executing before the owner has decided. The refusal is a policy answer with a code, and the
+    # sentence it must NOT produce is the one that tells a staff member their typing was wrong.
+    page.locator("button", has_text="Thực hiện bồi hoàn").first.click()
+    page.wait_for_timeout(900)
+    content = page.content()
+    check(
+        "executing early is refused as a refusal, not as bad input",
+        "REMEDY_APPROVAL_REQUIRED" in content and "Dữ liệu nhập không hợp lệ" not in content,
+    )
+    check(
+        "with the refusal glossed in Vietnamese beside its code",
+        "phải có phiếu duyệt của chủ tiệm" in content,
+    )
+
+    state["owner_approved"] = True
+    page.locator("button", has_text="Thực hiện bồi hoàn").first.click()
+    page.wait_for_timeout(900)
+    content = page.content()
+    check(
+        "once the owner has decided, the same press carries the remedy out",
+        "Đã thực hiện" in content and "CREDIT_EXECUTED" in content,
+    )
+    check(
+        "the credit id is shown in full with a copy control: nothing can look it up",
+        REMEDY_CREDIT_ID in content and "Chép mã giảm trừ này lại ngay" in content,
+    )
+
+    # Loss. The single most likely way this item goes wrong is a helpful console filling in a
+    # figure nobody published, so this asserts the absence of every figure rather than a value.
+    kind.select_option(value="LOST_ITEM")
+    page.wait_for_timeout(300)
+    content = page.content()
+    check(
+        "loss renders as an unsupported capability, not as a form",
+        "CHƯA HỖ TRỢ" in content and page.locator("#remedy-amount").count() == 0,
+    )
+    check(
+        "it names the reason: the owner has not decided loss policy",
+        "LOSS_POLICY_UNRESOLVED" in content and "chưa quyết chính sách cho mất đồ" in content,
+    )
+    check(
+        "and no ceiling of any kind is offered for it",
+        "600.000" not in content and "90.000" not in content,
+        "a damage ceiling is visible while loss is selected",
+    )
+
+    print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))
     browser.close()
 

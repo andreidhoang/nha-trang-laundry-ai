@@ -94,6 +94,52 @@ Những việc thật sự chưa hỗ trợ được liệt kê ở màn hình *
 
 ---
 
+## Bồi hoàn cho khách — làm trên máy, không thoả thuận miệng
+
+Trước đây phần này làm bằng lời rồi quên. Nay có màn hình **Bồi hoàn**, và mức chủ tiệm đã chốt
+được máy chủ tự áp — nhân viên **không gõ mức trần**.
+
+**Thứ tự đúng, năm bước:**
+
+1. Ghi sự cố trước (mục trên). Không có sự cố thì không có bồi hoàn.
+2. Trên dòng sự cố đó bấm **“Đề xuất bồi hoàn”**. Mã sự cố tự mang sang.
+3. Bấm **“Đọc mức trần và thời hạn”**. **Đọc xong mới nói gì với khách.** Màn hình hiện sẵn:
+   trần tối đa, hạn chót còn hay hết, và **có phải chờ chủ tiệm duyệt hay không**. Đọc bước này
+   là để không lỡ hứa với khách một con số rồi mới biết phải chờ chủ tiệm.
+4. Chọn loại, tích ô *“Tôi xác định lỗi thuộc về tiệm”*, điền nốt ô còn trống, bấm
+   **“Gửi đề nghị bồi hoàn”**.
+5. Bấm **“Thực hiện bồi hoàn”**. Xong bước này sự cố mới đóng lại.
+
+**Bốn loại, và ai duyệt:**
+
+| Loại | Máy chủ tính gì | Hạn | Ai duyệt |
+|---|---|---|---|
+| Giặt lại miễn phí | Không có tiền nào chuyển | 7 ngày kể từ khi khách nhận đồ | Nhân viên |
+| Bồi thường món hỏng | Trần = 5 lần phí giặt **đúng món đó** | 24 giờ kể từ khi khách nhận đồ | Tới 100.000đ là nhân viên, trên mức đó **chủ tiệm** |
+| Giảm trừ do giao trễ | Máy tính 10% tổng đã thu | Không tính theo hạn, tính theo mức trễ | Theo số tiền, như trên |
+| **Mất đồ** | **Không có mức nào** | — | **Chưa ai** — xem bên dưới |
+
+> **Mất đồ thì màn hình không mở biểu mẫu**, và đó là đúng. Chủ tiệm chưa quyết chính sách cho
+> trường hợp này, nên máy hiện **“Mất đồ — chưa có chính sách để áp dụng”**. Đừng mượn mức của
+> hàng hỏng. Ghi sự cố, **báo chủ tiệm ngay trong ngày**, đừng hứa con số nào ở quầy.
+
+**Ba điều dễ sai ở màn hình này:**
+
+- **Chép mã giảm trừ ngay lúc phát.** Máy hiện **“Chép mã giảm trừ này lại ngay”** kèm nút chép.
+  Chép vào phiếu giấy của khách **trước khi rời màn hình** — không có màn hình nào tra lại được mã
+  đó, và không có mã thì khách không dùng được phiếu.
+- **“Chờ chủ tiệm duyệt” nghĩa là chưa xong.** Nói với khách là phải chờ. Bấm thực hiện trước khi
+  chủ tiệm duyệt thì máy từ chối, và phiếu duyệt có hạn ngắn — đừng để qua ngày.
+- **Vượt trần thì máy từ chối, không tự hạ xuống.** Nếu màn hình báo vượt trần, nói đúng con số
+  trần cho khách nghe. Gõ một số khác cho lọt là tự quyết thay chủ tiệm.
+
+**Khách quay lại dùng phiếu giảm trừ:** tính giá như bình thường, rồi ở mục *Dùng một khoản giảm
+trừ* nhập mã phiếu, mã báo giá, số bản sửa đổi và dấu vân của bản đó, rồi bấm
+**“Áp dụng khoản giảm trừ”**. Phiếu dùng **đúng một lần**. Đọc lại tổng mới cho khách nghe rồi mới
+thu tiền.
+
+---
+
 ## Khi có sự cố
 
 | Màn hình nói | Nghĩa là | Làm gì |

@@ -41,6 +41,7 @@ from nha_trang_laundry_db.intake import (
     RecordCustomerFactsCommand,
     StoredOrderRequest,
 )
+from nha_trang_laundry_db.promotions import read_published_promotion_program
 from nha_trang_laundry_db.quotes import (
     QuoteRepository,
     QuoteRevisionCommand,
@@ -80,6 +81,7 @@ from nha_trang_laundry_domain.quote_composition import (
     RequestedLine,
     UnresolvedQuote,
     compose_quote_revision,
+    frozen_promotion,
 )
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot
 from nha_trang_laundry_policy import PolicyDecision, PolicyDecisionPoint
@@ -466,6 +468,10 @@ class DomainAgentToolBackend:
                 if bound.row_version != self._expected_row_version(call):
                     raise _stale_refusal()
                 pricebook = self._published_pricebook(cursor)
+                # The same published programme the staff path prices against. An agent estimate
+                # that ignored a running promotion would quote a higher number than the counter,
+                # which is worse than quoting none.
+                promotion = read_published_promotion_program(cursor)
                 container = QuoteRepository.find_container(
                     cursor,
                     store_id=claims.store_id,
@@ -492,6 +498,7 @@ class DomainAgentToolBackend:
                     if fulfillment.get("planned_transport_weight_kg") is None
                     else str(fulfillment["planned_transport_weight_kg"])
                 ),
+                promotion=promotion,
             )
             if isinstance(composition, UnresolvedQuote):
                 # The engine's own reason codes, nothing persisted, no idempotency key
@@ -807,27 +814,36 @@ def _quote_estimate_mapping(
 
     Every value is read off the snapshot the domain built; nullable delivery fee and display
     total stay null because the engine left them unresolved, and the reason codes are the
-    engine's own. `promotion_status` is REQUIRES_HUMAN because the snapshot carries
-    PROMOTION_NOT_EVALUATED (DEC-002 is open) and the contract has no NOT_EVALUATED value —
-    failing closed is the only honest member. `assumptions` stays empty: no engine produced
-    assumption codes, and this module does not invent them.
+    engine's own. `assumptions` stays empty: no engine produced assumption codes, and this module
+    does not invent them.
+
+    `promotion_status` used to be hardcoded REQUIRES_HUMAN, because the snapshot carried
+    `PROMOTION_NOT_EVALUATED` and the contract has no NOT_EVALUATED member to report. Since
+    `PROMO-WIRING-001` a promotion is actually evaluated, so the real `PromotionStatus` is read off
+    the frozen trace -- and the contract's enum is exactly that enum, so nothing has to be
+    approximated. A revision with no frozen promotion keeps the old answer: no published programme
+    means the discount is zero and no agent may imply otherwise, and REQUIRES_HUMAN is still the
+    only member of the contract's enum that says "do not act on this".
     """
     data = snapshot.data
     totals = data.totals
+    promotion = frozen_promotion(snapshot)
     return {
         "quote_id": str(data.quote_id),
         "quote_revision_id": str(_quote_revision_resource_id(data.quote_id, data.revision)),
         "revision": data.revision,
         "finality": data.finality.value,
         "pricebook_version": str(pricebook.version),
-        "promotion_version": None,
+        "promotion_version": (None if promotion is None else str(promotion.configuration_version)),
         "list_service_subtotal_vnd": totals.list_service_subtotal_max_vnd,
         "discount_amount_vnd": totals.discount_amount_max_vnd,
         "net_service_subtotal_vnd": totals.net_service_subtotal_max_vnd,
         "delivery_fee_vnd": totals.delivery_fee_vnd,
         "display_total_vnd": totals.display_total_max_vnd,
         "tax_treatment": "UNVERIFIED",
-        "promotion_status": "REQUIRES_HUMAN",
+        "promotion_status": "REQUIRES_HUMAN" if promotion is None else promotion.status,
+        # Never resolved on an agent estimate: eligibility is keyed to `accepted_at` and nobody has
+        # accepted anything. The staff acceptance path resolves it; an agent cannot.
         "promotion_eligibility_event": None,
         "promotion_eligibility_at": None,
         "vehicle_recommendation": None,

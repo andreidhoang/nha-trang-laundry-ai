@@ -101,6 +101,7 @@ from nha_trang_laundry_api.operations import (
     OperationsUnavailable,
     QueueRecoverySummary,
     QuotePricingUnavailable,
+    QuotePromotionView,
     StoredIncidentResult,
     StoredManualSendResult,
     UnresolvedQuoteResult,
@@ -542,6 +543,31 @@ class QuoteCreateRequest(StrictRequest):
     present_range_as_band: bool = False
 
 
+class QuotePromotionResponse(BaseModel):
+    """What the shop's promotion programme did to this revision, frozen at pricing time.
+
+    Null in place of the whole object means no programme was evaluated, and `reason_codes` on the
+    revision says which case: `PROMOTION_NOT_PUBLISHED` (nobody has published one) or
+    `PROMOTION_PENDING_BAND_CLOSE` (this is a band, and the discount waits for the amount).
+
+    `interval_end_at_exclusive` is the exclusive end of the programme window, so the last day it
+    covered is the day before. It is on the response so a console can say *when* an expired
+    programme ended instead of rendering an unexplained zero -- the same rule that forbids drawing a
+    null total as `0`.
+    """
+
+    policy_code: str
+    configuration_version: int
+    status: str
+    discount_amount_vnd: int
+    rate_bps: list[int]
+    interval_start_at: str
+    interval_end_at_exclusive: str
+    inside_interval: bool
+    eligibility_resolved: bool
+    reason_codes: list[str]
+
+
 class QuoteRevisionResponse(BaseModel):
     quote_id: UUID
     revision: int
@@ -556,6 +582,26 @@ class QuoteRevisionResponse(BaseModel):
     reason_codes: list[str]
     required_approvals: list[str]
     replayed: bool
+    promotion: QuotePromotionResponse | None = None
+
+
+def _promotion_response(view: QuotePromotionView | None) -> QuotePromotionResponse | None:
+    """Carry the service's frozen promotion through unchanged. No arithmetic in the route layer."""
+
+    if view is None:
+        return None
+    return QuotePromotionResponse(
+        policy_code=view.policy_code,
+        configuration_version=view.configuration_version,
+        status=view.status,
+        discount_amount_vnd=view.discount_amount_vnd,
+        rate_bps=list(view.rate_bps),
+        interval_start_at=view.interval_start_at,
+        interval_end_at_exclusive=view.interval_end_at_exclusive,
+        inside_interval=view.inside_interval,
+        eligibility_resolved=view.eligibility_resolved,
+        reason_codes=list(view.reason_codes),
+    )
 
 
 class RangePriceChoiceRequest(StrictRequest):
@@ -1518,6 +1564,7 @@ def create_quote(
         display_total_max_vnd=result.display_total_max_vnd,
         reason_codes=list(result.reason_codes),
         required_approvals=list(result.required_approvals),
+        promotion=_promotion_response(result.promotion),
         replayed=result.replayed,
     )
 
@@ -1682,6 +1729,7 @@ def accept_quote(
         display_total_max_vnd=result.display_total_max_vnd,
         reason_codes=list(result.reason_codes),
         required_approvals=list(result.required_approvals),
+        promotion=_promotion_response(result.promotion),
         replayed=result.replayed,
     )
 
@@ -1820,6 +1868,7 @@ def apply_range_prices(
         display_total_max_vnd=result.display_total_max_vnd,
         reason_codes=list(result.reason_codes),
         required_approvals=list(result.required_approvals),
+        promotion=_promotion_response(result.promotion),
         replayed=result.replayed,
     )
 

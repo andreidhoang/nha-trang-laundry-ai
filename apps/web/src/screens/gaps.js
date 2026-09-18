@@ -139,27 +139,38 @@ const GROUPS = [
       },
       {
         ref: "M3",
-        title: "Bồi hoàn sự cố",
+        title: "Tra lại một khoản giảm trừ chưa dùng",
         what:
-          "Quyết định và ghi nhận bồi hoàn cho một sự cố: giảm trừ, giặt lại, hoặc cấp tín dụng " +
-          "cho khách.",
+          "Tra ra các khoản giảm trừ chưa dùng của một đơn hoặc một số phiếu, để khách quên mã " +
+          "vẫn dùng được phiếu của mình.",
         missing:
-          "Không có remedies, credit_grants hay credit_ledger_entries. Bồi hoàn là một lệnh có " +
-          "duyệt, không phải một trạng thái tự do, nên không thể thay bằng một ô ghi chú. " +
-          "Hệ quả ở màn hình Sự cố: mọi sự cố đứng yên ở OPEN. Chỉ có một chỗ ghi trạng thái và " +
-          "nó luôn ghi OPEN, nên danh sách chỉ dài thêm chứ không đóng lại được — đó là thiếu " +
-          "đường xử lý, không phải sự cố bị bỏ quên.",
-        // DEC-004 is RESOLVED (18/08) and carries the operative figures. Naming it as the blocker
-        // made staff read "chưa có chính sách" under a "Bị chặn bởi" label and improvise at the
-        // counter, when the owner had already set the window, the cap and the approval ceiling.
-        // The blocker is the absent tables, which is what this now says; the policy is stated so
-        // staff can apply it on paper today.
+          "Có bảng remedy_credits và có đường áp dụng một khoản theo mã, nhưng không có đường nào " +
+          "liệt kê các khoản chưa dùng. Phiếu là vật cầm tay: không có mã thì máy chủ không có " +
+          "cách nào tìm ra nó, và đây là hệ quả của DEC-015 chứ không phải một chỗ bị quên.",
         blockedBy:
-          "Thiếu kho dữ liệu, không phải thiếu quyết định. Chính sách đã chốt (DEC-004, 18/08): " +
-          "giặt lại miễn phí nếu khách báo trong 7 ngày kể từ khi lấy đồ và nhân viên xác định " +
-          "lỗi thuộc về tiệm; bồi thường mất hoặc hỏng tối đa 5 lần phí giặt của món đó; nhân " +
-          "viên duyệt được tới 100.000đ, trên mức đó phải có chủ tiệm. Ghi tay theo mức này cho " +
-          "tới khi có bề mặt.",
+          "DEC-015 (đã quyết) từ chối lập hồ sơ khách, nên không có sổ nào ghi “khách này còn " +
+          "phiếu gì”. Muốn tra theo số phiếu quầy thì phải có một read model riêng, chưa dựng.",
+        today:
+          "Lúc phát hành, màn hình Bồi hoàn hiện mã giảm trừ kèm nút chép. Chép ngay vào phiếu " +
+          "giấy của khách trước khi rời màn hình — sau đó không tra lại được.",
+      },
+      {
+        ref: "M3",
+        title: "Danh sách đề nghị bồi hoàn và hàng chờ vụ mất đồ",
+        what:
+          "Xem các đề nghị bồi hoàn đã ghi cho một sự cố, và xem hàng chờ những vụ mất đồ đang " +
+          "đợi chủ tiệm quyết chính sách.",
+        missing:
+          "Không có đường nào đọc lại các đề nghị của một sự cố, và không có đường nào liệt kê " +
+          "các bản ghi POLICY_UNRESOLVED. Màn hình Bồi hoàn vì vậy chỉ hiện đúng đề nghị bạn vừa " +
+          "gửi trong phiên này, và cố ý không dựng một danh sách trong trình duyệt — danh sách " +
+          "đó sẽ đọc như “đây là tất cả”, điều mà bảng vận hành không có cơ sở để nói.",
+        blockedBy:
+          "REMEDY-001 dựng đường ghi trước, đường đọc sau. Chưa có mục nào trong hàng đợi cho " +
+          "phần đọc này.",
+        today:
+          "Chép mã đề nghị lúc gửi. Vụ mất đồ thì báo chủ tiệm trong ngày bằng lời và ghi số " +
+          "phiếu ra sổ — máy có ghi sự cố, nhưng không có màn hình nào gom chúng lại.",
       },
     ],
   },

@@ -8,15 +8,15 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
   and verified by scripts/verify_contracts.py against a fresh generation, so a new disclosure cannot land
   unregistered and a reworded one cannot pass unnoticed: a slot''s identity includes the hash of its text.'
 counts:
-  ABSENT_TABLE: 5
+  ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 188
+  DESCRIPTIVE: 253
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 12
-total: 213
+total: 277
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -282,6 +282,217 @@ disclosures:
   module: core/i18n.js
   key: REASON_NOTE.STALE_VERSION
   text: Có người vừa đổi đơn này trong lúc bạn đang xem. Tải lại đơn rồi ghi nhận theo số mới.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_POLICY_UNPUBLISHED:4341992a71c9
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_POLICY_UNPUBLISHED
+  text: Chưa có bản chính sách bồi hoàn nào được công bố, nên không có con số nào để áp dụng và không
+    được suy ra con số nào — kể cả cho loại không chuyển tiền, vì cửa sổ 7 ngày cũng là một con số đã
+    công bố. Báo chủ tiệm công bố chính sách; đừng hứa mức nào ở quầy.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.LOSS_POLICY_UNRESOLVED:68f7671e4105
+  module: core/i18n.js
+  key: REASON_NOTE.LOSS_POLICY_UNRESOLVED
+  text: Chủ tiệm chưa quyết chính sách cho trường hợp mất đồ, và mức của hàng hỏng không được mượn sang.
+    Sự cố vẫn được ghi — đó mới là việc phải làm ở quầy. Báo chủ tiệm trong ngày.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CEILING_EXCEEDED:f1b2cde07616
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_CEILING_EXCEEDED
+  text: Số tiền vượt trần máy chủ tính từ chính dòng đã có giá của đơn (5 lần phí giặt món đó). Máy chủ
+    từ chối kèm con số trần và không tự hạ xuống — hạ xuống là trả cho khách ít hơn số bạn vừa thoả thuận.
+    Nhập lại trong trần, hoặc báo chủ tiệm nếu vụ này cần khác đi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_WINDOW_CLOSED:8bb356e39519
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_WINDOW_CLOSED
+  text: Đã quá cửa sổ chủ tiệm công bố cho loại này, đo từ lúc khách nhận đồ. Nói với khách đúng mốc đã
+    qua chứ không chỉ nói là hết hạn. Muốn làm ngoài cửa sổ thì phải hỏi chủ tiệm.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_WINDOW_EVIDENCE_MISSING:e7cd34974d8e
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_WINDOW_EVIDENCE_MISSING
+  text: 'Tiệm không có bản ghi nào cho biết khách đã nhận đồ lúc nào, nên không đo được cửa sổ nào cả.
+    Đây không phải lỗi máy và cũng không phải mất dữ liệu: đơn này được trả trước khi hệ thống bắt đầu
+    ghi mốc giao đồ. Lấy hôm nay hay ngày tạo đơn thay vào là bịa ra một phép đo.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_STORE_FAULT_NOT_ATTESTED:50161cbc700f
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_STORE_FAULT_NOT_ATTESTED
+  text: Chưa có nhân viên nào xác định lỗi thuộc về tiệm, mà DEC-004 đặt mọi khoản bồi hoàn lên đúng việc
+    đó. Xác định rồi hãy gửi; tên người xác định được ghi kèm.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_AMOUNT_NOT_APPLICABLE:546dd9004134
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_AMOUNT_NOT_APPLICABLE
+  text: 'Có ô không thuộc về loại bồi hoàn đang chọn, hoặc thiếu ô bắt buộc của loại đó. Chỉ bồi thường
+    món hỏng mới có người gõ số tiền: giặt lại không chuyển tiền, giảm trừ giao trễ do máy chủ tính, mất
+    đồ thì không có số nào.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_LINE_NOT_PRICED:3e2770f81ba4
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_LINE_NOT_PRICED
+  text: Dòng được chọn không có trong bản báo giá hiện tại của đơn, nên không có phí giặt nào để lấy 5
+    lần. Mở lại đơn, đọc đúng mã dòng trên bản giá.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_ORDER_NOT_SETTLED:58d53edeb930
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_ORDER_NOT_SETTLED
+  text: Đơn chưa tất toán nên không có tổng nào để lấy 10%. Thu tiền xong rồi mới đề nghị giảm trừ cho
+    lần sau được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_DELIVERY_NOT_RECORDED:1a60c3934917
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_DELIVERY_NOT_RECORDED
+  text: Đơn này không có chuyến giao nào đã giao thành công, nên không thể có chuyến giao trễ. Khách tự
+    lấy ở quầy thì dùng loại khác.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_LATENESS_BELOW_THRESHOLD:a0c32ded36c5
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_LATENESS_BELOW_THRESHOLD
+  text: Số phút khai chưa vượt ngưỡng chủ tiệm công bố, nên theo chính sách đây chưa phải giao trễ. Không
+    có gì được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CREDIT_UNALLOCATABLE:04e5c25841d4
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_CREDIT_UNALLOCATABLE
+  text: Khoản giảm trừ lớn hơn phần còn có thể giảm trên bản báo giá định trừ vào. Máy chủ từ chối và
+    giữ nguyên phiếu chứ không cắt bớt — cắt bớt là xoá một phần nợ tiệm đang nợ khách. Trừ vào một hoá
+    đơn lớn hơn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CREDIT_REVISION_NOT_OPEN:01936df8d5cb
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_CREDIT_REVISION_NOT_OPEN
+  text: Bản báo giá định trừ vào đang là khoảng giá hoặc khách đã chốt rồi. Giảm trừ chỉ đổi tổng trước
+    khi báo cho khách, không đổi tổng đã thoả thuận. Lập bản mới rồi trừ vào bản đó.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CREDIT_ALREADY_REDEEMED:fadd6ad9160c
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_CREDIT_ALREADY_REDEEMED
+  text: Phiếu giảm trừ này đã dùng rồi. Phiếu là vật cầm tay, dùng đúng một lần — không phải lỗi của bạn,
+    và không trừ thêm lần nữa. Mở lại báo giá cũ để xem lần đã trừ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_APPROVAL_REQUIRED:d090211af4e1
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_APPROVAL_REQUIRED
+  text: Khoản này trên mức nhân viên duyệt được, nên phải có phiếu duyệt của chủ tiệm trước khi thực hiện.
+    Mở màn hình Duyệt; chưa duyệt mà bấm thực hiện thì máy chủ từ chối.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_APPROVAL_EXPIRED:449712fce281
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_APPROVAL_EXPIRED
+  text: Phiếu duyệt của chủ tiệm đã hết hạn. Phiếu có thời hạn ngắn và không tự gia hạn. Gửi lại đề nghị
+    để lập phiếu mới, đừng chờ thêm.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_APPROVAL_NOT_BOUND:e536a9fd2c77
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_APPROVAL_NOT_BOUND
+  text: Phiếu duyệt không gắn đúng với đề nghị đang thực hiện — khác cửa hàng, khác đề nghị, hoặc nội
+    dung đã đổi từ lúc chủ tiệm ký. Không có gì được ghi. Gửi lại đề nghị để lập phiếu mới.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_ALREADY_EXECUTED:c4c7e2cbac25
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_ALREADY_EXECUTED
+  text: Đề nghị này đã được thực hiện rồi — không phải lỗi của bạn, và không làm lại lần nữa. Mở lại sự
+    cố để xem kết quả đã ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_PROPOSAL_NOT_FOUND:d279582e7624
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_PROPOSAL_NOT_FOUND
+  text: Không có đề nghị bồi hoàn nào mang mã này. Kiểm tra lại mã đã chép.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CREDIT_NOT_FOUND:dbe5e4162969
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_CREDIT_NOT_FOUND
+  text: Không có khoản giảm trừ nào mang mã này ở cửa hàng đang chọn. Phiếu phát ở tiệm nào thì dùng ở
+    tiệm đó.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_INCIDENT_NOT_FOUND:f7e29f25d9c4
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_INCIDENT_NOT_FOUND
+  text: Không có sự cố nào mang mã này ở cửa hàng đang chọn, hoặc sự cố không gắn với đơn nào. Kiểm tra
+    lại mã sự cố trên màn hình Sự cố.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_ORDER_REVISION_UNREADABLE:da34e0c1e71e
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_ORDER_REVISION_UNREADABLE
+  text: 'Máy chủ không đọc được bản báo giá của đơn này nên không tính được trần nào. Đây là lỗi dữ liệu,
+    không phải chữ bạn gõ: chụp màn hình và báo kỹ thuật, đừng gõ lại kiểu khác.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_ORDER_TIMESTAMP_INVALID:8da744a453ba
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_ORDER_TIMESTAMP_INVALID
+  text: 'Mốc thời gian lưu trên đơn không đọc được nên không đo được cửa sổ nào. Đây là lỗi dữ liệu, không
+    phải chữ bạn gõ: chụp màn hình và báo kỹ thuật.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -769,29 +980,58 @@ disclosures:
     - custody_events
     - batches
     why: 'Same shape: the custody context is measured empty and the disclosure says so.'
-- slot_id: screens/gaps.js#missing:455dba33f5c7
+- slot_id: screens/gaps.js#missing:ee5cf8baa402
   module: screens/gaps.js
   key: missing
-  text: 'Không có remedies, credit_grants hay credit_ledger_entries. Bồi hoàn là một lệnh có duyệt, không
-    phải một trạng thái tự do, nên không thể thay bằng một ô ghi chú. Hệ quả ở màn hình Sự cố: mọi sự
-    cố đứng yên ở OPEN. Chỉ có một chỗ ghi trạng thái và nó luôn ghi OPEN, nên danh sách chỉ dài thêm
-    chứ không đóng lại được — đó là thiếu đường xử lý, không phải sự cố bị bỏ quên.'
+  text: 'Có bảng remedy_credits và có đường áp dụng một khoản theo mã, nhưng không có đường nào liệt kê
+    các khoản chưa dùng. Phiếu là vật cầm tay: không có mã thì máy chủ không có cách nào tìm ra nó, và
+    đây là hệ quả của DEC-015 chứ không phải một chỗ bị quên.'
   binding:
-    kind: ABSENT_TABLE
-    tables:
-    - remedies
-    - credit_grants
-    - credit_ledger_entries
-    why: Remedy and credit aggregates. The sentence also states that compensation is an approved command
-      rather than a screen action, and that an incident cannot leave OPEN while they are absent -- both
-      stay true exactly while these tables do not exist.
-- slot_id: screens/gaps.js#blockedBy:c4fb4de85d11
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#blockedBy:0b169ffca88c
   module: screens/gaps.js
   key: blockedBy
-  text: 'Thiếu kho dữ liệu, không phải thiếu quyết định. Chính sách đã chốt (DEC-004, 18/08): giặt lại
-    miễn phí nếu khách báo trong 7 ngày kể từ khi lấy đồ và nhân viên xác định lỗi thuộc về tiệm; bồi
-    thường mất hoặc hỏng tối đa 5 lần phí giặt của món đó; nhân viên duyệt được tới 100.000đ, trên mức
-    đó phải có chủ tiệm. Ghi tay theo mức này cho tới khi có bề mặt.'
+  text: DEC-015 (đã quyết) từ chối lập hồ sơ khách, nên không có sổ nào ghi “khách này còn phiếu gì”.
+    Muốn tra theo số phiếu quầy thì phải có một read model riêng, chưa dựng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:67282c933f07
+  module: screens/gaps.js
+  key: today
+  text: Lúc phát hành, màn hình Bồi hoàn hiện mã giảm trừ kèm nút chép. Chép ngay vào phiếu giấy của khách
+    trước khi rời màn hình — sau đó không tra lại được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:ea6bffd5f5bd
+  module: screens/gaps.js
+  key: missing
+  text: Không có đường nào đọc lại các đề nghị của một sự cố, và không có đường nào liệt kê các bản ghi
+    POLICY_UNRESOLVED. Màn hình Bồi hoàn vì vậy chỉ hiện đúng đề nghị bạn vừa gửi trong phiên này, và
+    cố ý không dựng một danh sách trong trình duyệt — danh sách đó sẽ đọc như “đây là tất cả”, điều mà
+    bảng vận hành không có cơ sở để nói.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#blockedBy:388736a0f19d
+  module: screens/gaps.js
+  key: blockedBy
+  text: REMEDY-001 dựng đường ghi trước, đường đọc sau. Chưa có mục nào trong hàng đợi cho phần đọc này.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:bc28437b846d
+  module: screens/gaps.js
+  key: today
+  text: Chép mã đề nghị lúc gửi. Vụ mất đồ thì báo chủ tiệm trong ngày bằng lời và ghi số phiếu ra sổ
+    — máy có ghi sự cố, nhưng không có màn hình nào gom chúng lại.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1083,12 +1323,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/incidents.js#notice:bdcdfb355ef5
+- slot_id: screens/incidents.js#notice:a62ca749766d
   module: screens/incidents.js
   key: notice
   text: Mở sự cố chỉ ghi lại rằng có chuyện xảy ra. Máy chủ luôn trả về fault_decided = false và remedy_decided
-    = false, và trong API này không có route nào đặt hai giá trị đó. Ai chịu lỗi và khách được bù gì là
-    quyết định của con người, ở nơi khác.
+    = false cho sự cố vừa mở, và màn hình này không đặt được giá trị nào khác. Ai chịu lỗi vẫn không có
+    chỗ nào ghi; khách được bù gì thì có, nhưng là một lệnh riêng do người quyết.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1101,10 +1341,10 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/incidents.js#hint:adc2a71c0587
+- slot_id: screens/incidents.js#hint:a3e5e1341c98
   module: screens/incidents.js
   key: hint
-  text: 'Luồng duyệt bồi hoàn là một lệnh cần phê duyệt và hiện chưa tồn tại:'
+  text: Quyết bồi hoàn là một lệnh riêng, ở màn hình
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1277,6 +1517,16 @@ disclosures:
   module: screens/orderDetail.js
   key: guardrail
   text: Máy chủ chưa có cách đọc một đơn riêng lẻ. Màn hình này gọi lại bảng đơn của cửa hàng và lọc theo
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#hint:03770ff31bf3
+  module: screens/orderDetail.js
+  key: hint
+  text: 'Bồi hoàn gắn với sự cố, không gắn thẳng với đơn: mở màn hình Sự cố, tìm đúng lời khách phàn nàn,
+    rồi bấm “Đề xuất bồi hoàn” trên chính dòng đó. API này không có đường nào liệt kê sự cố của riêng
+    một đơn, nên màn hình này không chọn hộ được.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1625,6 +1875,329 @@ disclosures:
   module: screens/quotes.js
   key: guardrail
   text: Thiếu dữ kiện thì máy chủ từ chối đoán và không ghi gì cả — người quyết, không phải máy.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#KIND_NOTE.FREE_REWASH:9f231c2f4faa
+  module: screens/remedies.js
+  key: KIND_NOTE.FREE_REWASH
+  text: Giặt lại không thu thêm tiền. Không có trần vì không có đồng nào chuyển đi, và không cần chủ tiệm
+    duyệt. Cửa sổ 7 ngày tính từ lúc khách nhận đồ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#KIND_NOTE.DAMAGE_COMPENSATION:ef9042434451
+  module: screens/remedies.js
+  key: KIND_NOTE.DAMAGE_COMPENSATION
+  text: Đền tiền cho một món tiệm làm hỏng. Trần là 5 lần phí giặt của đúng món đó — số tiệm đã thu, không
+    phải giá mua mới. Cửa sổ 24 giờ tính từ lúc khách nhận đồ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#KIND_NOTE.LATE_DELIVERY_CREDIT:4347b65bb212
+  module: screens/remedies.js
+  key: KIND_NOTE.LATE_DELIVERY_CREDIT
+  text: Giảm trừ 10% vào hoá đơn lần sau khi chuyến giao trễ do lỗi tiệm. Máy chủ tự tính 10% từ tổng
+    đã tất toán; nhân viên không gõ số tiền, chỉ khai trễ bao nhiêu phút.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#KIND_NOTE.LOST_ITEM:77fa424974cf
+  module: screens/remedies.js
+  key: KIND_NOTE.LOST_ITEM
+  text: Chủ tiệm chưa quyết chính sách cho trường hợp mất đồ, nên màn hình này không mở biểu mẫu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#PLAN_NOTE.POLICY_UNPUBLISHED:6cf429c9d5ee
+  module: screens/remedies.js
+  key: PLAN_NOTE.POLICY_UNPUBLISHED
+  text: 'Chưa có bản chính sách bồi hoàn nào được công bố, nên không có con số nào để áp dụng và không
+    được suy ra con số nào. Mọi loại bồi hoàn đều bị từ chối, kể cả loại không chuyển tiền: cửa sổ 7 ngày
+    cũng là một con số đã công bố. Báo chủ tiệm công bố chính sách.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#PLAN_NOTE.WINDOW_EVIDENCE_MISSING:122e203653c9
+  module: screens/remedies.js
+  key: PLAN_NOTE.WINDOW_EVIDENCE_MISSING
+  text: 'Tiệm không có bản ghi nào cho biết khách đã nhận đồ lúc nào, nên không đo được cửa sổ thời gian
+    nào cả. Đây không phải lỗi máy: đơn này được trả trước khi hệ thống bắt đầu ghi mốc giao đồ. Lấy ngày
+    hôm nay hay ngày tạo đơn thay vào là bịa ra một phép đo không ai làm.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#PLAN_NOTE.WINDOW_CLOSED:854e12201f95
+  module: screens/remedies.js
+  key: PLAN_NOTE.WINDOW_CLOSED
+  text: Cửa sổ chủ tiệm công bố cho loại này đã đóng. Nói với khách đúng mốc đã qua chứ không chỉ nói
+    là hết hạn. Muốn làm ngoài cửa sổ thì phải hỏi chủ tiệm, không phải gõ lại ở đây.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#PLAN_NOTE.CREDIT_UNAVAILABLE:fd3ca0d16d5b
+  module: screens/remedies.js
+  key: PLAN_NOTE.CREDIT_UNAVAILABLE
+  text: 'Máy chủ không tính được khoản giảm trừ cho đơn này: hoặc đơn không có chuyến giao nào đã giao
+    thành công, hoặc chưa có tổng nào được tất toán để lấy 10%. Không có tổng thì không có 10% — và ô
+    này để trống chứ không hiện 0.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#PLAN_NOTE.LINE_NOT_CHOSEN:8e01d3bbec34
+  module: screens/remedies.js
+  key: PLAN_NOTE.LINE_NOT_CHOSEN
+  text: Trần 5 lần thuộc về một dòng đã có giá, không thuộc về cả đơn. Chọn đúng món bị hỏng thì mới thấy
+    trần của nó.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#PLAN_NOTE.AMOUNT_MISSING:a023b35aa81f
+  module: screens/remedies.js
+  key: PLAN_NOTE.AMOUNT_MISSING
+  text: Chưa đủ dữ kiện để gửi. Điền nốt ô còn trống.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#PLAN_NOTE.NOT_AN_AMOUNT:d04ffbd3a577
+  module: screens/remedies.js
+  key: PLAN_NOTE.NOT_AN_AMOUNT
+  text: Số tiền phải là số nguyên đồng. “150.000” đọc là 150000; không nhận dấu phẩy và không nhận số
+    lẻ. Chưa có gì được gửi đi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#PLAN_NOTE.ABOVE_CEILING:535e227265ca
+  module: screens/remedies.js
+  key: PLAN_NOTE.ABOVE_CEILING
+  text: Số này vượt trần máy chủ tính cho dòng đã chọn. Máy chủ từ chối và không tự hạ xuống bằng trần
+    — hạ xuống là trả cho khách ít hơn con số bạn vừa thoả thuận với họ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#PLAN_NOTE.BELOW_LATENESS_THRESHOLD:5a09ef03a044
+  module: screens/remedies.js
+  key: PLAN_NOTE.BELOW_LATENESS_THRESHOLD
+  text: Số phút khai chưa vượt ngưỡng chủ tiệm công bố, nên đây chưa phải chuyến giao trễ theo chính sách.
+    Không có gì được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#PLAN_NOTE.FAULT_NOT_ATTESTED:41c55794ff77
+  module: screens/remedies.js
+  key: PLAN_NOTE.FAULT_NOT_ATTESTED
+  text: Mọi khoản bồi hoàn trong DEC-004 đều dựa trên việc một nhân viên xác định lỗi thuộc về tiệm. Chưa
+    ai xác định, nên chưa gửi được. Đây là lời khai của bạn, không phải ô bấm cho xong.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:e51e581b72fb
+  module: screens/remedies.js
+  key: hint
+  text: Máy chủ chưa tính được trần cho lựa chọn hiện tại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:2a21725ae03a
+  module: screens/remedies.js
+  key: hint
+  text: Loại này không đo theo cửa sổ thời gian. DEC-004 xét theo mức trễ và lỗi thuộc về
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:6be6cc411442
+  module: screens/remedies.js
+  key: hint
+  text: 'Mọi con số ở đây do máy chủ tính từ dữ liệu đã lưu của chính đơn này: 5 lần lấy từ tiền dòng
+    đã ghi, 10% lấy từ tổng đã tất toán, cửa sổ đo từ mốc khách nhận đồ. Màn hình này không tính tiền
+    và không được gõ trần.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#missing:717c7277266e
+  module: screens/remedies.js
+  key: missing
+  text: 'Chủ tiệm chưa quyết chính sách cho mất đồ. Gói quyết định nói rõ: mất đồ không nằm trong các
+    con số đã chốt, và nếu một vụ mất đồ chạm tới mức 5 lần hay 100.000đ thì phải hỏi lại chủ tiệm trước
+    khi dựa vào mức đó, vì chưa ai hỏi. Nên màn hình này không có trần, không có cửa sổ và không có nút
+    gửi cho loại này — mượn con số của hàng hỏng là tự quyết thay chủ tiệm.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#blockedBy:11d7cd194980
+  module: screens/remedies.js
+  key: blockedBy
+  text: DEC-004 (đã chốt 18/08 cho hỏng, giặt lại và giao trễ) để ngỏ riêng phần mất đồ. Máy chủ
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#today:9865947b949a
+  module: screens/remedies.js
+  key: today
+  text: Sự cố đã được ghi trên màn hình Sự cố rồi — đó là bản ghi. Báo chủ tiệm ngay trong ngày, thoả
+    thuận với khách bằng lời, và ghi lại số phiếu. Đừng hứa mức đền nào ở quầy.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#notice:71ee6ec09b56
+  module: screens/remedies.js
+  key: notice
+  text: 'Kết quả được phát lại: cùng khoá thao tác và cùng nội dung đã gửi trước đó. Không có đề nghị
+    mới nào được tạo.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#notice:769c9cbfd1f1
+  module: screens/remedies.js
+  key: notice
+  text: Số tiền này trên mức nhân viên duyệt được, nên máy chủ đã lập phiếu duyệt và dừng lại. Mở màn
+    hình Duyệt để chủ tiệm quyết; bấm thực hiện trước khi có quyết định thì máy chủ từ chối.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#notice__title:26c0b9133fa1
+  module: screens/remedies.js
+  key: notice__title
+  text: Chờ chủ tiệm duyệt — chưa được thực hiện
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#notice:afc3a461ac01
+  module: screens/remedies.js
+  key: notice
+  text: 'Kết quả được phát lại: cùng khoá thao tác đã gửi trước đó. Không có gì được làm hai lần.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#notice:6bf249817fea
+  module: screens/remedies.js
+  key: notice
+  text: 'Khoản giảm trừ là phiếu cầm tay: ai cầm phiếu thì dùng được, và dùng đúng một lần. Trong API
+    này chưa có đường nào liệt kê các khoản giảm trừ chưa dùng của một đơn hay một số phiếu, nên chỉ áp
+    dụng được bằng đúng mã dưới đây. Chép vào phiếu giấy của khách trước khi rời màn hình.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#notice__title:50af547342b0
+  module: screens/remedies.js
+  key: notice__title
+  text: Chép mã giảm trừ này lại ngay — không tra lại được
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:32728a27a8f8
+  module: screens/remedies.js
+  key: hint
+  text: 'Giặt lại không sinh khoản giảm trừ nào: không có đồng nào chuyển đi. Máy chủ ghi lệnh giặt lại
+    và đóng sự cố; việc giặt lại là việc mới ở xưởng, đơn cũ không quay lại dây chuyền.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:cf4fa492e6ab
+  module: screens/remedies.js
+  key: hint
+  text: Sự cố gắn với đề nghị này đã chuyển sang CLOSED và cột bồi hoàn đã là “đã quyết định”.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:93279a14259a
+  module: screens/remedies.js
+  key: hint
+  text: Không có chuyến giao nào đã giao thành công, hoặc chưa có tổng nào được tất toán. Ô này để trống
+    chứ không phải bằng 0.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:a77bfca09c8e
+  module: screens/remedies.js
+  key: hint
+  text: Đọc mức trần không ghi gì và không giữ chỗ gì. Bấm lại bất cứ lúc nào để xem số mới nhất.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:a8db88912c51
+  module: screens/remedies.js
+  key: hint
+  text: 'Thực hiện không gửi lại số tiền: mọi thứ đã được quyết khi ghi đề nghị và nằm bất biến trên bản
+    ghi đó. Cho gõ lại số ở bước này là để con số đổi giữa lúc chủ tiệm duyệt và lúc tiệm trả tiền.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#screen__lede:13679a8b2e3b
+  module: screens/remedies.js
+  key: screen__lede
+  text: 'Một sự cố đi tới kết cục ở đây: giặt lại, đền món hỏng, hoặc giảm trừ do giao trễ. Mức trần,
+    thời hạn và việc có cần chủ tiệm duyệt hay không đều do máy chủ tính và hiện ra trước khi bạn gõ bất
+    cứ con số nào.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#guardrail:33189362c2c5
+  module: screens/remedies.js
+  key: guardrail
+  text: Màn hình này không tính tiền và không đặt trần. 5 lần phí giặt lấy từ dòng đã có giá của chính
+    đơn, 10% lấy từ tổng đã tất toán, cửa sổ đo từ mốc khách nhận đồ — máy chủ tính hết. Chưa công bố
+    chính sách thì mọi loại đều bị từ chối, không có mức tạm.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#guardrail:189d63ba4d27
+  module: screens/remedies.js
+  key: guardrail
+  text: 'Nhân viên không bao giờ gõ trần. Vượt trần thì bị từ chối kèm con số trần, không bị tự hạ xuống.
+    Mất đồ thì không có biểu mẫu: chủ tiệm chưa quyết chính sách cho trường hợp đó.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:d5c4dfadd726
+  module: screens/remedies.js
+  key: hint
+  text: 'Phiếu này đã dùng xong và không dùng lại được: bấm lần nữa máy chủ trả REMEDY_CREDIT_ALREADY_REDEEMED.
+    Đọc lại tổng mới cho khách nghe trước khi thu tiền.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#guardrail:c796512ada13
+  module: screens/remedies.js
+  key: guardrail
+  text: Khoản giảm trừ là phiếu cầm tay, dùng đúng một lần, và trừ vào tổng trước khi báo cho khách —
+    không phải trừ vào số khách đã đồng ý trả. Đường tất toán vẫn chỉ nhận đúng tổng đã báo, đủ một lần.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

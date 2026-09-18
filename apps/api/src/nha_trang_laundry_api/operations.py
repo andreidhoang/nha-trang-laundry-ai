@@ -62,6 +62,7 @@ from nha_trang_laundry_db.orders import (
     OrderTransitionCommand,
     StoredOrder,
 )
+from nha_trang_laundry_db.promotions import read_published_promotion_program
 from nha_trang_laundry_db.quotes import (
     QuoteAcceptanceCommand,
     QuoteAcceptanceRepository,
@@ -120,6 +121,7 @@ from nha_trang_laundry_domain.quote_composition import (
     accept_quote_revision,
     close_range_prices,
     compose_quote_revision,
+    frozen_promotion,
     stored_price_bands,
 )
 from nha_trang_laundry_domain.quotes import (
@@ -163,6 +165,33 @@ class QuotePricingUnavailable(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class QuotePromotionView:
+    """The promotion frozen onto a committed revision, as a console has to render it.
+
+    `None` in place of this whole object means no programme was evaluated against the revision, and
+    the revision's own reason codes say which of the two cases that is -- `PROMOTION_NOT_PUBLISHED`
+    or `PROMOTION_PENDING_BAND_CLOSE`. It is deliberately not an object full of zeroes: "no
+    promotion was assessed" and "a promotion was assessed and came to nothing" are different
+    sentences to say to a customer, and collapsing them is the failure this item exists to fix.
+
+    `interval_end_at_exclusive` is here so that a console can render *when* an expired programme
+    ended rather than showing a silent zero. It is the exclusive bound, so the last day the
+    programme covered is the day before it.
+    """
+
+    policy_code: str
+    configuration_version: int
+    status: str
+    discount_amount_vnd: int
+    rate_bps: tuple[int, ...]
+    interval_start_at: str
+    interval_end_at_exclusive: str
+    inside_interval: bool
+    eligibility_resolved: bool
+    reason_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class QuoteRevisionResult:
     """A committed quote revision, described by what the domain computed rather than re-derived."""
 
@@ -179,6 +208,7 @@ class QuoteRevisionResult:
     reason_codes: tuple[str, ...]
     required_approvals: tuple[str, ...]
     replayed: bool
+    promotion: QuotePromotionView | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1016,6 +1046,10 @@ class OperationsService:
                             "quote moved since it was read; read it to the customer again"
                         )
                     stored = QuoteRepository.get_revision(cursor, quote_id, current_revision)
+                    # Read inside the same transaction as the revision, so the programme the
+                    # re-verification runs against is the one published at this instant rather than
+                    # one that could have moved between two connections.
+                    promotion = read_published_promotion_program(cursor)
                 if stored is None:
                     raise QuoteStateError("quote revision is missing")
                 if not hmac.compare_digest(stored.document.snapshot_hash, expected_snapshot_hash):
@@ -1038,7 +1072,15 @@ class OperationsService:
                         "QUOTE_EXPIRED: this price is out of date and cannot be accepted; "
                         "price the bag again before the customer agrees"
                     )
-                composition = accept_quote_revision(priced=priced, revision=current_revision + 1)
+                composition = accept_quote_revision(
+                    priced=priced,
+                    revision=current_revision + 1,
+                    promotion=promotion,
+                    # The server's clock, the same one the expiry check above uses and for the same
+                    # reason: a client that decides when its own acceptance happened decides whether
+                    # a promotion covers it.
+                    accepted_at=accepted_at,
+                )
                 if isinstance(composition, UnresolvedQuote):
                     # Refused before anything is written. The reason codes name the missing
                     # fact -- most often a quantity the customer estimated, never weighed.
@@ -1078,22 +1120,10 @@ class OperationsService:
                         occurred_at=accepted_at,
                     ),
                 )
-                accepted = composition.snapshot
-                totals = accepted.data.totals
-                return {
-                    "quote_id": str(accepted.data.quote_id),
-                    "revision": accepted.data.revision,
-                    "row_version": row_version + 1,
-                    "finality": accepted.data.finality.value,
-                    "status": accepted.data.status.value,
-                    "snapshot_hash": accepted.document.snapshot_hash,
-                    "list_service_subtotal_vnd": totals.list_service_subtotal_max_vnd,
-                    "net_service_subtotal_vnd": totals.net_service_subtotal_max_vnd,
-                    "display_total_min_vnd": totals.display_total_min_vnd,
-                    "display_total_max_vnd": totals.display_total_max_vnd,
-                    "reason_codes": list(accepted.data.reason_codes),
-                    "required_approvals": list(accepted.data.required_approvals),
-                }
+                # The same projection `create_quote` and `apply_range_prices` use. It used to be
+                # spelled out again here, which meant a field added to one of the three reached two
+                # of them -- and `PROMO-WIRING-001` adds one.
+                return _quote_mapping(composition.snapshot, row_version=row_version + 1)
 
             try:
                 result = self._idempotency.execute(
@@ -1166,6 +1196,10 @@ class OperationsService:
                     error=StoreAccessError,
                 )
                 pricebook = self._published_pricebook(cursor)
+                # `None` when the owner has published no programme, which is a state this system
+                # supports rather than an error: the quote composes at list price and says
+                # `PROMOTION_NOT_PUBLISHED`. Invariant 11 -- there is no constant to fall back on.
+                promotion = read_published_promotion_program(cursor)
             composition = compose_quote_revision(
                 quote_id=target_id,
                 revision=revision,
@@ -1179,6 +1213,7 @@ class OperationsService:
                 approved_manual_fee_vnd=approved_manual_fee_vnd,
                 customer_acknowledged_manual_fee=customer_acknowledged_manual_fee,
                 present_range_as_band=present_range_as_band,
+                promotion=promotion,
             )
             if isinstance(composition, UnresolvedQuote):
                 # Nothing is written and no idempotency record is claimed: an unresolved quote is
@@ -1230,6 +1265,13 @@ class OperationsService:
                             # decides whether the stored revision is a band or a refusal, so the
                             # same key asking for the other one must conflict rather than replay.
                             "present_range_as_band": present_range_as_band,
+                            # The programme in force moves the display total exactly as a delivery
+                            # fee does. Leaving it out would let the same key replay a price
+                            # computed under a programme that has since been replaced, which is the
+                            # bug the delivery facts were added to this payload to fix.
+                            "promotion_version_id": (
+                                None if promotion is None else str(promotion.version_id)
+                            ),
                             "lines": [
                                 {
                                     "service_code": line.service_code,
@@ -1386,6 +1428,7 @@ class OperationsService:
                     expected_current_revision=expected_current_revision,
                     expected_snapshot_hash=expected_snapshot_hash,
                 )
+                promotion = read_published_promotion_program(cursor)
             if container is None:
                 raise QuoteStateError("quote is missing, closed, or not in this store")
             attestation = _range_price_attestation(priced, choices, approval_id=approval_id)
@@ -1400,7 +1443,13 @@ class OperationsService:
                 at=applied_at,
             )
             composition = close_range_prices(
-                priced=priced, revision=priced.data.revision + 1, attestation=attestation
+                priced=priced,
+                revision=priced.data.revision + 1,
+                attestation=attestation,
+                promotion=promotion,
+                # A promotion applies to the amount the staff member just chose, evaluated at the
+                # moment they chose it. See `close_range_prices` for why the band is the wrong base.
+                closed_at=applied_at,
             )
             if isinstance(composition, UnresolvedQuote):
                 # Refused before anything is written, exactly as `create_quote` refuses: an
@@ -2469,6 +2518,33 @@ def _quote_mapping(snapshot: ImmutableQuoteSnapshot, *, row_version: int) -> dic
         "display_total_max_vnd": totals.display_total_max_vnd,
         "reason_codes": list(data.reason_codes),
         "required_approvals": list(data.required_approvals),
+        "promotion": _promotion_mapping(snapshot),
+    }
+
+
+def _promotion_mapping(snapshot: ImmutableQuoteSnapshot) -> dict[str, object] | None:
+    """Read the frozen promotion off the revision. Nothing here is recomputed.
+
+    `frozen_promotion` parses the revision's own `PROMOTION` calculation trace, which is canonical
+    bytes inside an immutable snapshot. Re-deriving any of it at read time would mean the console
+    could show a number the customer was never told -- the same failure the freeze exists to
+    prevent, arriving through the back door.
+    """
+
+    frozen = frozen_promotion(snapshot)
+    if frozen is None:
+        return None
+    return {
+        "policy_code": frozen.policy_code,
+        "configuration_version": frozen.configuration_version,
+        "status": frozen.status,
+        "discount_amount_vnd": frozen.discount_amount_vnd,
+        "rate_bps": list(frozen.rate_bps),
+        "interval_start_at": frozen.interval_start_at,
+        "interval_end_at_exclusive": frozen.interval_end_at_exclusive,
+        "inside_interval": frozen.candidate_inside_interval,
+        "eligibility_resolved": frozen.eligibility_resolved,
+        "reason_codes": list(frozen.reason_codes),
     }
 
 
@@ -2628,6 +2704,30 @@ def _quote_revision_result(value: dict[str, object], *, replayed: bool) -> Quote
         reason_codes=tuple(str(code) for code in _string_list(value["reason_codes"])),
         required_approvals=tuple(str(code) for code in _string_list(value["required_approvals"])),
         replayed=replayed,
+        # `.get`, not `[...]`: a response stored in the idempotency ledger before
+        # `PROMO-WIRING-001` has no promotion key, and a replay of it must still return rather than
+        # raising. Absent reads as "no promotion was frozen on that revision", which is what was
+        # true when it was written.
+        promotion=_promotion_view(value.get("promotion")),
+    )
+
+
+def _promotion_view(value: object) -> QuotePromotionView | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise OperationsUnavailable("stored quote response is malformed")
+    return QuotePromotionView(
+        policy_code=str(value["policy_code"]),
+        configuration_version=int(str(value["configuration_version"])),
+        status=str(value["status"]),
+        discount_amount_vnd=int(str(value["discount_amount_vnd"])),
+        rate_bps=tuple(int(str(rate)) for rate in _string_list(value["rate_bps"])),
+        interval_start_at=str(value["interval_start_at"]),
+        interval_end_at_exclusive=str(value["interval_end_at_exclusive"]),
+        inside_interval=bool(value["inside_interval"]),
+        eligibility_resolved=bool(value["eligibility_resolved"]),
+        reason_codes=tuple(str(code) for code in _string_list(value["reason_codes"])),
     )
 
 

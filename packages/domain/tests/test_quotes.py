@@ -212,6 +212,19 @@ def test_estimate_cannot_become_final_by_status_or_quantity_basis_edit() -> None
     with pytest.raises(QuoteSnapshotError, match="estimate cannot become approved final"):
         build_quote_snapshot(replace(data, status=QuoteRevisionStatus.ACCEPTED_FINAL))
 
+    # The status is `ACCEPTED_FINAL` rather than `APPROVED`, and `PROMO-WIRING-001` moved it there
+    # because the only thing that caught this edit was the promotion clause, and that clause moved.
+    # `estimate_data` clears `required_approvals` here, resolves the delivery fee at 10.000 d and
+    # measures the line, so every other condition in `_validate_finality` is already satisfied: what
+    # refused this revision was the `PROMOTION` configuration reference standing beside a null
+    # `promotion_eligibility_event`. Since promotions are actually evaluated, that pairing is the
+    # normal state of a closed price band -- `DEC-002` keys eligibility to `accepted_at`, which does
+    # not exist while a staff member is choosing an amount inside a band -- so the clause now binds
+    # at `ACCEPTED_FINAL`, the status that means the customer agreed and the only one
+    # `OrderRepository.create` will build an order from.
+    #
+    # The point the assertion was making is untouched: an estimate still cannot be promoted to a
+    # final exact price by editing its quantity basis and its status.
     measured_line = replace(data.lines[0], quantity_basis=QuantityBasis.STAFF_MEASUREMENT)
     with pytest.raises(QuoteSnapshotError, match="approved exact quote lacks final evidence"):
         build_quote_snapshot(
@@ -219,11 +232,40 @@ def test_estimate_cannot_become_final_by_status_or_quantity_basis_edit() -> None
                 data,
                 lines=(measured_line,),
                 finality=QuoteFinality.APPROVED_EXACT,
-                status=QuoteRevisionStatus.APPROVED,
+                status=QuoteRevisionStatus.ACCEPTED_FINAL,
                 approval_id=APPROVAL_ID,
                 required_approvals=(),
             )
         )
+
+
+def test_an_owner_approved_amount_may_rest_on_a_promotion_the_handshake_has_not_resolved() -> None:
+    """The other side of the clause `PROMO-WIRING-001` moved, stated as its own fact.
+
+    A closed price band is `APPROVED_EXACT`/`APPROVED`: the owner authorised this amount inside the
+    interval they published, and the promotion evaluated against it is `PROVISIONAL` because
+    `DEC-002` keys eligibility to `accepted_at` and nobody has accepted anything yet. That revision
+    has to be buildable, or a shop running a promotion could not close a band at all.
+
+    The same revision at `ACCEPTED_FINAL` is refused, which is the assertion above. Both are needed:
+    one alone would not distinguish a clause that moved from a clause that was deleted.
+    """
+
+    data = estimate_data()
+    measured_line = replace(data.lines[0], quantity_basis=QuantityBasis.STAFF_MEASUREMENT)
+    snapshot = build_quote_snapshot(
+        replace(
+            data,
+            revision=2,
+            lines=(measured_line,),
+            finality=QuoteFinality.APPROVED_EXACT,
+            status=QuoteRevisionStatus.APPROVED,
+            approval_id=APPROVAL_ID,
+            required_approvals=(),
+        )
+    )
+    assert snapshot.data.promotion_eligibility_event is None
+    assert any(item.config_type == "PROMOTION" for item in snapshot.data.configuration_snapshots)
 
 
 def test_human_approved_exact_requires_resolved_promotion_and_no_pending_approvals() -> None:

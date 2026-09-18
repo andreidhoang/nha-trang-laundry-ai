@@ -6,10 +6,12 @@
  *
  *   - **Opening an incident decides nothing.** `FR-INC-002` and `FR-INC-003` separate the intake
  *     record from the authority to say whose fault it was and what the customer gets. The server
- *     honours that separation literally: `fault_decided` and `remedy_decided` come back `false` and
- *     there is no route in this API that ever sets either. So both are rendered as
- *     "chưa quyết định" everywhere they appear, never as a blank or an omitted row, and the missing
- *     remedy workflow is linked rather than implied.
+ *     honours that separation literally: this route always answers `fault_decided` and
+ *     `remedy_decided` as `false`, and nothing on this screen moves either. `REMEDY-001` gave
+ *     `remedy_decided` its one writer — carrying out a remedy proposal, on `#/remedies`, which also
+ *     closes the incident — and `fault_decided` still has none. So both are rendered as
+ *     "chưa quyết định" everywhere they appear, never as a blank or an omitted row, and the remedy
+ *     screen is linked from the record rather than implied.
  *   - **The console sends words and computes no digest.** `DEC-028` moved both of this record's
  *     `sha256:` commitments to the server: the contact scope is derived from the order's own
  *     binding, and the evidence digest is taken over the summary that was actually stored. A form
@@ -36,6 +38,7 @@ import { h, render } from "../core/dom.js";
 import { UNKNOWN, UUID, dateTime, matchesFilter, shortId } from "../core/format.js";
 import { WARNING, enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
+import { navigate } from "../core/router.js";
 import { principal, storeId } from "../core/session.js";
 import {
   badge,
@@ -51,6 +54,9 @@ import {
   revealError,
   setResult,
 } from "../ui/components.js";
+// A screen importing a screen, deliberately, and the mirror of what `screens/orderDetail.js` does
+// to this one: the WS6 in-memory carry-over channel, cleared on consumption, not a shared helper.
+import { setRemedyIncidentPrefill } from "./remedies.js";
 
 const LIST_LIMIT = 100;
 
@@ -131,15 +137,17 @@ function recordOnlyNotice() {
       "p",
       null,
       "Mở sự cố chỉ ghi lại rằng có chuyện xảy ra. Máy chủ luôn trả về fault_decided = false và " +
-        "remedy_decided = false, và trong API này không có route nào đặt hai giá trị đó. Ai chịu " +
-        "lỗi và khách được bù gì là quyết định của con người, ở nơi khác.",
+        "remedy_decided = false cho sự cố vừa mở, và màn hình này không đặt được giá trị nào " +
+        "khác. Ai chịu lỗi vẫn không có chỗ nào ghi; khách được bù gì thì có, nhưng là một lệnh " +
+        "riêng do người quyết.",
     ),
     h(
       "p",
       { class: "hint" },
-      "Luồng duyệt bồi hoàn là một lệnh cần phê duyệt và hiện chưa tồn tại: ",
-      h("a", { href: "#/gaps" }, "xem danh sách khoảng trống"),
-      ".",
+      "Quyết bồi hoàn là một lệnh riêng, ở màn hình ",
+      h("a", { href: "#/remedies" }, "Bồi hoàn"),
+      ". Ở đó máy chủ hiện trần, thời hạn và việc có cần chủ tiệm duyệt hay không trước khi bạn " +
+        "gõ số. Thực hiện xong thì sự cố mới chuyển sang CLOSED.",
     ),
   );
 }
@@ -288,6 +296,25 @@ function incidentCard(item) {
       ["Bồi hoàn cho khách", decisionLabel(item.remedy_decided)],
       ["Mở lúc", dateTime(item.opened_at)],
     ]),
+    // Offered on every row, including a closed one: the remedy screen reads the server's own
+    // answer for this incident, and letting it say "đã thực hiện" is more useful than a button
+    // this list hid on a guess about what the server would allow.
+    h(
+      "div",
+      { class: "action-bar" },
+      h(
+        "button",
+        {
+          type: "button",
+          dataVariant: "quiet",
+          onClick: () => {
+            setRemedyIncidentPrefill(item.incident_id);
+            navigate("/remedies", { incident: item.incident_id });
+          },
+        },
+        "Đề xuất bồi hoàn",
+      ),
+    ),
   );
 }
 

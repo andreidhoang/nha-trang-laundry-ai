@@ -53,6 +53,13 @@ const NAV_ITEMS = [
     group: "Vận hành",
   },
   {
+    path: "/remedies",
+    label: NAV.remedies,
+    capability: "INCIDENTS_READ",
+    icon: "incident",
+    group: "Vận hành",
+  },
+  {
     path: "/approvals",
     label: NAV.approvals,
     capability: "APPROVALS_READ",

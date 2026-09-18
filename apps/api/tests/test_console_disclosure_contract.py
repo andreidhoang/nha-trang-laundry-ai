@@ -200,7 +200,15 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     assert counts.get("SERVER_GATE") == 12
     assert counts.get("REPOSITORY_ROLES") == 3
     assert counts.get("ALL_AUTHENTICATED") == 1
-    assert counts.get("ABSENT_TABLE") == 5
+    # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
+    # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
+    # incident therefore stands still at OPEN. Both halves stopped being true together:
+    # `remedy_proposals` and `remedy_credits` landed with the server half, and
+    # `RemedyProposalRepository.execute` writes `customer_incidents.status = 'CLOSED'` inside the
+    # same transaction as the credit. The three tables it *named* are still absent, so this test
+    # would have stayed green over a false sentence — which is the reason the entry and its
+    # binding were deleted together rather than the binding being left to outlive its claim.
+    assert counts.get("ABSENT_TABLE") == 4
     # ABSENT_ROUTE is gone entirely: both slots claimed the intake and production transitions
     # had no route, and both became false on 2026-08-29 when the routes were added.
     assert "ABSENT_ROUTE" not in counts
@@ -334,7 +342,43 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # `#/gaps` entry both named an order as the only viewable resource type, and a quote revision
     # is now viewable too; that `#/gaps` group lede counted four entries and now counts three; and
     # the `#/quotes` lede no longer describes a screen that only reads prices back.
-    assert sum(counts.values()) == _registry()["total"] == 213
+    # 277 after REMEDY-001's console half: +68 added, -4 removed, of which 2 of the removals are
+    # re-keyed sentences and 2 are a retirement. Net +64, and it divides into four:
+    #
+    #   * 23 in `core/i18n.js` -- one `REASON_NOTE` gloss for each of the fourteen members of the
+    #     domain's `RemedyRefusal`, plus the nine reason codes `RemedyProposalRepository` raises
+    #     that are states rather than policy answers (`REMEDY_APPROVAL_REQUIRED`,
+    #     `REMEDY_APPROVAL_EXPIRED`, `REMEDY_APPROVAL_NOT_BOUND`, `REMEDY_ALREADY_EXECUTED`,
+    #     `REMEDY_PROPOSAL_NOT_FOUND`, `REMEDY_CREDIT_NOT_FOUND`, `REMEDY_INCIDENT_NOT_FOUND`,
+    #     `REMEDY_ORDER_REVISION_UNREADABLE`, `REMEDY_ORDER_TIMESTAMP_INVALID`). This is the rule
+    #     the settlement and range-price vocabularies already set: `_raise_remedy_error` answers
+    #     422 with a bare code, and a refusal a staff member meets with a customer in front of them
+    #     may not arrive as a bare English token.
+    #   * 36 in `screens/remedies.js`, a screen that performs a procedure the console previously
+    #     could not reach at all: 3 panel guardrails, 1 lede, 4 notice bodies with 2 titles, 9
+    #     hints, the loss refusal's `missing`/`blockedBy`/`today` under `components.unsupported`,
+    #     and -- new in kind -- 10 `PLAN_NOTE` and 4 `KIND_NOTE` entries. Those last fourteen are
+    #     why `CLAIM_TABLES` in `scripts/console_disclosures.py` grew past `core/`: this screen
+    #     renders its refusal sentences through a lookup (`hint: KIND_NOTE[draft.kind]`,
+    #     `planNotice(plan)`), so every literal-scanning pass in the enumerator saw a variable and
+    #     registered nothing. Ten refusal sentences and the loss claim would otherwise have been
+    #     the least-covered honesty chrome on the console, in its newest screen.
+    #   * 6 in `screens/gaps.js` -- two new entries at three bindable keys each, replacing the one
+    #     that was retired. They are narrower and still true: there is no route listing an order's
+    #     or a ticket's unredeemed credits, and none listing an incident's proposals or the
+    #     `POLICY_UNRESOLVED` loss cases waiting on the owner.
+    #   * 3 across `screens/incidents.js` and `screens/orderDetail.js` -- 2 re-keyed and 1 added.
+    #     The incidents screen said "trong API này không có route nào đặt hai giá trị đó" and
+    #     linked the remedy workflow as a gap; `remedy_decided` now has exactly one writer, so both
+    #     sentences were rewritten to say what is still true (`fault_decided` has none) and where
+    #     the remedy is decided. The addition is order detail's line explaining why the cross-link
+    #     is a link and not a button: a remedy is keyed by `incident_id`, and no route lists an
+    #     order's incidents, so the screen cannot pick the complaint for the operator.
+    #
+    # The two genuine retirements are the `#/gaps` "Bồi hoàn sự cố" entry's `missing` and
+    # `blockedBy`, deleted rather than reworded because the limitation they described closed --
+    # the same move QUOTE-ACCEPT-001, INCIDENT-INTAKE-001 and RANGE-PRICE-001 each made before it.
+    assert sum(counts.values()) == _registry()["total"] == 277
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

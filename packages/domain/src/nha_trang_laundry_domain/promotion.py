@@ -184,14 +184,36 @@ class PromotionResult:
     trace: PromotionCalculationTrace
 
 
+#: The owner's one confirmed programme, kept here **only as a fixture for the synthetic eval
+#: harness**. It is not what the shop prices against and no production path reads it.
+#:
+#: `PROMO-WIRING-001` moved the production source to a published `PROMOTION_POLICY` configuration
+#: version (`promotion_policy.py`, `packages/db/.../promotions.py`), because a module-level constant
+#: is neither immutable-and-versioned (invariant 4) nor replaceable by the owner: running a new
+#: programme would have been a code deploy, and an expired one could not be retired without one.
+#:
+#: `eligibility_event` was `None` under a comment reading "DEC-002 remains open". DEC-002 was
+#: resolved on 2026-08-18, so the comment was false and the `None` it justified made every
+#: evaluation return PROVISIONAL/REQUIRE_HUMAN forever. `STORE_COMMERCIAL_ACCEPTED` is the enum's
+#: own name for the `accepted_at` the decision keys eligibility to.
 CURRENT_PROMOTION = PromotionPolicy(
     code="PROMO_WET30_DRY40_20260717_20260831",
     start_at=datetime(2026, 7, 17, tzinfo=PROMOTION_TIMEZONE),
     end_at_exclusive=datetime(2026, 9, 1, tzinfo=PROMOTION_TIMEZONE),
     timezone="Asia/Ho_Chi_Minh",
-    # DEC-002 remains open. A generic accepted_at is prohibited.
-    eligibility_event=None,
+    eligibility_event=PromotionEligibilityEvent.STORE_COMMERCIAL_ACCEPTED,
 )
+
+
+def validate_promotion_policy(policy: PromotionPolicy) -> None:
+    """The check `evaluate_promotion` applies to a policy, under a name other modules may call.
+
+    `promotion_policy.parse_promotion_policy` runs it at publication time so a programme that would
+    be refused at the counter is refused while somebody can still fix the document. It is the same
+    function, not a second reading of the same rules.
+    """
+
+    _validate_policy(policy)
 
 
 def evaluate_promotion(

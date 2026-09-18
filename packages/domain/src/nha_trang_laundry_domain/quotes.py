@@ -523,12 +523,33 @@ def _validate_finality(data: QuoteRevisionData) -> None:
     # about the world that a snapshot cannot see, so it is enforced where it is visible:
     # `OrderRepository.create` will not create an order against a revision with no acceptance row.
     # The column and its foreign key remain for a genuine two-party approval.
+    # The promotion clause below asks for a resolved eligibility event at `ACCEPTED_FINAL` rather
+    # than at `APPROVED_EXACT`, and `PROMO-WIRING-001` moved it there because the world it described
+    # changed. It was written when no production path evaluated a promotion at all: nothing ever set
+    # `promotion_eligibility_event`, so "APPROVED_EXACT may not reference a promotion with no
+    # resolved event" and "APPROVED_EXACT may not reference a promotion" were the same sentence, and
+    # both were true because a referenced promotion was necessarily an unevaluated one.
+    #
+    # A promotion is now evaluated on every revision, and `DEC-002` keys its eligibility to
+    # `accepted_at`. `close_range_prices` produces `APPROVED_EXACT`/`APPROVED` -- the owner
+    # authorised this amount inside the published band -- at a moment when acceptance has not
+    # happened and `accepted_at` does not exist, so its eligibility is `PROVISIONAL` by construction
+    # and no honest value can be put in that field. Refusing that revision would mean a shop running
+    # a promotion could not close a price band at all.
+    #
+    # Nothing is given up by moving it. `ACCEPTED_FINAL` is the handshake `DEC-021` is about, it is
+    # the only status `OrderRepository.create` will build an order from (`orders.py:322`, alongside
+    # the `quote_acceptances` row), and `accept_quote_revision` is its only producer -- and that
+    # function now refuses with `PROMOTION_ELIGIBILITY_UNRESOLVED` before it ever reaches this
+    # validator. So the check binds at the moment money becomes owed instead of at the moment a
+    # staff member picks a number inside a band, which is where it was always aimed.
     if data.finality is QuoteFinality.APPROVED_EXACT and (
         data.required_approvals
         or data.totals.delivery_fee_vnd is None
         or any(line.quantity_basis is QuantityBasis.CUSTOMER_ESTIMATE for line in data.lines)
         or (
-            any(item.config_type == "PROMOTION" for item in data.configuration_snapshots)
+            data.status is QuoteRevisionStatus.ACCEPTED_FINAL
+            and any(item.config_type == "PROMOTION" for item in data.configuration_snapshots)
             and data.promotion_eligibility_event is None
         )
         or data.status

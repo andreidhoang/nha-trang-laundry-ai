@@ -198,7 +198,23 @@ export function classify(status, detail, context = {}) {
       }
       // `NOT_SUPPORTED` is the settlement route's word for "the shop has not decided this case".
       // It shares the 422 status with validation failures and is the opposite of one.
-      if (detail.outcome === "NOT_SUPPORTED") {
+      //
+      // The second arm is the same refusal wearing a thinner envelope. `_raise_remedy_error` sends
+      // `{reason_code, authority, ceiling_vnd?, window_closes_at?, threshold_minutes?}` and no
+      // `outcome` at all, so every remedy refusal fell through to `INVALID` and reached the
+      // counter as "Dữ liệu nhập không hợp lệ" — which is the precise sentence WORKFLOW-
+      // CONFORMANCE-001 removed from the settlement path, for the precise reason that it is untrue
+      // and sends a staff member to retype a number that was never wrong. `REMEDY_WINDOW_CLOSED`
+      // is not bad input; it is the shop's own published window having closed, and the person
+      // holding the customer's damaged shirt needs to be told that and not told to try again.
+      //
+      // Matched on the shape rather than on a `REMEDY_` prefix: what makes this a policy answer is
+      // that the server named a single machine-readable reason for refusing, and a prefix test
+      // would silently stop covering the next route that does the same thing.
+      if (
+        detail.outcome === "NOT_SUPPORTED" ||
+        (!detail.outcome && typeof detail.reason_code === "string" && detail.reason_code)
+      ) {
         const codes = reasonCodesOf(detail);
         // One of that route's codes is not a policy question at all: somebody else changed the
         // order while this screen had it open. It arrives wearing the same envelope as the rest,

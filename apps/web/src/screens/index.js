@@ -22,6 +22,7 @@ import { screen as orderDetail } from "./orderDetail.js";
 import { screen as orderRequests } from "./orderRequests.js";
 import { screen as orders } from "./orders.js";
 import { screen as quotes } from "./quotes.js";
+import { screen as remedies } from "./remedies.js";
 import { screen as shadow } from "./shadow.js";
 import { screen as staff } from "./staff.js";
 import { screen as system } from "./system.js";
@@ -39,6 +40,7 @@ export const ROUTES = [
   shadow,
   exceptions,
   incidents,
+  remedies,
   system,
   staff,
   gaps,

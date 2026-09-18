@@ -54,3 +54,17 @@ Thumbs.db
 # credentials for a running business -- database passwords, a TLS private key, the Keycloak
 # bootstrap admin -- so the directory is ignored before it exists rather than after.
 .shop/
+
+# Adversarial-review scratch tests. A verifier writes a throwaway probe file, runs it, and deletes
+# it; the review instructions say so in as many words ("a scratch test you delete afterwards").
+# Three times during RANGE-PRICE-001 and PROMO-WIRING-001 one of those files existed at the moment
+# a `git add -A` ran, and once it reached a commit -- 504 lines whose own docstring said "Deleted
+# after the review", which made two of that item's acceptance_checks fail on a clean checkout while
+# passing for everyone who already had the file deleted locally.
+#
+# Ignoring the name is the durable fix: a reviewer's probe can no longer be committed by accident,
+# and a probe worth keeping has to be renamed to something that says what it proves, which is the
+# rename it deserved anyway.
+test_zz_*.py
+*_scratch.py
+*_scratch_*.py

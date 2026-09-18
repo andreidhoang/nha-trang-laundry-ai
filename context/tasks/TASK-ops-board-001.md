@@ -11,44 +11,62 @@ the shop's own records — each number produced by a named, versioned query.
 **Risk:** MEDIUM — read-only except the export, which moves shop data out of the system and is
 therefore owner-approved and audited.
 
-## Why this exists
+## Why this exists — and what already exists
 
-The SLA engine exists (`packages/domain/.../sla.py`) and nothing asks it about more than one order.
-Staff can see an individual order's state; nobody can see which of today's orders is about to breach.
-The shop runs its production queue from memory and from the physical rail of bagged laundry.
+**Scoped 2026-09-18. A first reading of this gap said "no SLA board exists". That was wrong, and
+building on it would have produced a second, divergent SLA engine.**
 
-## Constraint first
+What is already built:
 
-Invariant 18: *dashboard numbers, SLA flags, and operational priorities are computed by versioned
-deterministic queries/rules; AI may explain them but cannot originate or mutate them.*
+| Piece | Where |
+|---|---|
+| SLA engine, a pure function evaluated on read | `packages/domain/src/nha_trang_laundry_domain/sla.py`, `evaluate_production_sla` |
+| the board query | `ShadowConsoleRepository.sla_risk_board`, `shadow_console.py:762` |
+| its clock fix | migration `0037` — stops the clock at `ready_at_store` |
+| day status counts | `today_status_counts`, already rendered by `#/today` |
 
-So the board is not a screen that adds things up. Each figure is produced by a **named, versioned
-query**, and the version identifier travels with the result, so a number on a printout can be traced
-to the rule that produced it. A test pins each identifier; changing a rule changes its version.
+`sla_risk_board` already selects in-production, non-cancelled orders and evaluates each through the
+domain engine, returning its reason codes verbatim. Migration `0037` fixed a real bug in it: before
+that fix "a washed order waiting overnight for its owner accrued elapsed time until it read
+`SLA_BREACHED`, and `SLA_MET` was unreachable from this surface entirely." A second board would
+re-introduce a bug that has already been found and paid for once.
 
-## Scope, in value order
+What is missing is narrower: **a surface a person can work from.** The board's only reachable path
+today is `#/assistant`, where `assistant.py:366` answers an SLA question with two counts — how many
+orders are in production and how many passed the internal risk mark. A count is not actionable. Staff
+cannot see *which* order, *how long* is left, or *what to do first*.
 
-**1. SLA board.** Every open order against its deadline, ordered by time remaining, breaches first.
-The SLA clock starts at `ACCEPTED` and stops at `READY_AT_STORE`; that is already the engine's rule
-and this item must not restate it. State whether SLA state is computed on read or stored, and if
-computed, prove the board stays correct when the clock crosses a deadline between two reads.
+## Required design
 
-**2. Day summary.** Counts across the four independent status dimensions — commercial, intake,
-production, balance — plus the takings figure `#/today` already shows.
+**Reuse the query. Do not write SLA logic.** Add a list endpoint and a screen over `sla_risk_board`,
+ordered by time remaining with breaches first. If the board needs a field the query does not return,
+extend the query in place so `#/assistant` and the board keep answering from one source. A second
+SQL statement that computes SLA is a defect, not an optimisation.
 
-The `DEC-014` role gate is preserved exactly: `OWNER_ADMIN`, `OPS_APPROVER`, `OPERATOR`. Do not widen
-it and do not add a role. The wording rules are non-negotiable and already house style: **tiền đã
-thu**, never *doanh thu*, never *lợi nhuận*. A figure that counts money taken at the counter today is
-not revenue and must never be labelled as such.
+**Carry the existing honesty forward.** `SLA_POLICY` is one stated rule, and the assistant already
+says so in Vietnamese: *"quy tắc SLA riêng của từng đơn là quyết định kinh doanh chưa được chốt, nên
+con số này dùng đúng một quy tắc đã nêu."* Per-order SLA policy is an unresolved business decision.
+The board states which rule produced its numbers, in those same words, and never implies the shop
+promised a customer anything.
 
-**3. Export.** `ApprovalAction.EXPORT_SANITIZED_DATA` already exists, maps to `_OWNER_FINANCIAL` and
-resource type `EXPORT_REQUEST` (`approvals.py:110`, `:128`). An export is an owner-approved, audited
-act, not a button. Use the mapping unchanged.
+`SlaPolicyType.GUIDANCE_RANGE` carries `GUIDANCE_DOES_NOT_CREATE_BREACH` for exactly this reason.
+Guidance is not a promise, and a board that renders guidance as a broken promise lies to its own
+staff about what the shop owes.
 
-The word *sanitized* in the enum is a requirement, not a label. The export carries order, money and
-status facts. It carries **no incident free text and no evidence summary** — those live in disposable
-payload side tables under `RETENTION-STORE-001` precisely because they are the sensitive part, and an
-exported copy would escape every retention guarantee the purge machinery provides.
+**Day summary — verify before building.** `#/today` already renders `today_status_counts`. Establish
+what is genuinely absent before adding anything, and report it. The `DEC-014` role gate on the
+takings figure is preserved exactly — `OWNER_ADMIN`, `OPS_APPROVER`, `OPERATOR` — not widened, no role
+added. Wording is house style and non-negotiable: **tiền đã thu**, never *doanh thu*, never *lợi
+nhuận*.
+
+**Export — genuinely absent.** `ApprovalAction.EXPORT_SANITIZED_DATA` exists and maps to
+`_OWNER_FINANCIAL` with resource type `EXPORT_REQUEST` (`approvals.py:110`, `:128`). An export is an
+owner-approved, audited act, not a button. Use the mapping unchanged; do not edit `APPROVAL_POLICIES`.
+
+The word *sanitized* is a requirement, not a label. The export carries order, money and status facts.
+It carries **no incident free text and no evidence summary** — those live in disposable payload side
+tables under `RETENTION-STORE-001` precisely because they are the sensitive part, and an exported copy
+would escape every retention guarantee the purge machinery provides.
 
 ## What this must not become
 
@@ -70,6 +88,8 @@ The board answers *what needs a person right now* and *what did we take today*, 
 
 - Each board figure's query version identifier is pinned by a test; changing the rule fails the test
   until the version is changed.
+- The board and `#/assistant` report the same numbers for the same store at the same instant, proving
+  there is one query and not two.
 - A year of synthetic orders does not degrade the board beyond a stated bound, measured.
 - An order crossing its deadline between two reads shows as breached on the second, with no write.
 - A role outside the `DEC-014` set cannot see the takings figure, verified against a real API and not

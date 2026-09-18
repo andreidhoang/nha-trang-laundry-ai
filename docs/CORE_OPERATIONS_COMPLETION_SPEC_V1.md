@@ -364,21 +364,65 @@ So the board is not a screen that adds things up. It is a named, versioned query
 number, and a screen that renders it. The version identifier travels with the result, so a figure on a
 printout can be traced to the rule that produced it.
 
-### 6.2 Scope
+### 6.2 What already exists — corrected 2026-09-18, after scoping
 
-Three things, in value order:
+A first draft of this section specified building an SLA board. **One already exists.**
+`ShadowConsoleRepository.sla_risk_board` (`shadow_console.py:762`) selects in-production,
+non-cancelled orders by SQL and evaluates each through the domain engine, returning its reason codes
+verbatim. It even carries a bug-fix history: migration `0037` stopped the clock at `ready_at_store`,
+because before it "a washed order waiting overnight for its owner accrued elapsed time until it read
+`SLA_BREACHED`, and `SLA_MET` was unreachable from this surface entirely."
 
-1. **SLA board** — every open order against its deadline, ordered by time remaining, with breaches
-   first. The SLA engine exists (`domain/sla.py`); what does not exist is a query that asks it about
-   every open order at once.
-2. **Day summary** — counts by the four status dimensions, plus takings already shown on `#/today`.
-   The takings figure keeps the `DEC-014` role gate exactly as it is: `OWNER_ADMIN`, `OPS_APPROVER`,
-   `OPERATOR`. Wording rules are unchanged and non-negotiable: *tiền đã thu*, never *doanh thu*, never
-   *lợi nhuận*.
-3. **Export** — `ApprovalAction.EXPORT_SANITIZED_DATA` already exists and maps to `_OWNER_FINANCIAL`
-   with resource type `EXPORT_REQUEST`. An export is an owner-approved, audited act, not a button.
-   The word *sanitized* in the enum is a requirement: the export carries order, money and status
-   facts, and carries no incident free text and no evidence summary.
+Writing a second board would have produced exactly the divergent duplicate engine this repository
+warns about elsewhere. It would also have re-introduced a bug that has already been found and fixed
+once.
+
+`today_status_counts` likewise already exists and already feeds `#/today`.
+
+So what is actually missing is narrower than it looked:
+
+| Piece | State |
+|---|---|
+| SLA engine | built — `domain/sla.py`, a pure function evaluated on read |
+| board query | built — `sla_risk_board`, with the `0037` clock fix |
+| day counts | built — `today_status_counts`, rendered by `#/today` |
+| **a screen a person can work from** | **missing** |
+| **a list endpoint behind it** | **missing** |
+| **export** | **missing** |
+
+The board's only reachable surface today is `#/assistant`: ask about late orders and
+`assistant.py:366` answers with two counts — how many are in production and how many have passed the
+internal risk mark. A count is not something a staff member can act on. They cannot see *which*
+order, or *how long* is left, or *what to do first*.
+
+### 6.2a Scope, corrected
+
+1. **Surface the existing query.** A list endpoint and a screen over `sla_risk_board`, ordered by
+   time remaining with breaches first. **Reuse the query; do not write SLA logic.** If the query needs
+   a field it does not return, extend it in place so the assistant and the board keep answering from
+   one source.
+
+2. **Carry its honesty forward.** `SLA_POLICY` is one stated rule, and the assistant already says so
+   in Vietnamese: *"quy tắc SLA riêng của từng đơn là quyết định kinh doanh chưa được chốt, nên con số
+   này dùng đúng một quy tắc đã nêu."* Per-order SLA policy is an unresolved business decision. The
+   board must state which rule produced its numbers, in the same words, and must not imply the shop
+   promised a customer anything. `SlaPolicyType.GUIDANCE_RANGE` carries
+   `GUIDANCE_DOES_NOT_CREATE_BREACH` for exactly this reason: guidance is not a promise, and a board
+   that renders guidance as a broken promise is lying to its own staff.
+
+3. **Day summary — verify before building.** `#/today` already renders `today_status_counts`. Check
+   what is genuinely absent before adding anything. The `DEC-014` role gate on the takings figure is
+   preserved exactly: `OWNER_ADMIN`, `OPS_APPROVER`, `OPERATOR`. The wording rules are house style and
+   non-negotiable: **tiền đã thu**, never *doanh thu*, never *lợi nhuận*.
+
+4. **Export — genuinely absent.** `ApprovalAction.EXPORT_SANITIZED_DATA` exists and maps to
+   `_OWNER_FINANCIAL` with resource type `EXPORT_REQUEST` (`approvals.py:110`, `:128`). An export is an
+   owner-approved, audited act, not a button. Use the mapping unchanged.
+
+   The word *sanitized* is a requirement, not a label. The export carries order, money and status
+   facts. It carries **no incident free text and no evidence summary** — those live in disposable
+   payload side tables under `RETENTION-STORE-001` precisely because they are the sensitive part, and
+   an exported copy would escape every retention guarantee the purge machinery provides.
 
 ### 6.3 What this must not become
 

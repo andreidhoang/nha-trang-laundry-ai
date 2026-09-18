@@ -91,6 +91,39 @@ from the order's settled total, both already stored. A proposal above its comput
 refuse a rewrite anyway. An approved remedy creates a separate forward obligation. A test must assert
 the ledger is byte-identical before and after.
 
+**What `build_quote_snapshot` will demand of that credit — read this before designing it.**
+`_validate_adjustments` in `domain/quotes.py` (around lines 425-464) enforces three things that
+together decide the shape of a remedy credit:
+
+1. Its `else` branch raises `QuoteSnapshotError("unsupported quote adjustment")` for any kind it does
+   not know. Adding `REMEDY_CREDIT` to the enum is not enough; it needs its own branch, and that
+   branch must state the rules below rather than fall through to the discount branch by accident.
+2. Discount-shaped kinds must be `AdjustmentDirection.CREDIT`, and `MANUAL_DISCOUNT` additionally
+   requires an `approval_id`. Decide deliberately whether `REMEDY_CREDIT` does, and record why.
+   `DEC-004` lets staff approve up to 100.000 ₫ *without escalation*, so requiring an
+   `APPROVE_REMEDY` envelope on every credit would contradict the decision; requiring one only above
+   the ceiling matches it.
+3. **The one that will bite.** After the loop:
+
+   ```text
+   if (credit_min, credit_max) != (totals.discount_amount_min_vnd, totals.discount_amount_max_vnd):
+       raise QuoteSnapshotError("credit adjustments do not match line discounts")
+   ```
+
+   Every credit must reconcile to the revision's **line-level** discount totals, and
+   `net_service_subtotal = list_service_subtotal - discount` is a database CHECK constraint on
+   `quote_revisions` (migration `0005`), not merely a Python assertion.
+
+   A remedy credit is an order-level fact, not a line-level one. So it must be **allocated across the
+   lines of the quote it lands on** before it can be persisted — exactly the problem
+   `promotion.py::_allocate_group` already solves, with largest-remainder allocation ordered by
+   `line_id` ascending and `ROUND_HALF_UP_1_VND_THEN_LARGEST_REMAINDER_LINE_ID_ASC` recorded in the
+   trace. **Reuse that allocator.** Writing a second one would put two different answers for "who gets
+   the spare dong" into the same system.
+
+   A credit larger than the next quote's line subtotal cannot be allocated. Refuse it and carry the
+   remainder; do not silently cap it, and do not produce a negative net.
+
 **A credit is a quote adjustment, never a settlement adjustment.** Use the primitive that already
 exists: `QuoteAdjustmentSnapshot` (`quotes.py:89`) carries `kind`, `direction`, a non-negative
 `amount_min_vnd`/`amount_max_vnd` pair, `source_version_id` and `approval_id`. Add

@@ -22,6 +22,14 @@ import tempfile
 from typing import Any
 
 import pytest
+from nha_trang_laundry_domain.promotion import PromotionReason
+from nha_trang_laundry_domain.quote_composition import (
+    APPROVAL_OUTSTANDING_PREFIX,
+    PROMOTION_CHANGED_SINCE_QUOTE,
+    PROMOTION_NOT_PUBLISHED,
+    PROMOTION_PENDING_BAND_CLOSE,
+    PROMOTION_PUBLISHED_SINCE_APPROVAL,
+)
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 WEB = ROOT / "apps" / "web"
@@ -312,7 +320,12 @@ def test_every_range_price_refusal_the_counter_can_meet_is_glossed_for_them() ->
         "import { REASON_NOTE, warningFor } from './src/core/i18n.js';\n"
         "const codes = Object.keys(REASON_NOTE);\n"
         "const warnings = Object.fromEntries("
-        "codes.map((code) => [code, warningFor(code).token]));\n"
+        # `warningFor` answers `null` for a code that states a settled fact rather than a risk,
+        # which PROMO-FIX-001 introduced so that `PROMOTION_NOT_PUBLISHED` -- on every quote in a
+        # shop with no programme running -- stops raising a permanent HUMAN REQUIRED badge. The
+        # token is read optionally here for that reason; every assertion below still names the
+        # exact token it expects, so a code losing its badge by accident still fails.
+        "codes.map((code) => [code, warningFor(code)?.token ?? null]));\n"
         "console.log(JSON.stringify({codes, warnings}));\n"
     )
     expected = [*members, "RANGE_PRICE_REQUIRES_HUMAN", "HUMAN_APPROVAL_REQUIRED"]
@@ -323,6 +336,115 @@ def test_every_range_price_refusal_the_counter_can_meet_is_glossed_for_them() ->
     # fixable by retyping the same number harder -- `HUMAN REQUIRED` is the mandated token for that.
     for code in members:
         assert glossed["warnings"][code] == "HUMAN REQUIRED", code
+
+
+def test_every_promotion_answer_the_counter_can_meet_is_glossed_for_them() -> None:
+    """The settlement and range-price rule, applied to the vocabulary PROMO-WIRING-001 created.
+
+    That item replaced one reason code with nine and glossed none of them, so `REASON_NOTE` returned
+    nothing and `warningFor` fell through to `HUMAN REQUIRED` for all nine: every quote in the shop
+    showed a bare SCREAMING_SNAKE_CASE token to a Vietnamese counter under a false badge. Replacing
+    a code made the console strictly worse than leaving it alone, which is the failure this test
+    exists to make impossible to repeat.
+
+    The engine's own codes are read out of the domain rather than restated here, so one added later
+    fails on this line instead of at a counter. The module-level codes are named, because they are
+    what `quote_composition.py` emits on the engine's behalf and there is no enum to read them from.
+
+    `APPROVAL_OUTSTANDING_APPLY_PROMOTION` is deliberately not in this list and deliberately not in
+    `REASON_NOTE`. `_outstanding_approvals` can still mint it, but no path populates
+    `required_approvals`, so no server can send it -- and glossing a code no server can send is the
+    dead entry PROMO-WIRING-001 named as its reason for deleting `PROMOTION_NOT_EVALUATED`. The rule
+    has to bind to this item's own work or it is not a rule. `test_reason_notes_gloss_only_codes_a_
+    server_can_send` is the assertion in the other direction.
+    """
+
+    expected = [
+        *(str(reason) for reason in PromotionReason),
+        PROMOTION_NOT_PUBLISHED,
+        PROMOTION_PENDING_BAND_CLOSE,
+        PROMOTION_CHANGED_SINCE_QUOTE,
+        PROMOTION_PUBLISHED_SINCE_APPROVAL,
+    ]
+    glossed = _run(
+        "import { REASON_NOTE, warningFor } from './src/core/i18n.js';\n"
+        "const codes = Object.keys(REASON_NOTE);\n"
+        "const warnings = Object.fromEntries("
+        "codes.map((code) => [code, warningFor(code)?.token ?? null]));\n"
+        "console.log(JSON.stringify({codes, warnings}));\n"
+    )
+    missing = sorted({code for code in expected if code not in glossed["codes"]})
+    assert not missing, f"promotion answers with no Vietnamese note in i18n.js: {missing}"
+
+    # And each is badged for what it is. The split is the one `REASON_TO_WARNING` documents: an
+    # answer nobody can act on raises no badge, an open question raises the mandated token for that
+    # question. `PROMOTION_NOT_PUBLISHED` is the entry that forces the distinction to exist -- it is
+    # on every quote the shop writes today, so badging it would mean a permanent warning on every
+    # price.
+    #
+    # `PROMOTION_TARGET_REQUIRES_HUMAN` moved to that side in PROMO-FIX-002 and the name is now the
+    # misleading part rather than the badge: the promotion does not apply to an unconfirmed service,
+    # the line is charged at the published price, and the quote sells. Nothing is pending, so a
+    # HUMAN REQUIRED badge sent staff hunting for an approval screen that does not exist -- and then
+    # stayed on the accepted, paid, immutable revision for ever.
+    assert glossed["warnings"]["PROMOTION_APPLIED"] is None
+    assert glossed["warnings"][PROMOTION_NOT_PUBLISHED] is None
+    assert glossed["warnings"]["PROMOTION_OUTSIDE_INTERVAL"] is None
+    assert glossed["warnings"]["PROMOTION_NOT_TARGETED"] is None
+    assert glossed["warnings"]["PROMOTION_TARGET_REQUIRES_HUMAN"] is None
+    # `PROMOTION_STACKING_REQUIRES_HUMAN` moved to that side in PROMO-FIX-003, and the reason is
+    # the same one that moved the line above it: there is no longer a question attached to it. The
+    # badge asked the counter to choose between a `DEC-004` remedy credit and the programme's
+    # discount, and the domain refused the choice it offered -- acceptance was blocked either way,
+    # on a credit the db layer had already burnt. `redeem_remedy_credit` now settles it where the
+    # two meet and always the same way: the debt the shop owes this customer is kept and the
+    # programme's offer is withdrawn. Nothing is pending, the quote sells, and a HUMAN REQUIRED
+    # badge would send staff looking for an approval screen that does not exist -- and would then
+    # sit on the accepted, paid, immutable revision for ever.
+    assert glossed["warnings"]["PROMOTION_STACKING_REQUIRES_HUMAN"] is None
+    assert glossed["warnings"]["PROMOTION_ELIGIBILITY_UNRESOLVED"] == "PROMOTION PROVISIONAL"
+    assert glossed["warnings"][PROMOTION_PENDING_BAND_CLOSE] == "PROMOTION PROVISIONAL"
+    for code in (
+        PROMOTION_CHANGED_SINCE_QUOTE,
+        PROMOTION_PUBLISHED_SINCE_APPROVAL,
+    ):
+        assert glossed["warnings"][code] == "HUMAN REQUIRED", code
+
+
+def test_reason_notes_gloss_only_codes_a_server_can_send() -> None:
+    """The other direction of the rule above, for the promotion vocabulary this item owns.
+
+    A gloss for a code no server can emit is not harmless decoration. It is the failure
+    PROMO-WIRING-001 named when it deleted `PROMOTION_NOT_EVALUATED`: the console keeps answering a
+    question nobody asks, and the entry that is genuinely missing is hidden behind a table that
+    looks complete. PROMO-FIX-001 then created a fresh one --
+    `APPROVAL_OUTSTANDING_APPLY_PROMOTION`, glossed and registered as a disclosure while no path
+    populated `required_approvals` at all.
+
+    So every `PROMOTION`-prefixed and `APPROVAL_OUTSTANDING_`-prefixed key in `REASON_NOTE` has to
+    be a string the domain can actually produce. The domain's side of that list is built from the
+    engine's enum plus the module constants, not typed out here, so the two cannot drift apart
+    silently.
+    """
+
+    emittable = {
+        *(str(reason) for reason in PromotionReason),
+        PROMOTION_NOT_PUBLISHED,
+        PROMOTION_PENDING_BAND_CLOSE,
+        PROMOTION_CHANGED_SINCE_QUOTE,
+        PROMOTION_PUBLISHED_SINCE_APPROVAL,
+    }
+    glossed = _run(
+        "import { REASON_NOTE } from './src/core/i18n.js';\n"
+        "console.log(JSON.stringify({codes: Object.keys(REASON_NOTE)}));\n"
+    )
+    dead = sorted(
+        code
+        for code in glossed["codes"]
+        if (code.startswith("PROMOTION_") or code.startswith(APPROVAL_OUTSTANDING_PREFIX))
+        and code not in emittable
+    )
+    assert not dead, f"i18n.js glosses promotion codes no server can send: {dead}"
 
 
 def test_the_incident_scope_and_evidence_hash_are_produced_and_only_by_the_server() -> None:
@@ -539,7 +661,12 @@ def test_every_remedy_refusal_the_counter_can_meet_is_glossed_for_them() -> None
         "import { REASON_NOTE, warningFor } from './src/core/i18n.js';\n"
         "const codes = Object.keys(REASON_NOTE);\n"
         "const warnings = Object.fromEntries("
-        "codes.map((code) => [code, warningFor(code).token]));\n"
+        # `warningFor` answers `null` for a code that states a settled fact rather than a risk,
+        # which PROMO-FIX-001 introduced so that `PROMOTION_NOT_PUBLISHED` -- on every quote in a
+        # shop with no programme running -- stops raising a permanent HUMAN REQUIRED badge. The
+        # token is read optionally here for that reason; every assertion below still names the
+        # exact token it expects, so a code losing its badge by accident still fails.
+        "codes.map((code) => [code, warningFor(code)?.token ?? null]));\n"
         "console.log(JSON.stringify({codes, warnings}));\n"
     )
     missing = sorted({code for code in [*members, *raised] if code not in glossed["codes"]})

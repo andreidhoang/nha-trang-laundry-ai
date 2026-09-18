@@ -357,3 +357,95 @@ def test_an_expired_programme_still_accepts_because_the_number_did_not_move(
     assert accepted.status == "ACCEPTED_FINAL"
     assert accepted.display_total_min_vnd == LIST_VND
     assert PromotionReason.PROMOTION_OUTSIDE_INTERVAL.value in accepted.reason_codes
+
+
+# --- PROMO-FIX-001: what the console is actually served, and what acceptance may not waive -------
+
+
+def test_the_accepted_revision_the_console_reads_says_the_eligibility_is_settled(
+    connection: Any, service: OperationsService
+) -> None:
+    """The frozen trace is the only promotion state a console ever sees, so it has to be true.
+
+    `_promotion_mapping` reads it off the stored revision and recomputes nothing, deliberately. That
+    made the defect total: an accepted revision inherited the quote's trace, so the counter saw
+    `PROMOTION PROVISIONAL` and "khuyến mãi chưa chốt" on a bag that had been handed over, paid for
+    and recorded with a resolved eligibility event -- for ever, because the row is immutable.
+
+    The money is identical on both revisions, which is the point: nothing here is a re-price. What
+    changes is the statement, from "not yet decided" to what acceptance decided.
+    """
+
+    _publish_pricebook(connection)
+    _publish_live_programme(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    priced = _quote(service, store_id=store_id, staff=staff)
+    assert priced.promotion is not None
+    assert priced.promotion.status == "PROVISIONAL"
+    assert priced.promotion.eligibility_resolved is False
+    assert "PROMOTION_ELIGIBILITY_UNRESOLVED" in priced.reason_codes
+
+    accepted = _accept(service, store_id=store_id, staff=staff, quote=priced)
+    assert isinstance(accepted, QuoteRevisionResult)
+    assert accepted.promotion is not None
+    assert accepted.promotion.status == "ELIGIBLE"
+    assert accepted.promotion.eligibility_resolved is True
+    assert accepted.promotion.discount_amount_vnd == LIVE_DISCOUNT_VND
+    assert "PROMOTION_ELIGIBILITY_UNRESOLVED" not in accepted.reason_codes
+    assert PromotionReason.PROMOTION_APPLIED.value in accepted.reason_codes
+    # The facts acceptance did not change are still there. Only the promotion is re-stated.
+    assert "TAX_TREATMENT_UNVERIFIED" in accepted.reason_codes
+
+
+def test_a_service_the_owner_left_unconfirmed_is_sold_at_list_price_not_refused(
+    connection: Any, service: OperationsService
+) -> None:
+    """The trading test, through the real command path and against real PostgreSQL.
+
+    `IRON_SUIT` is `HUMAN_CONFIRM` in the owner's published document -- the storefront sign does not
+    mention ironing, and the owner recorded that rather than guessing. The promotion therefore does
+    not apply to the line, the customer is charged the published 150.000 d, and the bag is taken.
+
+    Both halves matter and the second is the one that was wrong. `PROMO-WIRING-001` put
+    `APPLY_PROMOTION` in `required_approvals` here, and `PROMO-FIX-001` then refused acceptance
+    while it was outstanding -- which nothing in this system can ever discharge, because no route
+    reads an `ApplyPromotion` envelope and re-quoting reproduces the same tuple from the same
+    document. Publishing a promotion would have made every unconfirmed service unsellable for the
+    programme's whole life, which is a worse defect than the bypass it replaced: it stops the shop
+    trading, and a shop that met it would keep those garments off the system entirely.
+    """
+
+    _publish_pricebook(connection)
+    _publish_live_programme(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+
+    priced = service.create_quote(
+        store_id=store_id,
+        bound_order_request_id=uuid4(),
+        lines=(RequestedLine("IRON_SUIT", "1", Unit.ITEM, QuantityBasis.STAFF_MEASUREMENT),),
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
+        idempotency_key=f"quote-{uuid4().hex}",
+        principal=staff,
+    )
+    assert isinstance(priced, QuoteRevisionResult)
+    # Nothing is demanded of anybody: this is the assertion whose opposite closed the shop.
+    assert priced.required_approvals == ()
+    assert PromotionReason.PROMOTION_TARGET_REQUIRES_HUMAN.value in priced.reason_codes
+    assert priced.net_service_subtotal_vnd == priced.list_service_subtotal_vnd
+
+    accepted = _accept(service, store_id=store_id, staff=staff, quote=priced)
+    assert isinstance(accepted, QuoteRevisionResult)
+    assert accepted.status == "ACCEPTED_FINAL"
+    assert accepted.display_total_min_vnd == priced.display_total_min_vnd
+    assert PromotionReason.PROMOTION_TARGET_REQUIRES_HUMAN.value in accepted.reason_codes
+    assert accepted.required_approvals == ()
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM quote_revisions WHERE quote_id = %s", (priced.quote_id,)
+        )
+        row = cursor.fetchone()
+    # Two revisions: the priced one and the accepted one. A sold bag, not a blocked counter.
+    assert row is not None and row[0] == 2

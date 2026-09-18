@@ -55,6 +55,23 @@ export const WARNING = {
 };
 
 /**
+ * The answer for a reason code that states a settled fact rather than a risk to the price.
+ *
+ * Needed because the fallback below is `HUMAN REQUIRED` and an *absent* mapping cannot be told
+ * apart from a deliberate silence. `PROMO-WIRING-001` made that distinction matter: a promotion is
+ * now evaluated on every quote, and most of its answers are settled ones. With no programme
+ * published — which is the shop's state today — every single quote carries
+ * `PROMOTION_NOT_PUBLISHED`, and mapping that to `HUMAN REQUIRED` would put a permanent "cần người
+ * quyết định" badge on every price in the shop. A warning that is always on is a warning nobody
+ * reads, and the cost lands on the five promotion answers that do mean somebody must act.
+ *
+ * Silence here is never silence on the screen: every code below still appears verbatim in
+ * `reasonCodeList` with its `REASON_NOTE` sentence. What it does not get is a badge claiming
+ * somebody has to act.
+ */
+const STATES_A_FACT = Symbol("states a fact, raises no warning");
+
+/**
  * Which mandated warning a domain reason code raises.
  *
  * The pairing is derived, not quoted: the spec fixes the strings in one place and the error codes
@@ -67,8 +84,44 @@ const REASON_TO_WARNING = {
   DELIVERY_FEE_UNRESOLVED: WARNING.DELIVERY_FEE_MISSING,
   DELIVERY_FEE_REQUIRES_HUMAN: WARNING.DELIVERY_FEE_MISSING,
   DELIVERY_DISTANCE_UNVERIFIED: WARNING.DELIVERY_FEE_MISSING,
-  PROMOTION_NOT_EVALUATED: WARNING.PROMOTION_PROVISIONAL,
+  // The promotion vocabulary, as `packages/domain/.../promotion.py` and `quote_composition.py`
+  // emit it. One retired code used to be the only entry here and it is gone: PROMO-WIRING-001
+  // deleted it from the domain because a promotion is now always assessed, and a gloss for a code
+  // no server can send is dead weight that hides the ones that are missing. It is named nowhere in
+  // this file on purpose — `test_the_deleted_promotion_reason_code_can_no_longer_be_emitted_or_
+  // rendered` greps the console tree for it, so the console is where the absence has to be total.
+  //
+  // The split is between an answer and an open question, and the test of an open question is
+  // whether anybody at the counter can still do something about this quote. A programme that is
+  // not published, not running, or does not cover these services has answered: the price is list
+  // price and the note says which of those zeroes it is.
+  //
+  // `PROMOTION_TARGET_REQUIRES_HUMAN` is on this side of the line and was not, before PROMO-FIX-002
+  // decided what a `HUMAN_CONFIRM` target actually costs: the promotion does not apply, the line is
+  // charged at the published price, and the quote sells. Nothing is pending, so a `HUMAN REQUIRED`
+  // badge sent staff looking for an approval screen this system does not have — and would have sat
+  // on the accepted, paid, immutable revision afterwards.
+  //
+  // `PROMOTION_STACKING_REQUIRES_HUMAN` joined it in PROMO-FIX-003, and for the same reason. It
+  // once offered the counter two instruments to choose between; the domain now chooses, and always
+  // the same way — a `DEC-004` remedy credit is a debt owed for the shop's own past failure, so it
+  // is kept and the programme's discount is withdrawn where the two meet. Nothing is pending, the
+  // quote sells, and the code survives only to say why the bill carries no programme discount.
+  //
+  // The rest are genuinely unfinished: eligibility resolves at acceptance, a band has to be closed
+  // before a promotion can be computed against it, a discount that moved between the quote and the
+  // handshake needs the bag priced again, and a band approved before a programme started has to be
+  // proposed again.
+  PROMOTION_APPLIED: STATES_A_FACT,
+  PROMOTION_NOT_PUBLISHED: STATES_A_FACT,
+  PROMOTION_OUTSIDE_INTERVAL: STATES_A_FACT,
+  PROMOTION_NOT_TARGETED: STATES_A_FACT,
+  PROMOTION_TARGET_REQUIRES_HUMAN: STATES_A_FACT,
+  PROMOTION_STACKING_REQUIRES_HUMAN: STATES_A_FACT,
   PROMOTION_ELIGIBILITY_UNRESOLVED: WARNING.PROMOTION_PROVISIONAL,
+  PROMOTION_PENDING_BAND_CLOSE: WARNING.PROMOTION_PROVISIONAL,
+  PROMOTION_CHANGED_SINCE_QUOTE: WARNING.HUMAN_REQUIRED,
+  PROMOTION_PUBLISHED_SINCE_APPROVAL: WARNING.HUMAN_REQUIRED,
   SLOT_APPROVAL_REQUIRED: WARNING.CAPACITY_NOT_CONFIRMED,
   CUSTOMER_RECONFIRMATION_REQUIRED: WARNING.CUSTOMER_RECONFIRMATION,
   RANGE_PRICE_REQUIRES_HUMAN: WARNING.HUMAN_REQUIRED,
@@ -84,25 +137,71 @@ const REASON_TO_WARNING = {
 };
 
 /**
+ * `null` for a code that states a settled fact; otherwise the warning it raises.
+ *
  * @param {string} reasonCode
- * @returns {{token: string, gloss: string, state: string}}
+ * @returns {{token: string, gloss: string, state: string}|null}
  */
 export function warningFor(reasonCode) {
-  return REASON_TO_WARNING[reasonCode] || WARNING.HUMAN_REQUIRED;
+  const known = REASON_TO_WARNING[reasonCode];
+  if (known === STATES_A_FACT) return null;
+  return known || WARNING.HUMAN_REQUIRED;
 }
 
 /**
  * Plain-language notes for the reason codes this API actually returns today.
  *
- * Every quote produced right now carries the same three, so an operator sees them constantly and
- * needs to know which are normal and which are blocking.
+ * An operator sees the tax one on every quote and one of the promotion ones on every quote, so the
+ * table has to say which are normal and which are blocking.
  */
 export const REASON_NOTE = {
   TAX_TREATMENT_UNVERIFIED:
     "Mọi báo giá R1 đều mang mã này. Số tiền hiển thị không được gọi là đã gồm hay chưa gồm thuế.",
   DELIVERY_FEE_UNRESOLVED:
     "Chưa có phí giao hàng nên chưa có tổng cuối. Tiền dịch vụ bên dưới không phải số khách trả.",
-  PROMOTION_NOT_EVALUATED: "Chưa xét khuyến mãi cho bản báo giá này.",
+  // The promotion vocabulary. One sentence stood here alone and said "chưa xét khuyến mãi" —
+  // nothing has been assessed — which the domain stopped being able to say. Every sentence below
+  // names which zero it is, or what has to happen next, because a bare 0 ₫ with no explanation is
+  // the same failure as rendering a null total as 0.
+  // Deliberately points at the two rows this screen really draws. There is no promotion panel yet
+  // and no separate discount row, so the mức giảm is the gap between "Giá niêm yết trước giảm" and
+  // the service-money row; saying so is honest, and naming a panel that does not exist would not be.
+  PROMOTION_APPLIED:
+    "Khuyến mãi đã áp vào bản báo giá này: chênh lệch giữa dòng “Giá niêm yết trước giảm” và dòng " +
+    "tiền dịch vụ chính là mức giảm. Chương trình tạo ra con số đó được ghi trên bản báo giá bất biến.",
+  PROMOTION_NOT_PUBLISHED:
+    "Chưa có chương trình khuyến mãi nào được công bố, nên báo giá tính theo giá niêm yết. Đây không " +
+    "phải là “chưa xét”: máy chủ đã xét và câu trả lời là không có chương trình nào đang chạy. Chủ tiệm " +
+    "là người công bố chương trình; đừng hứa mức giảm nào ở quầy.",
+  PROMOTION_OUTSIDE_INTERVAL:
+    "Chương trình đã công bố không bao trùm thời điểm này, nên mức giảm là 0 ₫. Máy chủ gửi kèm " +
+    "ngày kết thúc của chương trình — đây là một số không có lý do, không phải một ô bỏ trống.",
+  PROMOTION_NOT_TARGETED:
+    "Chương trình đang chạy không bao gồm dịch vụ trên bản báo giá này, nên không có mức giảm nào. " +
+    "Chương trình là một danh sách dịch vụ: không có tên trong danh sách thì không được giảm.",
+  PROMOTION_TARGET_REQUIRES_HUMAN:
+    "Chủ tiệm chưa quyết định dịch vụ này có nằm trong chương trình hay không, nên khuyến mãi không " +
+    "áp cho dòng này: tính đúng giá niêm yết. Không có gì phải chờ duyệt, cứ nhận đồ bình thường. " +
+    "Muốn dòng này được giảm thì chủ tiệm công bố lại chương trình có tên dịch vụ; đừng tự giảm ở quầy.",
+  PROMOTION_STACKING_REQUIRES_HUMAN:
+    "Bản báo giá này có phiếu bồi hoàn, mà chương trình khuyến mãi không cho cộng dồn hai khoản " +
+    "giảm. Máy chủ đã giữ phiếu bồi hoàn và gỡ khuyến mãi ra: số tiền giảm trên bản này là của " +
+    "phiếu bồi hoàn, không phải của chương trình. Khách trả đúng bằng lúc không có chương trình " +
+    "nào chạy. Không phải chờ ai duyệt — cứ nhận đồ, và nói trước với khách rằng lần này không " +
+    "cộng thêm khuyến mãi.",
+  PROMOTION_PENDING_BAND_CLOSE:
+    "Dòng khoảng giá chưa được chốt nên chưa xét khuyến mãi được: khuyến mãi áp trên số tiền nhân viên " +
+    "chọn, không áp trên khoảng. Chốt giá trong khoảng xong thì mức giảm mới hiện ra.",
+  PROMOTION_ELIGIBILITY_UNRESOLVED:
+    "Điều kiện hưởng khuyến mãi gắn với lúc khách đồng ý giao đồ, mà việc đó chưa xảy ra. Mức giảm " +
+    "đang hiển thị là tạm tính và sẽ được kiểm lại đúng vào lúc chốt đơn.",
+  PROMOTION_CHANGED_SINCE_QUOTE:
+    "Mức giảm tính lại lúc chốt đơn không còn bằng mức đã đọc cho khách nghe, nên không chốt được và " +
+    "không có gì được ghi. Báo giá lại rồi đọc số mới cho khách trước khi nhận đồ.",
+  PROMOTION_PUBLISHED_SINCE_APPROVAL:
+    "Chủ tiệm đã duyệt giá trong khoảng khi chưa có chương trình khuyến mãi nào, mà bây giờ đã có " +
+    "một chương trình đang chạy. Áp nó vào sẽ làm số tiền chủ tiệm đã duyệt đổi khác, nên phải đề " +
+    "xuất lại giá. Đề xuất lại xong thì chương trình được tính vào như mọi báo giá khác.",
   MISSING_REQUIRED_FACT: "Thiếu dữ kiện bắt buộc; máy chủ không đoán.",
   RANGE_PRICE_REQUIRES_HUMAN: "Dịch vụ này có khoảng giá; nhân viên phải chọn giá chính xác.",
   // `RangePriceRefusal`, exactly as packages/domain/.../range_prices.py names them. Each says what

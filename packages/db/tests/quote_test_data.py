@@ -256,6 +256,24 @@ def accepted_quote(
                     {"fulfillment_mode": str(fulfillment_mode), "fee_rule": "FIXTURE"},
                 ),
             ),
+            # No outstanding approvals, because a revision that has one cannot be accepted.
+            # `make_quote_snapshot` puts two on every estimate it builds, and this fixture used to
+            # carry them all the way to an accepted revision anyway: `accept_quote_revision` passed
+            # `required_approvals=()` into the assembly, which satisfied
+            # `quotes._validate_finality`'s `APPROVED_EXACT` gate by deleting the tuple the gate
+            # reads instead of by emptying it honestly. No production path populates the field today
+            # -- the promotion withholds a discount rather than asking for an envelope nobody can
+            # supply -- so the blanking harmed nothing in practice, and that is precisely why it
+            # survived: a guard is not allowed to be correct only because nothing has reached it.
+            #
+            # Acceptance refuses now, so the fixture has to state the precondition production
+            # states: nothing is outstanding when the customer says yes. The two codes are therefore
+            # cleared *before* revision 1 is stored, which means neither revision this fixture
+            # writes carries one -- it is a fixture for the orderable path, and the orderable path
+            # has none. A stored revision that does carry them, and the refusal it earns, is
+            # `test_postgres_integration.py`'s
+            # `test_a_stored_revision_with_an_outstanding_approval_cannot_be_accepted`.
+            required_approvals=(),
         )
     )
     repository = QuoteRepository()

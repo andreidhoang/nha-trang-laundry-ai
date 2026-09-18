@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Generator, Mapping
 from dataclasses import replace
@@ -30,7 +31,12 @@ from nha_trang_laundry_domain.catalog import (
     QuoteFinality,
     QuoteRevisionStatus,
 )
-from nha_trang_laundry_domain.quotes import build_quote_snapshot
+from nha_trang_laundry_domain.quote_composition import (
+    APPROVAL_OUTSTANDING_PREFIX,
+    UnresolvedQuote,
+    accept_quote_revision,
+)
+from nha_trang_laundry_domain.quotes import build_quote_snapshot, parse_quote_revision
 from quote_test_data import create_approval_envelope, make_quote_snapshot
 
 
@@ -546,3 +552,80 @@ def test_a_duplicate_oidc_subject_is_refused_in_words_not_as_a_server_error(
         row = cursor.fetchone()
     assert row is not None
     assert row[0] == 1
+
+
+def test_a_stored_revision_with_an_outstanding_approval_cannot_be_accepted(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """The union guard in `accept_quote_revision`, exercised through a real stored revision.
+
+    `_outstanding_approvals` reads two sources -- what the stored parent still needs, and what the
+    re-evaluation demands now -- because they answer different questions, and a guard that read only
+    one of them would have been right by accident. Nothing in production populates either tuple
+    today, so the only thing keeping that guard honest is a test, and PROMO-FIX-002 removed the last
+    db-level revision that carried a non-empty `required_approvals`: the `accepted_quote` fixture
+    now blanks the field before it stores anything, correctly, because an accepted revision may not
+    carry one.
+
+    Which left the guard covered only by hand-built in-memory snapshots. This restores the missing
+    half: the two codes go into Postgres on an `ESTIMATE` revision, come back out through
+    `get_revision` and `parse_quote_revision`, and acceptance names each one rather than answering
+    `VALIDATION_ERROR` to a person with a customer in front of them.
+
+    The round trip is the point. `required_approvals` has no column of its own -- it lives only
+    inside the revision's canonical JSON, which is the hashed document -- so a guard exercised
+    against a Python object built in the same process has never shown that the tuple survives being
+    written, re-hashed and parsed back. Here it does, and the recomputed snapshot hash on the way
+    out is what makes that claim mean something.
+    """
+
+    quote_id = uuid4()
+    store_id = uuid4()
+    actor_id = uuid4()
+    _ensure_store(postgres_connection, store_id)
+    estimate = make_quote_snapshot(quote_id, 1)
+    # `make_quote_snapshot` already leaves these two on its estimate; they are named here so the
+    # test states its own precondition instead of depending on a fixture default it does not own.
+    outstanding = ("TAX_TREATMENT_UNVERIFIED", "SLOT_CONFIRMATION")
+    pending = build_quote_snapshot(
+        replace(
+            estimate.data,
+            lines=_measured(estimate.data.lines),
+            required_approvals=outstanding,
+        )
+    )
+
+    with postgres_connection.transaction():
+        QuoteRepository().create_revision(
+            postgres_connection,
+            QuoteRevisionCommand(
+                store_id,
+                uuid4(),
+                pending,
+                0,
+                0,
+                actor_id,
+                uuid4(),
+                datetime.now(UTC),
+            ),
+        )
+
+    with postgres_connection.cursor() as cursor:
+        stored = QuoteRepository.get_revision(cursor, quote_id, 1)
+    assert stored is not None
+    # `get_revision` recomputes the digest from the stored bytes, so reading it back at all is the
+    # assertion that nothing about the document changed on the way through.
+    assert stored.document.snapshot_hash == pending.document.snapshot_hash
+
+    read_back = parse_quote_revision(json.loads(stored.document.canonical_json))
+    # Sorted, not as written: `canonical_document` orders the tuple so that two revisions demanding
+    # the same approvals hash identically whatever order a composer happened to append them in.
+    # Asserted in the canonical order rather than as a set, because that order is what every later
+    # reader of this revision sees, including the refusal below.
+    assert read_back.data.required_approvals == tuple(sorted(outstanding))
+
+    refused = accept_quote_revision(priced=read_back, revision=2, accepted_at=datetime.now(UTC))
+    assert isinstance(refused, UnresolvedQuote)
+    assert refused.reason_codes == tuple(
+        f"{APPROVAL_OUTSTANDING_PREFIX}{code}" for code in sorted(outstanding)
+    )

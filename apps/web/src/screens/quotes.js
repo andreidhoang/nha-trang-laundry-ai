@@ -617,6 +617,7 @@ function revisionResult(result, store, onAccepted, writeVerdict, contactId = nul
             { span: true },
           ]
         : null,
+      ["Chương trình khuyến mãi", promotionStatement(result.promotion), { span: true }],
       [
         "Mã băm ảnh chụp",
         // The order form needs this hash verbatim; the row shortens it for reading and the
@@ -639,6 +640,78 @@ function revisionResult(result, store, onAccepted, writeVerdict, contactId = nul
           h("ul", null, result.required_approvals.map((code) => h("li", { class: "mono" }, code))),
         )
       : null,
+  );
+}
+
+/**
+ * What the shop's promotion programme did to this revision, and when that programme runs.
+ *
+ * `PROMO-WIRING-001` made a 0 ₫ discount mean something specific — the programme ended on a date,
+ * or it never covered this service — and then left the date on the wire with nothing drawing it.
+ * A zero with no stated reason is the same failure as rendering a null total as `0`, so the
+ * interval is rendered beside the figure rather than left in the response.
+ *
+ * The end bound is **exclusive**, which is the one thing that must not be smoothed over: the server
+ * sends the first instant the programme no longer covers. It is rendered as that instant with
+ * "đến trước" in front of it rather than turned into "the last day" by subtracting from it here.
+ * Deriving a different date in the console would be this screen inventing a fact, and the
+ * difference between the two spellings is exactly one day at the boundary.
+ *
+ * `null` means no programme was evaluated against the revision at all — nothing published, or a
+ * band nobody has closed — which is `—` and not `0 ₫`, with the reason codes below saying which of
+ * the two it is.
+ *
+ * @param {any} promotion a `QuotePromotionResponse`, or null/undefined
+ * @returns {HTMLElement}
+ */
+function promotionStatement(promotion) {
+  if (!promotion) {
+    return h(
+      "span",
+      { class: "stack stack--tight" },
+      h("span", null, UNKNOWN),
+      h(
+        "span",
+        { class: "hint" },
+        "Không có chương trình nào được xét trên bản báo giá này. Mã lý do bên dưới nói rõ là " +
+          "chưa công bố chương trình nào, hay dòng khoảng giá chưa được chốt.",
+      ),
+    );
+  }
+  return h(
+    "span",
+    { class: "stack stack--tight" },
+    h(
+      "span",
+      { class: "row" },
+      h("span", { class: "mono" }, String(promotion.policy_code)),
+      h("span", null, `giảm ${money(promotion.discount_amount_vnd)}`),
+    ),
+    // The two bounds, printed verbatim from the response and in the counter's own timezone. They
+    // are a value and not a sentence, which is why they are `mono` and not `hint`: the sentences
+    // below are the claims, and this is the datum they are about.
+    h(
+      "span",
+      { class: "mono" },
+      `${dateTime(promotion.interval_start_at)} → trước ${dateTime(
+        promotion.interval_end_at_exclusive,
+      )}`,
+    ),
+    promotion.inside_interval === false
+      ? h(
+          "span",
+          { class: "hint" },
+          "Thời điểm tính giá của bản báo giá này nằm ngoài khoảng trên, nên mức giảm là 0 ₫. " +
+            "Đây là một con số không, có lý do đi kèm — không phải một ô bỏ trống.",
+        )
+      : null,
+    h(
+      "span",
+      { class: "hint" },
+      "Mốc sau là mốc kết thúc không bao gồm: chương trình chạy đến ngay trước nó, và thời điểm " +
+        "đó đã ở ngoài chương trình. Cả hai mốc lấy nguyên từ máy chủ; màn hình này không tự trừ " +
+        "ra một ngày nào khác.",
+    ),
   );
 }
 

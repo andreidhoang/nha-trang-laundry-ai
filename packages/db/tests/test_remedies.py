@@ -43,7 +43,16 @@ from nha_trang_laundry_db.orders import (
     OrderRepository,
     OrderTransitionCommand,
 )
-from nha_trang_laundry_db.quotes import QuoteRepository, QuoteRevisionCommand
+from nha_trang_laundry_db.promotions import (
+    publish_promotion_policy,
+    read_published_promotion_program,
+)
+from nha_trang_laundry_db.quotes import (
+    QuoteAcceptanceCommand,
+    QuoteAcceptanceRepository,
+    QuoteRepository,
+    QuoteRevisionCommand,
+)
 from nha_trang_laundry_db.remedies import (
     CREDIT_EXECUTED,
     REWASH_COMMANDED,
@@ -66,8 +75,24 @@ from nha_trang_laundry_domain.catalog import (
     IntakeStatus,
     PolicyOutcome,
     ProductionStatus,
+    QuantityBasis,
+    Unit,
 )
 from nha_trang_laundry_domain.orders import IntakeReadiness
+from nha_trang_laundry_domain.pricebook_import import (
+    import_pricebook_csv,
+    runtime_price_rules,
+)
+from nha_trang_laundry_domain.promotion import PromotionReason
+from nha_trang_laundry_domain.quote_composition import (
+    ComposedQuote,
+    PricebookProvenance,
+    RequestedLine,
+    accept_quote_revision,
+    compose_quote_revision,
+    frozen_promotion,
+)
+from nha_trang_laundry_domain.quotes import parse_quote_revision
 from nha_trang_laundry_domain.remedies import (
     RemedyKind,
     RemedyRefusal,
@@ -1109,3 +1134,227 @@ def test_the_options_read_fails_closed_with_no_published_policy(
     assert options.policy_published is False
     assert options.staff_approval_ceiling_vnd is None
     assert options.damage_line_ceilings_vnd is None
+
+
+#: 6 kg of standard wash on the far side of the `STD_WASH_DRY_GE6` cliff, at 20.000 d/kg.
+PROMOTED_LIST_VND = 120_000
+#: 30% of it, which is what the owner's confirmed document discounts `STANDARD_WASH_DRY` by.
+PROMOTED_DISCOUNT_VND = 36_000
+
+
+def _publish_live_programme(connection: Any, actor_id: UUID) -> Any:
+    """The owner's confirmed document with its window moved over today, published for real.
+
+    The window is moved rather than the document rewritten: `stacking_allowed: false` is the clause
+    under test and it is the owner's, not this test's. The shipped window (17/07 - 31/08/2026) has
+    already closed, and an expired programme never reaches the stacking question at all -- the
+    engine answers `PROMOTION_OUTSIDE_INTERVAL` first -- so a test pinned to it would assert
+    nothing.
+    """
+
+    payload = json.loads((ROOT / "templates" / "promotion-policy-dec-002.json").read_text("utf-8"))
+    payload["start_at"] = (NOW - timedelta(days=1)).isoformat()
+    payload["end_at_exclusive"] = (NOW + timedelta(days=30)).isoformat()
+    publish_promotion_policy(connection, actor_id=actor_id, payload=payload)
+    with connection.cursor() as cursor:
+        published = read_published_promotion_program(cursor)
+    assert published is not None
+    assert published.program.policy.stacking_allowed is False
+    return published
+
+
+def _promoted_quote(
+    connection: Any, store_id: UUID, staff: StaffPrincipal, published: Any
+) -> tuple[UUID, Any, UUID]:
+    """An open quote priced under a live programme, bound to a real customer, ready to be credited.
+
+    Bound through a counter ticket and an `order_requests` row because the end of this test creates
+    an order, and `OrderRepository.create` walks that chain to check the order's customer is the
+    customer the quote was priced for.
+    """
+
+    contact_id = counter_ticket(connection, store_id=store_id, principal=staff)
+    request_id = uuid4()
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO order_requests (
+                id, store_id, contact_binding_id, conversation_binding_id, status, row_version,
+                created_at
+            ) VALUES (%s, %s, %s, %s, 'SUBMITTED', 1, %s)
+            """,
+            (request_id, store_id, contact_id, uuid4(), NOW),
+        )
+    pricebook = import_pricebook_csv((ROOT / "templates/services-pricebook.csv").read_bytes())
+    quote_id = uuid4()
+    composition = compose_quote_revision(
+        quote_id=quote_id,
+        revision=1,
+        rules=runtime_price_rules(pricebook),
+        requested=(
+            RequestedLine("STANDARD_WASH_DRY", "6", Unit.KG, QuantityBasis.STAFF_MEASUREMENT),
+        ),
+        pricebook=PricebookProvenance(uuid4(), 1, pricebook.manifest.canonical_snapshot_hash),
+        priced_at=NOW,
+        # Walk-in, so the delivery fee resolves to zero and the display total exists. A quote whose
+        # transport needs a human cannot be accepted at all, which would refuse this test for a
+        # reason that has nothing to do with what it is about.
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
+        promotion=published,
+    )
+    assert isinstance(composition, ComposedQuote)
+    QuoteRepository().create_revision(
+        connection,
+        QuoteRevisionCommand(
+            store_id, request_id, composition.snapshot, 0, 0, staff.staff_user_id, uuid4(), NOW
+        ),
+    )
+    return quote_id, composition.snapshot, contact_id
+
+
+def test_a_credit_beats_a_programme_that_forbids_stacking_and_the_sale_still_completes(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """`DEC-004` against the programme's own document, end to end, through every real write.
+
+    This is the dead end PROMO-FIX-002 left and PROMO-FIX-003 closed. A quote priced under a live
+    `stacking_allowed: false` programme carried a 36.000 d discount; the customer then presented a
+    remedy credit; `RemedyCreditRepository.redeem` burnt the credit and wrote the credited revision
+    in one transaction; and `accept_quote_revision` then refused the sale because the two
+    instruments could not compound. The credit was spent, the order could not be created, and
+    nothing in this system can un-burn a credit.
+
+    The rule that closes it: **when a remedy credit and a non-stacking promotion meet, the credit
+    wins.** The credit is a debt this shop owes this customer for a past failure of its own; the
+    programme is an offer the shop chose to make. So the promotion is withdrawn where the two meet
+    -- inside the composition the redemption writes, before any new total is read to anybody -- and
+    the sale completes.
+
+    The arithmetic, which is what "the credit wins" costs the shop:
+
+    - 120.000 d of standard wash, 36.000 d off under the programme, 84.000 d at quote time.
+    - the credit is 11.000 d, issued by `DEC-004` for a late return on an earlier order.
+    - the promotion comes back out and the credit applies to the restored 120.000 d: 11.000 d off,
+      **109.000 d to pay**, exactly what this customer would owe with no programme running.
+
+    What must be true at the end is the whole point: the credit is burnt exactly once, the revision
+    says why it carries no programme discount, and an order exists.
+    """
+
+    store_id, credit_id, staff, credit_vnd = _issued_credit(connection)
+    assert credit_vnd == LATE_CREDIT
+    published = _publish_live_programme(connection, staff.staff_user_id)
+    quote_id, priced, contact_id = _promoted_quote(connection, store_id, staff, published)
+
+    assert priced.data.totals.discount_amount_max_vnd == PROMOTED_DISCOUNT_VND
+    assert priced.data.totals.display_total_max_vnd == PROMOTED_LIST_VND - PROMOTED_DISCOUNT_VND
+
+    redeemed = RemedyCreditRepository().redeem(
+        connection,
+        RemedyCreditRedemptionCommand(
+            store_id=store_id,
+            quote_id=quote_id,
+            credit_id=credit_id,
+            expected_current_revision=1,
+            expected_snapshot_hash=priced.document.snapshot_hash,
+            principal=staff,
+            correlation_id=uuid4(),
+            redeemed_at=NOW,
+        ),
+    )
+    # The credit applied and the programme did not: 120.000 - 11.000, not 84.000 - 11.000.
+    assert redeemed.credit_vnd == LATE_CREDIT
+    assert redeemed.net_service_subtotal_vnd == PROMOTED_LIST_VND - LATE_CREDIT
+    assert redeemed.display_total_vnd == PROMOTED_LIST_VND - LATE_CREDIT
+
+    with connection.cursor() as cursor:
+        stored = QuoteRepository.get_revision(cursor, quote_id, 2)
+    assert stored is not None
+    credited = parse_quote_revision(json.loads(stored.document.canonical_json))
+    assert PromotionReason.PROMOTION_STACKING_REQUIRES_HUMAN.value in credited.data.reason_codes
+    assert PromotionReason.PROMOTION_APPLIED.value not in credited.data.reason_codes
+    # The frozen trace agrees with the money rather than still claiming 36.000 d came off.
+    withheld = frozen_promotion(credited)
+    assert withheld is not None and withheld.discount_amount_vnd == 0
+
+    accepted_at = NOW + timedelta(minutes=2)
+    composition = accept_quote_revision(
+        priced=credited, revision=3, promotion=published, accepted_at=accepted_at
+    )
+    assert isinstance(composition, ComposedQuote), "the credited quote has to be sellable"
+    final = composition.snapshot
+    assert final.data.totals.display_total_max_vnd == PROMOTED_LIST_VND - LATE_CREDIT
+    assert PromotionReason.PROMOTION_STACKING_REQUIRES_HUMAN.value in final.data.reason_codes
+
+    QuoteAcceptanceRepository().record(
+        connection,
+        QuoteAcceptanceCommand(
+            store_id=store_id,
+            quote_id=quote_id,
+            accepted_revision=2,
+            accepted_snapshot_hash=stored.document.snapshot_hash,
+            final_revision=3,
+            display_total_vnd=PROMOTED_LIST_VND - LATE_CREDIT,
+            accepted_by=staff.staff_user_id,
+            correlation_id=uuid4(),
+            policy_version="quote-acceptance-dec-021-v1",
+            accepted_at=accepted_at,
+        ),
+    )
+    QuoteRepository().create_revision(
+        connection,
+        QuoteRevisionCommand(
+            store_id, uuid4(), final, 2, 2, staff.staff_user_id, uuid4(), accepted_at
+        ),
+    )
+    order_id = (
+        OrderRepository()
+        .create(
+            connection,
+            CreateOrderCommand(
+                store_id,
+                contact_id,
+                quote_id,
+                3,
+                final.document.snapshot_hash,
+                FulfillmentMode.SELF_DROP_SELF_COLLECT,
+                staff,
+                f"order-{uuid4().hex}",
+                uuid4(),
+                accepted_at,
+                AcquisitionSource.WALK_IN,
+            ),
+        )
+        .order_id
+    )
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT redeemed_at, redeemed_quote_id, redeemed_quote_revision FROM remedy_credits "
+            "WHERE id = %s",
+            (credit_id,),
+        )
+        burnt = cursor.fetchone()
+        cursor.execute("SELECT count(*) FROM orders WHERE id = %s", (order_id,))
+        counted = cursor.fetchone()
+    assert burnt is not None
+    assert burnt[0] is not None and UUID(str(burnt[1])) == quote_id and int(burnt[2]) == 2
+    assert counted is not None and counted[0] == 1
+
+    # Exactly once. A second presentation of the same credit is refused, and nothing is written.
+    second_quote_id, second_priced, _ = _promoted_quote(connection, store_id, staff, published)
+    with pytest.raises(RemedyStateError) as refused:
+        RemedyCreditRepository().redeem(
+            connection,
+            RemedyCreditRedemptionCommand(
+                store_id=store_id,
+                quote_id=second_quote_id,
+                credit_id=credit_id,
+                expected_current_revision=1,
+                expected_snapshot_hash=second_priced.document.snapshot_hash,
+                principal=staff,
+                correlation_id=uuid4(),
+                redeemed_at=NOW,
+            ),
+        )
+    assert refused.value.reason_code == RemedyRefusal.REMEDY_CREDIT_ALREADY_REDEEMED.value

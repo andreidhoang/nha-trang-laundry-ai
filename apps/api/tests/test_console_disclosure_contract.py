@@ -378,7 +378,47 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # The two genuine retirements are the `#/gaps` "Bồi hoàn sự cố" entry's `missing` and
     # `blockedBy`, deleted rather than reworded because the limitation they described closed --
     # the same move QUOTE-ACCEPT-001, INCIDENT-INTAKE-001 and RANGE-PRICE-001 each made before it.
-    assert sum(counts.values()) == _registry()["total"] == 277
+    #
+    # 286 after the promotion work: +10 added, -1 retired, all in `core/i18n.js`. Net +9.
+    #
+    # The retirement is `REASON_NOTE.PROMOTION_NOT_EVALUATED`, deleted rather than reworded, because
+    # PROMO-WIRING-001 deleted the code it glossed from the domain: a promotion is assessed on every
+    # revision now, so no server can send "chưa xét khuyến mãi" and a gloss for it could only ever
+    # mislead. That is the same legitimate exit the four items above took.
+    #
+    # The ten additions are one `REASON_NOTE` sentence for each promotion answer a quote can now
+    # carry, and counting them is the measure of how wide the hole was: replacing one code with
+    # nine left the console with a gloss for none of them, so `reasonCodeList` rendered a bare
+    # SCREAMING_SNAKE_CASE token to a Vietnamese counter on every quote in the shop -- strictly
+    # worse than the sentence it removed. Six come from the engine's own `PromotionReason`
+    # (`PROMOTION_APPLIED`, `PROMOTION_OUTSIDE_INTERVAL`, `PROMOTION_NOT_TARGETED`,
+    # `PROMOTION_TARGET_REQUIRES_HUMAN`, `PROMOTION_STACKING_REQUIRES_HUMAN`,
+    # `PROMOTION_ELIGIBILITY_UNRESOLVED`); four are the codes `quote_composition.py` emits on the
+    # engine's behalf (`PROMOTION_NOT_PUBLISHED`, `PROMOTION_PENDING_BAND_CLOSE`,
+    # `PROMOTION_CHANGED_SINCE_QUOTE`, `PROMOTION_PUBLISHED_SINCE_APPROVAL`).
+    #
+    # The total did not move when PROMO-FIX-002 rewrote them, and that is a coincidence worth
+    # stating rather than hiding: it deleted `APPROVAL_OUTSTANDING_APPLY_PROMOTION` and added
+    # `PROMOTION_PUBLISHED_SINCE_APPROVAL`, one out and one in. The deletion is the same rule as
+    # the retirement above, applied to the item's own work: nothing populates `required_approvals`
+    # any more, so no server can send that code, and a gloss for it would be the exact dead entry
+    # PROMO-WIRING-001 cited as its reason for deleting `PROMOTION_NOT_EVALUATED`. Several slot ids
+    # below it also changed, because two more sentences were rewritten where the behaviour they
+    # described moved -- which is the identity check doing its job.
+    #
+    # 289 after PROMO-FIX-003: +3, all on `screens/quotes.js`, none in `core/i18n.js`. The
+    # promotion vocabulary itself did not grow -- `REASON_NOTE.PROMOTION_STACKING_REQUIRES_HUMAN`
+    # was rewritten in place, so its slot id changed and its count did not, which is the identity
+    # check doing exactly what it is for. The three additions are the promotion statement the
+    # quotes screen did not draw: PROMO-WIRING-001 put the programme's interval on the wire and
+    # nothing rendered it, so the screen showed 0 d with the reason only in a code list. One
+    # sentence says what `null` means (no programme was assessed at all, which is why the row is
+    # "--" and not "0 d"), one says why a zero inside a published programme is a zero with a
+    # reason, and one states that the end bound is exclusive and is printed as the server sent it.
+    # That third one is load-bearing rather than decoration: the difference between "runs until
+    # 01/09" and "ran through 31/08" is one day at the boundary, and the screen must not be the
+    # place that quietly picks one.
+    assert sum(counts.values()) == _registry()["total"] == 289
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

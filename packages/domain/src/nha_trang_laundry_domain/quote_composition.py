@@ -38,7 +38,6 @@ from uuid import UUID, uuid5
 from nha_trang_laundry_domain.canonical import canonical_document
 from nha_trang_laundry_domain.catalog import (
     AdjustmentDirection,
-    ApprovalAction,
     ErrorCode,
     FulfillmentMode,
     PolicyOutcome,
@@ -138,10 +137,13 @@ BASE_REASON_CODES: Final = ("TAX_TREATMENT_UNVERIFIED",)
 DELIVERY_FEE_UNRESOLVED: Final = "DELIVERY_FEE_UNRESOLVED"
 DELIVERY_COMPONENT_VERSION: Final = "delivery-v1"
 
-#: Invariant 11. No `PROMOTION_POLICY` version is published, so no programme is running, none may be
-#: assumed, and the quote composes at list price. Distinct from every other zero below, because
-#: "nobody has published a programme" and "the programme does not cover this" are different answers
-#: to the customer standing at the counter.
+#: Invariant 11. No `PROMOTION_POLICY` version was published when this revision was priced, so no
+#: programme was running, none could be assumed, and the quote composed at list price. Distinct from
+#: every other zero below, because "nobody has published a programme" and "the programme does not
+#: cover this" are different answers to the customer standing at the counter.
+#:
+#: It is a statement about the pricing, which is why a revision derived from this one re-states it
+#: from its own evaluation rather than inheriting it -- see `PROMOTION_REASON_CODES`.
 PROMOTION_NOT_PUBLISHED: Final = "PROMOTION_NOT_PUBLISHED"
 
 #: A promotion is never evaluated against a band. `PROMO-WIRING-001` decided this explicitly, and it
@@ -154,6 +156,12 @@ PROMOTION_PENDING_BAND_CLOSE: Final = "PROMOTION_PENDING_BAND_CLOSE"
 #: re-price: the whole point of the refusal is that a person sees the number move.
 PROMOTION_CHANGED_SINCE_QUOTE: Final = "PROMOTION_CHANGED_SINCE_QUOTE"
 
+#: Invariant 8. A `PROMOTION_POLICY` version is published that the approved band revision does not
+#: cite, so the band may not be closed against it: the price must be proposed again. See
+#: `close_range_prices` for why a new programme invalidates the owner's `SET_RANGE_PRICE` envelope
+#: even though the bound `rendered_hash` and revision both still match it.
+PROMOTION_PUBLISHED_SINCE_APPROVAL: Final = "PROMOTION_PUBLISHED_SINCE_APPROVAL"
+
 #: The real-world event `accept_quote_revision` observes: the shop commercially accepted the order,
 #: which is `DEC-002`'s `accepted_at` in the enum's own vocabulary. It is passed to the engine as
 #: the *observed* event and compared there against the programme's *configured* one -- a programme
@@ -165,15 +173,58 @@ ACCEPTANCE_ELIGIBILITY_EVENT: Final = PromotionEligibilityEvent.STORE_COMMERCIAL
 #: there is one credit row for it, and its `reason_code` is the programme's own published code.
 PROMOTION_ADJUSTMENT_ID: Final = "promotion"
 
-#: The two reasons a promotion needs `ApplyPromotion` before the revision can be exact. Neither is
-#: "the programme is running" -- publishing the programme *was* that approval, and demanding a
-#: per-quote envelope for an automatic in-interval discount would make the owner sign every bag.
-#: These are the cases where the engine says a person must decide: a service whose inclusion the
-#: owner recorded as unconfirmed, and a second discount the programme does not allow to stack.
-_PROMOTION_APPROVAL_REASONS: Final = (
-    PromotionReason.PROMOTION_TARGET_REQUIRES_HUMAN,
-    PromotionReason.PROMOTION_STACKING_REQUIRES_HUMAN,
+# The engine answers `REQUIRE_HUMAN` about a promotion for two reasons -- a service whose inclusion
+# the owner recorded as unconfirmed (`PROMOTION_TARGET_REQUIRES_HUMAN`) and a second credit the
+# programme does not allow it to stack with (`PROMOTION_STACKING_REQUIRES_HUMAN`) -- and this module
+# answers both the same way: **the promotion does not apply, and nobody is asked for anything.**
+# `required_approvals` is never populated from here.
+#
+# `PROMO-WIRING-001` put `ApplyPromotion` into `required_approvals` instead, and `PROMO-FIX-001`
+# then made acceptance refuse while it was outstanding. Each half was defensible alone and together
+# they stopped the shop trading, because nothing in this system can discharge that approval: no
+# route accepts an `ApplyPromotion` envelope, and re-quoting reproduces the same tuple from the same
+# published document. Publishing a programme would therefore have made every `HUMAN_CONFIRM`
+# targeted service unsellable for the programme's whole life. An obligation with no discharge path
+# is worse than the bypass it replaced -- a shop that met it would work around the system on paper,
+# and refusing a garment because a *discount* could not be confirmed is absurd.
+#
+# So the fail-closed direction is the one that costs nothing to trade (invariant 11): a discount
+# nobody confirmed is not granted, the line is priced at list, and the revision records which
+# question was left open. An unconfirmed target is already a per-line zero, because the engine
+# allocates to `AUTO_IF_TARGETED` lines only; stacking is withheld whole by `_withheld_by_stacking`,
+# because it is a fact about the revision rather than about one line.
+#
+# The owner turns a `HUMAN_CONFIRM` service into a discounted one the way they started the
+# programme: by publishing a document that says so.
+
+#: Every reason code the promotion branch of this module owns, and therefore every reason code a
+#: derived revision must drop before it states what the promotion is *now*.
+#:
+#: A revision derived from another one -- accepted, or closed out of a band -- inherits its parent's
+#: reason codes, and that is right for almost all of them: the tax treatment was unverified when the
+#: price was computed and still is, and the distance was unverified and still is. The promotion is
+#: the exception, because the whole design of this item is that the promotion is assessed *again* at
+#: a later moment with a fact that did not exist before. Carrying the parent's promotion codes
+#: forward alongside a fresh evaluation would put two different answers to one question on one
+#: immutable row -- which is how a revision accepted inside a live programme came to say
+#: `PROMOTION_ELIGIBILITY_UNRESOLVED` for ever, on the same row that recorded the resolved event.
+#:
+#: Membership is derived from the engine's own enum rather than listed by hand, so a reason the
+#: engine learns to emit cannot be left behind here; the two module-level codes below it are the
+#: two this module emits on the engine's behalf when it does not run at all.
+PROMOTION_REASON_CODES: Final[frozenset[str]] = frozenset(
+    {
+        *(str(reason) for reason in PromotionReason),
+        PROMOTION_NOT_PUBLISHED,
+        PROMOTION_PENDING_BAND_CLOSE,
+    }
 )
+
+#: Prefix of the refusal a derived revision answers when the revision it derives from still has an
+#: approval outstanding. The action is spelled into the code rather than summarised, because the
+#: person reading it has a customer in front of them and "an approval is outstanding" does not say
+#: which screen to open; `APPROVAL_OUTSTANDING_APPLY_PROMOTION` does.
+APPROVAL_OUTSTANDING_PREFIX: Final = "APPROVAL_OUTSTANDING_"
 # Empty since `DEC-022` (2026-08-25). The owner decided that tax treatment is settled by the
 # accountant after an order completes rather than being a condition of accepting one, so
 # TAX_TREATMENT_UNVERIFIED leaves this gate and stays in `BASE_REASON_CODES`. The distinction is the
@@ -266,6 +317,13 @@ class FrozenPromotion:
     candidate_inside_interval: bool
     eligibility_resolved: bool
     reason_codes: tuple[str, ...]
+    #: The programme's own `stacking_allowed`, read back from the revision rather than from the
+    #: live configuration. `redeem_remedy_credit` is the reader, and the stored copy is the right
+    #: one: the question it answers is whether *the programme that produced these dong* allows them
+    #: to compound, and a programme republished since would be a different document answering about
+    #: a discount it did not grant. Invariant 4 is what makes reading it safe -- the trace is
+    #: canonical bytes inside an immutable revision.
+    stacking_allowed: bool
 
 
 def frozen_promotion(priced: ImmutableQuoteSnapshot) -> FrozenPromotion | None:
@@ -303,6 +361,7 @@ def frozen_promotion(priced: ImmutableQuoteSnapshot) -> FrozenPromotion | None:
         candidate_inside_interval=bool(payload["candidate_inside_interval"]),
         eligibility_resolved=bool(payload["eligibility_resolved"]),
         reason_codes=tuple(str(code) for code in payload["reason_codes"]),
+        stacking_allowed=bool(payload["stacking_allowed"]),
     )
 
 
@@ -322,15 +381,77 @@ class _PromotionOutcome:
     refusal: str | None = None
 
 
+def _other_promotion_present(adjustments: tuple[QuoteAdjustmentSnapshot, ...]) -> bool:
+    """Whether this revision already carries a discount that is not this promotion's.
+
+    The engine's `other_promotion_present` is the input `stacking_allowed` is tested against, and
+    `PROMO-WIRING-001` never passed it, so `PROMOTION_STACKING_REQUIRES_HUMAN` was unreachable and a
+    programme published with `stacking_allowed: false` stacked silently on top of a `DEC-004` remedy
+    credit. That is money, not tidiness: the customer was credited once by the remedy policy and
+    again by a programme whose own document says it may not compound.
+
+    Any credit-direction adjustment that is not this promotion's own row counts, rather than
+    `REMEDY_CREDIT` by name. A credit is a credit whatever instrument wrote it, and matching on kind
+    would make the next instrument stack silently in exactly the way this one did. The promotion's
+    own row is excluded by `adjustment_id` -- `PROMOTION_ADJUSTMENT_ID`, one per revision -- because
+    a re-evaluation must not find itself and conclude that it is stacking on itself.
+    """
+
+    return any(
+        item.direction is AdjustmentDirection.CREDIT
+        and item.adjustment_id != PROMOTION_ADJUSTMENT_ID
+        for item in adjustments
+    )
+
+
+def _withheld_by_stacking(result: PromotionResult) -> PromotionResult:
+    """The same evaluation with the discount withheld, for a programme that may not stack.
+
+    The engine allocates before it decides, so a `REQUIRE_HUMAN` stacking answer arrives with real
+    dong attached. This module's rule for a `REQUIRE_HUMAN` promotion is that the promotion does not
+    apply, so those dong are taken back out here rather than granted beside a reason code saying
+    nobody approved them -- the same rule the engine already applies per line to an unconfirmed
+    target, applied to the whole revision because stacking is a fact about the revision.
+
+    The arithmetic in `promotion.py` is untouched: this withholds a result, it does not re-allocate
+    one. The projection below is the shape the engine itself produces whenever it does not apply --
+    no allocation groups, a zero discount, an eligible subtotal of zero and every line at its list
+    amount -- so the frozen trace says the promotion granted nothing, which is what happened.
+    `PROMOTION_APPLIED` goes with it: it is the engine's statement that dong were taken off, and
+    none were.
+    """
+
+    return replace(
+        result,
+        eligible_service_subtotal_vnd=0,
+        discount_amount_vnd=0,
+        net_service_subtotal_vnd=result.list_service_subtotal_vnd,
+        display_total_vnd=result.list_service_subtotal_vnd + result.delivery_fee_vnd,
+        adjustments=tuple(
+            replace(item, discount_vnd=0, net_amount_vnd=item.list_amount_vnd)
+            for item in result.adjustments
+        ),
+        reason_codes=tuple(
+            code for code in result.reason_codes if code is not PromotionReason.PROMOTION_APPLIED
+        ),
+        trace=replace(result.trace, allocation_groups=()),
+    )
+
+
 def _promotion_outcome(
     *,
     published: PublishedPromotionProgram | None,
     lines: tuple[QuoteLineSnapshot, ...],
+    adjustments: tuple[QuoteAdjustmentSnapshot, ...],
     banded: bool,
     evaluation_at: datetime,
     eligibility_at: datetime | None,
 ) -> _PromotionOutcome:
     """Evaluate the published programme against these lines and project it onto the revision.
+
+    `adjustments` are the credits and debits the revision already carries, and they are an input
+    rather than decoration: `_other_promotion_present` reads them for the stacking test the
+    programme's own `stacking_allowed` is compared against.
 
     Three shapes come out of here and only one of them does arithmetic.
 
@@ -377,10 +498,20 @@ def _promotion_outcome(
             evaluation_at=evaluation_at,
             eligibility_event=None if eligibility_at is None else ACCEPTANCE_ELIGIBILITY_EVENT,
             eligibility_at=eligibility_at,
+            # The input that makes `stacking_allowed` mean anything. Omitting it defaulted the
+            # engine to "nothing else is discounting this bag", which was a guess and the wrong one
+            # whenever a remedy credit had already landed.
+            other_promotion_present=_other_promotion_present(adjustments),
         )
     except PromotionError as error:
         # The engine's own code, verbatim, exactly as the pricing and delivery branches do.
         return _failed_promotion(lines, error.code.value)
+    if PromotionReason.PROMOTION_STACKING_REQUIRES_HUMAN in result.reason_codes:
+        # The programme forbids compounding and something already discounts this revision, so the
+        # promotion does not apply at all. Withheld here rather than granted with an approval
+        # attached: see the module comment above `PROMOTION_REASON_CODES` for why this module never
+        # raises an approval a person could not discharge.
+        result = _withheld_by_stacking(result)
 
     allocated = {item.line_id: item.discount_vnd for item in result.adjustments}
     discounted = tuple(
@@ -408,9 +539,11 @@ def _promotion_outcome(
                 # to `CODE_PATTERN`: the money line names the programme that produced it.
                 reason_code=policy.code,
                 source_version_id=published.version_id,
-                # No envelope. An automatic in-interval discount on a targeted service was approved
-                # when the owner published the programme; see `_PROMOTION_APPROVAL_REASONS` for the
-                # two cases that are not that.
+                # No envelope, ever. An automatic in-interval discount on a targeted service was
+                # approved when the owner published the programme, and the two answers that are not
+                # that -- an unconfirmed target, and a programme that may not stack -- do not reach
+                # this row at all: both end in no discount rather than in a discount somebody must
+                # ratify. The module comment above `PROMOTION_REASON_CODES` has the reasoning.
                 approval_id=None,
             ),
         )
@@ -433,11 +566,11 @@ def _promotion_outcome(
         ),
         configuration_snapshots=(reference,),
         reason_codes=reasons,
-        required_approvals=(
-            (ApprovalAction.APPLY_PROMOTION.value,)
-            if any(str(reason) in reasons for reason in _PROMOTION_APPROVAL_REASONS)
-            else ()
-        ),
+        # Always empty, and never "so far": a promotion the engine says a person must rule on is
+        # not applied, so there is nothing left for anybody to rule on. The field stays on
+        # `_PromotionOutcome` because `_outstanding_approvals` unions it with the stored parent's,
+        # and a guard that reads only one of the two is right by accident.
+        required_approvals=(),
         eligibility_event=result.eligibility_event,
         eligibility_at=result.eligibility_at,
     )
@@ -582,6 +715,77 @@ def _moment_text(value: datetime) -> str:
     """The same UTC spelling `canonical_document` gives a datetime, so a read-back is
     byte-stable."""
     return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _outstanding_approvals(*sources: tuple[str, ...]) -> tuple[str, ...]:
+    """The refusal codes for every approval these tuples together demand, or `()` for none.
+
+    This exists because a derived revision may not *discharge* an approval by rebuilding the row
+    without it. `accept_quote_revision` and `close_range_prices` both produce `APPROVED_EXACT`, and
+    `quotes._validate_finality` refuses that finality while `required_approvals` is non-empty -- so
+    a derived revision that simply passed `required_approvals=()` would satisfy that guard by
+    deleting the thing it guards rather than by meeting it.
+
+    Refusing is the only safe answer, because the approval this names is not something either
+    function could obtain. An envelope is two parties and neither acceptance nor a band close is the
+    second one; `OperationsService` is where an envelope is read, and it has to be held before the
+    price becomes exact rather than waived after.
+
+    **Several sources, unioned, and that is the point.** The caller passes both the stored parent's
+    `required_approvals` and whatever its own re-evaluation demands, because those are two different
+    questions and only the first one was being asked. A guard that read the parent alone would let
+    an approval the engine demands *at acceptance* be written onto the final row as a reason code
+    beside an empty tuple. No promotion path populates either source today -- see the module comment
+    above `PROMOTION_REASON_CODES` -- which is exactly why the guard has to be right by construction
+    rather than by nothing having reached it yet.
+
+    Order is the order the sources give, deduplicated, so the refusal a person reads is stable
+    across runs rather than dependent on set iteration.
+    """
+
+    actions: list[str] = []
+    for source in sources:
+        for action in source:
+            if action not in actions:
+                actions.append(action)
+    return tuple(f"{APPROVAL_OUTSTANDING_PREFIX}{action}" for action in actions)
+
+
+def _revised_reason_codes(
+    inherited: tuple[str, ...], recomputed: tuple[str, ...]
+) -> tuple[str, ...]:
+    """The parent's reason codes with its promotion answer replaced by the fresh one.
+
+    Every non-promotion code is carried verbatim: they are facts about how the price was computed
+    and neither accepting a quote nor closing a band changed any of them. See
+    `PROMOTION_REASON_CODES` for why the promotion ones are not facts of that kind.
+    """
+
+    return (
+        *(code for code in inherited if code not in PROMOTION_REASON_CODES),
+        *recomputed,
+    )
+
+
+def _revised_traces(
+    inherited: tuple[CalculationTraceSnapshot, ...],
+    recomputed: tuple[CalculationTraceSnapshot, ...],
+) -> tuple[CalculationTraceSnapshot, ...]:
+    """The parent's traces with any recomputed component replaced rather than appended.
+
+    `_validate_traces` requires component names to be unique within a revision, so a second
+    `PROMOTION` trace would be refused outright. Replacement is also what the console needs: the
+    frozen promotion state it renders is read from this trace by `frozen_promotion`, and a revision
+    that kept the quote-time trace would show `status: PROVISIONAL` beside an eligibility event it
+    had already resolved.
+
+    Replacing it is not re-pricing. The caller has already proved the recomputed discount equals the
+    frozen one to the dong; what moves here is the *statement* about eligibility, which is precisely
+    what acceptance decides and what the frozen trace could not know.
+    """
+
+    replaced = {trace.component for trace in recomputed}
+    return (*(trace for trace in inherited if trace.component not in replaced), *recomputed)
 
 
 def compose_quote_revision(
@@ -780,6 +984,11 @@ def compose_quote_revision(
     promoted = _promotion_outcome(
         published=promotion,
         lines=tuple(lines),
+        # Delivery is the only adjustment a fresh composition can carry and it is a DEBIT, so
+        # nothing here is ever another promotion. Passed from the real tuple rather than as a
+        # literal `()`, so that an adjustment added to this function later is tested for stacking
+        # instead of being assumed away.
+        adjustments=delivery_adjustments,
         banded=banded,
         # The moment the price is computed. A promotion keyed to `accepted_at` cannot be resolved
         # here because acceptance has not happened; the engine answers PROVISIONAL and says so, and
@@ -789,12 +998,14 @@ def compose_quote_revision(
     )
     if promoted.refusal is not None:
         return UnresolvedQuote((promoted.refusal,))
-    if chosen and promoted.required_approvals:
+    outstanding = _outstanding_approvals(BASE_REQUIRED_APPROVALS, promoted.required_approvals)
+    if chosen and outstanding:
         # A closed band is `APPROVED_EXACT`, and `_validate_finality` refuses that finality while an
-        # approval is still outstanding. Naming the promotion reason rather than letting the
-        # validator answer VALIDATION_ERROR tells the person at the counter which decision is
-        # missing: the owner has to rule on this service before its price can be exact.
-        return UnresolvedQuote(promoted.reason_codes)
+        # approval is still outstanding. Both sources are empty today -- `DEC-022` emptied the base
+        # tuple and the promotion never populates one -- so this is unreachable, and it is checked
+        # rather than asserted because the alternative to naming the missing decision is letting the
+        # snapshot validator answer `VALIDATION_ERROR` to a person with a customer in front of them.
+        return UnresolvedQuote(outstanding)
 
     minimum_subtotal = sum(net_minimums)
     maximum_subtotal = sum(net_maximums)
@@ -874,6 +1085,16 @@ def _engine_line(line: RequestedLine) -> PriceLine:
     )
 
 
+#: Every code `accept_quote_revision` can refuse with, glossed in one line each.
+#:
+#: **Nothing reads this at runtime, and that is what it is for.** It is the refusal vocabulary
+#: written down beside the function that mints it, so that adding a refusal without deciding what a
+#: person is supposed to do about it is a visibly incomplete change. The operator-facing sentences
+#: live in `apps/web/src/core/i18n.js` (`REASON_NOTE`), in Vietnamese and under the console
+#: disclosure contract; these are the one-line English statements of the same facts for whoever is
+#: reading this module. Whether that Vietnamese table is complete is asserted separately, against
+#: the domain's own enums, by `apps/api/tests/test_staff_console_behaviour.py` -- not against this
+#: dict, which is documentation and must not become a second source of truth for it.
 ACCEPTANCE_REFUSALS: Final = {
     "QUOTE_QUANTITY_NOT_MEASURED": (
         "an exact price may not rest on a quantity the customer estimated"
@@ -890,6 +1111,21 @@ ACCEPTANCE_REFUSALS: Final = {
     ErrorCode.PROMOTION_ELIGIBILITY_UNRESOLVED.value: (
         "the published programme is keyed to an event this acceptance is not"
     ),
+    # No `APPROVAL_OUTSTANDING_*` entry, and that is an omission with a date on it rather than a
+    # rule. `_outstanding_approvals` mints those codes, `accept_quote_revision` returns them, and
+    # `test_the_outstanding_approval_guard_still_refuses_what_it_is_there_for` proves it does -- so
+    # a gloss for one is not the dead entry `PROMOTION_NOT_EVALUATED` was, whose producer had been
+    # deleted outright. What is true is narrower: no *composer* populates `required_approvals`
+    # today, so no such refusal can reach this table's readers from a revision this system wrote.
+    # The console glosses `APPROVAL_OUTSTANDING_APPLY_PROMOTION` anyway, because the guard is live
+    # and a counter meeting it must read a sentence rather than a token. When a composer does start
+    # populating the tuple, the English entry belongs here.
+    #
+    # No `PROMOTION_STACKING_REQUIRES_HUMAN` entry either, and that is a decision rather than an
+    # omission: a quote whose promotion was withheld for stacking is priced at list and sells. The
+    # case where a credit is *presented against* a revision a non-stacking programme did discount
+    # never reaches acceptance at all -- `redeem_remedy_credit` refuses it with
+    # `REMEDY_CREDIT_PROMOTION_NOT_STACKABLE` before anything is written or burnt.
     "QUOTE_ALREADY_FINAL": "this quote has already been accepted",
 }
 
@@ -944,6 +1180,19 @@ def accept_quote_revision(
     and the bag is priced again. Nothing is silently re-priced: the refusal exists so that a
     programme expiring between reading a price and taking the laundry is something a person sees
     rather than something the till absorbs.
+
+    When the two agree, the accepted revision states the *re-evaluation's* promotion reason codes
+    and frozen trace rather than the quote's. The money is identical by construction -- that is what
+    was just proved -- but the statements about eligibility are not: the quote could only say the
+    question was open, and acceptance is the moment `DEC-002` keys it to. A revision that inherited
+    the quote's answer would carry `PROMOTION_ELIGIBILITY_UNRESOLVED` and `status: PROVISIONAL` for
+    ever beside the resolved event it also records, and the row cannot be edited to take it back.
+
+    **An outstanding approval refuses**, whether the stored revision carries it or the
+    re-evaluation demands it. Acceptance does not answer an approval question and may not delete
+    one: see `_outstanding_approvals`. Nothing populates either tuple today -- the promotion path
+    withholds a discount rather than asking for an envelope nobody can supply -- so this is a guard
+    against a future populator, written to be correct rather than accidentally satisfied.
     """
 
     data = priced.data
@@ -968,7 +1217,24 @@ def accept_quote_revision(
     verified = _reverified_eligibility(priced=priced, promotion=promotion, accepted_at=accepted_at)
     if isinstance(verified, str):
         return UnresolvedQuote((verified,))
-    event, event_at = verified
+    outstanding = _outstanding_approvals(
+        data.required_approvals, () if verified is None else verified.required_approvals
+    )
+    if outstanding:
+        # An approval the quote still needs is not discharged by accepting the quote. See
+        # `_outstanding_approvals`: this is the guard `quotes._validate_finality` is trying to
+        # apply, answered here by name so the operator is told which decision is missing.
+        #
+        # Both sources, because they are two different questions. The stored parent records what
+        # was outstanding when the price was computed; the re-evaluation records what the engine
+        # demands at this moment, against facts that did not exist then. Reading only the parent
+        # discarded the second answer while still writing its reason code onto the final row, which
+        # is an approval demanded and an empty approval tuple on one immutable revision.
+        #
+        # Reached after the re-verification rather than before it, so that a promotion which has
+        # *moved* is named as such: that refusal is about the number the customer heard, which is
+        # the more urgent fact at a counter, and either way nothing is accepted.
+        return UnresolvedQuote(outstanding)
     try:
         snapshot = build_quote_snapshot(
             replace(
@@ -976,9 +1242,32 @@ def accept_quote_revision(
                 revision=revision,
                 finality=QuoteFinality.APPROVED_EXACT,
                 status=QuoteRevisionStatus.ACCEPTED_FINAL,
-                promotion_eligibility_event=event,
-                promotion_eligibility_at=event_at,
-                required_approvals=(),
+                promotion_eligibility_event=(
+                    None if verified is None else verified.eligibility_event
+                ),
+                promotion_eligibility_at=(None if verified is None else verified.eligibility_at),
+                # The promotion's reason codes and its frozen trace are re-stated, not inherited.
+                # Acceptance is the moment `DEC-002` keys eligibility to, so it is the moment the
+                # engine can finally answer the question the quote could only leave open: a revision
+                # accepted inside a live programme said `PROMOTION_ELIGIBILITY_UNRESOLVED` and
+                # `status: PROVISIONAL` for ever, on the same immutable row that recorded the
+                # resolved event and the moment it happened. Both statements cannot be true, and the
+                # false one is the permanent one, because the row cannot be edited.
+                reason_codes=(
+                    data.reason_codes
+                    if verified is None
+                    else _revised_reason_codes(data.reason_codes, verified.reason_codes)
+                ),
+                calculation_traces=(
+                    data.calculation_traces
+                    if verified is None
+                    else _revised_traces(data.calculation_traces, verified.traces)
+                ),
+                # Carried forward, never blanked. `_outstanding_approvals` above has already
+                # refused every revision for which this is non-empty, which is the whole point: it
+                # is empty here because nothing was outstanding, not because assembling a revision
+                # emptied it.
+                required_approvals=data.required_approvals,
             )
         )
     except QuoteSnapshotError:
@@ -1008,11 +1297,18 @@ def _reverified_eligibility(
     priced: ImmutableQuoteSnapshot,
     promotion: PublishedPromotionProgram | None,
     accepted_at: datetime | None,
-) -> tuple[PromotionEligibilityEvent | None, datetime | None] | str:
+) -> _PromotionOutcome | str | None:
     """Re-run the frozen programme against the real acceptance moment. `DEC-021`, `DEC-002`.
 
-    Returns the eligibility event and moment the accepted revision records, or a single refusal
-    code. The refusal is the product; the tuple is what is left when nothing has to be refused.
+    Returns the re-evaluation the accepted revision records -- its eligibility event and moment, its
+    reason codes and its frozen trace -- or a single refusal code, or `None` when the revision cites
+    no programme and there is nothing to re-state. The refusal is the product; the outcome is what
+    is left when nothing has to be refused.
+
+    The outcome and not just the event, since `PROMO-WIRING-001`'s defect pass: an accepted revision
+    that recorded the resolved event while still carrying the quote's unresolved reason code and its
+    quote-time trace was making two contradictory statements on one immutable row, and serving the
+    false one to the console.
 
     **What is compared is the promotion's own discount, not the revision's.**
     `totals.discount_amount_*` is the sum of every credit on the revision, and a `DEC-004` remedy
@@ -1023,13 +1319,21 @@ def _reverified_eligibility(
     Re-verifying against a different document is not re-verification: the number agreeing would be a
     coincidence, and invariant 8's reading of "the content the approval bound" applies to the
     programme as much as to the lines.
+
+    **Stacking is not re-opened here.** A credit presented against a revision that a non-stacking
+    programme discounted is refused by `redeem_remedy_credit` before it is spent, so no such
+    revision exists to be accepted. What can reach this point is a revision whose promotion was
+    already withheld at quote time because a credit was on the bag first: the recomputation
+    withholds the same promotion and arrives at the same zero, the frozen figure and the re-verified
+    one agree to the dong, and the only thing this contributes is the reason code saying why the
+    bill carries no programme discount.
     """
 
     reference = _promotion_reference(priced)
     if reference is None and promotion is None:
         # No programme was published when this was priced and none is published now. There is
         # nothing to re-verify and nothing to record.
-        return None, None
+        return None
     if accepted_at is None:
         # A promotion keyed to `accepted_at` cannot be re-verified without `accepted_at`. Refusing
         # is the only option: the alternative is choosing a moment nobody chose.
@@ -1049,12 +1353,26 @@ def _reverified_eligibility(
     recomputed = _promotion_outcome(
         published=promotion,
         lines=priced.data.lines,
+        # The credits the stored revision already carries, so the stacking test runs against what
+        # this bag actually has on it. A `DEC-004` remedy credit spent between the quote and the
+        # handshake is the case that matters, and it is a fact the quote-time evaluation could not
+        # have seen.
+        adjustments=priced.data.adjustments,
         banded=False,
         evaluation_at=accepted_at,
         eligibility_at=accepted_at,
     )
     if recomputed.refusal is not None:
         return recomputed.refusal
+    # There is deliberately no stacking refusal here. An earlier pass had one, and it was the
+    # worse half of a dead end: `redeem_remedy_credit` burns a one-shot `DEC-004` credit in the same
+    # transaction that writes the credited revision, so refusing the sale afterwards spent the
+    # customer's credit *and* blocked the order, with no way to un-burn it. The question is settled
+    # at the redemption instead, by refusing it outright while the credit is still unspent, so by
+    # the time acceptance re-verifies there is nothing left to rule on.
+    # `PROMOTION_STACKING_REQUIRES_HUMAN` still reaches the accepted revision through
+    # `_promotion_reasons` below, because it states a true fact about why the discount is absent --
+    # it is simply not a refusal.
     if recomputed.discount_vnd != (0 if frozen is None else frozen.discount_amount_vnd):
         # The number moved. `DEC-021` says the customer agreed to a price that was read aloud, so
         # the shop may not charge this one -- in either direction. A discount that appeared is as
@@ -1063,13 +1381,22 @@ def _reverified_eligibility(
     if reference is None:
         # Nothing was quoted against a programme and the recomputation confirms nothing changed, so
         # the accepted revision records no eligibility event. It has none: no programme priced it.
-        return None, None
+        #
+        # The recomputation is discarded here rather than re-stated, even when a programme has been
+        # published since. Re-stating it would mean minting a `PROMOTION` configuration-snapshot
+        # reference at acceptance, and a reference is the claim that *this programme priced this
+        # revision* -- which would be false, and would make the console show a programme beside a
+        # price that never saw one. The discount has already been proved to be zero two lines above,
+        # so nothing about the money is being carried quietly: what the revision inherits is
+        # `PROMOTION_NOT_PUBLISHED`, a statement about how it was priced, which acceptance did not
+        # change.
+        return None
     if recomputed.eligibility_event is None:
         # The programme is keyed to an event that commercial acceptance is not, so acceptance does
         # not resolve its eligibility and no exact price can rest on it. Named rather than left to
         # the snapshot validator, which would answer VALIDATION_ERROR.
         return ErrorCode.PROMOTION_ELIGIBILITY_UNRESOLVED.value
-    return recomputed.eligibility_event, recomputed.eligibility_at
+    return recomputed
 
 
 def stored_price_bands(priced: ImmutableQuoteSnapshot) -> dict[str, PriceBand] | None:
@@ -1158,6 +1485,39 @@ def close_range_prices(
     `promotion` must be the same published version the band revision cites, and `closed_at` the
     moment the band is closed. A different version refuses with `PROMOTION_CHANGED_SINCE_QUOTE`
     rather than pricing against a programme the customer was never shown.
+
+    **A programme published after the band was approved does not apply; the price is re-proposed.**
+    Invariant 8. `attestation.approval_id` names a `SET_RANGE_PRICE` envelope the owner signed
+    against a rendered document, and that signature is a point-in-time authorisation of a number,
+    not of a procedure. A programme published afterwards moves what the owner authorised by up to
+    the whole promotion rate while the bound `rendered_hash` and revision both still match, so the
+    binding would hold textually and mean nothing. `PROMOTION_PUBLISHED_SINCE_APPROVAL` refuses
+    instead. Pricing the bag again produces a band revision that cites the programme, and the
+    proposal and approval that follow are signed against a document that already shows it, so the
+    owner signs the number the customer will actually be charged.
+
+    The refusal is keyed on **whether that programme would have discounted the signed amount**, not
+    on whether a programme exists. The evaluation runs first and its own dong decide: a programme
+    whose interval does not cover the close, that does not target these services, or whose targets
+    the owner left unconfirmed takes nothing off the amount the owner signed, so the signature still
+    authorises exactly the number it authorised and there is nothing for invariant 8 to protect. A
+    refusal there would send the shop through a re-quote, a proposal and a second owner signature to
+    arrive back at the same total.
+
+    That is the opposite of the answer `_promotion_outcome` gives an unconfirmed target, and the
+    difference is whether a discharge path exists. Nothing in this system can supply an
+    `ApplyPromotion` envelope, so demanding one makes a service unsellable for the whole life of
+    the programme; this refusal costs a re-quote, a proposal and an approval, which are the three
+    presses the shop already makes for every range-priced garment. A refusal somebody can answer is
+    a guard. A refusal nobody can answer is an outage.
+
+    A programme the band revision *does* cite, unchanged, still applies, and the closed revision
+    carries the promotion reason codes of this evaluation in place of the band's
+    `PROMOTION_PENDING_BAND_CLOSE`. Its configuration-snapshot reference is already on the revision
+    -- composition put it there -- and the version comparison above has just proved it is the same
+    document, so nothing is added here. `accept_quote_revision` then re-verifies that same version
+    against the real `accepted_at`, so the customer's agreement is guarded by the rule that guards
+    every other quote.
     """
 
     data = priced.data
@@ -1165,6 +1525,15 @@ def close_range_prices(
         # Nothing here is a band, so there is nothing for an amount to be inside. Same refusal as
         # an amount for an exactly-priced service, because it is the same mistake one level up.
         return UnresolvedQuote((RangePriceRefusal.RANGE_PRICE_NOT_APPLICABLE.value,))
+    outstanding = _outstanding_approvals(data.required_approvals)
+    if outstanding:
+        # The same refusal `accept_quote_revision` makes, for the same reason: the revision this
+        # derives from becomes `APPROVED_EXACT`, and an approval outstanding on the band is not
+        # discharged by closing it. No composer output populates this today -- a band revision's
+        # promotion is deferred, so it asks for nothing -- and it is checked rather than asserted
+        # because the alternative is a revision that quietly drops an approval it inherited. The
+        # evaluation's own demand is unioned in below, once there is an evaluation to ask.
+        return UnresolvedQuote(outstanding)
     if (data.quote_id, data.revision) != (attestation.quote_id, attestation.revision):
         # Invariant 8. The amounts were chosen against one revision of one quote and may not be
         # carried to another; the rendered document the approval binds says which.
@@ -1229,6 +1598,10 @@ def close_range_prices(
     promoted = _promotion_outcome(
         published=promotion,
         lines=closed_lines,
+        # `redeem_remedy_credit` refuses a `RANGE` revision outright, so a band cannot be carrying
+        # a credit and this is always a delivery debit at most. Passed rather than assumed, for the
+        # reason `compose_quote_revision` gives.
+        adjustments=data.adjustments,
         banded=False,
         evaluation_at=closed_at or data.priced_at,
         # Acceptance has not happened: closing a band is the shop choosing the price, not the
@@ -1238,10 +1611,29 @@ def close_range_prices(
     )
     if promoted.refusal is not None:
         return UnresolvedQuote((promoted.refusal,))
-    if promoted.required_approvals:
-        # This revision is `APPROVED_EXACT`, which `_validate_finality` refuses while an approval is
-        # outstanding. The owner has to rule on the promotion for this service first.
-        return UnresolvedQuote(promoted.reason_codes)
+    if reference is None and promoted.discount_vnd:
+        # Invariant 8. The band revision cites no programme, so the owner signed this amount with no
+        # promotion in view, and one is published now -- and the evaluation just above proves it
+        # would take real dong off the amount they signed. Applying it would change what that
+        # signature cost while the envelope's bound `rendered_hash` and revision still matched: the
+        # binding holding textually and meaning nothing. The price is proposed again instead; see
+        # the docstring for why this refuses where `_promotion_outcome` withholds.
+        #
+        # Keyed on the dong and not on whether a programme is published, which is what an earlier
+        # pass keyed it on. Invariant 8 protects *the amount the owner signed*, so a programme that
+        # could not have moved it -- one whose interval does not cover the close, one that does not
+        # target these services, one whose targets the owner left unconfirmed -- has not weakened
+        # any signature and must not cost the shop a re-quote, a proposal and a second approval to
+        # discover that it changed nothing. The zero is proved here rather than assumed: the
+        # evaluation runs first and its own discount is what is read.
+        return UnresolvedQuote((PROMOTION_PUBLISHED_SINCE_APPROVAL,))
+    outstanding = _outstanding_approvals(data.required_approvals, promoted.required_approvals)
+    if outstanding:
+        # This revision becomes `APPROVED_EXACT`, which `_validate_finality` refuses while an
+        # approval is outstanding. Unioned with the parent's for the reason `accept_quote_revision`
+        # gives: the evaluation that runs here sees the closed amounts, which the band revision
+        # could not, so it is entitled to a different answer and that answer may not be dropped.
+        return UnresolvedQuote(outstanding)
     closed_lines = promoted.lines
 
     subtotal = sum(_line_list(line) for line in closed_lines)
@@ -1270,24 +1662,31 @@ def close_range_prices(
                 lines=closed_lines,
                 adjustments=(*data.adjustments, *promoted.adjustments),
                 totals=totals,
-                calculation_traces=(*data.calculation_traces, *promoted.traces),
-                # The band is closed, so the two reasons that said it was not no longer apply:
-                # `RANGE_PRICE_REQUIRES_HUMAN` because a person has now chosen, and
-                # `PROMOTION_PENDING_BAND_CLOSE` because the promotion has now been evaluated
-                # against the amount they chose. Both are replaced by what the evaluation found.
-                # Every other reason the revision carried is untouched: they are facts about how it
-                # was priced and closing a band did not change any of them.
-                reason_codes=tuple(
-                    code
-                    for code in data.reason_codes
-                    if code
-                    not in {
-                        ErrorCode.RANGE_PRICE_REQUIRES_HUMAN.value,
-                        PROMOTION_PENDING_BAND_CLOSE,
-                    }
-                )
-                + promoted.reason_codes,
-                required_approvals=(),
+                # `configuration_snapshots` is inherited untouched. The band revision already cites
+                # whichever `PROMOTION` version priced it, and the two checks above have proved the
+                # published one is that same version -- or that neither exists. There is nothing
+                # for this close to add, and minting a reference here would be the claim that a
+                # document the customer was never shown priced this revision.
+                calculation_traces=_revised_traces(data.calculation_traces, promoted.traces),
+                # The band is closed, so `RANGE_PRICE_REQUIRES_HUMAN` no longer applies: a person
+                # has now chosen. Every promotion reason the band revision carried goes with it,
+                # whichever of them it was -- `PROMOTION_PENDING_BAND_CLOSE` when a programme was
+                # published then, `PROMOTION_NOT_PUBLISHED` when none was -- and is replaced by what
+                # this evaluation found. Naming only the first of those two would leave a closed
+                # band saying no programme was published beside a discount a programme had just
+                # produced. Every other reason the revision carried is untouched: they are facts
+                # about how it was priced and closing a band did not change any of them.
+                reason_codes=_revised_reason_codes(
+                    tuple(
+                        code
+                        for code in data.reason_codes
+                        if code != ErrorCode.RANGE_PRICE_REQUIRES_HUMAN.value
+                    ),
+                    promoted.reason_codes,
+                ),
+                # Carried forward, never blanked, for the reason `_outstanding_approvals` gives.
+                # The guard at the top of this function has already refused anything non-empty.
+                required_approvals=data.required_approvals,
                 approval_id=attestation.approval_id,
             )
         )
@@ -1330,14 +1729,52 @@ def redeem_remedy_credit(
     a wall `RANGE-PRICE-001` put there deliberately. A remedy credit must not be the thing that
     walks into it, so it never lands on a `RANGE` revision at all.
 
-    Allocation weights are each line's **net** amount, not its list amount. A line already carrying
-    a promotion discount can absorb only what is left of it, and weighting by list could push a net
-    below zero on a heavily discounted line while the revision as a whole still balanced.
+    **A promotion the programme forbids stacking with refuses the redemption outright**, before any
+    weight is computed and before anything is mutated. `REMEDY_CREDIT_PROMOTION_NOT_STACKABLE`.
+
+    An earlier pass answered this automatically instead: it took the non-stacking promotion back off
+    the revision as the credit landed, on the reasoning that a `DEC-004` credit is a debt the shop
+    owes and a programme is an offer it chose to make. Two things were wrong with that, and both are
+    the kind that only show at a counter.
+
+    It **raised the bill above the number the customer had just been read.** 120.000 d of wash less
+    a 36.000 d programme discount is 84.000 d; withdrawing the programme and applying an 11.000 d
+    credit produced 109.000 d. A customer who spends a credit paid 25.000 d *more* than one who kept
+    it in their pocket. There is no way to say that across a counter.
+
+    And it **decided policy.** `stacking_allowed: false` is the owner's clause, the promotion engine
+    answers `PROMOTION_STACKING_REQUIRES_HUMAN` -- a `REQUIRE_HUMAN` outcome -- and this module
+    turned that into an automatic, unsupervised outcome that burnt a one-shot instrument in the same
+    transaction. Invariant 3 gives deterministic code the arithmetic, not the choice between two
+    instruments the owner has not ranked; the engine had already said a person must rank them.
+
+    So the answer here is to refuse and change nothing. The counter is told the credit was *not*
+    used and is still spendable, and a person decides whether this customer gets the programme's
+    discount or their credit. Refusing first is what makes that true:
+    `RemedyCreditRepository.redeem` composes before it burns, so a refusal returned from here leaves
+    `remedy_credits.redeemed_at` null and the credit is presentable against the next bill that
+    carries no programme discount.
+
+    Allocation weights are each line's **net** amount, not its list amount. A line still carrying a
+    promotion discount -- one the programme permits to stack -- can absorb only what is left of it,
+    and weighting by list could push a net below zero on a heavily discounted line while the
+    revision as a whole still balanced.
     """
 
     data = priced.data
     if data.finality is QuoteFinality.RANGE or data.status in _UNCREDITABLE_STATUSES:
         return UnresolvedQuote((RemedyRefusal.REMEDY_CREDIT_REVISION_NOT_OPEN.value,))
+    frozen = frozen_promotion(priced)
+    if frozen is not None and not frozen.stacking_allowed and frozen.discount_amount_vnd:
+        # First, before the weights and before any line is rewritten, so that nothing has been
+        # changed and -- in the caller -- nothing has been burnt when the refusal is returned.
+        #
+        # Both conditions are needed and neither is a shortcut. A programme that permits stacking
+        # has answered the question itself. A programme that granted no dong to this revision --
+        # expired, untargeted, or withheld for an unconfirmed target -- is not compounding with
+        # anything, so there is no second discount for the owner to rank against the credit, and
+        # refusing would strand a credit over a promotion that took nothing off the bill.
+        return UnresolvedQuote((RemedyRefusal.REMEDY_CREDIT_PROMOTION_NOT_STACKABLE.value,))
     weights: dict[str, int] = {}
     for line in data.lines:
         if not isinstance(line.amounts, ExactLineAmounts):
@@ -1619,11 +2056,14 @@ def _service_version_id(pricebook: PricebookProvenance, service_code: str) -> UU
 
 __all__ = [
     "ACCEPTANCE_ELIGIBILITY_EVENT",
+    "APPROVAL_OUTSTANDING_PREFIX",
     "BASE_REASON_CODES",
     "BASE_REQUIRED_APPROVALS",
     "PROMOTION_CHANGED_SINCE_QUOTE",
     "PROMOTION_NOT_PUBLISHED",
     "PROMOTION_PENDING_BAND_CLOSE",
+    "PROMOTION_PUBLISHED_SINCE_APPROVAL",
+    "PROMOTION_REASON_CODES",
     "QUOTE_ENGINE_HASH",
     "QUOTE_ENGINE_VERSION",
     "REMEDY_CREDIT_COMPONENT_VERSION",

@@ -203,6 +203,12 @@ export function priceStateBadge(finality) {
 /**
  * Badges for a list of domain reason codes, deduplicated by mandated warning.
  *
+ * A code that states a settled fact raises no badge — `warningFor` returns `null` for those, and
+ * PROMO-WIRING-001 made that a common case rather than a theoretical one: a promotion is assessed
+ * on every quote, and with no programme published every quote says so. Those codes are still
+ * rendered in full by `reasonCodeList` with their Vietnamese note; what they do not do is add a
+ * badge claiming somebody has to act, on every price in the shop, for ever.
+ *
  * @param {string[]} reasonCodes
  * @returns {HTMLElement|null}
  */
@@ -212,8 +218,9 @@ export function warningBadges(reasonCodes) {
   const unique = new Map();
   for (const code of reasonCodes) {
     const warning = warningFor(code);
-    unique.set(warning.token, warning);
+    if (warning) unique.set(warning.token, warning);
   }
+  if (!unique.size) return null;
   return h("div", { class: "row" }, [...unique.values()].map(badge));
 }
 

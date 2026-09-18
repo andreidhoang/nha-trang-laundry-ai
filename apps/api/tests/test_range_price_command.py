@@ -12,9 +12,11 @@ bound and nothing routes around it.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Generator
-from datetime import UTC, datetime
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -34,6 +36,7 @@ from nha_trang_laundry_db.channel import ContactChannelBindingRepository
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.pricebook import publish_pricebook
+from nha_trang_laundry_db.promotions import publish_promotion_policy
 from nha_trang_laundry_db.quotes import QuoteStateError
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
@@ -45,7 +48,11 @@ from nha_trang_laundry_domain.catalog import (
     QuantityBasis,
     Unit,
 )
-from nha_trang_laundry_domain.quote_composition import RequestedLine
+from nha_trang_laundry_domain.quote_composition import (
+    PROMOTION_NOT_PUBLISHED,
+    PROMOTION_PUBLISHED_SINCE_APPROVAL,
+    RequestedLine,
+)
 from nha_trang_laundry_domain.range_prices import RangePriceChoice
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -59,6 +66,29 @@ BAND_MAXIMUM = 240_000
 CHOSEN = 150_000
 #: The floor the republication test raises áo dài to, so 150.000 ₫ falls outside the new band.
 NARROWED_MINIMUM = 200_000
+#: Dry cleaning is the 40% arm of the owner's confirmed programme, so 150.000 d chosen inside the
+#: published band gives 60.000 d off. Held here rather than written inline so the one arithmetic
+#: fact this file asserts about a promotion is stated once, next to the band it is taken from.
+DRY_CLEAN_DISCOUNT_VND = 60_000
+
+
+def _publish_live_programme(connection: Any) -> None:
+    """The owner starts a programme, which is one published document and nothing else.
+
+    Anchored to the wall clock rather than to a calendar date because the shipped programme ended on
+    31/08/2026: a window pinned to July 2026 would quietly stop being live and these tests would
+    stop exercising the case they are named for.
+    """
+
+    payload = deepcopy(
+        json.loads(
+            (ROOT / "templates" / "promotion-policy-dec-002.json").read_text(encoding="utf-8")
+        )
+    )
+    now = datetime.now(UTC)
+    payload["start_at"] = (now - timedelta(days=1)).isoformat()
+    payload["end_at_exclusive"] = (now + timedelta(days=30)).isoformat()
+    publish_promotion_policy(connection, actor_id=OWNER_SEED_ID, payload=payload)
 
 
 def _database_url() -> str:
@@ -690,3 +720,108 @@ def test_a_band_republished_narrower_does_not_move_the_price_already_offered(
     # passing because the republication did nothing.
     reissued = _band_quote(service, store_id=store_id, staff=staff, bound_order_request_id=uuid4())
     assert reissued.display_total_min_vnd == NARROWED_MINIMUM
+
+
+# --- PROMO-FIX-001: a programme published while the band was open -------------------------------
+
+
+def test_a_programme_published_after_the_band_was_approved_sends_the_price_back(
+    connection: Any, service: OperationsService
+) -> None:
+    """Invariant 8, through the real command path, on the side a matching hash does not cover.
+
+    The band is quoted and the amount approved while nothing is published, so the owner signed a
+    `SET_RANGE_PRICE` envelope for 150.000 d with no promotion in view. The owner then starts a
+    programme -- by publishing a document, which is the whole of what starting one takes -- and the
+    staff member presses apply. Dry cleaning is the 40% arm, so applying it would turn that same
+    signature into an authorisation to charge 90.000 d, a 60.000 d move, while the envelope's bound
+    `rendered_hash` and revision both still matched perfectly. The binding would hold textually and
+    mean nothing.
+
+    So the apply refuses and nothing is written. `PROMO-FIX-001` decided the opposite -- that the
+    programme applies, because a band is an authorisation rather than a price -- and the reasoning
+    was sound about the customer, who had been read no number, but missed the owner, who had signed
+    one.
+
+    The refusal costs a re-quote, a proposal and an approval, which the test below spends and which
+    the shop already makes for every range-priced garment. That is what separates this from an
+    unconfirmed promotion target, where no screen that could answer exists at all.
+    """
+
+    _publish(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    owner = _extra_staff(connection, store_id, StaffRole.OWNER_ADMIN)
+    quote = _band_quote(service, store_id=store_id, staff=staff, bound_order_request_id=uuid4())
+    assert PROMOTION_NOT_PUBLISHED in quote.reason_codes
+    assert quote.promotion is None
+
+    proposal = _propose(service, store_id=store_id, staff=staff, quote=quote)
+    assert isinstance(proposal, RangePriceProposalResult)
+    _approve(service, proposal=proposal, owner=owner)
+    _publish_live_programme(connection)
+
+    refused = _apply(service, store_id=store_id, staff=staff, quote=quote, proposal=proposal)
+    assert isinstance(refused, UnresolvedQuoteResult)
+    assert refused.reason_codes == (PROMOTION_PUBLISHED_SINCE_APPROVAL,)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM quote_revisions WHERE quote_id = %s", (quote.quote_id,)
+        )
+        row = cursor.fetchone()
+    # One revision: the band. The refusal wrote nothing, so there is no closed price carrying a
+    # discount the owner never authorised.
+    assert row is not None and row[0] == 1
+
+
+def test_re_proposing_the_band_under_the_new_programme_prices_it_and_sells(
+    connection: Any, service: OperationsService
+) -> None:
+    """The discharge path the refusal above depends on, walked with real presses.
+
+    The bag is quoted again now that the programme is published, so the band revision cites it and
+    the owner approves an amount against a document that already shows it. The close then applies
+    40% of the 150.000 d chosen inside the published 80.000-240.000 band: 60.000 d off, 90.000 d to
+    pay, with the programme named on the revision that took the money.
+
+    And the closed revision is still acceptable. `accept_quote_revision` re-verifies the same
+    programme version against the real `accepted_at`, which is the rule that guards every other
+    quote, so the customer agrees to the discounted number rather than to a band.
+    """
+
+    _publish(connection)
+    _publish_live_programme(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    owner = _extra_staff(connection, store_id, StaffRole.OWNER_ADMIN)
+    quote = _band_quote(service, store_id=store_id, staff=staff, bound_order_request_id=uuid4())
+    assert PROMOTION_NOT_PUBLISHED not in quote.reason_codes
+
+    proposal = _propose(service, store_id=store_id, staff=staff, quote=quote)
+    assert isinstance(proposal, RangePriceProposalResult)
+    _approve(service, proposal=proposal, owner=owner)
+    closed = _apply(service, store_id=store_id, staff=staff, quote=quote, proposal=proposal)
+    assert isinstance(closed, QuoteRevisionResult)
+
+    assert closed.list_service_subtotal_vnd == CHOSEN
+    assert closed.net_service_subtotal_vnd == CHOSEN - DRY_CLEAN_DISCOUNT_VND
+    assert closed.display_total_min_vnd == CHOSEN - DRY_CLEAN_DISCOUNT_VND
+    assert closed.promotion is not None
+    assert closed.promotion.policy_code == "PROMO_WET30_DRY40_20260717_20260831"
+    assert closed.promotion.configuration_version == 1
+    assert closed.promotion.discount_amount_vnd == DRY_CLEAN_DISCOUNT_VND
+
+    accepted = service.accept_quote(
+        store_id=store_id,
+        quote_id=closed.quote_id,
+        expected_current_revision=closed.revision,
+        expected_snapshot_hash=closed.snapshot_hash,
+        idempotency_key=f"accept-{uuid4().hex}",
+        principal=staff,
+    )
+    assert isinstance(accepted, QuoteRevisionResult)
+    assert accepted.status == "ACCEPTED_FINAL"
+    assert accepted.display_total_min_vnd == CHOSEN - DRY_CLEAN_DISCOUNT_VND
+    assert accepted.promotion is not None
+    assert accepted.promotion.eligibility_resolved is True
+    assert accepted.promotion.status == "ELIGIBLE"

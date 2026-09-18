@@ -290,9 +290,29 @@ CLOSED_REVISION = {
     "net_service_subtotal_vnd": CHOSEN_VND,
     "display_total_min_vnd": CHOSEN_VND,
     "display_total_max_vnd": CHOSEN_VND,
-    "reason_codes": ["TAX_TREATMENT_UNVERIFIED"],
+    "reason_codes": ["TAX_TREATMENT_UNVERIFIED", "PROMOTION_OUTSIDE_INTERVAL"],
     "required_approvals": [],
     "replayed": False,
+    # `QuotePromotionResponse` for the shop's one confirmed programme, which ended on 31/08/2026.
+    # The discount is a real computed zero and not an absence, and the whole of section 10's last
+    # check is that the screen says which of the two it is: PROMO-WIRING-001 put this interval on
+    # the wire and nothing drew it, so a counter saw 0 d with the reason only in a code list.
+    #
+    # `interval_end_at_exclusive` is the first instant the programme no longer covers. The console
+    # must print that instant rather than subtracting a day to name "the last day", which is why
+    # the check below looks for 01/09/2026 and not 31/08/2026.
+    "promotion": {
+        "policy_code": "PROMO_WET30_DRY40_20260717_20260831",
+        "configuration_version": 1,
+        "status": "INELIGIBLE",
+        "discount_amount_vnd": 0,
+        "rate_bps": [],
+        "interval_start_at": "2026-07-17T00:00:00+07:00",
+        "interval_end_at_exclusive": "2026-09-01T00:00:00+07:00",
+        "inside_interval": False,
+        "eligibility_resolved": True,
+        "reason_codes": ["PROMOTION_OUTSIDE_INTERVAL"],
+    },
 }
 
 
@@ -1389,6 +1409,23 @@ with sync_playwright() as playwright:
     check(
         "and it is not yet offered as an order",
         page.locator("a", has_text="Tạo đơn từ báo giá này").count() == 0,
+    )
+
+    # `PROMO-WIRING-001` §5.3: today's honest answer is 0 d, and the screen has to say *which* zero
+    # it is. The API has carried the programme's interval since that item landed and nothing drew
+    # it, so the counter saw an unexplained zero -- the same failure as rendering a null total as 0.
+    check(
+        "the expired programme is named on the result, not just its reason code",
+        "PROMO_WET30_DRY40_20260717_20260831" in content,
+    )
+    check(
+        "with the end of its window on screen, so the zero has a date behind it",
+        "01/09/2026" in content,
+        "expected the programme's exclusive end bound rendered on the quote result",
+    )
+    check(
+        "and the bound is stated as exclusive rather than quietly turned into 'the last day'",
+        "Mốc sau là mốc kết thúc không bao gồm" in content,
     )
 
     print()

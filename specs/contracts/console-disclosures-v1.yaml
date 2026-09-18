@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 253
+  DESCRIPTIVE: 267
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 3
   RESPONSE_SHAPE: 1
   SERVER_GATE: 12
-total: 277
+total: 291
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -132,10 +132,107 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_NOT_EVALUATED:4a41314ec41c
+- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_APPLIED:8dc8eab4288a
   module: core/i18n.js
-  key: REASON_NOTE.PROMOTION_NOT_EVALUATED
-  text: Chưa xét khuyến mãi cho bản báo giá này.
+  key: REASON_NOTE.PROMOTION_APPLIED
+  text: 'Khuyến mãi đã áp vào bản báo giá này: chênh lệch giữa dòng “Giá niêm yết trước giảm” và dòng
+    tiền dịch vụ chính là mức giảm. Chương trình tạo ra con số đó được ghi trên bản báo giá bất biến.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_NOT_PUBLISHED:3f0cd1b9f9fd
+  module: core/i18n.js
+  key: REASON_NOTE.PROMOTION_NOT_PUBLISHED
+  text: 'Chưa có chương trình khuyến mãi nào được công bố, nên báo giá tính theo giá niêm yết. Đây không
+    phải là “chưa xét”: máy chủ đã xét và câu trả lời là không có chương trình nào đang chạy. Chủ tiệm
+    là người công bố chương trình; đừng hứa mức giảm nào ở quầy.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_OUTSIDE_INTERVAL:12a079df603f
+  module: core/i18n.js
+  key: REASON_NOTE.PROMOTION_OUTSIDE_INTERVAL
+  text: Chương trình đã công bố không bao trùm thời điểm này, nên mức giảm là 0 ₫. Máy chủ gửi kèm ngày
+    kết thúc của chương trình — đây là một số không có lý do, không phải một ô bỏ trống.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_NOT_TARGETED:40c4a0b22aeb
+  module: core/i18n.js
+  key: REASON_NOTE.PROMOTION_NOT_TARGETED
+  text: 'Chương trình đang chạy không bao gồm dịch vụ trên bản báo giá này, nên không có mức giảm nào.
+    Chương trình là một danh sách dịch vụ: không có tên trong danh sách thì không được giảm.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_TARGET_REQUIRES_HUMAN:bf27f88b72d7
+  module: core/i18n.js
+  key: REASON_NOTE.PROMOTION_TARGET_REQUIRES_HUMAN
+  text: 'Chủ tiệm chưa quyết định dịch vụ này có nằm trong chương trình hay không, nên khuyến mãi không
+    áp cho dòng này: tính đúng giá niêm yết. Không có gì phải chờ duyệt, cứ nhận đồ bình thường. Muốn
+    dòng này được giảm thì chủ tiệm công bố lại chương trình có tên dịch vụ; đừng tự giảm ở quầy.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_STACKING_REQUIRES_HUMAN:802e4bfee106
+  module: core/i18n.js
+  key: REASON_NOTE.PROMOTION_STACKING_REQUIRES_HUMAN
+  text: 'Bản báo giá này có phiếu bồi hoàn, mà chương trình khuyến mãi không cho cộng dồn hai khoản giảm,
+    nên khuyến mãi không được tính vào: số tiền giảm trên bản này là của phiếu bồi hoàn, không phải của
+    chương trình. Khách trả đúng bằng lúc không có chương trình nào chạy. Không phải chờ ai duyệt — cứ
+    nhận đồ, và nói trước với khách rằng lần này không cộng thêm khuyến mãi.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_PENDING_BAND_CLOSE:fb7a0fe4b971
+  module: core/i18n.js
+  key: REASON_NOTE.PROMOTION_PENDING_BAND_CLOSE
+  text: 'Dòng khoảng giá chưa được chốt nên chưa xét khuyến mãi được: khuyến mãi áp trên số tiền nhân
+    viên chọn, không áp trên khoảng. Chốt giá trong khoảng xong thì mức giảm mới hiện ra.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_ELIGIBILITY_UNRESOLVED:7fb464dea747
+  module: core/i18n.js
+  key: REASON_NOTE.PROMOTION_ELIGIBILITY_UNRESOLVED
+  text: Điều kiện hưởng khuyến mãi gắn với lúc khách đồng ý giao đồ, mà việc đó chưa xảy ra. Mức giảm
+    đang hiển thị là tạm tính và sẽ được kiểm lại đúng vào lúc chốt đơn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_CHANGED_SINCE_QUOTE:e83c99c9255b
+  module: core/i18n.js
+  key: REASON_NOTE.PROMOTION_CHANGED_SINCE_QUOTE
+  text: Mức giảm tính lại lúc chốt đơn không còn bằng mức đã đọc cho khách nghe, nên không chốt được và
+    không có gì được ghi. Báo giá lại rồi đọc số mới cho khách trước khi nhận đồ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_PUBLISHED_SINCE_APPROVAL:8a1b4542b4ca
+  module: core/i18n.js
+  key: REASON_NOTE.PROMOTION_PUBLISHED_SINCE_APPROVAL
+  text: Chủ tiệm đã duyệt giá trong khoảng khi chưa có chương trình khuyến mãi nào, mà bây giờ đã có một
+    chương trình đang chạy. Áp nó vào sẽ làm số tiền chủ tiệm đã duyệt đổi khác, nên phải đề xuất lại
+    giá. Đề xuất lại xong thì chương trình được tính vào như mọi báo giá khác.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.APPROVAL_OUTSTANDING_APPLY_PROMOTION:511e8f0724c9
+  module: core/i18n.js
+  key: REASON_NOTE.APPROVAL_OUTSTANDING_APPLY_PROMOTION
+  text: 'Bản báo giá gốc còn một phiếu duyệt khuyến mãi chưa dứt điểm, nên không chốt được bản này và
+    không có gì được ghi. Hiện không có màn hình nào trong hệ thống tạo ra tình huống này: đây là lỗi
+    dữ liệu chứ không phải chữ bạn gõ. Chụp màn hình và báo kỹ thuật, đừng bấm lại.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -404,6 +501,18 @@ disclosures:
   key: REASON_NOTE.REMEDY_CREDIT_REVISION_NOT_OPEN
   text: Bản báo giá định trừ vào đang là khoảng giá hoặc khách đã chốt rồi. Giảm trừ chỉ đổi tổng trước
     khi báo cho khách, không đổi tổng đã thoả thuận. Lập bản mới rồi trừ vào bản đó.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CREDIT_PROMOTION_NOT_STACKABLE:6d376ebfae14
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_CREDIT_PROMOTION_NOT_STACKABLE
+  text: 'Bản báo giá này đang có mức giảm của chương trình khuyến mãi, mà chương trình đó không cho cộng
+    dồn với phiếu giảm trừ. Phiếu CHƯA bị trừ, vẫn còn nguyên và vẫn dùng được — không có gì được ghi
+    và tổng vừa đọc cho khách không đổi. Phải có người chọn một trong hai: để khách hưởng khuyến mãi lần
+    này và giữ phiếu cho hoá đơn sau, hoặc lập báo giá không có khuyến mãi rồi trừ phiếu vào bản đó. Hỏi
+    chủ tiệm; máy không chọn thay.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1701,6 +1810,34 @@ disclosures:
   key: notice
   text: 'Kết quả được phát lại: cùng khoá thao tác và cùng nội dung đã gửi trước đó. Không có bản ghi
     mới nào được tạo.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#hint:18cf2bbbb383
+  module: screens/quotes.js
+  key: hint
+  text: Không có chương trình nào được xét trên bản báo giá này. Mã lý do bên dưới nói rõ là chưa công
+    bố chương trình nào, hay dòng khoảng giá chưa được chốt.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#hint:eb90aaca781f
+  module: screens/quotes.js
+  key: hint
+  text: Thời điểm tính giá của bản báo giá này nằm ngoài khoảng trên, nên mức giảm là 0 ₫. Đây là một
+    con số không, có lý do đi kèm — không phải một ô bỏ trống.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#hint:d3cfbaf71057
+  module: screens/quotes.js
+  key: hint
+  text: 'Mốc sau là mốc kết thúc không bao gồm: chương trình chạy đến ngay trước nó, và thời điểm đó đã
+    ở ngoài chương trình. Cả hai mốc lấy nguyên từ máy chủ; màn hình này không tự trừ ra một ngày nào
+    khác.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

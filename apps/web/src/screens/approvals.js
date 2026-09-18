@@ -93,15 +93,25 @@ function countdownBadge(expiresAt) {
  * refusal — "không xem được nội dung loại MESSAGE_DRAFT" tells an approver what to go and fix,
  * "không quyết được" does not.
  *
- * `QUOTE_REVISION` is deliberately absent even though `#/quotes` lists quotes: there is no GET for
- * a single revision and no endpoint returns `quote_lines` (`gaps.js`), so the approver would see a
- * total and a hash, never the lines being priced. That is the same blind approval in a politer
- * font.
+ * `QUOTE_REVISION` was deliberately absent until `RANGE-PRICE-001`, and the reason it left is the
+ * only legitimate one: the limitation behind it closed. The entry used to read "there is no GET
+ * for a single revision and no endpoint returns `quote_lines`, so the approver would see a total
+ * and a hash, never the lines being priced". `GET /internal/v1/stores/{store}/quotes/{quote}` now
+ * returns the revision with its lines, each carrying `price_kind` and, for a band, the two bounds
+ * — which is exactly the content a `SET_RANGE_PRICE` envelope is about. `#/quotes?quote=<id>`
+ * renders it read-only. The envelope's `resource_id` is the quote's own id (`operations.py`
+ * passes `quote_id` into the approval command) and its `resource_version` is the revision, so the
+ * link needs nothing the queue does not return.
+ *
+ * `MESSAGE_DRAFT` stays out, and stays out for a reason that has not changed: nothing stores the
+ * message body, and `rendered_hash` is explicitly not verified server-side, so there is nothing to
+ * show and nothing to check it against.
  *
  * @type {Record<string, (resourceId: string) => string>}
  */
 const VIEWABLE_RESOURCES = {
   ORDER: (resourceId) => `#/orders/${encodeURIComponent(resourceId)}`,
+  QUOTE_REVISION: (resourceId) => `#/quotes?quote=${encodeURIComponent(resourceId)}`,
 };
 
 /** What this console records as its reason; the server only constrains the shape. */
@@ -371,7 +381,8 @@ function limitsPanel() {
             null,
             "Máy chủ đòi phiên bản và hai mã niêm phong để chứng minh bạn quyết đúng nội dung đó. " +
               "Hàng chờ nay trả về đủ cả ba, nên phiếu nào bảng vận hành mở ra xem được thì bấm " +
-              "quyết được ngay — hôm nay là phiếu gắn với một đơn hàng.",
+              "quyết được ngay — hôm nay là phiếu gắn với một đơn hàng, và phiếu chốt giá trong " +
+              "khoảng của một bản báo giá.",
           ),
           h(
             "p",

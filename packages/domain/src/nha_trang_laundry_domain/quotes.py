@@ -37,6 +37,13 @@ class QuoteAdjustmentKind(StrEnum):
     MANUAL_DISCOUNT = "MANUAL_DISCOUNT"
     SURCHARGE = "SURCHARGE"
     DELIVERY = "DELIVERY"
+    #: `REMEDY-001`. A credit the shop owes a customer for a previous order, landing on this one.
+    #: It has its own member rather than reusing `MANUAL_DISCOUNT` because the two carry different
+    #: authority: a manual discount is a price somebody chose and always needs an approval envelope,
+    #: while a remedy credit is a figure the server computed from published `DEC-004` policy and is
+    #: escalated to the owner only above the staff ceiling. Collapsing them would make one of those
+    #: two rules unrepresentable. See `_validate_adjustments` for what this kind must satisfy.
+    REMEDY_CREDIT = "REMEDY_CREDIT"
 
 
 class QuoteSnapshotError(ValueError):
@@ -440,6 +447,34 @@ def _validate_adjustments(
                 raise QuoteSnapshotError("manual discounts require approval")
             credit_min += item.amount_min_vnd
             credit_max += item.amount_max_vnd
+        elif item.kind is QuoteAdjustmentKind.REMEDY_CREDIT:
+            # `REMEDY-001`, and its own branch rather than a member added to the discount set above,
+            # because three of its rules differ from a manual discount's.
+            #
+            # It is exact. A credit is a settled number of dong the shop already owes -- it was
+            # computed when the remedy was approved, not while this quote was being priced -- so it
+            # has no minimum and maximum to differ. That is also why a credit may not land on a band
+            # revision: there would be no single subtotal for it to be allocated across.
+            #
+            # It names its source. `source_version_id` is the published `REMEDY_POLICY` version the
+            # figure came from, which is what makes a discount on a stored snapshot traceable to the
+            # owner's ratified figures years later. A credit citing nothing is indistinguishable
+            # from a number somebody typed.
+            #
+            # It does **not** require an `approval_id`, and that is deliberate rather than an
+            # oversight. `DEC-004` lets staff approve compensation up to 100.000 d *without
+            # escalation*; demanding an envelope on every credit would contradict the decision the
+            # figure comes from. The escalation is enforced where the decision puts it -- at
+            # proposal time, against the published staff ceiling -- and a credit that needed the
+            # owner carries the envelope that satisfied it.
+            if item.direction is not AdjustmentDirection.CREDIT:
+                raise QuoteSnapshotError("a remedy credit must be a credit")
+            if item.amount_min_vnd != item.amount_max_vnd:
+                raise QuoteSnapshotError("a remedy credit must be exact")
+            if item.source_version_id is None:
+                raise QuoteSnapshotError("a remedy credit must name its policy version")
+            credit_min += item.amount_min_vnd
+            credit_max += item.amount_max_vnd
         elif item.kind is QuoteAdjustmentKind.DELIVERY:
             if (
                 item.direction is not AdjustmentDirection.DEBIT
@@ -488,12 +523,33 @@ def _validate_finality(data: QuoteRevisionData) -> None:
     # about the world that a snapshot cannot see, so it is enforced where it is visible:
     # `OrderRepository.create` will not create an order against a revision with no acceptance row.
     # The column and its foreign key remain for a genuine two-party approval.
+    # The promotion clause below asks for a resolved eligibility event at `ACCEPTED_FINAL` rather
+    # than at `APPROVED_EXACT`, and `PROMO-WIRING-001` moved it there because the world it described
+    # changed. It was written when no production path evaluated a promotion at all: nothing ever set
+    # `promotion_eligibility_event`, so "APPROVED_EXACT may not reference a promotion with no
+    # resolved event" and "APPROVED_EXACT may not reference a promotion" were the same sentence, and
+    # both were true because a referenced promotion was necessarily an unevaluated one.
+    #
+    # A promotion is now evaluated on every revision, and `DEC-002` keys its eligibility to
+    # `accepted_at`. `close_range_prices` produces `APPROVED_EXACT`/`APPROVED` -- the owner
+    # authorised this amount inside the published band -- at a moment when acceptance has not
+    # happened and `accepted_at` does not exist, so its eligibility is `PROVISIONAL` by construction
+    # and no honest value can be put in that field. Refusing that revision would mean a shop running
+    # a promotion could not close a price band at all.
+    #
+    # Nothing is given up by moving it. `ACCEPTED_FINAL` is the handshake `DEC-021` is about, it is
+    # the only status `OrderRepository.create` will build an order from (`orders.py:322`, alongside
+    # the `quote_acceptances` row), and `accept_quote_revision` is its only producer -- and that
+    # function now refuses with `PROMOTION_ELIGIBILITY_UNRESOLVED` before it ever reaches this
+    # validator. So the check binds at the moment money becomes owed instead of at the moment a
+    # staff member picks a number inside a band, which is where it was always aimed.
     if data.finality is QuoteFinality.APPROVED_EXACT and (
         data.required_approvals
         or data.totals.delivery_fee_vnd is None
         or any(line.quantity_basis is QuantityBasis.CUSTOMER_ESTIMATE for line in data.lines)
         or (
-            any(item.config_type == "PROMOTION" for item in data.configuration_snapshots)
+            data.status is QuoteRevisionStatus.ACCEPTED_FINAL
+            and any(item.config_type == "PROMOTION" for item in data.configuration_snapshots)
             and data.promotion_eligibility_event is None
         )
         or data.status

@@ -114,11 +114,62 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("GET", "/internal/v1/stores/{store_id}/quotes"): store_scoped(
         "quotes", "QuoteRepository.list_for_store"
     ),
+    ("GET", "/internal/v1/stores/{store_id}/quotes/{quote_id}"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "membership enforced in OperationsService.read_quote before the container is located, "
+        "and QuoteRepository.find_container_by_id carries store_id in its predicate, so another "
+        "store's quote id is indistinguishable from one that does not exist",
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/quotes/{quote_id}/range-prices"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "membership enforced in OperationsService.propose_range_prices before the band is read, "
+        "and again inside ApprovalRepository.request; the approval is written with the store it "
+        "belongs to, which is what ApprovalRepository.decide checks membership against",
+    ),
+    (
+        "POST",
+        "/internal/v1/stores/{store_id}/quotes/{quote_id}/range-prices/{approval_id}",
+    ): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "membership enforced in OperationsService.apply_range_prices before the approval or the "
+        "revision is read, and _require_range_price_approval refuses an envelope whose own "
+        "store_id is not this store, so an approval raised elsewhere cannot price this quote",
+    ),
     ("POST", "/internal/v1/stores/{store_id}/incidents"): store_scoped(
         "incidents", "IncidentRepository.open"
     ),
     ("GET", "/internal/v1/stores/{store_id}/incidents"): store_scoped(
         "incidents", "IncidentRepository.list_for_store"
+    ),
+    # --- REMEDY-001 --------------------------------------------------------------------------
+    ("GET", "/internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-options"): (
+        store_scoped("remedies", "RemedyProposalRepository.options")
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-proposals"): (
+        store_scoped("remedies", "RemedyProposalRepository.propose")
+    ),
+    ("POST", "/internal/v1/remedy-proposals/{proposal_id}/execution"): RouteScope(
+        "STORE_SCOPED",
+        ("remedies", "RemedyProposalRepository.execute"),
+        "keyed by proposal_id, so a URL-shape enumeration would miss it exactly as it missed the "
+        "order transition. The store comes from the proposal row the method has already locked "
+        "FOR UPDATE, never from the request, and membership is required on that same cursor while "
+        "the lock is held -- so a concurrently revoked assignment cannot be raced past it. This "
+        "route pays money to a customer, which is why it is keyed by the artefact that carries the "
+        "approval rather than by a store a caller could name.",
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/quotes/{quote_id}/remedy-credits"): RouteScope(
+        "STORE_SCOPED",
+        ("remedies", "RemedyCreditRepository.redeem"),
+        "membership is required before the credit or the quote is read, and both lookups carry "
+        "store_id in their predicates: the credit is selected WHERE id = %s AND store_id = %s and "
+        "the quote through QuoteRepository.find_container_by_id. A credit issued by one shop "
+        "therefore cannot be spent at another, and a credit id from another store is "
+        "indistinguishable from one that does not exist. The credit is a bearer instrument across "
+        "customers by design (DEC-015) but never across shops.",
     ),
     ("GET", "/internal/v1/stores/{store_id}/shadow/drafts"): store_scoped(
         "shadow_console", "ShadowConsoleRepository.list_pending_drafts"

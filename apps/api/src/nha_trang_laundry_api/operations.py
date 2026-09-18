@@ -14,12 +14,14 @@ import psycopg
 from nha_trang_laundry_contracts import AgentDeploymentStage
 from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
 from nha_trang_laundry_db.approvals import (
+    ApprovalBinding,
     ApprovalDecision,
     ApprovalDecisionCommand,
     ApprovalRepository,
     ApprovalRequestCommand,
     ApprovalStateError,
     StoredApproval,
+    read_approval_binding,
 )
 from nha_trang_laundry_db.channel import (
     ChannelBindingError,
@@ -60,6 +62,7 @@ from nha_trang_laundry_db.orders import (
     OrderTransitionCommand,
     StoredOrder,
 )
+from nha_trang_laundry_db.promotions import read_published_promotion_program
 from nha_trang_laundry_db.quotes import (
     QuoteAcceptanceCommand,
     QuoteAcceptanceRepository,
@@ -67,6 +70,14 @@ from nha_trang_laundry_db.quotes import (
     QuoteRevisionCommand,
     QuoteStateError,
     QuoteSummary,
+)
+from nha_trang_laundry_db.remedies import (
+    RemedyCreditRedemptionCommand,
+    RemedyCreditRepository,
+    RemedyExecutionCommand,
+    RemedyOptions,
+    RemedyProposalCommand,
+    RemedyProposalRepository,
 )
 from nha_trang_laundry_db.settlement import (
     CollectedToday,
@@ -87,12 +98,14 @@ from nha_trang_laundry_db.store_access import (
     member_store_ids,
     require_store_membership,
 )
+from nha_trang_laundry_domain.approvals import APPROVAL_RESOURCE_TYPES
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
     ActorRole,
     ApprovalAction,
     CommercialOrderStatus,
     CustodyResolution,
+    ErrorCode,
     FulfillmentMode,
     IntakeStatus,
     ProductionStatus,
@@ -106,9 +119,25 @@ from nha_trang_laundry_domain.quote_composition import (
     RequestedLine,
     UnresolvedQuote,
     accept_quote_revision,
+    close_range_prices,
     compose_quote_revision,
+    frozen_promotion,
+    stored_price_bands,
 )
-from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, parse_quote_revision
+from nha_trang_laundry_domain.quotes import (
+    ExactLineAmounts,
+    ImmutableQuoteSnapshot,
+    parse_quote_revision,
+)
+from nha_trang_laundry_domain.range_prices import (
+    RANGE_PRICE_POLICY_VERSION,
+    RangePriceAttestation,
+    RangePriceChoice,
+    RangePriceRefused,
+    range_price_rendered_document,
+    resolve_range_prices,
+)
+from nha_trang_laundry_domain.remedies import RemedyKind
 
 from nha_trang_laundry_api.auth import AuthSettings
 
@@ -136,6 +165,33 @@ class QuotePricingUnavailable(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class QuotePromotionView:
+    """The promotion frozen onto a committed revision, as a console has to render it.
+
+    `None` in place of this whole object means no programme was evaluated against the revision, and
+    the revision's own reason codes say which of the two cases that is -- `PROMOTION_NOT_PUBLISHED`
+    or `PROMOTION_PENDING_BAND_CLOSE`. It is deliberately not an object full of zeroes: "no
+    promotion was assessed" and "a promotion was assessed and came to nothing" are different
+    sentences to say to a customer, and collapsing them is the failure this item exists to fix.
+
+    `interval_end_at_exclusive` is here so that a console can render *when* an expired programme
+    ended rather than showing a silent zero. It is the exclusive bound, so the last day the
+    programme covered is the day before it.
+    """
+
+    policy_code: str
+    configuration_version: int
+    status: str
+    discount_amount_vnd: int
+    rate_bps: tuple[int, ...]
+    interval_start_at: str
+    interval_end_at_exclusive: str
+    inside_interval: bool
+    eligibility_resolved: bool
+    reason_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class QuoteRevisionResult:
     """A committed quote revision, described by what the domain computed rather than re-derived."""
 
@@ -152,6 +208,7 @@ class QuoteRevisionResult:
     reason_codes: tuple[str, ...]
     required_approvals: tuple[str, ...]
     replayed: bool
+    promotion: QuotePromotionView | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +216,60 @@ class UnresolvedQuoteResult:
     """Policy the engine could not resolve, carried verbatim. No row was written."""
 
     reason_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RangePriceProposalResult:
+    """A raised `SET_RANGE_PRICE` envelope and the exact binding an approver must hand back.
+
+    The three fields beside the approval are what `ApprovalDecisionRequest` requires as
+    `resource_version`, `snapshot_hash` and `rendered_hash`. The request path of
+    `ApprovalRepository` does not project them -- `list_pending` does, and a queue read is not what
+    the person who just proposed a price is looking at -- so they are returned here rather than
+    leaving the console to reconstruct a digest it must not be computing in the first place.
+    """
+
+    approval: StoredApproval
+    resource_version: int
+    snapshot_hash: str
+    rendered_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class QuoteLineView:
+    """One line as a console must render it: what it is, and what it costs or may cost.
+
+    `net_amount_vnd` and the band are mutually exclusive and never both absent. An exact line has
+    the amount; an open band has the two bounds and no amount, because there is no amount -- and a
+    read model that filled one in from the other would be inventing the number this whole item
+    exists to keep a person responsible for.
+    """
+
+    line_id: str
+    service_code: str
+    quantity: str
+    unit: str
+    price_kind: str
+    net_amount_vnd: int | None
+    band_minimum_vnd: int | None
+    band_maximum_vnd: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class QuoteRevisionView:
+    """One stored revision with its lines. Read-only; every number is off the immutable snapshot."""
+
+    quote_id: UUID
+    revision: int
+    row_version: int
+    finality: str
+    status: str
+    snapshot_hash: str
+    display_total_min_vnd: int | None
+    display_total_max_vnd: int | None
+    valid_until: datetime | None
+    reason_codes: tuple[str, ...]
+    lines: tuple[QuoteLineView, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +298,58 @@ class StoredIncidentResult:
     status: str
     fault_decided: bool
     remedy_decided: bool
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StoredRemedyProposalResult:
+    """A recorded remedy proposal and what the server decided about it. `REMEDY-001`.
+
+    `outcome` is `REQUIRE_HUMAN` for exactly one case -- a loss, which `DEC-004` carries forward as
+    undecided -- and `reason_code` then says `LOSS_POLICY_UNRESOLVED`. Both are on the success
+    response rather than an error, because the complaint *was* recorded: the record is the outcome.
+    """
+
+    proposal_id: UUID
+    incident_id: UUID
+    order_id: UUID
+    kind: str
+    status: str
+    outcome: str
+    proposal_hash: str
+    policy_version: int
+    amount_vnd: int | None
+    ceiling_vnd: int | None
+    window_opened_at: str | None
+    window_closes_at: str | None
+    approval_id: UUID | None
+    reason_code: str | None
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StoredRemedyExecutionResult:
+    proposal_id: UUID
+    incident_id: UUID
+    order_id: UUID
+    kind: str
+    status: str
+    #: `REWASH_COMMANDED` or `CREDIT_EXECUTED`, the domain-event names the incident eval queries.
+    event_type: str
+    credit_id: UUID | None
+    amount_vnd: int | None
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StoredCreditRedemptionResult:
+    credit_id: UUID
+    quote_id: UUID
+    revision: int
+    snapshot_hash: str
+    credit_vnd: int
+    net_service_subtotal_vnd: int
+    display_total_vnd: int | None
     replayed: bool
 
 
@@ -266,6 +429,8 @@ class OperationsService:
         self._approvals = ApprovalRepository()
         self._manual_sends = ManualSendRepository()
         self._incidents = IncidentRepository()
+        self._remedies = RemedyProposalRepository()
+        self._remedy_credits = RemedyCreditRepository()
         self._idempotency = IdempotencyRepository()
 
     def create_order(
@@ -881,6 +1046,10 @@ class OperationsService:
                             "quote moved since it was read; read it to the customer again"
                         )
                     stored = QuoteRepository.get_revision(cursor, quote_id, current_revision)
+                    # Read inside the same transaction as the revision, so the programme the
+                    # re-verification runs against is the one published at this instant rather than
+                    # one that could have moved between two connections.
+                    promotion = read_published_promotion_program(cursor)
                 if stored is None:
                     raise QuoteStateError("quote revision is missing")
                 if not hmac.compare_digest(stored.document.snapshot_hash, expected_snapshot_hash):
@@ -903,7 +1072,15 @@ class OperationsService:
                         "QUOTE_EXPIRED: this price is out of date and cannot be accepted; "
                         "price the bag again before the customer agrees"
                     )
-                composition = accept_quote_revision(priced=priced, revision=current_revision + 1)
+                composition = accept_quote_revision(
+                    priced=priced,
+                    revision=current_revision + 1,
+                    promotion=promotion,
+                    # The server's clock, the same one the expiry check above uses and for the same
+                    # reason: a client that decides when its own acceptance happened decides whether
+                    # a promotion covers it.
+                    accepted_at=accepted_at,
+                )
                 if isinstance(composition, UnresolvedQuote):
                     # Refused before anything is written. The reason codes name the missing
                     # fact -- most often a quantity the customer estimated, never weighed.
@@ -943,22 +1120,10 @@ class OperationsService:
                         occurred_at=accepted_at,
                     ),
                 )
-                accepted = composition.snapshot
-                totals = accepted.data.totals
-                return {
-                    "quote_id": str(accepted.data.quote_id),
-                    "revision": accepted.data.revision,
-                    "row_version": row_version + 1,
-                    "finality": accepted.data.finality.value,
-                    "status": accepted.data.status.value,
-                    "snapshot_hash": accepted.document.snapshot_hash,
-                    "list_service_subtotal_vnd": totals.list_service_subtotal_max_vnd,
-                    "net_service_subtotal_vnd": totals.net_service_subtotal_max_vnd,
-                    "display_total_min_vnd": totals.display_total_min_vnd,
-                    "display_total_max_vnd": totals.display_total_max_vnd,
-                    "reason_codes": list(accepted.data.reason_codes),
-                    "required_approvals": list(accepted.data.required_approvals),
-                }
+                # The same projection `create_quote` and `apply_range_prices` use. It used to be
+                # spelled out again here, which meant a field added to one of the three reached two
+                # of them -- and `PROMO-WIRING-001` adds one.
+                return _quote_mapping(composition.snapshot, row_version=row_version + 1)
 
             try:
                 result = self._idempotency.execute(
@@ -1009,8 +1174,14 @@ class OperationsService:
         quote_id: UUID | None = None,
         expected_current_revision: int = 0,
         expected_row_version: int = 0,
+        present_range_as_band: bool = False,
     ) -> QuoteRevisionResult | UnresolvedQuoteResult:
-        """Price through the deterministic engine and commit one immutable revision."""
+        """Price through the deterministic engine and commit one immutable revision.
+
+        `present_range_as_band` is the only way a revision containing an open band is written, and
+        it is off unless a caller asks: every existing caller wants an exact price, and a band
+        arriving where one was expected would be a total that is not a total.
+        """
         priced_at = datetime.now(UTC)
         target_id = quote_id or uuid4()
         revision = expected_current_revision + 1
@@ -1025,6 +1196,10 @@ class OperationsService:
                     error=StoreAccessError,
                 )
                 pricebook = self._published_pricebook(cursor)
+                # `None` when the owner has published no programme, which is a state this system
+                # supports rather than an error: the quote composes at list price and says
+                # `PROMOTION_NOT_PUBLISHED`. Invariant 11 -- there is no constant to fall back on.
+                promotion = read_published_promotion_program(cursor)
             composition = compose_quote_revision(
                 quote_id=target_id,
                 revision=revision,
@@ -1037,6 +1212,8 @@ class OperationsService:
                 planned_transport_weight_kg=planned_transport_weight_kg,
                 approved_manual_fee_vnd=approved_manual_fee_vnd,
                 customer_acknowledged_manual_fee=customer_acknowledged_manual_fee,
+                present_range_as_band=present_range_as_band,
+                promotion=promotion,
             )
             if isinstance(composition, UnresolvedQuote):
                 # Nothing is written and no idempotency record is claimed: an unresolved quote is
@@ -1084,6 +1261,17 @@ class OperationsService:
                             "planned_transport_weight_kg": planned_transport_weight_kg,
                             "approved_manual_fee_vnd": approved_manual_fee_vnd,
                             "customer_acknowledged_manual_fee": customer_acknowledged_manual_fee,
+                            # Part of the request for the same reason the delivery facts are: it
+                            # decides whether the stored revision is a band or a refusal, so the
+                            # same key asking for the other one must conflict rather than replay.
+                            "present_range_as_band": present_range_as_band,
+                            # The programme in force moves the display total exactly as a delivery
+                            # fee does. Leaving it out would let the same key replay a price
+                            # computed under a programme that has since been replaced, which is the
+                            # bug the delivery facts were added to this payload to fix.
+                            "promotion_version_id": (
+                                None if promotion is None else str(promotion.version_id)
+                            ),
                             "lines": [
                                 {
                                     "service_code": line.service_code,
@@ -1108,6 +1296,272 @@ class OperationsService:
                     "this order request already has a quote; add a revision instead"
                 ) from error
         return _quote_revision_result(result.response, replayed=result.replayed)
+
+    # --- RANGE-PRICE-001 ---------------------------------------------------------------------
+    #
+    # Twenty of the forty-four published services carry a band rather than a rate, and until this
+    # item none of them could be quoted. Closing one is two commands, in this order, and the order
+    # is not an implementation detail:
+    #
+    #   1. `create_quote(present_range_as_band=True)` stores the band the customer was shown.
+    #   2. `propose_range_prices` validates the staff member's amounts against *that stored
+    #      revision* and raises a `SET_RANGE_PRICE` envelope bound to its digest.
+    #   3. the existing `/internal/v1/approvals/{id}/decisions` route: a second person approves.
+    #   4. `apply_range_prices` writes the amounts into a new revision.
+    #
+    # The band revision has to exist first because an approval must bind something real. The
+    # alternative -- raising an envelope against a revision that does not exist yet, with a
+    # fabricated `snapshot_hash` -- is exactly what migration `0029` was written to stop.
+    #
+    # Neither method below does arithmetic on money. They establish who is asking, which stored
+    # revision answers, and whether the envelope binds this exact content; every number comes back
+    # from `packages/domain`.
+
+    def propose_range_prices(
+        self,
+        *,
+        store_id: UUID,
+        quote_id: UUID,
+        expected_current_revision: int,
+        expected_snapshot_hash: str,
+        choices: tuple[RangePriceChoice, ...],
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> RangePriceProposalResult | UnresolvedQuoteResult:
+        """Check the amounts against the stored band, then raise the envelope for them.
+
+        Nothing is priced here and no revision is written. A refusal therefore costs nothing: an
+        out-of-band amount is refused before any approval exists, which is what makes "nothing is
+        persisted" true rather than merely tidy.
+        """
+
+        if not principal.roles & QUOTE_ACCEPTANCE_ROLES or not principal.mfa_verified:
+            raise StoreAccessError("proposing a price inside a band requires an operations role")
+        with self._connection_factory(self._database_url) as connection:
+            with connection.cursor() as cursor:
+                require_store_membership(
+                    cursor,
+                    staff_user_id=principal.staff_user_id,
+                    store_id=store_id,
+                    error=StoreAccessError,
+                )
+                priced = self._bound_band_revision(
+                    cursor,
+                    store_id=store_id,
+                    quote_id=quote_id,
+                    expected_current_revision=expected_current_revision,
+                    expected_snapshot_hash=expected_snapshot_hash,
+                )
+            proposal = _range_price_attestation(priced, choices)
+            if proposal is None:
+                raise QuoteStateError("this quote revision carries no price band")
+            refusal = _band_refusal(priced, proposal)
+            if refusal is not None:
+                return UnresolvedQuoteResult((refusal,))
+            rendered_hash = range_price_rendered_document(proposal).snapshot_hash
+            return RangePriceProposalResult(
+                approval=self._approvals.request(
+                    connection,
+                    ApprovalRequestCommand(
+                        ApprovalAction.SET_RANGE_PRICE,
+                        # `APPROVAL_RESOURCE_TYPES[SET_RANGE_PRICE]`, not a literal chosen here:
+                        # `build_approval_envelope` refuses any other value for this action.
+                        APPROVAL_RESOURCE_TYPES[ApprovalAction.SET_RANGE_PRICE],
+                        quote_id,
+                        priced.data.revision,
+                        priced.document.snapshot_hash,
+                        rendered_hash,
+                        RANGE_PRICE_POLICY_VERSION,
+                        principal.staff_user_id,
+                        idempotency_key,
+                        uuid4(),
+                        store_id=store_id,
+                    ),
+                ),
+                resource_version=priced.data.revision,
+                snapshot_hash=priced.document.snapshot_hash,
+                rendered_hash=rendered_hash,
+            )
+
+    def apply_range_prices(
+        self,
+        *,
+        store_id: UUID,
+        quote_id: UUID,
+        approval_id: UUID,
+        expected_current_revision: int,
+        expected_snapshot_hash: str,
+        choices: tuple[RangePriceChoice, ...],
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> QuoteRevisionResult | UnresolvedQuoteResult:
+        """Write the approved amounts into a new revision derived from the band revision.
+
+        The amounts are supplied again rather than read from the envelope, because the envelope
+        stores a digest and not the content -- `approvals.py` says so plainly and calls comparing an
+        unstored rendering "theatre". Re-deriving the digest from the amounts in hand and demanding
+        it equal the one the owner approved is the check that is not theatre: it proves the caller
+        holds the same content, and invariant 8 asks for nothing weaker and nothing more.
+
+        Editing a line invalidates the approval by construction rather than by a rule written here.
+        An edit is a new revision, the container moves past the one the envelope named, and every
+        comparison below then fails.
+        """
+
+        if not principal.roles & QUOTE_ACCEPTANCE_ROLES or not principal.mfa_verified:
+            raise StoreAccessError("closing a price band requires an operations role")
+        applied_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            with connection.cursor() as cursor:
+                require_store_membership(
+                    cursor,
+                    staff_user_id=principal.staff_user_id,
+                    store_id=store_id,
+                    error=StoreAccessError,
+                )
+                binding = read_approval_binding(cursor, approval_id)
+                container = QuoteRepository.find_container_by_id(cursor, store_id, quote_id)
+                priced = self._bound_band_revision(
+                    cursor,
+                    store_id=store_id,
+                    quote_id=quote_id,
+                    expected_current_revision=expected_current_revision,
+                    expected_snapshot_hash=expected_snapshot_hash,
+                )
+                promotion = read_published_promotion_program(cursor)
+            if container is None:
+                raise QuoteStateError("quote is missing, closed, or not in this store")
+            attestation = _range_price_attestation(priced, choices, approval_id=approval_id)
+            if attestation is None:
+                raise QuoteStateError("this quote revision carries no price band")
+            _require_range_price_approval(
+                binding,
+                store_id=store_id,
+                quote_id=quote_id,
+                priced=priced,
+                rendered_hash=range_price_rendered_document(attestation).snapshot_hash,
+                at=applied_at,
+            )
+            composition = close_range_prices(
+                priced=priced,
+                revision=priced.data.revision + 1,
+                attestation=attestation,
+                promotion=promotion,
+                # A promotion applies to the amount the staff member just chose, evaluated at the
+                # moment they chose it. See `close_range_prices` for why the band is the wrong base.
+                closed_at=applied_at,
+            )
+            if isinstance(composition, UnresolvedQuote):
+                # Refused before anything is written, exactly as `create_quote` refuses: an
+                # unresolved price is not an outcome a caller should be able to replay into
+                # existence later, so no idempotency record is claimed either.
+                return UnresolvedQuoteResult(composition.reason_codes)
+            snapshot = composition.snapshot
+
+            def commit() -> dict[str, object]:
+                QuoteRepository().create_revision(
+                    connection,
+                    QuoteRevisionCommand(
+                        store_id=store_id,
+                        bound_order_request_id=container.bound_order_request_id,
+                        snapshot=snapshot,
+                        expected_current_revision=priced.data.revision,
+                        expected_row_version=container.row_version,
+                        created_by=principal.staff_user_id,
+                        correlation_id=uuid4(),
+                        occurred_at=applied_at,
+                    ),
+                )
+                return _quote_mapping(snapshot, row_version=container.row_version + 1)
+
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-range-price:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={
+                        "store_id": str(store_id),
+                        "quote_id": str(quote_id),
+                        "approval_id": str(approval_id),
+                        "expected_current_revision": expected_current_revision,
+                        "expected_snapshot_hash": expected_snapshot_hash,
+                        # The amounts are part of what makes this request this request: the same
+                        # key with different numbers must conflict rather than replay the old ones.
+                        "choices": [
+                            {"service_code": choice.service_code, "amount_vnd": choice.amount_vnd}
+                            for choice in sorted(choices, key=lambda item: item.service_code)
+                        ],
+                    },
+                    occurred_at=applied_at,
+                ),
+                commit,
+            )
+            return _quote_revision_result(result.response, replayed=result.replayed)
+
+    def read_quote(
+        self,
+        *,
+        store_id: UUID,
+        quote_id: UUID,
+        principal: StaffPrincipal,
+        revision: int | None = None,
+    ) -> QuoteRevisionView:
+        """One revision with its lines, so a console can render a band and what was chosen in it.
+
+        The list read returns totals only, which is enough to show a quote and not enough to close
+        one: closing a band needs the bound per line, and the bound lives on the line.
+        """
+
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as (cursor),
+        ):
+            require_store_membership(
+                cursor,
+                staff_user_id=principal.staff_user_id,
+                store_id=store_id,
+                error=StoreAccessError,
+            )
+            container = QuoteRepository.find_container_by_id(cursor, store_id, quote_id)
+            if container is None:
+                # No lifecycle condition, unlike the command paths: a quote that became an order is
+                # exactly when somebody asks what was charged for it.
+                raise QuoteStateError("quote is missing or not in this store")
+            target = container.current_revision if revision is None else revision
+            stored = QuoteRepository.get_revision(cursor, quote_id, target)
+        if stored is None:
+            raise QuoteStateError("quote revision is missing")
+        priced = parse_quote_revision(json.loads(stored.document.canonical_json))
+        return _quote_revision_view(
+            priced, snapshot_hash=stored.document.snapshot_hash, row_version=container.row_version
+        )
+
+    def _bound_band_revision(
+        self,
+        cursor: Any,
+        *,
+        store_id: UUID,
+        quote_id: UUID,
+        expected_current_revision: int,
+        expected_snapshot_hash: str,
+    ) -> ImmutableQuoteSnapshot:
+        """The current revision of this store's quote, proven to be the one the caller read.
+
+        Both compare-and-swap checks, for the reason `accept_quote` gives: an amount chosen against
+        a revision that has since moved was chosen against a price nobody is offering any more.
+        """
+
+        container = QuoteRepository.find_container_by_id(cursor, store_id, quote_id)
+        if container is None or container.lifecycle != "OPEN":
+            raise QuoteStateError("quote is missing, closed, or not in this store")
+        if container.current_revision != expected_current_revision:
+            raise QuoteStateError("quote moved since it was read; read the band again")
+        stored = QuoteRepository.get_revision(cursor, quote_id, container.current_revision)
+        if stored is None:
+            raise QuoteStateError("quote revision is missing")
+        if not hmac.compare_digest(stored.document.snapshot_hash, expected_snapshot_hash):
+            raise QuoteStateError("quote content changed since it was read")
+        return parse_quote_revision(json.loads(stored.document.canonical_json))
 
     def _published_pricebook(self, cursor: Any) -> tuple[dict[str, Any], PricebookProvenance]:
         """Resolve the one pricebook this deployment prices against, or refuse.
@@ -1342,6 +1796,162 @@ class OperationsService:
                 ),
             )
         return _stored_incident_result(result.response, replayed=result.replayed)
+
+    # --- REMEDY-001 --------------------------------------------------------------------------
+    #
+    # Four methods and no arithmetic. Every ceiling, window and rate is decided by
+    # `nha_trang_laundry_domain.remedies` from a published `REMEDY_POLICY` version; this layer
+    # resolves a connection, forwards, and returns what the repository gives back.
+
+    def remedy_options(
+        self, *, store_id: UUID, incident_id: UUID, principal: StaffPrincipal
+    ) -> RemedyOptions:
+        """What the server would allow for this incident, before anybody types anything.
+
+        The form has to show the kind, the computed ceiling, the window and whether the owner will
+        be needed *first*. Staff discovering after filling a form in that the owner is required is
+        the failure this read exists to prevent, and it is a read: nothing is written and nothing is
+        reserved by asking.
+        """
+
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return self._remedies.options(
+                cursor, store_id=store_id, incident_id=incident_id, principal=principal
+            )
+
+    def propose_remedy(
+        self,
+        *,
+        store_id: UUID,
+        incident_id: UUID,
+        kind: RemedyKind,
+        store_fault_attested: bool,
+        order_line_id: str | None,
+        amount_vnd: int | None,
+        attested_late_by_minutes: int | None,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> StoredRemedyProposalResult:
+        """Record what a staff member proposed, after the server checked it against `DEC-004`."""
+
+        proposed_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-remedy-propose:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    # The amount and the line are part of what makes this request this request: the
+                    # same key with a different figure must conflict rather than replay the old one.
+                    payload={
+                        "store_id": str(store_id),
+                        "incident_id": str(incident_id),
+                        "kind": kind.value,
+                        "store_fault_attested": store_fault_attested,
+                        "order_line_id": order_line_id,
+                        "amount_vnd": amount_vnd,
+                        "attested_late_by_minutes": attested_late_by_minutes,
+                    },
+                    occurred_at=proposed_at,
+                ),
+                lambda: _remedy_proposal_mapping(
+                    self._remedies.propose(
+                        connection,
+                        RemedyProposalCommand(
+                            store_id=store_id,
+                            incident_id=incident_id,
+                            kind=kind,
+                            store_fault_attested=store_fault_attested,
+                            principal=principal,
+                            correlation_id=uuid4(),
+                            order_line_id=order_line_id,
+                            amount_vnd=amount_vnd,
+                            attested_late_by_minutes=attested_late_by_minutes,
+                            proposed_at=proposed_at,
+                        ),
+                    )
+                ),
+            )
+        return _stored_remedy_proposal_result(result.response, replayed=result.replayed)
+
+    def execute_remedy(
+        self, *, proposal_id: UUID, idempotency_key: str, principal: StaffPrincipal
+    ) -> StoredRemedyExecutionResult:
+        """Carry out an authorised remedy: issue the credit, or command the rewash."""
+
+        executed_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-remedy-execute:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={"proposal_id": str(proposal_id)},
+                    occurred_at=executed_at,
+                ),
+                lambda: _remedy_execution_mapping(
+                    self._remedies.execute(
+                        connection,
+                        RemedyExecutionCommand(
+                            proposal_id=proposal_id,
+                            principal=principal,
+                            correlation_id=uuid4(),
+                            executed_at=executed_at,
+                        ),
+                    )
+                ),
+            )
+        return _stored_remedy_execution_result(result.response, replayed=result.replayed)
+
+    def redeem_remedy_credit(
+        self,
+        *,
+        store_id: UUID,
+        quote_id: UUID,
+        credit_id: UUID,
+        expected_current_revision: int,
+        expected_snapshot_hash: str,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> StoredCreditRedemptionResult:
+        """Spend one credit against the next bill, as a revision that carries its discount."""
+
+        redeemed_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-remedy-redeem:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={
+                        "store_id": str(store_id),
+                        "quote_id": str(quote_id),
+                        "credit_id": str(credit_id),
+                        "expected_current_revision": expected_current_revision,
+                        "expected_snapshot_hash": expected_snapshot_hash,
+                    },
+                    occurred_at=redeemed_at,
+                ),
+                lambda: _credit_redemption_mapping(
+                    self._remedy_credits.redeem(
+                        connection,
+                        RemedyCreditRedemptionCommand(
+                            store_id=store_id,
+                            quote_id=quote_id,
+                            credit_id=credit_id,
+                            expected_current_revision=expected_current_revision,
+                            expected_snapshot_hash=expected_snapshot_hash,
+                            principal=principal,
+                            correlation_id=uuid4(),
+                            redeemed_at=redeemed_at,
+                        ),
+                    )
+                ),
+            )
+        return _stored_credit_redemption_result(result.response, replayed=result.replayed)
 
     # --- SETTLEMENT-001 ----------------------------------------------------------------------
 
@@ -1737,6 +2347,113 @@ def _stored_incident_result(value: dict[str, object], *, replayed: bool) -> Stor
     )
 
 
+def _remedy_proposal_mapping(value: Any) -> dict[str, object]:
+    """Flatten a stored proposal for the idempotency record, which holds JSON and not objects."""
+
+    return {
+        "proposal_id": str(value.proposal_id),
+        "incident_id": str(value.incident_id),
+        "order_id": str(value.order_id),
+        "kind": value.kind.value,
+        "status": value.status.value,
+        "outcome": value.outcome.value,
+        "proposal_hash": value.proposal_hash,
+        "policy_version": value.policy_version,
+        "amount_vnd": value.amount_vnd,
+        "ceiling_vnd": value.ceiling_vnd,
+        "window_opened_at": _isoformat(value.window_opened_at),
+        "window_closes_at": _isoformat(value.window_closes_at),
+        "approval_id": None if value.approval_id is None else str(value.approval_id),
+        "reason_code": value.reason_code,
+    }
+
+
+def _stored_remedy_proposal_result(
+    value: dict[str, object], *, replayed: bool
+) -> StoredRemedyProposalResult:
+    return StoredRemedyProposalResult(
+        proposal_id=UUID(str(value["proposal_id"])),
+        incident_id=UUID(str(value["incident_id"])),
+        order_id=UUID(str(value["order_id"])),
+        kind=str(value["kind"]),
+        status=str(value["status"]),
+        outcome=str(value["outcome"]),
+        proposal_hash=str(value["proposal_hash"]),
+        policy_version=int(str(value["policy_version"])),
+        amount_vnd=_optional_vnd(value["amount_vnd"]),
+        ceiling_vnd=_optional_vnd(value["ceiling_vnd"]),
+        window_opened_at=_optional_text(value["window_opened_at"]),
+        window_closes_at=_optional_text(value["window_closes_at"]),
+        approval_id=(None if value["approval_id"] is None else UUID(str(value["approval_id"]))),
+        reason_code=_optional_text(value["reason_code"]),
+        replayed=replayed,
+    )
+
+
+def _remedy_execution_mapping(value: Any) -> dict[str, object]:
+    return {
+        "proposal_id": str(value.proposal_id),
+        "incident_id": str(value.incident_id),
+        "order_id": str(value.order_id),
+        "kind": value.kind.value,
+        "status": value.status.value,
+        "event_type": value.event_type,
+        "credit_id": None if value.credit_id is None else str(value.credit_id),
+        "amount_vnd": value.amount_vnd,
+    }
+
+
+def _stored_remedy_execution_result(
+    value: dict[str, object], *, replayed: bool
+) -> StoredRemedyExecutionResult:
+    return StoredRemedyExecutionResult(
+        proposal_id=UUID(str(value["proposal_id"])),
+        incident_id=UUID(str(value["incident_id"])),
+        order_id=UUID(str(value["order_id"])),
+        kind=str(value["kind"]),
+        status=str(value["status"]),
+        event_type=str(value["event_type"]),
+        credit_id=None if value["credit_id"] is None else UUID(str(value["credit_id"])),
+        amount_vnd=_optional_vnd(value["amount_vnd"]),
+        replayed=replayed,
+    )
+
+
+def _credit_redemption_mapping(value: Any) -> dict[str, object]:
+    return {
+        "credit_id": str(value.credit_id),
+        "quote_id": str(value.quote_id),
+        "revision": value.revision,
+        "snapshot_hash": value.snapshot_hash,
+        "credit_vnd": value.credit_vnd,
+        "net_service_subtotal_vnd": value.net_service_subtotal_vnd,
+        "display_total_vnd": value.display_total_vnd,
+    }
+
+
+def _stored_credit_redemption_result(
+    value: dict[str, object], *, replayed: bool
+) -> StoredCreditRedemptionResult:
+    return StoredCreditRedemptionResult(
+        credit_id=UUID(str(value["credit_id"])),
+        quote_id=UUID(str(value["quote_id"])),
+        revision=int(str(value["revision"])),
+        snapshot_hash=str(value["snapshot_hash"]),
+        credit_vnd=int(str(value["credit_vnd"])),
+        net_service_subtotal_vnd=int(str(value["net_service_subtotal_vnd"])),
+        display_total_vnd=_optional_vnd(value["display_total_vnd"]),
+        replayed=replayed,
+    )
+
+
+def _isoformat(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat()
+
+
+def _optional_text(value: object) -> str | None:
+    return None if value is None else str(value)
+
+
 def _stored_order_request_result(
     value: dict[str, object], *, replayed: bool
 ) -> StoredOrderRequestResult:
@@ -1801,7 +2518,175 @@ def _quote_mapping(snapshot: ImmutableQuoteSnapshot, *, row_version: int) -> dic
         "display_total_max_vnd": totals.display_total_max_vnd,
         "reason_codes": list(data.reason_codes),
         "required_approvals": list(data.required_approvals),
+        "promotion": _promotion_mapping(snapshot),
     }
+
+
+def _promotion_mapping(snapshot: ImmutableQuoteSnapshot) -> dict[str, object] | None:
+    """Read the frozen promotion off the revision. Nothing here is recomputed.
+
+    `frozen_promotion` parses the revision's own `PROMOTION` calculation trace, which is canonical
+    bytes inside an immutable snapshot. Re-deriving any of it at read time would mean the console
+    could show a number the customer was never told -- the same failure the freeze exists to
+    prevent, arriving through the back door.
+    """
+
+    frozen = frozen_promotion(snapshot)
+    if frozen is None:
+        return None
+    return {
+        "policy_code": frozen.policy_code,
+        "configuration_version": frozen.configuration_version,
+        "status": frozen.status,
+        "discount_amount_vnd": frozen.discount_amount_vnd,
+        "rate_bps": list(frozen.rate_bps),
+        "interval_start_at": frozen.interval_start_at,
+        "interval_end_at_exclusive": frozen.interval_end_at_exclusive,
+        "inside_interval": frozen.candidate_inside_interval,
+        "eligibility_resolved": frozen.eligibility_resolved,
+        "reason_codes": list(frozen.reason_codes),
+    }
+
+
+def _range_price_attestation(
+    priced: ImmutableQuoteSnapshot,
+    choices: tuple[RangePriceChoice, ...],
+    *,
+    approval_id: UUID | None = None,
+) -> RangePriceAttestation | None:
+    """Assemble the attestation from the stored revision plus the amounts a person chose.
+
+    Every field except the amounts is server-derived: the quote, the revision, and the pricebook
+    version the revision was priced against. A caller supplies numbers and nothing else, so it
+    cannot state which band its numbers should be checked against -- which is the difference between
+    a bound and a suggestion.
+
+    `None` when the stored revision names no pricebook, which `build_quote_snapshot` makes
+    impossible and this refuses anyway rather than reading `[0]` off an empty sequence.
+    """
+
+    pricebook = next(
+        (item for item in priced.data.configuration_snapshots if item.config_type == "PRICEBOOK"),
+        None,
+    )
+    if pricebook is None:
+        return None
+    return RangePriceAttestation(
+        quote_id=priced.data.quote_id,
+        revision=priced.data.revision,
+        pricebook_version_id=pricebook.version_id,
+        pricebook_version=pricebook.version,
+        choices=choices,
+        approval_id=approval_id,
+    )
+
+
+def _band_refusal(priced: ImmutableQuoteSnapshot, attestation: RangePriceAttestation) -> str | None:
+    """The domain's verdict on a set of amounts, before any envelope is raised.
+
+    `apply_range_prices` checks the same thing again through `close_range_prices`, and that is not
+    duplication worth removing: this call is what keeps an out-of-band amount from ever producing an
+    approval row, and that one is what keeps a stale or tampered one from producing a price.
+    """
+
+    bands = stored_price_bands(priced)
+    if bands is None:
+        return ErrorCode.VALIDATION_ERROR.value
+    outcome = resolve_range_prices(
+        bands=bands,
+        pricebook_version_id=attestation.pricebook_version_id,
+        pricebook_version=attestation.pricebook_version,
+        attestation=attestation,
+    )
+    if isinstance(outcome, RangePriceRefused):
+        return outcome.reason_code
+    if set(outcome.amounts) != set(bands):
+        return ErrorCode.RANGE_PRICE_REQUIRES_HUMAN.value
+    return None
+
+
+def _require_range_price_approval(
+    binding: ApprovalBinding | None,
+    *,
+    store_id: UUID,
+    quote_id: UUID,
+    priced: ImmutableQuoteSnapshot,
+    rendered_hash: str,
+    at: datetime,
+) -> None:
+    """Prove the envelope is an approved `SET_RANGE_PRICE` for exactly this content. Invariant 8.
+
+    One message for every failure, deliberately, and for the same reason
+    `_require_resolvable_resource` gives: separate strings would tell a member of any store whether
+    a UUID is a real approval in somebody else's shop.
+
+    Expiry is enforced here as well as at the decision, which is a real operational cost:
+    `_OWNER_FINANCIAL` allows ten minutes, so an owner\'s approval and the staff member\'s
+    application have to happen inside one window. That cost is raised for the owner in
+    `docs/DECISION_REQUEST_RANGE_PRICE_AUTHORITY_2026-09.md` rather than softened here, because a
+    money envelope that outlives its own TTL is exactly what a TTL is for.
+    """
+
+    if (
+        binding is None
+        or binding.store_id != store_id
+        or binding.action is not ApprovalAction.SET_RANGE_PRICE
+        or binding.resource_type != APPROVAL_RESOURCE_TYPES[ApprovalAction.SET_RANGE_PRICE]
+        or binding.resource_id != quote_id
+        or binding.resource_version != priced.data.revision
+        or binding.status != ApprovalDecision.APPROVED.value
+        or at >= binding.expires_at
+        or not hmac.compare_digest(binding.snapshot_hash, priced.document.snapshot_hash)
+        or not hmac.compare_digest(binding.rendered_hash, rendered_hash)
+    ):
+        raise QuoteStateError(
+            "no approved price is bound to this exact revision; propose the amounts again"
+        )
+
+
+def _quote_revision_view(
+    priced: ImmutableQuoteSnapshot, *, snapshot_hash: str, row_version: int
+) -> QuoteRevisionView:
+    """Project a stored revision for reading. Nothing is computed; every field is read off it."""
+
+    data = priced.data
+    return QuoteRevisionView(
+        quote_id=data.quote_id,
+        revision=data.revision,
+        row_version=row_version,
+        finality=data.finality.value,
+        status=data.status.value,
+        snapshot_hash=snapshot_hash,
+        display_total_min_vnd=data.totals.display_total_min_vnd,
+        display_total_max_vnd=data.totals.display_total_max_vnd,
+        valid_until=data.valid_until,
+        reason_codes=data.reason_codes,
+        lines=tuple(
+            QuoteLineView(
+                line_id=line.line_id,
+                service_code=line.service_code,
+                quantity=line.quantity,
+                unit=line.unit.value,
+                price_kind=line.amounts.kind,
+                net_amount_vnd=(
+                    line.amounts.net_amount_vnd
+                    if isinstance(line.amounts, ExactLineAmounts)
+                    else None
+                ),
+                band_minimum_vnd=(
+                    None
+                    if isinstance(line.amounts, ExactLineAmounts)
+                    else line.amounts.net_amount_min_vnd
+                ),
+                band_maximum_vnd=(
+                    None
+                    if isinstance(line.amounts, ExactLineAmounts)
+                    else line.amounts.net_amount_max_vnd
+                ),
+            )
+            for line in data.lines
+        ),
+    )
 
 
 def _quote_revision_result(value: dict[str, object], *, replayed: bool) -> QuoteRevisionResult:
@@ -1819,6 +2704,30 @@ def _quote_revision_result(value: dict[str, object], *, replayed: bool) -> Quote
         reason_codes=tuple(str(code) for code in _string_list(value["reason_codes"])),
         required_approvals=tuple(str(code) for code in _string_list(value["required_approvals"])),
         replayed=replayed,
+        # `.get`, not `[...]`: a response stored in the idempotency ledger before
+        # `PROMO-WIRING-001` has no promotion key, and a replay of it must still return rather than
+        # raising. Absent reads as "no promotion was frozen on that revision", which is what was
+        # true when it was written.
+        promotion=_promotion_view(value.get("promotion")),
+    )
+
+
+def _promotion_view(value: object) -> QuotePromotionView | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise OperationsUnavailable("stored quote response is malformed")
+    return QuotePromotionView(
+        policy_code=str(value["policy_code"]),
+        configuration_version=int(str(value["configuration_version"])),
+        status=str(value["status"]),
+        discount_amount_vnd=int(str(value["discount_amount_vnd"])),
+        rate_bps=tuple(int(str(rate)) for rate in _string_list(value["rate_bps"])),
+        interval_start_at=str(value["interval_start_at"]),
+        interval_end_at_exclusive=str(value["interval_end_at_exclusive"]),
+        inside_interval=bool(value["inside_interval"]),
+        eligibility_resolved=bool(value["eligibility_resolved"]),
+        reason_codes=tuple(str(code) for code in _string_list(value["reason_codes"])),
     )
 
 

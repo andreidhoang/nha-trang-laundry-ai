@@ -46,6 +46,7 @@ from nha_trang_laundry_db.orders import (
     StoredOrder,
 )
 from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
+from nha_trang_laundry_db.remedies import RemedyAuthorizationError, RemedyStateError
 from nha_trang_laundry_db.settlement import (
     BUSINESS_TIMEZONE,
     SettlementAuthorizationError,
@@ -67,6 +68,8 @@ from nha_trang_laundry_domain.catalog import (
     Unit,
 )
 from nha_trang_laundry_domain.quote_composition import RequestedLine
+from nha_trang_laundry_domain.range_prices import RangePriceChoice
+from nha_trang_laundry_domain.remedies import RemedyKind
 from nha_trang_laundry_observability import (
     CORRELATION_HEADER,
     CorrelationContext,
@@ -98,6 +101,7 @@ from nha_trang_laundry_api.operations import (
     OperationsUnavailable,
     QueueRecoverySummary,
     QuotePricingUnavailable,
+    QuotePromotionView,
     StoredIncidentResult,
     StoredManualSendResult,
     UnresolvedQuoteResult,
@@ -315,6 +319,115 @@ class IncidentOpenRequest(StrictRequest):
     evidence_summary: str = Field(min_length=1, max_length=2000)
 
 
+class RemedyProposalRequest(StrictRequest):
+    """What a staff member proposes. `REMEDY-001`, `DEC-004`.
+
+    **There is no ceiling field and there must never be.** The 5x damage cap comes from the order's
+    own priced line and the 10% late-delivery credit from its settled total; a client that could
+    state either would be authorising its own bound. The same applies to the window: it is measured
+    from a recorded handover, not from a date a form supplies.
+
+    `amount_vnd` is an integer of dong and is legal for exactly one kind. `DAMAGE_COMPENSATION` is
+    the only remedy where a person chooses the figure -- a rewash moves no money, a late-delivery
+    credit is computed, and loss has no figure at all -- so supplying it anywhere else is refused
+    with `REMEDY_AMOUNT_NOT_APPLICABLE` rather than ignored.
+    """
+
+    kind: RemedyKind
+    #: The staff finding `DEC-004` rests every remedy on. Required, with no default: a remedy is
+    #: authorised by somebody deciding the store was at fault, and a default would decide it for
+    #: them in whichever direction the default pointed.
+    store_fault_attested: bool
+    order_line_id: str | None = Field(default=None, min_length=1, max_length=64)
+    amount_vnd: int | None = Field(default=None, ge=0, le=MAX_CANONICAL_INT)
+    #: How late the delivery was, attested by the staff member who handled it. The shop records no
+    #: promised arrival time, so this cannot be derived; that a return leg happened at all is
+    #: checked against the record, and this is refused unless it clears the published threshold.
+    attested_late_by_minutes: int | None = Field(default=None, ge=0, le=MAX_CANONICAL_INT)
+
+
+class RemedyCreditRedemptionRequest(StrictRequest):
+    """Which credit to spend, and the caller's evidence that it read the quote it is spending on."""
+
+    credit_id: UUID
+    expected_current_revision: int = Field(ge=1)
+    expected_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
+
+
+class RemedyProposalResponse(BaseModel):
+    """The recorded proposal, with the figures the server computed for it.
+
+    `outcome` is `REQUIRE_HUMAN` and `reason_code` is `LOSS_POLICY_UNRESOLVED` for a loss, on a 201
+    rather than an error: the complaint was recorded, and for a loss the record *is* the outcome.
+    Every other field is then null, because `DEC-004` gives loss no figure of any kind.
+    """
+
+    proposal_id: UUID
+    incident_id: UUID
+    order_id: UUID
+    kind: str
+    status: str
+    outcome: str
+    proposal_hash: str
+    policy_version: int
+    amount_vnd: int | None
+    #: What the server computed the bound to be. Null where the kind has none.
+    ceiling_vnd: int | None
+    window_opened_at: str | None
+    window_closes_at: str | None
+    #: The `APPROVE_REMEDY` envelope, present exactly when the amount is above the staff ceiling.
+    approval_id: UUID | None
+    reason_code: str | None
+    replayed: bool
+
+
+class RemedyExecutionResponse(BaseModel):
+    proposal_id: UUID
+    incident_id: UUID
+    order_id: UUID
+    kind: str
+    status: str
+    event_type: str
+    credit_id: UUID | None
+    amount_vnd: int | None
+    replayed: bool
+
+
+class RemedyOptionsResponse(BaseModel):
+    """What the form must show before a staff member types anything.
+
+    `policy_published` false means every remedy fails closed (invariant 11) and the console must say
+    that the owner has not published the figures -- not render an empty form. A null
+    `late_delivery_credit_vnd` means no delivery this system recorded could have been late, and is
+    rendered as unavailable rather than as 0.
+    """
+
+    incident_id: UUID
+    order_id: UUID
+    policy_published: bool
+    staff_approval_ceiling_vnd: int | None
+    goods_returned_at: str | None
+    rewash_window_closes_at: str | None
+    rewash_window_open: bool
+    defect_window_closes_at: str | None
+    defect_window_open: bool
+    damage_line_ceilings_vnd: dict[str, int] | None
+    late_delivery_credit_vnd: int | None
+    late_delivery_threshold_minutes: int | None
+    loss_reason_code: str
+
+
+class RemedyCreditRedemptionResponse(BaseModel):
+    credit_id: UUID
+    quote_id: UUID
+    revision: int
+    snapshot_hash: str
+    credit_vnd: int
+    net_service_subtotal_vnd: int
+    display_total_vnd: int | None
+    replayed: bool
+
+
 class MemberStore(BaseModel):
     """One store the caller belongs to. `name` is null for a store minted before the registry."""
 
@@ -423,6 +536,36 @@ class QuoteCreateRequest(StrictRequest):
     # new revision, never an update to an existing one.
     quote_id: UUID | None = None
     expected_current_revision: int = Field(default=0, ge=0)
+    # Off unless asked for. A range-priced service is refused by default -- which is what every
+    # caller before `RANGE-PRICE-001` relied on -- and storing the band instead is a deliberate
+    # act: it produces a revision with a minimum and a maximum and no single total, which a caller
+    # expecting a price must not receive by accident.
+    present_range_as_band: bool = False
+
+
+class QuotePromotionResponse(BaseModel):
+    """What the shop's promotion programme did to this revision, frozen at pricing time.
+
+    Null in place of the whole object means no programme was evaluated, and `reason_codes` on the
+    revision says which case: `PROMOTION_NOT_PUBLISHED` (nobody has published one) or
+    `PROMOTION_PENDING_BAND_CLOSE` (this is a band, and the discount waits for the amount).
+
+    `interval_end_at_exclusive` is the exclusive end of the programme window, so the last day it
+    covered is the day before. It is on the response so a console can say *when* an expired
+    programme ended instead of rendering an unexplained zero -- the same rule that forbids drawing a
+    null total as `0`.
+    """
+
+    policy_code: str
+    configuration_version: int
+    status: str
+    discount_amount_vnd: int
+    rate_bps: list[int]
+    interval_start_at: str
+    interval_end_at_exclusive: str
+    inside_interval: bool
+    eligibility_resolved: bool
+    reason_codes: list[str]
 
 
 class QuoteRevisionResponse(BaseModel):
@@ -439,6 +582,89 @@ class QuoteRevisionResponse(BaseModel):
     reason_codes: list[str]
     required_approvals: list[str]
     replayed: bool
+    promotion: QuotePromotionResponse | None = None
+
+
+def _promotion_response(view: QuotePromotionView | None) -> QuotePromotionResponse | None:
+    """Carry the service's frozen promotion through unchanged. No arithmetic in the route layer."""
+
+    if view is None:
+        return None
+    return QuotePromotionResponse(
+        policy_code=view.policy_code,
+        configuration_version=view.configuration_version,
+        status=view.status,
+        discount_amount_vnd=view.discount_amount_vnd,
+        rate_bps=list(view.rate_bps),
+        interval_start_at=view.interval_start_at,
+        interval_end_at_exclusive=view.interval_end_at_exclusive,
+        inside_interval=view.inside_interval,
+        eligibility_resolved=view.eligibility_resolved,
+        reason_codes=list(view.reason_codes),
+    )
+
+
+class RangePriceChoiceRequest(StrictRequest):
+    """One amount a staff member chose for one range-priced line.
+
+    An integer of dong, like every other money field on this surface. A float would introduce a
+    representation the currency does not have, on a field that decides what a customer pays.
+
+    There is no band here, and there must never be: the interval comes from the stored revision the
+    server itself read. A client that could state its own bounds would be authorising its own price.
+    """
+
+    service_code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,62}$")
+    amount_vnd: int = Field(ge=0, le=MAX_CANONICAL_INT)
+
+
+class RangePriceRequest(StrictRequest):
+    """The amounts, and the caller's evidence that it is pricing the revision it was shown."""
+
+    expected_current_revision: int = Field(ge=1)
+    expected_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
+    choices: list[RangePriceChoiceRequest] = Field(min_length=1, max_length=20)
+
+
+class RangePriceProposalResponse(BaseModel):
+    """The raised envelope plus the exact binding its approver must hand back."""
+
+    approval_request_id: UUID
+    status: str
+    envelope_hash: str
+    required_role: str
+    expires_at: str
+    resource_version: int
+    snapshot_hash: str
+    rendered_hash: str
+    replayed: bool
+
+
+class QuoteLineResponse(BaseModel):
+    line_id: str
+    service_code: str
+    quantity: str
+    unit: str
+    #: "EXACT" or "RANGE". A RANGE line has the two bounds and no amount, because there is no
+    #: amount until a person chooses one.
+    price_kind: str
+    net_amount_vnd: int | None
+    band_minimum_vnd: int | None
+    band_maximum_vnd: int | None
+
+
+class QuoteRevisionDetailResponse(BaseModel):
+    quote_id: UUID
+    revision: int
+    row_version: int
+    finality: str
+    status: str
+    snapshot_hash: str
+    display_total_min_vnd: int | None
+    display_total_max_vnd: int | None
+    valid_until: datetime | None
+    reason_codes: list[str]
+    lines: list[QuoteLineResponse]
 
 
 class QuoteSummaryResponse(BaseModel):
@@ -1309,6 +1535,7 @@ def create_quote(
             quote_id=request.quote_id,
             expected_current_revision=request.expected_current_revision,
             expected_row_version=0 if request.quote_id is None else _parse_if_match(if_match),
+            present_range_as_band=request.present_range_as_band,
         )
     except QuotePricingUnavailable as error:
         # No approved price list means no price. This is a refusal, not an outage of convenience.
@@ -1337,6 +1564,7 @@ def create_quote(
         display_total_max_vnd=result.display_total_max_vnd,
         reason_codes=list(result.reason_codes),
         required_approvals=list(result.required_approvals),
+        promotion=_promotion_response(result.promotion),
         replayed=result.replayed,
     )
 
@@ -1501,7 +1729,197 @@ def accept_quote(
         display_total_max_vnd=result.display_total_max_vnd,
         reason_codes=list(result.reason_codes),
         required_approvals=list(result.required_approvals),
+        promotion=_promotion_response(result.promotion),
         replayed=result.replayed,
+    )
+
+
+# --- RANGE-PRICE-001: closing a published price band ------------------------------------------
+#
+# Two routes, and the second cannot be reached without the existing approval-decision route in
+# between. Neither does arithmetic on money: the first hands the amounts to the domain and persists
+# an envelope, the second hands them to the domain again and persists what comes back.
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/quotes/{quote_id}/range-prices",
+    response_model=RangePriceProposalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def propose_range_prices(
+    store_id: UUID,
+    quote_id: UUID,
+    request: RangePriceRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RangePriceProposalResponse:
+    """Propose exact amounts inside the bands this quote revision published, for approval.
+
+    The published band is the bound and the server owns it: this function forwards amounts and
+    nothing else. An amount outside the band is refused here, before any approval row exists, and
+    the refusal carries the domain's own code so the console can name it in Vietnamese.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.propose_range_prices(
+            store_id=store_id,
+            quote_id=quote_id,
+            expected_current_revision=request.expected_current_revision,
+            expected_snapshot_hash=request.expected_snapshot_hash,
+            choices=tuple(
+                RangePriceChoice(service_code=choice.service_code, amount_vnd=choice.amount_vnd)
+                for choice in request.choices
+            ),
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (
+        ApprovalEnvelopeError,
+        ApprovalStateError,
+        ApprovalAuthorizationError,
+        IdempotencyConflictError,
+        StoreAccessError,
+        QuoteStateError,
+        QuoteIntegrityError,
+        ValueError,
+    ) as error:
+        _raise_operations_error(error)
+    if isinstance(result, UnresolvedQuoteResult):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "REQUIRE_HUMAN", "reason_codes": list(result.reason_codes)},
+        )
+    return RangePriceProposalResponse(
+        approval_request_id=result.approval.approval_request_id,
+        status=result.approval.status,
+        envelope_hash=result.approval.envelope_hash,
+        required_role=result.approval.required_role.value,
+        expires_at=result.approval.expires_at.isoformat(),
+        resource_version=result.resource_version,
+        snapshot_hash=result.snapshot_hash,
+        rendered_hash=result.rendered_hash,
+        replayed=result.approval.replayed,
+    )
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/quotes/{quote_id}/range-prices/{approval_id}",
+    response_model=QuoteRevisionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def apply_range_prices(
+    store_id: UUID,
+    quote_id: UUID,
+    approval_id: UUID,
+    request: RangePriceRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> QuoteRevisionResponse:
+    """Write the approved amounts into a new revision derived from the band the customer saw.
+
+    The amounts are sent again because the envelope stores a digest, not the content. The server
+    re-derives the digest and refuses unless it is the one the approver bound, which is invariant 8
+    and is also why editing a line invalidates the approval: an edit is a new revision.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.apply_range_prices(
+            store_id=store_id,
+            quote_id=quote_id,
+            approval_id=approval_id,
+            expected_current_revision=request.expected_current_revision,
+            expected_snapshot_hash=request.expected_snapshot_hash,
+            choices=tuple(
+                RangePriceChoice(service_code=choice.service_code, amount_vnd=choice.amount_vnd)
+                for choice in request.choices
+            ),
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (
+        ApprovalStateError,
+        ApprovalAuthorizationError,
+        IdempotencyConflictError,
+        StoreAccessError,
+        QuoteStateError,
+        QuoteIntegrityError,
+        ValueError,
+    ) as error:
+        _raise_operations_error(error)
+    if isinstance(result, UnresolvedQuoteResult):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "REQUIRE_HUMAN", "reason_codes": list(result.reason_codes)},
+        )
+    return QuoteRevisionResponse(
+        quote_id=result.quote_id,
+        revision=result.revision,
+        row_version=result.row_version,
+        finality=result.finality,
+        status=result.status,
+        snapshot_hash=result.snapshot_hash,
+        list_service_subtotal_vnd=result.list_service_subtotal_vnd,
+        net_service_subtotal_vnd=result.net_service_subtotal_vnd,
+        display_total_min_vnd=result.display_total_min_vnd,
+        display_total_max_vnd=result.display_total_max_vnd,
+        reason_codes=list(result.reason_codes),
+        required_approvals=list(result.required_approvals),
+        promotion=_promotion_response(result.promotion),
+        replayed=result.replayed,
+    )
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/quotes/{quote_id}",
+    response_model=QuoteRevisionDetailResponse,
+)
+def read_quote(
+    store_id: UUID,
+    quote_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+    revision: int | None = None,
+) -> QuoteRevisionDetailResponse:
+    """One revision with its lines, so a console can draw the band it is asking staff to price in.
+
+    The list read returns totals, which is enough to show a quote and not enough to close one.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        view = service.read_quote(
+            store_id=store_id, quote_id=quote_id, principal=principal, revision=revision
+        )
+    except (StoreAccessError, QuoteStateError, QuoteIntegrityError, ValueError) as error:
+        _raise_operations_error(error)
+    return QuoteRevisionDetailResponse(
+        quote_id=view.quote_id,
+        revision=view.revision,
+        row_version=view.row_version,
+        finality=view.finality,
+        status=view.status,
+        snapshot_hash=view.snapshot_hash,
+        display_total_min_vnd=view.display_total_min_vnd,
+        display_total_max_vnd=view.display_total_max_vnd,
+        valid_until=view.valid_until,
+        reason_codes=list(view.reason_codes),
+        lines=[
+            QuoteLineResponse(
+                line_id=line.line_id,
+                service_code=line.service_code,
+                quantity=line.quantity,
+                unit=line.unit,
+                price_kind=line.price_kind,
+                net_amount_vnd=line.net_amount_vnd,
+                band_minimum_vnd=line.band_minimum_vnd,
+                band_maximum_vnd=line.band_maximum_vnd,
+            )
+            for line in view.lines
+        ],
     )
 
 
@@ -1873,6 +2291,185 @@ def list_incidents(
         _raise_operations_error(error)
 
 
+# --- REMEDY-001: DEC-004 expressed as configuration, and a surface to act on it ----------------
+#
+# Four routes and no arithmetic on money anywhere in them. Each forwards to the service, which
+# forwards to the repository, which hands the decision to `domain.remedies` and persists the answer.
+# A refusal comes back as 422 carrying the domain's own reason code plus the figure that would have
+# allowed it, so the console can tell staff *why* in Vietnamese rather than only that.
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-options",
+    response_model=RemedyOptionsResponse,
+)
+def remedy_options(
+    store_id: UUID,
+    incident_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RemedyOptionsResponse:
+    """The ceilings, the windows and the owner threshold, before anybody fills a form in.
+
+    The packet's requirement in one read: staff must never discover that the owner is required after
+    typing an amount. Nothing is written and nothing is reserved by asking.
+    """
+
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        options = service.remedy_options(
+            store_id=store_id, incident_id=incident_id, principal=principal
+        )
+    except (RemedyAuthorizationError, RemedyStateError, StoreAccessError, ValueError) as error:
+        _raise_remedy_error(error)
+    return RemedyOptionsResponse(
+        incident_id=options.incident_id,
+        order_id=options.order_id,
+        policy_published=options.policy_published,
+        staff_approval_ceiling_vnd=options.staff_approval_ceiling_vnd,
+        goods_returned_at=_isoformat_or_none(options.goods_returned_at),
+        rewash_window_closes_at=_isoformat_or_none(options.rewash_window_closes_at),
+        rewash_window_open=options.rewash_window_open,
+        defect_window_closes_at=_isoformat_or_none(options.defect_window_closes_at),
+        defect_window_open=options.defect_window_open,
+        damage_line_ceilings_vnd=(
+            None
+            if options.damage_line_ceilings_vnd is None
+            else dict(options.damage_line_ceilings_vnd)
+        ),
+        late_delivery_credit_vnd=options.late_delivery_credit_vnd,
+        late_delivery_threshold_minutes=options.late_delivery_threshold_minutes,
+        loss_reason_code=options.loss_reason_code,
+    )
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-proposals",
+    response_model=RemedyProposalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def propose_remedy(
+    store_id: UUID,
+    incident_id: UUID,
+    request: RemedyProposalRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RemedyProposalResponse:
+    """Propose a remedy against one incident, checked against the published `DEC-004` figures.
+
+    A loss is a 201 whose `outcome` is `REQUIRE_HUMAN`: the complaint is recorded, which is the
+    outcome the owner has decided for it, and no figure is computed anywhere.
+    """
+
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.propose_remedy(
+            store_id=store_id,
+            incident_id=incident_id,
+            kind=request.kind,
+            store_fault_attested=request.store_fault_attested,
+            order_line_id=request.order_line_id,
+            amount_vnd=request.amount_vnd,
+            attested_late_by_minutes=request.attested_late_by_minutes,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (
+        RemedyAuthorizationError,
+        RemedyStateError,
+        ApprovalEnvelopeError,
+        ApprovalStateError,
+        ApprovalAuthorizationError,
+        IdempotencyConflictError,
+        StoreAccessError,
+        ValueError,
+    ) as error:
+        _raise_remedy_error(error)
+    return RemedyProposalResponse.model_validate(result, from_attributes=True)
+
+
+@app.post(
+    "/internal/v1/remedy-proposals/{proposal_id}/execution",
+    response_model=RemedyExecutionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def execute_remedy(
+    proposal_id: UUID,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RemedyExecutionResponse:
+    """Carry out an authorised remedy: issue the credit, or command the rewash.
+
+    No body. Everything this needs was decided when the proposal was recorded and is immutable on
+    its row -- accepting an amount here would let the figure move between the owner approving it and
+    the shop paying it, which is precisely what invariant 8 binds the rendered hash to prevent.
+    """
+
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.execute_remedy(
+            proposal_id=proposal_id, idempotency_key=idempotency_key, principal=principal
+        )
+    except (
+        RemedyAuthorizationError,
+        RemedyStateError,
+        IdempotencyConflictError,
+        StoreAccessError,
+        ValueError,
+    ) as error:
+        _raise_remedy_error(error)
+    return RemedyExecutionResponse.model_validate(result, from_attributes=True)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/quotes/{quote_id}/remedy-credits",
+    response_model=RemedyCreditRedemptionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def redeem_remedy_credit(
+    store_id: UUID,
+    quote_id: UUID,
+    request: RemedyCreditRedemptionRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RemedyCreditRedemptionResponse:
+    """Spend one credit on the next bill, producing a revision that carries its discount.
+
+    The settlement ledger is untouched. A credit changes what a total *is* before the customer is
+    told it; `DEC-010` still keeps that path accepting only the exact quoted total, in full.
+    """
+
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.redeem_remedy_credit(
+            store_id=store_id,
+            quote_id=quote_id,
+            credit_id=request.credit_id,
+            expected_current_revision=request.expected_current_revision,
+            expected_snapshot_hash=request.expected_snapshot_hash,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (
+        RemedyAuthorizationError,
+        RemedyStateError,
+        QuoteStateError,
+        QuoteIntegrityError,
+        IdempotencyConflictError,
+        StoreAccessError,
+        ValueError,
+    ) as error:
+        _raise_remedy_error(error)
+    return RemedyCreditRedemptionResponse.model_validate(result, from_attributes=True)
+
+
 @app.get("/internal/v1/queue-recovery", response_model=QueueRecoveryResponse)
 def queue_recovery(
     principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
@@ -1925,6 +2522,36 @@ def _raise_operations_error(error: Exception) -> NoReturn:
     if isinstance(error, IdempotencyConflictError):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
     raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+def _raise_remedy_error(error: Exception) -> NoReturn:
+    """Map a remedy refusal onto a status and a body the console can render in Vietnamese.
+
+    422 rather than 409, and structured rather than a string. A refusal here is a policy answer with
+    a number attached -- "quá 5 lần phí giặt của món đó, tối đa 500.000 đ", "quá 7 ngày kể từ khi
+    nhận đồ" -- and a message the console has to parse would make that copy a regex. Authorization
+    failures keep the same opaque 403 as every other surface, so a caller still cannot tell "not a
+    member of this store" from "your role cannot do this".
+    """
+
+    if isinstance(error, (RemedyAuthorizationError, StoreAccessError)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="operation denied") from error
+    if isinstance(error, RemedyStateError):
+        detail: dict[str, object] = {"reason_code": error.reason_code}
+        if error.authority is not None:
+            detail["authority"] = error.authority
+        if error.ceiling_vnd is not None:
+            detail["ceiling_vnd"] = error.ceiling_vnd
+        if error.window_closes_at is not None:
+            detail["window_closes_at"] = error.window_closes_at.isoformat()
+        if error.threshold_minutes is not None:
+            detail["threshold_minutes"] = error.threshold_minutes
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail) from error
+    _raise_operations_error(error)
+
+
+def _isoformat_or_none(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat()
 
 
 def _order_response(stored: StoredOrder) -> OrderResponse:

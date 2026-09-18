@@ -34,6 +34,7 @@ import socketserver
 import sys
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from playwright.sync_api import Route, sync_playwright
@@ -73,6 +74,64 @@ INCIDENTS = [
         "evidence_summary": None,
     },
 ]
+
+
+#: `REMEDY-001`. One `RemedyOptionsResponse`, with `DEC-004`'s own figures rather than round
+#: numbers: the 100.000 d staff ceiling, both windows still open, and two priced lines whose 5x caps
+#: straddle that ceiling -- 90.000 d below it and 600.000 d above. The straddle is the whole point,
+#: because "will this need the owner?" has to be answerable per line *before* an amount exists.
+REMEDY_OPTIONS = {
+    "incident_id": INCIDENTS[0]["incident_id"],
+    "order_id": INCIDENTS[0]["order_id"],
+    "policy_published": True,
+    "staff_approval_ceiling_vnd": 100_000,
+    "goods_returned_at": "2026-09-17T03:00:00+00:00",
+    "rewash_window_closes_at": "2026-09-24T03:00:00+00:00",
+    "rewash_window_open": True,
+    "defect_window_closes_at": "2026-09-18T03:00:00+00:00",
+    "defect_window_open": True,
+    "damage_line_ceilings_vnd": {"line-large": 600_000, "line-small": 90_000},
+    "late_delivery_credit_vnd": 17_000,
+    "late_delivery_threshold_minutes": 120,
+    "loss_reason_code": "LOSS_POLICY_UNRESOLVED",
+}
+
+REMEDY_PROPOSAL_ID = "77777777-8888-4333-8444-bbbbbbbbbbbb"
+REMEDY_APPROVAL_ID = "88888888-9999-4333-8444-cccccccccccc"
+REMEDY_CREDIT_ID = "99999999-aaaa-4333-8444-dddddddddddd"
+
+#: What the server answers for a damage proposal above the staff ceiling: recorded, and stopped
+#: with an `APPROVE_REMEDY` envelope raised at proposal time. Section 11 exists mostly to prove the
+#: console said the owner would be needed *before* this response arrived.
+REMEDY_PROPOSAL_OWNER = {
+    "proposal_id": REMEDY_PROPOSAL_ID,
+    "incident_id": REMEDY_OPTIONS["incident_id"],
+    "order_id": REMEDY_OPTIONS["order_id"],
+    "kind": "DAMAGE_COMPENSATION",
+    "status": "OWNER_APPROVAL_REQUIRED",
+    "outcome": "ALLOW",
+    "proposal_hash": "JCS-SHA256-V1:" + "e" * 64,
+    "policy_version": 1,
+    "amount_vnd": 150_000,
+    "ceiling_vnd": 600_000,
+    "window_opened_at": REMEDY_OPTIONS["goods_returned_at"],
+    "window_closes_at": REMEDY_OPTIONS["defect_window_closes_at"],
+    "approval_id": REMEDY_APPROVAL_ID,
+    "reason_code": None,
+    "replayed": False,
+}
+
+REMEDY_EXECUTED = {
+    "proposal_id": REMEDY_PROPOSAL_ID,
+    "incident_id": REMEDY_OPTIONS["incident_id"],
+    "order_id": REMEDY_OPTIONS["order_id"],
+    "kind": "DAMAGE_COMPENSATION",
+    "status": "EXECUTED",
+    "event_type": "CREDIT_EXECUTED",
+    "credit_id": REMEDY_CREDIT_ID,
+    "amount_vnd": 150_000,
+    "replayed": False,
+}
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -147,8 +206,115 @@ PRICEBOOK_SERVICES = [
         "category": "ironing",
         "unit": "ITEM",
     },
+    # `RANGE-PRICE-001`. One of the twenty services the published pricebook prices by inspection,
+    # with the band the owner really published: `templates/services-pricebook.csv` carries
+    # `DC_AO_DAI_TRADITIONAL,dry_cleaning,"Áo dài truyền thống",bộ,80000,240000`. Section 10 closes
+    # this band, so the fixture is the real row rather than a round number chosen to pass.
+    {
+        "code": "DC_AO_DAI_TRADITIONAL",
+        "display_name": "Áo dài truyền thống",
+        "category": "dry_cleaning",
+        "unit": "SET",
+    },
 ]
 MISSING_REQUEST = "99999999-9999-4999-8999-999999999999"
+
+#: The quote section 10 drives, and the three responses the band flow needs.
+#:
+#: The shapes are `QuoteRevisionResponse`, `QuoteRevisionDetailResponse` and
+#: `RangePriceProposalResponse` from `main.py`, field for field. What matters most about them is
+#: what the first one does *not* carry: a revision presented as a band has no single service
+#: subtotal, and the two scalar fields that look like one are the range maximum under a scalar
+#: name. The stub sends the maximum in both, exactly as the server does, so the check below that
+#: the console withholds them is checking against the real hazard.
+BAND_QUOTE = "55555555-6666-4333-8444-999999999999"
+BAND_SNAPSHOT = "JCS-SHA256-V1:" + "a" * 64
+BAND_APPROVAL = "77777777-8888-4333-8444-bbbbbbbbbbbb"
+AO_DAI_MIN_VND = 80_000
+AO_DAI_MAX_VND = 240_000
+CHOSEN_VND = 150_000
+
+BAND_REVISION = {
+    "quote_id": BAND_QUOTE,
+    "revision": 1,
+    "row_version": 1,
+    "finality": "RANGE",
+    "status": "REVIEW_REQUIRED",
+    "snapshot_hash": BAND_SNAPSHOT,
+    "list_service_subtotal_vnd": AO_DAI_MAX_VND,
+    "net_service_subtotal_vnd": AO_DAI_MAX_VND,
+    "display_total_min_vnd": AO_DAI_MIN_VND,
+    "display_total_max_vnd": AO_DAI_MAX_VND,
+    "reason_codes": ["RANGE_PRICE_REQUIRES_HUMAN", "TAX_TREATMENT_UNVERIFIED"],
+    "required_approvals": [],
+    "replayed": False,
+}
+
+BAND_DETAIL = {
+    "quote_id": BAND_QUOTE,
+    "revision": 1,
+    "row_version": 1,
+    "finality": "RANGE",
+    "status": "REVIEW_REQUIRED",
+    "snapshot_hash": BAND_SNAPSHOT,
+    "display_total_min_vnd": AO_DAI_MIN_VND,
+    "display_total_max_vnd": AO_DAI_MAX_VND,
+    "valid_until": "2026-09-19T03:00:00+00:00",
+    "reason_codes": ["RANGE_PRICE_REQUIRES_HUMAN"],
+    "lines": [
+        {
+            "line_id": "line-1",
+            "service_code": "DC_AO_DAI_TRADITIONAL",
+            "quantity": "1",
+            "unit": "SET",
+            "price_kind": "RANGE",
+            "net_amount_vnd": None,
+            "band_minimum_vnd": AO_DAI_MIN_VND,
+            "band_maximum_vnd": AO_DAI_MAX_VND,
+        }
+    ],
+}
+
+#: The revision `apply_range_prices` writes: an exact price nobody has agreed to yet. `status` is
+#: `APPROVED`, not `ACCEPTED_FINAL`, and the difference is the whole of the check at the end of
+#: section 10 -- the console used to read `finality === "APPROVED_EXACT"` as "the customer has
+#: agreed", which was exact only while nothing else could produce that finality.
+CLOSED_REVISION = {
+    "quote_id": BAND_QUOTE,
+    "revision": 2,
+    "row_version": 2,
+    "finality": "APPROVED_EXACT",
+    "status": "APPROVED",
+    "snapshot_hash": "JCS-SHA256-V1:" + "d" * 64,
+    "list_service_subtotal_vnd": CHOSEN_VND,
+    "net_service_subtotal_vnd": CHOSEN_VND,
+    "display_total_min_vnd": CHOSEN_VND,
+    "display_total_max_vnd": CHOSEN_VND,
+    "reason_codes": ["TAX_TREATMENT_UNVERIFIED"],
+    "required_approvals": [],
+    "replayed": False,
+}
+
+
+def range_price_approval() -> dict[str, object]:
+    """The raised envelope, expiring ten minutes from now.
+
+    Built at call time rather than as a constant: `_OWNER_FINANCIAL` is a ten-minute TTL and the
+    console renders the time remaining, so a fixed timestamp would make the countdown read "đã hết
+    hạn" the day after this file was written and the section would fail for the wrong reason.
+    """
+
+    return {
+        "approval_request_id": BAND_APPROVAL,
+        "status": "REQUESTED",
+        "envelope_hash": "JCS-SHA256-V1:" + "b" * 64,
+        "required_role": "OWNER_ADMIN",
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+        "resource_version": 1,
+        "snapshot_hash": BAND_SNAPSHOT,
+        "rendered_hash": "JCS-SHA256-V1:" + "c" * 64,
+        "replayed": False,
+    }
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -197,7 +363,7 @@ SESSION_OK = {
     "mfa_verified": True,
 }
 
-state = {"authenticated": True, "hold_ticket": False}
+state = {"authenticated": True, "hold_ticket": False, "owner_approved": False}
 held_ticket_routes: list[Route] = []
 
 with sync_playwright() as playwright:
@@ -266,6 +432,44 @@ with sync_playwright() as playwright:
                 # earlier in section 4 depend on this being empty, so the purged-turn check below
                 # opts in rather than changing the world for everything before it.
                 body = state.get("assistant_history") or []
+        elif "remedy-options" in url:
+            # A pure read. Nothing is written and nothing is reserved by asking, which is what lets
+            # the console put the ceiling and the owner requirement on screen before anything is
+            # typed rather than after a round trip that commits something.
+            body = REMEDY_OPTIONS
+        elif "remedy-proposals" in url and url.endswith("/execution"):
+            # The owner-approval branch, both halves. Until the envelope is decided the server
+            # refuses with a machine-readable reason and no `outcome` key at all -- the shape that
+            # used to reach this console as "Du lieu nhap khong hop le".
+            if not state.get("owner_approved"):
+                route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "detail": {
+                                "reason_code": "REMEDY_APPROVAL_REQUIRED",
+                                "authority": "DEC-004",
+                            }
+                        }
+                    ),
+                )
+                return
+            route.fulfill(
+                status=201, content_type="application/json", body=json.dumps(REMEDY_EXECUTED)
+            )
+            return
+        elif "remedy-proposals" in url and route.request.method == "POST":
+            # Captured rather than merely answered: the property section 11 proves is that the
+            # body carries exactly the keys this kind owns and no ceiling of its own. A stub that
+            # only returned 201 would certify a console that sends anything at all.
+            state.setdefault("remedy_posts", []).append(route.request.post_data)
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(REMEDY_PROPOSAL_OWNER),
+            )
+            return
         elif "/incidents" in url:
             if route.request.method == "POST":
                 # Captured rather than merely answered. The seam this section exists to test is the
@@ -342,6 +546,52 @@ with sync_playwright() as playwright:
                 )
                 return
             body = [ORDER_REQUEST]
+        elif "/range-prices" in url:
+            # Two routes share this prefix and the suffix is what tells them apart: the bare path
+            # raises the envelope, the one carrying an approval id applies it. Both bodies are
+            # captured, because the property section 10 exists to prove is that the amounts sent
+            # the second time are byte-identical to the amounts the owner signed -- the console
+            # holds them, nothing on the server does.
+            state.setdefault("range_posts", []).append(route.request.post_data)
+            applying = not url.split("?")[0].rstrip("/").endswith("range-prices")
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(CLOSED_REVISION if applying else range_price_approval()),
+            )
+            return
+        elif "/quotes/" in url:
+            # `GET /internal/v1/stores/{store}/quotes/{quote}` -- one revision with its lines, the
+            # read that makes a band drawable at all. Nothing else returns `band_minimum_vnd`.
+            body = BAND_DETAIL
+        elif url.split("?")[0].endswith("/quotes") and route.request.method == "POST":
+            sent = json.loads(route.request.post_data or "{}")
+            state.setdefault("quote_posts", []).append(sent)
+            if not sent.get("present_range_as_band"):
+                # What the engine really answers for a banded service asked for as a price: it
+                # refuses rather than choosing a number in the interval. The console has no way to
+                # know in advance -- the catalog route carries no price kind -- so this refusal is
+                # the only thing that can tell it, and section 10 checks what it does with it.
+                route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "detail": {
+                                "outcome": "REQUIRE_HUMAN",
+                                "reason_codes": [
+                                    "RANGE_PRICE_REQUIRES_HUMAN",
+                                    "TAX_TREATMENT_UNVERIFIED",
+                                ],
+                            }
+                        }
+                    ),
+                )
+                return
+            route.fulfill(
+                status=201, content_type="application/json", body=json.dumps(BAND_REVISION)
+            )
+            return
         else:
             body = []
         route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
@@ -974,6 +1224,387 @@ with sync_playwright() as playwright:
         f"got {sent.get('evidence_summary')!r}",
     )
 
+    print()
+    print("=" * 74)
+    print("10. KHOẢNG GIÁ — the counter closes a band, and is warned before it sends")
+    print("=" * 74)
+
+    # `RANGE-PRICE-001`. Twenty of the forty-four published services are priced by inspection, and
+    # until this item none of them could be quoted at all. The whole path is here because every
+    # step of it is a place the console could quietly decide money: choosing a number inside the
+    # band, showing the top of an interval as a price, or treating an owner's approval as the
+    # customer's agreement. Each is checked below as a refusal rather than as a feature.
+
+    page.evaluate(f"location.hash = '#/quotes?request={ORDER_REQUEST['order_request_id']}'")
+    page.wait_for_timeout(1500)
+
+    band_code = page.locator("#quote-line-0-code")
+    band_code.select_option(label="Áo dài truyền thống")
+    page.wait_for_timeout(200)
+    band_qty = page.locator("#quote-line-0-qty")
+    band_qty.click()
+    band_qty.type("1", delay=12)
+    page.wait_for_timeout(150)
+
+    page.locator("form button[type=submit]", has_text="Tính giá").first.click()
+    page.wait_for_timeout(900)
+
+    content = page.content()
+    check(
+        "a banded service is refused rather than priced at a number nobody chose",
+        "Món này niêm yết theo khoảng giá" in content,
+    )
+    check(
+        "the refusal keeps its code and gains a Vietnamese reason",
+        "RANGE_PRICE_REQUIRES_HUMAN" in content and "nhân viên phải chọn giá chính xác" in content,
+    )
+    first_post = (state.get("quote_posts") or [{}])[-1]
+    check(
+        "and the first attempt did not ask for a band on the console's own initiative",
+        first_post.get("present_range_as_band") is None,
+        f"sent {first_post.get('present_range_as_band')!r}",
+    )
+
+    page.locator("button", has_text="Lập bản khoảng giá").first.click()
+    page.wait_for_timeout(1400)
+
+    banded_post = (state.get("quote_posts") or [{}])[-1]
+    check(
+        "asking for a band is a deliberate press, and it is what sets the flag",
+        banded_post.get("present_range_as_band") is True,
+        f"sent {banded_post.get('present_range_as_band')!r}",
+    )
+
+    content = page.content()
+    check(
+        "the stored band is shown whole, both ends, under the KHOẢNG GIÁ badge",
+        "80.000" in content and "240.000" in content and "KHOẢNG GIÁ" in content,
+    )
+    check(
+        "the two scalar subtotals are withheld on a band instead of printing its maximum",
+        "Vì sao hai dòng trên" in content,
+        "expected the console to refuse to print net_service_subtotal_vnd on a RANGE revision",
+    )
+    check(
+        "a band cannot be accepted, because there is no single number to agree to",
+        "Bản này là một khoảng giá, chưa phải một số" in content
+        and page.locator("button", has_text="Khách đã chốt giá").count() == 0,
+    )
+
+    band_field = page.locator("#quote-band-0")
+    check("the band gets a money box of its own", band_field.count() == 1)
+    check(
+        "with no placeholder, because any example inside the band is a suggestion",
+        band_field.get_attribute("placeholder") in (None, ""),
+        repr(band_field.get_attribute("placeholder")),
+    )
+
+    # The `pricingCliffNotice` property, applied to money: the warning has to arrive while the
+    # number is being typed, not after a round trip refuses it in front of a customer.
+    band_field.click()
+    page.keyboard.type("250000", delay=12)
+    page.wait_for_timeout(300)
+    check(
+        "an amount above the band is caught in the browser, before anything is sent",
+        "Số này cao hơn khoảng giá đã niêm yết" in page.content(),
+    )
+    check(
+        "the warning names the band and the code the server would answer with",
+        "RANGE_PRICE_OUT_OF_BAND" in page.content() and "80.000" in page.content(),
+    )
+    check(
+        "and nothing was sent while it was being typed",
+        not state.get("range_posts"),
+        f"{len(state.get('range_posts') or [])} request(s)",
+    )
+    check(
+        "focus stayed in the money box while the warning appeared",
+        page.evaluate("document.activeElement?.id") == "quote-band-0",
+        f"activeElement={page.evaluate('document.activeElement?.id')}",
+    )
+
+    for _ in range(6):
+        page.keyboard.press("Backspace")
+    page.keyboard.type("150000", delay=12)
+    page.wait_for_timeout(300)
+    check(
+        "an amount inside the band is accepted, and reads as a proposal rather than a price",
+        "Số này cao hơn khoảng giá đã niêm yết" not in page.content()
+        and "Giá bạn chọn cho dòng này" in page.content(),
+    )
+    check(
+        "the typed amount survives being typed one character at a time",
+        band_field.input_value() == "150000",
+        repr(band_field.input_value()),
+    )
+
+    page.locator("button", has_text="Gửi giá cho chủ duyệt").first.click()
+    page.wait_for_timeout(900)
+
+    proposed = json.loads((state.get("range_posts") or ["{}"])[-1] or "{}")
+    check("the proposal actually reaches the server", bool(state.get("range_posts")))
+    check(
+        "it carries the amount the staff member chose and no band of its own",
+        proposed.get("choices")
+        == [{"service_code": "DC_AO_DAI_TRADITIONAL", "amount_vnd": CHOSEN_VND}],
+        repr(proposed.get("choices")),
+    )
+    check(
+        "bound to the exact revision and digest the customer was read",
+        proposed.get("expected_current_revision") == 1
+        and proposed.get("expected_snapshot_hash") == BAND_SNAPSHOT,
+        repr(proposed.get("expected_snapshot_hash")),
+    )
+
+    content = page.content()
+    check(
+        "the screen then says a second person has to decide it",
+        "Đang chờ chủ tiệm duyệt" in content and "Đừng rời màn hình này" in content,
+    )
+    check(
+        "with the remaining time on the envelope, not a wall-clock stamp alone",
+        "còn " in content and "phút" in content,
+    )
+
+    page.locator("button", has_text="Áp dụng giá đã duyệt").first.click()
+    page.wait_for_timeout(900)
+
+    applied = json.loads((state.get("range_posts") or ["{}"])[-1] or "{}")
+    check(
+        "applying re-sends exactly the content the owner signed, because nothing stored it",
+        applied == proposed,
+        "the applied body differs from the proposed one",
+    )
+
+    content = page.content()
+    check(
+        "the closed band becomes one exact price",
+        "Đã ghi giá vào bản sửa đổi 2" in content and "150.000" in content,
+    )
+    check(
+        "an owner's approval is not the customer's agreement: the quote still has to be accepted",
+        page.locator("button", has_text="Khách đã chốt giá").count() == 1,
+        "expected the acceptance control on an APPROVED_EXACT revision that is not ACCEPTED_FINAL",
+    )
+    check(
+        "and it is not yet offered as an order",
+        page.locator("a", has_text="Tạo đơn từ báo giá này").count() == 0,
+    )
+
+    print()
+    print("=" * 74)
+    print("11. BỒI HOÀN — the ceiling and the owner, before a single digit is typed")
+    print("=" * 74)
+
+    # `REMEDY-001`'s whole claim is an ordering claim, and ordering is exactly what a source-text
+    # test cannot see: that the computed ceiling, the window and the owner requirement are on
+    # screen *before* the money box, not beside it and not after the refusal. A staff member who
+    # learns after filling the form in that the owner has to approve it has already told a customer
+    # something the shop cannot do, with that customer standing in front of them.
+
+    incident = str(INCIDENTS[0]["incident_id"])
+    page.evaluate(f"location.hash = '#/remedies?incident={incident}'")
+    page.wait_for_timeout(900)
+
+    content = page.content()
+    check(
+        "the deep link from an incident loads that incident's figures unasked",
+        page.locator("#remedy-incident").input_value() == incident,
+        repr(page.locator("#remedy-incident").input_value()),
+    )
+    check(
+        "the staff approval ceiling is stated as a figure, not as a rule to remember",
+        "100.000" in content,
+    )
+    check(
+        "a rewash says it has no ceiling rather than showing 0 ₫",
+        "Không có trần" in content and "0 ₫" not in content,
+    )
+    check(
+        "and its window is shown with whether it is still open",
+        "còn hạn" in content,
+    )
+
+    # Damage: the one kind where a person chooses the figure, and the only one with a money box.
+    kind = page.locator("#remedy-kind")
+    check(
+        "there is no money box until the kind that needs one is chosen",
+        page.locator("#remedy-amount").count() == 0,
+    )
+
+    kind.select_option(value="DAMAGE_COMPENSATION")
+    page.wait_for_timeout(300)
+    check(
+        "choosing damage asks which priced line was damaged before it asks for money",
+        page.locator("#remedy-line").count() == 1 and page.locator("#remedy-amount").count() == 0,
+        f"line={page.locator('#remedy-line').count()} "
+        f"amount={page.locator('#remedy-amount').count()}",
+    )
+    check(
+        "and it says why: the 5x cap belongs to one line, not to the order",
+        "Chưa chọn món bị hỏng" in page.content(),
+    )
+
+    page.locator("#remedy-line").select_option(value="line-large")
+    page.wait_for_timeout(300)
+    content = page.content()
+    check(
+        "the server-computed ceiling for that line is on screen with the box still empty",
+        "600.000" in content and page.locator("#remedy-amount").input_value() == "",
+        repr(page.locator("#remedy-amount").input_value()),
+    )
+    check(
+        "the box offers no example amount, because every example is a number nobody chose",
+        (page.locator("#remedy-amount").get_attribute("placeholder") or "") == "",
+        repr(page.locator("#remedy-amount").get_attribute("placeholder")),
+    )
+    check(
+        "the form warns that an amount on this line may need the owner — before any amount exists",
+        "Tuỳ số tiền" in content,
+    )
+    check(
+        "the defect window and its state are shown beside the ceiling, not discovered later",
+        "Cửa sổ thời gian" in content and "Khách nhận đồ lúc" in content,
+    )
+
+    # The boundary `DEC-004` sets, typed rather than filled, at the one đồng that decides it.
+    amount = page.locator("#remedy-amount")
+    amount.click()
+    page.keyboard.type("100000", delay=12)
+    page.wait_for_timeout(300)
+    check(
+        "100.000 d is inside what staff may approve, and the owner is not mentioned",
+        "sẽ lập phiếu chờ chủ tiệm duyệt" not in page.content(),
+    )
+    # One đồng over, and one đồng only. Typing a further "1" onto "100000" appends rather than
+    # increments and gives 1.000.001 ₫ -- above this line's 600.000 ₫ cap as well as above the
+    # staff ceiling, so the screen would answer about the cap and the boundary `DEC-004` actually
+    # sets would never be exercised. Backspace first, then retype the last digit: 100.000 -> 10.000
+    # -> 100.001.
+    page.keyboard.press("Backspace")
+    page.keyboard.type("1", delay=12)
+    page.wait_for_timeout(300)
+    check(
+        "100.001 ₫ crosses it, and the warning arrives while typing rather than after sending",
+        "sẽ lập phiếu chờ chủ tiệm duyệt" in page.content(),
+    )
+    check(
+        "the typed amount survives being typed one character at a time",
+        amount.input_value() == "100001",
+        repr(amount.input_value()),
+    )
+    # And it arrives before the attestation box is ticked. That box is the last thing a staff
+    # member touches, so a plan that stopped at it -- as this one did -- never read the amount, and
+    # the owner warning appeared only after the form was complete: exactly what the packet forbids.
+    check(
+        "the owner warning does not wait for the fault box to be ticked",
+        page.locator("#remedy-fault").is_checked() is False,
+    )
+    check(
+        "and focus stayed in the money box while the warning appeared",
+        page.evaluate("document.activeElement?.id") == "remedy-amount",
+        f"activeElement={page.evaluate('document.activeElement?.id')}",
+    )
+
+    # Above the line's own cap: refused here with the cap named, never reduced to it.
+    for _ in range(6):
+        page.keyboard.press("Backspace")
+    page.keyboard.type("600001", delay=8)
+    page.wait_for_timeout(300)
+    content = page.content()
+    check(
+        "an amount over the line's cap is refused with the cap named",
+        # The whole sentence, not the two words separately: "Vượt trần" is also in the money box's
+        # own hint and "600.000" is in the line picker, so testing for each on its own passed
+        # before the refusal was rendered at all.
+        "Vượt trần: trần của dòng này là 600.000" in content,
+    )
+    check(
+        "and the box still holds what was typed — nothing was silently reduced to the cap",
+        amount.input_value() == "600001",
+        repr(amount.input_value()),
+    )
+
+    for _ in range(6):
+        page.keyboard.press("Backspace")
+    page.keyboard.type("150000", delay=8)
+    page.locator("#remedy-fault").check()
+    page.wait_for_timeout(300)
+
+    page.locator("button", has_text="Gửi đề nghị bồi hoàn").first.click()
+    page.wait_for_timeout(900)
+
+    proposed = json.loads((state.get("remedy_posts") or ["{}"])[-1] or "{}")
+    check("the proposal actually reaches the server", bool(state.get("remedy_posts")))
+    check(
+        "it carries exactly the keys this kind owns, and no ceiling of its own",
+        proposed
+        == {
+            "kind": "DAMAGE_COMPENSATION",
+            "store_fault_attested": True,
+            "order_line_id": "line-large",
+            "amount_vnd": 150_000,
+        },
+        repr(proposed),
+    )
+
+    content = page.content()
+    check(
+        "the screen then says a second person has to decide it",
+        "Chờ chủ tiệm duyệt" in content,
+    )
+    check(
+        "and links the queue where that happens rather than leaving staff to find it",
+        page.locator("a[href='#/approvals']").count() >= 1,
+    )
+
+    # Executing before the owner has decided. The refusal is a policy answer with a code, and the
+    # sentence it must NOT produce is the one that tells a staff member their typing was wrong.
+    page.locator("button", has_text="Thực hiện bồi hoàn").first.click()
+    page.wait_for_timeout(900)
+    content = page.content()
+    check(
+        "executing early is refused as a refusal, not as bad input",
+        "REMEDY_APPROVAL_REQUIRED" in content and "Dữ liệu nhập không hợp lệ" not in content,
+    )
+    check(
+        "with the refusal glossed in Vietnamese beside its code",
+        "phải có phiếu duyệt của chủ tiệm" in content,
+    )
+
+    state["owner_approved"] = True
+    page.locator("button", has_text="Thực hiện bồi hoàn").first.click()
+    page.wait_for_timeout(900)
+    content = page.content()
+    check(
+        "once the owner has decided, the same press carries the remedy out",
+        "Đã thực hiện" in content and "CREDIT_EXECUTED" in content,
+    )
+    check(
+        "the credit id is shown in full with a copy control: nothing can look it up",
+        REMEDY_CREDIT_ID in content and "Chép mã giảm trừ này lại ngay" in content,
+    )
+
+    # Loss. The single most likely way this item goes wrong is a helpful console filling in a
+    # figure nobody published, so this asserts the absence of every figure rather than a value.
+    kind.select_option(value="LOST_ITEM")
+    page.wait_for_timeout(300)
+    content = page.content()
+    check(
+        "loss renders as an unsupported capability, not as a form",
+        "CHƯA HỖ TRỢ" in content and page.locator("#remedy-amount").count() == 0,
+    )
+    check(
+        "it names the reason: the owner has not decided loss policy",
+        "LOSS_POLICY_UNRESOLVED" in content and "chưa quyết chính sách cho mất đồ" in content,
+    )
+    check(
+        "and no ceiling of any kind is offered for it",
+        "600.000" not in content and "90.000" not in content,
+        "a damage ceiling is visible while loss is selected",
+    )
+
+    print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))
     browser.close()
 

@@ -748,11 +748,21 @@ def test_a_priced_quote_is_created_and_listed_over_http(
     # amount the customer pays, and without a reason code claiming the fee is unresolved when the
     # engine resolved it to zero.
     assert payload["display_total_min_vnd"] == 120_000
+    # `PROMOTION_NOT_PUBLISHED` replaces `PROMOTION_NOT_EVALUATED` here, and the substitution is a
+    # fact about this test rather than a rename: `_publish` seeds a pricebook and no promotion
+    # programme, so since `PROMO-WIRING-001` the revision's honest statement is that nobody has
+    # published one (invariant 11), not that nothing was assessed. The net subtotal is unchanged at
+    # 120.000 d precisely because there is no programme to discount it -- a quote composed with one
+    # running would not come out here.
     assert payload["reason_codes"] == [
-        "PROMOTION_NOT_EVALUATED",
+        "PROMOTION_NOT_PUBLISHED",
         "SELF_SERVICE_NO_DELIVERY_JOB",
         "TAX_TREATMENT_UNVERIFIED",
     ]
+    # And the response says nothing about a promotion, because none was evaluated against it. An
+    # object full of zeroes here would be the console's cue to draw "giảm 0 ₫", which is the
+    # unexplained zero this item exists to remove.
+    assert payload["promotion"] is None
     assert listed.status_code == 200
     assert [item["quote_id"] for item in listed.json()] == [payload["quote_id"]]
 

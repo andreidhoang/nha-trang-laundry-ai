@@ -10,10 +10,27 @@
  *   - **No total is ever computed here.** The response carries a service subtotal and, separately,
  *     a display total that is usually null because the delivery fee is unresolved. Adding the first
  *     to a guess at the second is precisely the defect `ENGINEERING_SPEC_V1.md:530` forbids.
- *   - **`net_service_subtotal_vnd` is shown under a price-state badge, never bare.** The API gives
- *     it a scalar name but the service layer fills it from the domain's range *maximum*. Today
- *     range-priced services are refused outright so the two coincide; the day they do not, a bare
- *     number here would show the top of a range as a settled price.
+ *   - **`net_service_subtotal_vnd` is not shown at all on a band.** The API gives it a scalar name
+ *     but the service layer fills it from the domain's range *maximum*
+ *     (`operations.py` — `totals.net_service_subtotal_max_vnd`), and the same is true of
+ *     `list_service_subtotal_vnd`. This module's earlier note said the two coincided "today,
+ *     because range-priced services are refused outright", and named what would happen the day
+ *     they did not: a bare number showing the top of a range as a settled price. `RANGE-PRICE-001`
+ *     is that day. So on a `RANGE` revision both rows read `—` with the reason stated, and the
+ *     band is read from `display_total_min_vnd`/`display_total_max_vnd`, which are a real pair.
+ *   - **Closing a band is three steps and the console never shortens them.** Twenty of the
+ *     forty-four published services carry an interval rather than a rate. The counter asks for a
+ *     band revision (`present_range_as_band`), types one amount per banded line, and the server
+ *     raises a `SET_RANGE_PRICE` envelope that a *second* person approves on `#/approvals`; only
+ *     then does applying it write the price. The screen holds the amounts between the second and
+ *     third step and says so, because nothing on the server stores them in between — the envelope
+ *     binds a digest, not the content.
+ *   - **The band mode is asked for, never assumed.** `GET /internal/v1/pricebook/services` carries
+ *     no price kind, so this screen genuinely cannot know which services are banded before it
+ *     prices one. It therefore submits the ordinary way, and when the engine answers
+ *     `RANGE_PRICE_REQUIRES_HUMAN` it offers one button that re-sends the same lines asking for a
+ *     band. Guessing the flag on every quote would make a total-less revision the default outcome
+ *     for a caller expecting a price.
  *   - **A refusal is a result, not an error.** A 422 carrying `REQUIRE_HUMAN` means the engine
  *     declined to guess. It is rendered as an outcome with its reason codes intact.
  *   - **The service is picked by name, never typed as a code.** The picker offers the published
@@ -31,14 +48,27 @@
  */
 
 import { Submission, isTruncated, request } from "../core/api.js";
+import { BAND, bandReadiness, bandVerdict } from "../core/bands.js";
 import { h, render } from "../core/dom.js";
-import { UUID, dateTime, matchesFilter, parseDong, shortHash, shortId } from "../core/format.js";
+import {
+  UNKNOWN,
+  UUID,
+  countdown,
+  dateTime,
+  matchesFilter,
+  money,
+  parseDong,
+  quantity as quantityText,
+  shortHash,
+  shortId,
+} from "../core/format.js";
 import { enumVi, serviceCategoryVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
   amount,
   badge,
+  bandInput,
   copyable,
   enumSelect,
   errorNotice,
@@ -84,6 +114,29 @@ const SERVICE_CODE = /^[A-Z][A-Z0-9_]{1,62}$/;
  * truncation the screen discloses rather than a total it poses as.
  */
 const PICKER_LIMIT = 100;
+
+/**
+ * The engine's word for "this line is priced by inspection and nobody has chosen a number yet".
+ *
+ * Matched on rather than interpreted: it is the one code whose presence in a pricing refusal means
+ * the same lines would succeed if the caller asked for a band instead, which is the only place in
+ * this screen where a refusal has a next action the console can offer.
+ */
+const NEEDS_A_HUMAN_PRICE = "RANGE_PRICE_REQUIRES_HUMAN";
+
+/** One second, as on the approvals queue. An envelope's remaining time is the point. */
+const TICK_MS = 1000;
+
+/**
+ * `ApprovalAction.SET_RANGE_PRICE` maps to `_OWNER_FINANCIAL`, which is a ten-minute envelope, and
+ * the server enforces expiry at the decision *and* again when the price is applied — so the
+ * owner's approval and the staff member's press must both land inside one window.
+ *
+ * Not a number this screen computes anything from: `expires_at` comes off the raised envelope and
+ * drives the countdown. It is written down because the sentence the counter reads has to say ten
+ * minutes, and a sentence quoting a figure nothing in the file explains is how copy goes stale.
+ */
+const OWNER_FINANCIAL_TTL_VI = "mười phút";
 
 /**
  * One editable line. Kept as plain state rather than read from the DOM at submit time, so that the
@@ -379,7 +432,16 @@ function createOrderHandoff(result, contactId) {
  * deciding must be read to them again, not silently accepted.
  */
 function acceptControl(result, store, onAccepted, writeVerdict, contactId) {
-  if (result.finality === "APPROVED_EXACT") {
+  // `status`, not `finality`, since RANGE-PRICE-001. This read `finality === "APPROVED_EXACT"`,
+  // which was an exact test for "the customer has agreed" only while the composer could produce
+  // nothing but `ESTIMATE` before acceptance. `apply_range_prices` now produces
+  // `APPROVED_EXACT`/`APPROVED` for a band an owner closed -- a revision with a real single price
+  // that *nobody has agreed to yet*. Under the old condition that revision rendered "Đã chốt" and
+  // a "Tạo đơn" link, so the counter would have created an order against a price the customer had
+  // never heard, and the order route would have refused it for having no acceptance attestation.
+  // `ACCEPTED_FINAL` is the status `accept_quote_revision` writes and the one `OrderRepository`
+  // requires, so it is the fact this branch always meant.
+  if (result.status === "ACCEPTED_FINAL") {
     return h(
       "div",
       { class: "stack stack--tight" },
@@ -389,6 +451,22 @@ function acceptControl(result, store, onAccepted, writeVerdict, contactId) {
         "Đã chốt. Bản này không sửa được nữa, và người chốt đã được ghi lại.",
       ),
       createOrderHandoff(result, contactId),
+    );
+  }
+  // A band is not one price, so there is nothing for a customer to agree to yet. The server
+  // refuses acceptance on a `RANGE` revision with `RANGE_PRICE_REQUIRES_HUMAN`; offering the
+  // button would be offering a press that can only be refused.
+  if (result.finality === "RANGE") {
+    return h(
+      "div",
+      { class: "notice", dataState: "warn" },
+      h("p", { class: "notice__title" }, "Bản này là một khoảng giá, chưa phải một số"),
+      h(
+        "p",
+        null,
+        "Đọc khoảng giá cho khách được, nhưng chưa chốt được: chưa có con số nào để khách đồng ý. " +
+          "Chốt một giá trong khoảng ở ô bên dưới, chủ tiệm duyệt, rồi mới bấm “Khách đã chốt giá”.",
+      ),
     );
   }
   const accepting = new Submission(`quote-accept-${result.quote_id}-${result.revision}`);
@@ -500,20 +578,45 @@ function revisionResult(result, store, onAccepted, writeVerdict, contactId = nul
         }),
         { span: true },
       ],
+      // Both of these rows are the domain's range *maximum* carried under a scalar name
+      // (`operations.py` fills them from `net_service_subtotal_max_vnd` and
+      // `list_service_subtotal_max_vnd`). On an exact revision the two ends coincide and the
+      // number is the number. On a band they do not, and printing one would put the top of the
+      // interval on screen as though it were the price -- the exact failure this module's header
+      // has warned about since it was written. So on a band the value is withheld and the row
+      // says why; the band itself is on the display-total row above, where min and max are a
+      // genuine pair.
       [
         "Tiền dịch vụ (chưa phải số khách trả)",
-        amount({
-          min: result.net_service_subtotal_vnd,
-          max: result.net_service_subtotal_vnd,
-          finality: result.finality,
-        }),
+        result.finality === "RANGE"
+          ? h("span", { class: "row" }, UNKNOWN, priceStateBadge(result.finality))
+          : amount({
+              min: result.net_service_subtotal_vnd,
+              max: result.net_service_subtotal_vnd,
+              finality: result.finality,
+            }),
         { span: true },
       ],
-      ["Giá niêm yết trước giảm", amount({
-        min: result.list_service_subtotal_vnd,
-        max: result.list_service_subtotal_vnd,
-        finality: result.finality,
-      }), { span: true }],
+      [
+        "Giá niêm yết trước giảm",
+        result.finality === "RANGE"
+          ? h("span", { class: "row" }, UNKNOWN, priceStateBadge(result.finality))
+          : amount({
+              min: result.list_service_subtotal_vnd,
+              max: result.list_service_subtotal_vnd,
+              finality: result.finality,
+            }),
+        { span: true },
+      ],
+      result.finality === "RANGE"
+        ? [
+            "Vì sao hai dòng trên là “—”",
+            "Máy chủ gửi hai số này dưới một cái tên số đơn, nhưng ruột của chúng là đầu trên của " +
+              "khoảng giá. Với một bản khoảng giá, in đầu trên ra sẽ đọc như giá đã chốt. Khoảng " +
+              "đầy đủ nằm ở dòng “Tổng hiển thị cho khách”.",
+            { span: true },
+          ]
+        : null,
       [
         "Mã băm ảnh chụp",
         // The order form needs this hash verbatim; the row shortens it for reading and the
@@ -537,6 +640,550 @@ function revisionResult(result, store, onAccepted, writeVerdict, contactId = nul
         )
       : null,
   );
+}
+
+/**
+ * The published name of a service, from the catalog the picker already loaded.
+ *
+ * Falls back to the code rather than to a friendly guess: a line whose code is not in the
+ * published catalog is a pricebook that moved under a stored revision, and it must look
+ * unfamiliar rather than be labelled plausibly.
+ *
+ * @param {CatalogService[]|null} catalog
+ * @param {string} code
+ * @returns {string}
+ */
+function serviceName(catalog, code) {
+  const found = catalog?.find((item) => item.code === code);
+  return found ? found.display_name : String(code);
+}
+
+/**
+ * One revision's lines, read back from the server.
+ *
+ * This is what an approver looks at before deciding a `SET_RANGE_PRICE` envelope, and what the
+ * staff member closing a band checks their own amounts against. Every number on it came off the
+ * immutable snapshot; nothing is combined and nothing is totalled here.
+ *
+ * @param {any} detail a `QuoteRevisionDetailResponse`
+ * @param {CatalogService[]|null} catalog
+ * @returns {HTMLElement}
+ */
+function revisionLines(detail, catalog) {
+  return h(
+    "div",
+    { class: "stack stack--tight" },
+    // Defensive `|| []` for the same reason every read on this screen has one: the console has no
+    // generated client and no type checker between it and the API, so a response missing a field
+    // must render an empty list rather than throw and leave a blank panel with no explanation.
+    (detail.lines || []).map((line) =>
+      h(
+        "div",
+        { class: "spread" },
+        h(
+          "span",
+          null,
+          h("strong", null, serviceName(catalog, line.service_code)),
+          h("span", { class: "hint mono" }, ` ${line.service_code}`),
+          h("span", { class: "hint" }, ` · ${quantityText(line.quantity)} ${enumVi(line.unit)}`),
+        ),
+        line.price_kind === "RANGE"
+          ? amount({
+              min: line.band_minimum_vnd,
+              max: line.band_maximum_vnd,
+              finality: "RANGE",
+              unknownLabel: "chưa có khoảng giá",
+            })
+          : amount({
+              min: line.net_amount_vnd,
+              max: line.net_amount_vnd,
+              finality: detail.finality,
+              unknownLabel: "chưa có giá",
+            }),
+      ),
+    ),
+  );
+}
+
+/**
+ * Closing a published band: the counter's three steps, on one card.
+ *
+ * The shape of this control is dictated by the server and is not a UX preference. Closing a band
+ * is *two* commands with a second person in between — propose, approve, apply — because the
+ * envelope an owner signs binds a digest of the amounts rather than storing them
+ * (`approvals.py` calls comparing an unstored rendering "theatre"). Two consequences fall out of
+ * that and both are stated on screen rather than discovered:
+ *
+ *   1. **The amounts live in this screen between step two and step three.** Nothing on the server
+ *      holds them. Navigating away loses them, and the operator has to propose again — which is
+ *      cheap, because a proposal writes no price.
+ *   2. **The envelope dies in ten minutes** and expiry is checked again at application, so an
+ *      approval that arrives late produces a refusal rather than a price. The countdown is
+ *      therefore a control, not decoration.
+ *
+ * The bound comes from the server, per line, off the revision the customer was read — never from
+ * the live pricebook and never from anything this screen assembled. A pricebook republished while
+ * the customer was deciding cannot move the interval they were told.
+ *
+ * @param {object} spec
+ * @param {any} spec.result the stored `RANGE` revision this closes
+ * @param {string} spec.store
+ * @param {CatalogService[]|null} spec.catalog
+ * @param {{allowed: boolean, reason: string}} spec.writeVerdict
+ * @param {(closed: any) => Promise<void>|void} spec.onClosed given the new exact revision
+ * @returns {HTMLElement}
+ */
+function bandCloser(spec) {
+  const root = h("div", { class: "stack" }, skeleton(2));
+
+  /**
+   * @type {{lines: any[], typed: Record<string, string>, approval: any|null, detail: any|null}}
+   */
+  const state = { lines: [], typed: {}, approval: null, detail: null };
+
+  const status = resultLine();
+  const errorHost = h("div");
+  const clockHost = h("span", { class: "row" });
+
+  // One key per intent, minted on first use and cleared on an edit or a commit -- the rule
+  // `core/api.js` states and the reason it states it. Minting a key per press instead would make
+  // a retry after a timeout a *second* command: the server hashes the body alongside the key, so
+  // the same amounts under a new key raise a second envelope rather than replaying the first, and
+  // the counter would be looking at two approvals for one garment.
+  const proposing = new Submission(`range-price-propose-${spec.result.quote_id}`);
+  const applying = new Submission(`range-price-apply-${spec.result.quote_id}`);
+
+  // One interval for this card, stopped the moment the card leaves the document. Without the
+  // connectivity check a closed quote would leave a timer ticking against a detached tree for as
+  // long as the console stayed open, which on a counter tablet is all day.
+  const timer = setInterval(() => {
+    if (!root.isConnected) {
+      clearInterval(timer);
+      return;
+    }
+    if (state.approval) render(clockHost, expiryBadge(state.approval.expires_at));
+  }, TICK_MS);
+
+  /** The body of the request both commands take. Identical by construction, which is the point. */
+  const body = () => ({
+    expected_current_revision: spec.result.revision,
+    expected_snapshot_hash: spec.result.snapshot_hash,
+    choices: state.lines.map((line) => ({
+      service_code: line.service_code,
+      amount_vnd: bandVerdict(
+        state.typed[line.service_code],
+        line.band_minimum_vnd,
+        line.band_maximum_vnd,
+      ).amount,
+    })),
+  });
+
+  async function load() {
+    render(root, skeleton(2));
+    try {
+      const detail = await request(
+        `/internal/v1/stores/${encodeURIComponent(spec.store)}/quotes/${encodeURIComponent(spec.result.quote_id)}?revision=${encodeURIComponent(String(spec.result.revision))}`,
+      );
+      state.detail = detail;
+      state.lines = (detail.lines || []).filter((line) => line.price_kind === "RANGE");
+      draw();
+    } catch (error) {
+      render(
+        root,
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Chưa đọc được các dòng của bản báo giá này"),
+          h(
+            "p",
+            null,
+            "Không có các dòng thì không biết khoảng giá của từng món, và bảng vận hành không tự " +
+              "đoán khoảng. Thử tải lại; nếu vẫn vậy thì báo kỹ thuật kèm mã theo dõi bên dưới.",
+          ),
+        ),
+        errorNotice(error, { onRetry: () => void load() }),
+        h(
+          "div",
+          { class: "form__actions" },
+          h(
+            "button",
+            { type: "button", dataVariant: "quiet", onClick: () => void load() },
+            icon("refresh"),
+            "Tải lại các dòng",
+          ),
+        ),
+      );
+    }
+  }
+
+  /** Redraw the whole card. Called on a step change, never on a keystroke. */
+  function draw() {
+    if (!state.lines.length) {
+      render(
+        root,
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Bản này không có dòng nào theo khoảng giá"),
+          h(
+            "p",
+            null,
+            "Máy chủ báo đây là bản khoảng giá nhưng không dòng nào mang khoảng. Đừng gửi số nào; " +
+              "tải lại báo giá và báo kỹ thuật.",
+          ),
+        ),
+      );
+      return;
+    }
+    render(root, state.approval ? awaitingApproval() : chooseAmounts());
+  }
+
+  /** Step one: one amount per banded line, checked while it is typed. */
+  function chooseAmounts() {
+    const fields = state.lines.map((line, index) =>
+      bandInput({
+        id: `quote-band-${index}`,
+        label: serviceName(spec.catalog, line.service_code),
+        hint:
+          `${quantityText(line.quantity)} ${enumVi(line.unit)} · ` +
+          "giá cho cả dòng, không phải đơn giá.",
+        minimum: line.band_minimum_vnd,
+        maximum: line.band_maximum_vnd,
+        value: state.typed[line.service_code] || "",
+        onInput: (value) => {
+          state.typed[line.service_code] = value;
+          // An edited amount is different content, so the proposal that would carry it is a
+          // different intent and may not reuse the key of the one before it.
+          proposing.reset();
+          refreshReadiness();
+        },
+      }),
+    );
+
+    const send = h(
+      "button",
+      { type: "button", dataVariant: "primary", dataRequiresNetwork: "true" },
+      "Gửi giá cho chủ duyệt",
+    );
+    send.addEventListener("click", () => void propose(send));
+
+    const readinessHost = h("div");
+    const refreshReadiness = () => render(readinessHost, readinessNotice());
+
+    refreshReadiness();
+
+    return h(
+      "div",
+      { class: "stack" },
+      h(
+        "div",
+        { class: "notice", dataState: "info" },
+        h("p", { class: "notice__title" }, "Chốt một giá trong khoảng đã niêm yết"),
+        h(
+          "p",
+          null,
+          "Khoảng giá là chủ tiệm đã cho phép trước: mọi số trong khoảng đều là giá hợp lệ, và " +
+            "bảng vận hành không tự chọn giúp một số nào. Bạn chọn, chủ tiệm duyệt, rồi máy chủ " +
+            "mới ghi thành giá.",
+        ),
+        h(
+          "p",
+          { class: "hint" },
+          `Phiếu duyệt chỉ sống ${OWNER_FINANCIAL_TTL_VI}, và máy chủ kiểm lại hạn cả lúc duyệt ` +
+            "lẫn lúc áp dụng — nên gọi chủ tiệm trước khi gửi, đừng gửi rồi mới đi tìm.",
+        ),
+      ),
+      h("div", { class: "stack stack--tight" }, fields),
+      readinessHost,
+      h("div", { class: "action-bar" }, gated(send, spec.writeVerdict)),
+      status,
+      errorHost,
+    );
+  }
+
+  /**
+   * What stands between the last keystroke and the button.
+   *
+   * The server refuses a half-closed revision outright — every band must be closed in one
+   * attestation — so the console names the line that is still open instead of letting the operator
+   * press and read `RANGE_PRICE_REQUIRES_HUMAN` back.
+   *
+   * @returns {HTMLElement|null}
+   */
+  function readinessNotice() {
+    const readiness = bandReadiness(state.lines, state.typed);
+    if (readiness.ready) return null;
+    const open = readiness.blocked.filter((item) => item.state === BAND.EMPTY);
+    return h(
+      "div",
+      { class: "notice", dataState: "warn" },
+      h("p", { class: "notice__title" }, "Chưa gửi được: còn dòng chưa có giá hợp lệ"),
+      h(
+        "p",
+        null,
+        "Máy chủ chốt cả bản một lần, không chốt từng dòng. Một bản nửa quyết nửa đoán còn tệ hơn " +
+          "là chưa có tổng, nên phải điền đủ mọi dòng trước khi gửi.",
+      ),
+      h(
+        "ul",
+        null,
+        readiness.blocked.map((item) =>
+          h(
+            "li",
+            null,
+            h("span", null, serviceName(spec.catalog, item.serviceCode)),
+            open.includes(item) ? " — chưa nhập giá" : " — số đang nhập chưa dùng được",
+          ),
+        ),
+      ),
+    );
+  }
+
+  /** Step two: the envelope is raised and a second person has to decide it. */
+  function awaitingApproval() {
+    const apply = h(
+      "button",
+      { type: "button", dataVariant: "primary", dataRequiresNetwork: "true" },
+      "Áp dụng giá đã duyệt",
+    );
+    apply.addEventListener("click", () => void applyPrices(apply));
+
+    render(clockHost, expiryBadge(state.approval.expires_at));
+
+    return h(
+      "div",
+      { class: "stack" },
+      h(
+        "div",
+        { class: "spread" },
+        h("p", { class: "eyebrow" }, "Đang chờ chủ tiệm duyệt"),
+        clockHost,
+      ),
+      facts([
+        [
+          "Mã phiếu duyệt",
+          copyable({
+            value: String(state.approval.approval_request_id),
+            display: shortId(state.approval.approval_request_id),
+          }),
+          { mono: true, span: true },
+        ],
+        ["Ai được quyết", enumVi(state.approval.required_role)],
+        ["Hết hạn lúc", dateTime(state.approval.expires_at)],
+      ]),
+      h(
+        "div",
+        { class: "stack stack--tight" },
+        state.lines.map((line) =>
+          h(
+            "div",
+            { class: "spread" },
+            h("span", null, serviceName(spec.catalog, line.service_code)),
+            h(
+              "span",
+              { class: "money" },
+              money(
+                bandVerdict(
+                  state.typed[line.service_code],
+                  line.band_minimum_vnd,
+                  line.band_maximum_vnd,
+                ).amount,
+              ),
+            ),
+          ),
+        ),
+      ),
+      h(
+        "div",
+        { class: "notice", dataState: "warn" },
+        h("p", { class: "notice__title" }, "Đừng rời màn hình này"),
+        h(
+          "p",
+          null,
+          "Phiếu duyệt niêm phong một mã băm của đúng những con số này, chứ máy chủ không lưu " +
+            "chính những con số ấy — nên chúng chỉ còn ở màn hình này. Rời đi là phải gửi lại từ " +
+            "đầu. Gửi lại không mất gì: lúc đề nghị chưa có giá nào được ghi.",
+        ),
+        h(
+          "p",
+          null,
+          "Máy chủ cũng từ chối để người đề nghị tự duyệt. Người bấm “Duyệt” ở màn hình ",
+          h("a", { href: "#/approvals" }, "Duyệt"),
+          " phải là người khác.",
+        ),
+      ),
+      h(
+        "div",
+        { class: "action-bar" },
+        gated(apply, spec.writeVerdict),
+        h(
+          "button",
+          {
+            type: "button",
+            dataVariant: "quiet",
+            onClick: () => {
+              // Deliberately not a "cancel": nothing on the server is undone. The envelope stays
+              // raised and simply stops matching, because a different amount renders a different
+              // digest -- which is invariant 8 doing its job, not a loose end.
+              state.approval = null;
+              setResult(
+                status,
+                "warn",
+                "Đã quay lại bước chọn giá. Phiếu duyệt cũ không dùng được cho số mới — đổi số " +
+                  "là đổi nội dung được niêm phong, nên phải gửi lại.",
+              );
+              draw();
+            },
+          },
+          "Sửa lại số",
+        ),
+      ),
+      status,
+      errorHost,
+    );
+  }
+
+  /** @param {HTMLButtonElement} button */
+  async function propose(button) {
+    const readiness = bandReadiness(state.lines, state.typed);
+    if (!readiness.ready) {
+      setResult(status, "danger", "Còn dòng chưa có giá hợp lệ; chưa gửi đi.");
+      return;
+    }
+    button.disabled = true;
+    setResult(status, "warn", "Đang gửi cho chủ tiệm duyệt…");
+    render(errorHost);
+    try {
+      const approval = await request(
+        `/internal/v1/stores/${encodeURIComponent(spec.store)}/quotes/${encodeURIComponent(spec.result.quote_id)}/range-prices`,
+        { method: "POST", body: body(), idempotencyKey: proposing.key() },
+      );
+      proposing.reset();
+      state.approval = approval;
+      setResult(
+        status,
+        "ok",
+        `Đã gửi. Chủ tiệm mở màn hình Duyệt và bấm Duyệt cho phiếu ${shortId(approval.approval_request_id)}.`,
+      );
+      draw();
+    } catch (error) {
+      button.disabled = false;
+      setResult(status, error.kind === "REQUIRE_HUMAN" ? "warn" : "danger", proposeFailure(error));
+      render(errorHost, errorNotice(error));
+      revealError(errorHost);
+    }
+  }
+
+  /** @param {HTMLButtonElement} button */
+  async function applyPrices(button) {
+    // Checked again, although nothing can have edited an amount while step two is on screen:
+    // "Sửa lại số" is the only way back to the boxes and it drops the approval on the way. A
+    // command that writes a price is the wrong place to rely on that being true.
+    if (!bandReadiness(state.lines, state.typed).ready) {
+      setResult(status, "danger", "Số tiền đang giữ không hợp lệ; chưa gửi đi.");
+      return;
+    }
+    button.disabled = true;
+    setResult(status, "warn", "Đang ghi giá đã duyệt…");
+    render(errorHost);
+    try {
+      const closed = await request(
+        `/internal/v1/stores/${encodeURIComponent(spec.store)}/quotes/${encodeURIComponent(spec.result.quote_id)}/range-prices/${encodeURIComponent(String(state.approval.approval_request_id))}`,
+        { method: "POST", body: body(), idempotencyKey: applying.key() },
+      );
+      applying.reset();
+      clearInterval(timer);
+      setResult(status, "ok", `Đã ghi giá vào bản sửa đổi ${closed.revision}.`);
+      if (spec.onClosed) await spec.onClosed(closed);
+    } catch (error) {
+      button.disabled = false;
+      setResult(status, error.kind === "REQUIRE_HUMAN" ? "warn" : "danger", applyFailure(error));
+      render(errorHost, errorNotice(error));
+      revealError(errorHost);
+    }
+  }
+
+  void load();
+  return root;
+}
+
+/**
+ * The sentence above a failed proposal.
+ *
+ * Every branch says the same load-bearing thing in different words — nothing was written — because
+ * the one mistake this step invites is pressing again in case the first press "half worked". A
+ * proposal writes no price at all, and an out-of-band amount is refused before any approval row
+ * exists, so there is never anything to clean up.
+ *
+ * @param {any} error
+ * @returns {string}
+ */
+function proposeFailure(error) {
+  if (error.kind === "TIMEOUT" || error.kind === "NETWORK") {
+    return (
+      "Chưa biết lệnh có tới máy chủ hay không. Phiếu duyệt có thể đã được tạo — mở màn hình " +
+      "Duyệt xem có phiếu nào của bản báo giá này trước khi gửi lại. Chưa có giá nào được ghi."
+    );
+  }
+  if (error.kind === "REQUIRE_HUMAN") {
+    return "Máy chủ từ chối số này. Không có phiếu duyệt nào được tạo và không có giá nào được ghi.";
+  }
+  if (error.kind === "STALE" || error.kind === "CONFLICT") {
+    return (
+      "Bản báo giá đã đổi từ lúc bạn mở màn hình, nên đề nghị này không còn gắn đúng bản nữa. " +
+      "Tải lại danh sách báo giá và làm lại trên bản mới. Chưa có gì được ghi."
+    );
+  }
+  return "Không gửi được đề nghị. Chưa có giá nào được ghi.";
+}
+
+/**
+ * The sentence above a failed application.
+ *
+ * The common failure here is not a bad number: it is an envelope that is not approved yet, was
+ * approved for different amounts, or has run out its ten minutes. The server answers all three
+ * with one deliberately opaque message — telling a caller *which* would tell a member of any store
+ * whether a given UUID is a real approval somewhere else — so the console lists the three
+ * possibilities rather than guessing between them.
+ *
+ * @param {any} error
+ * @returns {string}
+ */
+function applyFailure(error) {
+  if (error.kind === "TIMEOUT" || error.kind === "NETWORK") {
+    return (
+      "Chưa biết lệnh có tới máy chủ hay không, nên chưa biết giá đã được ghi hay chưa. Tải lại " +
+      "danh sách báo giá và xem bản mới nhất trước khi bấm lại."
+    );
+  }
+  return (
+    "Chưa ghi được giá. Thường là một trong ba: chủ tiệm chưa bấm Duyệt, phiếu duyệt niêm phong " +
+    "những con số khác với số đang ở đây, hoặc phiếu đã quá hạn. Máy chủ trả lời chung một câu " +
+    "cho cả ba. Kiểm màn hình Duyệt, và nếu quá hạn thì gửi lại từ đầu."
+  );
+}
+
+/**
+ * Remaining time on the raised envelope.
+ *
+ * Copied in spirit from the approvals queue rather than shared with it: the badge there belongs to
+ * a card in a list that reloads, this one belongs to a form the operator is standing in front of.
+ * Rebuilt whole on each tick because the warn → danger flip is carried by `data-state`, not by the
+ * words, and a tick that patched only the text would leave an expired envelope wearing a live
+ * envelope's colour.
+ *
+ * @param {string|null|undefined} expiresAt
+ * @returns {HTMLElement}
+ */
+function expiryBadge(expiresAt) {
+  const left = countdown(expiresAt);
+  return badge({
+    token: left.text,
+    gloss: left.expired
+      ? "đã hết hạn — gửi lại từ đầu, không xin gia hạn được"
+      : "thời gian còn lại để chủ duyệt và bạn áp dụng",
+    state: left.expired ? "danger" : "warn",
+  });
 }
 
 /**
@@ -611,6 +1258,10 @@ export function render_(context) {
   // The Tiếp nhận screen's "Báo giá ngay" lands here. The id is a claim until the server confirms
   // it — `prefill` below resolves it before the form is allowed to rely on it.
   const prefillId = String(context?.query?.get("request") || "").trim();
+  // `#/quotes?quote=<id>` — the approvals queue's "Mở nội dung này trước khi quyết" link for a
+  // `QUOTE_REVISION` envelope. An approver arrives here to read the lines and the bands behind a
+  // digest they are about to sign, so the panel it opens is a read and carries no controls.
+  const openId = String(context?.query?.get("quote") || "").trim();
 
   /** @type {{lines: Line[], fulfillmentMode: string, verifiedDistanceM: string, manualFeeVnd: string, customerAcknowledgedFee: boolean, orderRequestId: string, quoteId: string, expectedRevision: string, rowVersion: string, requestSummary: any|null}} */
   const draft = {
@@ -719,6 +1370,7 @@ export function render_(context) {
   const resultHost = h("div", { class: "stack" });
   const result = resultLine();
   const summaryHost = h("div");
+  const openHost = h("div");
   const pickerHost = h("div", null, skeleton(2));
 
   // Any edit invalidates the idempotency key: the server hashes the payload alongside it, so
@@ -1014,6 +1666,114 @@ export function render_(context) {
     }
   }
 
+  /**
+   * Open one stored revision for reading, by id.
+   *
+   * This exists so that an approver can see what a `SET_RANGE_PRICE` envelope is about before
+   * deciding it. `screens/approvals.js` refuses to enable its decision controls for a resource
+   * type the console cannot render — approving a digest of content nobody was shown is blind
+   * approval — and `QUOTE_REVISION` was on the wrong side of that line for as long as no route
+   * returned a quote's lines. One does now, so the link is real and this is where it lands.
+   *
+   * Read-only on purpose, including for a staff member who could write: the person who proposed
+   * the amounts may not approve them, and a panel that offered a control here would be inviting
+   * the one press the server is guaranteed to refuse.
+   *
+   * @param {string} id
+   */
+  async function openQuote(id) {
+    if (!UUID.test(id)) {
+      render(
+        openHost,
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Mã báo giá trong đường dẫn không hợp lệ"),
+          h("p", null, "Không mở được bản nào; chọn báo giá từ danh sách bên dưới."),
+        ),
+      );
+      return;
+    }
+    render(openHost, skeleton(2));
+    try {
+      const detail = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${encodeURIComponent(id)}`,
+      );
+      render(
+        openHost,
+        panel({
+          eyebrow: "Đang xem",
+          title: `Bản sửa đổi ${detail.revision}`,
+          guardrail:
+            "Bảng này chỉ để đọc. Nó cho thấy đúng những dòng và những khoảng giá mà một phiếu " +
+            "duyệt niêm phong, để không ai phải duyệt một mã băm mà chưa nhìn thấy nội dung.",
+          children: h(
+            "div",
+            { class: "stack" },
+            h(
+              "div",
+              { class: "spread" },
+              copyable({ value: String(detail.quote_id), display: shortId(detail.quote_id) }),
+              priceStateBadge(detail.finality),
+            ),
+            facts([
+              ["Trạng thái", enumVi(detail.status)],
+              ["Phiên bản dòng", `v${detail.row_version}`],
+              ["Hiệu lực đến", dateTime(detail.valid_until)],
+              [
+                "Tổng hiển thị cho khách",
+                amount({
+                  min: detail.display_total_min_vnd,
+                  max: detail.display_total_max_vnd,
+                  finality: detail.finality,
+                  unknownLabel: "chưa có tổng",
+                }),
+                { span: true },
+              ],
+              [
+                "Mã băm ảnh chụp",
+                copyable({
+                  value: String(detail.snapshot_hash),
+                  display: shortHash(detail.snapshot_hash),
+                }),
+                { mono: true, span: true },
+              ],
+            ]),
+            revisionLines(detail, catalog),
+            reasonCodeList(detail.reason_codes || []),
+          ),
+        }),
+      );
+    } catch (error) {
+      // A 404 here is most often store scope rather than a wrong id: the approvals queue spans
+      // every store the approver is assigned to, while this read is scoped to the one selected in
+      // the app bar. The server answers the same way for "another store's quote" and "no such
+      // quote", so the console does not guess between them either -- it names both and says which
+      // control fixes the first.
+      render(
+        openHost,
+        /** @type {any} */ (error).kind === "MISSING"
+          ? h(
+              "div",
+              { class: "notice", dataState: "warn" },
+              h(
+                "p",
+                { class: "notice__title" },
+                "Không tìm thấy bản báo giá này trong cửa hàng đang chọn",
+              ),
+              h(
+                "p",
+                null,
+                "Báo giá có thể thuộc cửa hàng khác, hoặc mã đã sai — máy chủ trả lời giống nhau " +
+                  "cho cả hai nên màn hình này cũng không đoán. Đổi cửa hàng ở thanh trên rồi mở " +
+                  "lại đường dẫn. Đừng duyệt một phiếu mà bạn chưa xem được nội dung.",
+              ),
+            )
+          : errorNotice(/** @type {any} */ (error), { onRetry: () => void openQuote(id) }),
+      );
+    }
+  }
+
   function validate() {
     if (!draft.orderRequestId.trim()) {
       return "Chọn một yêu cầu từ danh sách tiếp nhận, hoặc mở mục nâng cao để nhập mã.";
@@ -1041,6 +1801,109 @@ export function render_(context) {
     return "";
   }
 
+  /**
+   * Paint one revision, and everything that revision makes possible.
+   *
+   * One function rather than three call sites, because the screen reaches this state three ways —
+   * a fresh quote, an accepted one, and a band an owner just closed — and the earlier version
+   * duplicated the render inside the acceptance callback. A band revision additionally gets the
+   * closing card below the result; an exact one does not, and neither is ever both.
+   *
+   * @param {any} revision
+   */
+  function paintRevision(revision) {
+    const contactId = draft.requestSummary?.contact_binding_id ?? null;
+    render(
+      resultHost,
+      revisionResult(
+        revision,
+        store,
+        async (accepted) => {
+          // Repaint from the accepted revision so the screen shows the final price and the
+          // control is replaced by the record, rather than leaving a button that would only
+          // be refused a second time. The contact id is read again on each paint rather than
+          // captured once: an operator can unbind the intake while the customer is deciding, and
+          // a stale capture would build a hand-off link pointing at somebody else.
+          //
+          // The confirmation is moved to the form's result line for the same reason as below:
+          // `acceptControl` writes "Đã chốt" into a host that this repaint then destroys, so the
+          // attestation used to be recorded and never announced.
+          setResult(result, "ok", `Đã chốt. Bản sửa đổi ${accepted.revision} là giá cuối.`);
+          paintRevision(accepted);
+          await list.reload();
+        },
+        writeVerdict,
+        contactId,
+      ),
+      revision.finality === "RANGE"
+        ? bandCloser({
+            result: revision,
+            store,
+            catalog,
+            writeVerdict,
+            onClosed: async (closed) => {
+              // Reported to the form's own result line, not to the card, because the next
+              // statement replaces the card. Without this the operator watches the closing form
+              // vanish with no sentence saying the price was written -- which is the one thing
+              // they need before they read the number back to the customer.
+              setResult(result, "ok", `Đã ghi giá vào bản sửa đổi ${closed.revision}.`);
+              paintRevision(closed);
+              await list.reload();
+            },
+          })
+        : null,
+    );
+  }
+
+  /**
+   * The one refusal on this screen that has a next action the console can offer.
+   *
+   * `GET /internal/v1/pricebook/services` carries no price kind, so nothing here knows which of
+   * the forty-four published services are banded until the engine says so. When it does, the same
+   * lines would be accepted as a band — and asking for one is a deliberate act with a person
+   * behind it, which is why it is a button and not a flag this screen sets on every quote.
+   *
+   * @returns {HTMLElement}
+   */
+  function bandOffer() {
+    const button = h(
+      "button",
+      { type: "button", dataVariant: "primary", dataRequiresNetwork: "true" },
+      "Lập bản khoảng giá",
+    );
+    button.addEventListener("click", () => {
+      // Re-validated rather than trusted: the refusal this button answers leaves the form live,
+      // so a line can have been emptied between the press that failed and this one.
+      const problem = validate();
+      if (problem) {
+        setResult(result, "danger", problem);
+        return;
+      }
+      // A different payload needs a different key: the server hashes the body alongside it, so
+      // reusing the key with `present_range_as_band` added is a 409 rather than a second command.
+      submission.reset();
+      void send(true);
+    });
+    return h(
+      "div",
+      { class: "notice", dataState: "warn" },
+      h("p", { class: "notice__title" }, "Món này niêm yết theo khoảng giá"),
+      h(
+        "p",
+        null,
+        "Bảng giá công bố một khoảng cho món này chứ không công bố một đơn giá, nên bộ tính giá " +
+          "không tự chọn một số — đó là việc của người, và của chủ tiệm duyệt.",
+      ),
+      h(
+        "p",
+        null,
+        "Bấm nút dưới đây để ghi lại đúng những dòng vừa nhập thành một bản khoảng giá. Đọc " +
+          "khoảng cho khách nghe được ngay, và chốt một giá trong khoảng ở ngay bản đó.",
+      ),
+      h("div", { class: "form__actions" }, gated(button, writeVerdict)),
+    );
+  }
+
   async function submit(event) {
     event.preventDefault();
     const problem = validate();
@@ -1048,7 +1911,15 @@ export function render_(context) {
       setResult(result, "danger", problem);
       return;
     }
+    await send(false);
+  }
 
+  /**
+   * Price the drafted lines.
+   *
+   * @param {boolean} asBand whether to ask the server to store the band instead of refusing it
+   */
+  async function send(asBand) {
     const revisionMode = Boolean(draft.quoteId);
     const payload = {
       bound_order_request_id: draft.orderRequestId.trim(),
@@ -1071,6 +1942,10 @@ export function render_(context) {
         ? { approved_manual_fee_vnd: parseDong(draft.manualFeeVnd) }
         : {}),
       ...(draft.customerAcknowledgedFee ? { customer_acknowledged_manual_fee: true } : {}),
+      // Sent only when it is true, and only because somebody pressed "Lập bản khoảng giá". The
+      // field is part of the idempotency payload on the server, so the two modes can never share
+      // a key -- which is the behaviour wanted: they are two different intents.
+      ...(asBand ? { present_range_as_band: true } : {}),
       ...(revisionMode
         ? {
             quote_id: draft.quoteId,
@@ -1079,7 +1954,11 @@ export function render_(context) {
         : {}),
     };
 
-    setResult(result, "warn", "Đang gửi cho bộ tính giá…");
+    setResult(
+      result,
+      "warn",
+      asBand ? "Đang ghi bản khoảng giá…" : "Đang gửi cho bộ tính giá…",
+    );
     render(resultHost);
 
     try {
@@ -1092,50 +1971,33 @@ export function render_(context) {
       // Confirmed exactly once, in one place. The next submission is a new intent.
       submission.reset();
       setResult(result, "ok", `Đã ghi bản sửa đổi ${created.revision}.`);
-      render(
-        resultHost,
-        revisionResult(
-          created,
-          store,
-          async (accepted) => {
-            // Repaint from the accepted revision so the screen shows the final price and the
-            // control is replaced by the record, rather than leaving a button that would only
-            // be refused a second time. The contact id is read again here rather than captured
-            // above: an operator can unbind the intake while the customer is deciding, and a
-            // stale capture would build a hand-off link pointing at somebody else.
-            render(
-              resultHost,
-              revisionResult(
-                accepted,
-                store,
-                null,
-                writeVerdict,
-                draft.requestSummary?.contact_binding_id ?? null,
-              ),
-            );
-            await list.reload();
-          },
-          writeVerdict,
-          draft.requestSummary?.contact_binding_id ?? null,
-        ),
-      );
+      paintRevision(created);
       await list.reload();
     } catch (error) {
       // A lost answer is not a refusal. Same rule as the order screen: on TIMEOUT or NETWORK the
       // quote may well exist, and saying it does not sends the operator to price the bag again --
       // which is how a customer ends up hearing two numbers for one bag.
       const unknown = error.kind === "TIMEOUT" || error.kind === "NETWORK";
+      // The engine refused because a line is priced by inspection, and the same lines would be
+      // stored as a band. Offered only on the ordinary path: a refusal that survives asking for a
+      // band is a different problem, and re-offering the same button would loop.
+      const bandable =
+        !asBand &&
+        error.kind === "REQUIRE_HUMAN" &&
+        (error.reasonCodes || []).includes(NEEDS_A_HUMAN_PRICE);
       setResult(
         result,
         error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
         unknown
           ? "Chưa biết lệnh có tới máy chủ hay không, nên chưa biết báo giá đã được ghi hay chưa. " +
             "Tải lại danh sách báo giá và kiểm tra trước khi tính lại."
-          : error.kind === "REQUIRE_HUMAN"
-            ? "Bộ tính giá từ chối đoán. Không có bản ghi nào được tạo."
-            : "Không tạo được bản sửa đổi.",
+          : bandable
+            ? "Bộ tính giá không tự chọn số trong khoảng giá. Không có bản ghi nào được tạo."
+            : error.kind === "REQUIRE_HUMAN"
+              ? "Bộ tính giá từ chối đoán. Không có bản ghi nào được tạo."
+              : "Không tạo được bản sửa đổi.",
       );
-      render(resultHost, errorNotice(error));
+      render(resultHost, bandable ? bandOffer() : null, errorNotice(error));
       revealError(resultHost);
     }
   }
@@ -1267,7 +2129,12 @@ export function render_(context) {
     );
   }
 
-  void loadCatalog();
+  // The opened revision waits for the catalog rather than racing it: its lines carry service
+  // codes and the reader needs the published names, and a panel that paints codes and then
+  // relabels itself a moment later reads as two different answers to one question.
+  void loadCatalog().then(() => {
+    if (openId) void openQuote(openId);
+  });
   void loadPicker();
   void list.reload();
   if (prefillId) void prefill(prefillId);
@@ -1283,9 +2150,12 @@ export function render_(context) {
       h(
         "p",
         { class: "screen__lede" },
-        "Chọn yêu cầu, chọn dịch vụ, nhập khối lượng — máy chủ tính theo bảng giá đã chốt. Màn hình này không tự cộng tiền, không làm tròn.",
+        "Chọn yêu cầu, chọn dịch vụ, nhập khối lượng — máy chủ tính theo bảng giá đã chốt. Món " +
+          "niêm yết theo khoảng giá thì nhân viên chốt một số trong khoảng và chủ tiệm duyệt. " +
+          "Màn hình này không tự cộng tiền, không làm tròn, và không tự chọn số nào trong khoảng.",
       ),
     ),
+    openHost,
     panel({
       eyebrow: "Lệnh",
       title: "Tính giá cho một yêu cầu",

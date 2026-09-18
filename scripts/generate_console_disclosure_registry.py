@@ -100,18 +100,6 @@ BINDINGS: dict[str, dict[str, Any]] = {
         "tables": ["custody_units", "custody_events", "batches"],
         "why": "Same shape: the custody context is measured empty and the disclosure says so.",
     },
-    # Re-keyed 2026-09-09 from `4c53a8d9d8b5`. The sentence gained the consequence an operator
-    # actually meets: `customer_incidents.status` has one writer and it always writes 'OPEN', so
-    # the incidents list only ever grows and nothing on any screen can close a row. That is the
-    # same absence -- no remedy tables, so no resolution command -- said where it is felt, so the
-    # binding is re-keyed rather than retired.
-    "screens/gaps.js#missing:455dba33f5c7": {
-        "kind": "ABSENT_TABLE",
-        "tables": ["remedies", "credit_grants", "credit_ledger_entries"],
-        "why": "Remedy and credit aggregates. The sentence also states that compensation is an "
-        "approved command rather than a screen action, and that an incident cannot leave OPEN "
-        "while they are absent -- both stay true exactly while these tables do not exist.",
-    },
     # Re-keyed by COUNTER-DEFECTS-001 from `c4f99531cea6`. The old text also claimed no source
     # produces a `bound_contact_id`, which stopped being true when COUNTER-TICKET-001 shipped
     # DEC-013's counter ticket on 26/08. The binding is unchanged in substance -- these three

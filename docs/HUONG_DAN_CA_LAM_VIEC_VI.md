@@ -36,6 +36,27 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 12 | Thu tiền → nhập số tiền, tích **Khách đã tự lấy đồ**, bấm **Ghi nhận tất toán** | Chi tiết đơn |
 | 13 | Chuyển **thương mại** sang *Hoàn tất* | Đơn hàng |
 
+### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
+
+Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **khoảng giá**, vì phải nhìn món đồ mới
+định giá được. Bước 4 ở trên sẽ báo là máy không tự chọn số. Làm tiếp như sau, vẫn ở màn hình
+**Báo giá**:
+
+| | Làm gì |
+|---|---|
+| 4a | Bấm **Lập bản khoảng giá**. Đọc khoảng cho khách nghe (ví dụ *80.000 – 240.000 ₫*) |
+| 4b | Xem đồ, thoả thuận với khách, gõ **một số nằm trong khoảng** cho từng dòng |
+| 4c | Bấm **Gửi giá cho chủ duyệt**. Gọi chủ tiệm — phiếu duyệt chỉ sống **mười phút** |
+| 4d | Chủ tiệm mở màn hình **Duyệt**, mở bản báo giá xem, rồi bấm **Duyệt** |
+| 4e | Bạn bấm **Áp dụng giá đã duyệt** → quay lại bước 5 ở bảng trên |
+
+- **Người gửi không tự duyệt được.** Máy chủ từ chối. Phải là hai người.
+- **Đừng rời màn hình Báo giá** giữa 4c và 4e: những con số chỉ còn ở màn hình đó. Rời đi thì gửi
+  lại từ đầu — không mất gì, vì lúc đề nghị chưa có giá nào được ghi.
+- **Quá mười phút** thì phiếu chết hẳn, không gia hạn được. Gửi lại từ đầu.
+- Gõ số ngoài khoảng thì màn hình cảnh báo **ngay khi đang gõ**, trước khi gửi. Đừng lách: muốn ra
+  ngoài khoảng thì chủ tiệm phải công bố lại bảng giá.
+
 ### Ba điều dễ sai nhất
 
 - **Gần 6 kg.** Dưới 6 kg tính 25.000đ/kg, từ 6 kg tính 20.000đ/kg — nên **túi nhẹ hơn có thể đắt
@@ -54,23 +75,68 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 
 ---
 
-## Hai việc tuần này vẫn ghi ra sổ
+## Hai việc trước đây phải ghi ra sổ, nay làm được trên máy
 
-Không phải máy hỏng — chủ tiệm chưa chốt hai câu hỏi, nên phần mềm cố ý không đoán.
+Trang này trước đây dặn ghi tay hai việc. Cả hai đã làm được trên máy, và **ghi tay bây giờ là
+mất bản ghi** — vì bản trên máy mới là bản không sửa được.
 
-**1. Món có khoảng giá.** Vest, áo khoác, áo dài thêu, giày da, giày lộn, túi da, gối, ruột gối,
-thú bông, ghế sofa, thảm, và xử lý vết bẩn — 20 trong 43 dịch vụ được niêm yết theo **khoảng giá**.
-Màn hình cố ý không tự chọn một con số trong khoảng.
+**1. Món có khoảng giá.** Làm theo mục *Món niêm yết theo khoảng giá* ở trên. Vẫn là bạn thoả
+thuận giá với khách và chủ tiệm gật đầu — chỉ khác là được ghi lại kèm tên người chốt, thay vì
+nằm trên một tờ phiếu.
 
-> Thoả thuận giá với khách, **ghi giá lên phiếu, giữ lại phiếu**, và báo chủ tiệm cuối ngày.
-> Giặt sấy theo kg và các món giá cố định vẫn báo giá bình thường trên máy.
+**2. Khách khiếu nại.** Màn hình **Sự cố** dùng được rồi: chọn đơn, gõ nội dung khách phàn nàn
+bằng lời, bấm ghi nhận. Không phải gõ mã gì cả — máy chủ tự sinh.
 
-**2. Khách khiếu nại.** Màn hình **Sự cố** chưa dùng được — nó đòi hai mã mà không chỗ nào trong hệ
-thống sinh ra.
+> Mở sự cố **chỉ là ghi nhận**: máy không phán ai sai và không tự quyết bồi hoàn. Hai dòng đó hiện
+> là *chưa quyết định*, và đó là đúng. Vẫn **báo chủ tiệm ngay trong ngày**.
 
-> Ghi khiếu nại **ra sổ kèm số phiếu**, và **báo chủ tiệm ngay trong ngày**.
+Những việc thật sự chưa hỗ trợ được liệt kê ở màn hình **Chưa hỗ trợ** trên bảng vận hành.
 
-Cả hai đều được ghi ở màn hình **Chưa hỗ trợ** trên bảng vận hành.
+---
+
+## Bồi hoàn cho khách — làm trên máy, không thoả thuận miệng
+
+Trước đây phần này làm bằng lời rồi quên. Nay có màn hình **Bồi hoàn**, và mức chủ tiệm đã chốt
+được máy chủ tự áp — nhân viên **không gõ mức trần**.
+
+**Thứ tự đúng, năm bước:**
+
+1. Ghi sự cố trước (mục trên). Không có sự cố thì không có bồi hoàn.
+2. Trên dòng sự cố đó bấm **“Đề xuất bồi hoàn”**. Mã sự cố tự mang sang.
+3. Bấm **“Đọc mức trần và thời hạn”**. **Đọc xong mới nói gì với khách.** Màn hình hiện sẵn:
+   trần tối đa, hạn chót còn hay hết, và **có phải chờ chủ tiệm duyệt hay không**. Đọc bước này
+   là để không lỡ hứa với khách một con số rồi mới biết phải chờ chủ tiệm.
+4. Chọn loại, tích ô *“Tôi xác định lỗi thuộc về tiệm”*, điền nốt ô còn trống, bấm
+   **“Gửi đề nghị bồi hoàn”**.
+5. Bấm **“Thực hiện bồi hoàn”**. Xong bước này sự cố mới đóng lại.
+
+**Bốn loại, và ai duyệt:**
+
+| Loại | Máy chủ tính gì | Hạn | Ai duyệt |
+|---|---|---|---|
+| Giặt lại miễn phí | Không có tiền nào chuyển | 7 ngày kể từ khi khách nhận đồ | Nhân viên |
+| Bồi thường món hỏng | Trần = 5 lần phí giặt **đúng món đó** | 24 giờ kể từ khi khách nhận đồ | Tới 100.000đ là nhân viên, trên mức đó **chủ tiệm** |
+| Giảm trừ do giao trễ | Máy tính 10% tổng đã thu | Không tính theo hạn, tính theo mức trễ | Theo số tiền, như trên |
+| **Mất đồ** | **Không có mức nào** | — | **Chưa ai** — xem bên dưới |
+
+> **Mất đồ thì màn hình không mở biểu mẫu**, và đó là đúng. Chủ tiệm chưa quyết chính sách cho
+> trường hợp này, nên máy hiện **“Mất đồ — chưa có chính sách để áp dụng”**. Đừng mượn mức của
+> hàng hỏng. Ghi sự cố, **báo chủ tiệm ngay trong ngày**, đừng hứa con số nào ở quầy.
+
+**Ba điều dễ sai ở màn hình này:**
+
+- **Chép mã giảm trừ ngay lúc phát.** Máy hiện **“Chép mã giảm trừ này lại ngay”** kèm nút chép.
+  Chép vào phiếu giấy của khách **trước khi rời màn hình** — không có màn hình nào tra lại được mã
+  đó, và không có mã thì khách không dùng được phiếu.
+- **“Chờ chủ tiệm duyệt” nghĩa là chưa xong.** Nói với khách là phải chờ. Bấm thực hiện trước khi
+  chủ tiệm duyệt thì máy từ chối, và phiếu duyệt có hạn ngắn — đừng để qua ngày.
+- **Vượt trần thì máy từ chối, không tự hạ xuống.** Nếu màn hình báo vượt trần, nói đúng con số
+  trần cho khách nghe. Gõ một số khác cho lọt là tự quyết thay chủ tiệm.
+
+**Khách quay lại dùng phiếu giảm trừ:** tính giá như bình thường, rồi ở mục *Dùng một khoản giảm
+trừ* nhập mã phiếu, mã báo giá, số bản sửa đổi và dấu vân của bản đó, rồi bấm
+**“Áp dụng khoản giảm trừ”**. Phiếu dùng **đúng một lần**. Đọc lại tổng mới cho khách nghe rồi mới
+thu tiền.
 
 ---
 

@@ -1,0 +1,273 @@
+{
+  "schema": "promotion-policy-v1",
+  "decision": "DEC-002",
+  "ratified_on": "2026-08-18",
+  "source": "templates/promotions.csv + templates/promotion-service-rules.csv (owner message + storefront sign)",
+  "code": "PROMO_WET30_DRY40_20260717_20260831",
+  "name": "Ưu đãi giặt ướt 30% và giặt khô 40%",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "start_at": "2026-07-17T00:00:00+07:00",
+  "end_at_exclusive": "2026-09-01T00:00:00+07:00",
+  "eligibility_event": "STORE_COMMERCIAL_ACCEPTED",
+  "stacking_allowed": false,
+  "services": [
+    {
+      "service_code": "STANDARD_WASH_DRY",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 3000,
+      "note": "Giat quan ao; both source tiers (STD_WASH_DRY_LT6/GE6) carry the same confirmed 30%, and the pricebook merges them into one runtime service either side of the 6 kg cliff"
+    },
+    {
+      "service_code": "DRY_WET_CLOTHES",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 3000,
+      "note": "Sấy riêng không đồng nghĩa giặt ướt"
+    },
+    {
+      "service_code": "DRY_BEDDING",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 3000,
+      "note": "Sấy riêng không đồng nghĩa giặt ướt"
+    },
+    {
+      "service_code": "BED_BLANKET",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 3000,
+      "note": "Chăn"
+    },
+    {
+      "service_code": "BED_TOPPER",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 3000,
+      "note": "Chưa được nêu rõ trên biển"
+    },
+    {
+      "service_code": "BED_PILLOW",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 3000,
+      "note": "Gối; nhân viên chọn giá niêm yết trong khoảng trước khi giảm"
+    },
+    {
+      "service_code": "IRON_KNIT",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 3000,
+      "note": "Biển không nêu dịch vụ ủi"
+    },
+    {
+      "service_code": "IRON_TROUSERS_SHIRT",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 3000,
+      "note": "Biển không nêu dịch vụ ủi"
+    },
+    {
+      "service_code": "IRON_SUIT",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 3000,
+      "note": "Biển không nêu dịch vụ ủi"
+    },
+    {
+      "service_code": "IRON_DESIGNER_DRESS",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 3000,
+      "note": "Biển không nêu dịch vụ ủi"
+    },
+    {
+      "service_code": "LEATHER_JACKET_DRESS",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 4000,
+      "note": "Làm mới đồ da không mặc định là giặt khô"
+    },
+    {
+      "service_code": "LEATHER_HANDBAG",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 4000,
+      "note": "Làm mới đồ da không mặc định là giặt khô"
+    },
+    {
+      "service_code": "DC_SUIT",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_VEST",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_WOOL_COAT_SHORT",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_WOOL_COAT_LONG",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_DOWN_JACKET",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_EVENING_DRESS",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_WEDDING_DRESS",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_SHORT_DRESS",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_LONG_DRESS",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_AO_DAI_PLAIN",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_AO_DAI_DECORATED",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_AO_DAI_TRADITIONAL",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_FUR_COAT",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_COAT",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_SHIRT",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_TROUSERS",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_SKIRT",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_SCARF",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "DC_HAT",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 4000,
+      "note": "Toàn bộ mục giặt khô"
+    },
+    {
+      "service_code": "SHOE_SPORTS",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 3000,
+      "note": "Vệ sinh giày dép"
+    },
+    {
+      "service_code": "SHOE_CHILD",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 3000,
+      "note": "Vệ sinh giày dép"
+    },
+    {
+      "service_code": "SHOE_SMOOTH_LEATHER",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 3000,
+      "note": "Vệ sinh giày dép"
+    },
+    {
+      "service_code": "SHOE_SUEDE",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 3000,
+      "note": "Vệ sinh giày dép"
+    },
+    {
+      "service_code": "OTHER_CURTAIN",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 3000,
+      "note": "Giặt rèm thường"
+    },
+    {
+      "service_code": "OTHER_CURTAIN_INSTALL",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 3000,
+      "note": "Xác nhận ưu đãi có áp cả phí tháo/lắp hay chỉ phần giặt"
+    },
+    {
+      "service_code": "OTHER_SOFA",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 3000,
+      "note": "Chưa được nêu rõ trên biển"
+    },
+    {
+      "service_code": "OTHER_SOFT_CARPET",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 3000,
+      "note": "Giặt thảm mềm"
+    },
+    {
+      "service_code": "OTHER_HARD_CARPET",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 3000,
+      "note": "Giặt thảm cứng"
+    },
+    {
+      "service_code": "OTHER_PLUSH",
+      "resolution": "AUTO_IF_TARGETED",
+      "rate_bps": 3000,
+      "note": "Gấu bông"
+    },
+    {
+      "service_code": "OTHER_STAIN",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 3000,
+      "note": "Dịch vụ xử lý riêng"
+    },
+    {
+      "service_code": "OTHER_PILLOW_INSERT",
+      "resolution": "HUMAN_CONFIRM",
+      "rate_bps": 3000,
+      "note": "Tẩy ruột gối không mặc định là giặt gối"
+    }
+  ]
+}

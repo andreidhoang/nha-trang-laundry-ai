@@ -8,9 +8,10 @@ code runs.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Generator, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -46,6 +47,7 @@ from nha_trang_laundry_db.configurations import ConfigurationRepository
 from nha_trang_laundry_db.intake import CreateOrderRequestCommand, OrderRequestRepository
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.pricebook import publish_pricebook
+from nha_trang_laundry_db.promotions import publish_promotion_policy
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import FulfillmentMode, QuantityBasis, Unit
 from nha_trang_laundry_domain.pricebook_import import published_price_rules
@@ -693,6 +695,75 @@ def test_an_unresolved_quote_estimate_carries_the_engines_refusal_and_writes_not
             "SELECT count(*) FROM command_idempotency_records WHERE scope LIKE 'agent-%'"
         )
         assert int(cursor.fetchone()[0]) == 0
+
+
+def test_an_agent_estimate_prices_the_published_promotion_and_reports_its_real_status(
+    connection: Any, backend: DomainAgentToolBackend
+) -> None:
+    """`PROMO-WIRING-001`. The agent quotes the same number the counter would, and says no more.
+
+    An estimate that ignored a running programme would tell a customer a higher price than the shop
+    charges, which is worse than telling them none. So the facade reads the same published
+    `PROMOTION_POLICY` version the staff path reads, and 120.000 d comes back as 84.000 d.
+
+    `promotion_status` was hardcoded `REQUIRES_HUMAN` because the snapshot carried
+    `PROMOTION_NOT_EVALUATED` and the contract's enum has no member for "not assessed". It is now
+    the engine's own `PromotionStatus`, and `PROVISIONAL` is the honest one here: eligibility is
+    keyed to `accepted_at` and an agent cannot accept anything, so the eligibility fields stay null
+    and the decision outcome stays `REQUIRE_HUMAN`.
+    """
+
+    _publish(connection)
+    now = datetime.now(UTC)
+    payload_document = json.loads(
+        (ROOT / "templates" / "promotion-policy-dec-002.json").read_text(encoding="utf-8")
+    )
+    payload_document["start_at"] = (now - timedelta(days=1)).isoformat()
+    payload_document["end_at_exclusive"] = (now + timedelta(days=30)).isoformat()
+    publish_promotion_policy(connection, actor_id=OWNER_ID, payload=payload_document)
+
+    store_id, contact_id, conversation_id = uuid4(), uuid4(), uuid4()
+    _ensure_store(connection, store_id)
+    request_id = _seed_request(
+        connection, store_id=store_id, contact_id=contact_id, conversation_id=conversation_id
+    )
+    claims = _claims(
+        store_id=store_id,
+        contact_id=contact_id,
+        conversation_id=conversation_id,
+        order_request_id=request_id,
+    )
+    status, payload = _invoke(
+        backend,
+        AgentToolOperation.QUOTE_ESTIMATE,
+        arguments={
+            "lines": [
+                {
+                    "service_code": "STANDARD_WASH_DRY",
+                    "quantity_basis": "CUSTOMER_ESTIMATE",
+                    "quantity": "6",
+                    "unit": "KG",
+                }
+            ],
+            "fulfillment": {"mode": "SELF_DROP_SELF_COLLECT"},
+        },
+        claims=claims,
+        path_parameters={"order_request_id": str(request_id)},
+        idempotency_key="agent-test-quote-00003",
+        if_match='"1"',
+    )
+    assert status == 200
+    data = payload["data"]
+    # 6 kg at 20.000/kg on the far side of the cliff, less the programme's 30% wash rate.
+    assert data["list_service_subtotal_vnd"] == 120_000
+    assert data["discount_amount_vnd"] == 36_000
+    assert data["net_service_subtotal_vnd"] == 84_000
+    assert data["display_total_vnd"] == 84_000
+    assert data["promotion_status"] == "PROVISIONAL"
+    assert data["promotion_version"] == "1"
+    assert data["promotion_eligibility_event"] is None
+    assert data["promotion_eligibility_at"] is None
+    assert payload["decision"]["outcome"] == "REQUIRE_HUMAN"
 
 
 # --- delivery and capacity ------------------------------------------------------

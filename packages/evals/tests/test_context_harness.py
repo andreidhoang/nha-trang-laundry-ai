@@ -234,7 +234,29 @@ def test_context_drift_check_passes() -> None:
     # at all -- but the path was eight commands in a runbook and nothing executed them on a clean
     # checkout, so the first person to find a broken step would have been somebody opening a shop.
     # `RUNBOOK-TRUTH-001` and `-002` are already in this list for that exact failure.
-    assert "127 work items" in result.stdout
+    # 131 with the four items of `docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md`, which tested the six
+    # capabilities named unbuilt in `CORE_BUSINESS_WORKFLOWS_V1.md` §9 against the decision register
+    # and found four of them already decided and merely unpublished. That is the distinction
+    # `DECISION_REQUEST_PRICING_POLICY_2026-08.md` §0 drew in advance: signing a decision is not
+    # publishing configuration, and "each answer still has to be expressed as versioned config the
+    # pricing/promotion/delivery/incident engines read -- that is a separate, small engineering item
+    # after signature."
+    #
+    # `RANGE-PRICE-001` is first because twenty of the forty-four published services carry a price
+    # band rather than a rate, and `quote_composition.py:466` refuses to compose a revision for any
+    # of them. Forty-five per cent of the catalogue -- and every high-margin garment in it -- cannot
+    # be quoted, so it cannot be sold. `REMEDY-001` publishes the `DEC-004` figures the owner
+    # supplied on 2026-08-18, which no code reads: `APPROVE_REMEDY`, `REMEDY_PROPOSAL` and
+    # `AdjustmentDirection.CREDIT` all exist with nothing behind them, so an incident recorded by
+    # `INCIDENT-INTAKE-001` still cannot reach an outcome. `PROMO-WIRING-001` gives the promotion
+    # engine its first production call site and moves promotion policy out of a Python constant, so
+    # the shop can run a program without a code deploy. `OPS-BOARD-001` makes the day's SLA state
+    # answerable for more than one order at a time, under invariant 18.
+    #
+    # The other two of the six are refusals, not omissions, and are deliberately absent from this
+    # list: customer records are `DEC-015` ("chưa xây", reopening on a real channel that does not
+    # exist), and deposits and instalments are `DEC-010` (deferred by decision).
+    assert "131 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

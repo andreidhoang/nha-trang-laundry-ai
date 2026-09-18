@@ -20,6 +20,12 @@ MAX_BIGINT_VND: Final = 9_223_372_036_854_775_807
 RATE_DENOMINATOR: Final = 10_000
 PROMOTION_TIMEZONE: Final = ZoneInfo("Asia/Ho_Chi_Minh")
 
+#: How this system splits a whole-dong total across lines, recorded in every trace that does it.
+#: Lifted out of `PromotionCalculationTrace` when `REMEDY-001` needed the same answer, so the string
+#: and the algorithm stay in one place: a trace that names a rounding rule the code no longer
+#: applies is worse than one that names none.
+LARGEST_REMAINDER_RULE: Final = "ROUND_HALF_UP_1_VND_THEN_LARGEST_REMAINDER_LINE_ID_ASC"
+
 
 class PromotionReason(StrEnum):
     PROMOTION_APPLIED = "PROMOTION_APPLIED"
@@ -64,6 +70,71 @@ class PromotionLineAdjustment:
     discount_vnd: int
     net_amount_vnd: int
     resolution: PromotionResolution
+
+
+@dataclass(frozen=True)
+class LargestRemainderAllocation:
+    """One whole-dong total split across named lines, with the working shown.
+
+    The intermediate fields are not decoration. A customer asking why a 33.333 d discount landed as
+    11.112 d on one shirt and 11.111 d on the other two is asking a question the floor amounts and
+    the remainders answer exactly, and an allocation whose only output is its result cannot be
+    audited after the fact.
+    """
+
+    ordered_ids: tuple[str, ...]
+    floor_allocations_vnd: tuple[int, ...]
+    remainders: tuple[int, ...]
+    remainder_award_order: tuple[str, ...]
+    final_allocations_vnd: tuple[int, ...]
+
+
+def allocate_largest_remainder(
+    *,
+    weights: tuple[tuple[str, int], ...],
+    multiplier: int,
+    denominator: int,
+    total_vnd: int,
+) -> LargestRemainderAllocation:
+    """Split `total_vnd` across `weights` in proportion to `multiplier / denominator`.
+
+    Each line takes `floor(weight * multiplier / denominator)` and the shortfall against `total_vnd`
+    is awarded one dong at a time, largest remainder first and ties broken by `line_id` ascending.
+    Ordering by id rather than by input order is what makes the answer reproducible: the same lines
+    submitted in a different order must produce the same allocation, or a recomputation years later
+    would disagree with the stored snapshot.
+
+    Two callers, one algorithm. A promotion passes `multiplier=rate_bps`,
+    `denominator=RATE_DENOMINATOR` and the rounded group discount; a remedy credit passes
+    `multiplier=total_vnd` and `denominator=<the lines' own subtotal>`, which is the same arithmetic
+    seen from the other end -- the shares still sum to `total_vnd` exactly.
+
+    The shortfall is always between 0 and `len(weights) - 1`: the floors can only undershoot, and
+    they undershoot by the sum of the fractional parts, which is strictly less than the number of
+    lines. So the award slice below can never run off the end of the order.
+    """
+
+    ordered = tuple(sorted(weights, key=lambda item: item[0]))
+    floor_allocations: list[int] = []
+    remainders: list[int] = []
+    for _, weight in ordered:
+        floor_amount, remainder = divmod(weight * multiplier, denominator)
+        floor_allocations.append(floor_amount)
+        remainders.append(remainder)
+    awards_needed = total_vnd - sum(floor_allocations)
+    award_indexes = sorted(
+        range(len(ordered)), key=lambda index: (-remainders[index], ordered[index][0])
+    )[:awards_needed]
+    final_allocations = list(floor_allocations)
+    for index in award_indexes:
+        final_allocations[index] += 1
+    return LargestRemainderAllocation(
+        ordered_ids=tuple(line_id for line_id, _ in ordered),
+        floor_allocations_vnd=tuple(floor_allocations),
+        remainders=tuple(remainders),
+        remainder_award_order=tuple(ordered[index][0] for index in award_indexes),
+        final_allocations_vnd=tuple(final_allocations),
+    )
 
 
 @dataclass(frozen=True)
@@ -113,14 +184,36 @@ class PromotionResult:
     trace: PromotionCalculationTrace
 
 
+#: The owner's one confirmed programme, kept here **only as a fixture for the synthetic eval
+#: harness**. It is not what the shop prices against and no production path reads it.
+#:
+#: `PROMO-WIRING-001` moved the production source to a published `PROMOTION_POLICY` configuration
+#: version (`promotion_policy.py`, `packages/db/.../promotions.py`), because a module-level constant
+#: is neither immutable-and-versioned (invariant 4) nor replaceable by the owner: running a new
+#: programme would have been a code deploy, and an expired one could not be retired without one.
+#:
+#: `eligibility_event` was `None` under a comment reading "DEC-002 remains open". DEC-002 was
+#: resolved on 2026-08-18, so the comment was false and the `None` it justified made every
+#: evaluation return PROVISIONAL/REQUIRE_HUMAN forever. `STORE_COMMERCIAL_ACCEPTED` is the enum's
+#: own name for the `accepted_at` the decision keys eligibility to.
 CURRENT_PROMOTION = PromotionPolicy(
     code="PROMO_WET30_DRY40_20260717_20260831",
     start_at=datetime(2026, 7, 17, tzinfo=PROMOTION_TIMEZONE),
     end_at_exclusive=datetime(2026, 9, 1, tzinfo=PROMOTION_TIMEZONE),
     timezone="Asia/Ho_Chi_Minh",
-    # DEC-002 remains open. A generic accepted_at is prohibited.
-    eligibility_event=None,
+    eligibility_event=PromotionEligibilityEvent.STORE_COMMERCIAL_ACCEPTED,
 )
+
+
+def validate_promotion_policy(policy: PromotionPolicy) -> None:
+    """The check `evaluate_promotion` applies to a policy, under a name other modules may call.
+
+    `promotion_policy.parse_promotion_policy` runs it at publication time so a programme that would
+    be refused at the counter is refused while somebody can still fix the document. It is the same
+    function, not a second reading of the same rules.
+    """
+
+    _validate_policy(policy)
 
 
 def evaluate_promotion(
@@ -244,7 +337,7 @@ def evaluate_promotion(
         candidate_inside_interval=inside_interval,
         eligibility_resolved=eligibility_resolved,
         allocation_groups=tuple(group_traces),
-        rounding="ROUND_HALF_UP_1_VND_THEN_LARGEST_REMAINDER_LINE_ID_ASC",
+        rounding=LARGEST_REMAINDER_RULE,
         delivery_discount_vnd=0,
     )
     return PromotionResult(
@@ -267,35 +360,27 @@ def evaluate_promotion(
 def _allocate_group(
     lines: tuple[PromotionLine, ...], rate_bps: int
 ) -> tuple[dict[str, int], PromotionAllocationTrace]:
-    ordered = tuple(sorted(lines, key=lambda line: line.line_id))
-    subtotal = sum(line.list_amount_vnd for line in ordered)
+    subtotal = sum(line.list_amount_vnd for line in lines)
     numerator = subtotal * rate_bps
     rounded_group_discount = (numerator + RATE_DENOMINATOR // 2) // RATE_DENOMINATOR
-    floor_allocations: list[int] = []
-    remainders: list[int] = []
-    for line in ordered:
-        floor_amount, remainder = divmod(line.list_amount_vnd * rate_bps, RATE_DENOMINATOR)
-        floor_allocations.append(floor_amount)
-        remainders.append(remainder)
-    awards_needed = rounded_group_discount - sum(floor_allocations)
-    award_indexes = sorted(
-        range(len(ordered)), key=lambda index: (-remainders[index], ordered[index].line_id)
-    )[:awards_needed]
-    final_allocations = list(floor_allocations)
-    for index in award_indexes:
-        final_allocations[index] += 1
-    allocations = {line.line_id: final_allocations[index] for index, line in enumerate(ordered)}
+    allocation = allocate_largest_remainder(
+        weights=tuple((line.line_id, line.list_amount_vnd) for line in lines),
+        multiplier=rate_bps,
+        denominator=RATE_DENOMINATOR,
+        total_vnd=rounded_group_discount,
+    )
+    allocations = dict(zip(allocation.ordered_ids, allocation.final_allocations_vnd, strict=True))
     trace = PromotionAllocationTrace(
         rate_bps=rate_bps,
-        eligible_line_ids=tuple(line.line_id for line in ordered),
+        eligible_line_ids=allocation.ordered_ids,
         eligible_subtotal_vnd=subtotal,
         exact_discount_numerator=numerator,
         exact_discount_denominator=RATE_DENOMINATOR,
         rounded_discount_vnd=rounded_group_discount,
-        floor_allocations_vnd=tuple(floor_allocations),
-        remainders=tuple(remainders),
-        remainder_award_order=tuple(ordered[index].line_id for index in award_indexes),
-        final_allocations_vnd=tuple(final_allocations),
+        floor_allocations_vnd=allocation.floor_allocations_vnd,
+        remainders=allocation.remainders,
+        remainder_award_order=allocation.remainder_award_order,
+        final_allocations_vnd=allocation.final_allocations_vnd,
     )
     return allocations, trace
 

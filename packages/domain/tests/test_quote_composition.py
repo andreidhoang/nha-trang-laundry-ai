@@ -214,7 +214,12 @@ def test_no_display_total_is_presented_while_delivery_is_unresolved() -> None:
     assert totals.display_total_min_vnd is None
     assert totals.display_total_max_vnd is None
     assert "DELIVERY_FEE_UNRESOLVED" in result.snapshot.data.reason_codes
-    assert "PROMOTION_NOT_EVALUATED" in result.snapshot.data.reason_codes
+    # Was `PROMOTION_NOT_EVALUATED`. `PROMO-WIRING-001` deleted that code because it stopped being
+    # true: a promotion is now always assessed, and `compose` here passes no published programme, so
+    # the honest statement about this revision is that none is running. The assertion is kept rather
+    # than dropped because the point it was making still holds -- an unresolved delivery fee must
+    # not silently take the promotion statement off the revision with it.
+    assert "PROMOTION_NOT_PUBLISHED" in result.snapshot.data.reason_codes
 
 
 def test_a_walk_in_quote_carries_the_total_the_customer_actually_pays() -> None:

@@ -566,6 +566,66 @@ class ApprovalRepository:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ApprovalBinding:
+    """Everything an executor needs to prove an approval is the one it is acting on.
+
+    `RANGE-PRICE-001`. Reading an approval's binding was previously possible only through
+    `list_pending`, which by construction returns approvals that have *not* been decided. Acting on
+    an approved one -- writing the amount the owner authorised into a quote revision -- needs the
+    opposite, and needs it with the store attached so the caller can refuse an envelope belonging to
+    another shop before reading anything else.
+
+    This is a read, not a claim. `claim_execution` remains the only one-time claim and remains
+    restricted to `OUTBOX_WORKER`; the single-use property on the range-price path comes from the
+    revision itself, because applying an approval bound to revision N moves the quote to N+1 and the
+    second attempt no longer matches.
+    """
+
+    approval_request_id: UUID
+    store_id: UUID
+    action: ApprovalAction
+    resource_type: str
+    resource_id: UUID
+    resource_version: int
+    snapshot_hash: str
+    rendered_hash: str
+    policy_version: str
+    status: str
+    expires_at: datetime
+
+
+def read_approval_binding(cursor: Any, approval_id: UUID) -> ApprovalBinding | None:
+    """The stored envelope binding for one approval, or `None` when there is no such approval."""
+
+    cursor.execute(
+        """
+        SELECT r.id, r.store_id, r.action, r.resource_type, r.resource_id, r.resource_version,
+               r.snapshot_hash, r.rendered_hash, r.policy_version, s.status, r.expires_at
+        FROM approval_requests r
+        JOIN approval_request_states s ON s.approval_request_id = r.id
+        WHERE r.id = %s
+        """,
+        (approval_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return ApprovalBinding(
+        approval_request_id=_uuid(row[0]),
+        store_id=_uuid(row[1]),
+        action=ApprovalAction(str(row[2])),
+        resource_type=str(row[3]),
+        resource_id=_uuid(row[4]),
+        resource_version=int(str(row[5])),
+        snapshot_hash=str(row[6]),
+        rendered_hash=str(row[7]),
+        policy_version=str(row[8]),
+        status=str(row[9]),
+        expires_at=_datetime(row[10]),
+    )
+
+
 def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
     cursor.execute(
         """

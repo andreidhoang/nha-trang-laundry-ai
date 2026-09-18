@@ -122,6 +122,26 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/orders/{}/production-transition",
         "/internal/v1/orders/{}/settlement",
         "/internal/v1/orders/{}/delivery-legs",
+        # RANGE-PRICE-001. Twenty of the forty-four published services are priced by inspection,
+        # and these three are the whole of the console's half of closing one: read the revision to
+        # learn the band the customer was shown, propose an amount inside it, and -- after a second
+        # person approves the envelope through `/internal/v1/approvals/{}/decisions`, which is
+        # already required above -- apply it. A screen that stops calling any one of the three
+        # leaves those services quotable and unsellable, which is the state this item ended.
+        "/internal/v1/stores/{}/quotes/{}",
+        "/internal/v1/stores/{}/quotes/{}/range-prices",
+        "/internal/v1/stores/{}/quotes/{}/range-prices/{}",
+        # REMEDY-001. These four are the whole of an incident's path to an outcome, and losing any
+        # one of them puts the shop back where the item found it -- a complaint recorded, resolved
+        # verbally, with the owner's 5x cap and 100.000d ceiling enforced by nothing. `remedy-
+        # options` is the load-bearing one and the easiest to drop as "just a read": it is what
+        # puts the computed ceiling, the window and the owner requirement on screen *before* a
+        # staff member types an amount, and a form without it would let somebody discover that the
+        # owner is required after telling a customer what they were getting.
+        "/internal/v1/stores/{}/incidents/{}/remedy-options",
+        "/internal/v1/stores/{}/incidents/{}/remedy-proposals",
+        "/internal/v1/remedy-proposals/{}/execution",
+        "/internal/v1/stores/{}/quotes/{}/remedy-credits",
     }
     missing = sorted(required - referenced)
     assert not missing, f"no screen calls these routes any more: {missing}"

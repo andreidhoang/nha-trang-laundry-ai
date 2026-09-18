@@ -78,10 +78,22 @@ NOTICE_MINIMUM_LENGTH = 40
 #: registered one. A string passed after a props object is not less of a disclosure for it.
 CLAIM_CLASSES = ("notice__title", "screen__lede", "hint", "eyebrow", "notice")
 
-#: Object literals in `core/` that are pure claim vocabulary rather than screen prose.
+#: Object literals that are pure claim vocabulary rather than screen prose.
+#:
+#: The first two live in `core/`. The two on `screens/remedies.js` were added by REMEDY-001 and are
+#: the first outside it, for a reason worth recording: that screen reaches its disclosures through
+#: a lookup rather than a literal. `PLAN_NOTE` holds the sentence shown for each state the form can
+#: be in before anything is sent -- "the shop has no record of when this customer collected", "this
+#: is above the cap and the server refuses rather than reducing it" -- and `KIND_NOTE` holds the
+#: one that says loss has no form because the owner has not decided it. Every one of them is
+#: rendered as `hint: KIND_NOTE[draft.kind]` or through `planNotice`, so the literal-scanning
+#: passes above see a variable and register nothing. Ten refusal sentences and the loss claim would
+#: have been the console's least-covered honesty chrome while sitting in its newest screen.
 CLAIM_TABLES = (
     ("core/errors.js", "MESSAGES"),
     ("core/i18n.js", "REASON_NOTE"),
+    ("screens/remedies.js", "PLAN_NOTE"),
+    ("screens/remedies.js", "KIND_NOTE"),
 )
 
 #: Below this length a string is a label, not a disclosure. Measured: the shortest genuine

@@ -43,6 +43,33 @@ nhất tuần này không nằm ở AI — nó là **đưa tiệm lên chạy th
 
 ---
 
+## 0a. Relationship to `specs/CUSTOMER_SUPPORT_AND_ACQUISITION_SPEC_V1.md`
+
+That draft specification (2026-09-17, `DRAFT — NOT OWNER-APPROVED`, deliberately absent from
+`context/CONTEXT_MAP.yaml`) describes **how** support and acquisition compose at the seams. This
+document answers a different question — **whether to do it at all**, at what commercial value, and
+with which runtime. Read that one for the integration surface; read this one for the go/no-go, the
+unit economics and the build-versus-integrate verdict. Neither supersedes the other.
+
+They were written independently and agree where they overlap, which is worth recording rather than
+re-deriving: the same rollout order (`DEC-016` first, then the OA application, then a host so
+`SHOP-CUTOVER-001` clears, then `DEC-006`), the same read that the eval corpus is the only
+agent-movable evidence stream, and the same conclusion on a second agent runtime — its §14 closes
+that with `ADR-0004`'s perpetual-fork cost, independently of §6.1 below.
+
+**One apparent disagreement, reconciled.** Its §14 declines "a CRM in PostgreSQL" on `DEC-015`
+grounds, holding that spreadsheets are the right shape and create no processing record for people
+nobody has asked. §5.2 below proposes a profile aggregate. These are not the same object: the spec is
+refusing a **prospect** CRM in R1 — researched organisations that never contacted the shop — while
+§5.2 concerns **a customer who has messaged the shop**, which is exactly the event `DEC-015` named as
+its own reopen trigger. Both refuse the thing `DEC-013` forbids: a record created by staff typing a
+stranger's phone number. **Neither authorizes a migration**, and §5.2's does not get written until
+`DEC-015` is reopened and answered.
+
+**Three facts it carries that this document would otherwise have missed**, each folded in below:
+the statutory auto-disclosure duty (§5.3), the permanent-lock risk in the OA application clock (§8),
+and the one near-term path that no gate blocks (§8).
+
 ## 1. Verdict
 
 **GO — conditionally, in a fixed order, with three corrections to the proposal as stated.**
@@ -179,7 +206,9 @@ call (system + tool schemas + signed context packet + recent turns) and ~500 out
 
 Prices [S6][S7]; ≈26,000đ/USD assumed. Prompt-caching the static prefix cuts input roughly an order of
 magnitude. Channel cost on Zalo: inbound is free; advisory replies carry **8 free messages per 48h
-window from the customer's last interaction**, then ~**55đ/message** inside the window; a proactive
+window from the customer's last interaction**, then ~**55đ/message** inside the window — noting that
+"interaction" is the **provider's** definition (following the OA, a menu or CTA click, a comment, a
+call), not this system's, and any interaction type the adapter cannot map must fail closed; a proactive
 "your laundry is ready" outside the window is a **ZBS template message at ~200–300đ** (ZBS replaced
 ZNS/UID tag messages on 2026-01-01) [S8][S9][S10].
 
@@ -268,7 +297,16 @@ corpus, report order status the deterministic system already knows, queue a requ
 and escalate anything else to `REQUIRE_HUMAN`. It may never confirm a slot, quote a negotiated price,
 commit an ETA, or accept an incident resolution. Note that `promised_ready_at_store` is staff-set per
 item and `HUMAN_ETA_REQUIRED` covers the special-item classes — the deterministic layer already
-refuses to let the model do this, which is the design working as intended.
+refuses to let the model do this, which is the design working as intended. Note also that
+AI-confirmable capacity is **0 kg/day** (`BUSINESS_TRUTH_INTAKE.md` §2), so *every* slot is a request
+pending human confirmation, not a scheduling problem the agent can be given later.
+
+**And one thing it must always say.** Since `Luật 134/2025` Điều 11, disclosing that the customer is
+talking to an automated assistant is a **statutory duty, not a courtesy**
+(`specs/CUSTOMER_SUPPORT_AND_ACQUISITION_SPEC_V1.md` §5.4). That makes the disclosure string
+compliance surface, and it must be contract-tested like a contract — the repository has already been
+bitten once by a user-facing factual claim shipping with no test behind it
+(`apps/web/src/screens/assistant.js:487`).
 
 ---
 
@@ -415,10 +453,23 @@ already exists (`scripts/run_delivery_loop.py`, `record_delivery_evidence.py --e
 | # | Action | Unblocks | Clock |
 |---|---|---|---|
 | 1 | Answer `DEC-016`: company-owned channel account, and out-of-hours behaviour | everything | days |
-| 2 | Submit Zalo OA verification (MST `4202059758`, rep CCCD matching the licence) | `CHANNEL-ZALO-APPLY-001` → `CHANNEL-ZALO-001` | **2–8 weeks** |
+| 2 | **Scan all three documents *before* creating the OA**, then submit (MST `4202059758`, rep CCCD matching the licence) | `CHANNEL-ZALO-APPLY-001` → `CHANNEL-ZALO-001` | **2–8 weeks** |
 | 3 | Resolve `DEC-006` (provider data use, retention, region, deletion) | **every model call, including internal** | days–weeks |
 | 4 | Select a host (`DECISION-HOSTING-001`) | `SHOP-CUTOVER-001` → real orders → `G2`'s 30 | days |
 | 5 | Reopen and answer `DEC-015` in the §5.2 shape | the profile aggregate | days, after #2 starts |
+
+**Row 2 carries the only irreversible step in this table.** The 14-day submission clock starts the
+moment the OA is *created*, and a missed resubmission locks the account **permanently**
+(`specs/CUSTOMER_SUPPORT_AND_ACQUISITION_SPEC_V1.md` §13). So the full-page business licence with
+seal, the legal representative's ID, and the CVXT template downloaded from OA Manager itself are all
+scanned and in hand **before** anyone clicks create. Wrong or incomplete paperwork is the most common
+rejection cause, and here it is not merely a delay.
+
+**One near-term path that no gate blocks, worth knowing before planning around the ladder.** A
+**human-attested** marketing or follow-up send is `HUMAN_APPROVAL`, not a capability, so it sits
+outside `G4` entirely (ibid. §12). It is blocked on a consent projection and an owner decision on
+cadence and wording — not on shadow days, eval minima or a signed manifest. It is the only useful
+thing in this whole analysis that is closer than the gate ladder implies.
 
 ### Agent-buildable now — no new authority, in dependency order
 

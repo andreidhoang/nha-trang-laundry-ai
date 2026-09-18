@@ -36,6 +36,14 @@ those two layers is accelerated by engineering effort.
    free. Break-even is ~1–4 recovered orders per week. The real bill is 800 eval cases, 14 shadow
    days, 100 interactions, 30 real orders, a Zone P host and a three-actor signed manifest.
 
+**It composes, and does not supersede, `specs/CUSTOMER_SUPPORT_AND_ACQUISITION_SPEC_V1.md`**
+(2026-09-17 draft): that one describes *how* support and acquisition compose at the seams, this one
+answers *whether*, at what value, and with which runtime. Written independently, they agree on the
+rollout order and on refusing a second agent runtime. Their one apparent conflict — its §14 declines
+a CRM in PostgreSQL — is reconciled in §0a: it refuses a *prospect* CRM in R1, while the profile
+aggregate here concerns a customer who has already messaged, which is `DEC-015`'s own reopen trigger.
+Neither authorizes a migration.
+
 **What it recommends starting, and who owns it:** owner — finish `DEC-016`, submit the Zalo OA
 application (2–8 weeks, external, nothing shortens it), resolve `DEC-006`, select a host so
 `SHOP-CUTOVER-001` clears, reopen `DEC-015`. Agent — the eval corpus first, then

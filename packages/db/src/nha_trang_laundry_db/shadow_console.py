@@ -20,15 +20,21 @@ may never originate, mutate or rank one.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
-from nha_trang_laundry_domain.sla import ProductionSlaPolicy, evaluate_production_sla
+from nha_trang_laundry_domain import sla
+from nha_trang_laundry_domain.sla import (
+    ProductionSlaPolicy,
+    ProductionSlaResult,
+    evaluate_production_sla,
+)
 from psycopg.errors import UniqueViolation
 
 from .identity import StaffPrincipal, StaffRole
+from .query_version import QueryVersion, query_version, rule_source
 from .store_access import require_store_membership
 from .stores import StoreRepository
 from .transactions import MaterialChange, OutboxEvent, commit_material_change
@@ -41,6 +47,91 @@ SHADOW_READ_ROLES = frozenset(
 SHADOW_DECIDE_ROLES = frozenset({StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER})
 
 DRAFT_DECISIONS = frozenset({"APPROVE", "EDIT", "REJECT"})
+
+#: The board's population and its order, as one statement, so that one edit moves one rule.
+#:
+#: The predicate is the 2026-08 original with `0037`'s meaning intact: an order is on the board from
+#: the moment production accepted it until production physically released it, and a cancelled order
+#: is not work. The keyset arm is written as a row comparison so PostgreSQL can satisfy the whole
+#: WHERE and the whole ORDER BY from one index; `%(after_accepted)s::timestamptz IS NULL` ahead of
+#: it is the first page, and the cast is required because a bare NULL parameter has no type.
+_SLA_BOARD_SQL = """
+    SELECT id, store_id, production_accepted_at, production_ready_at,
+           commercial_status, production_status
+    FROM orders
+    WHERE store_id = %(store)s
+      AND production_accepted_at IS NOT NULL
+      AND production_status <> 'RELEASED'
+      AND commercial_status <> 'CANCELLED'
+      AND (
+          %(after_accepted)s::timestamptz IS NULL
+          OR (production_accepted_at, id) > (%(after_accepted)s::timestamptz, %(after_id)s::uuid)
+      )
+    ORDER BY production_accepted_at, id
+    LIMIT %(limit)s
+"""
+
+#: The published identifier of the board's rule.
+#:
+#: `v1` is the first *published* identifier, not the first shape of the query: the `0037` clock fix
+#: predates it. What the identifier promises from here on is that a change to the rule cannot reach
+#: a printout without a new name, which `packages/db/tests/test_ops_board.py` enforces by pinning
+#: the digest.
+SLA_BOARD_QUERY_IDENTIFIER = "sla-risk-board-v1"
+
+#: The domain SLA engine, as a structural digest of its own module rather than a hand-kept string.
+#:
+#: The SQL alone is not the rule behind a board figure. It selects rows; `evaluate_production_sla`
+#: decides what each row *means* -- where the clock stops, where the mark falls, which reason codes
+#: travel with it -- and a change there moves every number on the board while leaving the statement
+#: untouched. A published version that could not notice that is the exact failure `query_version`
+#: exists to prevent.
+#:
+#: `rule_source` is used rather than the raw text so that the digest tracks behaviour: comments,
+#: docstrings and formatting are dropped, a renamed local or a reordered branch is not. The whole
+#: module is read, not just the entry point, because the answer is produced with `_validate_policy`,
+#: `_lifecycle` and the published policy constants as much as with the function that calls them.
+_SLA_ENGINE_RULE = rule_source(sla)
+
+#: One screen of the board. Matches the historical default so the assistant's counts do not move.
+SLA_BOARD_DEFAULT_LIMIT = 50
+#: The ceiling a caller may ask for, mirroring `ApprovalRepository.list_pending`.
+SLA_BOARD_MAX_LIMIT = 200
+
+
+def _policy_identity(policy: ProductionSlaPolicy) -> str:
+    """Everything about a policy that can change a board figure, as one line.
+
+    The policy is an argument rather than a constant -- choosing one per order is an open business
+    decision -- so the version cannot be a module constant either. Its identifier is not enough on
+    its own: `SLA_STANDARD_CLOTHES` with an eight-hour mark and `SLA_STANDARD_CLOTHES` with a
+    twelve-hour mark produce different breaches under one name, so the hours and the type are hashed
+    with it. `commitment_authority` is included because the engine refuses anything but
+    `HUMAN_CONFIRM`, and the day that widens is a day every figure here means something else.
+    """
+    return "|".join(
+        (
+            policy.policy_id,
+            policy.policy_type.value,
+            str(policy.target_min_hours),
+            str(policy.target_max_hours),
+            policy.commitment_authority.value,
+        )
+    )
+
+
+def sla_board_query_version(policy: ProductionSlaPolicy) -> QueryVersion:
+    """The version that travels with a board figure: the statement, the engine, and the policy.
+
+    Invariant 18 wants the identifier beside a number to name the rule that produced it. Three
+    things produce a board number and any one of them can change without the other two: the SQL
+    that chooses the population, the engine that evaluates each row, and the policy the caller
+    evaluates it under. Hashing only the first published `v1` beside figures the other two had
+    already moved.
+    """
+    return query_version(
+        SLA_BOARD_QUERY_IDENTIFIER, _SLA_BOARD_SQL, _SLA_ENGINE_RULE, _policy_identity(policy)
+    )
 
 
 class ShadowAuthorizationError(PermissionError):
@@ -110,12 +201,43 @@ class UnknownSend:
 
 @dataclass(frozen=True, slots=True)
 class SlaRisk:
+    """One in-production order as the domain SLA engine reported it, plus the row it was read from.
+
+    `OPS-BOARD-001` widened this. The first six fields answered the assistant's question — how many
+    orders are in production and how many passed the internal risk mark — and a count is all they
+    can answer. A staff member standing at the counter needs the three things a count cannot give
+    them: *which* order, *how long* is left, and *what state* it is in so they know what to do.
+
+    Every added field is carried from somewhere that already decided it. `sla_outcome`,
+    `elapsed_microseconds` and `breach_microseconds` are `evaluate_production_sla`'s own outputs;
+    `remaining_microseconds` is the complement of the breach, derived from the engine's due
+    timestamp and its own elapsed figure rather than by re-deciding when the clock stops. The two
+    statuses and `production_ready_at` come straight off the order row. Nothing here is a second
+    opinion about risk.
+
+    Durations are microseconds and non-negative, and which side of the mark an order is on is
+    carried by *which* duration is non-zero rather than by a sign: `remaining_microseconds` counts
+    down to the mark and `breach_microseconds` counts past it, and exactly one of them can be
+    non-zero at a time. Invariant 2 is about money, but the habit it encodes — a magnitude never
+    carries a direction — is what keeps a board from rendering "-3 giờ còn lại".
+    """
+
     order_id: UUID
     store_id: UUID
     production_accepted_at: datetime
     internal_risk_due_at: datetime | None
     overall_outcome: str
     reason_codes: tuple[str, ...]
+    commercial_status: str
+    production_status: str
+    production_ready_at: datetime | None
+    sla_outcome: str
+    policy_id: str
+    policy_type: str
+    elapsed_microseconds: int | None
+    remaining_microseconds: int | None
+    breach_microseconds: int
+    evaluated_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -768,32 +890,65 @@ class ShadowConsoleRepository:
         principal: StaffPrincipal,
         policy: ProductionSlaPolicy,
         now: datetime | None = None,
-        limit: int = 50,
+        limit: int = SLA_BOARD_DEFAULT_LIMIT,
+        after: tuple[datetime, UUID] | None = None,
     ) -> tuple[SlaRisk, ...]:
         """Rank in-production orders by the domain SLA engine, never by a model or a heuristic.
 
         The policy is a required argument rather than a default, because choosing one per order is a
         business decision. There is no stored promised-at column: the promise is computed, and this
         surface reports exactly what `evaluate_production_sla` returns, including its reason codes.
+
+        **This is the only SLA read in the system, and `OPS-BOARD-001` extended it in place rather
+        than adding a second.** `#/assistant` counts what this returns and the board screen lists
+        it, so the two cannot disagree about a store at an instant. A second statement that computed
+        risk would also be a second place to re-introduce the `0037` clock bug, which this project
+        has already found and paid for once.
+
+        `after` pages forward by `(production_accepted_at, id)` — a keyset, not an offset, because
+        an offset over a board whose population changes while a shift reads it silently skips rows.
+        The pair is exactly the ORDER BY, so paging cannot repeat or lose an order.
+
+        **The board is ordered by production acceptance, oldest first — and that is all it is.**
+        It is tempting to call that least-time-remaining-first, and under a `COMMITMENT` policy it
+        nearly is: the mark is `production_accepted_at + target_max_hours`, one fixed offset, so
+        between two orders *whose clocks are both still running* the older acceptance really does
+        mean the less time left. It stops being true for the exact population migration `0037`
+        exists to serve. A `READY_AT_STORE` order's clock stopped at `production_ready_at`, so its
+        remaining time froze at whatever was left when the washing finished while the order
+        accepted beside it keeps spending. Two orders accepted in the same minute — one finished an
+        hour ago, one still running — share a sort key and have different time remaining, and the
+        finished one can sit above an order about to breach. Under `GUIDANCE_RANGE` or
+        `HUMAN_ETA_REQUIRED` there is no mark at all, so there is no remaining time to rank by.
+
+        Ordering by remaining time itself would mean `coalesce(production_ready_at, <now>) -
+        production_accepted_at` in the ORDER BY: a second copy of the clock-stop rule written in
+        SQL, and one that no index can serve, because the key depends on the instant of evaluation.
+        `orders_sla_board_idx` would stop covering both the sort and the keyset and a page would
+        become a sort of the store's whole board. So this method does not claim a ranking it cannot
+        produce. It orders by acceptance, the surfaces above it say so in those words, and every row
+        carries `sla_outcome`, `remaining_microseconds` and `breach_microseconds` so a reader ranks
+        by the figure rather than by the position. Re-sorting a page in Python would rank one page
+        against itself and break the keyset, so that is not done either.
         """
 
+        if not 1 <= limit <= SLA_BOARD_MAX_LIMIT:
+            raise ShadowStateError(
+                f"the SLA board limit must be between 1 and {SLA_BOARD_MAX_LIMIT}"
+            )
         timestamp = now or datetime.now(UTC)
         with connection.transaction(), connection.cursor() as cursor:
             self._require_store_access(
                 cursor, principal=principal, store_id=store_id, roles=SHADOW_READ_ROLES
             )
             cursor.execute(
-                """
-                SELECT id, store_id, production_accepted_at, production_ready_at
-                FROM orders
-                WHERE store_id = %s
-                  AND production_accepted_at IS NOT NULL
-                  AND production_status <> 'RELEASED'
-                  AND commercial_status <> 'CANCELLED'
-                ORDER BY production_accepted_at, id
-                LIMIT %s
-                """,
-                (store_id, limit),
+                _SLA_BOARD_SQL,
+                {
+                    "store": store_id,
+                    "after_accepted": None if after is None else after[0],
+                    "after_id": None if after is None else after[1],
+                    "limit": limit,
+                },
             )
             rows = cursor.fetchall()
         board = []
@@ -818,6 +973,16 @@ class ShadowConsoleRepository:
                     internal_risk_due_at=result.internal_risk_due_at,
                     overall_outcome=str(result.overall_outcome.value),
                     reason_codes=tuple(str(code.value) for code in result.reason_codes),
+                    commercial_status=str(row[4]),
+                    production_status=str(row[5]),
+                    production_ready_at=ready_at,
+                    sla_outcome=str(result.outcome.value),
+                    policy_id=result.trace.policy_id,
+                    policy_type=str(result.trace.policy_type.value),
+                    elapsed_microseconds=result.trace.actual_elapsed_microseconds,
+                    remaining_microseconds=_remaining_microseconds(result, accepted_at),
+                    breach_microseconds=result.trace.breach_microseconds,
+                    evaluated_at=timestamp,
                 )
             )
         return tuple(board)
@@ -904,6 +1069,31 @@ class ShadowConsoleRepository:
             )
 
 
+def _remaining_microseconds(result: ProductionSlaResult, accepted_at: datetime) -> int | None:
+    """How much of the internal mark is left, derived from the engine and never re-decided.
+
+    The tempting one-liner is `internal_risk_due_at - now`, and it is wrong in exactly the way
+    `0037` was wrong: it keeps counting for an order whose laundry is already finished and waiting
+    on the counter for its owner. The engine already knows where the clock stopped — that knowledge
+    is inside `actual_elapsed_microseconds`, which it measured to `ready_at_store` when there is one
+    and to the evaluation instant when there is not.
+
+    So the budget is taken from the engine's own two timestamps (`internal_risk_due_at` minus the
+    acceptance the board read) and the elapsed figure is subtracted from it. Restating the
+    clock-stop rule here would be the second SLA engine this item exists to not build.
+
+    `None` when the policy sets no mark: `GUIDANCE_RANGE` is guidance and carries
+    `GUIDANCE_DOES_NOT_CREATE_BREACH`, `HUMAN_ETA_REQUIRED` waits for a person, and neither has a
+    deadline to have time left against. Unknown means unknown, not zero.
+    """
+    due_at = result.internal_risk_due_at
+    elapsed = result.trace.actual_elapsed_microseconds
+    if due_at is None or elapsed is None:
+        return None
+    budget = (due_at - accepted_at) // timedelta(microseconds=1)
+    return max(0, budget - elapsed)
+
+
 def _uuid(value: object) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))
 
@@ -960,6 +1150,9 @@ __all__ = [
     "DRAFT_DECISIONS",
     "SHADOW_DECIDE_ROLES",
     "SHADOW_READ_ROLES",
+    "SLA_BOARD_DEFAULT_LIMIT",
+    "SLA_BOARD_MAX_LIMIT",
+    "SLA_BOARD_QUERY_IDENTIFIER",
     "AuditEntry",
     "DraftDecision",
     "PendingDraft",
@@ -968,4 +1161,5 @@ __all__ = [
     "ShadowStateError",
     "SlaRisk",
     "UnknownSend",
+    "sla_board_query_version",
 ]

@@ -28,6 +28,7 @@ from nha_trang_laundry_db.delivery_legs import (
     DeliveryLegKind,
     DeliveryLegOutcome,
 )
+from nha_trang_laundry_db.exports import ExportAuthorizationError, ExportStateError
 from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import (
     IdentityStateError,
@@ -50,10 +51,15 @@ from nha_trang_laundry_db.range_prices import RangePriceProposalIntegrityError
 from nha_trang_laundry_db.remedies import RemedyAuthorizationError, RemedyStateError
 from nha_trang_laundry_db.settlement import (
     BUSINESS_TIMEZONE,
+    COLLECTED_TODAY_QUERY,
     SettlementAuthorizationError,
     SettlementStateError,
 )
-from nha_trang_laundry_db.shadow_console import ShadowAuthorizationError, ShadowStateError
+from nha_trang_laundry_db.shadow_console import (
+    SLA_BOARD_DEFAULT_LIMIT,
+    ShadowAuthorizationError,
+    ShadowStateError,
+)
 from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_domain.approvals import ApprovalEnvelopeError
 from nha_trang_laundry_domain.canonical import MAX_CANONICAL_INT
@@ -86,9 +92,11 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse, StreamingResponse
 
 from nha_trang_laundry_api.assistant import (
+    SLA_POLICY,
     AssistantService,
     AssistantUnavailable,
     answer_sse_frames,
+    sla_policy_notice_vi,
 )
 from nha_trang_laundry_api.auth import (
     AuthenticationAttemptLimiter,
@@ -107,6 +115,7 @@ from nha_trang_laundry_api.operations import (
     StoredManualSendResult,
     UnresolvedQuoteResult,
 )
+from nha_trang_laundry_api.ops_board import OpsBoardService, OpsBoardUnavailable
 from nha_trang_laundry_api.security import BrowserSecurityMiddleware, RequestSizeLimitMiddleware
 
 # SHOP-OBSERVABILITY-001. Before this call, every `_LOGGER.record(...)` below was a no-op in the
@@ -2071,6 +2080,10 @@ class CollectedTodayResponse(BaseModel):
     collected_vnd: int
     settlement_count: int
     business_timezone: str
+    #: `OPS-BOARD-001`, invariant 18: the identifier of the rule that produced the figure travels
+    #: with the figure. This is the only money the console shows, so it is the one where "which
+    #: rule was this" most needs to survive onto a printout.
+    query_version: str
 
 
 @app.get(
@@ -2097,6 +2110,7 @@ def collected_today(
         collected_vnd=collected.collected_vnd,
         settlement_count=collected.settlement_count,
         business_timezone=BUSINESS_TIMEZONE,
+        query_version=COLLECTED_TODAY_QUERY.label,
     )
 
 
@@ -3181,6 +3195,466 @@ def _raise_assistant_error(error: Exception) -> NoReturn:
     if isinstance(error, IdempotencyConflictError):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
     raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+# --- OPS-BOARD-001: the shop's day, as versioned deterministic queries ------------------------
+#
+# Three reads and two commands, and not one of them decides anything. The SLA board is
+# `ShadowConsoleRepository.sla_risk_board` -- the query that already existed, with migration
+# `0037`'s clock fix inside it -- given a list surface so staff can see which order, how long is
+# left and what to do first instead of the two counts `#/assistant` answers with. The day summary
+# is `today_status_counts`, which had a query and no route. The export is the one genuinely absent
+# capability, and it is an owner-approved, audited act rather than a button.
+#
+# Every response carries `query_version`: invariant 18 says a figure is produced by a versioned
+# deterministic query, and a figure whose version does not travel with it cannot be traced to the
+# rule that produced it once it is on a printout. No figure here is computed in this layer.
+
+
+class SlaRiskResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    commercial_status: str
+    production_status: str
+    production_accepted_at: datetime
+    production_ready_at: datetime | None
+    internal_risk_due_at: datetime | None
+    sla_outcome: str
+    overall_outcome: str
+    reason_codes: list[str]
+    #: Durations, in microseconds, produced by the domain engine. Non-negative, and which side of
+    #: the internal mark an order is on is carried by which one is non-zero -- never by a sign.
+    #: `None` where the policy sets no mark at all, which is not the same as zero time left.
+    elapsed_microseconds: int | None
+    remaining_microseconds: int | None
+    breach_microseconds: int
+
+
+class SlaBoardResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[SlaRiskResponse]
+    query_version: str
+    policy_id: str
+    policy_type: str
+    policy_target_max_hours: int | None
+    #: The sentence `#/assistant` already says, shared rather than copied. It names the rule that
+    #: produced these numbers and states that per-order SLA policy is an unresolved business
+    #: decision -- so a board cannot be read as the shop having promised a customer anything.
+    policy_notice_vi: str
+    evaluated_at: datetime
+    next_accepted_at: datetime | None
+    next_order_id: UUID | None
+
+
+class DaySummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: (commercial_status, count) in the server's order. A mapping would let a client iterate it in
+    #: whatever order its JSON parser felt like, and the query's ORDER BY is part of the answer.
+    counts: list[tuple[str, int]]
+    total_orders: int
+    query_version: str
+    business_timezone: str
+
+
+class ExportRequestBody(StrictRequest):
+    #: Named by the requester, with no default. A day nobody chose is a day nobody is accountable
+    #: for having exported, and "unknown means stop" applies to a date exactly as it applies to a
+    #: price.
+    business_date: date
+
+
+class ExportRequestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    export_request_id: UUID
+    store_id: UUID
+    dataset: str
+    business_date: date
+    #: What the caller takes to `POST /internal/v1/approvals` to raise the envelope. Handed back
+    #: rather than recomputed by the client: the digests are what the owner approves, and a client
+    #: that derived its own would be approving a document the server never stored.
+    resource_type: str
+    resource_version: int
+    snapshot_hash: str
+    rendered_hash: str
+    policy_version: str
+    requested_at: datetime
+    columns: list[str]
+    excludes: list[str]
+    query_version: str
+    #: Which event puts an order on the named day, and the Vietnamese sentence the owner approves.
+    #: Both come from the server because both are hashed into `rendered_hash`: a console composing
+    #: its own wording would be describing a document nobody signed. `day_boundary` is on the wire
+    #: because this system cuts the shop's day two ways -- an export by `orders.created_at`, the
+    #: counter's takings by `order_settlements.attested_at` -- and both surfaces say *tiền đã thu*.
+    day_boundary: str
+    statement_vi: str
+    replayed: bool
+
+
+class ExportRequestContentResponse(BaseModel):
+    """What one `EXPORT_SANITIZED_DATA` envelope authorises, for the owner being asked to sign it.
+
+    The same shape and the same purpose as `RangePriceProposalContentResponse`: an approver must be
+    able to read what they are releasing before the approve control is reachable. `#/approvals`
+    could not put an export in front of anybody -- `EXPORT_REQUEST` was absent from the console's
+    viewable-resource table -- so the envelope `#/exports` raises could never be decided, and a
+    capability that a staff member can request and no owner can release is not a capability.
+
+    `requested_by_you` is the one field that is about the reader rather than the content. It is the
+    separation-of-duty answer computed where the console can act on it: the account that defined
+    this export cannot approve it, and learning that from a disabled control with a sentence beside
+    it is better than learning it from a 403 after pressing. It discloses nothing about anyone else
+    -- it is true only of the caller, and is `false` for every other account whatever raised it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    approval_request_id: UUID
+    export_request_id: UUID
+    dataset: str
+    business_date: date
+    business_timezone: str
+    day_boundary: str
+    columns: list[str]
+    excludes: list[str]
+    query_version: str
+    statement_vi: str
+    #: The envelope's own digest, so the console can refuse to show content that belongs to a
+    #: different rendering than the queue row the decision will be built from.
+    rendered_hash: str
+    requested_at: datetime
+    requested_by_you: bool
+
+
+class ExportExecutionBody(StrictRequest):
+    approval_id: UUID
+
+
+class ExportExecutionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    export_id: UUID
+    export_request_id: UUID
+    store_id: UUID
+    approval_request_id: UUID
+    business_date: date
+    row_count: int
+    content_hash: str
+    query_version: str
+    content_csv: str
+    produced_at: datetime
+
+
+def get_ops_board_service() -> OpsBoardService:
+    try:
+        return OpsBoardService(AuthSettings())
+    except OpsBoardUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations board unavailable"
+        ) from error
+
+
+@app.get("/internal/v1/stores/{store_id}/sla-board", response_model=SlaBoardResponse)
+def sla_board(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    service: Annotated[OpsBoardService | None, Depends(get_ops_board_service)] = None,
+    limit: int = SLA_BOARD_DEFAULT_LIMIT,
+    after_accepted_at: datetime | None = None,
+    after_order_id: UUID | None = None,
+) -> SlaBoardResponse:
+    """In-production orders against the one stated internal mark, oldest accepted first.
+
+    The route gate is the session alone and the real gate is the repository, exactly as on the two
+    Shadow list routes: `SHADOW_READ_ROLES` plus an explicit `staff_store_assignments` row. Writing
+    a second role set here would be a second opinion about who may read a store, and the one in the
+    repository is the one that cannot be forgotten.
+
+    Ordering is the query's, not this layer's, and it is acceptance order rather than urgency
+    order: an order whose clock stopped at `production_ready_at` has frozen time remaining and can
+    sort above one about to breach, so `sla_risk_board` declines to claim a ranking its index can
+    serve. Each row carries its own outcome and its own remaining and breach figures for that
+    reason. Re-sorting the page here would rank one page against itself and break the keyset.
+    """
+    if service is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations board unavailable"
+        )
+    try:
+        page = service.sla_board(
+            store_id=store_id,
+            principal=principal,
+            policy=SLA_POLICY,
+            limit=limit,
+            after_accepted_at=after_accepted_at,
+            after_order_id=after_order_id,
+        )
+    except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
+        _raise_shadow_error(error)
+    return SlaBoardResponse(
+        items=[
+            SlaRiskResponse(
+                order_id=item.order_id,
+                commercial_status=item.commercial_status,
+                production_status=item.production_status,
+                production_accepted_at=item.production_accepted_at,
+                production_ready_at=item.production_ready_at,
+                internal_risk_due_at=item.internal_risk_due_at,
+                sla_outcome=item.sla_outcome,
+                overall_outcome=item.overall_outcome,
+                reason_codes=list(item.reason_codes),
+                elapsed_microseconds=item.elapsed_microseconds,
+                remaining_microseconds=item.remaining_microseconds,
+                breach_microseconds=item.breach_microseconds,
+            )
+            for item in page.items
+        ],
+        query_version=page.query_version,
+        policy_id=page.policy_id,
+        policy_type=page.policy_type,
+        policy_target_max_hours=page.policy_target_max_hours,
+        policy_notice_vi=sla_policy_notice_vi(SLA_POLICY),
+        evaluated_at=page.evaluated_at,
+        next_accepted_at=page.next_accepted_at,
+        next_order_id=page.next_order_id,
+    )
+
+
+@app.get("/internal/v1/stores/{store_id}/day-summary", response_model=DaySummaryResponse)
+def day_summary(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OpsBoardService | None, Depends(get_ops_board_service)] = None,
+) -> DaySummaryResponse:
+    """The store's own day, counted by commercial status. No money is served here.
+
+    The day's takings keep their own route and their own `DEC-014` gate
+    (`GET /internal/v1/stores/{store_id}/settlements/today`). Folding that figure in here would put
+    it behind a second gate, and a role gate with two doors is a role gate that gets widened by
+    whichever door somebody edits next.
+
+    `total_orders` is summed by the server for the same reason every other figure is: a console that
+    added the rows would be a second, unreviewed opinion about the day's volume.
+    """
+    if service is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations board unavailable"
+        )
+    try:
+        summary = service.day_summary(store_id=store_id, principal=principal)
+    except (AssistantAuthorizationError, StoreAccessError, ValueError) as error:
+        _raise_assistant_error(error)
+    return DaySummaryResponse(
+        counts=[(status_name, count) for status_name, count in summary.counts],
+        total_orders=sum(count for _, count in summary.counts),
+        query_version=summary.query_version,
+        business_timezone=summary.business_timezone,
+    )
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/exports",
+    response_model=ExportRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def request_export(
+    store_id: UUID,
+    request: ExportRequestBody,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
+    service: Annotated[OpsBoardService | None, Depends(get_ops_board_service)] = None,
+) -> ExportRequestResponse:
+    """Record what somebody wants exported and hand back the binding an approval envelope needs.
+
+    Nothing leaves the system on this call and no approval is raised on it. The digests returned are
+    what `POST /internal/v1/approvals` binds, and `_require_resolvable_resource` now resolves an
+    `EXPORT_REQUEST` against the row this wrote -- so an envelope naming an export that does not
+    exist, or one belonging to another shop, is refused before anybody can approve it.
+    """
+    if service is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations board unavailable"
+        )
+    try:
+        stored = service.request_export(
+            store_id=store_id,
+            principal=principal,
+            business_date=request.business_date,
+            idempotency_key=idempotency_key,
+        )
+    except ExportAuthorizationError as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    except IdempotencyConflictError as error:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
+    except (StoreAccessError, ExportStateError, ValueError) as error:
+        _raise_export_error(error)
+    return ExportRequestResponse(
+        export_request_id=stored.export_request_id,
+        store_id=stored.store_id,
+        dataset=stored.dataset,
+        business_date=stored.business_date,
+        resource_type=stored.resource_type,
+        resource_version=stored.resource_version,
+        snapshot_hash=stored.snapshot_hash,
+        rendered_hash=stored.rendered_hash,
+        policy_version=stored.policy_version,
+        requested_at=stored.requested_at,
+        columns=list(stored.columns),
+        excludes=list(stored.excludes),
+        query_version=stored.query_version,
+        day_boundary=stored.day_boundary,
+        statement_vi=stored.statement_vi,
+        replayed=stored.replayed,
+    )
+
+
+@app.get(
+    "/internal/v1/approvals/{approval_id}/export-request",
+    response_model=ExportRequestContentResponse,
+)
+def read_export_request_for_approval(
+    approval_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
+    service: Annotated[OpsBoardService | None, Depends(get_ops_board_service)] = None,
+) -> ExportRequestContentResponse:
+    """What one `EXPORT_SANITIZED_DATA` envelope releases, for the person being asked to sign it.
+
+    The export half of `RANGE-APPROVAL-VISIBILITY-001`. `#/approvals` had no way to render an
+    `EXPORT_REQUEST`, so the envelope `#/exports` raises could never be decided from the approvals
+    queue: a staff member could ask for an export that no owner was able to release. Adding the
+    resource type to the console's viewable table alone would have fixed the dead end by letting an
+    owner approve a digest and a UUID, which is the blind approval that item existed to remove.
+    This route is what makes it not blind -- the business date, the exact columns, the stated
+    exclusions and the day boundary, re-derived from the column list in force right now.
+
+    Keyed by the approval rather than by the store, exactly as the range-price read is: the store
+    comes off the stored request row and membership is required against it, so an approval from
+    another shop is refused with the same opaque 403 as any other non-membership.
+
+    404 covers "no such approval" and "this approval is not an export" alike. A caller learns
+    nothing from the difference, and both fail closed in the direction the console needs: no
+    content, therefore no approve control.
+    """
+    if service is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations board unavailable"
+        )
+    try:
+        record = service.read_export_for_approval(approval_id=approval_id, principal=principal)
+    except (ExportAuthorizationError, StoreAccessError, ExportStateError, ValueError) as error:
+        _raise_export_error(error)
+    if record is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no export request for this approval")
+    return ExportRequestContentResponse(
+        approval_request_id=record.approval_request_id,
+        export_request_id=record.export_request_id,
+        dataset=record.dataset,
+        business_date=record.business_date,
+        business_timezone=record.business_timezone,
+        day_boundary=record.day_boundary,
+        columns=list(record.columns),
+        excludes=list(record.excludes),
+        query_version=record.query_version,
+        statement_vi=record.statement_vi,
+        rendered_hash=record.rendered_hash,
+        requested_at=record.requested_at,
+        requested_by_you=record.requested_by_you,
+    )
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/exports/{export_request_id}/execution",
+    response_model=ExportExecutionResponse,
+)
+def execute_export(
+    store_id: UUID,
+    export_request_id: UUID,
+    request: ExportExecutionBody,
+    principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
+    service: Annotated[OpsBoardService | None, Depends(get_ops_board_service)] = None,
+) -> ExportExecutionResponse:
+    """Release the file once, against an approval that names this exact request.
+
+    **This route deliberately does not honour `Idempotency-Key`, and that is the safer choice
+    rather than an omission.** `IdempotencyRepository` persists a command's response verbatim into
+    `command_idempotency_records.response`, where `protect_idempotency_record` forbids anyone to
+    delete it -- so replaying an export through it would store the exported bytes inside the system
+    for ever, which is precisely the escaped, ungoverned second copy the export's own sanitisation
+    rule exists to prevent. The one-time property comes from `data_exports.export_request_id UNIQUE`
+    instead: an approved request releases one file, and a second attempt is refused by name.
+
+    `store_id` is in the path for the console's sake and is not trusted: the repository reads the
+    store off the locked `export_requests` row and checks membership against that. The path value
+    is passed down as an assertion only -- a URL naming a different shop is refused before the file
+    is produced, so a mislabelled request cannot burn the request's one release.
+    """
+    if service is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations board unavailable"
+        )
+    try:
+        produced = service.execute_export(
+            store_id=store_id,
+            export_request_id=export_request_id,
+            approval_request_id=request.approval_id,
+            principal=principal,
+        )
+    except ExportAuthorizationError as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    except (StoreAccessError, ExportStateError, ValueError) as error:
+        _raise_export_error(error)
+    return ExportExecutionResponse(
+        export_id=produced.export_id,
+        export_request_id=produced.export_request_id,
+        store_id=produced.store_id,
+        approval_request_id=produced.approval_request_id,
+        business_date=produced.business_date,
+        row_count=produced.row_count,
+        content_hash=produced.content_hash,
+        query_version=produced.query_version,
+        content_csv=produced.content_csv,
+        produced_at=produced.produced_at,
+    )
+
+
+#: Export refusals that a person can resolve by deciding something, rather than by retyping.
+#:
+#: These three are the owner\'s approval being absent, expired, or bound to a different document.
+#: All three are answered `REQUIRE_HUMAN`, which is `core/errors.js`\'s classification for "somebody
+#: has to decide this" -- not `NOT_SUPPORTED`, which means the shop has never decided the case, and
+#: not `INVALID`, which would send a staff member back to retype a date that was never wrong.
+#: `EXPORT_APPROVAL_SELF_DECIDED` joined them when separation of duty was bound to the person who
+#: defined the export rather than to whoever raised the envelope. It is the same kind of answer as
+#: the other three -- a different owner has to decide this -- and never a retype.
+_EXPORT_REQUIRES_HUMAN = frozenset(
+    {
+        "EXPORT_APPROVAL_REQUIRED",
+        "EXPORT_APPROVAL_EXPIRED",
+        "EXPORT_APPROVAL_NOT_BOUND",
+        "EXPORT_APPROVAL_SELF_DECIDED",
+    }
+)
+
+
+def _raise_export_error(error: Exception) -> NoReturn:
+    """One refusal shape for the export surface, keeping the reason code the caller can act on."""
+    if isinstance(error, (ExportAuthorizationError, StoreAccessError)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    if isinstance(error, ExportStateError):
+        if error.reason_code in _EXPORT_REQUIRES_HUMAN:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"outcome": "REQUIRE_HUMAN", "reason_code": error.reason_code},
+            ) from error
+        # The rest are state, not policy: this request has already released its one file, or there
+        # is no such request. 409 with the code as the detail, which is the shape `classify` turns
+        # into a conflict the screen glosses from `REASON_NOTE`.
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=error.reason_code) from error
+    raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
 
 
 if WEB_DIRECTORY.is_dir():

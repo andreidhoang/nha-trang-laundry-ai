@@ -26,6 +26,15 @@
  *     the published band and the owner approved an amount nobody had put in front of them. The
  *     gate is therefore on the action as well now, and a `SET_RANGE_PRICE` card fetches the
  *     proposed amounts and stays undecidable until they are on screen above the buttons.
+ *
+ *     `EXPORT_REQUEST` is the same rule applied to the opposite failure. `OPS-BOARD-001` built the
+ *     sanitized export and `#/exports` raises its envelope, but the resource type was absent from
+ *     the table below — so an `EXPORT_SANITIZED_DATA` envelope reached this queue and could never
+ *     be decided by anyone. Not a locked button: a dead end, in which a staff member could request
+ *     an export that no owner in the shop was able to release. Adding the type alone would have
+ *     traded that for blind approval of a digest, so the card fetches the export's own business
+ *     date, column list and exclusions and prints them above the buttons, and blocks when it
+ *     cannot.
  *   - **The server is the authority, not this list.** `_require_exact_binding` re-checks the
  *     version and both digests at decision time, `_authorize_decision` re-checks store membership,
  *     role, MFA and maker-checker separation. A stale card cannot approve anything: the decision is
@@ -48,7 +57,15 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { countdown, dateTime, money, moneyRange, shortHash, shortId } from "../core/format.js";
+import {
+  UNKNOWN,
+  countdown,
+  dateTime,
+  money,
+  moneyRange,
+  shortHash,
+  shortId,
+} from "../core/format.js";
 import { enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal } from "../core/session.js";
@@ -133,6 +150,20 @@ const VIEWABLE_RESOURCES = {
   QUOTE_REVISION: (resourceId, resourceVersion) =>
     `#/quotes?quote=${encodeURIComponent(resourceId)}` +
     `&revision=${encodeURIComponent(String(resourceVersion))}`,
+  // `OPS-BOARD-001` built the sanitized export and `#/exports` raises its envelope, but this table
+  // had no entry for the resource type that envelope names — so `EXPORT_SANITIZED_DATA` reached
+  // this queue permanently undecidable. A staff member could ask for an export that no owner in
+  // the shop was able to release: not a locked button but a dead end, and the one capability the
+  // approval vocabulary had named since the first migration.
+  //
+  // `null` rather than a route, and that is the entry's real content. There is no screen that
+  // renders a stored export request: `#/exports` is the form that creates one and would open blank
+  // and unrelated, so a link to it would be this console pointing an owner at the wrong document
+  // while telling them to read it before deciding. The card fetches the request's own contents
+  // instead and prints them above the buttons, exactly as a `SET_RANGE_PRICE` card prints the
+  // amounts, and stays undecidable until they are on screen. A builder that returns `null` means
+  // "this console can show you this, and it shows you here" — not "there is nothing to show".
+  EXPORT_REQUEST: () => null,
 };
 
 /**
@@ -155,6 +186,17 @@ const VIEWABLE_RESOURCES = {
  * screen. The card below never enables an approve control from a resource type alone.
  */
 const SET_RANGE_PRICE = "SET_RANGE_PRICE";
+
+/**
+ * The resource type whose content this card fetches and prints itself.
+ *
+ * Same rule as `SET_RANGE_PRICE` above and a stronger reason for it. An export is the one act on
+ * this queue whose result leaves every control the system has: once the CSV is on a laptop, no
+ * retention schedule reaches it and no approval can be withdrawn. So the owner sees the business
+ * day, the exact column list and the exclusions the file promises before the approve control is
+ * reachable — and if any of those cannot be read, the control stays shut.
+ */
+const EXPORT_REQUEST = "EXPORT_REQUEST";
 
 /** What this console records as its reason; the server only constrains the shape. */
 const DECISION_REASONS = {
@@ -287,17 +329,22 @@ function decisionControls(item, onDecided, verdict, contentBlock = null) {
   approve.addEventListener("click", () => void send("APPROVED", approve, reject));
   reject.addEventListener("click", () => void send("REJECTED", reject, approve));
 
+  // `null` is a legitimate answer here and means "the content is already on this card", which is
+  // the shape an `EXPORT_REQUEST` takes: there is no screen that renders a stored export request,
+  // so a link would send the approver somewhere that is not the document they are signing. The
+  // sentence about the server re-checking still belongs on every card, so only the anchor is
+  // conditional.
+  const href = viewer(String(item.resource_id), item.resource_version);
+
   return h(
     "div",
     { class: "stack stack--tight" },
     h(
       "p",
       { class: "hint" },
-      h(
-        "a",
-        { href: viewer(String(item.resource_id), item.resource_version) },
-        "Mở nội dung này trước khi quyết",
-      ),
+      typeof href === "string"
+        ? h("a", { href }, "Mở nội dung này trước khi quyết")
+        : "Nội dung cần duyệt đã in ngay trên thẻ này",
       " — máy chủ kiểm lại phiên bản và cả hai mã niêm phong khi bạn bấm.",
     ),
     h("div", { class: "form__actions" }, gated(approve, verdict), gated(reject, verdict)),
@@ -383,6 +430,162 @@ function proposedAmounts(proposal, lines) {
 }
 
 /**
+ * What one export envelope actually releases, in the owner's own language.
+ *
+ * Four things, and the order is the argument. The day first, because an export is chosen by day
+ * and the wrong day is the commonest mistake. Then the exact columns, then the exclusions — a
+ * reader told only what a file contains cannot tell "the complaint text is not here" from "no
+ * complaint was recorded", which is the difference the word *sanitized* is claiming. Then the
+ * sentence the server hashed into `rendered_hash`, verbatim: that string is the document, and a
+ * console paraphrasing it would be showing an owner something other than what they sign.
+ *
+ * The day boundary is on the card beside the money columns for a reason worth stating. This file
+ * is cut on `orders.created_at` and the takings figure on `#/today` is cut on when money was
+ * taken, so the same words — *tiền đã thu* — name two different numbers in this console. Naming
+ * which one this is costs a line here and saves an argument about which spreadsheet is wrong.
+ *
+ * Nothing is computed. Every value is rendered as the server sent it.
+ *
+ * @param {any} record the `ExportRequestContentResponse` body
+ * @returns {HTMLElement}
+ */
+function exportContents(record) {
+  const columns = Array.isArray(record.columns) ? record.columns : [];
+  const excludes = Array.isArray(record.excludes) ? record.excludes : [];
+  return h(
+    "div",
+    { class: "notice", dataState: "warn" },
+    h("p", { class: "notice__title" }, "Dữ liệu bạn đang được đề nghị cho rời khỏi hệ thống"),
+    facts([
+      ["Ngày làm việc", String(record.business_date)],
+      ["Múi giờ", record.business_timezone || UNKNOWN, { mono: true }],
+      ["Bộ dữ liệu", record.dataset || UNKNOWN, { mono: true }],
+      ["Cắt ngày theo", record.day_boundary || UNKNOWN, { mono: true, span: true }],
+      ["Có trong tệp", h("span", { class: "mono" }, columns.join(", ")), { span: true }],
+      ["Cố ý không có", h("span", { class: "mono" }, excludes.join(", ")), { span: true }],
+      ["Truy vấn", record.query_version || UNKNOWN, { mono: true, span: true }],
+    ]),
+    h("p", null, record.statement_vi || UNKNOWN),
+    h(
+      "p",
+      { class: "hint" },
+      "Bấm Duyệt là cho đúng danh sách cột này, của đúng ngày này, rời khỏi hệ thống. Tệp tải về " +
+        "nằm ngoài mọi lịch xoá dữ liệu và không thu hồi lại được.",
+    ),
+  );
+}
+
+/**
+ * Fetch what one `EXPORT_REQUEST` envelope releases, and unblock its controls — or not.
+ *
+ * Every failure path leaves the controls where they started: shut, with a reason. Same design as
+ * `loadProposedAmounts`, and there is no failure here whose right answer is to let the press
+ * through — an approved export produces a file, and a file cannot be unapproved.
+ *
+ * One branch is not a failure at all and still blocks: `requested_by_you`. `_OWNER_FINANCIAL`
+ * carries `SEPARATION_OF_DUTY`, and for an export the server binds it to the person who DEFINED
+ * the export rather than to whoever raised the envelope — so an owner who asked for this file
+ * cannot approve it, however the envelope came to be. That is a refusal the server will make
+ * anyway; making it here means the owner reads it beside the shut control instead of meeting an
+ * opaque 403 after pressing.
+ *
+ * @param {any} item
+ * @param {HTMLElement} contentHost
+ * @param {HTMLElement} controlsHost
+ * @param {() => Promise<void>} onDecided
+ * @param {{allowed: boolean, reason: string}} verdict
+ * @returns {Promise<void>}
+ */
+async function loadExportRequest(item, contentHost, controlsHost, onDecided, verdict) {
+  /** @param {string} reason @param {HTMLElement} explanation */
+  const block = (reason, explanation) => {
+    render(contentHost, explanation);
+    render(controlsHost, decisionControls(item, onDecided, verdict, reason));
+  };
+  try {
+    const record = await request(
+      `/internal/v1/approvals/${encodeURIComponent(item.approval_request_id)}/export-request`,
+    );
+    const columns = Array.isArray(record.columns) ? record.columns : [];
+    if (!columns.length) {
+      block(
+        "Không bấm được: máy chủ không trả về cột nào cho yêu cầu xuất này.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger" },
+          h("p", { class: "notice__title" }, "Không có danh sách cột để xem"),
+          h(
+            "p",
+            null,
+            "Phiếu này xin cho dữ liệu rời khỏi hệ thống, nhưng máy chủ không nói được tệp sẽ " +
+              "mang những cột nào. Không duyệt. Báo kỹ thuật và để phiếu tự hết hạn.",
+          ),
+        ),
+      );
+      return;
+    }
+    if (record.rendered_hash !== item.rendered_hash) {
+      // The server re-derives this digest from the column list in force right now. A disagreement
+      // means the export's columns moved after the envelope was raised, so the file would carry
+      // something the owner never saw -- and the release itself would refuse with
+      // `EXPORT_APPROVAL_NOT_BOUND`. Nothing here is fixable by pressing.
+      block(
+        "Không bấm được: nội dung đọc được không khớp mã niêm phong của phiếu trong hàng chờ.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger" },
+          h("p", { class: "notice__title" }, "Nội dung không khớp phiếu"),
+          h(
+            "p",
+            null,
+            "Danh sách cột của bản xuất đã đổi kể từ lúc phiếu này được mở, nên tệp sẽ không " +
+              "giống bản mô tả mà phiếu đang niêm phong. Máy chủ cũng sẽ từ chối xuất. Tạo lại " +
+              "yêu cầu xuất và xin duyệt lại.",
+          ),
+        ),
+      );
+      return;
+    }
+    render(contentHost, exportContents(record));
+    if (record.requested_by_you === true) {
+      render(
+        controlsHost,
+        decisionControls(
+          item,
+          onDecided,
+          verdict,
+          "Không bấm được: yêu cầu xuất này do chính bạn tạo, và người chọn dữ liệu nào rời khỏi " +
+            "hệ thống không được tự duyệt. Nhờ một chủ tiệm khác quyết.",
+        ),
+      );
+      return;
+    }
+    render(controlsHost, decisionControls(item, onDecided, verdict));
+  } catch (error) {
+    block(
+      "Không bấm được: chưa đọc được nội dung yêu cầu xuất. Chưa thấy dữ liệu thì chưa quyết.",
+      h(
+        "div",
+        { class: "stack stack--tight" },
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Chưa xem được dữ liệu sắp rời khỏi hệ thống"),
+          h(
+            "p",
+            null,
+            "Phiếu này xin cho một bản sao hồ sơ của cửa hàng rời khỏi hệ thống. Chừng nào chưa " +
+              "đọc được ngày và danh sách cột của bản xuất thì nút Duyệt vẫn khoá. Máy chủ nêu " +
+              "lý do bên dưới, nguyên văn.",
+          ),
+        ),
+        errorNotice(error),
+      ),
+    );
+  }
+}
+
+/**
  * One pending envelope.
  *
  * @param {any} item
@@ -413,6 +616,21 @@ function approvalCard(item, registerClock, onDecided, verdict) {
     );
     render(contentHost, h("p", { class: "hint" }, "Đang tải số tiền được đề nghị…"));
     void loadProposedAmounts(item, contentHost, controlsHost, onDecided, verdict);
+  } else if (String(item.resource_type) === EXPORT_REQUEST) {
+    // Keyed on the resource type rather than the action, unlike the branch above: one action maps
+    // to `EXPORT_REQUEST` and the type is what says there is a stored request to read. The
+    // range-price branch has to key on the action because four actions share `QUOTE_REVISION`.
+    render(
+      controlsHost,
+      decisionControls(
+        item,
+        onDecided,
+        verdict,
+        "Không bấm được: đang tải nội dung bản xuất. Chưa thấy dữ liệu thì chưa quyết.",
+      ),
+    );
+    render(contentHost, h("p", { class: "hint" }, "Đang tải nội dung bản xuất…"));
+    void loadExportRequest(item, contentHost, controlsHost, onDecided, verdict);
   } else {
     render(controlsHost, decisionControls(item, onDecided, verdict));
   }
@@ -639,6 +857,13 @@ function limitsPanel() {
           h(
             "p",
             null,
+            "Phiếu xin xuất dữ liệu cũng vậy, và còn chặt hơn: thẻ phiếu tự đọc ngày làm việc, " +
+              "danh sách cột và những phần cố ý không mang theo, rồi in ngay trên hai nút. Tệp " +
+              "đã tải về thì không thu hồi được, nên chưa đọc được nội dung là chưa quyết.",
+          ),
+          h(
+            "p",
+            null,
             "Loại nào bảng vận hành chưa mở ra xem được thì nút vẫn khoá, và đó là cố ý. " +
               "MESSAGE_DRAFT là loại đáng nói nhất: hệ thống không lưu nội dung tin nhắn, và máy " +
               "chủ cũng không đối chiếu được mã niêm phong nội dung với bất cứ thứ gì. Bấm duyệt " +
@@ -680,7 +905,10 @@ function limitsPanel() {
               "dd",
               null,
               "Máy chủ từ chối quyết định đến từ chính nhân viên đã tạo yêu cầu. Danh sách này không " +
-                "trả về ai là người yêu cầu, nên bạn chỉ biết mình vướng quy tắc đó khi máy chủ từ chối.",
+                "trả về ai là người yêu cầu, nên bạn chỉ biết mình vướng quy tắc đó khi máy chủ từ chối. " +
+                "Riêng phiếu xin xuất dữ liệu thì thẻ phiếu nói trước: quy tắc ở đó tính theo người " +
+                "đã tạo YÊU CẦU XUẤT — người chọn dữ liệu nào rời khỏi hệ thống — chứ không phải " +
+                "người bấm mở phong bì duyệt, nên nếu yêu cầu xuất là của bạn thì nút khoá kèm lý do.",
             ),
           ),
           h(

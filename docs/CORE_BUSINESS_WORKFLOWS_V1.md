@@ -249,10 +249,10 @@ Recorded so the gap is visible rather than discovered at the counter. Each is in
 | Naming the exact price inside a published range | No path. Range-priced services refuse to quote |
 | Promotions | The engine exists and is not wired into the quote path. Every revision discounts 0 |
 | ~~Deciding an approval from the console~~ | **Built.** `list_pending` projects `resource_version`, `snapshot_hash` and `rendered_hash`, so a decision can bind exactly what it approved. `ORDER` is decidable with a link to the resource; `QUOTE_REVISION` and `MESSAGE_DRAFT` stay disabled by name, because approving what the console cannot show you is blind approval in a politer font |
-| An SLA board | The read model exists, unrouted. The assistant answers today's counts instead |
+| ~~An SLA board~~ | **Built, 2026-09-22.** The read model was never the missing half: `ShadowConsoleRepository.sla_risk_board` already existed with migration `0037`'s clock fix, and building a second one would have re-introduced a bug already paid for once. What was missing was a surface — `GET /internal/v1/stores/{store_id}/sla-board` and `#/sla-board`, ordered by the server, each row carrying the query version and the one stated rule that produced it. Per-order `ProductionSlaPolicy` is still undecided and the board says so in the assistant's own words. `OPS-BOARD-001` |
 | Payment methods, part payments, deposits, credit | One shape only (§4) |
 | Batches, chain of custody, machine cycles, delivery cost capture | Blocked on `SHOP-INSTRUMENT-001` |
-| A daily operations dashboard and CSV export | No versioned read models |
+| ~~A daily operations dashboard and CSV export~~ | **Partly built, 2026-09-22.** The export exists and is versioned: `#/exports` raises an `EXPORT_SANITIZED_DATA` envelope, an owner who is not the staff member that defined it approves it, and the file is released once with its query version and a digest recorded in `data_exports`. It carries no incident free text, no evidence summary and no contact key. One day at a time, cut on `orders.created_at` — which is **not** the boundary the takings figure uses, and both surfaces now say so. A date range, and any dashboard with a rate in it, remain unbuilt: `FR-RPT-005` still needs a denominator nothing supplies. `OPS-BOARD-001`, `EXPORT-FIX-001` |
 
 ### 9.1 Where a specification and the code disagree
 
@@ -268,6 +268,8 @@ These are documentation defects, not behaviour defects — the code is the autho
 | `specs/DOMAIN_DATA_API_SPEC_V1.md:1336` | An error envelope with `ok`, `trace_id`, nested `error` | The server sends `{"detail": …}` in three shapes |
 | `specs/ENGINEERING_SPEC_V1.md` §10.6 | TypeScript strict mode | The console is plain ES modules, deliberately, with the reasoning recorded in `apps/web/README.md` |
 | `specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md` | An agent opens incidents with server-computed hashes | The agent path is unauthorised, so nothing computes them, and the staff path inherited the requirement |
+| `docs/STAFF_CONSOLE_ENGINEERING_SPEC_V1.md` §2 | The SLA risk read model is unrouted | Routed since `OPS-BOARD-001`: `GET /internal/v1/stores/{store_id}/sla-board` behind `#/sla-board`. The per-order policy it also names is genuinely still undecided |
+| same, §14 | No versioned read models, so there is no dashboard and no export | The day summary and the sanitized export are both versioned queries with pinned identifiers. The row is right about the dashboard `FR-RPT-005` asks for, which needs a denominator nothing supplies, and wrong that nothing is exported |
 
 ---
 

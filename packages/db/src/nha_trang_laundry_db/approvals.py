@@ -640,7 +640,8 @@ def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
         """
         SELECT r.resource_id, r.resource_version, r.snapshot_hash, r.rendered_hash,
                r.requested_by, r.policy_version, r.required_role, r.requested_at,
-               r.expires_at, r.envelope_hash, s.status, s.row_version, r.action, r.store_id
+               r.expires_at, r.envelope_hash, s.status, s.row_version, r.action, r.store_id,
+               r.resource_type
         FROM approval_requests r
         JOIN approval_request_states s ON s.approval_request_id = r.id
         WHERE r.id = %s
@@ -736,6 +737,63 @@ def _authorize_decision(cursor: Any, row: tuple[object, ...], principal: StaffPr
     if not principal.mfa_verified:
         raise ApprovalAuthorizationError("MFA is required for approval decisions")
     if principal.staff_user_id == _uuid(row[4]):
+        raise ApprovalAuthorizationError("requester cannot approve their own action")
+    _require_separation_from_the_definer(
+        cursor,
+        resource_type=str(row[14]),
+        resource_id=_uuid(row[0]),
+        principal=principal,
+    )
+
+
+#: Resource types whose CONTENT was chosen by somebody other than the account that raised the
+#: envelope, and the column naming that person.
+#:
+#: `SEPARATION_OF_DUTY` is a requirement of `_OWNER_FINANCIAL`, and the check above implements it
+#: against `approval_requests.requested_by`. For most actions those two accounts are the same one:
+#: proposing a range price writes the amounts and raises the envelope in one command, so the person
+#: who chose the number is the person the check names.
+#:
+#: `EXPORT_REQUEST` is the exception, and OPS-BOARD-001 shipped with it unnoticed. An export request
+#: is recorded first, by whoever decided which day of which shop leaves the building and under which
+#: column list; raising the envelope against that stored row is a second, later act that any member
+#: of the store may perform. So the check above compared the approver against the wrong person
+#: entirely: have a colleague press "xin chủ tiệm duyệt" and the account that defined the export
+#: could then approve its own release, with the maker-checker rule reading green throughout.
+#:
+#: A table rather than an `if`, and shaped like `_RESOLVABLE_RESOURCES` above, because the question
+#: it answers is per resource type and the honest answer for the other twelve is "the envelope's
+#: requester is the definer". An entry is added here only when that is untrue, and adding one is a
+#: statement about how that resource comes into being.
+_RESOURCE_DEFINERS: dict[str, str] = {
+    "EXPORT_REQUEST": """
+        SELECT e.requested_by_staff_id FROM export_requests e WHERE e.id = %s
+    """,
+}
+
+
+def _require_separation_from_the_definer(
+    cursor: Any, *, resource_type: str, resource_id: UUID, principal: StaffPrincipal
+) -> None:
+    """Refuse a decision from the staff member who defined the content this envelope binds.
+
+    Silent for a resource type with no entry above, and silent for a resource that has since gone:
+    this widens the maker-checker rule, it does not become a second existence check.
+    `_require_resolvable_resource` already refuses an envelope naming a row that is not there, at
+    request time, which is where that refusal belongs.
+
+    The same opaque `ApprovalAuthorizationError` as the rule it extends, and the same sentence. An
+    approver learns that separation of duty refused them, not which of two accounts it measured
+    against -- and a caller cannot use the difference to discover who raised what.
+    """
+    statement = _RESOURCE_DEFINERS.get(resource_type)
+    if statement is None:
+        return
+    cursor.execute(statement, (resource_id,))
+    row = cursor.fetchone()
+    if row is None or row[0] is None:
+        return
+    if principal.staff_user_id == _uuid(row[0]):
         raise ApprovalAuthorizationError("requester cannot approve their own action")
 
 

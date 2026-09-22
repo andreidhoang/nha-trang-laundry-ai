@@ -197,8 +197,14 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # binds to the same `require_approval_staff` gate the queue read does. The floor moves up
     # because a new console capability without a server gate behind it is exactly what this count
     # exists to notice.
-    assert counts.get("SERVER_GATE") == 12
-    assert counts.get("REPOSITORY_ROLES") == 3
+    #
+    # 13 and 5 since OPS-BOARD-001 added three capabilities. `DAY_SUMMARY_READ` is the SERVER_GATE
+    # one: `require_operations_staff` is the whole of its rule, so 12 + 1 = 13. `SLA_BOARD_READ`
+    # and `EXPORT_DATA` are REPOSITORY_ROLES, so 3 + 2 = 5 -- the board route depends on
+    # `current_principal` and the set that decides it is `SHADOW_READ_ROLES`, and the export's
+    # `EXPORT_ROLES` is re-checked inside the repository where a route rewrite cannot drop it.
+    assert counts.get("SERVER_GATE") == 13
+    assert counts.get("REPOSITORY_ROLES") == 5
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
     # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
@@ -464,16 +470,86 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     newest, so an approver could read revision 3 while signing revision 1's digest; the link
     #     carries the bound revision now, and a value this screen cannot read opens nothing at all
     #     rather than falling back to the newest one.
-    assert sum(counts.values()) == _registry()["total"] == 301
+    #
+    # 340 after OPS-BOARD-001: +39 on top of the 301 above, and the arithmetic is 301 + 39 = 340.
+    # The item put the SLA board -- which already existed as a query and was reachable only as two
+    # counts inside an assistant answer -- on a screen a shift can work from, rendered the day's
+    # order counts on `#/today`, and built the sanitized export.
+    #
+    #   * 20 in `core/i18n.js`, all in `REASON_NOTE`. Thirteen are the `SlaReason` vocabulary, which
+    #     was never glossed because no screen had ever shown it: every row of the new board carries
+    #     these codes as its evidence, and `SLA_BREACHED` on its own tells a staff member nothing
+    #     about whether the shop owes the customer anything. The notes draw that line explicitly --
+    #     `ELAPSED_EIGHT_HOUR_INTERNAL_RISK` is the shop's own mark, and
+    #     `GUIDANCE_DOES_NOT_CREATE_BREACH` says a guidance range is not a promise and must not be
+    #     rendered as a broken one. The other seven are the export refusals: five are conditions a
+    #     person can resolve, `EXPORT_REQUEST_STORE_MISMATCH` says the console is pointed at the
+    #     wrong shop and that the approval is still good, and `EXPORT_CELL_NOT_SAFE` is the
+    #     spreadsheet-formula guard, which is a data fault and says so rather than telling a staff
+    #     member to retype something.
+    #   * 7 in `screens/slaBoard.js`. The rule notice's title, the empty-board line, the no-mark
+    #     line, the lede stating that the order is the server's, the read-only guardrail, and the
+    #     two halves of the strange-shape notice.
+    #   * 6 in `screens/exports.js`. What the file carries and what it withholds, the wait-for-owner
+    #     notice, the guardrail naming separation of duty, the lede, and the line saying a
+    #     downloaded file has left every retention schedule the system runs.
+    #   * 3 in `core/rbac.js`, one per new capability: `SLA_BOARD_READ`, `DAY_SUMMARY_READ` and
+    #     `EXPORT_DATA`. Two are bound to repository role sets and one to a route gate; see the
+    #     split pinned above.
+    #   * 2 in `screens/today.js`: the day-summary card's total line, and the refusal note for a
+    #     role the server would turn away.
+    #   * 1 net in `screens/gaps.js` -- five sentences added, four removed -- and the removals are
+    #     the point. "Không có endpoint xuất dữ liệu nào" and "chưa có route nào phơi nó ra" both
+    #     stopped being true the moment this item shipped, which is exactly the day a gap register
+    #     has to stop saying them. Neither entry was deleted: the narrow half is built and the wide
+    #     half is not, so both now name what is still missing -- a report over a chosen date range,
+    #     and a per-order SLA policy nobody has decided -- and say what can be done today instead.
+    #     The CSV formula note went because it became code: `_cell` refuses a cell a spreadsheet
+    #     would execute, so the warning is enforced rather than remembered.
+    #
+    # 348 after EXPORT-FIX-001: +8 on top of the 340 above, and the arithmetic is 340 + 8 = 348.
+    # The item fixed the export OPS-BOARD-001 shipped, and every new sentence belongs to one of the
+    # two defects that made the capability unusable rather than merely imperfect.
+    #
+    #   * 6 in `screens/approvals.js`. `VIEWABLE_RESOURCES` had no `EXPORT_REQUEST` entry, so the
+    #     `EXPORT_SANITIZED_DATA` envelope `#/exports` raises reached this queue permanently
+    #     undecidable -- not a locked button but a dead end, in which a staff member could request
+    #     an export that no owner in the shop was able to release. Adding the type alone would have
+    #     traded that for blind approval of a digest and a UUID, so the card follows the standard
+    #     RANGE-APPROVAL-VISIBILITY-001 set in this same tree: two are the disclosure itself, the
+    #     notice title naming what is about to leave the building and the line saying that pressing
+    #     Duyet releases this exact column list for this exact day and that a downloaded file
+    #     cannot be recalled. The other four are refusals that leave the approve control shut -- a
+    #     read that returned no columns, one whose re-derived digest disagrees with the queue row,
+    #     and a read that failed -- each with the sentence that says why. A disabled button with no
+    #     reason is how the last version of this screen taught approvers to press on regardless.
+    #   * 2 in `core/i18n.js`, both `REASON_NOTE` glosses for export refusals that had none.
+    #     `EXPORT_REQUEST_CORRUPT` was the gap the review named: the five other refusal
+    #     vocabularies on this console are bound to their producing enum by a test and this one was
+    #     not, so a staff member meeting it got a bare English token. The second is
+    #     `EXPORT_APPROVAL_SELF_DECIDED`, which this item creates: separation of duty now binds to
+    #     the person who defined the export rather than to whoever raised the envelope, and the
+    #     refusal it produces needs a sentence saying that another owner has to decide.
+    #   * 0 net in `screens/exports.js` -- three sentences re-keyed, none added or removed, and the
+    #     re-keying is the point. The lede said the file carries "tiền đã thu", which is also what
+    #     `#/today` calls a different number: that box sums when money was taken and this file is
+    #     cut on when an order was opened, so an order opened yesterday and paid this morning is in
+    #     one and not the other. The lede now says which. The guardrail and the wait-for-owner
+    #     notice both said the envelope must be decided by somebody other than "người vừa tạo",
+    #     which named the wrong act now that the rule measures against the export request's own
+    #     requester.
+    assert sum(counts.values()) == _registry()["total"] == 348
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
     # that admits everyone.
+    #
+    # 19 after OPS-BOARD-001: 16 + 3, one per new capability.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 16
+        == 19
     )
 
 

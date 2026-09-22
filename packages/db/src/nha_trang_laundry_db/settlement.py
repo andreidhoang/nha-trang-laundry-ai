@@ -31,6 +31,7 @@ from nha_trang_laundry_domain.settlement import (
 )
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.query_version import query_version
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -41,6 +42,21 @@ SETTLEMENT_ROLES = frozenset({StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, Sta
 #: A counter closes by the local clock, not by UTC, so a settlement at 22:00 local belongs to the
 #: day the staff member worked and not to the next one.
 BUSINESS_TIMEZONE = "Asia/Ho_Chi_Minh"
+
+#: The takings figure, as one statement so that one edit moves one rule (`OPS-BOARD-001`).
+_COLLECTED_TODAY_SQL = """
+    SELECT coalesce(sum(paid_amount_vnd), 0), count(*)
+    FROM order_settlements
+    WHERE store_id = %s
+      AND (attested_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date
+"""
+
+#: The published version of the rule above, travelling with the figure under invariant 18.
+#:
+#: This is the one money figure the console shows, so "which rule produced it" is not a developer
+#: convenience: the day boundary is hashed with the SQL because moving it would change the total
+#: while leaving the statement word for word identical.
+COLLECTED_TODAY_QUERY = query_version("collected-today-v1", _COLLECTED_TODAY_SQL, BUSINESS_TIMEZONE)
 
 
 class SettlementAuthorizationError(PermissionError):
@@ -310,15 +326,7 @@ class SettlementRepository:
             store_id=store_id,
             error=SettlementAuthorizationError,
         )
-        cursor.execute(
-            """
-            SELECT coalesce(sum(paid_amount_vnd), 0), count(*)
-            FROM order_settlements
-            WHERE store_id = %s
-              AND (attested_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date
-            """,
-            (store_id, BUSINESS_TIMEZONE, BUSINESS_TIMEZONE),
-        )
+        cursor.execute(_COLLECTED_TODAY_SQL, (store_id, BUSINESS_TIMEZONE, BUSINESS_TIMEZONE))
         row = cursor.fetchone()
         if row is None:  # pragma: no cover - an aggregate always returns one row
             return CollectedToday(collected_vnd=0, settlement_count=0)
@@ -335,6 +343,7 @@ def _optional_int(value: object) -> int | None:
 
 __all__ = [
     "BUSINESS_TIMEZONE",
+    "COLLECTED_TODAY_QUERY",
     "SETTLEMENT_ROLES",
     "CollectedToday",
     "SettlementAuthorizationError",

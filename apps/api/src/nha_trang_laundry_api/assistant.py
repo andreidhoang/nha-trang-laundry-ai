@@ -65,15 +65,40 @@ from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCo
 from nha_trang_laundry_db.identity import StaffPrincipal
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
-from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA
+from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA, ProductionSlaPolicy
 from nha_trang_laundry_observability import redact_text
 
 from nha_trang_laundry_api.auth import AuthSettings
 
 #: The one SLA rule the risk answer evaluates with. Choosing a policy per order is an open
-#: business decision (the read model stays unrouted for exactly that reason), so this intent names
-#: the rule it used rather than pretending to know each order's policy.
+#: business decision, so this intent names the rule it used rather than pretending to know each
+#: order's policy.
+#:
+#: `OPS-BOARD-001` gave the same read model a screen, so this constant is now the single policy two
+#: surfaces evaluate with. That is deliberate: if the board and the assistant chose their own, the
+#: owner could be told two different numbers about one shop at one instant.
 SLA_POLICY = STANDARD_WASH_SLA
+
+
+def sla_policy_notice_vi(policy: ProductionSlaPolicy) -> str:
+    """The sentence that names which rule produced a risk figure, and what is still undecided.
+
+    Extracted verbatim from the `SLA_RISK` answer by `OPS-BOARD-001` so the board can say it too.
+    Copying it would have been one edit away from two surfaces disagreeing about what the shop owes
+    a customer, and this sentence is the one that says the shop has promised nothing: per-order SLA
+    policy is an unresolved business decision, and the number beside it is one stated rule applied
+    to every order because there is no other rule to apply.
+
+    `SlaPolicyType.GUIDANCE_RANGE` carries `GUIDANCE_DOES_NOT_CREATE_BREACH` for the same reason.
+    Guidance is not a promise, and a surface that renders guidance as a broken promise lies to its
+    own staff.
+    """
+    return (
+        f"Mốc này tính theo quy tắc {policy.policy_id} — {policy.target_max_hours} giờ kể từ "
+        "khi nhận sản xuất; quy tắc SLA riêng của từng đơn là quyết định kinh doanh chưa được "
+        "chốt, nên con số này dùng đúng một quy tắc đã nêu."
+    )
+
 
 #: Approvals page size for the count answer. A full page is a floor, not a total, and says so.
 APPROVALS_PAGE = 100
@@ -369,10 +394,8 @@ def _sla_risk(context_reads: AssistantContextReads) -> AssistantAnswer:
     else:
         text = (
             f"Có {context_reads.sla_in_production} đơn đang sản xuất, trong đó "
-            f"{context_reads.sla_breached} đơn đã quá mốc rủi ro nội bộ (SLA_BREACHED). Mốc này "
-            f"tính theo quy tắc {SLA_POLICY.policy_id} — {SLA_POLICY.target_max_hours} giờ kể từ "
-            "khi nhận sản xuất; quy tắc SLA riêng của từng đơn là quyết định kinh doanh chưa được "
-            "chốt, nên con số này dùng đúng một quy tắc đã nêu."
+            f"{context_reads.sla_breached} đơn đã quá mốc rủi ro nội bộ (SLA_BREACHED). "
+            + sla_policy_notice_vi(SLA_POLICY)
         )
     return AssistantAnswer(
         intent="SLA_RISK",

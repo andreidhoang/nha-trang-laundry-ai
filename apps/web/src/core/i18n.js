@@ -356,6 +356,67 @@ export const REASON_NOTE = {
   CONTACT_BINDING_UNKNOWN:
     "Không có liên hệ nào mang mã này. Liên hệ chỉ được tạo từ một hội thoại kênh đã xác minh; " +
     "màn hình tiếp nhận không tạo liên hệ mới.",
+  // `SlaReason`, from `packages/domain/src/nha_trang_laundry_domain/sla.py`. OPS-BOARD-001 put the
+  // SLA board on a screen, and these codes are the evidence behind every row on it. Every one of
+  // them appears on an ordinary order in an ordinary shift, so the notes say which are simply the
+  // rule describing itself and which mean somebody has to move.
+  PRODUCTION_SLA_EXCLUDES_DELIVERY:
+    "Mốc này chỉ đo phần giặt trong tiệm. Thời gian giao tận nơi không nằm trong đó, nên đơn " +
+    "“đúng hạn” ở đây vẫn có thể tới tay khách muộn.",
+  ELAPSED_EIGHT_HOUR_INTERNAL_RISK:
+    "Đây là mốc rủi ro nội bộ 8 giờ, tính từ lúc nhận vào sản xuất. Nó là mốc của tiệm để tự soi " +
+    "công việc, không phải lời hứa đã nói với khách.",
+  EXACT_CLOSURE_CUTOFF_UNPUBLISHED:
+    "Giờ đóng cửa chính xác chưa được công bố, nên mốc trên tính tròn theo giờ đồng hồ chứ không " +
+    "trừ giờ tiệm nghỉ. Đơn nhận cuối ngày vì vậy trông gấp hơn thực tế.",
+  SLA_PENDING: "Đơn vẫn đang trong mốc: chưa quá hạn và cũng chưa xong.",
+  SLA_MET: "Đồ đã giặt xong trước mốc. Đồng hồ đã dừng ở lúc báo xong, không chạy tiếp.",
+  SLA_BREACHED:
+    "Đơn đã quá mốc rủi ro nội bộ. Đây là việc cần một người xử lý trước, không phải một con số " +
+    "để theo dõi.",
+  BREACH_REMEDY_REQUIRES_HUMAN:
+    "Quá mốc không tự sinh ra khoản bù cho khách. Ai được bù gì là quyết định của người, ở màn " +
+    "hình Bồi hoàn.",
+  HUMAN_PROMISE_REQUIRED:
+    "Chưa có ai hứa giờ trả đồ cho khách trên hệ thống. Mốc bên cạnh là mốc nội bộ của tiệm.",
+  HUMAN_PROMISE_RECORDED: "Đã có người xác nhận giờ trả đồ cho khách, và giờ đó được ghi lại.",
+  GUIDANCE_RANGE_24_TO_48_HOURS:
+    "Món này chỉ có khoảng thời gian tham khảo 24–48 giờ, không có mốc cứng.",
+  GUIDANCE_DOES_NOT_CREATE_BREACH:
+    "Khoảng tham khảo không phải lời hứa, nên không có “trễ hạn” cho nhóm này. Hiển thị nó như " +
+    "một lời hứa bị vỡ là nói sai với chính nhân viên tiệm.",
+  HUMAN_ETA_REQUIRED:
+    "Món này phải có người xem rồi mới hẹn được giờ. Hệ thống không tự đoán một mốc nào.",
+  PRODUCTION_NOT_ACCEPTED: "Đơn chưa được nhận vào sản xuất nên đồng hồ chưa bắt đầu chạy.",
+  // Export refusals, from `packages/db/src/nha_trang_laundry_db/exports.py`.
+  EXPORT_APPROVAL_REQUIRED:
+    "Bản xuất này cần chủ tiệm duyệt trước. Phong bì duyệt đã được tạo; mở màn hình Duyệt để chủ " +
+    "tiệm quyết định, rồi quay lại bấm xuất.",
+  EXPORT_APPROVAL_NOT_BOUND:
+    "Phong bì duyệt đang cầm không khớp với yêu cầu xuất này — khác cửa hàng, khác ngày, hoặc " +
+    "khác danh sách cột. Tạo lại yêu cầu xuất và xin duyệt lại; không có dữ liệu nào ra khỏi hệ thống.",
+  EXPORT_APPROVAL_EXPIRED:
+    "Phê duyệt của chủ tiệm đã hết hạn (cửa sổ 10 phút). Tạo yêu cầu mới và xin duyệt lại.",
+  EXPORT_APPROVAL_SELF_DECIDED:
+    "Phiếu duyệt này do chính người đã tạo yêu cầu xuất bấm duyệt, nên máy chủ không cho xuất. " +
+    "Người chọn dữ liệu nào rời khỏi hệ thống không được tự duyệt việc đó. Nhờ một chủ tiệm khác " +
+    "duyệt; chưa có dữ liệu nào ra khỏi hệ thống.",
+  EXPORT_ALREADY_PRODUCED:
+    "Yêu cầu này đã xuất một lần rồi. Một lần duyệt cho đúng một bản; cần bản nữa thì tạo yêu cầu mới.",
+  EXPORT_REQUEST_NOT_FOUND:
+    "Không có yêu cầu xuất nào mang mã này. Kiểm tra lại mã đã chép.",
+  EXPORT_REQUEST_STORE_MISMATCH:
+    "Yêu cầu xuất này thuộc cửa hàng khác với cửa hàng đang chọn. Chưa có tệp nào được tạo và " +
+    "phiếu duyệt vẫn còn dùng được: chọn đúng cửa hàng rồi bấm lại.",
+  EXPORT_CELL_NOT_SAFE:
+    "Có một ô trong dữ liệu bắt đầu bằng =, +, - hoặc @ — bảng tính sẽ chạy nó như công thức khi " +
+    "mở tệp. Máy chủ dừng lại và không tạo tệp nào. Đây là lỗi dữ liệu, không phải chữ bạn gõ: " +
+    "chụp màn hình và báo kỹ thuật.",
+  EXPORT_REQUEST_CORRUPT:
+    "Bản ghi của yêu cầu xuất này không đọc lại được, nên máy chủ không dựng lại được đúng văn " +
+    "bản mà chủ tiệm đã ký. Máy chủ không tự viết lại nội dung ấy: viết lại là đưa chủ tiệm duyệt " +
+    "một văn bản khác với văn bản đã niêm phong. Tạo một yêu cầu xuất mới; chưa có dữ liệu nào ra " +
+    "khỏi hệ thống.",
 };
 
 /** Server enum values, glossed. The value itself is always displayed too. */
@@ -592,12 +653,14 @@ export const NAV = {
   orderRequests: "Tiếp nhận",
   quotes: "Báo giá",
   orders: "Đơn hàng",
+  slaBoard: "Bảng trễ hạn",
   approvals: "Duyệt",
   shadow: "Bản nháp AI",
   assistant: "Trợ lý AI",
   exceptions: "Ngoại lệ",
   incidents: "Sự cố",
   remedies: "Bồi hoàn",
+  exports: "Xuất dữ liệu",
   system: "Hệ thống",
   staff: "Nhân sự",
   unsupported: "Việc chưa hỗ trợ",

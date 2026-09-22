@@ -171,6 +171,35 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "indistinguishable from one that does not exist. The credit is a bearer instrument across "
         "customers by design (DEC-015) but never across shops.",
     ),
+    # --- OPS-BOARD-001 ------------------------------------------------------------------------
+    ("GET", "/internal/v1/stores/{store_id}/sla-board"): store_scoped(
+        "shadow_console", "ShadowConsoleRepository.sla_risk_board"
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/day-summary"): RouteScope(
+        "STORE_SCOPED",
+        ("assistant", "today_status_counts"),
+        "membership enforced inside `today_status_counts`, which calls require_store_membership on "
+        "the caller's own cursor before the COUNT runs. It is a module-level function rather than "
+        "a repository method, and the first version of this entry opted out of the mechanical "
+        "check for that reason and paid for it with a prose claim -- which is the arrangement this "
+        "module exists to make impossible. `method_source` resolves a module-level function too "
+        "now, so deleting the call fails the build here exactly as it would in a class. The route "
+        "gate is additionally require_operations_staff, which is the same role set the function "
+        "checks plus MFA.",
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/exports"): store_scoped(
+        "exports", "SanitizedExportRepository.request"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/exports/{export_request_id}/execution"): RouteScope(
+        "STORE_SCOPED",
+        ("exports", "SanitizedExportRepository.execute"),
+        "keyed by export_request_id as well as store_id, and the path store is NOT what is "
+        "checked: the repository locks the export_requests row, reads the store off it, and "
+        "requires membership on that same cursor while the lock is held. The path value is passed "
+        "down as an assertion only, and a URL naming a different shop is refused before any file "
+        "exists. This route moves the shop's own records out of the system, which is why it is "
+        "keyed by the artefact carrying the owner's approval.",
+    ),
     ("GET", "/internal/v1/stores/{store_id}/shadow/drafts"): store_scoped(
         "shadow_console", "ShadowConsoleRepository.list_pending_drafts"
     ),
@@ -288,6 +317,22 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "NOT_STORE_DATA", None, "manual send envelope bound to an approval; see above"
     ),
     # --- RANGE-APPROVAL-VISIBILITY-001 -------------------------------------------------------
+    ("GET", "/internal/v1/approvals/{approval_id}/export-request"): RouteScope(
+        "STORE_SCOPED",
+        ("exports", "SanitizedExportRepository.read_for_approval"),
+        "keyed by approval_id and named by no store at all, so URL-shape enumeration would miss "
+        "it -- the same shape as the range-price read above and for the same reason: the caller "
+        "must not be able to name a store here. The store is read off the export_requests row the "
+        "envelope points at and membership is required against that value on the same cursor, so "
+        "an approval belonging to another shop is refused with the same opaque 403 as any other "
+        "non-membership, and an approval that does not exist (or is not an export) is a 404. A "
+        "caller cannot use the pair to discover which shop an approval belongs to. It is a read "
+        "and authorises nothing: it exists so an owner can see the business date, the column list "
+        "and the stated exclusions before the approve control on #/approvals is reachable, which "
+        "is the standard RANGE-APPROVAL-VISIBILITY-001 set for this console. The one field about "
+        "the caller, requested_by_you, is true only of the caller themselves and so discloses no "
+        "other account.",
+    ),
     ("GET", "/internal/v1/approvals/{approval_id}/range-price-proposal"): RouteScope(
         "STORE_SCOPED",
         ("range_prices", "RangePriceProposalRepository.read"),
@@ -328,9 +373,21 @@ def internal_routes() -> set[tuple[str, str]]:
 
 
 def method_source(module: str, qualified: str) -> ast.FunctionDef:
-    """Return the AST of `Class.method` in `packages/db/.../{module}.py`."""
-    class_name, _, method_name = qualified.partition(".")
+    """Return the AST of `Class.method`, or of a bare `function`, in `packages/db/.../{module}.py`.
+
+    The bare form was added by `OPS-BOARD-FIX-001`. `today_status_counts` guards
+    `GET /internal/v1/stores/{store_id}/day-summary` and is a module-level function, and because
+    this resolver could only see methods the route was registered with `enforced_in=None` and a
+    sentence explaining that the check did not apply to it. A route whose guarantee is prose is
+    the thing this module was written to prevent, so the resolver learned the other shape instead.
+    """
+    class_name, _, method_name = qualified.rpartition(".")
     tree = ast.parse((DB_SOURCE / f"{module}.py").read_text(encoding="utf-8"))
+    if not class_name:
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == method_name:
+                return node
+        raise AssertionError(f"{module}.py has no function {qualified}")
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             for item in node.body:

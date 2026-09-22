@@ -232,24 +232,44 @@ const GROUPS = [
           "được đọc như KPI.",
       },
       {
+        // OPS-BOARD-001 built the narrow half of this, so the sentence changed with it. What
+        // exists is one day of one cửa hàng, chủ tiệm duyệt từng lần, và chỉ những cột đã nêu.
+        // What is still missing is the reporting export this entry was written about: mọi khoảng
+        // thời gian, và các chỉ số của mục trên. Xoá cả mục này sẽ nói rằng phần đó đã xong.
+        //
+        // The CSV note went the same way, and for the better reason: it became code.
+        // `SanitizedExportRepository._cell` refuses a cell beginning with =, +, - or @, so the
+        // warning is enforced rather than remembered.
         ref: "FR-RPT-003 · FR-RPT-004",
-        title: "Xuất CSV",
-        what: "Xuất dữ liệu vận hành ra tệp để chủ mở bằng bảng tính hoặc gửi cho kế toán.",
-        missing: "Không có endpoint xuất dữ liệu nào.",
-        blockedBy: "Chưa có route xuất dữ liệu; phụ thuộc read model báo cáo ở mục trên",
-        note:
-          "Khi làm: CSV phải chống chèn công thức bảng tính — một ô bắt đầu bằng =, +, - hay @ là " +
-          "mã chạy được khi khách hàng mở tệp.",
+        title: "Xuất báo cáo theo khoảng thời gian",
+        what:
+          "Xuất số liệu vận hành cho một khoảng thời gian tự chọn, kèm các chỉ số của bảng điều " +
+          "hành, để gửi cho kế toán.",
+        missing:
+          "Chỉ xuất được đúng hồ sơ thô của một ngày làm việc, ở màn hình Xuất dữ liệu: mã đơn, " +
+          "trạng thái, mốc thời gian và tiền đã thu. Không chọn được khoảng ngày, và không có chỉ " +
+          "số nào — vì chưa có read model nào tính chúng.",
+        blockedBy: "Chưa có read model báo cáo có phiên bản (mục Bảng điều hành hằng ngày)",
+        today:
+          "Xuất một ngày thì được, và mỗi lần xuất đều cần chủ tiệm duyệt rồi mới có tệp. Tệp đó " +
+          "không kèm lời khách phàn nàn và không kèm mô tả bằng chứng.",
       },
       {
+        // OPS-BOARD-001 phơi read model ra thành màn hình Bảng trễ hạn, nên nửa đầu của câu cũ
+        // không còn đúng. Nửa sau vẫn đúng nguyên: quy tắc SLA của từng đơn vẫn chưa ai chốt, và
+        // bảng đang dùng đúng một quy tắc đã nêu cho mọi đơn.
         ref: "FR-RPT-006",
-        title: "Rủi ro SLA",
-        what: "Danh sách đơn đang có nguy cơ trễ hẹn, xếp theo mức rủi ro.",
+        title: "Quy tắc SLA riêng cho từng đơn",
+        what:
+          "Mỗi đơn có mốc riêng theo loại dịch vụ và theo điều đã hẹn với khách, thay vì một mốc " +
+          "chung cho tất cả.",
         missing:
-          "Read model đã tồn tại trong kho dữ liệu nhưng chưa có route nào phơi nó ra. Ngoài ra nó " +
-          "cần một ProductionSlaPolicy cho mỗi đơn, và đó là một quyết định kinh doanh chứ không " +
-          "phải một mặc định kỹ thuật để lấp vào.",
+          "Chưa có nguồn cấu hình nào gán ProductionSlaPolicy cho từng đơn. Bảng trễ hạn vì vậy " +
+          "đang áp đúng một quy tắc đã nêu cho mọi đơn, và nói rõ điều đó ngay trên màn hình.",
         blockedBy: "Chọn chính sách SLA cho từng đơn (chưa có nguồn cấu hình)",
+        today:
+          "Xem danh sách đơn đang sản xuất ở màn hình Bảng trễ hạn. Mốc ở đó là mốc rủi ro nội bộ " +
+          "của tiệm, không phải giờ đã hẹn với khách.",
       },
     ],
   },

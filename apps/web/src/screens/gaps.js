@@ -232,24 +232,44 @@ const GROUPS = [
           "được đọc như KPI.",
       },
       {
+        // OPS-BOARD-001 built the narrow half of this, so the sentence changed with it. What
+        // exists is one day of one cửa hàng, chủ tiệm duyệt từng lần, và chỉ những cột đã nêu.
+        // What is still missing is the reporting export this entry was written about: mọi khoảng
+        // thời gian, và các chỉ số của mục trên. Xoá cả mục này sẽ nói rằng phần đó đã xong.
+        //
+        // The CSV note went the same way, and for the better reason: it became code.
+        // `SanitizedExportRepository._cell` refuses a cell beginning with =, +, - or @, so the
+        // warning is enforced rather than remembered.
         ref: "FR-RPT-003 · FR-RPT-004",
-        title: "Xuất CSV",
-        what: "Xuất dữ liệu vận hành ra tệp để chủ mở bằng bảng tính hoặc gửi cho kế toán.",
-        missing: "Không có endpoint xuất dữ liệu nào.",
-        blockedBy: "Chưa có route xuất dữ liệu; phụ thuộc read model báo cáo ở mục trên",
-        note:
-          "Khi làm: CSV phải chống chèn công thức bảng tính — một ô bắt đầu bằng =, +, - hay @ là " +
-          "mã chạy được khi khách hàng mở tệp.",
+        title: "Xuất báo cáo theo khoảng thời gian",
+        what:
+          "Xuất số liệu vận hành cho một khoảng thời gian tự chọn, kèm các chỉ số của bảng điều " +
+          "hành, để gửi cho kế toán.",
+        missing:
+          "Chỉ xuất được đúng hồ sơ thô của một ngày làm việc, ở màn hình Xuất dữ liệu: mã đơn, " +
+          "trạng thái, mốc thời gian và tiền đã thu. Không chọn được khoảng ngày, và không có chỉ " +
+          "số nào — vì chưa có read model nào tính chúng.",
+        blockedBy: "Chưa có read model báo cáo có phiên bản (mục Bảng điều hành hằng ngày)",
+        today:
+          "Xuất một ngày thì được, và mỗi lần xuất đều cần chủ tiệm duyệt rồi mới có tệp. Tệp đó " +
+          "không kèm lời khách phàn nàn và không kèm mô tả bằng chứng.",
       },
       {
+        // OPS-BOARD-001 phơi read model ra thành màn hình Bảng trễ hạn, nên nửa đầu của câu cũ
+        // không còn đúng. Nửa sau vẫn đúng nguyên: quy tắc SLA của từng đơn vẫn chưa ai chốt, và
+        // bảng đang dùng đúng một quy tắc đã nêu cho mọi đơn.
         ref: "FR-RPT-006",
-        title: "Rủi ro SLA",
-        what: "Danh sách đơn đang có nguy cơ trễ hẹn, xếp theo mức rủi ro.",
+        title: "Quy tắc SLA riêng cho từng đơn",
+        what:
+          "Mỗi đơn có mốc riêng theo loại dịch vụ và theo điều đã hẹn với khách, thay vì một mốc " +
+          "chung cho tất cả.",
         missing:
-          "Read model đã tồn tại trong kho dữ liệu nhưng chưa có route nào phơi nó ra. Ngoài ra nó " +
-          "cần một ProductionSlaPolicy cho mỗi đơn, và đó là một quyết định kinh doanh chứ không " +
-          "phải một mặc định kỹ thuật để lấp vào.",
+          "Chưa có nguồn cấu hình nào gán ProductionSlaPolicy cho từng đơn. Bảng trễ hạn vì vậy " +
+          "đang áp đúng một quy tắc đã nêu cho mọi đơn, và nói rõ điều đó ngay trên màn hình.",
         blockedBy: "Chọn chính sách SLA cho từng đơn (chưa có nguồn cấu hình)",
+        today:
+          "Xem danh sách đơn đang sản xuất ở màn hình Bảng trễ hạn. Mốc ở đó là mốc rủi ro nội bộ " +
+          "của tiệm, không phải giờ đã hẹn với khách.",
       },
     ],
   },
@@ -282,9 +302,31 @@ const GROUPS = [
   {
     heading: "Duyệt và phiên",
     lede:
-      "Ba mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API " +
+      "Bốn mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API " +
       "không trả về, và một bề mặt đoán bừa các trường đó sẽ là duyệt mù hoặc thao tác nhầm người.",
     entries: [
+      {
+        ref: "CONSOLE",
+        title: "Biết chắc mình đang đọc đúng phiên bản của phiếu duyệt gắn với đơn hàng",
+        what:
+          "Mở một phong bì ORDER và thấy ngay rằng đơn hàng đang hiện đúng là phiên bản mà " +
+          "phong bì niêm phong, chứ không phải một phiên bản mới hơn.",
+        // RANGE-APPROVAL-VISIBILITY-001 closed the money half of this and left the rest standing,
+        // so the entry is written for what remains rather than for what was fixed. A
+        // SET_RANGE_PRICE envelope now prints its proposed amounts on the card, and the quote
+        // link carries &revision=<n> so the panel opens the bound revision. The ORDER link does
+        // not: #/orders/:id shows the order as it is now.
+        missing:
+          "Đường dẫn tới đơn hàng không mang theo số phiên bản, và màn hình đơn hàng luôn hiện " +
+          "trạng thái mới nhất. Thẻ phiếu in “Phiên bản v…” còn màn hình đơn hàng in “Phiên bản " +
+          "dòng v…”, nên người duyệt phải tự so hai con số bằng mắt; không có gì bắt họ so.",
+        blockedBy: "Màn hình đơn hàng chưa đọc được một phiên bản cũ của đơn",
+        today:
+          "Máy chủ vẫn từ chối một quyết định gửi kèm phiên bản không khớp bản đã lưu, nên không " +
+          "ai duyệt nhầm được vào một phiên bản khác. Điều còn thiếu là ở phía người đọc: hai con " +
+          "số phiên bản đều hiện ra, nhưng phải tự đối chiếu. Phiếu báo giá thì đã hết vấn đề này " +
+          "— đường dẫn mang sẵn số bản sửa đổi.",
+      },
       {
         ref: "CONSOLE",
         title: "Duyệt một tin nhắn soạn sẵn",
@@ -302,8 +344,9 @@ const GROUPS = [
         blockedBy: "Không có kho dữ liệu nào giữ nội dung bản tin đã soạn",
         today:
           "Phiếu MESSAGE_DRAFT vẫn hiện trong hàng chờ kèm thời gian còn lại, nhưng hai nút quyết " +
-          "định bị khoá kèm lý do. Phiếu gắn với đơn hàng và phiếu chốt giá trong khoảng của báo " +
-          "giá thì bấm quyết được.",
+          "định bị khoá kèm lý do. Phiếu gắn với đơn hàng thì bấm quyết được; phiếu chốt giá " +
+          "trong khoảng cũng vậy, nhưng chỉ sau khi thẻ phiếu đọc và in được số tiền nhân viên " +
+          "đề nghị — chưa thấy số thì nút vẫn khoá.",
       },
       {
         ref: "CONSOLE",

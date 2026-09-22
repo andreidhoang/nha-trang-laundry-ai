@@ -1,0 +1,87 @@
+schema_version: 1
+work_item: RANGE-APPROVAL-VISIBILITY-001
+recorded_at: '2026-09-22T18:38:00+07:00'
+requirement_contract: >-
+  A defect fix on shipped code. Two independent adversarial lenses converged on it and it was the
+  oldest unfixed finding in the project.
+
+  `RANGE-PRICE-001` made the owner's `SET_RANGE_PRICE` approval the only second-party control over
+  the amount a staff member picks inside a published band — and the owner could not see that amount.
+  The envelope held only `rendered_hash`, the proposed amounts were persisted nowhere, and the
+  approvals card linked to `#/quotes`, which renders the published BAND because the revision the
+  envelope binds is the one *before* any price was chosen. Every sentence on that screen was true and
+  the owner still could not see the number. A staff member could agree 150.000 ₫ with the customer,
+  propose 240.000 ₫, and the approval passed it through.
+rollback_impact: >-
+  Migration `0043` adds two tables and alters no existing column, so leaving the schema applied under
+  a code revert is safe and the tables become unused.
+
+  Reverting returns the owner to approving blind. Proposals already recorded remain readable. The
+  application path is unaffected by a revert because it never consulted the stored copy — that
+  separation is the point of the design and is what makes the revert safe.
+
+  The console half and the server half revert together: reverting the console alone leaves a screen
+  calling a route it no longer renders; reverting the server alone leaves a card that shuts its
+  approve control because the read fails.
+unresolved_assumptions: >-
+  Residual blindness remains on `ORDER` envelopes and is now disclosed on `#/gaps` rather than left
+  implicit: the link opens the order's current state, both version numbers are on screen, and nothing
+  makes the approver compare them.
+
+  A medium finding stands and is not fixed here: the approvals card tells the owner that pressing
+  *Duyệt* approves exactly the figure on screen, which stops being exactly true when a promotion the
+  band revision cites is live, because applying the same approval then produces a different total.
+  The wording overstates; the money is correct and bounded.
+
+  The proposal read's 403/404 pair is a one-bit existence oracle over approval ids, contradicting its
+  own docstring's stated property.
+evidence:
+  approver_sees_the_amount_before_the_control: >-
+    `#/approvals` renders, per service, the published band and the exact proposed amount **above** the
+    approve control. The browser run asserts document order with `compareDocumentPosition`, asserts
+    the button's disabled state in three scenarios, and asserts that no figure is shown beside a shut
+    control. Loading, empty lines, a digest disagreeing with the queue row, and a failed read all
+    leave the control shut with a Vietnamese reason.
+  display_copy_never_becomes_the_authority: >-
+    `test_a_tampered_stored_amount_cannot_change_what_the_approval_authorises` forces the immutability
+    trigger aside, rewrites the stored 150.000 ₫ to 240.000 ₫, and proves applying 240.000 ₫ is
+    refused while applying 150.000 ₫ still prices at 150.000 ₫. If the stored copy were ever made the
+    thing the hash is checked against, those two assertions would swap. The read re-derives
+    `range_price_rendered_document` from the stored rows and requires the envelope's own
+    `rendered_hash`; a row that fails is withheld entirely rather than shown with a caveat.
+  the_queue_gate_is_on_the_action_not_the_type: >-
+    Four actions share the `QUOTE_REVISION` resource type and the old gate was on the type — which is
+    precisely how the hole read as sound while it was being broken. `list_pending` now projects
+    `action`.
+  bound_revision_is_the_one_displayed: >-
+    A residual found on the way and fixed because it is the same defect: `#/quotes?quote=<id>` opened
+    whichever revision is newest, so an approver could read revision 3 while signing revision 1's
+    digest. The link now carries `&revision=<n>`, and a malformed value opens nothing rather than
+    falling back.
+  rollback_assessment: See `rollback_impact`.
+checks:
+  - command: uv run ruff check .
+    status: PASSED
+    result: All checks passed!
+  - command: uv run ruff format --check .
+    status: PASSED
+    result: 566 files already formatted
+  - command: uv run mypy apps packages
+    status: PASSED
+    result: 'Success: no issues found in 249 source files'
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED
+    result: 57 served internal API operations; 348 staff-console disclosures
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED
+    result: 137 source references, 28 decisions, 131 work items
+  - command: uv run pytest --require-postgres-integration
+    status: PASSED
+    result: 1574 passed, 4 skipped in 433.24s
+supplementary_checks:
+  - command: adversarial review, money and authority lens
+    status: PASSED
+    result: 0 high findings, 0 blockers, 18 verified_good
+  - command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_console_interaction.py
+    status: PASSED
+    result: 170 passed, 0 failed

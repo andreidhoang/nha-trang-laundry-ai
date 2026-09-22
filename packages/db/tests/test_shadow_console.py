@@ -598,10 +598,16 @@ def test_the_sla_board_reports_exactly_what_the_domain_engine_computed() -> None
 
         def execute(self, statement: str, _parameters: Any = None) -> None:
             # The membership probe returns a row; the board query returns one order.
+            #
+            # Six columns since `OPS-BOARD-001`, not four. The query kept its population and its
+            # order and widened its projection, because the surface it now feeds is a list a staff
+            # member works from rather than a count read out in a sentence: which order, and what
+            # state it is in, are the two facts a count cannot give them. A stub that kept the old
+            # four would be answering for a query this repository no longer runs.
             self._rows = (
                 [(1,)]
                 if "staff_store_assignments" in statement
-                else [(order_id, store_id, accepted_at, None)]
+                else [(order_id, store_id, accepted_at, None, "ACTIVE", "IN_PROCESS")]
             )
 
         def fetchone(self) -> tuple[Any, ...] | None:
@@ -843,10 +849,14 @@ def test_the_sla_board_stops_the_clock_when_the_laundry_was_finished() -> None:
             return None
 
         def execute(self, statement: str, _parameters: Any = None) -> None:
+            # Six columns since `OPS-BOARD-001`; see the note on the stub above. The fifth and sixth
+            # are the order's own statuses, and `READY_AT_STORE` is the state this test is about --
+            # the laundry is finished and the order is still on the board because nobody has
+            # collected it yet, which is the whole of what `0037` fixed.
             self._rows = (
                 [(1,)]
                 if "staff_store_assignments" in statement
-                else [(order_id, store_id, accepted_at, ready_at)]
+                else [(order_id, store_id, accepted_at, ready_at, "ACTIVE", "READY_AT_STORE")]
             )
 
         def fetchone(self) -> tuple[Any, ...] | None:

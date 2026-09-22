@@ -142,6 +142,15 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/stores/{}/incidents/{}/remedy-proposals",
         "/internal/v1/remedy-proposals/{}/execution",
         "/internal/v1/stores/{}/quotes/{}/remedy-credits",
+        # OPS-BOARD-001. The board query and the day counts both existed with no route and no
+        # screen, which is how a surface that answers "which order needs a person right now" stayed
+        # reachable only as two numbers inside an assistant sentence. A screen that stops calling
+        # the board puts the shop back there, and one that stops calling the export leaves
+        # `EXPORT_SANITIZED_DATA` as vocabulary with nothing behind it again.
+        "/internal/v1/stores/{}/sla-board",
+        "/internal/v1/stores/{}/day-summary",
+        "/internal/v1/stores/{}/exports",
+        "/internal/v1/stores/{}/exports/{}/execution",
     }
     missing = sorted(required - referenced)
     assert not missing, f"no screen calls these routes any more: {missing}"

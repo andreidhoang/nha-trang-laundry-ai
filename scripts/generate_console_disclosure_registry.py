@@ -69,6 +69,12 @@ CAPABILITY_GATES: dict[str, str] = {
     "MANUAL_SEND": "require_operations_staff",
     "STAFF_ADMIN": "require_owner",
     "ASSISTANT": "require_operations_staff",
+    # OPS-BOARD-001. The day summary is the only one of the three new capabilities whose route gate
+    # is the whole truth: `require_operations_staff` is exactly the role set `today_status_counts`
+    # enforces, plus MFA the repository does not ask for, so binding to the gate is the stricter and
+    # more honest of the two. The other two bind to repository role sets below, for the same reason
+    # SHADOW_READ does.
+    "DAY_SUMMARY_READ": "require_operations_staff",
 }
 
 #: Console capability -> the exact role set that actually enforces it, at the repository layer
@@ -82,6 +88,14 @@ CAPABILITY_REPOSITORY_ROLES: dict[str, tuple[str, str]] = {
     "ORDERS_READ": ("nha_trang_laundry_db.orders", "_require_order_read"),
     "SHADOW_READ": ("nha_trang_laundry_db.shadow_console", "SHADOW_READ_ROLES"),
     "SHADOW_DECIDE": ("nha_trang_laundry_db.shadow_console", "SHADOW_DECIDE_ROLES"),
+    # OPS-BOARD-001. The SLA board route depends on `current_principal`, exactly as the two Shadow
+    # list routes do, because the role set that really decides it lives in the repository -- so
+    # binding it to that gate would be the vacuous tautology this table exists to replace.
+    "SLA_BOARD_READ": ("nha_trang_laundry_db.shadow_console", "SHADOW_READ_ROLES"),
+    # The export route does gate on `require_approval_staff`, and `EXPORT_ROLES` is the same pair
+    # checked again inside the repository. Bound to the repository set because that is the check a
+    # route rewrite cannot drop, and because equality is stronger than the subset a gate allows.
+    "EXPORT_DATA": ("nha_trang_laundry_db.exports", "EXPORT_ROLES"),
 }
 
 #: Authored bindings, keyed by slot id. A slot absent from this table is registered `DESCRIPTIVE`.

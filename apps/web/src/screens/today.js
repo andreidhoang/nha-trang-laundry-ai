@@ -32,6 +32,7 @@
 import { isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UNKNOWN, count, money } from "../core/format.js";
+import { enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { snapshot } from "../core/session.js";
 import { errorNotice, explain, markUpdated, panel, skeleton, toolbar } from "../ui/components.js";
@@ -183,6 +184,35 @@ function takingsCard() {
 }
 
 /**
+ * "Đơn hôm nay" — the day's orders counted by the status the server recorded them in.
+ *
+ * `OPS-BOARD-001` added this after checking what was genuinely missing rather than assuming.
+ * `today_status_counts` already existed and already fed one sentence of the assistant's answer;
+ * what it never had was a route or a place on this screen. The tiles above are per-queue counts of
+ * work waiting — they do not say how the day's own orders are distributed, and the orders tile
+ * counts a page of the whole board rather than today.
+ *
+ * Two rules it keeps. The counts and their total are the server's: `total_orders` comes down
+ * already summed, because a console that added the rows would be a second opinion about the day's
+ * volume. And there is no money here — the takings figure keeps its own route and its own
+ * `DEC-014` gate above, and a second path to the same number is how a role gate gets widened by
+ * whichever path somebody edits next.
+ *
+ * @returns {{card: HTMLElement, body: HTMLElement}}
+ */
+function daySummaryCard() {
+  const body = h("div", { class: "stack stack--tight" }, skeleton(1));
+  const card = h(
+    "article",
+    { class: "card stack" },
+    h("p", { class: "eyebrow" }, "Đơn hôm nay"),
+    h("h3", null, "Theo trạng thái"),
+    body,
+  );
+  return { card, body };
+}
+
+/**
  * Build one tile's DOM and hand back the handles the loader writes into.
  *
  * The link is never removed and never turned into plain text. A role that cannot read the queue can
@@ -223,6 +253,48 @@ export function render_() {
   const cards = TILES.map((tile) => ({ tile, ...tileCard(tile) }));
   const clearLine = h("p", { class: "hint", hidden: true });
   const takings = takingsCard();
+  const daySummary = daySummaryCard();
+
+  /**
+   * Load the day's order counts.
+   *
+   * Its own loader for the same reason the takings card has one: zero is a real answer here rather
+   * than an empty list to hide, and a store whose summary cannot be read still shows its queues.
+   *
+   * @param {string} store
+   * @returns {Promise<void>}
+   */
+  async function loadDaySummary(store) {
+    render(daySummary.body, skeleton(1));
+    try {
+      const summary = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/day-summary`,
+      );
+      markUpdated(bar.stamp);
+      const counts = Array.isArray(summary.counts) ? summary.counts : [];
+      render(
+        daySummary.body,
+        counts.length === 0
+          ? h("p", { class: "hint" }, "Hôm nay cửa hàng này chưa có đơn nào (theo giờ Việt Nam).")
+          : h(
+              "ul",
+              { class: "stack stack--tight" },
+              counts.map(([statusName, total]) =>
+                h("li", null, h("span", { class: "mono" }, enumLabel(statusName)), ` — ${total} đơn`),
+              ),
+            ),
+        h(
+          "p",
+          { class: "hint" },
+          `Tổng ${summary.total_orders} đơn tạo trong ngày hôm nay (giờ Việt Nam). Đây là số đếm ` +
+            "theo trạng thái máy chủ ghi nhận, không phải chỉ số hiệu suất.",
+        ),
+        h("p", { class: "hint mono" }, summary.query_version),
+      );
+    } catch (error) {
+      render(daySummary.body, errorNotice(error, { onRetry: () => void loadDaySummary(store) }));
+    }
+  }
 
   /**
    * Load today's counter takings.
@@ -251,6 +323,10 @@ export function render_() {
             ? "Chưa có đơn nào tất toán hôm nay."
             : `${result.settlement_count} đơn đã tất toán hôm nay (giờ Việt Nam).`,
         ),
+        // The rule that produced the figure, beside the figure. Invariant 18 wants the version to
+        // travel with the number, and a total printed or photographed off this screen is exactly
+        // the case where "which rule was this" stops being answerable any other way.
+        h("p", { class: "hint mono" }, result.query_version),
       );
     } catch (error) {
       // The amount is blanked, never left showing the previous store's figure under an error
@@ -362,6 +438,28 @@ export function render_() {
       void loadTakings(store);
     }
 
+    // The same three-way gate as the takings card, on its own capability: a predicted refusal is
+    // shown rather than hidden, and no call is made.
+    const summaryVerdict = can(state.principal, "DAY_SUMMARY_READ");
+    if (!summaryVerdict.allowed) {
+      render(
+        daySummary.body,
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Không đủ quyền — không gọi máy chủ"),
+          h("p", null, summaryVerdict.reason),
+        ),
+      );
+    } else if (!store) {
+      render(
+        daySummary.body,
+        h("p", { class: "hint" }, "Chọn một cửa hàng để xem số đơn trong ngày."),
+      );
+    } else {
+      void loadDaySummary(store);
+    }
+
     /** @type {Array<{tile: Tile, countNode: HTMLElement, body: HTMLElement, card: HTMLElement}>} */
     const runnable = [];
 
@@ -453,6 +551,7 @@ export function render_() {
       ),
     ),
     takings.card,
+    daySummary.card,
     panel({
       eyebrow: "Hàng đợi",
       title: "Đang chờ bạn xử lý",

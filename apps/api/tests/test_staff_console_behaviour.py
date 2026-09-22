@@ -37,6 +37,8 @@ WEB = ROOT / "apps" / "web"
 DOMAIN_SETTLEMENT = ROOT / "packages/domain/src/nha_trang_laundry_domain/settlement.py"
 DOMAIN_RANGE_PRICES = ROOT / "packages/domain/src/nha_trang_laundry_domain/range_prices.py"
 DOMAIN_REMEDIES = ROOT / "packages/domain/src/nha_trang_laundry_domain/remedies.py"
+DOMAIN_SLA = ROOT / "packages/domain/src/nha_trang_laundry_domain/sla.py"
+DB_EXPORTS = ROOT / "packages/db/src/nha_trang_laundry_db/exports.py"
 
 #: `DC_AO_DAI_TRADITIONAL` as `templates/services-pricebook.csv` publishes it, and the worked
 #: example in the task packet and in `CORE_OPERATIONS_COMPLETION_SPEC_V1.md` §3. Held here so the
@@ -693,6 +695,76 @@ def test_every_remedy_refusal_the_counter_can_meet_is_glossed_for_them() -> None
     # typing the same number harder — `HUMAN REQUIRED` is the mandated token for that.
     for code in members:
         assert glossed["warnings"][code] == "HUMAN REQUIRED", code
+
+
+def test_every_sla_reason_the_board_can_show_is_glossed_for_them() -> None:
+    """The settlement rule, applied to the vocabulary the SLA board renders.
+
+    `OPS-BOARD-001` put `sla_risk_board` on a screen, and every row carries `reason_codes`
+    verbatim from `evaluate_production_sla`. Thirteen glosses were written for them and nothing
+    tied them to the enum, so a fourteenth `SlaReason` would have reached a Vietnamese counter as a
+    bare English token -- which is the failure the settlement, range-price, promotion and remedy
+    vocabularies each already have a test against.
+
+    The whole enum is required rather than the subset a `COMMITMENT` policy happens to emit today.
+    Which policy applies per order is an unresolved business decision, so `GUIDANCE_RANGE` and
+    `HUMAN_ETA_REQUIRED` codes are one decision away from the same screen, and a board that
+    rendered `GUIDANCE_DOES_NOT_CREATE_BREACH` as a bare token would be showing a staff member the
+    one code whose entire job is to stop guidance being read as a broken promise.
+    """
+
+    domain = DOMAIN_SLA.read_text(encoding="utf-8")
+    block = domain.split("class SlaReason(StrEnum):", 1)[1].split("\n\n\n", 1)[0]
+    members = [
+        value
+        for _name, value in re.findall(
+            r'^\s{4}([A-Z][A-Z0-9_]+) = "([A-Z0-9_]+)"', block, re.MULTILINE
+        )
+    ]
+    assert len(members) >= 13, f"the SLA reason enum was not found or shrank: {members}"
+
+    glossed = _run(
+        "import { REASON_NOTE } from './src/core/i18n.js';\n"
+        "console.log(JSON.stringify(Object.keys(REASON_NOTE)));\n"
+    )
+    missing = sorted({code for code in members if code not in glossed})
+    assert not missing, f"SLA reason codes with no Vietnamese note in i18n.js: {missing}"
+
+
+def test_every_export_refusal_the_server_can_send_is_glossed_for_them() -> None:
+    """The settlement rule, applied to the sixth refusal vocabulary on this console.
+
+    `EXPORT-FIX-001`. The other five -- settlement, range price, promotion, remedy and `SlaReason`
+    -- are each bound to their producing enum or module by a test, so a code added on the server
+    fails the build until somebody writes the Vietnamese sentence for it. The export vocabulary was
+    not, and it had already drifted: `EXPORT_REQUEST_CORRUPT` reached a Vietnamese counter as a
+    bare English token, which is the single thing `REASON_NOTE` exists to prevent.
+
+    The source of truth is the module that raises them rather than an enum, because these codes are
+    not one: `ExportStateError` carries `reason_code` as a string and `exports.py` is the only
+    place any of them is minted. Reading the `reason_code="..."` sites is therefore reading the
+    whole vocabulary, and a seventh refusal added there fails this test until it is glossed.
+
+    `EXPORT_APPROVAL_SELF_DECIDED` is in the set this item created, and it is the one whose gloss
+    matters most at the counter: the refusal is opaque by design on the approval path, so the
+    sentence here is the only place a staff member is told that a different owner has to decide.
+    """
+
+    module = DB_EXPORTS.read_text(encoding="utf-8")
+    raised = sorted(set(re.findall(r'reason_code="([A-Z][A-Z0-9_]+)"', module)))
+    # A floor rather than an exact count: this asserts the pattern still finds the vocabulary, so
+    # that a refactor which moved the codes elsewhere fails here rather than passing vacuously with
+    # an empty set.
+    assert len(raised) >= 9, f"the export refusal vocabulary was not found or shrank: {raised}"
+    assert "EXPORT_REQUEST_CORRUPT" in raised
+    assert "EXPORT_APPROVAL_SELF_DECIDED" in raised
+
+    glossed = _run(
+        "import { REASON_NOTE } from './src/core/i18n.js';\n"
+        "console.log(JSON.stringify(Object.keys(REASON_NOTE)));\n"
+    )
+    missing = sorted({code for code in raised if code not in glossed})
+    assert not missing, f"export refusals with no Vietnamese note in i18n.js: {missing}"
 
 
 def test_a_remedy_refusal_arrives_as_a_refusal_and_not_as_bad_input() -> None:

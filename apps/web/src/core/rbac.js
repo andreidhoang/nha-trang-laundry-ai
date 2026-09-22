@@ -119,6 +119,21 @@ export const CAPABILITIES = {
     mfa: false,
     why: "Quản lý nhân sự chỉ dành cho chủ.",
   },
+  SLA_BOARD_READ: {
+    roles: [OWNER, APPROVER, OPERATOR, AUDITOR],
+    mfa: false,
+    why: "Bảng SLA dùng đúng cổng đọc của các màn hình giám sát: bốn vai trò, và phải được gán cửa hàng.",
+  },
+  DAY_SUMMARY_READ: {
+    roles: [OWNER, APPROVER, OPERATOR],
+    mfa: true,
+    why: "Số đơn trong ngày dùng cổng vận hành, giống báo giá và sự cố.",
+  },
+  EXPORT_DATA: {
+    roles: [OWNER, APPROVER],
+    mfa: true,
+    why: "Xuất hồ sơ ra ngoài hệ thống chỉ dành cho chủ hoặc người duyệt, và vẫn phải có chủ tiệm duyệt từng lần.",
+  },
   ASSISTANT: {
     roles: [OWNER, APPROVER, OPERATOR],
     mfa: true,

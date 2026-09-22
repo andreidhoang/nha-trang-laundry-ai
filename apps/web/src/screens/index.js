@@ -16,6 +16,7 @@
 import { screen as approvals } from "./approvals.js";
 import { screen as assistant } from "./assistant.js";
 import { screen as exceptions } from "./exceptions.js";
+import { screen as exports_ } from "./exports.js";
 import { screen as gaps } from "./gaps.js";
 import { screen as incidents } from "./incidents.js";
 import { screen as orderDetail } from "./orderDetail.js";
@@ -24,6 +25,7 @@ import { screen as orders } from "./orders.js";
 import { screen as quotes } from "./quotes.js";
 import { screen as remedies } from "./remedies.js";
 import { screen as shadow } from "./shadow.js";
+import { screen as slaBoard } from "./slaBoard.js";
 import { screen as staff } from "./staff.js";
 import { screen as system } from "./system.js";
 import { screen as today } from "./today.js";
@@ -35,12 +37,14 @@ export const ROUTES = [
   quotes,
   orders,
   orderDetail,
+  slaBoard,
   approvals,
   assistant,
   shadow,
   exceptions,
   incidents,
   remedies,
+  exports_,
   system,
   staff,
   gaps,

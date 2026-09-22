@@ -208,6 +208,41 @@ export function countdown(expiresAt, now = new Date()) {
 }
 
 /**
+ * A duration the server measured, in microseconds, as whole Vietnamese units.
+ *
+ * The SLA board's "how long is left" and "how far past" are produced by `evaluate_production_sla`
+ * and arrive as integers. This converts units for display and decides nothing: the magnitude, the
+ * clock it was measured against and which of the two fields is non-zero were all settled by the
+ * domain engine before the browser saw them. Dividing here is the same act as `countdown` turning
+ * a server timestamp into "còn 5 phút" — it is not the console forming an opinion about risk.
+ *
+ * Three rules, each because the alternative misreads:
+ *
+ *   - A non-integer is `—`, never `0`. "No mark was set for this order" and "no time is left" are
+ *     opposite facts and a shift would act on them differently.
+ *   - Below a minute reads "dưới 1 phút", not "0 phút", while the magnitude is genuinely positive.
+ *   - Days appear once the figure passes 48 hours, because "73 giờ" is a number a reader has to do
+ *     arithmetic on before it means anything.
+ *
+ * @param {unknown} microseconds a non-negative integer, as the server sent it
+ * @returns {string}
+ */
+export function duration(microseconds) {
+  if (!Number.isInteger(microseconds) || microseconds < 0) return UNKNOWN;
+  const totalMinutes = Math.floor(microseconds / 60_000_000);
+  if (totalMinutes === 0) return microseconds === 0 ? "0 phút" : "dưới 1 phút";
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours >= 48) {
+    const days = Math.floor(hours / 24);
+    const restHours = hours % 24;
+    return restHours > 0 ? `${days} ngày ${restHours} giờ` : `${days} ngày`;
+  }
+  if (hours === 0) return `${minutes} phút`;
+  return minutes > 0 ? `${hours} giờ ${minutes} phút` : `${hours} giờ`;
+}
+
+/**
  * A quantity as the operator typed it and the server stored it.
  *
  * Quantities travel as base-10 strings precisely so that nobody's float turns `6` into `5.999…`,

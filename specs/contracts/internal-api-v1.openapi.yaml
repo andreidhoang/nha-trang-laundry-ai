@@ -57,6 +57,24 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/approvals/{approval_id}/export-request:
+    get:
+      operationId: read_export_request_for_approval
+      summary: What one `EXPORT_SANITIZED_DATA` envelope releases, for the person being asked to sign
+        it.
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_ops_board_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: approval_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/approvals/{approval_id}/manual-send:
     post:
       operationId: prepare_manual_send
@@ -67,6 +85,23 @@ paths:
       x-documented-by-fastapi: true
       responses:
         '201':
+          description: Success response.
+      parameters:
+      - name: approval_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/approvals/{approval_id}/range-price-proposal:
+    get:
+      operationId: read_range_price_proposal
+      summary: The amounts behind one `SET_RANGE_PRICE` envelope, for the person being asked to sign it.
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
           description: Success response.
       parameters:
       - name: approval_id
@@ -479,6 +514,62 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/day-summary:
+    get:
+      operationId: day_summary
+      summary: The store's own day, counted by commercial status. No money is served here.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_ops_board_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/exports:
+    post:
+      operationId: request_export
+      summary: Record what somebody wants exported and hand back the binding an approval envelope needs.
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_ops_board_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/exports/{export_request_id}/execution:
+    post:
+      operationId: execute_export
+      summary: Release the file once, against an approval that names this exact request.
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_ops_board_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: export_request_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/incidents:
     get:
       operationId: list_incidents
@@ -856,6 +947,23 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/sla-board:
+    get:
+      operationId: sla_board
+      summary: In-production orders against the one stated internal mark, oldest accepted first.
+      x-authorization-dependencies:
+      - current_principal
+      - get_ops_board_service
       x-documented-by-fastapi: true
       responses:
         '200':

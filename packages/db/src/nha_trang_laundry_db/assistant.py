@@ -31,6 +31,7 @@ from typing import Any
 from uuid import UUID
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.query_version import query_version
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -39,6 +40,23 @@ BUSINESS_TIMEZONE = "Asia/Ho_Chi_Minh"
 
 #: Hard ceiling on any turn history read, whatever the caller asked for.
 LIST_LIMIT_MAX = 100
+
+#: The day's order counts, as one statement so that one edit moves one rule (`OPS-BOARD-001`).
+_TODAY_STATUS_COUNTS_SQL = """
+    SELECT commercial_status, count(*)
+    FROM orders
+    WHERE store_id = %s
+      AND (created_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date
+    GROUP BY commercial_status
+    ORDER BY commercial_status
+"""
+
+#: The published version of the rule above. The timezone is part of the rule and not merely a
+#: parameter: moving the day boundary would change every count this returns while leaving the SQL
+#: text untouched, so it is hashed alongside it and a change to either forces a new identifier.
+TODAY_STATUS_COUNTS_QUERY = query_version(
+    "today-status-counts-v1", _TODAY_STATUS_COUNTS_SQL, BUSINESS_TIMEZONE
+)
 
 
 class AssistantAuthorizationError(PermissionError):
@@ -317,17 +335,7 @@ def today_status_counts(
         store_id=store_id,
         error=AssistantAuthorizationError,
     )
-    cursor.execute(
-        """
-        SELECT commercial_status, count(*)
-        FROM orders
-        WHERE store_id = %s
-          AND (created_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date
-        GROUP BY commercial_status
-        ORDER BY commercial_status
-        """,
-        (store_id, BUSINESS_TIMEZONE, BUSINESS_TIMEZONE),
-    )
+    cursor.execute(_TODAY_STATUS_COUNTS_SQL, (store_id, BUSINESS_TIMEZONE, BUSINESS_TIMEZONE))
     return tuple((str(row[0]), int(str(row[1]))) for row in cursor.fetchall())
 
 
@@ -419,6 +427,7 @@ def _uuid(value: object) -> UUID:
 __all__ = [
     "BUSINESS_TIMEZONE",
     "LIST_LIMIT_MAX",
+    "TODAY_STATUS_COUNTS_QUERY",
     "AssistantAuthorizationError",
     "AssistantLink",
     "AssistantStateError",

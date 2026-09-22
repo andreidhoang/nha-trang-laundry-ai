@@ -46,6 +46,13 @@ const NAV_ITEMS = [
   { path: "/quotes", label: NAV.quotes, capability: "QUOTES_READ", icon: "quote", group: "Vận hành" },
   { path: "/orders", label: NAV.orders, capability: "ORDERS_READ", icon: "order", group: "Vận hành" },
   {
+    path: "/sla-board",
+    label: NAV.slaBoard,
+    capability: "SLA_BOARD_READ",
+    icon: "exception",
+    group: "Vận hành",
+  },
+  {
     path: "/incidents",
     label: NAV.incidents,
     capability: "INCIDENTS_READ",
@@ -80,6 +87,13 @@ const NAV_ITEMS = [
     capability: "SHADOW_READ",
     icon: "exception",
     group: "Giám sát AI",
+  },
+  {
+    path: "/exports",
+    label: NAV.exports,
+    capability: "EXPORT_DATA",
+    icon: "system",
+    group: "Quản trị",
   },
   { path: "/system", label: NAV.system, capability: "QUEUE_READ", icon: "system", group: "Quản trị" },
   { path: "/staff", label: NAV.staff, capability: "STAFF_ADMIN", icon: "staff", group: "Quản trị" },

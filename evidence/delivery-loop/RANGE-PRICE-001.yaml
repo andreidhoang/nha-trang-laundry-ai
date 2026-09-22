@@ -1,0 +1,102 @@
+schema_version: 1
+work_item: RANGE-PRICE-001
+recorded_at: '2026-09-22T18:30:00+07:00'
+requirement_contract: >-
+  `context/tasks/TASK-range-price-001.md` requires that the twenty `RANGE_ONLY_HUMAN_FINAL` services
+  become sellable, by letting a named staff member choose an exact amount inside the published band
+  and recording that choice as an attributed, immutable attestation bound to the revision.
+
+  The defect was measured rather than asserted. `templates/services-pricebook.csv` publishes 44
+  services; exactly 20 carry `min_price_vnd != max_price_vnd`, and `quote_composition.py`'s
+  `_unresolved_reasons` refused to compose a revision for any of them. Forty-five per cent of the
+  catalogue could not be quoted, so it could not be sold, and it was the half with the margin in it:
+  áo dài truyền thống 80.000–240.000 ₫, áo lông thú 200.000–400.000 ₫, vệ sinh sofa
+  300.000–500.000 ₫.
+
+  No policy is decided here. The published band is the owner's authorisation: publishing an interval
+  under an immutable pricebook version states that every integer inside it is acceptable. `DEC-021`
+  supplies the recording mechanism.
+rollback_impact: >-
+  No migration was needed, so a revert is code-only and the schema is untouched. `0005` already
+  admitted `'RANGE'` and `'APPROVED_EXACT'` in its finality CHECK and already carried the paired
+  min/max columns; `RangeLineAmounts` already existed as a snapshot type.
+
+  Reverting returns the twenty services to unsellable. Revisions already composed as `RANGE` or
+  closed to `APPROVED_EXACT` remain valid rows — nothing about them is unreadable after a revert —
+  but no new one can be produced, and a band revision already presented to a customer could not be
+  closed. Orders already created from a closed band are unaffected: they settled through the
+  existing exact-payment path, which this item did not modify.
+
+  The console half and the server half must revert together. Reverting the console alone leaves a
+  screen that cannot reach routes it calls; reverting the server alone leaves a money box bounded by
+  a band the server will not accept.
+unresolved_assumptions: >-
+  `SET_RANGE_PRICE` keeps its `_OWNER_FINANCIAL` mapping: `OWNER_ADMIN`, MFA, ten-minute TTL. That
+  mapping was written when nothing used it and is now on the shop's commonest high-value path, so
+  the owner's approval and the staff member's application must both fall inside one ten-minute
+  window, per quote, and every band on a quote closes in one attestation.
+  `docs/DECISION_REQUEST_RANGE_PRICE_AUTHORITY_2026-09.md` puts that to the owner as proposed
+  `DEC-029`. This item deliberately ships against the table as it stands so that signature is not on
+  its critical path.
+
+  `RANGE_PRICE_PRICEBOOK_MISMATCH` is not reachable through HTTP by construction — the route derives
+  the pricebook identity from the stored revision, so a client cannot make the two disagree. It is
+  proven at the domain level and exists as a guard against a mistake no current caller can make.
+evidence:
+  in_band_amount_persists_and_settles: >-
+    `test_an_ao_dai_is_banded_priced_approved_accepted_ordered_and_settled` walks the whole path
+    against real PostgreSQL: a band revision is stored at 80.000–240.000 ₫, 150.000 ₫ is proposed and
+    approved under a `SET_RANGE_PRICE` envelope, applied as revision N+1 with finality
+    `APPROVED_EXACT`, accepted under `DEC-021`, converted to an order and settled through the
+    existing exact-payment path. The browser run drives the same path through the console.
+  out_of_band_amount_is_refused: >-
+    `test_an_amount_outside_the_published_band_is_refused_and_nothing_is_composed` covers 79.999 ₫,
+    240.001 ₫, 250.000 ₫ and 0. A property test asserts, for every one of the twenty range services,
+    that `min` and `max` are accepted and `min - 1` and `max + 1` are refused. `_in_band` excludes
+    `bool` explicitly, because `isinstance(True, int)` is true in Python and `amount_vnd=True` would
+    otherwise have been priced as 1 ₫. The console catches an out-of-band figure before anything is
+    sent: the browser run asserts zero requests while the warning is on screen.
+  unpriced_range_line_still_requires_a_human: >-
+    `test_a_range_line_with_no_amount_still_requires_a_human`. The default is unchanged: a range line
+    with no approved amount still yields `UnresolvedQuote` carrying `RANGE_PRICE_REQUIRES_HUMAN`. No
+    midpoint, minimum, maximum or default is substituted anywhere in `range_prices.py`.
+  approval_binds_the_rendered_revision: >-
+    The envelope binds the revision's `snapshot_hash` and the amounts' `rendered_hash`, and
+    application re-derives the digest from the amounts in hand and refuses unless it equals the
+    approved one. `RANGE-APPROVAL-VISIBILITY-001` later added the stored display copy and proved the
+    separation holds: `test_a_tampered_stored_amount_cannot_change_what_the_approval_authorises`
+    forces the immutability trigger aside, rewrites a stored 150.000 ₫ to 240.000 ₫, and shows
+    applying 240.000 ₫ is refused while applying 150.000 ₫ still prices at 150.000 ₫.
+  approval_policy_table_unchanged: >-
+    `APPROVAL_POLICIES` and `APPROVAL_RESOURCE_TYPES` are untouched, proven by `git diff` against
+    `main` and by two tests: an operator cannot approve, and the proposer cannot approve their own.
+  rollback_assessment: See `rollback_impact`.
+checks:
+  - command: uv run ruff check .
+    status: PASSED
+    result: All checks passed!
+  - command: uv run ruff format --check .
+    status: PASSED
+    result: 566 files already formatted
+  - command: uv run mypy apps packages
+    status: PASSED
+    result: 'Success: no issues found in 249 source files'
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED
+    result: 57 served internal API operations; 348 staff-console disclosures
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED
+    result: 137 source references, 28 decisions, 131 work items
+  - command: uv run pytest --require-postgres-integration
+    status: PASSED
+    result: 1574 passed, 4 skipped in 433.24s
+supplementary_checks:
+  - command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_console_interaction.py
+    status: PASSED
+    result: 170 passed, 0 failed
+    note: >-
+      The script serves the console over a stub HTTP handler with fixture responses, which is the
+      established pattern for it and is NOT a run against a live FastAPI process. The packet's "Done
+      when" asks for a real API; the equivalent coverage that does exist is the PostgreSQL-backed
+      end-to-end test named under `in_band_amount_persists_and_settles`. Recorded as the limitation
+      it is rather than as the thing the packet asked for.

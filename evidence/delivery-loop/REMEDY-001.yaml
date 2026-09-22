@@ -1,0 +1,109 @@
+schema_version: 1
+work_item: REMEDY-001
+recorded_at: '2026-09-22T18:32:00+07:00'
+requirement_contract: >-
+  `context/tasks/TASK-remedy-001.md` requires that an incident be able to reach an outcome, by
+  publishing `DEC-004`'s six ratified figures as versioned configuration and building the proposal,
+  ceiling, approval and credit primitives that read them.
+
+  The defect: `DEC-004` was RESOLVED on 2026-08-18 with three owner-supplied figures and **no code
+  read any of them**. The vocabulary existed with nothing behind it — `ApprovalAction.APPROVE_REMEDY`,
+  the `REMEDY_PROPOSAL` resource type, `AdjustmentDirection.CREDIT`. `INCIDENT-INTAKE-001` had made
+  the complaint recordable and the thread then stopped, so the shop resolved complaints verbally and
+  the 5× ceiling and the 100.000 ₫ escalation the owner decided were enforced by nothing.
+rollback_impact: >-
+  Migration `0042` adds two tables and one nullable column (`orders.production_released_at`) and
+  alters no existing column, so leaving the schema applied under a code revert is safe; the tables
+  become unused.
+
+  Reverting returns complaint handling to paper and un-enforces the owner's figures. Remedy
+  proposals and credits already recorded remain readable. A credit already redeemed has already
+  landed as a `REMEDY_CREDIT` adjustment on a quote revision, and those revisions are immutable, so
+  a revert cannot un-spend one — the burn is recorded in `remedy_credits` and stays true.
+
+  `orders.production_released_at` is write-once and NULL for every order released before `0042`. A
+  revert does not lose it; a re-apply does not re-derive it, because it was never derivable.
+unresolved_assumptions: >-
+  **Loss is not decided and the code says so.** The owner answered damage and did not answer loss;
+  the decision packet carries loss forward explicitly as unresolved. `LOST_ITEM` is recorded and
+  refuses with `LOSS_POLICY_UNRESOLVED`, inheriting no ceiling, no window and no staff authority.
+
+  `FREE_REWASH` records authority but commands nothing. `RELEASED` is terminal in
+  `transition_production` and the 7-day rewash window runs *from* `RELEASED`, so every in-window
+  rewash is on an order whose production dimension cannot legally move. The guard was not widened;
+  reopening production on a released order is a state-machine change and probably a decision of its
+  own.
+
+  Lateness is attested, not derived: no promised-arrival fact exists in the schema, so ">2 hours
+  late" is a staff attestation checked against the published threshold. Only the contradiction is
+  checkable.
+
+  `initial_response_window_hours` is published as one of the six ratified figures and nothing
+  enforces it. It is carried as a record and no code pretends otherwise.
+evidence:
+  owner_figures_read_from_published_configuration: >-
+    The six figures live in `templates/remedy-policy-dec-004.json`, published through
+    `ConfigurationRepository` under `config_type = 'REMEDY_POLICY'` with a registered validator, by
+    `scripts/publish_remedy_policy.py`. `packages/db/tests/test_remedies.py` proves fail-closed with
+    nothing published (`REMEDY_POLICY_UNPUBLISHED`), digest idempotency on republication, and eight
+    malformed-document refusals at publication time rather than at the counter. A float
+    `staff_approval_ceiling_vnd` is refused rather than coerced.
+  loss_refuses_and_inherits_no_ceiling: >-
+    `remedies.py` returns `RemedyUnresolved` / `REQUIRE_HUMAN` / `LOSS_POLICY_UNRESOLVED` for
+    `LOST_ITEM` before fault, window, amount or ceiling are read. The type it returns has no
+    `ceiling_vnd` or `amount_vnd` attribute at all; migration `0042` carries a
+    `remedy_proposals_loss_is_unresolved` CHECK and a status trigger making `POLICY_UNRESOLVED` a
+    status no UPDATE can leave. **No test asserts a loss ceiling.** The browser run asserts the
+    console names the reason and offers no ceiling of any kind while loss is selected.
+  staff_ceiling_escalates_at_one_hundred_thousand: >-
+    Parametrised at the boundary: `(1, False), (99_999, False), (100_000, False), (100_001, True),
+    (500_000, True)`. 100.000 ₫ needs no owner; one dong more raises an `APPROVE_REMEDY` envelope.
+  computed_ceiling_refuses_rather_than_truncates: >-
+    Ceilings are computed by the server from the order's own stored amounts — 5× that line's net,
+    10% of the settled total by round-half-up in basis points. A proposal above its ceiling is
+    refused **with the computed ceiling named in the refusal**, never truncated to it, so staff can
+    tell the customer why rather than only that.
+  settlement_ledger_is_unchanged_by_a_remedy: >-
+    A credit is a `QuoteAdjustmentKind.REMEDY_CREDIT` on a derived quote revision, never an
+    adjustment to a settlement, so `DEC-010` is untouched and the settlement path keeps accepting
+    only the exact quoted total in full. Money stays non-negative integer VND because the direction
+    carries the sign. The credit is allocated across lines by `allocate_largest_remainder`, extracted
+    from `promotion.py` so a promotion and a remedy credit cannot disagree about who gets the spare
+    dong.
+  credit_is_redeemable_once_against_an_existing_binding: >-
+    A compare-and-swap on `redeemed_at IS NULL` plus a `protect_remedy_credit` trigger, committed in
+    the same transaction as the revision it paid for. `test_remedies.py` proves the burn happens
+    exactly once and a second presentation is refused. The credit is a bearer instrument tied to the
+    order's `bound_contact_id` — the two sources `OrderRepository.create` already checks under
+    `DEC-015` — deliberately not a customer ledger.
+  rollback_assessment: See `rollback_impact`.
+checks:
+  - command: uv run ruff check .
+    status: PASSED
+    result: All checks passed!
+  - command: uv run ruff format --check .
+    status: PASSED
+    result: 566 files already formatted
+  - command: uv run mypy apps packages
+    status: PASSED
+    result: 'Success: no issues found in 249 source files'
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED
+    result: 57 served internal API operations; 348 staff-console disclosures
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED
+    result: 137 source references, 28 decisions, 131 work items
+  - command: uv run pytest --require-postgres-integration
+    status: PASSED
+    result: 1574 passed, 4 skipped in 433.24s
+supplementary_checks:
+  - command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_console_interaction.py
+    status: PASSED
+    result: 170 passed, 0 failed
+    note: >-
+      The browser run found three real defects in the remedy console that unit tests could not see,
+      and all three were fixed before this record: the money box rendered before the ceiling that
+      bounds it, the owner-required warning waited for the fault checkbox so staff learned the owner
+      was needed after filling the form in, and selecting `LOST_ITEM` left a 600.000 ₫ damage ceiling
+      on screen with a live execute button — the figure `DEC-004` refuses to lend loss by analogy.
+      The run is against a stubbed API, not a live process.

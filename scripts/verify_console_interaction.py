@@ -22,6 +22,16 @@ Section 6 covers what the owner's-morning redesign is answerable for: that the d
 rendered as the server sent them, that an empty queue costs no space, and that the all-clear line
 claims only the queues it actually checked. That last one is an assertion about a *refusal*, which
 is the kind this console most needs and most easily loses.
+
+Section 12 is here for the same reason section 1 is: the defect it covers shipped, and every other
+kind of test certified the screen while it was broken. `RANGE-APPROVAL-VISIBILITY-001` was an
+ordering and reachability defect rather than a missing string -- the approvals queue returned a
+digest, the card linked to `#/quotes`, and that screen renders the published BAND, because the
+revision the envelope binds is the one before any price was chosen. Every sentence on the screen
+was true and the owner still could not see the number they were authorising. So the assertions
+there are about document order (`compareDocumentPosition` between the amount and the approve
+button), about whether the button is pressable, and -- twice over -- about what is *not* on screen
+when the amount cannot be read.
 """
 
 from __future__ import annotations
@@ -182,6 +192,102 @@ SETTLEMENTS_TODAY = {
     "collected_vnd": 1_285_000,
     "settlement_count": 7,
     "business_timezone": "Asia/Ho_Chi_Minh",
+    # OPS-BOARD-001, invariant 18: the rule that produced the figure travels with the figure, and
+    # the takings card renders it beneath the amount.
+    "query_version": "collected-today-v1:391bd9369153e5ae",
+}
+
+#: What `GET /internal/v1/stores/{id}/day-summary` returns. Two statuses rather than one, because
+#: the card renders a list and a single row would not show that it does.
+DAY_SUMMARY = {
+    "counts": [["ACTIVE", 4], ["COMPLETED", 2]],
+    "total_orders": 6,
+    "query_version": "today-status-counts-v1:cd422085b053d921",
+    "business_timezone": "Asia/Ho_Chi_Minh",
+}
+
+#: The SLA board, in the shape and the order the server really answers in: acceptance order,
+#: oldest accepted first. The durations are the server's integers -- section 13 asserts the console
+#: renders them as Vietnamese units and never as a raw microsecond count or a negative number.
+#: Section 12 is the range-approval work; this comment named it until OPS-BOARD-FIX-001.
+#:
+#: The page carries `next_accepted_at`/`next_order_id`, so the keyset "Tải thêm" control is
+#: exercised against a real second page rather than described.
+SLA_BOARD_POLICY_NOTICE = (
+    "Mốc này tính theo quy tắc SLA_STANDARD_CLOTHES — 8 giờ kể từ khi nhận sản xuất; quy tắc SLA "
+    "riêng của từng đơn là quyết định kinh doanh chưa được chốt, nên con số này dùng đúng một quy "
+    "tắc đã nêu."
+)
+SLA_BOARD_FIRST_PAGE = {
+    "items": [
+        {
+            "order_id": "aaaaaaa1-0000-4000-8000-000000000001",
+            "commercial_status": "ACTIVE",
+            "production_status": "IN_PROCESS",
+            "production_accepted_at": "2026-09-09T00:00:00+00:00",
+            "production_ready_at": None,
+            "internal_risk_due_at": "2026-09-09T08:00:00+00:00",
+            "sla_outcome": "BREACHED",
+            "overall_outcome": "REQUIRE_HUMAN",
+            "reason_codes": [
+                "PRODUCTION_SLA_EXCLUDES_DELIVERY",
+                "HUMAN_PROMISE_REQUIRED",
+                "ELAPSED_EIGHT_HOUR_INTERNAL_RISK",
+                "EXACT_CLOSURE_CUTOFF_UNPUBLISHED",
+                "SLA_BREACHED",
+                "BREACH_REMEDY_REQUIRES_HUMAN",
+            ],
+            "elapsed_microseconds": 39_600_000_000,
+            "remaining_microseconds": 0,
+            # Three hours past the mark.
+            "breach_microseconds": 10_800_000_000,
+        },
+        {
+            "order_id": "aaaaaaa2-0000-4000-8000-000000000002",
+            "commercial_status": "ACTIVE",
+            "production_status": "QUEUED",
+            "production_accepted_at": "2026-09-09T04:00:00+00:00",
+            "production_ready_at": None,
+            "internal_risk_due_at": "2026-09-09T12:00:00+00:00",
+            "sla_outcome": "PENDING",
+            "overall_outcome": "REQUIRE_HUMAN",
+            "reason_codes": ["SLA_PENDING", "ELAPSED_EIGHT_HOUR_INTERNAL_RISK"],
+            "elapsed_microseconds": 25_200_000_000,
+            # One hour left.
+            "remaining_microseconds": 3_600_000_000,
+            "breach_microseconds": 0,
+        },
+    ],
+    "query_version": "sla-risk-board-v1:e56e50ea7beb4021",
+    "policy_id": "SLA_STANDARD_CLOTHES",
+    "policy_type": "COMMITMENT",
+    "policy_target_max_hours": 8,
+    "policy_notice_vi": SLA_BOARD_POLICY_NOTICE,
+    "evaluated_at": "2026-09-09T11:00:00+00:00",
+    "next_accepted_at": "2026-09-09T04:00:00+00:00",
+    "next_order_id": "aaaaaaa2-0000-4000-8000-000000000002",
+}
+SLA_BOARD_SECOND_PAGE = {
+    **SLA_BOARD_FIRST_PAGE,
+    "items": [
+        {
+            "order_id": "aaaaaaa3-0000-4000-8000-000000000003",
+            "commercial_status": "ACTIVE",
+            "production_status": "READY_AT_STORE",
+            "production_accepted_at": "2026-09-09T06:00:00+00:00",
+            "production_ready_at": "2026-09-09T07:00:00+00:00",
+            "internal_risk_due_at": "2026-09-09T14:00:00+00:00",
+            "sla_outcome": "MET",
+            "overall_outcome": "REQUIRE_HUMAN",
+            "reason_codes": ["SLA_MET", "ELAPSED_EIGHT_HOUR_INTERNAL_RISK"],
+            "elapsed_microseconds": 3_600_000_000,
+            "remaining_microseconds": 25_200_000_000,
+            "breach_microseconds": 0,
+        }
+    ],
+    "evaluated_at": "2026-09-09T11:00:30+00:00",
+    "next_accepted_at": None,
+    "next_order_id": None,
 }
 
 #: What `GET /internal/v1/pricebook/services` returns, in the shape the real route publishes.
@@ -230,6 +336,19 @@ MISSING_REQUEST = "99999999-9999-4999-8999-999999999999"
 BAND_QUOTE = "55555555-6666-4333-8444-999999999999"
 BAND_SNAPSHOT = "JCS-SHA256-V1:" + "a" * 64
 BAND_APPROVAL = "77777777-8888-4333-8444-bbbbbbbbbbbb"
+#: The digest the envelope binds. One constant rather than two literals, because section 12 turns
+#: on the queue row and the proposal body carrying the *same* value: the console refuses to show an
+#: amount whose rendering is not the one the card is about to sign.
+BAND_RENDERED = "JCS-SHA256-V1:" + "c" * 64
+#: The band and the chosen amount exactly as `core/format.js` prints them.
+#:
+#: Written as escapes, and worth the awkwardness: `Intl.NumberFormat` puts a NO-BREAK SPACE (U+00A0)
+#: before the currency sign and `moneyRange` joins the ends with an EN DASH (U+2013). A check
+#: written with an ordinary space is absent from the page whether the amount is rendered or not --
+#: which would make section 12's negative assertions, the ones that prove no figure is shown beside
+#: a shut approve control, pass vacuously. Those are the assertions this item most needs to be real.
+CHOSEN_AS_RENDERED = "150.000\u00a0\u20ab"
+BAND_AS_RENDERED = "80.000\u00a0\u20ab \u2013 240.000\u00a0\u20ab"
 AO_DAI_MIN_VND = 80_000
 AO_DAI_MAX_VND = 240_000
 CHOSEN_VND = 150_000
@@ -248,6 +367,27 @@ BAND_REVISION = {
     "reason_codes": ["RANGE_PRICE_REQUIRES_HUMAN", "TAX_TREATMENT_UNVERIFIED"],
     "required_approvals": [],
     "replayed": False,
+}
+
+#: `RangePriceProposalContentResponse` from `main.py`, field for field: what the owner is actually
+#: being asked to authorise. Before this item no read returned it and the number lived nowhere at
+#: all, so the owner followed the queue's link, read the BAND on `#/quotes`, and approved a figure
+#: they had never seen.
+RANGE_PRICE_PROPOSAL_CONTENT = {
+    "approval_request_id": BAND_APPROVAL,
+    "quote_id": BAND_QUOTE,
+    "revision": 1,
+    "pricebook_version": 1,
+    "rendered_hash": BAND_RENDERED,
+    "proposed_at": "2026-09-18T03:00:00+00:00",
+    "lines": [
+        {
+            "service_code": "DC_AO_DAI_TRADITIONAL",
+            "band_minimum_vnd": AO_DAI_MIN_VND,
+            "band_maximum_vnd": AO_DAI_MAX_VND,
+            "proposed_amount_vnd": CHOSEN_VND,
+        }
+    ],
 }
 
 BAND_DETAIL = {
@@ -316,6 +456,88 @@ CLOSED_REVISION = {
 }
 
 
+#: `EXPORT-FIX-001`. The export envelope `#/exports` raises, and the read that makes it decidable.
+#:
+#: `VIEWABLE_RESOURCES` in `screens/approvals.js` had no `EXPORT_REQUEST` entry, so this envelope
+#: reached the queue permanently undecidable: a staff member could ask for an export that no owner
+#: in the shop was able to release. What section 14 checks is the fix *and* its safe direction --
+#: the columns, the day and the exclusions are on the card above the approve control, and every
+#: path that cannot show them leaves the control shut.
+EXPORT_APPROVAL = "99999999-aaaa-4333-8444-cccccccccccc"
+EXPORT_REQUEST_ID = "88888888-9999-4333-8444-dddddddddddd"
+#: The digest the envelope binds. One constant for the same reason `BAND_RENDERED` is one: the card
+#: must refuse content whose rendering is not the one the press would hand back.
+EXPORT_RENDERED = "JCS-SHA256-V1:" + "d" * 64
+EXPORT_SNAPSHOT = "JCS-SHA256-V1:" + "e" * 64
+#: The business day this export is about, written out so the check below is looking for the day the
+#: card was told about rather than for any date at all.
+EXPORT_BUSINESS_DATE = "2026-09-16"
+
+#: `ExportRequestContentResponse` from `main.py`, field for field. `incident_open` is deliberately
+#: absent from the column list: nothing in this system ever sets `orders.incident_open`, so the
+#: column published a constant `false` as a fact inside a document an owner signs.
+EXPORT_REQUEST_CONTENT = {
+    "approval_request_id": EXPORT_APPROVAL,
+    "export_request_id": EXPORT_REQUEST_ID,
+    "dataset": "STORE_DAY_ORDERS_V1",
+    "business_date": EXPORT_BUSINESS_DATE,
+    "business_timezone": "Asia/Ho_Chi_Minh",
+    "day_boundary": "orders.created_at",
+    "columns": [
+        "order_id",
+        "created_at",
+        "commercial_status",
+        "intake_status",
+        "production_status",
+        "production_accepted_at",
+        "production_ready_at",
+        "production_released_at",
+        "closed_at",
+        "expected_total_vnd",
+        "paid_amount_vnd",
+        "settlement_attested_at",
+    ],
+    "excludes": [
+        "customer_incident_evidence.summary",
+        "assistant_turn_payloads.question",
+        "assistant_turn_payloads.answer",
+        "orders.bound_contact_id",
+    ],
+    "query_version": "store-day-orders-export-v1:7489179454314e46",
+    "statement_vi": (
+        "Xuất bản sao hồ sơ của chính cửa hàng cho ngày 2026-09-16 (theo giờ Việt Nam): mã đơn, "
+        "trạng thái, mốc thời gian và số tiền đã thu của những đơn MỞ trong ngày đó. Ngày được "
+        "cắt theo lúc mở đơn, không phải theo lúc thu tiền."
+    ),
+    "rendered_hash": EXPORT_RENDERED,
+    "requested_at": "2026-09-16T03:00:00+00:00",
+    "requested_by_you": False,
+}
+
+
+def export_queue_item() -> dict[str, object]:
+    """The export envelope as `GET /internal/v1/approvals` returns it, for section 14.
+
+    Built at call time for the reason the two above are: `_OWNER_FINANCIAL` is a ten-minute TTL and
+    the card renders the time remaining, so a frozen timestamp would make it read "đã hết hạn".
+    """
+
+    return {
+        "approval_request_id": EXPORT_APPROVAL,
+        "status": "REQUESTED",
+        "envelope_hash": "JCS-SHA256-V1:" + "9" * 64,
+        "required_role": "OWNER_ADMIN",
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+        "replayed": False,
+        "resource_type": "EXPORT_REQUEST",
+        "resource_id": EXPORT_REQUEST_ID,
+        "resource_version": 1,
+        "snapshot_hash": EXPORT_SNAPSHOT,
+        "rendered_hash": EXPORT_RENDERED,
+        "action": "EXPORT_SANITIZED_DATA",
+    }
+
+
 def range_price_approval() -> dict[str, object]:
     """The raised envelope, expiring ten minutes from now.
 
@@ -332,8 +554,34 @@ def range_price_approval() -> dict[str, object]:
         "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
         "resource_version": 1,
         "snapshot_hash": BAND_SNAPSHOT,
-        "rendered_hash": "JCS-SHA256-V1:" + "c" * 64,
+        "rendered_hash": BAND_RENDERED,
         "replayed": False,
+    }
+
+
+def range_price_queue_item() -> dict[str, object]:
+    """The same envelope as it appears in `GET /internal/v1/approvals`, for section 12.
+
+    `RANGE-APPROVAL-VISIBILITY-001`. `action` is the field that was not projected until this item:
+    four actions share the `QUOTE_REVISION` resource type and only this one asks its approver to
+    authorise a number the linked quote screen does not render. Built at call time for the same
+    reason the proposal above is — the countdown is ten minutes and a frozen timestamp would make
+    the card read "đã hết hạn".
+    """
+
+    return {
+        "approval_request_id": BAND_APPROVAL,
+        "status": "REQUESTED",
+        "envelope_hash": "JCS-SHA256-V1:" + "b" * 64,
+        "required_role": "OWNER_ADMIN",
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+        "replayed": False,
+        "resource_type": "QUOTE_REVISION",
+        "resource_id": BAND_QUOTE,
+        "resource_version": 1,
+        "snapshot_hash": BAND_SNAPSHOT,
+        "rendered_hash": BAND_RENDERED,
+        "action": "SET_RANGE_PRICE",
     }
 
 
@@ -383,7 +631,19 @@ SESSION_OK = {
     "mfa_verified": True,
 }
 
-state = {"authenticated": True, "hold_ticket": False, "owner_approved": False}
+state = {
+    "authenticated": True,
+    "hold_ticket": False,
+    "owner_approved": False,
+    # Section 12 only. The queue is empty for every earlier section, because the home screen reads
+    # the same endpoint and section 6 asserts an all-clear line that claims only what it checked.
+    "approvals_listed": False,
+    "proposal_unreadable": False,
+    # Section 14 only, and separate from `approvals_listed` so that section 12's card is alone in
+    # the queue while it is being checked and this one is alone while it is.
+    "export_listed": False,
+    "export_unreadable": False,
+}
 held_ticket_routes: list[Route] = []
 
 with sync_playwright() as playwright:
@@ -431,6 +691,49 @@ with sync_playwright() as playwright:
             body = SESSION_OK
         elif url.endswith("/internal/v1/stores"):
             body = {"store_ids": [STORE]}
+        elif "/range-price-proposal" in url:
+            # The read section 12 exists for. When it refuses, it refuses with a code -- the
+            # console has to render that as a refusal and keep the approve control shut, and a
+            # console that had to parse a sentence to know so is a console that would not.
+            if state.get("proposal_unreadable"):
+                route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "detail": {
+                                "outcome": "REQUIRE_HUMAN",
+                                "reason_codes": ["RANGE_PRICE_PROPOSAL_CONTENT_MISMATCH"],
+                            }
+                        }
+                    ),
+                )
+                return
+            body = RANGE_PRICE_PROPOSAL_CONTENT
+        elif "/export-request" in url:
+            # The read section 14 exists for. Its failure direction is the important one: the
+            # console must keep the approve control shut and say why, rather than offering a
+            # decision about a file whose contents it could not read.
+            if state.get("export_unreadable"):
+                route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "detail": {
+                                "outcome": "REQUIRE_HUMAN",
+                                "reason_code": "EXPORT_REQUEST_CORRUPT",
+                            }
+                        }
+                    ),
+                )
+                return
+            body = EXPORT_REQUEST_CONTENT
+        elif url.split("?")[0].endswith("/internal/v1/approvals"):
+            if state.get("export_listed"):
+                body = [export_queue_item()]
+            else:
+                body = [range_price_queue_item()] if state.get("approvals_listed") else []
         elif "/assistant/turns/" in url and url.endswith("/stream"):
             # Exempt from interception: the static server drip-feeds this one so the
             # progressive-rendering check below observes genuine mid-stream states.
@@ -519,6 +822,14 @@ with sync_playwright() as playwright:
             body = INCIDENTS if state.get("incidents_listed") else []
         elif "/settlements/today" in url:
             body = SETTLEMENTS_TODAY
+        elif "/day-summary" in url:
+            body = DAY_SUMMARY
+        elif "/sla-board" in url:
+            # The keyset, exercised rather than described: a request carrying `after_order_id` is
+            # the second page, and the second page ends the board. A stub that answered the same
+            # rows to both would certify a "Tải thêm" control that appends what is already on
+            # screen, which is the defect the paging shape exists to avoid.
+            body = SLA_BOARD_SECOND_PAGE if "after_order_id=" in url else SLA_BOARD_FIRST_PAGE
         elif "/pricebook/services" in url:
             # The quote form refuses to build without this, so an empty stub would leave every
             # assertion below looking at a refusal notice rather than a form.
@@ -1640,6 +1951,454 @@ with sync_playwright() as playwright:
         "600.000" not in content and "90.000" not in content,
         "a damage ceiling is visible while loss is selected",
     )
+
+    print()
+    print("=" * 74)
+    print("12. DUYỆT — the number is on screen before the button that approves it")
+    print("=" * 74)
+
+    # `RANGE-APPROVAL-VISIBILITY-001`, and the reason it needs a browser rather than a source test.
+    #
+    # The defect was an ORDERING and REACHABILITY defect, not a missing string. The queue returned
+    # a digest, the card linked to `#/quotes`, and the quote screen renders the published BAND --
+    # 80.000 d - 240.000 d -- because the revision the envelope binds is the one before any price
+    # was chosen. Every sentence on that screen was true. The owner still could not see the number
+    # they were authorising, so a staff member who agreed 150.000 d with the customer could propose
+    # 240.000 d and the only second-party control over that figure passed it through.
+    #
+    # A source test can prove the sentence exists. Only this can prove the amount is in the
+    # document *above* the approve control, that the control is pressable when it is, and that it
+    # is not when the amount cannot be read. The last one is asserted twice: once on the button's
+    # own disabled state, and once on the absence of the figure -- a screen that showed 150.000 d
+    # and disabled the button would pass a check that only looked at the button.
+
+    def rendered_text() -> str:
+        """The page's text, not its serialized HTML.
+
+        `page.content()` is what every other section reads, and it cannot answer this one:
+        Chromium serializes the NO-BREAK SPACE that `Intl.NumberFormat` puts before ₫ as the
+        entity `&nbsp;`, so "150.000\u00a0\u20ab" is absent from the HTML whether the amount is on
+        screen or not. Reading `textContent` is the difference between checking the money and
+        checking nothing.
+        """
+
+        return str(page.evaluate("() => document.body.textContent"))
+
+    state["approvals_listed"] = True
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    content = page.content()
+    text = rendered_text()
+
+    check(
+        "the queue names the action, not only the resource type",
+        "SET_RANGE_PRICE" in content and "QUOTE_REVISION" in content,
+    )
+    check(
+        "the published band is on the card, as a range and never as one end of one",
+        # The whole string, not the two ends separately: both numbers appear elsewhere in the
+        # card, and the property is that they are joined into one interval.
+        BAND_AS_RENDERED in text,
+    )
+    check(
+        "and so is the exact amount the owner is being asked to authorise",
+        CHOSEN_AS_RENDERED in text and "Nhân viên đề nghị" in text,
+    )
+
+    # The whole item, in one assertion. `compareDocumentPosition` is the only honest way to ask it:
+    # both nodes could exist with the button first, or in a collapsed panel, and the screen would
+    # still contain every string checked above.
+    ordering = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          const money = [...card.querySelectorAll(".money")]
+            .find((n) => n.textContent.includes("150.000"));
+          if (!approve) return "no approve control";
+          if (!money) return "the amount is not rendered as money";
+          const before =
+            Boolean(money.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING);
+          return { before, disabled: approve.disabled };
+        }"""
+    )
+    check(
+        "the amount precedes the approve control in the document, not merely on the page",
+        isinstance(ordering, dict) and ordering.get("before") is True,
+        repr(ordering),
+    )
+    check(
+        "and the control is pressable, because the owner can now see what it approves",
+        isinstance(ordering, dict) and ordering.get("disabled") is False,
+        repr(ordering),
+    )
+
+    # Now the failure direction, which is the one that has to be safe. The server refuses the read
+    # -- a stored amount that does not re-derive to the digest the envelope binds -- and the card
+    # must go back to offering nothing.
+    state["proposal_unreadable"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    content = page.content()
+
+    blocked = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          return approve ? approve.disabled : "no approve control";
+        }"""
+    )
+    check(
+        "an amount that cannot be read leaves the approve control shut",
+        blocked is True,
+        repr(blocked),
+    )
+    check(
+        "no figure at all is shown beside the shut control",
+        CHOSEN_AS_RENDERED not in rendered_text(),
+        "an amount is on screen while the console says it cannot read one",
+    )
+    check(
+        "the card says why, in Vietnamese, rather than only greying out",
+        "Chưa xem được số tiền được đề nghị" in content
+        and "chưa thấy số thì chưa quyết" in content.lower(),
+    )
+    check(
+        "and the server's own refusal code travels through intact",
+        "RANGE_PRICE_PROPOSAL_CONTENT_MISMATCH" in content,
+    )
+
+    # Back to readable, and this time the digest disagrees. Same direction, different cause: the
+    # queue row and the proposal body describe two different renderings, which means the amount on
+    # screen would not be the amount the press hands back.
+    state["proposal_unreadable"] = False
+    RANGE_PRICE_PROPOSAL_CONTENT["rendered_hash"] = "JCS-SHA256-V1:" + "f" * 64
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    content = page.content()
+    stale = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          return approve ? approve.disabled : "no approve control";
+        }"""
+    )
+    check(
+        "amounts whose digest is not the card's own are withheld, not shown with a caveat",
+        stale is True and CHOSEN_AS_RENDERED not in rendered_text(),
+        repr(stale),
+    )
+    check(
+        "and the card names that as the reason, so it reads as staleness and not as a bug",
+        "Số tiền không khớp phiếu" in content,
+    )
+    # Restored, and the queue reloaded before the link is looked for: the card on screen at this
+    # point is the blocked one, which by design carries no link to anything.
+    RANGE_PRICE_PROPOSAL_CONTENT["rendered_hash"] = BAND_RENDERED
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+
+    # The link an approver follows. It has to carry the revision the envelope binds: without it
+    # `#/quotes?quote=<id>` opens whichever revision is newest, so an approver could read revision
+    # 3 while signing revision 1's digest.
+    href = page.evaluate(
+        """() => {
+          const link = document.querySelector("article.card a[href^='#/quotes']");
+          return link ? link.getAttribute("href") : null;
+        }"""
+    )
+    check(
+        "the link to the quote names the revision the envelope binds",
+        isinstance(href, str) and "revision=1" in href,
+        repr(href),
+    )
+
+    state["approvals_listed"] = False
+
+    print()
+    print("=" * 74)
+    print("13. BẢNG TRỄ HẠN — which order, how long is left, and whose rule says so")
+    print("=" * 74)
+
+    # `OPS-BOARD-001`. The SLA engine and its board query already existed; the only way to reach
+    # them was to ask the assistant, which answered "N in production, M past the mark". A count is
+    # not something a shift can act on, and this section checks the three things that make the list
+    # actionable without making it dishonest: which order, how long, and under whose rule.
+    page.goto(f"http://localhost:{PORT}/#/sla-board", wait_until="networkidle")
+    page.wait_for_timeout(700)
+
+    cards = page.locator("article[data-sla-outcome]")
+    check("the board lists the orders the server returned", cards.count() == 2, str(cards.count()))
+    # The server answers in acceptance order, oldest first, and the screen renders that order
+    # unchanged. Asserted as the sequence rather than as "the breached one is on top": the board
+    # does not rank by urgency and must not look as though it does, because an order whose clock
+    # stopped at `production_ready_at` carries frozen time remaining and can outrank a running one.
+    check(
+        "the rows are in the server's acceptance order, not one the browser chose",
+        [cards.nth(index).get_attribute("data-order-id") for index in range(cards.count())]
+        == [item["order_id"] for item in SLA_BOARD_FIRST_PAGE["items"]],
+        repr([cards.nth(index).get_attribute("data-order-id") for index in range(cards.count())]),
+    )
+    check(
+        "and each row carries its own outcome, which is what a shift ranks by",
+        cards.first.get_attribute("data-sla-outcome") == "BREACHED",
+        repr(cards.first.get_attribute("data-sla-outcome")),
+    )
+
+    body_text = page.inner_text("body")
+    check(
+        "time past the mark reads as a duration, never as a negative number",
+        "quá mốc 3 giờ" in body_text and "-3" not in body_text,
+    )
+    check(
+        "time still left reads the same way, in whole Vietnamese units",
+        "còn 1 giờ" in body_text,
+    )
+    check(
+        "no raw microsecond count reaches the screen",
+        "10800000000" not in body_text and "3600000000" not in body_text,
+    )
+    check(
+        "the board states which rule produced its numbers, in the assistant's own words",
+        SLA_BOARD_POLICY_NOTICE in body_text.replace("\n", " "),
+        "the shared policy sentence is missing or reworded",
+    )
+    check(
+        "and says plainly that this is the shop's own mark, not a promise to a customer",
+        "không phải hẹn với khách" in body_text,
+    )
+    check(
+        "the versioned query behind the figures is on the screen, not only in the response",
+        "sla-risk-board-v1:e56e50ea7beb4021" in body_text,
+    )
+    check(
+        "each row links to the order it is about, so the list is something to act on",
+        page.locator("a[href='#/orders/aaaaaaa1-0000-4000-8000-000000000001']").count() >= 1,
+    )
+
+    # Paging. The control must fetch the *next* page and append it, not re-fetch the first -- and
+    # the second page was read at a second instant, which the screen has to say rather than file
+    # both reads under one stamp.
+    page.locator("button", has_text="Tải thêm").first.click()
+    page.wait_for_timeout(700)
+    check(
+        "Tải thêm appends the next keyset page rather than replacing or repeating the first",
+        page.locator("article[data-sla-outcome]").count() == 3,
+        str(page.locator("article[data-sla-outcome]").count()),
+    )
+    body_text = page.inner_text("body")
+    check(
+        "the appended rows say they were read at their own, later instant",
+        "muộn hơn phần ở trên" in body_text,
+    )
+    check(
+        "a finished order shows the time it finished with, not a clock still running",
+        "Xong trước mốc" in body_text and "còn 7 giờ" in body_text,
+    )
+    check(
+        "and the control disappears once the board has no further page",
+        page.locator("button", has_text="Tải thêm").count() == 0,
+    )
+
+    print()
+    print("=" * 74)
+    print("14. DUYỆT XUẤT DỮ LIỆU — an owner can decide it, and only with the file in view")
+    print("=" * 74)
+
+    # `EXPORT-FIX-001`. Two defects, both on this path, and the browser is the only place either
+    # can be proved. The first is reachability: `VIEWABLE_RESOURCES` had no `EXPORT_REQUEST` entry,
+    # so the envelope `#/exports` raises could never be decided from `#/approvals` by anybody — a
+    # staff member could request an export that no owner in the shop was able to release. A source
+    # test can prove the table now has a key; only this can prove the button is pressable.
+    #
+    # The second is that fixing reachability must not produce blind approval. What leaves the
+    # building on that press cannot be recalled, so the day, the columns and the exclusions have to
+    # be in the document ABOVE the control, and every path that cannot show them has to leave it
+    # shut. Both directions are checked, and the shut direction twice: once on the button and once
+    # on the absence of the content beside it.
+
+    state["approvals_listed"] = False
+    state["export_listed"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    content = page.content()
+    text = rendered_text()
+
+    check(
+        "the queue names the export action and its resource type",
+        "EXPORT_SANITIZED_DATA" in content and "EXPORT_REQUEST" in content,
+    )
+    check(
+        "the business day the file is about is on the card",
+        EXPORT_BUSINESS_DATE in text,
+    )
+    check(
+        "so is the exact column list the file will carry",
+        "settlement_attested_at" in text and "paid_amount_vnd" in text,
+    )
+    check(
+        "and the exclusions, named rather than implied by the word sanitized",
+        "customer_incident_evidence.summary" in text and "orders.bound_contact_id" in text,
+    )
+    check(
+        "the always-false incident column is not offered as a fact",
+        "incident_open" not in text,
+    )
+    check(
+        "the card says which event cuts the shop's day, because two figures here share a name",
+        "orders.created_at" in text and "không phải theo lúc thu tiền" in text,
+    )
+
+    # The whole item, in one assertion, asked the only honest way: both nodes could exist with the
+    # button first and every string above would still be on the page.
+    ordering = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          const columns = [...card.querySelectorAll(".mono")]
+            .find((n) => n.textContent.includes("settlement_attested_at"));
+          if (!approve) return "no approve control";
+          if (!columns) return "the column list is not rendered";
+          const before =
+            Boolean(columns.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING);
+          return { before, disabled: approve.disabled };
+        }"""
+    )
+    check(
+        "the column list precedes the approve control in the document, not merely on the page",
+        isinstance(ordering, dict) and ordering.get("before") is True,
+        repr(ordering),
+    )
+    check(
+        "and the control is pressable at last — this envelope was undecidable by anyone",
+        isinstance(ordering, dict) and ordering.get("disabled") is False,
+        repr(ordering),
+    )
+    check(
+        "the card carries no link, because no screen renders a stored export request",
+        page.evaluate(
+            """() => document.querySelectorAll("article.card a[href^='#/exports']").length"""
+        )
+        == 0,
+    )
+
+    # Separation of duty, bound to the person who DEFINED the export rather than to whoever raised
+    # the envelope. The server refuses that decision; the card says so first, beside a shut control,
+    # so the owner is not sent to press a button that will 403.
+    EXPORT_REQUEST_CONTENT["requested_by_you"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    content = page.content()
+    mine = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          return approve ? approve.disabled : "no approve control";
+        }"""
+    )
+    check(
+        "the staff member who defined the export cannot approve it from here",
+        mine is True,
+        repr(mine),
+    )
+    check(
+        "and is told that before pressing, not by a 403 afterwards",
+        "do chính bạn tạo" in content and "Nhờ một chủ tiệm khác quyết" in content,
+    )
+    check(
+        "the contents stay on screen, because the refusal is about who may sign and not about what",
+        EXPORT_BUSINESS_DATE in rendered_text(),
+    )
+    EXPORT_REQUEST_CONTENT["requested_by_you"] = False
+
+    # Now the failure direction that has to be safe. The server cannot re-derive the document the
+    # owner is being asked to sign, so the card must offer nothing at all.
+    state["export_unreadable"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    content = page.content()
+    blocked = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          return approve ? approve.disabled : "no approve control";
+        }"""
+    )
+    check(
+        "contents that cannot be read leave the approve control shut",
+        blocked is True,
+        repr(blocked),
+    )
+    check(
+        "no column list is shown beside the shut control",
+        "settlement_attested_at" not in rendered_text(),
+        "columns are on screen while the console says it cannot read them",
+    )
+    check(
+        "the card says why, in Vietnamese, rather than only greying out",
+        "Chưa xem được dữ liệu sắp rời khỏi hệ thống" in content,
+    )
+    check(
+        "and the server's own refusal code travels through intact",
+        "EXPORT_REQUEST_CORRUPT" in content,
+    )
+    check(
+        "that code is glossed rather than left as a bare English token",
+        "Bản ghi của yêu cầu xuất này không đọc lại được" in content,
+    )
+
+    # Readable again, and this time the digest disagrees: the export's columns moved after the
+    # envelope was raised, so what is on screen is not what the press would hand back.
+    state["export_unreadable"] = False
+    EXPORT_REQUEST_CONTENT["rendered_hash"] = "JCS-SHA256-V1:" + "1" * 64
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    content = page.content()
+    stale = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          return approve ? approve.disabled : "no approve control";
+        }"""
+    )
+    check(
+        "contents whose digest is not the card's own are withheld, not shown with a caveat",
+        stale is True and "settlement_attested_at" not in rendered_text(),
+        repr(stale),
+    )
+    check(
+        "and the card names that as the reason, so it reads as a moved column list and not a bug",
+        "Nội dung không khớp phiếu" in content,
+    )
+    EXPORT_REQUEST_CONTENT["rendered_hash"] = EXPORT_RENDERED
+    state["export_listed"] = False
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

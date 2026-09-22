@@ -110,6 +110,14 @@ class StoredApproval:
     resource_version: int | None = None
     snapshot_hash: str | None = None
     rendered_hash: str | None = None
+    # `RANGE-APPROVAL-VISIBILITY-001`. Four actions share the `QUOTE_REVISION` resource type --
+    # PRESENT_QUOTE, FINALIZE_QUOTE, APPLY_PROMOTION and SET_RANGE_PRICE -- and only the last one
+    # asks its approver to authorise a number that is stored nowhere on the revision. A queue that
+    # returns only the resource type cannot tell them apart, so the approvals console treated all
+    # four as "linkable to the quote screen, therefore reviewable", which was true of three of
+    # them. Populated by `list_pending` alongside the binding, and for the same reason: the console
+    # has to know what it is being asked to approve before it can know whether it can show it.
+    action: str | None = None
 
 
 class ApprovalRepository:
@@ -537,7 +545,7 @@ class ApprovalRepository:
             """
             SELECT r.id, s.status, r.envelope_hash, r.required_role, r.expires_at,
                    r.resource_type, r.resource_id, r.resource_version, r.snapshot_hash,
-                   r.rendered_hash
+                   r.rendered_hash, r.action
             FROM approval_requests r
             JOIN approval_request_states s ON s.approval_request_id = r.id
             JOIN staff_store_assignments a
@@ -561,6 +569,7 @@ class ApprovalRepository:
                 resource_version=int(str(row[7])),
                 snapshot_hash=str(row[8]),
                 rendered_hash=str(row[9]),
+                action=str(row[10]),
             )
             for row in cursor.fetchall()
         )
@@ -645,14 +654,23 @@ def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
     return tuple(row)
 
 
-#: Which resource types this system can actually locate, and where. The other eleven in
+#: Which resource types this system can actually locate, and where. The other ten in
 #: `APPROVAL_RESOURCE_TYPES` name content that lives in the envelope itself (`MESSAGE_DRAFT`) or
-#: capabilities that are not built (`SLOT_PROPOSAL`, `B2B_TERMS`, `EXPORT_REQUEST`, ...). For those
-#: the store binding above is the whole of the check, and that is stated rather than implied.
+#: capabilities that are not built (`SLOT_PROPOSAL`, `B2B_TERMS`, ...). For those the store binding
+#: above is the whole of the check, and that is stated rather than implied.
 _RESOLVABLE_RESOURCES: dict[str, str] = {
     "ORDER": """
         SELECT o.store_id, o.row_version, o.current_quote_snapshot_hash
         FROM orders o WHERE o.id = %s
+    """,
+    # `OPS-BOARD-001` gave `EXPORT_REQUEST` a row, so it moved out of the unbuilt list above and
+    # into this one. Until it had one, an export envelope could name any UUID at all with invented
+    # digests and be approved and frozen into the ledger -- the exact failure the 2026-08-30 fix
+    # closed for orders. Now the same three facts are checked: the request exists, it belongs to the
+    # store the envelope names, and its stored digest is the one being approved.
+    "EXPORT_REQUEST": """
+        SELECT e.store_id, e.row_version, e.snapshot_hash
+        FROM export_requests e WHERE e.id = %s
     """,
 }
 #: `QUOTE_REVISION` is deliberately absent, and the reason is worth stating because the first

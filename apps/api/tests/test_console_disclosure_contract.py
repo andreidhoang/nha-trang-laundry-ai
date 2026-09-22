@@ -436,7 +436,35 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # `accept_quote_revision` send exactly that. The narrower true statement -- that no composer
     # populates `required_approvals` today -- is now in the gloss itself, which tells the counter it
     # is looking at a data fault and must not press again.
-    assert sum(counts.values()) == _registry()["total"] == 291
+    #
+    # 301 after RANGE-APPROVAL-VISIBILITY-001: +10, in three screens, and one lede re-keyed. The
+    # arithmetic is 291 + 10 = 301, and every one of the ten is a sentence the console could not
+    # say before because the fact behind it did not exist.
+    #
+    # The item is a defect fix: the owner approving a `SET_RANGE_PRICE` envelope could not see the
+    # amount. The envelope carries a digest, the linked quote screen renders the published BAND,
+    # and the proposed number was persisted nowhere -- so a staff member could agree 150.000 d with
+    # the customer, propose 240.000 d, and the owner's approval, the only second-party control over
+    # that number, passed it through unread.
+    #
+    #   * 5 in `screens/approvals.js`. Two are the disclosure itself -- the notice title that names
+    #     the revision the amounts belong to, and the line saying that pressing Duyet approves this
+    #     exact figure and that it is not yet `tien da thu`. Three are refusals, and they are the
+    #     more important half: a proposal that comes back with no lines, a proposal whose
+    #     `rendered_hash` disagrees with the queue row's, and a read that failed. All three leave
+    #     the approve control shut, so each needs a sentence saying why -- a disabled button with
+    #     no reason is how the last version of this screen taught approvers to press on regardless.
+    #   * 3 in `screens/gaps.js`, one new entry at three bindable keys. It is narrower than the one
+    #     RANGE-PRICE-001 retired and it is *not* the same claim: the money half is closed, and what
+    #     remains is that an `ORDER` envelope's link opens the order as it is now, with no proof
+    #     that the version on screen is the version the envelope binds. The group lede moved from
+    #     "Ba muc" to "Bon muc" and re-keyed, which is the count the entry changed.
+    #   * 2 in `screens/quotes.js`, both on the refusal for a malformed `&revision=` in the link the
+    #     approvals queue now builds. `#/quotes?quote=<id>` used to open whichever revision is
+    #     newest, so an approver could read revision 3 while signing revision 1's digest; the link
+    #     carries the bound revision now, and a value this screen cannot read opens nothing at all
+    #     rather than falling back to the newest one.
+    assert sum(counts.values()) == _registry()["total"] == 301
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

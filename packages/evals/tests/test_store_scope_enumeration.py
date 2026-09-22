@@ -287,6 +287,19 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/approvals/{approval_id}/manual-send"): RouteScope(
         "NOT_STORE_DATA", None, "manual send envelope bound to an approval; see above"
     ),
+    # --- RANGE-APPROVAL-VISIBILITY-001 -------------------------------------------------------
+    ("GET", "/internal/v1/approvals/{approval_id}/range-price-proposal"): RouteScope(
+        "STORE_SCOPED",
+        ("range_prices", "RangePriceProposalRepository.read"),
+        "keyed by approval_id, so a URL-shape enumeration would miss it exactly as it missed the "
+        "order transition -- and this one returns money a customer will be charged, which is why "
+        "it is keyed by the artefact carrying the approval rather than by a store a caller could "
+        "name. The store is read off the proposal row and membership is required against that "
+        "value on the same cursor, so an approval id from another shop is refused with the same "
+        "opaque 403 as any other non-membership, and an id that does not exist is a 404: a caller "
+        "cannot use the pair to discover which shop an approval belongs to. The row itself was "
+        "written with the store the proposing staff member was already proved a member of.",
+    ),
     ("POST", "/internal/v1/manual-sends/{manual_send_id}/attest"): RouteScope(
         "NOT_STORE_DATA", None, "attestation against a manual send envelope; see above"
     ),

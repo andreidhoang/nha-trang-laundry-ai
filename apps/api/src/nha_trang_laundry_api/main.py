@@ -46,6 +46,7 @@ from nha_trang_laundry_db.orders import (
     StoredOrder,
 )
 from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
+from nha_trang_laundry_db.range_prices import RangePriceProposalIntegrityError
 from nha_trang_laundry_db.remedies import RemedyAuthorizationError, RemedyStateError
 from nha_trang_laundry_db.settlement import (
     BUSINESS_TIMEZONE,
@@ -473,6 +474,11 @@ class ApprovalResponse(BaseModel):
     resource_version: int | None = None
     snapshot_hash: str | None = None
     rendered_hash: str | None = None
+    # Which action this envelope authorises. Null on the same two paths the binding is null on.
+    # Returned because the resource type is not specific enough to decide whether the console can
+    # show an approver what they are approving: `SET_RANGE_PRICE` and `PRESENT_QUOTE` are both
+    # `QUOTE_REVISION`, and only one of them is about a number the quote screen does not render.
+    action: str | None = None
 
 
 class ManualSendResponse(BaseModel):
@@ -638,6 +644,47 @@ class RangePriceProposalResponse(BaseModel):
     snapshot_hash: str
     rendered_hash: str
     replayed: bool
+
+
+class ProposedRangePriceLineResponse(BaseModel):
+    """One line of a proposal: the bound the owner published, and the number inside it.
+
+    All three are integers of dong and all three are server-held. The band is returned beside the
+    amount rather than left to the client to fetch, because the pair is the disclosure: an amount
+    without the interval it was checked against is as unreadable as the interval alone was.
+    """
+
+    service_code: str
+    band_minimum_vnd: int
+    band_maximum_vnd: int
+    proposed_amount_vnd: int
+
+
+class RangePriceProposalContentResponse(BaseModel):
+    """What a `SET_RANGE_PRICE` envelope is actually asking its approver to authorise.
+
+    `RANGE-APPROVAL-VISIBILITY-001`. The approvals queue returns a digest, and until this route
+    existed the digest was all an approver could see: the console linked through to the quote,
+    which renders the published band, so the owner read *80.000 ₫ - 240.000 ₫* and approved a
+    number they had never been shown.
+
+    This is a display read and nothing else. Application still re-derives the digest from the
+    amounts the caller holds and refuses unless it equals the approved one; that check does not
+    consult these rows. What the read does do before answering is re-derive the digest from the
+    stored rows and require the envelope's own copy, so a stored amount that does not belong to
+    this envelope is withheld rather than shown.
+    """
+
+    approval_request_id: UUID
+    quote_id: UUID
+    revision: int
+    pricebook_version: int
+    #: The envelope's `rendered_hash`, returned so a client can show that the amounts below and the
+    #: digest it is about to hand back are the same content. It is not a substitute for the
+    #: server's own checks, and no client-side comparison of it authorises anything.
+    rendered_hash: str
+    proposed_at: datetime
+    lines: list[ProposedRangePriceLineResponse]
 
 
 class QuoteLineResponse(BaseModel):
@@ -1487,6 +1534,65 @@ def decide_approval(
     except (ApprovalAuthorizationError, ApprovalStateError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
     return _approval_response(stored)
+
+
+@app.get(
+    "/internal/v1/approvals/{approval_id}/range-price-proposal",
+    response_model=RangePriceProposalContentResponse,
+)
+def read_range_price_proposal(
+    approval_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RangePriceProposalContentResponse:
+    """The amounts behind one `SET_RANGE_PRICE` envelope, for the person being asked to sign it.
+
+    `RANGE-APPROVAL-VISIBILITY-001`. Keyed by the approval rather than by the store, for the same
+    reason `POST /internal/v1/remedy-proposals/{id}/execution` is: the store comes from the stored
+    row, never from a caller who could name one. Membership against that store is required inside
+    `RangePriceProposalRepository.read`.
+
+    404 covers three different truths on purpose -- no such approval, an approval of some other
+    kind, and an envelope whose amounts were never recorded. A caller learns nothing about another
+    shop's approvals from the difference, and the third case fails closed exactly as the first two
+    do: the console cannot show a number, so it offers no approve control.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        record = service.read_range_price_proposal(approval_id=approval_id, principal=principal)
+    except RangePriceProposalIntegrityError as error:
+        # Before `ValueError`, which it is a subclass of. A 422 with the code rather than the 409
+        # with a message string the generic mapper would produce: this is a refusal the console has
+        # to render as a refusal -- the amounts are withheld and the approve control stays shut --
+        # and a console that has to parse a sentence to know that is a console that will not.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "REQUIRE_HUMAN", "reason_codes": [str(error)]},
+        ) from error
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+    if record is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="no proposed range price for this approval"
+        )
+    return RangePriceProposalContentResponse(
+        approval_request_id=record.approval_id,
+        quote_id=record.quote_id,
+        revision=record.revision,
+        pricebook_version=record.pricebook_version,
+        rendered_hash=record.rendered_hash,
+        proposed_at=record.proposed_at,
+        lines=[
+            ProposedRangePriceLineResponse(
+                service_code=line.service_code,
+                band_minimum_vnd=line.band_minimum_vnd,
+                band_maximum_vnd=line.band_maximum_vnd,
+                proposed_amount_vnd=line.proposed_amount_vnd,
+            )
+            for line in record.lines
+        ],
+    )
 
 
 @app.post(
@@ -2580,6 +2686,7 @@ def _approval_response(stored: StoredApproval) -> ApprovalResponse:
         resource_version=stored.resource_version,
         snapshot_hash=stored.snapshot_hash,
         rendered_hash=stored.rendered_hash,
+        action=stored.action,
     )
 
 

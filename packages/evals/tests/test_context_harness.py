@@ -256,7 +256,22 @@ def test_context_drift_check_passes() -> None:
     # The other two of the six are refusals, not omissions, and are deliberately absent from this
     # list: customer records are `DEC-015` ("chưa xây", reopening on a real channel that does not
     # exist), and deposits and instalments are `DEC-010` (deferred by decision).
-    assert "131 work items" in result.stdout
+    # 132 with RANGE-APPROVAL-VISIBILITY-001, opened by adversarial review of RANGE-PRICE-001
+    # rather than by a plan. That item made the owner's SET_RANGE_PRICE approval the only
+    # second-party control over the amount a staff member picks inside a published band, and shipped
+    # without the owner being able to see that amount: the envelope held only `rendered_hash`, the
+    # proposed amounts were persisted nowhere, and the approvals card linked to `#/quotes`, which
+    # renders the BAND because the revision the envelope binds is the one before any price was
+    # chosen. Every sentence on that screen was true and the owner still could not read the number,
+    # so a staff member could agree 150.000 d with the customer, propose 240.000 d, and the approval
+    # passed it through.
+    #
+    # It is a separate item rather than a correction to RANGE-PRICE-001 because it needed its own
+    # migration, its own read route and its own console surface, and because the distinction it
+    # rests on deserves to be findable later: storing content for DISPLAY is not the same act as
+    # comparing a hash against stored content, which `approvals.py` rightly calls theatre. The
+    # application path still re-derives the digest from the amounts in hand.
+    assert "132 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

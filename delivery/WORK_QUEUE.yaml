@@ -1,6 +1,7 @@
 schema_version: 1
-last_updated: '2026-09-18'
-id_policy: Stable domain IDs; phase/milestone labels may change without renaming work items.
+last_updated: '2026-09-22'
+id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
+  items.
 items:
 - id: FOUNDATION-001
   phase: FOUNDATION
@@ -249,7 +250,8 @@ items:
   blocked_by_decisions: []
 - id: AGENT-001
   phase: AGENT_SHADOW
-  title: Isolated OpenClaw Concierge, typed Tool Facade, model registry, and Shadow evals
+  title: Isolated OpenClaw Concierge, typed Tool Facade, model registry, and Shadow
+    evals
   status: BLOCKED
   priority: 110
   depends_on:
@@ -283,15 +285,16 @@ items:
   - rollback_assessment
   blocked_by_decisions: []
   blocking_condition: 'Local fixture/assertion registry, the sanitized 32-case deterministic-degraded
-    evidence bundle, signed-manifest/trust-root and provider-evidence enforcement, version-bound offline
-    runtime audit, context-contract coverage validation, capability-status cryptographic binding, and
-    rollback assessment are complete; 313 database-enabled tests pass. PRIMARY/fallback provider evals,
-    immutable model release pin, verified OpenClaw store:false effective request, dedicated credential,
-    scanned sandbox image digest with scan/SBOM evidence, DEC-006 Security/Privacy approval, provider
-    storage/retention verification, and signed release evidence require external authority/services. FROZEN
-    by ADR-0004 on 2026-08-12: this item is immutable blocked history. It is not completed, rewritten,
-    unblocked or deleted, and no further engineering effort is spent on it. G1 agent evidence is carried
-    by AGENT-002 instead.'
+    evidence bundle, signed-manifest/trust-root and provider-evidence enforcement,
+    version-bound offline runtime audit, context-contract coverage validation, capability-status
+    cryptographic binding, and rollback assessment are complete; 313 database-enabled
+    tests pass. PRIMARY/fallback provider evals, immutable model release pin, verified
+    OpenClaw store:false effective request, dedicated credential, scanned sandbox
+    image digest with scan/SBOM evidence, DEC-006 Security/Privacy approval, provider
+    storage/retention verification, and signed release evidence require external authority/services.
+    FROZEN by ADR-0004 on 2026-08-12: this item is immutable blocked history. It is
+    not completed, rewritten, unblocked or deleted, and no further engineering effort
+    is spent on it. G1 agent evidence is carried by AGENT-002 instead.'
 - id: HARDEN-CI-001
   phase: PRODUCTION_HARDENING
   title: Non-skippable PostgreSQL integration and OpenClaw plugin checks in CI
@@ -408,8 +411,10 @@ items:
   - uv run pytest packages/evals/tests/test_container_build_contract.py
   - docker compose -f compose.yaml -f compose.production.yaml config
   - docker build --file apps/api/Dockerfile --tag nha-trang-laundry-api:local .
-  - docker build --file apps/worker/Dockerfile --tag nha-trang-laundry-worker:local .
-  - docker build --file apps/public-agent-tools/Dockerfile --tag nha-trang-laundry-agent-tools:local .
+  - docker build --file apps/worker/Dockerfile --tag nha-trang-laundry-worker:local
+    .
+  - docker build --file apps/public-agent-tools/Dockerfile --tag nha-trang-laundry-agent-tools:local
+    .
   - uv run python scripts/check_context_drift.py
   required_evidence:
   - reproducible_image_builds
@@ -684,10 +689,11 @@ items:
   - duplicate_send_reconciliation
   - rollback_assessment
   blocked_by_decisions: []
-  blocking_condition: Requires an operator-provisioned encrypted off-host PostgreSQL recovery repository
-    in a separate failure domain and a reviewed restore drill demonstrating a recovery point no older
-    than 15 minutes, restoration within 4 hours, object evidence access, quote/audit integrity, and duplicate-send
-    reconciliation. Local configuration and synthetic data cannot satisfy this external evidence requirement.
+  blocking_condition: Requires an operator-provisioned encrypted off-host PostgreSQL
+    recovery repository in a separate failure domain and a reviewed restore drill
+    demonstrating a recovery point no older than 15 minutes, restoration within 4
+    hours, object evidence access, quote/audit integrity, and duplicate-send reconciliation.
+    Local configuration and synthetic data cannot satisfy this external evidence requirement.
 - id: SECURITY-001
   phase: REAL_SHADOW_READINESS
   title: Identity, privacy, PITR, incident, kill-switch, and release-readiness gates
@@ -900,13 +906,15 @@ items:
   - regression_suite
   - rollback_assessment
   blocked_by_decisions: []
-  blocking_condition: 'The current latest stable openclaw 2026.7.1-2 package embeds a nested npm shrinkwrap
-    containing brace-expansion 5.0.7 and fast-uri 3.1.2, which now have two high-severity advisories.
-    Root patch-level overrides were proven ineffective because the embedded shrinkwrap retains those versions.
-    Completion requires a reviewed upstream OpenClaw release or separately reviewed immutable runtime
-    repackaging; high findings cannot be waived or relabeled. FROZEN by ADR-0004 on 2026-08-12: this item
-    is immutable blocked history. It is not completed, rewritten, unblocked or deleted, and no further
-    engineering effort is spent on it. G1 agent evidence is carried by AGENT-002 instead.'
+  blocking_condition: 'The current latest stable openclaw 2026.7.1-2 package embeds
+    a nested npm shrinkwrap containing brace-expansion 5.0.7 and fast-uri 3.1.2, which
+    now have two high-severity advisories. Root patch-level overrides were proven
+    ineffective because the embedded shrinkwrap retains those versions. Completion
+    requires a reviewed upstream OpenClaw release or separately reviewed immutable
+    runtime repackaging; high findings cannot be waived or relabeled. FROZEN by ADR-0004
+    on 2026-08-12: this item is immutable blocked history. It is not completed, rewritten,
+    unblocked or deleted, and no further engineering effort is spent on it. G1 agent
+    evidence is carried by AGENT-002 instead.'
 - id: RUNTIME-EVIDENCE-001
   phase: PRODUCTION_HARDENING
   title: Explicit fail-closed evidence for blocked pinned-runtime verification
@@ -967,8 +975,8 @@ items:
   task_packet: context/tasks/TASK-runtime-evidence-portability-001.md
   acceptance_checks:
   - uv run pytest packages/evals/tests/test_runtime_verifier.py packages/evals/tests/test_local_agent_evidence.py
-    packages/contracts/tests/test_runtime_registry.py packages/evals/tests/test_context_harness.py packages/evals/tests/test_delivery_loop.py
-    packages/evals/tests/test_delivery_state.py
+    packages/contracts/tests/test_runtime_registry.py packages/evals/tests/test_context_harness.py
+    packages/evals/tests/test_delivery_loop.py packages/evals/tests/test_delivery_state.py
   - uv run pytest --require-postgres-integration
   - uv run ruff check .
   - uv run ruff format --check .
@@ -1064,15 +1072,18 @@ items:
   - regression_suite
   - disabled_authority_and_rollback
   blocked_by_decisions: []
-  blocking_condition: 'Phase B1 local-only least-privilege Windows/Linux r2 build, typed metadata, byte-comparison,
-    compared-byte OCI binding, and final evidence workflow preparation passed all local checks with no
-    required skips. Completion remains blocked pending independent Security/Supply-chain review; authorization
-    to create the exact commit and push the dedicated branch; authorization to run the reviewed hosted
-    workflow; hosted Windows/Linux byte-identity evidence; and exact r2 OCI CycloneDX SBOM, SLSA v1 provenance,
-    and zero-HIGH/CRITICAL scan evidence. No commit, push, hosted run, credential, provider/customer data,
-    release, deployment, or capability authorization occurred. FROZEN by ADR-0004 on 2026-08-12: this
-    item is immutable blocked history. It is not completed, rewritten, unblocked or deleted, and no further
-    engineering effort is spent on it. G1 agent evidence is carried by AGENT-002 instead.'
+  blocking_condition: 'Phase B1 local-only least-privilege Windows/Linux r2 build,
+    typed metadata, byte-comparison, compared-byte OCI binding, and final evidence
+    workflow preparation passed all local checks with no required skips. Completion
+    remains blocked pending independent Security/Supply-chain review; authorization
+    to create the exact commit and push the dedicated branch; authorization to run
+    the reviewed hosted workflow; hosted Windows/Linux byte-identity evidence; and
+    exact r2 OCI CycloneDX SBOM, SLSA v1 provenance, and zero-HIGH/CRITICAL scan evidence.
+    No commit, push, hosted run, credential, provider/customer data, release, deployment,
+    or capability authorization occurred. FROZEN by ADR-0004 on 2026-08-12: this item
+    is immutable blocked history. It is not completed, rewritten, unblocked or deleted,
+    and no further engineering effort is spent on it. G1 agent evidence is carried
+    by AGENT-002 instead.'
 - id: RESPONSES-RUNTIME-001
   phase: AGENT_SHADOW
   title: Minimum bounded custom Responses adapter behind ConstrainedAgentRuntime
@@ -1254,10 +1265,11 @@ items:
   - dec_006_decision_record
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-provider-access-001.md
-  blocking_condition: Requires a dedicated non-personal provider service credential and the Security/Privacy
-    owner's DEC-006 decision covering training, retention, region, deletion, subprocessors and incident
-    terms. A coding agent may not create a provider organization, accept provider terms, hold or verify
-    a credential, or resolve DEC-006. No provider call was made and no credential exists in this repository.
+  blocking_condition: Requires a dedicated non-personal provider service credential
+    and the Security/Privacy owner's DEC-006 decision covering training, retention,
+    region, deletion, subprocessors and incident terms. A coding agent may not create
+    a provider organization, accept provider terms, hold or verify a credential, or
+    resolve DEC-006. No provider call was made and no credential exists in this repository.
     Unblocks PROVIDER-TRANSPORT-001, then MODEL-PIN-001 and AGENT-002.
 - id: SHOP-INSTRUMENT-001
   phase: REAL_SHADOW_READINESS
@@ -1284,12 +1296,13 @@ items:
   - item_count_handoff_checklist
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-shop-instrument-001.md
-  blocking_condition: 'Requires four to six weeks of measurement in the physical shop: ten timed wash
-    and dry loads, twenty delivery logs with distance and true cost, a measured cost per kilogram, owner-confirmed
-    safe capacity per machine, and an item-count handoff checklist in use by staff. These are observations
-    of real operations that cannot be simulated, estimated or back-filled without violating the business_truth
-    prohibition on committing to CAN DO and CAN CHOT fields. Without the baseline, SHADOW-001 has no valid
-    denominator.'
+  blocking_condition: 'Requires four to six weeks of measurement in the physical shop:
+    ten timed wash and dry loads, twenty delivery logs with distance and true cost,
+    a measured cost per kilogram, owner-confirmed safe capacity per machine, and an
+    item-count handoff checklist in use by staff. These are observations of real operations
+    that cannot be simulated, estimated or back-filled without violating the business_truth
+    prohibition on committing to CAN DO and CAN CHOT fields. Without the baseline,
+    SHADOW-001 has no valid denominator.'
 - id: DECISION-BUSINESS-001
   phase: REAL_SHADOW_READINESS
   title: Owner decision session closing DEC-001 through DEC-004
@@ -1316,12 +1329,14 @@ items:
   - versioned_configuration_publication
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-decision-business-001.md
-  blocking_condition: Requires the business owner to close DEC-001 weight precision and rounding, DEC-002
-    the definitive promotion eligibility event, DEC-003 delivery pricing beyond six kilometres and one-leg
-    delivery, and DEC-004 rewash, loss, damage, compensation and credit, and to publish each as versioned
-    configuration. An agent may not resolve a business policy decision or infer one from a draft document;
-    CUSTOMER_SERVICE_POLICY_DRAFT.md and DELIVERY_POLICY_DRAFT.md remain drafts. All four currently fail
-    closed correctly. DEC-003 should follow the twenty delivery logs from SHOP-INSTRUMENT-001.
+  blocking_condition: Requires the business owner to close DEC-001 weight precision
+    and rounding, DEC-002 the definitive promotion eligibility event, DEC-003 delivery
+    pricing beyond six kilometres and one-leg delivery, and DEC-004 rewash, loss,
+    damage, compensation and credit, and to publish each as versioned configuration.
+    An agent may not resolve a business policy decision or infer one from a draft
+    document; CUSTOMER_SERVICE_POLICY_DRAFT.md and DELIVERY_POLICY_DRAFT.md remain
+    drafts. All four currently fail closed correctly. DEC-003 should follow the twenty
+    delivery logs from SHOP-INSTRUMENT-001.
 - id: CHANNEL-ZALO-APPLY-001
   phase: PUBLIC_ASSISTED
   title: Official Zalo OA registration and business verification
@@ -1344,11 +1359,12 @@ items:
   - dec_005_decision_record
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-channel-zalo-apply-001.md
-  blocking_condition: Requires official Zalo Official Account business verification in the business's
-    own name, a provisioned API tier with its messaging-window rules recorded, separation from any personal
-    Zalo account, and the owner's DEC-005 decision record. Verification is an external process taking
-    two to eight weeks that no engineering work shortens. An agent may not register a business identity,
-    accept provider terms or hold the resulting credential.
+  blocking_condition: Requires official Zalo Official Account business verification
+    in the business's own name, a provisioned API tier with its messaging-window rules
+    recorded, separation from any personal Zalo account, and the owner's DEC-005 decision
+    record. Verification is an external process taking two to eight weeks that no
+    engineering work shortens. An agent may not register a business identity, accept
+    provider terms or hold the resulting credential.
 - id: CHANNEL-ENVELOPE-001
   phase: PRODUCTION_HARDENING
   title: Canonical inbound envelope and outbound receipt wired to inbox/outbox
@@ -1442,12 +1458,14 @@ items:
   - no_raw_pii_fixture
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-corpus-consent-001.md
-  blocking_condition: Requires a lawful basis or consent for using existing customer message history as
-    evaluation material, a reviewed identifier-substitution method that preserves linguistic shape, a
-    mapping table stored outside the repository with a named custodian, and human review of free text.
-    Establishing a lawful basis and reviewing personal data are owner and legal responsibilities; an agent
-    may not assert a basis, nor decide that a substitution is adequate for real people's messages. Blocks
-    EVAL-LANGUAGE-CORPUS-001, which carries 300 of the manifest's 1,300 required cases.
+  blocking_condition: Requires a lawful basis or consent for using existing customer
+    message history as evaluation material, a reviewed identifier-substitution method
+    that preserves linguistic shape, a mapping table stored outside the repository
+    with a named custodian, and human review of free text. Establishing a lawful basis
+    and reviewing personal data are owner and legal responsibilities; an agent may
+    not assert a basis, nor decide that a substitution is adequate for real people's
+    messages. Blocks EVAL-LANGUAGE-CORPUS-001, which carries 300 of the manifest's
+    1,300 required cases.
 - id: CHANNEL-TELEGRAM-001
   phase: PRODUCTION_HARDENING
   title: Telegram sandbox adapter proving the channel contract end to end
@@ -1473,12 +1491,13 @@ items:
   - rollback_assessment
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-channel-telegram-001.md
-  blocking_condition: Requires a Telegram Bot API token and a reachable sandbox endpoint. The item's completion
-    condition is the full inbound and outbound path running against the real Bot API; a scripted-transport
-    substitute would not satisfy it and recording one as if it did would be the substitution AGENTS.md
-    forbids. An agent may not create a bot identity, hold a channel credential, or expose a public webhook
-    endpoint. The canonical contract this adapter maps into is complete and tested, so the work is unblocked
-    the moment a sandbox token and endpoint exist.
+  blocking_condition: Requires a Telegram Bot API token and a reachable sandbox endpoint.
+    The item's completion condition is the full inbound and outbound path running
+    against the real Bot API; a scripted-transport substitute would not satisfy it
+    and recording one as if it did would be the substitution AGENTS.md forbids. An
+    agent may not create a bot identity, hold a channel credential, or expose a public
+    webhook endpoint. The canonical contract this adapter maps into is complete and
+    tested, so the work is unblocked the moment a sandbox token and endpoint exist.
 - id: CONSENT-STOP-001
   phase: PRODUCTION_HARDENING
   title: Consent capture, STOP suppression, and opt-out versus in-flight send race
@@ -1562,16 +1581,19 @@ items:
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-model-route-001.md
   blocking_condition: Two blockers, neither of them engineering. First, runtime/model-registry-v1.yaml
-    is one of the 21 files hash-pinned by evidence/agent-shadow/local-synthetic-suite-v1.json, so the
-    registry cannot change until EVIDENCE-REPIN-001 is decided; hand-editing the bundle to match would
-    be a fabricated attestation and ADR-0004 freezes that history. Second, docs/adr/0008-inference-topology-and-multimodal-scope.md
-    is proposed rather than accepted, and its model-role decomposition question is owned by PRODUCT_ENGINEERING_OWNER.
-    If that decision is one model per turn, this item closes as not-required rather than being built speculatively.
-    Building a route before either is settled produces a schema nothing may use. Update 2026-08-13 — the
-    first blocker is lifted. EVIDENCE-REPIN-001 re-derived the bundle, the current one is evidence/agent-shadow/local-synthetic-suite-v2.json,
-    and a pinned file now changes by re-deriving it while retaining the superseded bundle — see evidence/agent-shadow/bundle-index-v1.yaml.
-    The registry may therefore change. Only the second blocker remains, and it is the one that decides
-    whether this item exists at all.
+    is one of the 21 files hash-pinned by evidence/agent-shadow/local-synthetic-suite-v1.json,
+    so the registry cannot change until EVIDENCE-REPIN-001 is decided; hand-editing
+    the bundle to match would be a fabricated attestation and ADR-0004 freezes that
+    history. Second, docs/adr/0008-inference-topology-and-multimodal-scope.md is proposed
+    rather than accepted, and its model-role decomposition question is owned by PRODUCT_ENGINEERING_OWNER.
+    If that decision is one model per turn, this item closes as not-required rather
+    than being built speculatively. Building a route before either is settled produces
+    a schema nothing may use. Update 2026-08-13 — the first blocker is lifted. EVIDENCE-REPIN-001
+    re-derived the bundle, the current one is evidence/agent-shadow/local-synthetic-suite-v2.json,
+    and a pinned file now changes by re-deriving it while retaining the superseded
+    bundle — see evidence/agent-shadow/bundle-index-v1.yaml. The registry may therefore
+    change. Only the second blocker remains, and it is the one that decides whether
+    this item exists at all.
 - id: MULTIMODAL-PERCEPTION-001
   phase: AGENT_SHADOW
   title: Perception tier that emits observations and never conclusions
@@ -1607,15 +1629,17 @@ items:
   blocked_by_decisions:
   - DEC-006
   task_packet: context/tasks/TASK-multimodal-perception-001.md
-  blocking_condition: Three open decisions and one absent corpus. DEC-009 asks whether customer-supplied
-    media may be fetched from a channel provider and submitted to an inference endpoint at all; its fail-closed
-    default is NOT_SUPPORTED and no byte may be fetched while it is OPEN. DEC-006 keeps every model path
-    NOT_SUPPORTED. DEC-008 has no retention schedule, and RETENTION-001 already established that 5 of
-    9 existing classes cannot be purged at all, so a media class landing in a ledger-backed table would
-    be undeletable by construction. Separately, the task-completion eval this item requires needs real
-    intake slips in real handwriting under a consent basis, which is CORPUS-CONSENT-001; synthetic handwriting
-    would measure the fixture author rather than the workload, and no public benchmark covers Vietnamese
-    diacritics on paper.
+  blocking_condition: Three open decisions and one absent corpus. DEC-009 asks whether
+    customer-supplied media may be fetched from a channel provider and submitted to
+    an inference endpoint at all; its fail-closed default is NOT_SUPPORTED and no
+    byte may be fetched while it is OPEN. DEC-006 keeps every model path NOT_SUPPORTED.
+    DEC-008 has no retention schedule, and RETENTION-001 already established that
+    5 of 9 existing classes cannot be purged at all, so a media class landing in a
+    ledger-backed table would be undeletable by construction. Separately, the task-completion
+    eval this item requires needs real intake slips in real handwriting under a consent
+    basis, which is CORPUS-CONSENT-001; synthetic handwriting would measure the fixture
+    author rather than the workload, and no public benchmark covers Vietnamese diacritics
+    on paper.
 - id: EVAL-CORPUS-001
   phase: AGENT_SHADOW
   title: Frozen Vietnamese regression corpus raised toward the manifest minimum
@@ -1667,12 +1691,13 @@ items:
   - rollback_assessment
   blocked_by_decisions: []
   task_packet: context/tasks/TASK-deploy-target-001.md
-  blocking_condition: 'Selectable now that DECISION-HOSTING-001 is complete, but it needs a provisioned
-    host and its evidence is G2-shaped rather than R1-shaped: external_port_scan_single_path and agent_cell_isolation_proven_by_attempt
-    both describe a topology with public webhook ingress and a Zone A agent cell, neither of which R1
-    has. The R1 half of this work is already recorded under SHOP-DEPLOY-001, SHOP-IDENTITY-001, SHOP-OBSERVABILITY-001
-    and SHOP-RECOVERY-001; what is left here belongs with the second host, at G2, alongside the ingress
-    it exists to isolate.'
+  blocking_condition: 'Selectable now that DECISION-HOSTING-001 is complete, but it
+    needs a provisioned host and its evidence is G2-shaped rather than R1-shaped:
+    external_port_scan_single_path and agent_cell_isolation_proven_by_attempt both
+    describe a topology with public webhook ingress and a Zone A agent cell, neither
+    of which R1 has. The R1 half of this work is already recorded under SHOP-DEPLOY-001,
+    SHOP-IDENTITY-001, SHOP-OBSERVABILITY-001 and SHOP-RECOVERY-001; what is left
+    here belongs with the second host, at G2, alongside the ingress it exists to isolate.'
 - id: MONITORING-001
   phase: PRODUCTION_HARDENING
   title: Telemetry collector, retention, and paging alert contracts
@@ -1724,19 +1749,22 @@ items:
   - rotation_and_revocation_exercised
   - rollback_assessment
   blocked_by_decisions: []
-  blocking_condition: 'The v2 verifier is written and passing in isolation: schema selection by version,
-    OWNER actor distinctness decided independently of signoff order, cooling-off computed from timestamps
-    with the declared value cross-checked, external review required and hash-verified, eleven rejection
-    paths, v1 behaviour and error messages unchanged. It is parked on branch spike/signer-registry-v2-verifier
+  blocking_condition: 'The v2 verifier is written and passing in isolation: schema
+    selection by version, OWNER actor distinctness decided independently of signoff
+    order, cooling-off computed from timestamps with the declared value cross-checked,
+    external review required and hash-verified, eleven rejection paths, v1 behaviour
+    and error messages unchanged. It is parked on branch spike/signer-registry-v2-verifier
     because landing it turns the guarded suite red: evidence/agent-shadow/local-synthetic-suite-v1.json
-    hash-pins release_manifest.py, so editing the verifier invalidates recorded evidence. That bundle
-    pins 21 files including agent_runner.py, graders.py, runner.py, the eval manifest, the agent tool
-    OpenAPI and five contract schemas, making it a de facto change freeze on the core. Regenerating a
-    frozen AGENT-001 artifact is not an engineer''s call. Also still required: the owner key ceremony,
-    which no agent can perform. Update 2026-08-13: the change-freeze half is lifted. The owner decided
-    EVIDENCE-REPIN-001, so editing release_manifest.py is now landed by re-deriving the bundle in the
-    same change and retaining the superseded one; the parked verifier on spike/signer-registry-v2-verifier
-    can land. The owner key ceremony is still required and is still not an agent''s to perform.'
+    hash-pins release_manifest.py, so editing the verifier invalidates recorded evidence.
+    That bundle pins 21 files including agent_runner.py, graders.py, runner.py, the
+    eval manifest, the agent tool OpenAPI and five contract schemas, making it a de
+    facto change freeze on the core. Regenerating a frozen AGENT-001 artifact is not
+    an engineer''s call. Also still required: the owner key ceremony, which no agent
+    can perform. Update 2026-08-13: the change-freeze half is lifted. The owner decided
+    EVIDENCE-REPIN-001, so editing release_manifest.py is now landed by re-deriving
+    the bundle in the same change and retaining the superseded one; the parked verifier
+    on spike/signer-registry-v2-verifier can land. The owner key ceremony is still
+    required and is still not an agent''s to perform.'
 - id: AGENT-002
   phase: AGENT_SHADOW
   title: Custom-runtime Shadow evidence and P0 provider-backed evaluation
@@ -2177,14 +2205,17 @@ items:
   - skips_and_blockers_unchanged
   - rollback_assessment
   blocked_by_decisions: []
-  decision_record: 'Unblocked 2026-08-13 by the owner, who chose option 1 of the two written up in context/tasks/TASK-evidence-repin-001.md:
-    re-derive the local synthetic evidence bundle through scripts/capture_local_agent_evidence.py while
-    retaining the superseded file, rather than waiting for AGENT-002 to supersede it. The decision was
-    the whole blocker; re-deriving a frozen AGENT-001 artifact is not a call an engineer makes alone,
-    which is why this item sat BLOCKED with depends_on: [] and no engineering dependency. ADR-0004 still
-    stands: re-deriving this evidence artifact is not resuming AGENT-001, no capability, decision or release
-    state moves, hand-editing hashes remains a fabricated attestation, and every SKIP stays a SKIP. Rollback
-    is restoring the superseded bundle as current, which re-freezes the core and loses nothing.'
+  decision_record: 'Unblocked 2026-08-13 by the owner, who chose option 1 of the two
+    written up in context/tasks/TASK-evidence-repin-001.md: re-derive the local synthetic
+    evidence bundle through scripts/capture_local_agent_evidence.py while retaining
+    the superseded file, rather than waiting for AGENT-002 to supersede it. The decision
+    was the whole blocker; re-deriving a frozen AGENT-001 artifact is not a call an
+    engineer makes alone, which is why this item sat BLOCKED with depends_on: [] and
+    no engineering dependency. ADR-0004 still stands: re-deriving this evidence artifact
+    is not resuming AGENT-001, no capability, decision or release state moves, hand-editing
+    hashes remains a fabricated attestation, and every SKIP stays a SKIP. Rollback
+    is restoring the superseded bundle as current, which re-freezes the core and loses
+    nothing.'
 - id: RETENTION-STORE-001
   phase: PRODUCTION_HARDENING
   title: Separate disposable payload from the append-only ledger
@@ -2616,7 +2647,8 @@ items:
   blocked_by_decisions: []
 - id: ASSISTANT-001
   phase: OPERATIONS_CONTROL
-  title: Owner-directed internal assistant with deterministic brain and append-only transcript
+  title: Owner-directed internal assistant with deterministic brain and append-only
+    transcript
   status: COMPLETE
   priority: 234
   depends_on:
@@ -2634,7 +2666,8 @@ items:
   contracts:
   - specs/contracts/canonical-enums-v1.json
   acceptance_checks:
-  - uv run pytest apps/api/tests/test_assistant.py apps/api/tests/test_assistant_brain.py apps/api/tests/test_assistant_postgres.py
+  - uv run pytest apps/api/tests/test_assistant.py apps/api/tests/test_assistant_brain.py
+    apps/api/tests/test_assistant_postgres.py
   - uv run pytest --require-postgres-integration
   - uv run ruff check .
   - uv run ruff format --check .
@@ -2711,7 +2744,8 @@ items:
   blocked_by_decisions: []
 - id: DISCLOSURE-BIND-002
   phase: PRODUCTION_HARDENING
-  title: Correct the vacuous bindings and false completeness claim in the disclosure registry
+  title: Correct the vacuous bindings and false completeness claim in the disclosure
+    registry
   status: COMPLETE
   priority: 237
   depends_on:
@@ -3123,7 +3157,8 @@ items:
   blocked_by_decisions: []
 - id: BOUNDS-AND-TRUTH-001
   phase: PRODUCTION_HARDENING
-  title: A number too large is a refusal, and the settlement panel says what the server does
+  title: A number too large is a refusal, and the settlement panel says what the server
+    does
   status: COMPLETE
   priority: 251
   depends_on:
@@ -3398,13 +3433,14 @@ items:
   - one_real_transaction_at_the_counter
   - rollback_assessment
   blocked_by_decisions: []
-  blocking_condition: 'Needs a provisioned host, which DECISION-HOSTING-001 has not selected. Everything
-    buildable without one is done: the topology, the identity provider, the observability checks, the
-    archiving, and the order-exit rules DEC-024 settled. What remains is physical -- a machine, a TLS
-    certificate from a private CA installed and trusted on every tablet, DNS for the console name, an
-    off-host archive repository in a separate failure domain, the age key pair generated on the owner''s
-    own device, and a timed restore drill. An agent may not select a vendor, accept commercial terms,
-    hold the backup identity, or run a deployment.'
+  blocking_condition: 'Needs a provisioned host, which DECISION-HOSTING-001 has not
+    selected. Everything buildable without one is done: the topology, the identity
+    provider, the observability checks, the archiving, and the order-exit rules DEC-024
+    settled. What remains is physical -- a machine, a TLS certificate from a private
+    CA installed and trusted on every tablet, DNS for the console name, an off-host
+    archive repository in a separate failure domain, the age key pair generated on
+    the owner''s own device, and a timed restore drill. An agent may not select a
+    vendor, accept commercial terms, hold the backup identity, or run a deployment.'
 - id: SHOP-PILOT-001
   phase: PRODUCTION_HARDENING
   title: The shop's own machine runs the week before the cloud bill starts
@@ -3437,7 +3473,8 @@ items:
   blocked_by_decisions: []
 - id: SHOP-FIRST-START-001
   phase: PRODUCTION_HARDENING
-  title: The first time the stack was actually started, and the four defects that found
+  title: The first time the stack was actually started, and the four defects that
+    found
   status: COMPLETE
   priority: 263
   depends_on:
@@ -3950,8 +3987,9 @@ items:
   blocked_by_decisions: []
 - id: RANGE-PRICE-001
   phase: PRODUCTION_HARDENING
-  title: Let a staff member close a published price band so the other twenty services can be sold
-  status: PENDING
+  title: Let a staff member close a published price band so the other twenty services
+    can be sold
+  status: COMPLETE
   priority: 281
   depends_on:
   - QUOTE-ACCEPT-001
@@ -3985,8 +4023,9 @@ items:
   blocked_by_decisions: []
 - id: REMEDY-001
   phase: PRODUCTION_HARDENING
-  title: DEC-004 expressed as configuration, and a surface that lets an incident reach an outcome
-  status: PENDING
+  title: DEC-004 expressed as configuration, and a surface that lets an incident reach
+    an outcome
+  status: COMPLETE
   priority: 282
   depends_on:
   - INCIDENT-INTAKE-001
@@ -4016,7 +4055,7 @@ items:
 - id: PROMO-WIRING-001
   phase: PRODUCTION_HARDENING
   title: Publish promotion policy as configuration and evaluate it in the quote path
-  status: PENDING
+  status: COMPLETE
   priority: 283
   depends_on:
   - RANGE-PRICE-001
@@ -4043,8 +4082,9 @@ items:
   blocked_by_decisions: []
 - id: OPS-BOARD-001
   phase: PRODUCTION_HARDENING
-  title: 'The shop day as versioned deterministic queries: SLA board, summary, and owner-approved export'
-  status: PENDING
+  title: 'The shop day as versioned deterministic queries: SLA board, summary, and
+    owner-approved export'
+  status: COMPLETE
   priority: 284
   depends_on:
   - SETTLEMENT-001
@@ -4066,5 +4106,37 @@ items:
   - takings_gate_matches_dec_014_against_a_real_api
   - export_requires_an_owner_approval
   - export_carries_no_incident_free_text
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: RANGE-APPROVAL-VISIBILITY-001
+  phase: PRODUCTION_HARDENING
+  title: The owner approving a range price can see the amount they are approving
+  status: COMPLETE
+  priority: 285
+  depends_on:
+  - RANGE-PRICE-001
+  context_domains:
+  - pricing
+  - orders_audit
+  - platform
+  normative_sources:
+  - specs/DOMAIN_DATA_API_SPEC_V1.md
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  - docs/DECISION_REQUEST_RANGE_PRICE_AUTHORITY_2026-09.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-range-price-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - approver_sees_the_amount_before_the_control
+  - display_copy_never_becomes_the_authority
+  - the_queue_gate_is_on_the_action_not_the_type
+  - bound_revision_is_the_one_displayed
   - rollback_assessment
   blocked_by_decisions: []

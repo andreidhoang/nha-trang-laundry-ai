@@ -1,0 +1,105 @@
+schema_version: 1
+work_item: PROMO-WIRING-001
+recorded_at: '2026-09-22T18:34:00+07:00'
+requirement_contract: >-
+  `context/tasks/TASK-promo-wiring-001.md` requires that promotion policy become published versioned
+  configuration, be evaluated in the quote path, and let the shop run a programme without a code
+  deploy.
+
+  The defect: `packages/domain/.../promotion.py` was a complete, careful, tested engine with **zero
+  production call sites** — every import outside its own tests was the eval corpus or the package
+  `__init__`. `quote_composition.py` stamped `PROMOTION_NOT_EVALUATED` on every revision ever
+  composed, and `CURRENT_PROMOTION` carried the comment "DEC-002 remains open", which stopped being
+  true on 2026-08-18. The `eligibility_event=None` that comment justified made every evaluation
+  return `PROVISIONAL`/`REQUIRE_HUMAN` forever.
+rollback_impact: >-
+  No migration. `PROMOTION_POLICY` publishes through the existing `configuration_versions` table
+  (`0002`) and the discount lands in `quote_revisions` columns that already existed.
+
+  Reverting returns every quote to `PROMOTION_NOT_EVALUATED` and makes a published programme inert.
+  Revisions already composed carrying a frozen `PROMOTION` trace remain readable and their money
+  does not change — the trace is inside the immutable canonical document. An order already accepted
+  under a discount keeps that discount; nothing recomputes it.
+
+  The console half and the server half must revert together, or staff meet reason codes with no
+  Vietnamese gloss.
+unresolved_assumptions: >-
+  **Who wins when a remedy credit meets a non-stacking promotion is not decided.** The engine
+  answers `REQUIRE_HUMAN` and this item does not overrule it: the redemption refuses before anything
+  is burnt and tells the counter the credit is untouched and still good.
+  `docs/DECISION_REQUEST_CREDIT_VS_PROMOTION_2026-09.md` puts it to the owner as proposed `DEC-030`,
+  and records the answer that was tried and withdrawn.
+
+  Today's honest answer is zero discount. The only confirmed programme ran 17 Jul – 1 Sep 2026
+  exclusive and has expired, so a quote priced now carries `PROMOTION_OUTSIDE_INTERVAL` and the
+  console renders the end date. That is a different statement from the old
+  `PROMOTION_NOT_EVALUATED`, and the difference is the whole value of the item.
+
+  A `HUMAN_CONFIRM`-targeted line gets no discount rather than an approval demand. Nothing in this
+  system can discharge an `ApplyPromotion` envelope, so raising one made every such service
+  unsellable for a programme's life.
+evidence:
+  promotion_policy_is_published_configuration_not_a_constant: >-
+    `templates/promotion-policy-dec-002.json` is published through `ConfigurationRepository` under
+    `config_type = 'PROMOTION_POLICY'` with a registered validator by
+    `scripts/publish_promotion_policy.py`. `packages/db/tests/test_promotions.py` proves fail-closed
+    with nothing published, publish-once idempotency on digest, eight malformed-document refusals at
+    publication, and the packet's own "done when": an owner publishes a document and the next quote
+    priced at the counter carries the discount, with no code change. `CURRENT_PROMOTION` survives
+    only as an eval fixture with a docstring saying so; its false comment is corrected.
+  quote_discount_is_frozen_into_the_immutable_revision: >-
+    The evaluated `PromotionResult` — policy code, rate, allocation trace and resulting total — is
+    frozen into the revision's canonical document, and a test re-derives the discount from the stored
+    trace and reproduces it exactly.
+  acceptance_refuses_when_the_discount_moved: >-
+    Acceptance re-evaluates with the real `accepted_at` and refuses `PROMOTION_CHANGED_SINCE_QUOTE`
+    if the number differs by even 1 ₫, because `DEC-021` says the customer agreed to a price that was
+    read aloud. Covered against PostgreSQL both ways: a programme published between quote and
+    handshake refuses, and a republished programme refuses on version identity before any arithmetic.
+    `close_range_prices` refuses `PROMOTION_PUBLISHED_SINCE_APPROVAL` for a programme published after
+    the owner signed a band, because the `SET_RANGE_PRICE` envelope is a point-in-time authorisation
+    and applying a later programme would change what it costs while its bound hash still matched.
+  expired_program_is_named_rather_than_shown_as_zero: >-
+    A quote priced against the shipped programme carries `PROMOTION_OUTSIDE_INTERVAL`, the API serves
+    the interval bounds, and `#/quotes` renders a "Chương trình khuyến mãi" row naming the policy
+    code, the discount and both bounds, stating that the end bound is exclusive. `null` renders `—`,
+    never `0 ₫`. Asserted in the browser run.
+  promotion_not_evaluated_is_gone: >-
+    Removed from `BASE_REASON_CODES`, from `ACCEPTANCE_REFUSALS`, from every Python path and from the
+    console vocabulary. A quote now carries `PROMOTION_NOT_PUBLISHED` when nobody has published a
+    programme — a different and true statement. A test asserts the retired code can no longer be
+    emitted or rendered, and a second asserts `REASON_NOTE` glosses only codes a server can send.
+  rollback_assessment: See `rollback_impact`.
+checks:
+  - command: uv run ruff check .
+    status: PASSED
+    result: All checks passed!
+  - command: uv run ruff format --check .
+    status: PASSED
+    result: 566 files already formatted
+  - command: uv run mypy apps packages
+    status: PASSED
+    result: 'Success: no issues found in 249 source files'
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED
+    result: 57 served internal API operations; 348 staff-console disclosures
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED
+    result: 137 source references, 28 decisions, 131 work items
+  - command: uv run pytest --require-postgres-integration
+    status: PASSED
+    result: 1574 passed, 4 skipped in 433.24s
+supplementary_checks:
+  - command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_console_interaction.py
+    status: PASSED
+    result: 170 passed, 0 failed
+  - command: adversarial review, four passes
+    status: RECORDED
+    result: >-
+      This item was merged once before its verifiers finished and they then found real defects. Four
+      fix passes followed, and three of the wrong turns were the lead's own. Each created an
+      obligation nothing could discharge, one layer deeper: an `APPLY_PROMOTION` envelope no route
+      accepts; a sale refused after the one-shot credit was already burnt; a bill that rose 25.000 ₫
+      because a customer spent a credit. The common cause was resolving a question the engine had
+      already correctly refused to resolve. `PROMOTION_STACKING_REQUIRES_HUMAN` was never a gap to
+      fill. The final pass stops deciding and asks the owner.

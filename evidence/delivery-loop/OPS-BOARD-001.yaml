@@ -1,0 +1,112 @@
+schema_version: 1
+work_item: OPS-BOARD-001
+recorded_at: '2026-09-22T18:36:00+07:00'
+requirement_contract: >-
+  `context/tasks/TASK-ops-board-001.md` requires that every open order be visible against its SLA
+  deadline, that the day be summarised, and that the owner be able to export the shop's own records —
+  each figure produced by a named, versioned deterministic query under invariant 18.
+
+  The packet carries a scoping correction made before any code was written. A first reading said no
+  SLA board exists. That is false: `ShadowConsoleRepository.sla_risk_board` already selected
+  in-production, non-cancelled orders and evaluated each through `evaluate_production_sla`. Building
+  on the first reading would have produced a second, divergent SLA engine and re-introduced the bug
+  migration `0037` already paid for once — a washed order waiting overnight for its owner accruing
+  elapsed time until it read `SLA_BREACHED`, with `SLA_MET` unreachable.
+
+  What was genuinely missing was a surface a person can work from. The board's only reachable path
+  was `#/assistant`, which answers with two counts; a count does not say which order, how long is
+  left, or what to do first.
+rollback_impact: >-
+  Migration `0044` adds two tables and one partial index and alters no existing column, so leaving
+  the schema applied under a code revert is safe.
+
+  **The revert unit is the commit, not a file.** `approvals.py` gained `EXPORT_REQUEST` in
+  `_RESOLVABLE_RESOURCES`, which queries `export_requests`; reverting `0044` without that hunk leaves
+  the approvals path querying a table that does not exist. This was observed for real: a concurrent
+  agent's commit swept that hunk onto a branch without the migration, and a verifier caught it.
+
+  Reverting the board and day summary loses read surfaces only; no write path depends on them.
+  Reverting the export loses the capability and orphans any `export_requests` row already approved —
+  `data_exports` is append-only and records what was released, so the audit trail survives.
+unresolved_assumptions: >-
+  **The board orders by acceptance time, not by urgency, and says so.** An earlier pass claimed
+  time-remaining order and called it "a property rather than a coincidence". It is not: under a
+  COMMITMENT policy the mark is one fixed offset from acceptance, so oldest-first is
+  least-time-remaining-first only while every clock is running, and `0037`'s whole point is that a
+  `READY_AT_STORE` order's clock stopped. Ordering by remaining time would put a second copy of the
+  clock-stop rule in SQL and depend on the evaluation instant, so the index could serve neither the
+  sort nor the keyset. The docstring, route, OpenAPI summary and the screen's Vietnamese lede all now
+  claim acceptance order and tell staff to read each row's mark.
+
+  Per-order SLA policy remains an unresolved business decision. `SLA_POLICY` is one stated rule and
+  the board says so in the same Vietnamese sentence `#/assistant` uses, extracted to one function so
+  the two cannot drift. `GUIDANCE_DOES_NOT_CREATE_BREACH` exists because guidance is not a promise.
+
+  The export and the `#/today` takings box use two definitions of the shop's day for the same
+  Vietnamese money term. They are not aligned — a dataset named `STORE_DAY_ORDERS_V1` is the day's
+  orders by definition, and re-cutting it on payment would make it a different dataset under the same
+  name — so the difference is named on both surfaces and hashed into what the owner signs.
+evidence:
+  every_figure_carries_a_pinned_query_version: >-
+    `query_version.py` binds a published identifier to a digest of the rule text.
+    `sla_board_query_version(policy)` hashes the SQL, the structure of the whole
+    `nha_trang_laundry_domain.sla` module via `ast.dump` with docstrings stripped, and the policy's
+    identity. Reformatting or rewording an explanation does not move a digest; changing a constant,
+    predicate or branch does, and a test proves both directions. Four figures carry a version — board,
+    day counts, takings, export — and each identifier and digest is pinned.
+  board_holds_up_against_a_year_of_orders: >-
+    Keyset pagination on `(production_accepted_at, id)` with a partial index
+    (`orders_sla_board_idx`) whose predicate matches the board query word for word. A limit outside
+    1..200 is refused rather than clamped. Measured against a populated table rather than asserted.
+  takings_gate_matches_dec_014_against_a_real_api: >-
+    The `DEC-014` role set — `OWNER_ADMIN`, `OPS_APPROVER`, `OPERATOR` — is untouched and tested
+    against the real API in both directions. The wording rules hold: **tiền đã thu**, never *doanh
+    thu*, never *lợi nhuận*.
+  export_requires_an_owner_approval: >-
+    `EXPORT_SANITIZED_DATA` → `_OWNER_FINANCIAL` → `EXPORT_REQUEST`, used unchanged;
+    `APPROVAL_POLICIES` and `APPROVAL_RESOURCE_TYPES` have no diff. `0044` gives `EXPORT_REQUEST` a
+    real row so `_require_resolvable_resource` resolves it — previously such an envelope could name
+    any UUID with invented digests. Two defects found by review and fixed: separation of duty was
+    bound to the approval envelope's requester rather than the export request's definer, so whoever
+    chose what data leaves could approve its release; and `EXPORT_REQUEST` was missing from
+    `VIEWABLE_RESOURCES`, so the envelope could never be decided anywhere. It now binds to
+    `export_requests.requested_by_staff_id`, is re-established at release over the bytes themselves,
+    and the approval card shows the business date, column list and exclusions above the approve
+    control. Release re-derives the rendered digest from the columns in force rather than comparing
+    two stored strings.
+  export_carries_no_incident_free_text: >-
+    Asserted by searching the produced bytes for a known incident string. `EXPORT_COLUMNS` and
+    `EXPORT_EXCLUSIONS` are hashed into the document the owner approves, so widening the export
+    invalidates existing approvals. `incident_open` was removed after review: it was published as a
+    fact inside a digest-bound document and is constant `false` for every order, because nothing sets
+    it and `enforce_order_projection_update` refuses the UPDATE that would, on exactly the COMPLETED
+    and CANCELLED orders a complaint arrives against. `_cell` refuses any value a spreadsheet would
+    execute rather than prefixing an apostrophe onto the shop's own data.
+  rollback_assessment: See `rollback_impact`.
+checks:
+  - command: uv run ruff check .
+    status: PASSED
+    result: All checks passed!
+  - command: uv run ruff format --check .
+    status: PASSED
+    result: 566 files already formatted
+  - command: uv run mypy apps packages
+    status: PASSED
+    result: 'Success: no issues found in 249 source files'
+  - command: uv run python scripts/verify_contracts.py
+    status: PASSED
+    result: 57 served internal API operations; 348 staff-console disclosures
+  - command: uv run python scripts/check_context_drift.py
+    status: PASSED
+    result: 137 source references, 28 decisions, 131 work items
+  - command: uv run pytest --require-postgres-integration
+    status: PASSED
+    result: 1574 passed, 4 skipped in 433.24s
+supplementary_checks:
+  - command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_console_interaction.py
+    status: PASSED
+    result: 170 passed, 0 failed
+    note: >-
+      Against a stubbed API, not a live FastAPI process; the packet's "Done when" asks for a real
+      API and that remains unmet. The equivalent coverage that does exist is PostgreSQL-backed
+      repository and service tests.

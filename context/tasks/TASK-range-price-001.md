@@ -115,3 +115,33 @@ typing error rather than a number.
 All of the above pass, `uv run mypy apps packages` is clean, `verify_contracts.py` and
 `check_context_drift.py` pass, and a browser run of `scripts/verify_console_interaction.py` completes
 a range-priced quote end to end against a real API.
+
+---
+
+## Follow-up: `RANGE-APPROVAL-VISIBILITY-001`
+
+Recorded 2026-09-22, after adversarial review of the shipped item.
+
+This packet made the owner's `SET_RANGE_PRICE` approval the only second-party control over the
+amount a staff member picks inside a band — and shipped without the owner being able to *see* that
+amount. The envelope held only `rendered_hash`, the proposed amounts were persisted nowhere, and the
+approvals card linked to `#/quotes`, which renders the published **band**, because the revision the
+envelope binds is the one before any price was chosen. Every sentence on that screen was true and the
+owner still could not see the number.
+
+So a staff member could agree 150.000 ₫ with the customer, propose 240.000 ₫, and the approval passed
+it through. Two independent lenses found it; it was the oldest unfixed finding in the project.
+
+The original reasoning was not wrong, only incomplete. `approvals.py` states that `rendered_hash` is a
+digest of a rendering this system does not store, and that comparing it against anything stored would
+be theatre. That is correct about **verification** and says nothing about **display**. Invariant 8
+binds an approval to exact rendered content — and for a human to approve content, they must see it.
+
+`RANGE-APPROVAL-VISIBILITY-001` stores the proposed amounts for the approver to read, keyed to the
+envelope, and leaves the application path untouched: it still re-derives the digest from the amounts
+in hand and refuses unless it equals the approved one. A test forces the immutability trigger aside,
+rewrites a stored 150.000 ₫ to 240.000 ₫, and proves applying 240.000 ₫ is still refused while
+150.000 ₫ still prices at 150.000 ₫. If the stored copy ever became the thing the hash is checked
+against, those two assertions would swap.
+
+Evidence: `evidence/delivery-loop/RANGE-APPROVAL-VISIBILITY-001.yaml`.

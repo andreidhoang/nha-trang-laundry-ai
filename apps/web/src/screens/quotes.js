@@ -1335,6 +1335,13 @@ export function render_(context) {
   // `QUOTE_REVISION` envelope. An approver arrives here to read the lines and the bands behind a
   // digest they are about to sign, so the panel it opens is a read and carries no controls.
   const openId = String(context?.query?.get("quote") || "").trim();
+  // `&revision=<n>` — which revision the approvals queue's envelope actually binds.
+  //
+  // `RANGE-APPROVAL-VISIBILITY-001`. Without it this panel opened whichever revision is newest,
+  // and an approver who arrived from a `QUOTE_REVISION` envelope could read revision 3 while
+  // signing the digest of revision 1. Optional, because a person opening a quote by hand has no
+  // envelope in mind and the newest revision is the right answer for them.
+  const openRevision = String(context?.query?.get("revision") || "").trim();
 
   /** @type {{lines: Line[], fulfillmentMode: string, verifiedDistanceM: string, manualFeeVnd: string, customerAcknowledgedFee: boolean, orderRequestId: string, quoteId: string, expectedRevision: string, rowVersion: string, requestSummary: any|null}} */
   const draft = {
@@ -1753,8 +1760,9 @@ export function render_(context) {
    * the one press the server is guaranteed to refuse.
    *
    * @param {string} id
+   * @param {string} [revision] the revision an envelope binds, when the caller arrived from one
    */
-  async function openQuote(id) {
+  async function openQuote(id, revision = "") {
     if (!UUID.test(id)) {
       render(
         openHost,
@@ -1767,10 +1775,26 @@ export function render_(context) {
       );
       return;
     }
+    // Refused rather than silently dropped. A caller that asked for a revision and got the newest
+    // one instead is the exact failure this parameter exists to prevent, so a malformed value
+    // opens nothing at all.
+    if (revision && !/^[1-9][0-9]{0,8}$/.test(revision)) {
+      render(
+        openHost,
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Số bản sửa đổi trong đường dẫn không hợp lệ"),
+          h("p", null, "Không mở bản nào, vì mở nhầm bản còn tệ hơn không mở. Kiểm lại đường dẫn."),
+        ),
+      );
+      return;
+    }
     render(openHost, skeleton(2));
     try {
       const detail = await request(
-        `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${encodeURIComponent(id)}`,
+        `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${encodeURIComponent(id)}` +
+          (revision ? `?revision=${encodeURIComponent(revision)}` : ""),
       );
       render(
         openHost,
@@ -1842,7 +1866,9 @@ export function render_(context) {
                   "lại đường dẫn. Đừng duyệt một phiếu mà bạn chưa xem được nội dung.",
               ),
             )
-          : errorNotice(/** @type {any} */ (error), { onRetry: () => void openQuote(id) }),
+          : errorNotice(/** @type {any} */ (error), {
+              onRetry: () => void openQuote(id, revision),
+            }),
       );
     }
   }
@@ -2206,7 +2232,7 @@ export function render_(context) {
   // codes and the reader needs the published names, and a panel that paints codes and then
   // relabels itself a moment later reads as two different answers to one question.
   void loadCatalog().then(() => {
-    if (openId) void openQuote(openId);
+    if (openId) void openQuote(openId, openRevision);
   });
   void loadPicker();
   void list.reload();

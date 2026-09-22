@@ -282,9 +282,31 @@ const GROUPS = [
   {
     heading: "Duyệt và phiên",
     lede:
-      "Ba mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API " +
+      "Bốn mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API " +
       "không trả về, và một bề mặt đoán bừa các trường đó sẽ là duyệt mù hoặc thao tác nhầm người.",
     entries: [
+      {
+        ref: "CONSOLE",
+        title: "Biết chắc mình đang đọc đúng phiên bản của phiếu duyệt gắn với đơn hàng",
+        what:
+          "Mở một phong bì ORDER và thấy ngay rằng đơn hàng đang hiện đúng là phiên bản mà " +
+          "phong bì niêm phong, chứ không phải một phiên bản mới hơn.",
+        // RANGE-APPROVAL-VISIBILITY-001 closed the money half of this and left the rest standing,
+        // so the entry is written for what remains rather than for what was fixed. A
+        // SET_RANGE_PRICE envelope now prints its proposed amounts on the card, and the quote
+        // link carries &revision=<n> so the panel opens the bound revision. The ORDER link does
+        // not: #/orders/:id shows the order as it is now.
+        missing:
+          "Đường dẫn tới đơn hàng không mang theo số phiên bản, và màn hình đơn hàng luôn hiện " +
+          "trạng thái mới nhất. Thẻ phiếu in “Phiên bản v…” còn màn hình đơn hàng in “Phiên bản " +
+          "dòng v…”, nên người duyệt phải tự so hai con số bằng mắt; không có gì bắt họ so.",
+        blockedBy: "Màn hình đơn hàng chưa đọc được một phiên bản cũ của đơn",
+        today:
+          "Máy chủ vẫn từ chối một quyết định gửi kèm phiên bản không khớp bản đã lưu, nên không " +
+          "ai duyệt nhầm được vào một phiên bản khác. Điều còn thiếu là ở phía người đọc: hai con " +
+          "số phiên bản đều hiện ra, nhưng phải tự đối chiếu. Phiếu báo giá thì đã hết vấn đề này " +
+          "— đường dẫn mang sẵn số bản sửa đổi.",
+      },
       {
         ref: "CONSOLE",
         title: "Duyệt một tin nhắn soạn sẵn",
@@ -302,8 +324,9 @@ const GROUPS = [
         blockedBy: "Không có kho dữ liệu nào giữ nội dung bản tin đã soạn",
         today:
           "Phiếu MESSAGE_DRAFT vẫn hiện trong hàng chờ kèm thời gian còn lại, nhưng hai nút quyết " +
-          "định bị khoá kèm lý do. Phiếu gắn với đơn hàng và phiếu chốt giá trong khoảng của báo " +
-          "giá thì bấm quyết được.",
+          "định bị khoá kèm lý do. Phiếu gắn với đơn hàng thì bấm quyết được; phiếu chốt giá " +
+          "trong khoảng cũng vậy, nhưng chỉ sau khi thẻ phiếu đọc và in được số tiền nhân viên " +
+          "đề nghị — chưa thấy số thì nút vẫn khoá.",
       },
       {
         ref: "CONSOLE",

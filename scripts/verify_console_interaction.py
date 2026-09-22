@@ -22,6 +22,16 @@ Section 6 covers what the owner's-morning redesign is answerable for: that the d
 rendered as the server sent them, that an empty queue costs no space, and that the all-clear line
 claims only the queues it actually checked. That last one is an assertion about a *refusal*, which
 is the kind this console most needs and most easily loses.
+
+Section 12 is here for the same reason section 1 is: the defect it covers shipped, and every other
+kind of test certified the screen while it was broken. `RANGE-APPROVAL-VISIBILITY-001` was an
+ordering and reachability defect rather than a missing string -- the approvals queue returned a
+digest, the card linked to `#/quotes`, and that screen renders the published BAND, because the
+revision the envelope binds is the one before any price was chosen. Every sentence on the screen
+was true and the owner still could not see the number they were authorising. So the assertions
+there are about document order (`compareDocumentPosition` between the amount and the approve
+button), about whether the button is pressable, and -- twice over -- about what is *not* on screen
+when the amount cannot be read.
 """
 
 from __future__ import annotations
@@ -230,6 +240,19 @@ MISSING_REQUEST = "99999999-9999-4999-8999-999999999999"
 BAND_QUOTE = "55555555-6666-4333-8444-999999999999"
 BAND_SNAPSHOT = "JCS-SHA256-V1:" + "a" * 64
 BAND_APPROVAL = "77777777-8888-4333-8444-bbbbbbbbbbbb"
+#: The digest the envelope binds. One constant rather than two literals, because section 12 turns
+#: on the queue row and the proposal body carrying the *same* value: the console refuses to show an
+#: amount whose rendering is not the one the card is about to sign.
+BAND_RENDERED = "JCS-SHA256-V1:" + "c" * 64
+#: The band and the chosen amount exactly as `core/format.js` prints them.
+#:
+#: Written as escapes, and worth the awkwardness: `Intl.NumberFormat` puts a NO-BREAK SPACE (U+00A0)
+#: before the currency sign and `moneyRange` joins the ends with an EN DASH (U+2013). A check
+#: written with an ordinary space is absent from the page whether the amount is rendered or not --
+#: which would make section 12's negative assertions, the ones that prove no figure is shown beside
+#: a shut approve control, pass vacuously. Those are the assertions this item most needs to be real.
+CHOSEN_AS_RENDERED = "150.000\u00a0\u20ab"
+BAND_AS_RENDERED = "80.000\u00a0\u20ab \u2013 240.000\u00a0\u20ab"
 AO_DAI_MIN_VND = 80_000
 AO_DAI_MAX_VND = 240_000
 CHOSEN_VND = 150_000
@@ -248,6 +271,27 @@ BAND_REVISION = {
     "reason_codes": ["RANGE_PRICE_REQUIRES_HUMAN", "TAX_TREATMENT_UNVERIFIED"],
     "required_approvals": [],
     "replayed": False,
+}
+
+#: `RangePriceProposalContentResponse` from `main.py`, field for field: what the owner is actually
+#: being asked to authorise. Before this item no read returned it and the number lived nowhere at
+#: all, so the owner followed the queue's link, read the BAND on `#/quotes`, and approved a figure
+#: they had never seen.
+RANGE_PRICE_PROPOSAL_CONTENT = {
+    "approval_request_id": BAND_APPROVAL,
+    "quote_id": BAND_QUOTE,
+    "revision": 1,
+    "pricebook_version": 1,
+    "rendered_hash": BAND_RENDERED,
+    "proposed_at": "2026-09-18T03:00:00+00:00",
+    "lines": [
+        {
+            "service_code": "DC_AO_DAI_TRADITIONAL",
+            "band_minimum_vnd": AO_DAI_MIN_VND,
+            "band_maximum_vnd": AO_DAI_MAX_VND,
+            "proposed_amount_vnd": CHOSEN_VND,
+        }
+    ],
 }
 
 BAND_DETAIL = {
@@ -332,8 +376,34 @@ def range_price_approval() -> dict[str, object]:
         "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
         "resource_version": 1,
         "snapshot_hash": BAND_SNAPSHOT,
-        "rendered_hash": "JCS-SHA256-V1:" + "c" * 64,
+        "rendered_hash": BAND_RENDERED,
         "replayed": False,
+    }
+
+
+def range_price_queue_item() -> dict[str, object]:
+    """The same envelope as it appears in `GET /internal/v1/approvals`, for section 12.
+
+    `RANGE-APPROVAL-VISIBILITY-001`. `action` is the field that was not projected until this item:
+    four actions share the `QUOTE_REVISION` resource type and only this one asks its approver to
+    authorise a number the linked quote screen does not render. Built at call time for the same
+    reason the proposal above is — the countdown is ten minutes and a frozen timestamp would make
+    the card read "đã hết hạn".
+    """
+
+    return {
+        "approval_request_id": BAND_APPROVAL,
+        "status": "REQUESTED",
+        "envelope_hash": "JCS-SHA256-V1:" + "b" * 64,
+        "required_role": "OWNER_ADMIN",
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+        "replayed": False,
+        "resource_type": "QUOTE_REVISION",
+        "resource_id": BAND_QUOTE,
+        "resource_version": 1,
+        "snapshot_hash": BAND_SNAPSHOT,
+        "rendered_hash": BAND_RENDERED,
+        "action": "SET_RANGE_PRICE",
     }
 
 
@@ -383,7 +453,15 @@ SESSION_OK = {
     "mfa_verified": True,
 }
 
-state = {"authenticated": True, "hold_ticket": False, "owner_approved": False}
+state = {
+    "authenticated": True,
+    "hold_ticket": False,
+    "owner_approved": False,
+    # Section 12 only. The queue is empty for every earlier section, because the home screen reads
+    # the same endpoint and section 6 asserts an all-clear line that claims only what it checked.
+    "approvals_listed": False,
+    "proposal_unreadable": False,
+}
 held_ticket_routes: list[Route] = []
 
 with sync_playwright() as playwright:
@@ -431,6 +509,27 @@ with sync_playwright() as playwright:
             body = SESSION_OK
         elif url.endswith("/internal/v1/stores"):
             body = {"store_ids": [STORE]}
+        elif "/range-price-proposal" in url:
+            # The read section 12 exists for. When it refuses, it refuses with a code -- the
+            # console has to render that as a refusal and keep the approve control shut, and a
+            # console that had to parse a sentence to know so is a console that would not.
+            if state.get("proposal_unreadable"):
+                route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "detail": {
+                                "outcome": "REQUIRE_HUMAN",
+                                "reason_codes": ["RANGE_PRICE_PROPOSAL_CONTENT_MISMATCH"],
+                            }
+                        }
+                    ),
+                )
+                return
+            body = RANGE_PRICE_PROPOSAL_CONTENT
+        elif url.split("?")[0].endswith("/internal/v1/approvals"):
+            body = [range_price_queue_item()] if state.get("approvals_listed") else []
         elif "/assistant/turns/" in url and url.endswith("/stream"):
             # Exempt from interception: the static server drip-feeds this one so the
             # progressive-rendering check below observes genuine mid-stream states.
@@ -1640,6 +1739,180 @@ with sync_playwright() as playwright:
         "600.000" not in content and "90.000" not in content,
         "a damage ceiling is visible while loss is selected",
     )
+
+    print()
+    print("=" * 74)
+    print("12. DUYỆT — the number is on screen before the button that approves it")
+    print("=" * 74)
+
+    # `RANGE-APPROVAL-VISIBILITY-001`, and the reason it needs a browser rather than a source test.
+    #
+    # The defect was an ORDERING and REACHABILITY defect, not a missing string. The queue returned
+    # a digest, the card linked to `#/quotes`, and the quote screen renders the published BAND --
+    # 80.000 d - 240.000 d -- because the revision the envelope binds is the one before any price
+    # was chosen. Every sentence on that screen was true. The owner still could not see the number
+    # they were authorising, so a staff member who agreed 150.000 d with the customer could propose
+    # 240.000 d and the only second-party control over that figure passed it through.
+    #
+    # A source test can prove the sentence exists. Only this can prove the amount is in the
+    # document *above* the approve control, that the control is pressable when it is, and that it
+    # is not when the amount cannot be read. The last one is asserted twice: once on the button's
+    # own disabled state, and once on the absence of the figure -- a screen that showed 150.000 d
+    # and disabled the button would pass a check that only looked at the button.
+
+    def rendered_text() -> str:
+        """The page's text, not its serialized HTML.
+
+        `page.content()` is what every other section reads, and it cannot answer this one:
+        Chromium serializes the NO-BREAK SPACE that `Intl.NumberFormat` puts before ₫ as the
+        entity `&nbsp;`, so "150.000\u00a0\u20ab" is absent from the HTML whether the amount is on
+        screen or not. Reading `textContent` is the difference between checking the money and
+        checking nothing.
+        """
+
+        return str(page.evaluate("() => document.body.textContent"))
+
+    state["approvals_listed"] = True
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    content = page.content()
+    text = rendered_text()
+
+    check(
+        "the queue names the action, not only the resource type",
+        "SET_RANGE_PRICE" in content and "QUOTE_REVISION" in content,
+    )
+    check(
+        "the published band is on the card, as a range and never as one end of one",
+        # The whole string, not the two ends separately: both numbers appear elsewhere in the
+        # card, and the property is that they are joined into one interval.
+        BAND_AS_RENDERED in text,
+    )
+    check(
+        "and so is the exact amount the owner is being asked to authorise",
+        CHOSEN_AS_RENDERED in text and "Nhân viên đề nghị" in text,
+    )
+
+    # The whole item, in one assertion. `compareDocumentPosition` is the only honest way to ask it:
+    # both nodes could exist with the button first, or in a collapsed panel, and the screen would
+    # still contain every string checked above.
+    ordering = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          const money = [...card.querySelectorAll(".money")]
+            .find((n) => n.textContent.includes("150.000"));
+          if (!approve) return "no approve control";
+          if (!money) return "the amount is not rendered as money";
+          const before =
+            Boolean(money.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING);
+          return { before, disabled: approve.disabled };
+        }"""
+    )
+    check(
+        "the amount precedes the approve control in the document, not merely on the page",
+        isinstance(ordering, dict) and ordering.get("before") is True,
+        repr(ordering),
+    )
+    check(
+        "and the control is pressable, because the owner can now see what it approves",
+        isinstance(ordering, dict) and ordering.get("disabled") is False,
+        repr(ordering),
+    )
+
+    # Now the failure direction, which is the one that has to be safe. The server refuses the read
+    # -- a stored amount that does not re-derive to the digest the envelope binds -- and the card
+    # must go back to offering nothing.
+    state["proposal_unreadable"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    content = page.content()
+
+    blocked = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          return approve ? approve.disabled : "no approve control";
+        }"""
+    )
+    check(
+        "an amount that cannot be read leaves the approve control shut",
+        blocked is True,
+        repr(blocked),
+    )
+    check(
+        "no figure at all is shown beside the shut control",
+        CHOSEN_AS_RENDERED not in rendered_text(),
+        "an amount is on screen while the console says it cannot read one",
+    )
+    check(
+        "the card says why, in Vietnamese, rather than only greying out",
+        "Chưa xem được số tiền được đề nghị" in content
+        and "chưa thấy số thì chưa quyết" in content.lower(),
+    )
+    check(
+        "and the server's own refusal code travels through intact",
+        "RANGE_PRICE_PROPOSAL_CONTENT_MISMATCH" in content,
+    )
+
+    # Back to readable, and this time the digest disagrees. Same direction, different cause: the
+    # queue row and the proposal body describe two different renderings, which means the amount on
+    # screen would not be the amount the press hands back.
+    state["proposal_unreadable"] = False
+    RANGE_PRICE_PROPOSAL_CONTENT["rendered_hash"] = "JCS-SHA256-V1:" + "f" * 64
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    content = page.content()
+    stale = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          return approve ? approve.disabled : "no approve control";
+        }"""
+    )
+    check(
+        "amounts whose digest is not the card's own are withheld, not shown with a caveat",
+        stale is True and CHOSEN_AS_RENDERED not in rendered_text(),
+        repr(stale),
+    )
+    check(
+        "and the card names that as the reason, so it reads as staleness and not as a bug",
+        "Số tiền không khớp phiếu" in content,
+    )
+    # Restored, and the queue reloaded before the link is looked for: the card on screen at this
+    # point is the blocked one, which by design carries no link to anything.
+    RANGE_PRICE_PROPOSAL_CONTENT["rendered_hash"] = BAND_RENDERED
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+
+    # The link an approver follows. It has to carry the revision the envelope binds: without it
+    # `#/quotes?quote=<id>` opens whichever revision is newest, so an approver could read revision
+    # 3 while signing revision 1's digest.
+    href = page.evaluate(
+        """() => {
+          const link = document.querySelector("article.card a[href^='#/quotes']");
+          return link ? link.getAttribute("href") : null;
+        }"""
+    )
+    check(
+        "the link to the quote names the revision the envelope binds",
+        isinstance(href, str) and "revision=1" in href,
+        repr(href),
+    )
+
+    state["approvals_listed"] = False
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

@@ -71,6 +71,12 @@ from nha_trang_laundry_db.quotes import (
     QuoteStateError,
     QuoteSummary,
 )
+from nha_trang_laundry_db.range_prices import (
+    ProposedRangePriceLine,
+    RangePriceProposalRecord,
+    RangePriceProposalRepository,
+    RecordRangePriceProposalCommand,
+)
 from nha_trang_laundry_db.remedies import (
     RemedyCreditRedemptionCommand,
     RemedyCreditRepository,
@@ -149,6 +155,11 @@ QUOTE_ACCEPTANCE_POLICY_VERSION = "quote-acceptance-dec-021-v1"
 QUOTE_ACCEPTANCE_ROLES = frozenset(
     {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.OPERATOR}
 )
+# Who may look at what an approval envelope is asking for. The same two roles `main.py`'s
+# `require_approval_staff` admits, restated here rather than imported because every other command
+# in this module re-checks its own roles: a service method that trusts a route dependency is a
+# service method that is safe only while it is called from that one route.
+APPROVAL_DECISION_ROLES = frozenset({StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER})
 
 
 class OperationsUnavailable(RuntimeError):
@@ -1358,29 +1369,94 @@ class OperationsService:
             refusal = _band_refusal(priced, proposal)
             if refusal is not None:
                 return UnresolvedQuoteResult((refusal,))
+            bands = stored_price_bands(priced)
+            if bands is None:
+                # `_band_refusal` has already read the same bands and returned a refusal code for
+                # an unreadable revision, so this cannot be reached. It is not an assertion for
+                # the type checker's benefit alone: reaching it would mean the two reads disagreed,
+                # and proposing amounts against bands nobody could name is the failure this whole
+                # item is about.
+                raise QuoteStateError("this quote revision carries no price band")
             rendered_hash = range_price_rendered_document(proposal).snapshot_hash
-            return RangePriceProposalResult(
-                approval=self._approvals.request(
-                    connection,
-                    ApprovalRequestCommand(
-                        ApprovalAction.SET_RANGE_PRICE,
-                        # `APPROVAL_RESOURCE_TYPES[SET_RANGE_PRICE]`, not a literal chosen here:
-                        # `build_approval_envelope` refuses any other value for this action.
-                        APPROVAL_RESOURCE_TYPES[ApprovalAction.SET_RANGE_PRICE],
-                        quote_id,
-                        priced.data.revision,
-                        priced.document.snapshot_hash,
-                        rendered_hash,
-                        RANGE_PRICE_POLICY_VERSION,
-                        principal.staff_user_id,
-                        idempotency_key,
-                        uuid4(),
-                        store_id=store_id,
-                    ),
+            approval = self._approvals.request(
+                connection,
+                ApprovalRequestCommand(
+                    ApprovalAction.SET_RANGE_PRICE,
+                    # `APPROVAL_RESOURCE_TYPES[SET_RANGE_PRICE]`, not a literal chosen here:
+                    # `build_approval_envelope` refuses any other value for this action.
+                    APPROVAL_RESOURCE_TYPES[ApprovalAction.SET_RANGE_PRICE],
+                    quote_id,
+                    priced.data.revision,
+                    priced.document.snapshot_hash,
+                    rendered_hash,
+                    RANGE_PRICE_POLICY_VERSION,
+                    principal.staff_user_id,
+                    idempotency_key,
+                    uuid4(),
+                    store_id=store_id,
                 ),
+            )
+            # `RANGE-APPROVAL-VISIBILITY-001`. The envelope carries a digest; the owner has to read
+            # a number. These rows are that number, kept beside the band it was checked against so
+            # the approvals surface can put both in front of the approver before offering them an
+            # approve control. Nothing below is consulted when the approval is applied -- that path
+            # still re-derives the digest from the amounts the caller holds.
+            #
+            # Written second because `range_price_proposals.approval_id` is a foreign key, and
+            # skipped on a replay because the envelope is idempotent and its amounts are already
+            # stored under this same approval id.
+            if not approval.replayed:
+                RangePriceProposalRepository.record(
+                    connection,
+                    RecordRangePriceProposalCommand(
+                        approval_id=approval.approval_request_id,
+                        store_id=store_id,
+                        quote_id=quote_id,
+                        revision=priced.data.revision,
+                        pricebook_version_id=proposal.pricebook_version_id,
+                        pricebook_version=proposal.pricebook_version,
+                        rendered_hash=rendered_hash,
+                        proposed_by=principal.staff_user_id,
+                        correlation_id=uuid4(),
+                        lines=tuple(
+                            ProposedRangePriceLine(
+                                service_code=choice.service_code,
+                                # The bound is read from the stored revision, never from the
+                                # request: what is displayed to the approver has to be the interval
+                                # the amount was actually checked against.
+                                band_minimum_vnd=bands[choice.service_code].minimum_vnd,
+                                band_maximum_vnd=bands[choice.service_code].maximum_vnd,
+                                proposed_amount_vnd=choice.amount_vnd,
+                            )
+                            for choice in choices
+                        ),
+                    ),
+                )
+            return RangePriceProposalResult(
+                approval=approval,
                 resource_version=priced.data.revision,
                 snapshot_hash=priced.document.snapshot_hash,
                 rendered_hash=rendered_hash,
+            )
+
+    def read_range_price_proposal(
+        self, *, approval_id: UUID, principal: StaffPrincipal
+    ) -> RangePriceProposalRecord | None:
+        """The amounts one `SET_RANGE_PRICE` envelope asks the owner to authorise.
+
+        A pure read. It decides nothing and reserves nothing: it exists so that the person holding
+        the only second-party control over a staff-chosen price can see that price. Membership is
+        required against the store recorded on the proposal row itself, inside the repository.
+        """
+
+        if not principal.roles & APPROVAL_DECISION_ROLES or not principal.mfa_verified:
+            raise StoreAccessError("reading an approval's proposed amounts requires an approver")
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return RangePriceProposalRepository.read(
+                cursor, approval_id=approval_id, principal=principal
             )
 
     def apply_range_prices(

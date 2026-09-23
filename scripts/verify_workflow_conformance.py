@@ -418,6 +418,29 @@ class Console:
                 break
         return state
 
+    def current_version(self, order_id: str, fallback: object) -> object:
+        """The order's `row_version` as the server holds it now, read over the API.
+
+        Added 2026-09-23. Two scenarios previously wrote
+        `stored(order_id, "row_version") or <pre-move version>`, and `stored` reads the database
+        directly, which needs `--psql-container`. Without it the call returned None every time and
+        the fallback replayed the version from *before* the move on the line above -- so the next
+        command carried a stale version and the server refused it as a concurrent edit, exactly as
+        it should. The two checks then failed against correct behaviour, and the message they
+        reported was the stale-write refusal rather than the refusal they were written to prove.
+
+        The console itself never has this problem: it re-reads the board. So this does what the
+        console does, through the same route and the same session, and the scenarios no longer need
+        database access to assert something the API already says out loud.
+        """
+
+        listed = self.call("GET", f"/internal/v1/stores/{STORE}/orders")
+        rows = (listed.get("body") or {}).get("orders") or []
+        for row in rows:
+            if str(row.get("order_id")) == str(order_id):
+                return row.get("row_version", fallback)
+        return fallback
+
     def move(
         self,
         order_id: str,
@@ -611,7 +634,7 @@ def scenario_exit(console: Console) -> None:
     head("2c", "XÉT HUỶ — the reviewed path, and a resolution the record contradicts")
     live = console.build_order(stop="active")
     console.move(live["order_id"], live["row_version"], "commercial", "CANCELLATION_REVIEW")
-    version = stored(live["order_id"], "row_version") or live["row_version"]
+    version = console.current_version(live["order_id"], live["row_version"])
     if arguments.psql_container:
         ok(
             "an active order can be sent to cancellation review",
@@ -1071,7 +1094,7 @@ def scenario_resilience(console: Console) -> None:
         "intake",
         "RECEIVED_PENDING_INSPECTION",
     )
-    version = stored(taken_in["order_id"], "row_version") or taken_in["row_version"]
+    version = console.current_version(taken_in["order_id"], taken_in["row_version"])
     said = console.move(taken_in["order_id"], version, "intake", "ACCEPTED", slot=True)
     ok(
         "accepting intake from the screen requires the staff member to confirm the slot",

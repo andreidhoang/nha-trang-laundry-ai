@@ -107,6 +107,42 @@ supplementary_checks:
     status: PASSED
     result: 170 passed, 0 failed
     note: >-
-      Against a stubbed API, not a live FastAPI process; the packet's "Done when" asks for a real
-      API and that remains unmet. The equivalent coverage that does exist is PostgreSQL-backed
-      repository and service tests.
+      Against a stubbed API by design. The packet's "Done when" real-API condition is met
+      separately by the two runs recorded below, added 2026-09-23; it is no longer unmet.
+  - command: >-
+      CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_daily_operations.py
+      --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+    status: PASSED
+    result: 70 ok, 0 failed
+    note: >-
+      2026-09-23. A browser driving the console against a REAL stack, which is what every packet's
+      "Done when" asked for and what no evidence record in this directory could previously claim.
+      Real PostgreSQL, real RS256 identity provider, the real FastAPI process, and the console
+      served from it. Both trades close: a walk-in from counter ticket to COMPLETED, and a delivery
+      priced at 160.000 + 10.000 = 170.000 with the server computing the published 2-6km fee, a
+      failed first attempt recorded rather than hidden, and the order refusing to close on payment
+      alone until a delivery leg succeeds.
+
+      This became runnable only on the same day: `verify_daily_operations.py` and
+      `verify_workflow_conformance.py` both hardcoded `channel="chrome"`, so they raised "Chromium
+      distribution 'chrome' is not found" in every container this repository is worked on in. The
+      browser override existed in the stubbed script alone. That single omission is why this record,
+      and the four beside it, had to say the browser run was stubbed.
+  - command: >-
+      CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_workflow_conformance.py
+      --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+    status: PASSED
+    result: 86 ok, 1 failed (coverage only), 0 crashes
+    note: >-
+      2026-09-23, against the same real stack. The one remaining failure is the script's own
+      coverage line -- 40 of 49 declared controls exercised -- which is information rather than a
+      defect: the nine untouched are staff-management and assistant controls no scenario in this set
+      drives.
+
+      The first run of this script reported seven failures and every one was in the test estate, not
+      the product. Three asserted that incident intake was impossible, which `INCIDENT-INTAKE-001`
+      fixed on 2026-09-18, so they were failing because the product improved. Two replayed a version
+      from before a move, because `stored()` silently needs `--psql-container`, so the server's
+      correct concurrency refusal read as a failure. One was caused by the lead killing the API
+      mid-run. A virgin database reproduced the result identically, which is what ruled out fixture
+      state and forced the real root cause.

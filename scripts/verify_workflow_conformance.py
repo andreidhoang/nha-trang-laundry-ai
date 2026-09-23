@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import subprocess
 import sys
 import time
@@ -417,6 +418,35 @@ class Console:
                 break
         return state
 
+    def current_version(self, order_id: str, fallback: object) -> object:
+        """The order's `row_version` as the server holds it now, read over the API.
+
+        Added 2026-09-23. Two scenarios previously wrote
+        `stored(order_id, "row_version") or <pre-move version>`, and `stored` reads the database
+        directly, which needs `--psql-container`. Without it the call returned None every time and
+        the fallback replayed the version from *before* the move on the line above -- so the next
+        command carried a stale version and the server refused it as a concurrent edit, exactly as
+        it should. The two checks then failed against correct behaviour, and the message they
+        reported was the stale-write refusal rather than the refusal they were written to prove.
+
+        The console itself never has this problem: it re-reads the board. So this does what the
+        console does, through the same route and the same session, and the scenarios no longer need
+        database access to assert something the API already says out loud.
+        """
+
+        listed = self.call("GET", f"/internal/v1/stores/{STORE}/orders")
+        # `list_orders` returns `list[OrderResponse]`, so the body IS the array. Reading it as
+        # `body["orders"]` raised AttributeError and crashed two scenarios outright -- which is a
+        # better outcome than a silent `or fallback`, because that is the shape of bug this helper
+        # was written to remove in the first place.
+        rows = listed.get("body")
+        if not isinstance(rows, list):
+            return fallback
+        for row in rows:
+            if isinstance(row, dict) and str(row.get("order_id")) == str(order_id):
+                return row.get("row_version", fallback)
+        return fallback
+
     def move(
         self,
         order_id: str,
@@ -610,7 +640,7 @@ def scenario_exit(console: Console) -> None:
     head("2c", "XÉT HUỶ — the reviewed path, and a resolution the record contradicts")
     live = console.build_order(stop="active")
     console.move(live["order_id"], live["row_version"], "commercial", "CANCELLATION_REVIEW")
-    version = stored(live["order_id"], "row_version") or live["row_version"]
+    version = console.current_version(live["order_id"], live["row_version"])
     if arguments.psql_container:
         ok(
             "an active order can be sent to cancellation review",
@@ -1070,7 +1100,7 @@ def scenario_resilience(console: Console) -> None:
         "intake",
         "RECEIVED_PENDING_INSPECTION",
     )
-    version = stored(taken_in["order_id"], "row_version") or taken_in["row_version"]
+    version = console.current_version(taken_in["order_id"], taken_in["row_version"])
     said = console.move(taken_in["order_id"], version, "intake", "ACCEPTED", slot=True)
     ok(
         "accepting intake from the screen requires the staff member to confirm the slot",
@@ -1199,14 +1229,25 @@ def scenario_ai_refuses(console: Console) -> None:
     console.open("#/incidents")
     touched("shell.nav.incidents")
     incidents = console.text()
+    # Corrected 2026-09-23, by running this script against a real API for the first time.
+    #
+    # These two checks asserted "chưa dùng được" and "ra sổ" -- that the form could not be completed
+    # and that the counter should use the paper book. That was true when WORKFLOW-CONFORMANCE-001
+    # measured it on 2026-09-10: the route demanded two sha256 digests and nothing in the repository
+    # produced either, so a customer complaining at the counter could not be recorded by anybody.
+    #
+    # `INCIDENT-INTAKE-001` fixed it on 2026-09-18 -- the staff member types what the customer said
+    # and the server derives both digests -- and these checks kept asserting the defect. A test that
+    # fails because the product improved is worse than no test: it trains a reader to discount a red
+    # line. So they now assert what is true, and what must stay true.
     ok(
-        "the incident screen says plainly that its form cannot be completed yet",
-        "chưa dùng được" in incidents,
-        [line.strip() for line in incidents.splitlines() if "chưa dùng được" in line][:1],
+        "the incident screen can be completed by the person standing at the counter",
+        "Mở một sự cố" in incidents and "chưa dùng được" not in incidents,
+        [line.strip() for line in incidents.splitlines() if "Mở một sự cố" in line][:1],
     )
     ok(
-        "and tells the counter what to do meanwhile",
-        "ra sổ" in incidents,
+        "and it says recording is not the same act as deciding fault or paying for it",
+        "Việc quy lỗi và bồi hoàn" in incidents,
         "",
     )
 
@@ -1224,13 +1265,20 @@ def scenario_ai_refuses(console: Console) -> None:
             console.text().splitlines()[0][:60],
         )
 
-    gaps = console.text()
     console.open("#/gaps")
     gaps = console.text()
+    # Corrected 2026-09-23 with the two incident checks above, and for the same reason: this
+    # asserted that `#/gaps` still lists "Mở sự cố tại quầy" as unsupported. `INCIDENT-INTAKE-001`
+    # built it and correctly retired that entry, so the check was holding the register to a claim
+    # the register was right to drop.
+    #
+    # What the register must keep doing is naming what is genuinely absent, so that is what this
+    # checks now. An empty or silent `#/gaps` would be the real defect: the screen exists because a
+    # console that quietly omits what it cannot do teaches staff to guess.
     ok(
-        "the unsupported register names incident intake, which this run confirmed is unusable",
-        "Mở sự cố tại quầy" in gaps,
-        "",
+        "the unsupported register still names what the shop genuinely cannot do",
+        "Chưa hỗ trợ" in gaps and len(gaps.strip()) > 200,
+        f"{len(gaps.strip())} characters of register",
     )
 
 
@@ -1245,13 +1293,37 @@ SCENARIOS = {
 }
 
 
+def _browser_launch_options() -> dict[str, object]:
+    """Which browser to drive, chosen the same way `verify_console_interaction.py` chooses it.
+
+    Real Chrome by default, because the console is opened in a real browser and some of what these
+    scripts catch is browser behaviour rather than DOM shape. `CONSOLE_BROWSER_CHANNEL=chromium`
+    selects Playwright's bundled build; `CONSOLE_BROWSER_PATH` names a binary outright and takes
+    precedence over both.
+
+    This was added to `verify_console_interaction.py` and not to the two scripts that drive a *real*
+    API, so those two raised "Chromium distribution 'chrome' is not found" in every container this
+    repository is worked on in. The consequence was not a missing convenience: it is why every
+    evidence record in `evidence/delivery-loop/` had to say the browser run was against a stub, and
+    why the packets' "Done when" browser condition went unmet for five items. One override in one
+    file is the difference between a check that exists and a check that runs.
+    """
+
+    executable = os.environ.get("CONSOLE_BROWSER_PATH", "")
+    if executable:
+        return {"executable_path": executable}
+    channel = os.environ.get("CONSOLE_BROWSER_CHANNEL", "chrome")
+    if channel == "chromium":
+        return {}
+    return {"channel": channel}
+
+
 def main() -> int:
     selected = {arguments.only: SCENARIOS[arguments.only]} if arguments.only else dict(SCENARIOS)
     if arguments.only and arguments.only not in SCENARIOS:
         raise SystemExit(f"unknown scenario {arguments.only!r}; choose from {sorted(SCENARIOS)}")
-
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(channel="chrome", headless=True)
+        browser = playwright.chromium.launch(headless=True, **_browser_launch_options())  # type: ignore[arg-type]
         context = browser.new_context(
             viewport={"width": 1280, "height": 900},
             permissions=["clipboard-read", "clipboard-write"],

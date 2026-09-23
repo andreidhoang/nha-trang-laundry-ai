@@ -1200,14 +1200,25 @@ def scenario_ai_refuses(console: Console) -> None:
     console.open("#/incidents")
     touched("shell.nav.incidents")
     incidents = console.text()
+    # Corrected 2026-09-23, by running this script against a real API for the first time.
+    #
+    # These two checks asserted "chưa dùng được" and "ra sổ" -- that the form could not be completed
+    # and that the counter should use the paper book. That was true when WORKFLOW-CONFORMANCE-001
+    # measured it on 2026-09-10: the route demanded two sha256 digests and nothing in the repository
+    # produced either, so a customer complaining at the counter could not be recorded by anybody.
+    #
+    # `INCIDENT-INTAKE-001` fixed it on 2026-09-18 -- the staff member types what the customer said
+    # and the server derives both digests -- and these checks kept asserting the defect. A test that
+    # fails because the product improved is worse than no test: it trains a reader to discount a red
+    # line. So they now assert what is true, and what must stay true.
     ok(
-        "the incident screen says plainly that its form cannot be completed yet",
-        "chưa dùng được" in incidents,
-        [line.strip() for line in incidents.splitlines() if "chưa dùng được" in line][:1],
+        "the incident screen can be completed by the person standing at the counter",
+        "Mở một sự cố" in incidents and "chưa dùng được" not in incidents,
+        [line.strip() for line in incidents.splitlines() if "Mở một sự cố" in line][:1],
     )
     ok(
-        "and tells the counter what to do meanwhile",
-        "ra sổ" in incidents,
+        "and it says recording is not the same act as deciding fault or paying for it",
+        "Việc quy lỗi và bồi hoàn" in incidents,
         "",
     )
 
@@ -1225,13 +1236,20 @@ def scenario_ai_refuses(console: Console) -> None:
             console.text().splitlines()[0][:60],
         )
 
-    gaps = console.text()
     console.open("#/gaps")
     gaps = console.text()
+    # Corrected 2026-09-23 with the two incident checks above, and for the same reason: this
+    # asserted that `#/gaps` still lists "Mở sự cố tại quầy" as unsupported. `INCIDENT-INTAKE-001`
+    # built it and correctly retired that entry, so the check was holding the register to a claim
+    # the register was right to drop.
+    #
+    # What the register must keep doing is naming what is genuinely absent, so that is what this
+    # checks now. An empty or silent `#/gaps` would be the real defect: the screen exists because a
+    # console that quietly omits what it cannot do teaches staff to guess.
     ok(
-        "the unsupported register names incident intake, which this run confirmed is unusable",
-        "Mở sự cố tại quầy" in gaps,
-        "",
+        "the unsupported register still names what the shop genuinely cannot do",
+        "Chưa hỗ trợ" in gaps and len(gaps.strip()) > 200,
+        f"{len(gaps.strip())} characters of register",
     )
 
 

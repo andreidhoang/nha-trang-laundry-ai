@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 import urllib.request
@@ -102,8 +103,33 @@ def shot(page, name: str) -> None:
         page.screenshot(path=str(SHOTS / name), full_page=True)
 
 
+def _browser_launch_options() -> dict[str, object]:
+    """Which browser to drive, chosen the same way `verify_console_interaction.py` chooses it.
+
+    Real Chrome by default, because the console is opened in a real browser and some of what these
+    scripts catch is browser behaviour rather than DOM shape. `CONSOLE_BROWSER_CHANNEL=chromium`
+    selects Playwright's bundled build; `CONSOLE_BROWSER_PATH` names a binary outright and takes
+    precedence over both.
+
+    This was added to `verify_console_interaction.py` and not to the two scripts that drive a *real*
+    API, so those two raised "Chromium distribution 'chrome' is not found" in every container this
+    repository is worked on in. The consequence was not a missing convenience: it is why every
+    evidence record in `evidence/delivery-loop/` had to say the browser run was against a stub, and
+    why the packets' "Done when" browser condition went unmet for five items. One override in one
+    file is the difference between a check that exists and a check that runs.
+    """
+
+    executable = os.environ.get("CONSOLE_BROWSER_PATH", "")
+    if executable:
+        return {"executable_path": executable}
+    channel = os.environ.get("CONSOLE_BROWSER_CHANNEL", "chrome")
+    if channel == "chromium":
+        return {}
+    return {"channel": channel}
+
+
 with sync_playwright() as pw:
-    browser = pw.chromium.launch(channel="chrome", headless=True)
+    browser = pw.chromium.launch(headless=True, **_browser_launch_options())  # type: ignore[arg-type]
     ctx = browser.new_context(
         viewport={"width": 1280, "height": 900}, permissions=["clipboard-read", "clipboard-write"]
     )

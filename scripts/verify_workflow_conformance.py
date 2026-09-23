@@ -435,9 +435,15 @@ class Console:
         """
 
         listed = self.call("GET", f"/internal/v1/stores/{STORE}/orders")
-        rows = (listed.get("body") or {}).get("orders") or []
+        # `list_orders` returns `list[OrderResponse]`, so the body IS the array. Reading it as
+        # `body["orders"]` raised AttributeError and crashed two scenarios outright -- which is a
+        # better outcome than a silent `or fallback`, because that is the shape of bug this helper
+        # was written to remove in the first place.
+        rows = listed.get("body")
+        if not isinstance(rows, list):
+            return fallback
         for row in rows:
-            if str(row.get("order_id")) == str(order_id):
+            if isinstance(row, dict) and str(row.get("order_id")) == str(order_id):
                 return row.get("row_version", fallback)
         return fallback
 

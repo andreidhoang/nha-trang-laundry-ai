@@ -269,7 +269,8 @@ def test_every_board_figure_carries_the_version_of_the_query_that_produced_it(
     # different policy would be visible in the version rather than hidden behind a constant.
     assert board["query_version"] == sla_board_query_version(SLA_POLICY).label
     assert summary["query_version"].startswith("today-status-counts-v1:")
-    assert takings["query_version"].startswith("collected-today-v1:")
+    # v2 since DEC-024 refunds are subtracted; the pinned digest lives in `test_ops_board.py`.
+    assert takings["query_version"].startswith("collected-today-v2:")
 
 
 def test_the_board_refuses_a_store_the_caller_is_not_assigned_to(

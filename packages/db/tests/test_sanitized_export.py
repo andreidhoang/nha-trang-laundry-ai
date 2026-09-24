@@ -346,8 +346,13 @@ def test_the_export_query_version_is_pinned_to_the_rule_it_names() -> None:
     digest is for: an envelope raised before this change no longer matches at release and refuses
     with `EXPORT_APPROVAL_NOT_BOUND` rather than shipping a different file than was signed for.
     """
-    assert EXPORT_QUERY.identifier == "store-day-orders-export-v1"
-    assert EXPORT_QUERY.label == "store-day-orders-export-v1:7489179454314e46"
+    # v2: `balance_status`, `refunded_amount_vnd` and `refunded_at` joined the columns and
+    # `order_refunds` joined the SELECT (DEC-024). v1 (`7489179454314e46`) showed a paid order
+    # cancelled with the cash handed back exactly like a paid order, so a sum of `paid_amount_vnd`
+    # overstated the day by every refund. Approvals signed over v1's twelve columns stop matching,
+    # which is the point of hashing the column list.
+    assert EXPORT_QUERY.identifier == "store-day-orders-export-v2"
+    assert EXPORT_QUERY.label == "store-day-orders-export-v2:3f884e227d6a2d05"
 
 
 # --- refusals -----------------------------------------------------------------------------------
@@ -1107,3 +1112,109 @@ def test_the_approval_disclosure_shows_what_is_being_released_and_who_may_not_re
     # And the one field that is about the reader: the definer is told before the press, not after.
     assert for_definer.requested_by_you is True
     assert for_other.requested_by_you is False
+
+
+def test_a_paid_order_cancelled_with_a_refund_shows_the_refund_in_the_export(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The export used to LEFT JOIN the settlement and stop, so a refunded order read as paid.
+
+    A paid order cancelled under `DEC-024`'s `RETURNED_UNWASHED_REFUNDED` hands the money back at
+    the counter. The file must say so on the order's own row -- the settlement it reverses stays
+    visible beside it, because both things happened -- or anyone summing `paid_amount_vnd` reports
+    a day's takings larger than the drawer by exactly the refund.
+    """
+    from nha_trang_laundry_db.settlement import SettlementCommand, SettlementRepository
+    from nha_trang_laundry_domain.catalog import CommercialOrderStatus, CustodyResolution
+
+    shop = _Shop(connection, datetime.now(UTC))
+    quote_id, revision, quote, contact_id = accepted_quote(
+        connection,
+        store_id=shop.store_id,
+        principal=shop.owner,
+        fulfillment_mode=FulfillmentMode.PICKUP_AND_RETURN,
+    )
+    stored = OrderRepository().create(
+        connection,
+        CreateOrderCommand(
+            shop.store_id,
+            contact_id,
+            quote_id,
+            revision,
+            quote.document.snapshot_hash,
+            FulfillmentMode.PICKUP_AND_RETURN,
+            shop.owner,
+            f"order-{uuid4().hex}",
+            uuid4(),
+            shop.now,
+            AcquisitionSource.WALK_IN,
+        ),
+    )
+    order_id, version = stored.order_id, stored.row_version
+
+    def move(**step: Any) -> None:
+        nonlocal version
+        version = (
+            OrderRepository()
+            .transition(
+                connection,
+                OrderTransitionCommand(
+                    order_id,
+                    version,
+                    shop.owner,
+                    f"step-{uuid4().hex}",
+                    uuid4(),
+                    occurred_at=shop.now,
+                    **step,
+                ),
+            )
+            .row_version
+        )
+
+    move(intake_target=IntakeStatus.RECEIVED_PENDING_INSPECTION)
+    move(
+        intake_target=IntakeStatus.ACCEPTED, production_accepted_at=shop.now, intake_readiness=READY
+    )
+    move(commercial_target=CommercialOrderStatus.STORE_CONFIRMATION_PENDING)
+    move(commercial_target=CommercialOrderStatus.CONFIRMED)
+    move(commercial_target=CommercialOrderStatus.ACTIVE)
+    settled = SettlementRepository().record(
+        connection,
+        SettlementCommand(
+            order_id=order_id,
+            paid_amount_vnd=110_000,
+            collected_by_customer=False,
+            principal=shop.owner,
+            correlation_id=uuid4(),
+            attested_at=shop.now,
+        ),
+    )
+    version = settled.row_version
+    move(commercial_target=CommercialOrderStatus.CANCELLATION_REVIEW)
+    move(
+        commercial_target=CommercialOrderStatus.CANCELLED,
+        custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+    )
+
+    created = _request_export(connection, shop, _local_date(shop.now))
+    approval_id = _approve(connection, shop, created)
+    produced = SanitizedExportRepository().execute(
+        connection,
+        ExportExecutionCommand(
+            export_request_id=created.export_request_id,
+            approval_request_id=approval_id,
+            principal=shop.requester,
+            correlation_id=uuid4(),
+        ),
+    )
+
+    header, *body = produced.content_csv.splitlines()
+    assert header == ",".join(EXPORT_COLUMNS)
+    assert len(body) == 1
+    row = dict(zip(EXPORT_COLUMNS, body[0].split(","), strict=True))
+    assert row["order_id"] == str(order_id)
+    assert row["commercial_status"] == "CANCELLED"
+    assert row["balance_status"] == "REFUNDED"
+    assert row["paid_amount_vnd"] == "110000"
+    assert row["refunded_amount_vnd"] == "110000"
+    assert datetime.fromisoformat(row["refunded_at"]) == shop.now

@@ -136,8 +136,10 @@ const TILES = [
  * adds, rounds or converts, and no model is involved at any point.
  *
  * What it is not is stated on the card, not buried: this is money taken today, not doanh thu.
- * Orders still in the wash, goods delivered but unpaid, and every question about refunds, deposits
- * and B2B accounts are outside it — those are DEC-010 and unanswered. An owner who reads this as
+ * Orders still in the wash, goods delivered but unpaid, and every question about partial refunds,
+ * deposits and B2B accounts are outside it — those are DEC-010 and unanswered. The one refund that
+ * exists — a paid order cancelled under DEC-024 with the whole amount handed back — is subtracted
+ * by the server on the day it happened (`collected-today-v2`). An owner who reads this as
  * revenue would be wrong in a direction that matters, so the card names the boundary itself and
  * the assistant still refuses revenue questions.
  *
@@ -163,6 +165,16 @@ function takingsCard() {
           "tại quầy. Có hai trường hợp và cả hai đều đã trả đủ: khách tự lấy đồ về, hoặc đã trả " +
           "đủ rồi tiệm giao tận nơi sau. Nên tiền đã thu không có nghĩa là đồ đã ra khỏi tiệm. " +
           "Máy chủ cộng trực tiếp từ sổ ghi tất toán; màn hình này không tự cộng.",
+      ),
+      h(
+        "p",
+        null,
+        // DEC-024: a paid order cancelled with the money handed back is subtracted on the day the
+        // money went back, which can take a day's figure below zero. Said here so a negative
+        // number reads as the drawer's truth rather than as a fault.
+        "Trừ đi: tiền đã hoàn lại cho khách hôm nay khi một đơn đã trả tiền bị huỷ (trả đồ " +
+          "chưa giặt, hoặc lỗi của tiệm nên không thu tiền). Tiền hoàn tính vào ngày hoàn, " +
+          "nên nếu hôm nay chỉ có hoàn tiền mà chưa thu đồng nào thì con số này có thể âm.",
       ),
       h(
         "p",
@@ -323,6 +335,17 @@ export function render_() {
             ? "Chưa có đơn nào tất toán hôm nay."
             : `${result.settlement_count} đơn đã tất toán hôm nay (giờ Việt Nam).`,
         ),
+        // `collected-today-v2` (DEC-024): the amount above is already net of refunds, computed by
+        // the server. Both legs are shown so the figure can be checked against the drawer without
+        // this screen doing the subtraction itself.
+        result.refund_count > 0
+          ? h(
+              "p",
+              { class: "hint" },
+              `Đã thu ${money(result.settled_vnd)}, đã hoàn lại ${money(result.refunded_vnd)} ` +
+                `cho ${result.refund_count} đơn huỷ — số ở trên đã trừ phần hoàn lại.`,
+            )
+          : null,
         // The rule that produced the figure, beside the figure. Invariant 18 wants the version to
         // travel with the number, and a total printed or photographed off this screen is exactly
         // the case where "which rule was this" stops being answerable any other way.

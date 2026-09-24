@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from nha_trang_laundry_domain.catalog import FulfillmentMode
 from nha_trang_laundry_domain.settlement import (
@@ -44,11 +45,31 @@ SETTLEMENT_ROLES = frozenset({StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, Sta
 BUSINESS_TIMEZONE = "Asia/Ho_Chi_Minh"
 
 #: The takings figure, as one statement so that one edit moves one rule (`OPS-BOARD-001`).
+#:
+#: v2 (`DEC-024`): money in minus money out, each on its own local business day. v1 summed
+#: settlements alone, so a paid order cancelled with the cash handed back stayed in the day's
+#: takings and the figure read above the drawer by exactly the refund. A refund is dated by when
+#: the money went back, not by when it first came in: a refund today of yesterday's payment reduces
+#: today, and yesterday's figure -- which was true of yesterday's drawer -- does not move.
+#:
+#: The business day is a parameter rather than `now()` inside the statement, so a figure can be
+#: reproduced for a named day and a test can hold the clock still.
 _COLLECTED_TODAY_SQL = """
-    SELECT coalesce(sum(paid_amount_vnd), 0), count(*)
-    FROM order_settlements
-    WHERE store_id = %s
-      AND (attested_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date
+    WITH settled AS (
+        SELECT coalesce(sum(paid_amount_vnd), 0) AS amount, count(*) AS entries
+        FROM order_settlements
+        WHERE store_id = %(store)s
+          AND (attested_at AT TIME ZONE %(zone)s)::date = %(business_date)s
+    ), refunded AS (
+        SELECT coalesce(sum(refunded_amount_vnd), 0) AS amount, count(*) AS entries
+        FROM order_refunds
+        WHERE store_id = %(store)s
+          AND direction = 'TO_CUSTOMER'
+          AND (refunded_at AT TIME ZONE %(zone)s)::date = %(business_date)s
+    )
+    SELECT settled.amount - refunded.amount, settled.amount, settled.entries,
+           refunded.amount, refunded.entries
+    FROM settled, refunded
 """
 
 #: The published version of the rule above, travelling with the figure under invariant 18.
@@ -56,7 +77,7 @@ _COLLECTED_TODAY_SQL = """
 #: This is the one money figure the console shows, so "which rule produced it" is not a developer
 #: convenience: the day boundary is hashed with the SQL because moving it would change the total
 #: while leaving the statement word for word identical.
-COLLECTED_TODAY_QUERY = query_version("collected-today-v1", _COLLECTED_TODAY_SQL, BUSINESS_TIMEZONE)
+COLLECTED_TODAY_QUERY = query_version("collected-today-v2", _COLLECTED_TODAY_SQL, BUSINESS_TIMEZONE)
 
 
 class SettlementAuthorizationError(PermissionError):
@@ -96,16 +117,30 @@ class StoredSettlement:
 
 @dataclass(frozen=True, slots=True)
 class CollectedToday:
-    """What one store's counter took in, on today's local business day.
+    """What one store's counter took in and handed back, on one local business day.
 
-    Deliberately two integers and nothing else. `collected_vnd` is a sum of `paid_amount_vnd`, a
-    BIGINT column the database itself constrains to equal `expected_total_vnd`, so it cannot be a
-    partial payment, a deposit or a rounded figure — every row it sums is a customer who paid the
-    quoted total in full and took their goods.
+    `settled_vnd` sums `paid_amount_vnd`, a BIGINT column the database constrains to equal
+    `expected_total_vnd`, so every row in it is a customer who paid the quoted total in full --
+    and that money came in, whatever happened to the order afterwards. It is not "a customer who
+    paid and took their goods": a prepaid delivery (`DEC-023`) pays before the goods leave, and an
+    order can be cancelled after it was paid.
+
+    `refunded_vnd` sums `order_refunds.refunded_amount_vnd`: the whole settled amount of an order
+    cancelled under a `DEC-024` resolution that charges the customer nothing, dated by when the
+    money went back.
+
+    `collected_vnd` is the first minus the second, computed by the database, and it is the figure
+    labelled *tiền đã thu*. It is what the drawer did that day, so it **can be negative**: a day
+    whose only money event was a refund of yesterday's payment ended lighter than it began. That is
+    a signed difference of two non-negative ledger sums, not a stored amount of money, and clamping
+    it at zero would reintroduce the defect this replaced in the opposite direction.
     """
 
     collected_vnd: int
     settlement_count: int
+    settled_vnd: int = 0
+    refunded_vnd: int = 0
+    refund_count: int = 0
 
 
 class SettlementRepository:
@@ -303,19 +338,27 @@ class SettlementRepository:
 
     @staticmethod
     def collected_today(
-        cursor: Any, *, store_id: UUID, principal: StaffPrincipal
+        cursor: Any,
+        *,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        as_of: datetime | None = None,
     ) -> CollectedToday:
-        """Sum today's attested settlements for one store.
+        """Today's settlements minus today's refunds, for one store.
 
         This is the only money figure the console reads, and its narrowness is the reason it is
         safe to show. It is not revenue: it does not know about work in progress, about an order
-        delivered but unpaid, about a refund (the schema has no such row), or about anything that
-        happened before today's local midnight. It is one question — "how much came across the
-        counter today" — answered by summing an append-only ledger.
+        delivered but unpaid, or about anything that happened outside the named local day. It is
+        one question — "how much did the counter's drawer change by today" — answered from two
+        append-only ledgers, money in and money out.
 
-        The database does the arithmetic. Nothing here adds, rounds, converts or reconciles, and no
-        model is involved at any point: `SUM` over a BIGINT column is exact in a way that a
-        floating-point total in application code would not be.
+        The database does the arithmetic. Nothing here adds, subtracts, rounds, converts or
+        reconciles, and no model is involved at any point: `SUM` over BIGINT columns is exact in a
+        way that a floating-point total in application code would not be.
+
+        `as_of` names the instant whose local business day is meant; it defaults to the server's
+        clock and exists so a figure can be reproduced for a named day. It is a parameter of this
+        method, not of any request.
 
         `coalesce` matters: a store with no settlements today must read as 0, not as null, because
         the caller renders this number and "chưa thu đồng nào" is a real answer.
@@ -326,11 +369,22 @@ class SettlementRepository:
             store_id=store_id,
             error=SettlementAuthorizationError,
         )
-        cursor.execute(_COLLECTED_TODAY_SQL, (store_id, BUSINESS_TIMEZONE, BUSINESS_TIMEZONE))
+        moment = as_of or datetime.now(UTC)
+        business_date = moment.astimezone(ZoneInfo(BUSINESS_TIMEZONE)).date()
+        cursor.execute(
+            _COLLECTED_TODAY_SQL,
+            {"store": store_id, "zone": BUSINESS_TIMEZONE, "business_date": business_date},
+        )
         row = cursor.fetchone()
         if row is None:  # pragma: no cover - an aggregate always returns one row
             return CollectedToday(collected_vnd=0, settlement_count=0)
-        return CollectedToday(collected_vnd=int(row[0]), settlement_count=int(row[1]))
+        return CollectedToday(
+            collected_vnd=int(row[0]),
+            settled_vnd=int(row[1]),
+            settlement_count=int(row[2]),
+            refunded_vnd=int(row[3]),
+            refund_count=int(row[4]),
+        )
 
 
 def _uuid(value: object) -> UUID:

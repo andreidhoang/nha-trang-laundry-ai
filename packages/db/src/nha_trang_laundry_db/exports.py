@@ -127,6 +127,14 @@ EXPORT_COLUMNS: tuple[str, ...] = (
     "expected_total_vnd",
     "paid_amount_vnd",
     "settlement_attested_at",
+    # `DEC-024`. Until these three existed a paid order cancelled with the cash handed back read,
+    # in this file, exactly like a paid order: `paid_amount_vnd` filled in and nothing beside it.
+    # Anyone summing that column reported the day larger than the drawer by every refund. The
+    # settlement stays -- the customer did pay -- and the refund sits on the same row, positive,
+    # with the moment it went back, so both movements are visible and neither is netted away.
+    "balance_status",
+    "refunded_amount_vnd",
+    "refunded_at",
 )
 
 #: What this export withholds, named rather than implied, and hashed into the same document.
@@ -168,9 +176,11 @@ _EXPORT_SQL = """
     SELECT o.id, o.created_at, o.commercial_status, o.intake_status, o.production_status,
            o.production_accepted_at, o.production_ready_at, o.production_released_at,
            o.closed_at,
-           s.expected_total_vnd, s.paid_amount_vnd, s.attested_at
+           s.expected_total_vnd, s.paid_amount_vnd, s.attested_at,
+           o.balance_status, rf.refunded_amount_vnd, rf.refunded_at
     FROM orders o
     LEFT JOIN order_settlements s ON s.order_id = o.id
+    LEFT JOIN order_refunds rf ON rf.order_id = o.id
     WHERE o.store_id = %(store)s
       AND (o.created_at AT TIME ZONE %(zone)s)::date = %(business_date)s
     ORDER BY o.created_at, o.id
@@ -180,7 +190,7 @@ _EXPORT_SQL = """
 #: row. The column list, the timezone and the boundary event are hashed with the SQL: any of them
 #: could change what a figure in the file means while leaving the statement itself untouched.
 EXPORT_QUERY = query_version(
-    "store-day-orders-export-v1",
+    "store-day-orders-export-v2",
     _EXPORT_SQL,
     BUSINESS_TIMEZONE,
     EXPORT_DAY_BOUNDARY,
@@ -750,8 +760,10 @@ def _statement(facts: ExportRequestFacts) -> ExportStatement:
         query_version=EXPORT_QUERY.label,
         statement_vi=(
             "Xuất bản sao hồ sơ của chính cửa hàng cho ngày "
-            f"{facts.business_date} (theo giờ Việt Nam): mã đơn, trạng thái, mốc thời gian và "
-            "số tiền đã thu của những đơn MỞ trong ngày đó. "
+            f"{facts.business_date} (theo giờ Việt Nam): mã đơn, trạng thái, mốc thời gian, "
+            "số tiền đã thu và số tiền đã hoàn lại cho khách của những đơn MỞ trong ngày đó. "
+            "Đơn đã thu tiền rồi bị huỷ và hoàn tiền vẫn hiện số tiền đã thu, kèm số tiền đã "
+            "hoàn và lúc hoàn trên cùng dòng — cả hai việc đều đã xảy ra. "
             "Ngày được cắt theo lúc mở đơn, không phải theo lúc thu tiền: đơn mở hôm trước mà "
             "thu tiền hôm sau vẫn nằm ở ngày mở. Vì vậy tổng tiền trong tệp này không bằng ô "
             "“tiền đã thu hôm nay” trên màn hình Hôm nay — ô đó cộng theo lúc thu. Hai con số "

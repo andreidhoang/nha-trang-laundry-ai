@@ -333,7 +333,11 @@ def _changed_probe() -> Any:
 def test_the_day_count_and_takings_versions_are_pinned_too() -> None:
     """The other two figures the day surfaces publish, held to the same rule."""
     assert TODAY_STATUS_COUNTS_QUERY.label == "today-status-counts-v1:cd422085b053d921"
-    assert COLLECTED_TODAY_QUERY.label == "collected-today-v1:391bd9369153e5ae"
+    # v1 (`391bd9369153e5ae`) summed settlements alone, so a paid order cancelled with the cash
+    # handed back under DEC-024 stayed in the day's takings. v2 subtracts `order_refunds` on the
+    # refund's own business day and takes that day as a parameter instead of `now()` -- a changed
+    # rule, so a new identifier, not a bumped digest under the old one.
+    assert COLLECTED_TODAY_QUERY.label == "collected-today-v2:4c5ad5da56daa1e9"
 
 
 def test_a_changed_rule_produces_a_different_digest_under_the_same_identifier() -> None:

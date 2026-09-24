@@ -109,6 +109,15 @@ TERMINAL_COMMERCIAL_STATUSES: Final = frozenset(
     {CommercialOrderStatus.CANCELLED, CommercialOrderStatus.COMPLETED}
 )
 
+#: `DEC-024`, in its own words: `RETURNED_UNWASHED_REFUNDED` is "laundry handed back and any
+#: prepayment refunded in full", and `SHOP_FAULT_NO_CHARGE` is "nothing is charged". Under either, a
+#: customer who had paid gets the settled amount back. `NOT_RECEIVED` is absent on purpose: it means
+#: nothing was taken in, and an order that took money has custody recorded, so the resolution is
+#: refused on the custody fact before the money question is reached.
+CUSTOMER_NOT_CHARGED_RESOLUTIONS: Final = frozenset(
+    {CustodyResolution.RETURNED_UNWASHED_REFUNDED, CustodyResolution.SHOP_FAULT_NO_CHARGE}
+)
+
 PRODUCTION_SEQUENCE: Final = (
     ProductionStatus.NOT_STARTED,
     ProductionStatus.QUEUED,
@@ -150,7 +159,12 @@ def transition_commercial(
                     "HUMAN_APPROVAL_REQUIRED: cancellation resolution is incomplete"
                 )
             _reject_resolution_contradicting_the_record(state, custody_resolution)
-        elif _work_has_begun(state):
+            return replace(
+                state,
+                commercial=target,
+                balance=_balance_after_cancellation(state.balance, custody_resolution),
+            )
+        if _work_has_begun(state):
             # DEC-024. Every other edge into CANCELLED had no guard at all, so an order whose
             # laundry was already in a machine could be cancelled outright and the money never
             # recorded -- while the one path that *is* guarded could never succeed, because its two
@@ -165,6 +179,40 @@ def transition_commercial(
                 "HUMAN_APPROVAL_REQUIRED: work has begun; cancel through cancellation review"
             )
     return replace(state, commercial=target)
+
+
+def _balance_after_cancellation(
+    balance: OrderBalanceStatus, resolution: CustodyResolution | None
+) -> OrderBalanceStatus:
+    """What the order's balance reads once a reviewed cancellation lands. `DEC-024`.
+
+    The defect this closes: the resolution was recorded on the event and nothing acted on it, so a
+    paid order cancelled as "returned unwashed, refunded in full" stayed `PAID` and the day's
+    takings counted money that had gone back across the counter.
+
+    * `UNPAID` stays `UNPAID`. Nothing was taken, so nothing goes back -- unchanged behaviour.
+    * `PAID` under a resolution that charges the customer nothing becomes `REFUNDED`. The amount is
+      not decided here or by anyone at the counter: it is the settled amount, read off the
+      settlement ledger by the repository that writes the refund in the same transaction.
+    * `PAID` under anything else is refused. The only such resolution is `NOT_RECEIVED`, which the
+      custody check above already refuses for a paid order; this is the money-side statement of the
+      same rule, so no future resolution code can cancel a paid order and keep the money counted.
+    * Every other balance is a settlement shape `DEC-010` keeps `NOT_SUPPORTED`, and none can be
+      written today. A cancellation of one is refused rather than guessed at.
+    """
+
+    if balance is OrderBalanceStatus.UNPAID:
+        return balance
+    if balance is OrderBalanceStatus.PAID:
+        if resolution in CUSTOMER_NOT_CHARGED_RESOLUTIONS:
+            return OrderBalanceStatus.REFUNDED
+        raise OrderTransitionError(
+            "HUMAN_APPROVAL_REQUIRED: the order was paid, and this resolution does not say the "
+            "money went back to the customer"
+        )
+    raise OrderTransitionError(
+        "NOT_SUPPORTED: cancelling an order with this balance is not a supported settlement shape"
+    )
 
 
 def _reject_resolution_contradicting_the_record(

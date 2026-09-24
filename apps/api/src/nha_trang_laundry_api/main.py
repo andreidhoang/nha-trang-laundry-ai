@@ -2070,15 +2070,25 @@ def list_quotes(
 # order, and the database itself constrains `paid_amount_vnd = expected_total_vnd`, so every row is
 # a customer who paid the quoted total in full at the counter. Summing it involves no policy, no
 # proration and no model. Revenue would require answering what to do about work in progress,
-# delivery collections, refunds and B2B accounts — all of which are DEC-010, and none of which this
-# route pretends to have settled.
+# delivery collections, partial refunds and B2B accounts — all of which are DEC-010, and none of
+# which this route pretends to have settled.
+#
+# The one refund that does exist is subtracted (`collected-today-v2`): a paid order cancelled under
+# a DEC-024 resolution that charges the customer nothing hands the whole settled amount back, and an
+# append-only `order_refunds` row records it. Leaving it in made the figure read above the drawer.
 
 
 class CollectedTodayResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    #: `collected-today-v2` (`DEC-024`): today's settlements minus today's refunds, as the database
+    #: computed it. What the drawer did, so it may be negative on a day whose only money event was a
+    #: refund; the two non-negative ledger sums it is the difference of travel beside it.
     collected_vnd: int
     settlement_count: int
+    settled_vnd: int
+    refunded_vnd: int
+    refund_count: int
     business_timezone: str
     #: `OPS-BOARD-001`, invariant 18: the identifier of the rule that produced the figure travels
     #: with the figure. This is the only money the console shows, so it is the one where "which
@@ -2109,6 +2119,9 @@ def collected_today(
     return CollectedTodayResponse(
         collected_vnd=collected.collected_vnd,
         settlement_count=collected.settlement_count,
+        settled_vnd=collected.settled_vnd,
+        refunded_vnd=collected.refunded_vnd,
+        refund_count=collected.refund_count,
         business_timezone=BUSINESS_TIMEZONE,
         query_version=COLLECTED_TODAY_QUERY.label,
     )

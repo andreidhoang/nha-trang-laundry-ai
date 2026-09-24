@@ -162,23 +162,22 @@ def publish_remedy_policy(
 ) -> tuple[str, bool]:
     """Publish one remedy policy document, returning its digest and whether this call created it.
 
-    Idempotent on the digest for the reason `publish_pricebook` is: republishing an identical
-    document would create a second version of the same figures, and every proposal citing version 1
-    would start looking out of date for no reason.
+    Idempotent on the digest *of the version in force*, for the reason `publish_pricebook` is:
+    republishing the document already in force would create a second version of the same figures,
+    and every proposal citing it would start looking out of date for no reason. An earlier
+    document is not in force, so publishing it again is a new version that is.
     """
 
     validate_remedy_policy(payload)
     digest = snapshot_hash(payload)
     repository = ConfigurationRepository({REMEDY_POLICY_CONFIG_TYPE: validate_remedy_policy})
     with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT version FROM configuration_versions
-            WHERE config_type = %s AND snapshot_hash = %s AND lifecycle = 'PUBLISHED'
-            """,
-            (REMEDY_POLICY_CONFIG_TYPE, digest),
-        )
-        if cursor.fetchone() is not None:
+        # "Is this the policy in force", not "was it ever published". The second made reverting a
+        # temporary change impossible -- raise the staff ceiling as v2, republish v1's figures to
+        # end it, and v2 stayed in force behind an "already published". A revert is a new version
+        # with the earlier content, exactly as `publish_pricebook` does it.
+        in_force = ConfigurationRepository.latest_published(cursor, REMEDY_POLICY_CONFIG_TYPE)
+        if in_force is not None and in_force.snapshot_hash == digest:
             return digest, False
         cursor.execute(
             "SELECT coalesce(max(version), 0) FROM configuration_versions WHERE config_type = %s",

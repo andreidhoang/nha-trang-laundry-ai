@@ -56,7 +56,7 @@ def main() -> int:
         digest, created = publish_remedy_policy(
             connection, actor_id=arguments.actor_id, payload=payload
         )
-    state = "published" if created else "already published"
+    state = "published" if created else "already in force"
     print(f"remedy policy {state}: JCS-SHA256-V1:{digest}")
     return 0
 

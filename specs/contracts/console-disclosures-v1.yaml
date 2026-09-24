@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 321
+  DESCRIPTIVE: 320
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 5
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 348
+total: 347
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1998,11 +1998,18 @@ disclosures:
     why: True because a registered decision says so, not because of a code fact. The recorded status is
       regenerated from context/DECISION_REGISTRY.yaml, so a decision resolving after the sentence was
       written shows up here as a registry diff.
-- slot_id: screens/orderDetail.js#hint:402155a555ce
+- slot_id: screens/orderDetail.js#hint:80b50bcbf320
   module: screens/orderDetail.js
   key: hint
-  text: Bốn trục chuyển động độc lập với nhau; đừng đọc chúng như một chuỗi tuần tự. Lệnh chuyển trạng
-    thái nằm ở bảng đơn, vì lệnh đó cần phiên bản dòng vừa đọc được.
+  text: Bốn trục chuyển động độc lập với nhau; đừng đọc chúng như một chuỗi tuần tự.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#notice:8e31f46ac341
+  module: screens/orderDetail.js
+  key: notice
+  text: Mã đơn sai, hoặc đơn thuộc cửa hàng bạn không làm. Tìm lại bằng số phiếu ở màn hình Đơn hàng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2027,22 +2034,6 @@ disclosures:
   module: screens/orderDetail.js
   key: notice__title
   text: Địa chỉ này không chứa một mã đơn hợp lệ
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#eyebrow:069b0c4703fc
-  module: screens/orderDetail.js
-  key: eyebrow
-  text: Ghép từ bảng đơn · máy chủ chưa có cách đọc một đơn riêng lẻ
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#guardrail:561748165de4
-  module: screens/orderDetail.js
-  key: guardrail
-  text: Máy chủ chưa có cách đọc một đơn riêng lẻ. Màn hình này gọi lại bảng đơn của cửa hàng và lọc theo
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2120,12 +2111,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#notice:81fcdba8cd13
+- slot_id: screens/orders.js#notice:b050b9f1628d
   module: screens/orders.js
   key: notice
-  text: Vì máy chủ chưa lưu những thứ đó cho một đơn. Không phải màn hình này giấu đi — chúng chưa tồn
-    tại. Hiện một cột “Khách” lấy từ chỗ khác là bịa ra một điều máy chủ chưa từng nói, nên bảng để trống
-    và ghi nhận đây là việc chưa làm được.
+  text: 'Chủ tiệm đã chốt: khách vãng lai chỉ được ghi bằng số phiếu, tiệm không lưu tên, số điện thoại
+    hay địa chỉ (DEC-013). Tìm đơn bằng số phiếu ở ô “Tìm theo số phiếu”.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orders.js#guardrail:3f18d87de043
+  module: screens/orders.js
+  key: guardrail
+  text: Đơn chỉ được tạo từ một báo giá khách đã chốt. Bấm “Khách đã chốt giá” ở màn hình Báo giá trước,
+    rồi mới tạo đơn ở đây. Máy chủ kiểm lại toàn bộ điều kiện; màn hình này chỉ bắt lỗi gõ trước khi gửi.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2166,16 +2165,6 @@ disclosures:
   text: Khách đã trả đủ tại quầy trước khi đồ rời tiệm, nên ghi nhận ở đây không có tiền — chỉ ghi đồ
     đã đến tay khách hay chưa. Giao hụt thì ghi thất bại, không tính thêm phí, và lần giao sau là một
     dòng mới. Chỉ chuyến TRẢ ĐỒ thành công mới cho phép đóng đơn.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#guardrail:a0b69d4833f1
-  module: screens/orders.js
-  key: guardrail
-  text: Đơn chỉ được tạo từ một báo giá khách đã chốt. Bấm \u201cKhách đã chốt giá\u201d ở màn hình Báo
-    giá trước, rồi mới tạo đơn ở đây. Máy chủ kiểm lại toàn bộ điều kiện; màn hình này chỉ bắt lỗi gõ
-    trước khi gửi.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

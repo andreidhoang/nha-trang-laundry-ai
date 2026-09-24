@@ -538,7 +538,23 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     notice both said the envelope must be decided by somebody other than "người vừa tạo",
     #     which named the wrong act now that the rule measures against the export request's own
     #     requester.
-    assert sum(counts.values()) == _registry()["total"] == 348
+    #
+    # 347 after ORDER-LOOKUP-001: -2 retired, +1 added, 3 re-keyed. Net -1.
+    #
+    #   * The two retirements are order detail's eyebrow and guardrail, "Ghép từ bảng đơn · máy chủ
+    #     chưa có cách đọc một đơn riêng lẻ" and "Máy chủ chưa có cách đọc một đơn riêng lẻ…". Both
+    #     stopped being true when `GET /internal/v1/orders/{order_id}` shipped, so they were deleted
+    #     rather than reworded -- the same exit QUOTE-ACCEPT-001 and REMEDY-001 took.
+    #   * The addition is the detail screen's 404 notice, which says only what the server's single
+    #     answer for "missing" and "another store's" allows: the id is wrong or the order is in a
+    #     store you do not work in.
+    #   * Re-keyed: the board's read-model note (it said the server stores no amount for an order,
+    #     and now the board shows one; what remains true is that no customer name is stored, by
+    #     DEC-013), order detail's four-axes hint (it pointed transitions at the board because only
+    #     the board held a row version), and the create panel's guardrail, whose text is unchanged
+    #     but whose quote marks are now literal characters rather than `“` escapes -- the
+    #     registry used to record the escape sequence itself as the sentence.
+    assert sum(counts.values()) == _registry()["total"] == 347
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

@@ -1,14 +1,17 @@
 /**
- * One order: its four states, and everything the audit log recorded against its identifier.
+ * One order: the ticket it is tracked by, what the customer owes, its four states, and
+ * everything the audit log recorded against its identifier.
  *
- * This screen exists in a slightly awkward position, and the awkwardness is the point rather than
- * something to paper over:
- *
- *   - **There is no route that reads one order.** The API offers a store-scoped board and nothing
- *     else, so the "detail" here is the board fetched again and filtered in the browser. That means
- *     an order outside the newest hundred rows cannot be shown at all, and the screen says exactly
- *     that instead of rendering "không tìm thấy", which would be a claim about the order's
- *     existence that this console is in no position to make.
+ *   - **The order is read by its id** (`GET /internal/v1/orders/{id}`), whatever its age and
+ *     whichever of the caller's stores it belongs to. Until ORDER-LOOKUP-001 this screen fetched the
+ *     newest hundred rows of the selected store and searched them in the browser, so an order from
+ *     four days ago could not be opened at the counter at all. The server answers a missing order
+ *     and another store's order with the same 404, so "không tìm thấy" is all this screen can say
+ *     about either -- and all it should.
+ *   - **The amount is the server's.** `payable_total_vnd` is read from the quote revision the order
+ *     is bound to -- the same stored figure the settlement checks a payment against. It is shown
+ *     beside the payment field so the operator reads it to the customer, and the field is still
+ *     typed rather than prefilled (see `settlementPanel`).
  *   - **The timeline is a Shadow surface wearing an order's clothes.** `GET …/shadow/audit/{id}` is
  *     the only audit read in the API, and the repository gates it on `SHADOW_READ` regardless of
  *     what the caller thinks they are looking at. An `AUDITOR` or an `OPERATOR` reaches it; a role
@@ -19,7 +22,8 @@
  *     nothing more — not that the order is new, not that the order is absent. The empty state says
  *     the ambiguous thing because the ambiguous thing is what is true.
  *   - **Nothing is re-sorted and nothing is totalled.** The server orders by `(occurred_at, id)`,
- *     oldest first, and that order is preserved; there is no money on this screen to add up.
+ *     oldest first, and that order is preserved; the one amount on this screen is displayed, never
+ *     computed.
  *
  * @module screens/orderDetail
  */
@@ -27,7 +31,7 @@
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UNKNOWN, UUID, count, dateTime, money, parseDong, shortId } from "../core/format.js";
-import { enumLabel } from "../core/i18n.js";
+import { enumLabel, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import { navigate } from "../core/router.js";
@@ -48,8 +52,9 @@ import {
 // A screen importing a screen, deliberately: this is the WS6 order-detail-to-incidents
 // carry-over channel (in-memory module state, cleared on consumption), not a shared helper.
 import { setIncidentOrderPrefill } from "./incidents.js";
-
-const BOARD_LIMIT = 100;
+// The same two helpers the board uses, so a card and this screen cannot word the ticket or the
+// amount differently.
+import { amountDue, ticketLabel } from "./orders.js";
 
 /**
  * The server's fixed audit page size.
@@ -124,7 +129,9 @@ function auditTimeline(entries) {
  * The form asks for the amount rather than offering to fill it in. The server compares what is
  * typed against the immutable quote the order is bound to, and a pre-filled figure a staff member
  * confirms without reading is how a wrong amount gets attested — the point of the comparison is
- * that two independent sources agree.
+ * that two independent sources agree. What changed is that the figure to read to the customer is
+ * now on screen beside the field (`spec.dueHost`, filled once the order is read); before, the
+ * form demanded an exact total that no order screen showed.
  *
  * Only one shape exists. Anything else is refused with the open decision that owns it, and the
  * refusal is shown verbatim rather than translated into "try again".
@@ -132,6 +139,7 @@ function auditTimeline(entries) {
  * @param {object} spec
  * @param {string} spec.orderId
  * @param {import("../core/rbac.js").Verdict} spec.verdict
+ * @param {HTMLElement} spec.dueHost where the amount to collect is shown, next to the field
  * @param {() => void} spec.onRecorded
  * @returns {HTMLElement}
  */
@@ -199,7 +207,7 @@ function settlementPanel(spec) {
     type: "text",
     inputmode: "numeric",
     autocomplete: "off",
-    placeholder: "110000",
+    placeholder: "Số tiền khách đưa",
     onInput: (event) => {
       draft.amount = /** @type {HTMLInputElement} */ (event.target).value;
       // Any edit is a new intent; the old key would be a 409 against the new payload.
@@ -227,6 +235,7 @@ function settlementPanel(spec) {
     children: h(
       "form",
       { class: "form", onSubmit: submit },
+      spec.dueHost,
       labelled({
         id: "settlement-amount",
         label: "Số tiền khách đã trả (₫)",
@@ -264,7 +273,6 @@ function settlementPanel(spec) {
 
 export function render_(context) {
   const orderId = String(context?.params?.orderId || "").trim();
-  const store = storeId();
   const shadowVerdict = can(principal(), "SHADOW_READ");
   const settlementVerdict = can(principal(), "ORDERS_WRITE");
   const incidentVerdict = can(principal(), "INCIDENTS_WRITE");
@@ -274,77 +282,103 @@ export function render_(context) {
   const timelineHost = h("div", null, skeleton(3));
   const timelineCount = h("span", { class: "count" }, "…");
   const timelineTruncation = h("p", { class: "hint" });
+  const heading = h("h1", null, "Chi tiết đơn");
+  const dueHost = h("div");
 
   /**
-   * Fetch the board and pick this order out of it.
+   * Read this order by id. The server takes the store from the order itself, so an order of any
+   * age in any of the caller's stores opens here, not only the selected store's newest hundred.
    *
-   * The filter is done here rather than server-side because there is no server-side filter to use.
-   * That has a consequence worth stating plainly on screen: absence from the response is absence
-   * from the newest hundred rows of one store, not absence from the system.
+   * @returns {Promise<any|null>} the order, or null when it could not be read
    */
   async function loadOrder() {
     render(orderHost, skeleton(1));
     try {
-      const items = await request(
-        `/internal/v1/stores/${encodeURIComponent(store)}/orders?limit=${BOARD_LIMIT}`,
-      );
-      const found = (Array.isArray(items) ? items : []).find(
-        (item) => String(item.order_id).toLowerCase() === orderId.toLowerCase(),
-      );
-
-      if (!found) {
-        const full = isTruncated(items, BOARD_LIMIT);
-        render(
-          orderHost,
-          h(
-            "div",
-            { class: "notice", dataState: "warn" },
-            h("p", { class: "notice__title" }, "Không thấy đơn này trong bảng đơn"),
-            h(
+      const found = await request(`/internal/v1/orders/${encodeURIComponent(orderId)}`);
+      const ticket = ticketLabel(found);
+      const due = amountDue(found);
+      heading.textContent = ticket || "Chi tiết đơn";
+      render(
+        dueHost,
+        due
+          ? h(
               "p",
-              null,
-              full
-                ? `Bảng chỉ đọc được ${BOARD_LIMIT} đơn mới nhất và đã trả đủ ${BOARD_LIMIT} dòng, ` +
-                  "nên đơn này có thể nằm ngoài phạm vi đọc được. Đây không phải bằng chứng đơn " +
-                  "không tồn tại."
-                : "Cửa hàng đang chọn không có đơn nào mang định danh này. Đơn có thể thuộc cửa " +
-                  "hàng khác — máy chủ chưa có cách đọc một đơn theo định danh, nên không kiểm tra " +
-                  "được điều đó từ đây.",
-            ),
-            h("p", { class: "hint mono" }, orderId),
-          ),
-        );
-        return;
-      }
-
+              { class: "row" },
+              h("span", null, `${due.label}:`),
+              h("strong", { class: due.known ? "money" : "" }, due.text),
+              h("span", { class: "hint" }, `(${enumVi(found.balance).toLowerCase()})`),
+            )
+          : null,
+      );
       render(
         orderHost,
         h(
           "div",
           { class: "stack" },
           facts([
-            ["Mã đơn", copyable({ value: orderId }), { mono: true, span: true }],
-            ["Cửa hàng", found.store_id, { mono: true, span: true }],
+            ["Số phiếu", ticket || "Không có — khách nhắn tin, không phát phiếu"],
+            due ? [due.label, h("span", { class: due.known ? "money" : "" }, due.text)] : null,
             ["Thương mại", dimensionBadge(found.commercial)],
             ["Tiếp nhận", dimensionBadge(found.intake)],
             ["Sản xuất", dimensionBadge(found.production)],
             ["Công nợ", dimensionBadge(found.balance)],
+            ["Giao nhận", enumVi(found.fulfillment_mode)],
+            ["Tạo lúc", dateTime(found.created_at)],
+            [
+              "Báo giá",
+              h(
+                "span",
+                { class: "mono", title: found.quote_id },
+                `${shortId(found.quote_id)} · bản ${found.quote_revision}`,
+              ),
+            ],
+            ["Mã đơn", copyable({ value: orderId }), { mono: true, span: true }],
             ["Phiên bản dòng", `v${found.row_version}`],
           ]),
           h(
             "p",
             { class: "hint" },
-            "Bốn trục chuyển động độc lập với nhau; đừng đọc chúng như một chuỗi tuần tự. Lệnh " +
-              "chuyển trạng thái nằm ở bảng đơn, vì lệnh đó cần phiên bản dòng vừa đọc được.",
+            "Bốn trục chuyển động độc lập với nhau; đừng đọc chúng như một chuỗi tuần tự.",
+          ),
+          h(
+            "div",
+            { class: "form__actions" },
+            h(
+              "a",
+              { class: "button", href: `#/orders?order=${encodeURIComponent(orderId)}` },
+              "Chuyển trạng thái đơn này",
+            ),
           ),
         ),
       );
+      return found;
     } catch (error) {
-      render(orderHost, errorNotice(error, { onRetry: () => void loadOrder() }));
+      render(dueHost);
+      if (error?.status === 404) {
+        render(
+          orderHost,
+          h(
+            "div",
+            { class: "notice", dataState: "warn" },
+            h("p", { class: "notice__title" }, "Không tìm thấy đơn này"),
+            h(
+              "p",
+              null,
+              "Mã đơn sai, hoặc đơn thuộc cửa hàng bạn không làm. Tìm lại bằng số phiếu ở màn " +
+                "hình Đơn hàng.",
+            ),
+            h("p", { class: "hint mono" }, orderId),
+          ),
+        );
+        return null;
+      }
+      render(orderHost, errorNotice(error, { onRetry: () => void start() }));
+      return null;
     }
   }
 
-  async function loadTimeline() {
+  /** @param {string} store the order's own store, read off the order */
+  async function loadTimeline(store) {
     // The repository gates this on SHADOW_READ even though the screen is an order screen. A role
     // without it gets the reason, not an empty list that would read as "nothing ever happened".
     if (!shadowVerdict.allowed) {
@@ -377,13 +411,26 @@ export function render_(context) {
     } catch (error) {
       timelineCount.textContent = "—";
       timelineTruncation.textContent = "";
-      render(timelineHost, errorNotice(error, { onRetry: () => void loadTimeline() }));
+      render(timelineHost, errorNotice(error, { onRetry: () => void loadTimeline(store) }));
     }
   }
 
+  /**
+   * The order first, then its timeline from the order's own store -- which need not be the store
+   * selected in the header, since a staff member working two shops can open either's orders.
+   */
+  async function start() {
+    const found = await loadOrder();
+    if (found) {
+      void loadTimeline(found.store_id || storeId());
+      return;
+    }
+    timelineCount.textContent = "—";
+    render(timelineHost, empty("Chưa đọc dòng thời gian vì chưa đọc được đơn."));
+  }
+
   if (wellFormed) {
-    void loadOrder();
-    void loadTimeline();
+    void start();
   } else {
     // A malformed identifier would be a 422 from the server and a confusing one, because the
     // failure is in the address bar rather than in anything the operator typed on this screen.
@@ -408,8 +455,8 @@ export function render_(context) {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "Ghép từ bảng đơn · máy chủ chưa có cách đọc một đơn riêng lẻ"),
-      h("h1", null, "Chi tiết đơn"),
+      h("p", { class: "eyebrow" }, "Đơn hàng"),
+      heading,
       h(
         "p",
         { class: "screen__lede" },
@@ -420,20 +467,14 @@ export function render_(context) {
     panel({
       eyebrow: "Trạng thái",
       title: "Đơn này",
-      guardrail:
-        "Máy chủ chưa có cách đọc một đơn riêng lẻ. Màn hình này gọi lại bảng đơn của cửa hàng và lọc theo " +
-        `mã trong địa chỉ, nên chỉ thấy được ${BOARD_LIMIT} đơn mới nhất. Ngoài bốn trạng thái và ` +
-        "phiên bản dòng, máy chủ không trả thêm gì về một đơn — không khách hàng, không mốc thời " +
-        "gian, không tiền.",
       children: h(
         "div",
         { class: "stack" },
         orderHost,
         // WS6 cross-link: hand the order id to the incident form through the incidents
         // module's in-memory slot and navigate there. Shown whenever the address holds a
-        // well-formed id — an order outside the newest hundred board rows still needs an
-        // incident opened against it — and gated like any other write control, with the
-        // denial reason visible.
+        // well-formed id, and gated like any other write control, with the denial reason
+        // visible.
         wellFormed
           ? h(
               "div",
@@ -470,10 +511,14 @@ export function render_(context) {
                 "đường nào liệt kê sự cố của riêng một đơn, nên màn hình này không chọn hộ được.",
             )
           : null,
-        h("p", null, h("a", { href: "#/gaps" }, "Xem khoảng trống: đọc chi tiết một đơn riêng lẻ")),
       ),
     }),
-    settlementPanel({ orderId, verdict: settlementVerdict, onRecorded: () => void loadOrder() }),
+    settlementPanel({
+      orderId,
+      verdict: settlementVerdict,
+      dueHost,
+      onRecorded: () => void loadOrder(),
+    }),
     panel({
       eyebrow: "Kiểm toán",
       title: "Dòng thời gian",

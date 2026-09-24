@@ -68,3 +68,7 @@ Thumbs.db
 test_zz_*.py
 *_scratch.py
 *_scratch_*.py
+
+# Agent worktrees are full checkouts nested in this one. Unignored, `git add -A` records each as an
+# embedded repository and every linter walks four extra copies of the codebase.
+.claude/worktrees/

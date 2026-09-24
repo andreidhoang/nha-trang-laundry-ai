@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-22'
+last_updated: '2026-09-24'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -4138,5 +4138,319 @@ items:
   - display_copy_never_becomes_the_authority
   - the_queue_gate_is_on_the_action_not_the_type
   - bound_revision_is_the_one_displayed
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: STAGING-REVIEW-001
+  phase: PRODUCTION_HARDENING
+  title: Five independent reviewers before real staff touch the application
+  status: COMPLETE
+  priority: 286
+  depends_on: []
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-staging-review-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_fix_has_a_test_that_fails_on_the_previous_code
+  - restore_runs_under_dash_and_without_gnu_date
+  - a_truncated_backup_is_never_encrypted_or_marked_good
+  - csrf_does_not_switch_off_on_a_malformed_cookie
+  - no_request_field_coerces_a_boolean_or_string_into_money
+  - real_api_browser_runs_on_a_database_migrated_from_empty
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: REMEDY-CUMULATIVE-001
+  phase: PRODUCTION_HARDENING
+  title: One complaint cannot mint unlimited staff-authorised credits
+  status: COMPLETE
+  priority: 287
+  depends_on:
+  - REMEDY-001
+  context_domains:
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  - docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-staging-review-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_reviewer_repro_is_refused_on_postgres
+  - the_staff_limit_and_ceiling_are_cumulative_per_line
+  - two_simultaneous_proposals_cannot_both_read_zero
+  - a_closed_incident_takes_no_new_proposal
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CREDIT-RESERVATION-001
+  phase: PRODUCTION_HARDENING
+  title: A remedy credit the shop owes survives a reprice, an expiry and an abandoned
+    quote
+  status: COMPLETE
+  priority: 288
+  depends_on:
+  - REMEDY-001
+  context_domains:
+  - orders_audit
+  - pricing
+  normative_sources:
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-staging-review-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_credit_is_spent_only_by_the_order_that_uses_it
+  - a_reprice_carries_or_releases_never_partially_spends
+  - a_credit_can_be_spent_once
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CANCEL-REFUND-001
+  phase: PRODUCTION_HARDENING
+  title: A paid order cancelled without charge records its refund, and takings match
+    the drawer
+  status: COMPLETE
+  priority: 289
+  depends_on:
+  - ORDER-EXIT-001
+  context_domains:
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  - docs/DECISION_REQUEST_ORDER_EXIT_2026-08.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-staging-review-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_refund_equals_the_settlement_by_schema
+  - takings_are_non_negative_and_net_of_refunds
+  - refund_mutation_event_audit_outbox_are_atomic
+  - no_late_credit_on_a_refunded_bill
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONFIG-REVERT-001
+  phase: PRODUCTION_HARDENING
+  title: Republishing an earlier pricebook, promotion or remedy policy puts it back
+    in force
+  status: COMPLETE
+  priority: 290
+  depends_on: []
+  context_domains:
+  - pricing
+  - business_truth
+  normative_sources:
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-staging-review-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_in_force_version_is_still_a_no_op
+  - an_older_document_becomes_a_new_version
+  - no_published_version_is_mutated
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: ORDER-LOOKUP-001
+  phase: PRODUCTION_HARDENING
+  title: Staff find the order a customer comes back for, and see what they owe
+  status: COMPLETE
+  priority: 291
+  depends_on: []
+  context_domains:
+  - orders_audit
+  - platform
+  normative_sources:
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-staging-review-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - an_order_past_the_newest_hundred_is_readable_and_transitionable
+  - ticket_lookup_uses_the_local_business_day
+  - another_stores_order_is_indistinguishable_from_a_missing_one
+  - the_amount_shown_is_the_stored_snapshot_total
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-DEADENDS-001
+  phase: PRODUCTION_HARDENING
+  title: The places a counter shift got stuck on the console
+  status: COMPLETE
+  priority: 292
+  depends_on: []
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-staging-review-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_failed_acceptance_keeps_its_control_and_says_why
+  - a_second_reprice_is_not_refused_as_stale
+  - server_refusals_reach_staff_in_vietnamese_naming_the_recorded_fact
+  - no_client_side_money_arithmetic
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-ALERT-DELIVERY-001
+  phase: PRODUCTION_HARDENING
+  title: Backup and disk alerts reach a person
+  status: PENDING
+  priority: 293
+  depends_on:
+  - STAGING-REVIEW-001
+  context_domains:
+  - platform
+  normative_sources:
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  - docs/adr/0007-production-deployment-topology.md
+  contracts: []
+  task_packet: context/tasks/TASK-staging-review-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_forced_failure_is_seen_arriving_on_the_owners_phone
+  - the_database_network_stays_internal
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: AGENT-SHADOW-DEFECTS-001
+  phase: PRODUCTION_HARDENING
+  title: Agent-runtime defects that block internal Shadow, found in the staging review
+  status: PENDING
+  priority: 294
+  depends_on:
+  - AGENT-PIPELINE-001
+  context_domains:
+  - runtime_architecture
+  - agent_tools
+  - orders_audit
+  normative_sources:
+  - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
+  - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
+  contracts: []
+  task_packet: context/tasks/TASK-staging-review-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_deterministic_handoff_is_filed_as_require_human
+  - a_timed_out_run_records_its_own_failure
+  - the_pinned_prompt_and_registry_are_the_ones_that_execute
+  - an_agent_approval_binds_server_rendered_content
+  - the_real_customer_lock_is_not_a_self_declared_label
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: OPS-HARDENING-002
+  phase: PRODUCTION_HARDENING
+  title: Readiness that touches the database, query timeouts, log rotation, image
+    pins
+  status: PENDING
+  priority: 295
+  depends_on:
+  - STAGING-REVIEW-001
+  context_domains:
+  - platform
+  normative_sources:
+  - specs/PRODUCTION_OPERATIONS_SPEC_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-staging-review-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - readiness_is_red_while_the_database_is_down
+  - a_migration_lock_cannot_queue_the_request_pool
+  - no_superuser_port_published_in_any_overlay
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: API-INTEGRITY-002
+  phase: PRODUCTION_HARDENING
+  title: A manual send goes to the approved recipient; unknown sends respect store
+    boundaries
+  status: PENDING
+  priority: 296
+  depends_on: []
+  context_domains:
+  - orders_audit
+  - platform
+  normative_sources:
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-staging-review-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_recipient_is_bound_to_the_approved_draft
+  - unknown_send_receipts_are_store_scoped
   - rollback_assessment
   blocked_by_decisions: []

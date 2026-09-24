@@ -1,0 +1,71 @@
+schema_version: 1
+work_item: CONSOLE-DEADENDS-001
+recorded_at: '2026-09-24T21:00:00+07:00'
+requirement_contract: 'Places a shift got stuck, reproduced with Playwright by the console reviewer: ''Khach
+  da chot gia'' erased itself on failure; a second reprice was refused as stale; server refusals reached
+  staff in English; ''5,5'' was refused as a missing fact; a mistyped payment was told not to retype and
+  DEC-010 was called open; the export flow''s own instructions discarded its progress.'
+rollback_impact: Client code, registry and manifest only; git revert restores them together. Migrations
+  are forward-only; a code revert past 0046/0047 leaves them applied, which is safe as stated per item.
+  Rolling the data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section
+  8 now takes before every upgrade.
+unresolved_assumptions: 'The in-progress export is kept in page memory, not sessionStorage, because test_the_client_persists_nothing_but_a_store_identifier
+  forbids it; a reload loses it and the screen says so. The damage picker still shows line ids: the server
+  sends no service per line yet.'
+evidence:
+  a_failed_acceptance_keeps_its_control_and_says_why: 'p1_accept_matrix, eight failure shapes (409 expired
+    / accepted / moved, 422, 500, 504, 503, network abort): control and hint survive, Vietnamese title,
+    a way forward; for 500/504/network a second press reuses the Idempotency-Key and the server replays.
+    Before: no notice ever shown.'
+  a_second_reprice_is_not_refused_as_stale: 'p2_reprice_cas against a stub enforcing the server''s revision
+    checks: five writes accepted, banner r1->r5. Before: dead end on the second press.'
+  server_refusals_reach_staff_in_vietnamese_naming_the_recorded_fact: 29 REFUSAL entries copied from real
+    raise sites. The real-API conformance run on the merged tree caught that the cancellation contradictions
+    fell back to the generic title and hid the fact on record; ca395c2 adds them, and the run now asserts
+    the Vietnamese sentence names 'da ghi nhan tiem nhan do'.
+  no_client_side_money_arithmetic: The takings drawer line picks a word from net_direction; the payment
+    panel shows the server's payable_total_vnd; parseDong and parseQuantity refuse rather than compute.
+  rollback_assessment: Client code, registry and manifest only; git revert restores them together. Migrations
+    are forward-only; a code revert past 0046/0047 leaves them applied, which is safe as stated per item.
+    Rolling the data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section
+    8 now takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 572 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 257 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 1749 passed, 4 skipped in 321.55s (0:05:21)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 58 served
+    internal API operations against their contract. Validated 381 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 137 source references, 28 decisions, 4 gates, 9 phases, 143 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_daily_operations.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-24, against a database created empty and migrated 0001-0047 (0045 unused) on the merged
+    tree, real RS256 identity provider, real FastAPI process. The first run on the merged tree was 69/1;
+    the failure was traced to the check, not the product (see CONSOLE-DEADENDS-001) before anything changed.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_workflow_conformance.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: '86 ok, 1 failed (coverage only: 40/49 declared controls exercised, identical to main at 9287596)'
+  note: First run on the merged tree was 82/5. Four were real findings about the merged console and are
+    fixed in ca395c2; the fifth is the pre-existing coverage line.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_console_interaction.py
+  status: PASSED
+  result: 170 passed, 0 failed
+  note: Stubbed API. Run after every console merge and after ca395c2.

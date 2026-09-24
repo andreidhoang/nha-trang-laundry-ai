@@ -52,6 +52,9 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0042", "remedy_proposals"),
         ("0043", "range_price_proposals"),
         ("0044", "ops_board_export"),
+        # No 0045: it was reserved for the remedy fixes, which turned out to need no schema change.
+        ("0046", "order_refunds"),
+        ("0047", "order_lookup"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

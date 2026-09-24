@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, date, datetime
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_domain.catalog import (
@@ -27,6 +27,7 @@ from nha_trang_laundry_domain.orders import (
 
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.remedies import RemedyStateError, spend_reserved_remedy_credits
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -37,6 +38,19 @@ class OrderStateError(ValueError):
 
 class OrderAuthorizationError(PermissionError):
     """Raised when a staff principal lacks an order command permission."""
+
+
+class OrderNotVisibleError(LookupError):
+    """The order does not exist, or it is in a store the caller is not a member of.
+
+    One error for both, with one message whatever the caller passes, because telling them apart
+    would let anyone holding an operations role learn which order ids exist in which store by
+    probing -- the promise `store_access` makes in as many words, and the reason
+    `OperationsService._derive_intake_readiness` filters rather than raising a second error.
+    """
+
+    def __init__(self, _detail: str = "") -> None:
+        super().__init__("order is not visible to this caller")
 
 
 @dataclass(frozen=True)
@@ -89,6 +103,114 @@ class StoredOrder:
     balance: OrderBalanceStatus
     row_version: int
     replayed: bool = False
+
+
+#: An order still in play: anything not in `TERMINAL_COMMERCIAL_STATUSES`. Spelled once, because
+#: migration 0047's partial index `orders_store_open_idx` carries the same text and the planner only
+#: uses a partial index whose predicate the query implies; `test_order_lookup.py` pins both.
+OPEN_ORDERS_SQL_PREDICATE: Final = "commercial_status NOT IN ('CANCELLED', 'COMPLETED')"
+
+#: The hard ceiling on one board page. Unchanged from before the read model grew.
+MAX_BOARD_LIMIT: Final = 200
+
+
+@dataclass(frozen=True)
+class TicketReference:
+    """A walk-in ticket as the counter says it: a number, on one business day (`DEC-013`).
+
+    Numbers restart every morning, so a number alone names one customer per day the shop has been
+    open. The day is required here and is never defaulted inside the repository: "today" is a
+    reading of a clock, and the caller that owns the clock supplies it.
+    """
+
+    number: int
+    issued_on: date
+
+
+@dataclass(frozen=True)
+class OrderView:
+    """One order as the counter reads it. Every field is a stored fact; nothing is computed.
+
+    The first seven are `StoredOrder`'s, with the same names, so a caller that read the old list
+    item reads this one unchanged.
+
+    `payable_total_vnd` is the bound quote revision's display total, read from the same columns
+    `SettlementRepository.record` checks a payment against -- so the figure the counter is shown is
+    the figure the settlement will accept, to the đồng. It is null when that revision presents no
+    single total (an unresolved delivery fee or a range), which `evaluate_settlement` refuses for
+    the same reason; it is never zero in that case. It does not change when the money is taken:
+    `balance` says whether it has been.
+
+    `ticket_number` / `ticket_issued_on` are null when the order's customer reference is a channel
+    binding rather than a counter ticket (`DEC-015` keeps the two sources separate). A ticket is
+    only ever read within the order's own store.
+    """
+
+    order_id: UUID
+    store_id: UUID
+    commercial: CommercialOrderStatus
+    intake: IntakeStatus
+    production: ProductionStatus
+    balance: OrderBalanceStatus
+    row_version: int
+    fulfillment_mode: FulfillmentMode
+    created_at: datetime
+    quote_id: UUID
+    quote_revision: int
+    payable_total_vnd: int | None
+    ticket_number: int | None
+    ticket_issued_on: date | None
+
+
+#: The read model, shared by the board and the read by id so the two cannot disagree about a field.
+#: `CASE` rather than `display_total_min_vnd` alone: a range has no single amount owed, and the
+#: settlement refuses it (`TOTAL_IS_A_RANGE`), so reporting its lower bound would put a number on
+#: screen that the counter cannot take. An order's revision is always APPROVED_EXACT, where 0006
+#: already forces the two equal; the CASE states the rule rather than relying on that.
+_ORDER_VIEW_SELECT: Final = """
+    SELECT o.id, o.store_id, o.commercial_status, o.intake_status, o.production_status,
+           o.balance_status, o.row_version, o.fulfillment_mode, o.created_at,
+           o.current_quote_id, o.current_quote_revision,
+           CASE WHEN r.display_total_min_vnd = r.display_total_max_vnd
+                THEN r.display_total_min_vnd END AS payable_total_vnd,
+           t.ticket_number, t.issued_on
+    FROM orders o
+    JOIN quote_revisions r
+      ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
+    LEFT JOIN counter_tickets t
+      ON t.id = o.bound_contact_id AND t.store_id = o.store_id
+"""
+
+
+def _list_statement(
+    *, store_id: UUID, limit: int, open_only: bool, ticket: TicketReference | None
+) -> tuple[str, dict[str, object]]:
+    """The board's statement and parameters, exposed so the plan test reads the query it runs."""
+
+    clauses = ["o.store_id = %(store_id)s"]
+    parameters: dict[str, object] = {"store_id": store_id, "limit": limit}
+    if open_only:
+        clauses.append(f"o.{OPEN_ORDERS_SQL_PREDICATE}")
+    if ticket is not None:
+        # Through the ticket's own store-scoped unique key, never a bare number: every store has a
+        # "số 1" today, and another store's is not this counter's customer.
+        clauses.append(
+            """o.bound_contact_id IN (
+                SELECT ct.id FROM counter_tickets ct
+                WHERE ct.store_id = %(store_id)s
+                  AND ct.issued_on = %(ticket_issued_on)s
+                  AND ct.ticket_number = %(ticket_number)s
+            )"""
+        )
+        parameters["ticket_issued_on"] = ticket.issued_on
+        parameters["ticket_number"] = ticket.number
+    sql = (
+        _ORDER_VIEW_SELECT
+        + " WHERE "
+        + " AND ".join(clauses)
+        + " ORDER BY o.created_at DESC, o.id LIMIT %(limit)s"
+    )
+    return sql, parameters
 
 
 def _ready_clock_effect(
@@ -398,6 +520,23 @@ class OrderRepository:
                         occurred_at,
                     ),
                 )
+                # The credit-lifecycle fix: a remedy credit on this bill is spent now, in the same
+                # transaction as the order it discounts, and not when it was first put on the quote.
+                # A credit another order already spent refuses this one and rolls it back -- the
+                # customer was read a total that included a discount the shop can no longer give.
+                try:
+                    spend_reserved_remedy_credits(
+                        connection,
+                        store_id=command.store_id,
+                        quote_id=command.accepted_quote_id,
+                        revision=command.accepted_quote_revision,
+                        order_id=order_id,
+                        actor_id=command.principal.staff_user_id,
+                        correlation_id=command.correlation_id,
+                        occurred_at=occurred_at,
+                    )
+                except RemedyStateError as error:
+                    raise OrderStateError(f"{error.reason_code}: {error}") from error
 
             commit_material_change(
                 connection,
@@ -573,6 +712,18 @@ class OrderRepository:
                 raise OrderStateError(str(error)) from error
 
             next_version = command.expected_row_version + 1
+            # DEC-024. The domain decided whether money goes back; this reads how much, from the
+            # settlement ledger, under the order lock already held. Nobody types the amount: it is
+            # the settled amount, and `order_refunds`' composite key to `order_settlements` makes it
+            # impossible for the row to say anything else.
+            refund = (
+                _refund_for_cancellation(
+                    connection, order_id=command.order_id, resolution=command.custody_resolution
+                )
+                if current.balance is OrderBalanceStatus.PAID
+                and next_state.balance is OrderBalanceStatus.REFUNDED
+                else None
+            )
             closed_at = (
                 occurred_at if next_state.commercial is CommercialOrderStatus.COMPLETED else None
             )
@@ -632,10 +783,35 @@ class OrderRepository:
             )
 
             def mutation(cursor: Any) -> None:
+                # The refund row first: `order_refund_consistency` refuses to let the order read
+                # REFUNDED unless one exists, and the deferred check on `order_refunds` refuses to
+                # commit one beside an order that is not cancelled. Either write alone fails.
+                if refund is not None:
+                    cursor.execute(
+                        """
+                        INSERT INTO order_refunds (
+                            id, order_id, store_id, settlement_id, refunded_amount_vnd,
+                            direction, custody_resolution, attested_by_staff_id, refunded_at,
+                            created_at
+                        ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s)
+                        """,
+                        (
+                            refund.refund_id,
+                            command.order_id,
+                            refund.store_id,
+                            refund.settlement_id,
+                            refund.amount_vnd,
+                            refund.resolution.value,
+                            command.principal.staff_user_id,
+                            occurred_at,
+                            occurred_at,
+                        ),
+                    )
                 cursor.execute(
                     """
                     UPDATE orders
                     SET commercial_status = %s, intake_status = %s, production_status = %s,
+                        balance_status = %s,
                         production_resume_status = %s, production_accepted_at = %s,
                         production_ready_at = COALESCE(
                             %s, CASE WHEN %s THEN production_ready_at ELSE NULL END
@@ -649,6 +825,7 @@ class OrderRepository:
                         next_state.commercial.value,
                         next_state.intake.value,
                         next_state.production.value,
+                        next_state.balance.value,
                         (
                             next_state.production_resume_status.value
                             if next_state.production_resume_status
@@ -705,12 +882,14 @@ class OrderRepository:
                             "dimension": dimension,
                             "target": target,
                             "custody_resolution": command.custody_resolution.value,
+                            **({} if refund is None else {"refund": refund.document()}),
                         }
                     ),
                     audit_action="ORDER_STATE_TRANSITION",
                     actor_type="STAFF",
                     actor_id=command.principal.staff_user_id,
                     correlation_id=command.correlation_id,
+                    audit_details=None if refund is None else {"refund": refund.document()},
                     outbox_events=(
                         OutboxEvent(
                             "order.state_transitioned.v1",
@@ -721,6 +900,20 @@ class OrderRepository:
                                 "row_version": next_version,
                             },
                             f"order:{command.order_id}:version:{next_version}",
+                        ),
+                        # Money leaving the drawer is its own downstream fact, keyed once per order
+                        # because an order is refunded at most once -- the same shape as
+                        # `order:{id}:settlement` for the money that came in.
+                        *(
+                            ()
+                            if refund is None
+                            else (
+                                OutboxEvent(
+                                    "order.refund_recorded.v1",
+                                    {"order_id": str(command.order_id), **refund.document()},
+                                    f"order:{command.order_id}:refund",
+                                ),
+                            )
                         ),
                     ),
                     occurred_at=occurred_at,
@@ -756,7 +949,16 @@ class OrderRepository:
         store_id: UUID,
         principal: StaffPrincipal,
         limit: int = 100,
-    ) -> tuple[StoredOrder, ...]:
+        open_only: bool = False,
+        ticket: TicketReference | None = None,
+    ) -> tuple[OrderView, ...]:
+        """The store's orders, newest first, optionally narrowed to open ones or to one ticket.
+
+        `open_only` is what keeps an order in play from falling off the board by age: at thirty
+        orders a day the newest hundred is three days, and laundry is collected later than that.
+        `ticket` answers the question the counter actually asks at pickup, "phiếu số 17".
+        """
+
         _require_order_read(principal)
         require_store_membership(
             cursor,
@@ -764,20 +966,89 @@ class OrderRepository:
             store_id=store_id,
             error=OrderAuthorizationError,
         )
-        if not 1 <= limit <= 200:
+        if not 1 <= limit <= MAX_BOARD_LIMIT:
             raise ValueError("order board limit must be between 1 and 200")
-        cursor.execute(
-            """
-            SELECT id, store_id, commercial_status, intake_status, production_status,
-                   balance_status, row_version
-            FROM orders
-            WHERE store_id = %s
-            ORDER BY created_at DESC, id
-            LIMIT %s
-            """,
-            (store_id, limit),
+        if ticket is not None and ticket.number < 1:
+            raise ValueError("a ticket number starts at 1")
+        sql, parameters = _list_statement(
+            store_id=store_id, limit=limit, open_only=open_only, ticket=ticket
         )
-        return tuple(_stored_order_row(row) for row in cursor.fetchall())
+        cursor.execute(sql, parameters)
+        return tuple(_order_view_row(row) for row in cursor.fetchall())
+
+    @staticmethod
+    def read_for_principal(cursor: Any, *, order_id: UUID, principal: StaffPrincipal) -> OrderView:
+        """One order by id, for a caller who is a member of the store the order belongs to.
+
+        The store is the row's, never the request's: this route carries no store in its path, and a
+        client-supplied store would be exactly the authority `STORE-SCOPING-002` removed from the
+        transition route. A missing order and another store's order raise the same error.
+        """
+
+        _require_order_read(principal)
+        cursor.execute(_ORDER_VIEW_SELECT + " WHERE o.id = %(order_id)s", {"order_id": order_id})
+        row = cursor.fetchone()
+        if row is None:
+            raise OrderNotVisibleError()
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=_uuid(row[1]),
+            error=OrderNotVisibleError,
+        )
+        return _order_view_row(row)
+
+
+@dataclass(frozen=True)
+class _CancellationRefund:
+    """The whole settled amount going back to the customer, as `DEC-024` resolves it."""
+
+    refund_id: UUID
+    settlement_id: UUID
+    store_id: UUID
+    amount_vnd: int
+    resolution: CustodyResolution
+
+    def document(self) -> dict[str, object]:
+        return {
+            "refund_id": str(self.refund_id),
+            "settlement_id": str(self.settlement_id),
+            "refunded_amount_vnd": self.amount_vnd,
+            "direction": "TO_CUSTOMER",
+            "custody_resolution": self.resolution.value,
+        }
+
+
+def _refund_for_cancellation(
+    connection: Any, *, order_id: UUID, resolution: CustodyResolution | None
+) -> _CancellationRefund:
+    """Read the settlement a refunding cancellation reverses, or refuse.
+
+    Called only after the domain answered `REFUNDED`, which it does only for a resolution in
+    `CUSTOMER_NOT_CHARGED_RESOLUTIONS` -- so both refusals here are states no command writes. An
+    order that reads `PAID` with no settlement row means the books already disagree, and refunding
+    against a guess would make that worse rather than visible.
+    """
+
+    if resolution is None:
+        raise OrderStateError("HUMAN_APPROVAL_REQUIRED: a refund needs a custody resolution")
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id, store_id, paid_amount_vnd FROM order_settlements WHERE order_id = %s",
+            (order_id,),
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise OrderStateError(
+            "the order reads paid but no settlement records the payment; nothing can be refunded"
+        )
+    return _CancellationRefund(
+        refund_id=uuid4(),
+        settlement_id=_uuid(row[0]),
+        store_id=_uuid(row[1]),
+        amount_vnd=int(row[2]),
+        resolution=resolution,
+    )
 
 
 def _order_state(row: tuple[object, ...]) -> OrderState:
@@ -850,16 +1121,31 @@ def _stored_order(response: dict[str, object], replayed: bool) -> StoredOrder:
         raise OrderStateError("stored idempotent order result is invalid") from error
 
 
-def _stored_order_row(row: tuple[object, ...]) -> StoredOrder:
-    return StoredOrder(
-        _uuid(row[0]),
-        _uuid(row[1]),
-        CommercialOrderStatus(str(row[2])),
-        IntakeStatus(str(row[3])),
-        ProductionStatus(str(row[4])),
-        OrderBalanceStatus(str(row[5])),
-        int(str(row[6])),
+def _order_view_row(row: tuple[object, ...]) -> OrderView:
+    return OrderView(
+        order_id=_uuid(row[0]),
+        store_id=_uuid(row[1]),
+        commercial=CommercialOrderStatus(str(row[2])),
+        intake=IntakeStatus(str(row[3])),
+        production=ProductionStatus(str(row[4])),
+        balance=OrderBalanceStatus(str(row[5])),
+        row_version=int(str(row[6])),
+        fulfillment_mode=FulfillmentMode(str(row[7])),
+        created_at=_datetime(row[8]),
+        quote_id=_uuid(row[9]),
+        quote_revision=int(str(row[10])),
+        payable_total_vnd=None if row[11] is None else int(str(row[11])),
+        ticket_number=None if row[12] is None else int(str(row[12])),
+        ticket_issued_on=_optional_date(row[13]),
     )
+
+
+def _optional_date(value: object) -> date | None:
+    if value is None:
+        return None
+    if not isinstance(value, date) or isinstance(value, datetime):
+        raise OrderStateError("stored date is invalid")
+    return value
 
 
 def _uuid(value: object) -> UUID:

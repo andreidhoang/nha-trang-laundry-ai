@@ -1,0 +1,67 @@
+schema_version: 1
+work_item: CREDIT-RESERVATION-001
+recorded_at: '2026-09-24T21:00:00+07:00'
+requirement_contract: 'A redeemed remedy credit was spent when the credited revision was written, so a
+  reprice, an expiry or an abandoned quote lost money the shop owes under DEC-004. Required: reserved
+  by a quote, spent by the order that uses it, never partially.'
+rollback_impact: No migration; redeemed_* is still written exactly once, now at order creation. A code
+  revert restores spend-at-redemption. Migrations are forward-only; a code revert past 0046/0047 leaves
+  them applied, which is safe as stated per item. Rolling the data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 now takes before every upgrade.
+unresolved_assumptions: 'Deviation from the lead''s brief, accepted: a credit larger than the new bill
+  is released whole rather than capped, because a capped credit would be spent with the remainder lost
+  -- the defect itself. Acceptance does not pre-check that a carried credit is still unspent; the refusal
+  comes at order creation.'
+evidence:
+  a_credit_is_spent_only_by_the_order_that_uses_it: 'test_remedy_credit_lifecycle.py through the real
+    OperationsService: 5 failed before, all pass after; skipping the spend at order creation fails 4 of
+    them.'
+  a_reprice_carries_or_releases_never_partially_spends: 'test_remedy_credit_carry.py: 10 tests including
+    the reviewer''s repro (now 95.000 d) and the 6 kg cliff held exactly under a carried credit; hypothesis
+    property (200 examples): full face value or released, never partial, never above the bill. A revision
+    that silently drops a reserved credit is refused (REMEDY_CREDIT_DROPPED).'
+  a_credit_can_be_spent_once: Double conversion refused; the same credit twice on one quote refused (REMEDY_CREDIT_ALREADY_ON_QUOTE).
+  rollback_assessment: No migration; redeemed_* is still written exactly once, now at order creation.
+    A code revert restores spend-at-redemption. Migrations are forward-only; a code revert past 0046/0047
+    leaves them applied, which is safe as stated per item. Rolling the data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 now takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 572 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 257 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 1749 passed, 4 skipped in 321.55s (0:05:21)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 58 served
+    internal API operations against their contract. Validated 381 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 137 source references, 28 decisions, 4 gates, 9 phases, 143 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_daily_operations.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-24, against a database created empty and migrated 0001-0047 (0045 unused) on the merged
+    tree, real RS256 identity provider, real FastAPI process. The first run on the merged tree was 69/1;
+    the failure was traced to the check, not the product (see CONSOLE-DEADENDS-001) before anything changed.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_workflow_conformance.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: '86 ok, 1 failed (coverage only: 40/49 declared controls exercised, identical to main at 9287596)'
+  note: First run on the merged tree was 82/5. Four were real findings about the merged console and are
+    fixed in ca395c2; the fifth is the pre-existing coverage line.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_console_interaction.py
+  status: PASSED
+  result: 170 passed, 0 failed
+  note: Stubbed API. Run after every console merge and after ca395c2.

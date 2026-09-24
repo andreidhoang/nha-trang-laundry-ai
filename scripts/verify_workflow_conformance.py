@@ -553,9 +553,13 @@ def scenario_money(console: Console) -> None:
         return console.said()
 
     said = settle(str(total - 5_000), collected=True)
+    # This asserted the words "không sai" ("your input is not wrong"). The console review found that
+    # sentence false for the commonest case the same refusal covers -- 13.200 typed for 132.000 --
+    # and the client cannot tell a typo from a deliberate part payment. The intent is kept whole:
+    # refused, framed as the owner's decision rather than bad input, and never "không hợp lệ".
     ok(
-        "a part payment is refused, and is not called invalid input",
-        "chưa được hỗ trợ" in said and "không sai" in said,
+        "a part payment is refused as the owner's decision, and is not called invalid input",
+        "DEC-010" in said and "Trả thiếu" in said and "không hợp lệ" not in said,
         said[:150],
     )
     ok(
@@ -653,10 +657,16 @@ def scenario_exit(console: Console) -> None:
         "'we never received it' is refused for an order whose custody is recorded",
         stored(live["order_id"], "commercial_status") != "CANCELLED"
         if arguments.psql_container
-        else "records custody" in said,
+        else "chưa từng nhận đồ" in said,
         "",
     )
-    ok("and the refusal says which recorded fact contradicts it", "custody" in said, said[:160])
+    # The server's English used to be the headline, so "custody" was what this looked for. The
+    # console now says it in Vietnamese; what matters is unchanged -- the fact on record is named.
+    ok(
+        "and the refusal says which recorded fact contradicts it",
+        "đã ghi nhận tiệm nhận đồ" in said,
+        said[:160],
+    )
 
     said = console.move(
         live["order_id"], version, "commercial", "CANCELLED", custody="SHOP_FAULT_NO_CHARGE"
@@ -917,7 +927,10 @@ def scenario_roles(console: Console) -> None:
                 f"HTTP {got['status']}",
             )
         if subject == "demo-auditor":
-            live = console.page.locator("button[data-requires-network]:not([disabled])").count()
+            # Writes only: the ticket lookup is a read an auditor may use (`data-intent="read"`).
+            live = console.page.locator(
+                "button[data-requires-network]:not([disabled]):not([data-intent='read'])"
+            ).count()
             denied = console.page.locator("[data-denied='true']").count()
             ok("an auditor is offered no live write control on the order board", live == 0, live)
             ok(

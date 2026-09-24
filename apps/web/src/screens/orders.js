@@ -4,13 +4,19 @@
  * This screen is mostly an exercise in not inventing things, because the order read model is far
  * thinner than an operations board usually is, and every plausible way to thicken it is a lie:
  *
- *   - **The list carries state and version, and nothing else.** No customer, no timestamp, no
- *     total, no fulfilment mode. `OrderResponse` has exactly eight members and six of them are
- *     identifiers or enums. A "Khách" column filled from anywhere would be this console asserting a
- *     fact the server never told it, so the gap is named on screen instead and linked to `#/gaps`.
- *   - **No money appears here at all.** Not a subtotal, not a balance amount — the board's `balance`
- *     is a *status* enum, not an amount, and rendering it next to a number would invite the reading
- *     that the number is what remains owed.
+ *   - **The counter finds an order by the ticket it is tracked by.** `DEC-013`: a walk-in is known
+ *     by the number the counter handed them and nothing else, so there is no customer name to
+ *     search and there never will be one. "Tìm theo số phiếu" asks the server for that number on a
+ *     business day (today unless the slip says otherwise); the server decides which day "today"
+ *     is, not this device's clock.
+ *   - **The board shows open orders by default.** Newest-first by creation, a hundred rows is three
+ *     days of trade and laundry is collected later than that, so an order still in play fell off
+ *     the board by age. `?open=true` keeps every order not yet completed or cancelled, any age.
+ *   - **The one amount shown is the server's.** `payable_total_vnd` is the accepted quote's total,
+ *     read from the same stored revision the settlement checks a payment against. Nothing here
+ *     adds, rounds or derives it; null is shown as "no total yet", never as 0. Beside it the
+ *     label says whether it is still to collect ("Phải thu") or already collected ("Đã thu"),
+ *     read off the `balance` status the server sent.
  *   - **The four dimensions are orthogonal and the screen says so once.** `commercial`, `intake`,
  *     `production` and `balance` move independently. Staff read four badges in a row as a pipeline
  *     unless told otherwise, and then treat `CONFIRMED` as meaning the washing started.
@@ -23,16 +29,24 @@
  *   - **A stale version is not a retry.** Re-sending the same `If-Match` can never succeed, so the
  *     offer is to reload the board, not to try again.
  *   - **The toolbar's filter narrows, it does not interpret.** Reload is a plain re-read, stamped
- *     with its fetch time; the text box string-matches the id and the four state enums of rows
- *     already fetched and computes nothing, so it cannot grow into the second copy of a domain
- *     rule the transition-table note above warns against.
+ *     with its fetch time; the text box string-matches the ticket number, the id and the four state
+ *     enums of rows already fetched and computes nothing, so it cannot grow into the second copy of a
+ *     domain rule the transition-table note above warns against.
  *
  * @module screens/orders
  */
 
 import { MAX_LIMIT, Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UUID, matchesFilter, shortId } from "../core/format.js";
+import {
+  UUID,
+  dateOnly,
+  dateTime,
+  matchesFilter,
+  money,
+  parseInstant,
+  shortId,
+} from "../core/format.js";
 import { ACQUISITION_SOURCE_VI, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -188,28 +202,100 @@ const CUSTODY_RESOLUTIONS = [
 /** `OrderCreateRequest.quote_snapshot_hash`, exactly as the server's pattern spells it. */
 const SNAPSHOT_HASH = /^JCS-SHA256-V1:[0-9a-f]{64}$/;
 
+/** A ticket number as staff type it: the counter issues 1, 2, 3… and restarts each morning. */
+const TICKET_NUMBER = /^[1-9][0-9]{0,4}$/;
+
+/**
+ * `DeliveryLegKind` and the leg `outcome`, in the words the counter uses.
+ *
+ * Scoped maps passed to `enumSelect`, for the reason `ACQUISITION_SOURCE_VI` is scoped: `ENUM_GLOSS`
+ * is one flat map across every server enum, and `RETURN`/`FAILED` are generic enough to collide
+ * with a member of some later enum. The raw token stays as each option's title.
+ */
+const LEG_KIND_VI = {
+  RETURN: "trả đồ cho khách",
+  PICKUP: "lấy đồ của khách",
+};
+
+const LEG_OUTCOME_VI = {
+  SUCCEEDED: "thành công",
+  FAILED: "không thành công",
+};
+
+/**
+ * "Phiếu 17 · 24/09/2026", or null when the order's customer reference is not a counter ticket.
+ *
+ * The date is always printed: numbers restart every morning, so "phiếu 17" alone names one
+ * customer per day the shop has been open.
+ *
+ * @param {any} item an `OrderViewResponse`
+ * @returns {string|null}
+ */
+export function ticketLabel(item) {
+  if (item?.ticket_number === null || item?.ticket_number === undefined) return null;
+  return `Phiếu ${item.ticket_number} · ${dateOnly(item.ticket_issued_on)}`;
+}
+
+/**
+ * The amount line: what the server says this order's accepted quote totals, and whether it is
+ * still to collect.
+ *
+ * Returns null when the item is a command result rather than a read -- a transition's reply
+ * carries the eight command fields only, and "no total" there would be a false statement about
+ * an order that has one.
+ *
+ * @param {any} item an `OrderViewResponse`
+ * @returns {{label: string, text: string, known: boolean}|null}
+ */
+export function amountDue(item) {
+  if (!item || !("payable_total_vnd" in item)) return null;
+  const known = item.payable_total_vnd !== null && item.payable_total_vnd !== undefined;
+  const label =
+    item.balance === "UNPAID" ? "Phải thu" : item.balance === "PAID" ? "Đã thu" : "Tổng tiền";
+  return { label, text: money(item.payable_total_vnd, "Chưa có tổng"), known };
+}
+
 /**
  * One order on the board.
  *
- * @param {any} item an `OrderResponse`
+ * Headed by what the counter says out loud -- the ticket number -- and the amount, because those
+ * are the two things a staff member needs with a customer standing in front of them. The id stays
+ * underneath for the case where somebody reads it off another screen.
+ *
+ * @param {any} item an `OrderViewResponse`, or an `OrderResponse` from a command
  * @param {{onTransition?: (item: any) => void}} [options]
  * @returns {HTMLElement}
  */
 function orderCard(item, options = {}) {
+  const ticket = ticketLabel(item);
+  const due = amountDue(item);
   return h(
     "article",
     { class: "card" },
     h(
       "div",
       { class: "spread" },
-      h("strong", { class: "mono", title: item.order_id }, shortId(item.order_id)),
-      options.onTransition
+      h("strong", null, ticket || `Đơn ${shortId(item.order_id)}`),
+      due
         ? h(
-            "button",
-            { type: "button", onClick: () => options.onTransition(item) },
-            "Chọn để chuyển trạng thái",
+            "span",
+            { class: "row" },
+            h("span", { class: "hint" }, due.label),
+            h("span", { class: due.known ? "money" : "" }, due.text),
           )
         : null,
+    ),
+    h(
+      "p",
+      { class: "hint" },
+      [
+        item.created_at ? `Tạo ${dateTime(item.created_at)}` : null,
+        item.fulfillment_mode ? enumVi(item.fulfillment_mode) : null,
+        "Mã ",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      h("span", { class: "mono", title: item.order_id }, shortId(item.order_id)),
     ),
     item.replayed
       ? h(
@@ -232,31 +318,33 @@ function orderCard(item, options = {}) {
       h(
         "a",
         { class: "button", href: `#/orders/${encodeURIComponent(item.order_id)}` },
-        "Mở chi tiết và dòng thời gian",
+        "Mở đơn",
       ),
+      options.onTransition
+        ? h(
+            "button",
+            { type: "button", onClick: () => options.onTransition(item) },
+            "Chọn để chuyển trạng thái",
+          )
+        : null,
     ),
   );
 }
 
 /**
- * The standing note about what the order read model does not contain.
- *
- * Kept as a component rather than a sentence in the panel because the same honesty is owed on the
- * detail screen, and two hand-written versions of it drift apart.
+ * The standing note about what the order read model deliberately does not contain.
  *
  * @returns {HTMLElement}
  */
 function readModelNotice() {
   return explain(
-    "Vì sao bảng đơn không có tên khách, giờ hẹn hay số tiền?",
+    "Vì sao không có tên hay số điện thoại khách?",
     h(
       "p",
       null,
-      "Vì máy chủ chưa lưu những thứ đó cho một đơn. Không phải màn hình này giấu đi — chúng " +
-        "chưa tồn tại. Hiện một cột “Khách” lấy từ chỗ khác là bịa ra một điều máy chủ chưa từng " +
-        "nói, nên bảng để trống và ghi nhận đây là việc chưa làm được.",
+      "Chủ tiệm đã chốt: khách vãng lai chỉ được ghi bằng số phiếu, tiệm không lưu tên, số " +
+        "điện thoại hay địa chỉ (DEC-013). Tìm đơn bằng số phiếu ở ô “Tìm theo số phiếu”.",
     ),
-    h("p", null, h("a", { href: "#/gaps" }, "Xem danh sách việc chưa hỗ trợ")),
   );
 }
 
@@ -299,10 +387,30 @@ export function render_(context) {
     hash: prefill("hash", SNAPSHOT_HASH),
     mode: FULFILLMENT_MODES[0],
     acceptedAt: "",
+    // The instant the server recorded when staff pressed "Khách đã chốt giá", sent verbatim while
+    // the field still shows it. Converting it to a `datetime-local` string and back would drop the
+    // seconds and depend on the device's timezone twice; the field shows it, the server's value is
+    // what goes back. Any edit to the field clears it and the typed value is sent instead.
+    acceptedAtServer: "",
     // Rests on "nobody asked" until somebody says otherwise, which is what is actually true before
     // the question is put to the customer.
     source: "UNKNOWN",
   };
+  // Arrived from "Tạo đơn từ báo giá này": the form is the reason the operator is here, so it is
+  // drawn first and brought into view rather than left as the fourth panel down a phone screen.
+  const fromQuote = Boolean(draft.quoteId && draft.hash);
+
+  // "Tìm theo số phiếu". The date is optional and empty means "today" -- decided by the server's
+  // clock on the shop's business day, not by this device, whose clock and timezone are not the
+  // authority on which day it is at the counter.
+  const lookup = { number: prefill("ticket", TICKET_NUMBER), date: "" };
+  const lookupSubmission = { seq: 0 };
+  const lookupHost = h("div", { class: "stack" });
+  const lookupResult = resultLine();
+
+  // Open orders by default: an order still in play must not fall off the board because newer ones
+  // arrived. "Gần đây" is the old newest-first view, kept for looking something up after it closed.
+  let boardScope = "open";
 
   /** @type {{orderId: string, rowVersion: string, target: string}} */
   // DEC-024. `custodyResolution` is sent only when the target is CANCELLED, and the server decides
@@ -346,25 +454,150 @@ export function render_(context) {
   const board = listView({
     limit: LIST_LIMIT,
     fetch: () =>
-      request(`/internal/v1/stores/${encodeURIComponent(store)}/orders?limit=${LIST_LIMIT}`),
+      request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/orders?limit=${LIST_LIMIT}` +
+          (boardScope === "open" ? "&open=true" : ""),
+      ),
     renderItem: (item) => orderCard(item, { onTransition: pickOrder }),
-    emptyText: "Chưa có đơn nào trong cửa hàng này.",
+    emptyText: "Không có đơn nào ở đây.",
     clearMetaOnError: true,
     truncationText: (limit) =>
-      `Máy chủ trả tối đa ${limit} bản ghi và đã trả đủ; có thể còn nữa. API này không ` +
-      `có phân trang và không có con trỏ; trần cứng phía máy chủ là ${MAX_LIMIT}.`,
+      boardScope === "open"
+        ? `Đang có hơn ${limit} đơn chưa xong; bảng chỉ hiện ${limit} đơn mới nhất. ` +
+          "Đơn cũ hơn vẫn tìm được bằng số phiếu hoặc mở thẳng theo mã đơn."
+        : `Chỉ hiện ${limit} đơn mới nhất; đơn cũ hơn tìm bằng số phiếu hoặc mở theo mã đơn. ` +
+          `Trần cứng phía máy chủ là ${MAX_LIMIT}.`,
     filter: {
-      placeholder: "Lọc theo mã đơn hoặc trạng thái…",
+      placeholder: "Lọc theo số phiếu, mã đơn hoặc trạng thái…",
       label: "Lọc bảng đơn",
       noun: "đơn",
       matches: (item, needle) =>
         matchesFilter(
-          [item.order_id, item.commercial, item.intake, item.production, item.balance],
+          [
+            item.ticket_number === null || item.ticket_number === undefined
+              ? ""
+              : `phiếu ${item.ticket_number}`,
+            item.order_id,
+            item.commercial,
+            item.intake,
+            item.production,
+            item.balance,
+          ],
           needle,
         ),
       filteredEmptyText: "Không có đơn nào khớp bộ lọc.",
     },
   });
+
+  const scopeSelect = /** @type {HTMLSelectElement} */ (
+    h(
+      "select",
+      { name: "board_scope" },
+      h("option", { value: "open", selected: true }, "Đơn chưa xong"),
+      h("option", { value: "recent" }, "Mọi đơn gần đây"),
+    )
+  );
+  scopeSelect.addEventListener("change", (event) => {
+    boardScope = /** @type {HTMLSelectElement} */ (event.target).value;
+    void board.reload();
+  });
+
+  // --- find by ticket -------------------------------------------------------------------------
+
+  /**
+   * @param {SubmitEvent} event
+   */
+  async function submitLookup(event) {
+    event.preventDefault();
+    const number = lookup.number.trim();
+    if (!TICKET_NUMBER.test(number)) {
+      setResult(lookupResult, "danger", "Nhập số phiếu, ví dụ 17.");
+      render(lookupHost);
+      return;
+    }
+    const day = lookup.date ? `ngày ${dateOnly(lookup.date)}` : "hôm nay";
+    const query = new URLSearchParams({ ticket: number, limit: "20" });
+    if (lookup.date) query.set("ticket_date", lookup.date);
+    // A slower earlier answer must not overwrite a later one when staff retype quickly.
+    const seq = ++lookupSubmission.seq;
+    setResult(lookupResult, "warn", `Đang tìm phiếu ${number} ${day}…`);
+    render(lookupHost);
+    try {
+      const items = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/orders?${query}`,
+      );
+      if (seq !== lookupSubmission.seq) return;
+      const found = Array.isArray(items) ? items : [];
+      if (!found.length) {
+        setResult(
+          lookupResult,
+          "warn",
+          `Không có đơn nào mang phiếu ${number} ${day}. Có thể phiếu chưa được tạo đơn, ` +
+            "hoặc phiếu của ngày khác — chọn ngày ghi trên phiếu.",
+        );
+        render(lookupHost);
+        return;
+      }
+      setResult(
+        lookupResult,
+        "ok",
+        found.length === 1
+          ? `Phiếu ${number} ${day}:`
+          : `Phiếu ${number} ${day} có ${found.length} đơn:`,
+      );
+      render(
+        lookupHost,
+        found.map((item) => orderCard(item, { onTransition: pickOrder })),
+      );
+    } catch (error) {
+      if (seq !== lookupSubmission.seq) return;
+      setResult(lookupResult, "danger", "Chưa tìm được. Máy chủ nêu lý do bên dưới.");
+      const notice = errorNotice(error);
+      render(lookupHost, notice);
+      revealError(notice);
+    }
+  }
+
+  const ticketInput = h("input", {
+    type: "text",
+    inputmode: "numeric",
+    autocomplete: "off",
+    maxlength: "5",
+    placeholder: "17",
+    value: lookup.number,
+    onInput: (event) => {
+      lookup.number = /** @type {HTMLInputElement} */ (event.target).value;
+    },
+  });
+  const ticketDateInput = h("input", {
+    type: "date",
+    onInput: (event) => {
+      lookup.date = /** @type {HTMLInputElement} */ (event.target).value;
+    },
+  });
+  const lookupForm = h(
+    "form",
+    { class: "form", onSubmit: submitLookup },
+    labelled({ id: "lookup-ticket", label: "Số phiếu", control: ticketInput }),
+    labelled({
+      id: "lookup-date",
+      label: "Ngày trên phiếu",
+      hint: "Để trống là hôm nay.",
+      control: ticketDateInput,
+    }),
+    h(
+      "div",
+      { class: "form__actions" },
+      h(
+        "button",
+        // A read. `data-intent="read"` is how the role checks tell it from a write control;
+        // `test_staff_console_contract.py` pins which buttons may carry it.
+        { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true", dataIntent: "read" },
+        "Tìm",
+      ),
+    ),
+    lookupResult,
+  );
 
   /** Any structural change to the transition form invalidates its key and redraws it. */
   const redrawMove = () => {
@@ -387,6 +620,7 @@ export function render_(context) {
     }
     // An empty datetime is refused here rather than sent as an empty string, because the field is
     // required and timezone-aware: there is no defensible value to substitute for "not filled in".
+    if (draft.acceptedAtServer) return "";
     if (!draft.acceptedAt) return "Chưa nhập thời điểm khách chốt giá.";
     if (Number.isNaN(new Date(draft.acceptedAt).getTime())) {
       return "Thời điểm khách chốt giá không đọc được.";
@@ -418,11 +652,13 @@ export function render_(context) {
       quote_snapshot_hash: draft.hash.trim(),
       fulfillment_mode: draft.mode,
       acquisition_source: draft.source,
+      // The server's own record of the moment when the field still shows it, verbatim. Otherwise
       // `datetime-local` yields a naive wall-clock string; the server requires an aware instant.
       // `Date` reads it in the device's timezone and `toISOString` emits UTC, so the offset is
       // always explicit. The device's timezone is therefore load-bearing, which is why the hint
       // under the field says so.
-      customer_final_quote_accepted_at: new Date(draft.acceptedAt).toISOString(),
+      customer_final_quote_accepted_at:
+        draft.acceptedAtServer || new Date(draft.acceptedAt).toISOString(),
     };
 
     setResult(createResult, "warn", "Đang gửi lệnh tạo đơn…");
@@ -444,6 +680,7 @@ export function render_(context) {
       draft.quoteId = "";
       draft.hash = "";
       draft.acceptedAt = "";
+      draft.acceptedAtServer = "";
       // And the source goes back to "nobody asked", which is true again the moment this customer
       // leaves. Leaving it on the last answer would let the console supply a plausible value for
       // the next customer -- exactly the failure `UNKNOWN` exists to prevent, except committed by
@@ -555,6 +792,8 @@ export function render_(context) {
       value: draft.acceptedAt,
       onInput: (event) => {
         draft.acceptedAt = event.target.value;
+        // A person changed it, so what they typed is what is sent.
+        draft.acceptedAtServer = "";
         createSubmission.reset();
       },
     });
@@ -635,7 +874,9 @@ export function render_(context) {
       labelled({
         id: "order-accepted",
         label: "Thời điểm khách chốt giá",
-        hint: "Đọc theo giờ của máy bạn đang dùng — kiểm lại nếu máy đặt sai múi giờ. Bỏ trống thì không gửi.",
+        hint: draft.acceptedAtServer
+          ? "Đã điền sẵn lúc bấm “Khách đã chốt giá”. Không cần sửa."
+          : "Đọc theo giờ của máy bạn đang dùng — kiểm lại nếu máy đặt sai múi giờ. Bỏ trống thì không gửi.",
         control: acceptedInput,
       }),
       h("div", { class: "action-bar" }, gated(submit, writeVerdict)),
@@ -916,6 +1157,56 @@ export function render_(context) {
   render(moveBody, gatedFields(moveForm(), writeVerdict));
   void board.reload();
 
+  /**
+   * Fill "Thời điểm khách chốt giá" from the acceptance the server recorded a moment ago.
+   *
+   * The field was required and blank on arrival from the quote, so the operator typed a time from
+   * memory for an event the server had just written down to the microsecond. Read, never guessed:
+   * a revision no acceptance produced reads back null and the field stays empty for a person.
+   */
+  async function prefillAcceptedAt() {
+    try {
+      const quote = encodeURIComponent(draft.quoteId);
+      const revision = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${quote}?revision=${draft.revision}`,
+      );
+      const at = parseInstant(revision?.customer_accepted_at);
+      // Somebody already typed a time while this was loading; theirs stands.
+      if (!at || draft.acceptedAt) return;
+      draft.acceptedAtServer = revision.customer_accepted_at;
+      draft.acceptedAt = localInputValue(at);
+      createSubmission.reset();
+      // The form is rebuilt from `draft`; keep the cursor where the operator had it.
+      const focused = createBody.contains(document.activeElement) ? document.activeElement?.id : "";
+      render(createBody, gatedFields(createForm(), writeVerdict));
+      if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
+    } catch {
+      // Nothing to add: the field stays empty and its hint says how to fill it.
+    }
+  }
+
+  /**
+   * `#/orders?order=<id>`, from the order screen: read the order by id and pick it for a transition
+   * with the version just read, so an order that left the board is as movable as one on it.
+   *
+   * @param {string} id
+   */
+  async function pickById(id) {
+    try {
+      pickOrder(await request(`/internal/v1/orders/${encodeURIComponent(id)}`));
+    } catch (error) {
+      setResult(moveResult, "danger", "Không đọc được đơn này để chuyển trạng thái.");
+      const notice = errorNotice(error);
+      render(moveResultHost, notice);
+      revealError(notice);
+    }
+  }
+
+  if (fromQuote) void prefillAcceptedAt();
+  const orderToMove = prefill("order", UUID);
+  if (orderToMove) void pickById(orderToMove);
+  if (lookup.number) void submitLookup(/** @type {any} */ ({ preventDefault() {} }));
+
   // FULFILMENT-001 / DEC-023. No amount field, deliberately: the money was taken at the counter.
   const legDraft = { orderId: "", kind: "RETURN", outcome: "SUCCEEDED" };
   const legResultHost = h("div", { class: "stack" });
@@ -931,12 +1222,17 @@ export function render_(context) {
       legSubmission.reset();
     },
   });
-  const legKindSelect = enumSelect("leg_kind", ["RETURN", "PICKUP"], legDraft.kind);
+  const legKindSelect = enumSelect("leg_kind", ["RETURN", "PICKUP"], legDraft.kind, LEG_KIND_VI);
   legKindSelect.addEventListener("change", (event) => {
     legDraft.kind = event.target.value;
     legSubmission.reset();
   });
-  const legOutcomeSelect = enumSelect("outcome", ["SUCCEEDED", "FAILED"], legDraft.outcome);
+  const legOutcomeSelect = enumSelect(
+    "outcome",
+    ["SUCCEEDED", "FAILED"],
+    legDraft.outcome,
+    LEG_OUTCOME_VI,
+  );
   legOutcomeSelect.addEventListener("change", (event) => {
     legDraft.outcome = event.target.value;
     legSubmission.reset();
@@ -1001,6 +1297,35 @@ export function render_(context) {
     ),
   );
 
+  const createPanel = panel({
+    eyebrow: "Lệnh",
+    title: "Tạo đơn từ báo giá đã chốt",
+    guardrail:
+      "Đơn chỉ được tạo từ một báo giá khách đã chốt. Bấm “Khách đã chốt giá” ở màn " +
+      "hình Báo giá trước, rồi mới tạo đơn ở đây. Máy chủ kiểm lại toàn bộ điều kiện; màn hình " +
+      "này chỉ bắt lỗi gõ trước khi gửi.",
+    children: h("div", { class: "stack" }, createBody, createResultHost),
+  });
+
+  const lookupPanel = panel({
+    eyebrow: "Khách tới lấy đồ",
+    title: "Tìm theo số phiếu",
+    children: h("div", { class: "stack" }, lookupForm, lookupHost),
+  });
+
+  if (fromQuote) {
+    // After the router has mounted this screen and scrolled to the top: bring the prefilled form
+    // into view and put the cursor on the first field nobody has filled in for the operator.
+    // Centred rather than aligned to the top: the app bar is sticky and would cover the panel's
+    // top edge, and the fields still to decide sit below the four prefilled ones.
+    setTimeout(() => {
+      const first = /** @type {HTMLElement|null} */ (createPanel.querySelector("#order-mode"));
+      if (!first) return;
+      first.scrollIntoView({ block: "center" });
+      first.focus({ preventScroll: true });
+    }, 0);
+  }
+
   return h(
     "section",
     { class: "screen" },
@@ -1016,6 +1341,8 @@ export function render_(context) {
           "nên hãy đọc từng phần một.",
       ),
     ),
+    fromQuote ? createPanel : null,
+    lookupPanel,
     panel({
       eyebrow: "Đã ghi",
       title: "Bảng đơn của cửa hàng",
@@ -1027,6 +1354,7 @@ export function render_(context) {
       children: h(
         "div",
         { class: "stack" },
+        labelled({ id: "board-scope", label: "Hiện", control: scopeSelect }),
         board.bar.node,
         board.filterStatus,
         readModelNotice(),
@@ -1058,15 +1386,24 @@ export function render_(context) {
       // easiest to miss because it is built once rather than re-rendered.
       children: h("div", { class: "stack" }, gatedFields(legBody, writeVerdict), legResultHost),
     }),
-    panel({
-      eyebrow: "Lệnh",
-      title: "Tạo đơn từ báo giá đã chốt",
-      guardrail:
-        "Đơn chỉ được tạo từ một báo giá khách đã chốt. Bấm \u201cKhách đã chốt giá\u201d ở màn " +
-        "hình Báo giá trước, rồi mới tạo đơn ở đây. Máy chủ kiểm lại toàn bộ điều kiện; màn hình " +
-        "này chỉ bắt lỗi gõ trước khi gửi.",
-      children: h("div", { class: "stack" }, createBody, createResultHost),
-    }),
+    fromQuote ? null : createPanel,
+  );
+}
+
+/**
+ * An instant as a `datetime-local` value in this device's timezone, to the minute.
+ *
+ * Only for display in the field: the instant itself is sent verbatim (`acceptedAtServer`). The
+ * device's zone is used because that is the zone the field is read back in if somebody edits it.
+ *
+ * @param {Date} at
+ * @returns {string}
+ */
+function localInputValue(at) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
+    `T${pad(at.getHours())}:${pad(at.getMinutes())}`
   );
 }
 

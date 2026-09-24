@@ -67,6 +67,11 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/orders/{order_id}/transition"): store_scoped(
         "orders", "OrderRepository.transition"
     ),
+    # ORDER-LOOKUP-001. Keyed by `order_id` like the transition, so its store is read from the row
+    # and membership is required against that store; a non-member gets the missing-order answer.
+    ("GET", "/internal/v1/orders/{order_id}"): store_scoped(
+        "orders", "OrderRepository.read_for_principal"
+    ),
     # Intake and production move through the same locked row and the same guard as the
     # commercial transition above; `OperationsService` only chooses which target it carries. They
     # are keyed by `order_id` for the same reason and would have gone unclassified for the same

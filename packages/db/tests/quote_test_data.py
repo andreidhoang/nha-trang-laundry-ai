@@ -207,6 +207,7 @@ def accepted_quote(
     principal: StaffPrincipal,
     quote_id: UUID | None = None,
     fulfillment_mode: FulfillmentMode = FulfillmentMode.SELF_DROP_SELF_COLLECT,
+    ticket_issued_at: datetime | None = None,
 ) -> tuple[UUID, int, ImmutableQuoteSnapshot, UUID]:
     """Price a revision and accept it the way production does, returning the orderable revision.
 
@@ -223,7 +224,9 @@ def accepted_quote(
     # A real intake request bound to a real counter ticket. `OrderRepository.create` checks that the
     # order's customer is the customer the quote was priced for, reached through this request, so a
     # fixture that invents a `bound_order_request_id` builds a chain no customer could walk.
-    contact_id = counter_ticket(connection, store_id=store_id, principal=principal)
+    contact_id = counter_ticket(
+        connection, store_id=store_id, principal=principal, issued_at=ticket_issued_at
+    )
     request_id = uuid4()
     with connection.cursor() as cursor:
         cursor.execute(
@@ -316,7 +319,13 @@ def accepted_quote(
     return identifier, 2, composition.snapshot, contact_id
 
 
-def counter_ticket(connection: Any, *, store_id: UUID, principal: StaffPrincipal) -> UUID:
+def counter_ticket(
+    connection: Any,
+    *,
+    store_id: UUID,
+    principal: StaffPrincipal,
+    issued_at: datetime | None = None,
+) -> UUID:
     """Issue a walk-in ticket and return the reference an order carries.
 
     Since `COUNTER-TICKET-001` an order's `bound_contact_id` must name a ticket this store
@@ -327,6 +336,69 @@ def counter_ticket(connection: Any, *, store_id: UUID, principal: StaffPrincipal
 
     return (
         CounterTicketRepository()
-        .issue(connection, store_id=store_id, principal=principal, correlation_id=uuid4())
+        .issue(
+            connection,
+            store_id=store_id,
+            principal=principal,
+            correlation_id=uuid4(),
+            issued_at=issued_at,
+        )
         .ticket_id
     )
+
+
+def bulk_newer_orders(
+    connection: Any,
+    store_id: UUID,
+    staff: StaffPrincipal,
+    *,
+    count: int,
+    after: datetime,
+    commercial: str,
+    contact_id: UUID | None = None,
+) -> None:
+    """`count` order rows created after `after`, reusing one real quote chain.
+
+    The `test_ops_board` technique: the rows satisfy every constraint and foreign key, and skip the
+    transition history no read in these tests looks at. `contact_id` overrides the customer
+    reference, for a row bound to something other than the fixture's counter ticket.
+    """
+    quote_id, revision, quote, ticket_id = accepted_quote(
+        connection, store_id=store_id, principal=staff
+    )
+    bound = contact_id or ticket_id
+    with (
+        connection.transaction(),
+        connection.cursor() as cursor,
+        cursor.copy(
+            """
+            COPY orders (
+                id, store_id, bound_contact_id, current_quote_id, current_quote_revision,
+                current_quote_snapshot_hash, commercial_status, intake_status, production_status,
+                fulfillment_mode, balance_status, customer_final_quote_accepted_at,
+                row_version, created_at, acquisition_source
+            ) FROM STDIN
+            """
+        ) as copy,
+    ):
+        for index in range(count):
+            created = after + timedelta(minutes=index + 1)
+            copy.write_row(
+                (
+                    uuid4(),
+                    store_id,
+                    bound,
+                    quote_id,
+                    revision,
+                    quote.document.snapshot_hash,
+                    commercial,
+                    "AWAITING_HANDOFF",
+                    "NOT_STARTED",
+                    "SELF_DROP_SELF_COLLECT",
+                    "UNPAID",
+                    created,
+                    1,
+                    created,
+                    "WALK_IN",
+                )
+            )

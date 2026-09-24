@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import hmac
-from http.cookies import SimpleCookie
 
 from nha_trang_laundry_observability import SafeStructuredLogger
 from starlette.datastructures import Headers, MutableHeaders
+from starlette.requests import cookie_parser
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -135,10 +135,17 @@ class RequestBodyTooLarge(Exception):
 
 
 def _cookies(value: str | None) -> dict[str, str]:
-    parsed = SimpleCookie()
-    if value:
-        parsed.load(value)
-    return {key: morsel.value for key, morsel in parsed.items()}
+    """Read cookies exactly as authentication will, so the two can never disagree.
+
+    This used `http.cookies.SimpleCookie`, which discards the whole header when any one cookie is
+    malformed (a JSON value, an unquoted space, a stray quote). `current_principal` reads the same
+    header through Starlette's lenient parser and still finds the session, so a single odd
+    neighbouring cookie made this middleware conclude there was no session and skip both the
+    Origin and the CSRF checks for a request the API then authenticated. Using the parser the
+    session lookup uses makes "has a session" one fact rather than two.
+    """
+
+    return cookie_parser(value) if value else {}
 
 
 async def _reject(scope: Scope, send: Send, status_code: int, detail: str) -> None:

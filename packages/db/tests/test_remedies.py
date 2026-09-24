@@ -52,6 +52,7 @@ from nha_trang_laundry_db.quotes import (
     QuoteAcceptanceRepository,
     QuoteRepository,
     QuoteRevisionCommand,
+    QuoteStateError,
 )
 from nha_trang_laundry_db.remedies import (
     CREDIT_EXECUTED,
@@ -64,6 +65,7 @@ from nha_trang_laundry_db.remedies import (
     RemedyStateError,
     publish_remedy_policy,
     read_published_remedy_policy,
+    spend_reserved_remedy_credits,
     validate_remedy_policy,
 )
 from nha_trang_laundry_db.settlement import SettlementCommand, SettlementRepository
@@ -71,6 +73,7 @@ from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
     CommercialOrderStatus,
+    CustodyResolution,
     FulfillmentMode,
     IntakeStatus,
     PolicyOutcome,
@@ -892,29 +895,142 @@ def test_a_credit_lands_on_the_next_quote_and_is_redeemable_exactly_once(
     # `quote_revisions` and `_validate_adjustments` both require.
     assert (int(row[0]), int(row[1])) == (amount, LINE_AMOUNT - amount)
 
+    # Changed by the credit-lifecycle fix, and the old expectation was the defect. This test used to
+    # assert that presenting the credit against a *second* quote was refused because the first
+    # redemption had already burnt it. Burning at redemption is exactly what lost credits: the first
+    # quote could then be re-priced, expire or be abandoned, and the credit was gone with it. A
+    # redemption now only reserves the credit; "exactly once" is enforced where the money actually
+    # leaves -- when an order is created -- and pinned below and in
+    # `apps/api/tests/test_remedy_credit_lifecycle.py`.
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT redeemed_at FROM remedy_credits WHERE id = %s", (credit_id,))
+        reserved_only = cursor.fetchone()
+    assert reserved_only is not None and reserved_only[0] is None
+
     second_quote_id, second_revision, second_hash = _next_quote(connection, store_id, staff)
-    with pytest.raises(RemedyStateError) as refused:
+    on_second = RemedyCreditRepository().redeem(
+        connection,
+        RemedyCreditRedemptionCommand(
+            store_id=store_id,
+            quote_id=second_quote_id,
+            credit_id=credit_id,
+            expected_current_revision=second_revision,
+            expected_snapshot_hash=second_hash,
+            principal=staff,
+            correlation_id=uuid4(),
+            redeemed_at=NOW,
+        ),
+    )
+    # Reserved on two bills at once is allowed: neither is an order yet.
+    assert on_second.revision == 2
+
+    # The same credit on the same bill twice is not. Refused, and nothing is written.
+    with pytest.raises(RemedyStateError) as twice:
         RemedyCreditRepository().redeem(
             connection,
             RemedyCreditRedemptionCommand(
                 store_id=store_id,
                 quote_id=second_quote_id,
                 credit_id=credit_id,
-                expected_current_revision=second_revision,
-                expected_snapshot_hash=second_hash,
+                expected_current_revision=on_second.revision,
+                expected_snapshot_hash=on_second.snapshot_hash,
                 principal=staff,
                 correlation_id=uuid4(),
                 redeemed_at=NOW,
             ),
         )
-    assert refused.value.reason_code == RemedyRefusal.REMEDY_CREDIT_ALREADY_REDEEMED.value
+    assert twice.value.reason_code == RemedyRefusal.REMEDY_CREDIT_ALREADY_ON_QUOTE.value
     with connection.cursor() as cursor:
         cursor.execute(
             "SELECT count(*) FROM quote_revisions WHERE quote_id = %s", (second_quote_id,)
         )
         counted = cursor.fetchone()
-    # The refused redemption wrote nothing: the second quote still has only its first revision.
-    assert counted is not None and counted[0] == 1
+    assert counted is not None and counted[0] == 2
+
+    # Spent exactly once: the first conversion spends it, the second is refused. This is the
+    # function `OrderRepository.create` calls inside its own transaction.
+    def spend(quote: UUID) -> Any:
+        return spend_reserved_remedy_credits(
+            connection,
+            store_id=store_id,
+            quote_id=quote,
+            revision=2,
+            order_id=uuid4(),
+            actor_id=staff.staff_user_id,
+            correlation_id=uuid4(),
+            occurred_at=NOW,
+        )
+
+    assert spend(quote_id) == (credit_id,)
+    with pytest.raises(RemedyStateError) as second_spend:
+        spend(second_quote_id)
+    assert second_spend.value.reason_code == RemedyRefusal.REMEDY_CREDIT_ALREADY_REDEEMED.value
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT redeemed_quote_id, redeemed_quote_revision FROM remedy_credits WHERE id = %s",
+            (credit_id,),
+        )
+        spent_on = cursor.fetchone()
+        cursor.execute(
+            "SELECT count(*) FROM domain_events WHERE aggregate_type = 'REMEDY_CREDIT' "
+            "AND aggregate_id = %s AND event_type = 'REMEDY_CREDIT_REDEEMED'",
+            (credit_id,),
+        )
+        events = cursor.fetchone()
+    assert spent_on is not None and (UUID(str(spent_on[0])), int(spent_on[1])) == (quote_id, 2)
+    # One spend, one event: the refused second spend left no trace but its refusal.
+    assert events is not None and events[0] == 1
+
+
+def test_a_revision_that_silently_drops_a_reserved_credit_is_refused(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The wall behind the carry-forward, for any caller that composes without passing the credit.
+
+    This is the reviewer's defect at the persistence boundary: a re-priced revision composed from
+    the lines alone -- as `create_quote` did before the fix -- written over a revision that reserves
+    a credit. It used to be accepted, and the bill lost 11.000 d with nothing on it saying so. Now
+    it is refused and nothing is written; a revision that genuinely cannot carry the credit must
+    say so with a `REMEDY_CREDIT_RELEASED_<id>` trace, which `compose_quote_revision` writes.
+    """
+
+    store_id, credit_id, staff, _ = _issued_credit(connection)
+    quote_id, revision, snapshot_hash = _next_quote(connection, store_id, staff)
+    credited = RemedyCreditRepository().redeem(
+        connection,
+        RemedyCreditRedemptionCommand(
+            store_id=store_id,
+            quote_id=quote_id,
+            credit_id=credit_id,
+            expected_current_revision=revision,
+            expected_snapshot_hash=snapshot_hash,
+            principal=staff,
+            correlation_id=uuid4(),
+            redeemed_at=NOW,
+        ),
+    )
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT bound_order_request_id FROM quotes WHERE id = %s", (quote_id,))
+        bound = cursor.fetchone()
+    assert bound is not None
+    with pytest.raises(QuoteStateError, match="REMEDY_CREDIT_DROPPED"):
+        QuoteRepository().create_revision(
+            connection,
+            QuoteRevisionCommand(
+                store_id,
+                UUID(str(bound[0])),
+                make_quote_snapshot(quote_id, credited.revision + 1),
+                credited.revision,
+                credited.revision,
+                staff.staff_user_id,
+                uuid4(),
+                NOW,
+            ),
+        )
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM quote_revisions WHERE quote_id = %s", (quote_id,))
+        counted = cursor.fetchone()
+    assert counted is not None and counted[0] == credited.revision
 
 
 def test_a_credit_larger_than_the_next_bill_is_refused_rather_than_capped(
@@ -1000,6 +1116,70 @@ def test_a_late_delivery_credit_on_an_order_nobody_delivered_is_refused(
             attested_late_by_minutes=150,
         )
     assert refused.value.reason_code == RemedyRefusal.REMEDY_DELIVERY_NOT_RECORDED.value
+
+
+def test_a_late_delivery_credit_on_a_fully_refunded_order_is_refused(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """Ten percent of the bill, when the whole bill was handed back, is ten percent of nothing.
+
+    Two fixes met here. `CANCEL-REFUND-001` records a refund when a paid order is cancelled under a
+    resolution `DEC-024` says is not charged, and leaves the settlement row in place because the
+    refund references it. The late-delivery credit reads that settlement row as "what the customer
+    paid". So a delivered order cancelled `SHOP_FAULT_NO_CHARGE` and refunded in full could then
+    also mint a 10% credit on money the customer already has back. Found by the refund fixer as a
+    residual risk; it exists only with both branches merged.
+
+    Whether a refunded item's *damage* ceiling still applies is not decided here: the ceiling reads
+    the quoted line price, not the settlement, and `DEC-004` does not say. That is the owner's.
+    """
+
+    store_id, staff, order_id, incident_id = _shop(
+        connection, mode=FulfillmentMode.PICKUP_AND_RETURN
+    )
+    DeliveryLegRepository().record(
+        connection,
+        RecordDeliveryLegCommand(
+            order_id=order_id,
+            leg_kind=DeliveryLegKind.RETURN,
+            outcome=DeliveryLegOutcome.SUCCEEDED,
+            principal=staff,
+            correlation_id=uuid4(),
+            recorded_at=NOW,
+        ),
+    )
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT row_version FROM orders WHERE id = %s", (order_id,))
+        row = cursor.fetchone()
+    assert row is not None
+    version = _advance(
+        connection,
+        order_id,
+        staff,
+        int(row[0]),
+        commercial_target=CommercialOrderStatus.CANCELLATION_REVIEW,
+    ).row_version
+    cancelled = _advance(
+        connection,
+        order_id,
+        staff,
+        version,
+        commercial_target=CommercialOrderStatus.CANCELLED,
+        custody_resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE,
+    )
+    assert cancelled.balance.value == "REFUNDED"
+
+    with pytest.raises(RemedyStateError) as refused:
+        _propose(
+            connection,
+            store_id,
+            incident_id,
+            staff,
+            kind=RemedyKind.LATE_DELIVERY_CREDIT,
+            store_fault_attested=True,
+            attested_late_by_minutes=150,
+        )
+    assert refused.value.reason_code == RemedyRefusal.REMEDY_ORDER_NOT_SETTLED.value
 
 
 def test_lateness_below_the_published_threshold_is_refused_with_the_threshold_named(
@@ -1234,8 +1414,9 @@ def test_a_credit_refused_over_a_non_stacking_programme_survives_and_spends_late
       untouched. `redeemed_at` is still null.
     - the quote it was presented against still has exactly one revision. No second number exists for
       anybody to read out by mistake.
-    - the same credit, presented later against a bill with no programme discount on it, spends for
-      its full 11.000 d and burns exactly once, against *that* quote.
+    - the same credit, presented later against a bill with no programme discount on it, lands for
+      its full 11.000 d on *that* quote. (Since the credit-lifecycle fix it is reserved there and
+      spent only when that quote becomes an order; it used to be burnt at this point.)
 
     The arithmetic, which is the whole reason the old assertions are gone rather than bumped:
 
@@ -1303,16 +1484,30 @@ def test_a_credit_refused_over_a_non_stacking_programme_survives_and_spends_late
     assert redeemed.net_service_subtotal_vnd == LINE_AMOUNT - LATE_CREDIT
     assert redeemed.display_total_vnd == LINE_AMOUNT - LATE_CREDIT + 10_000
 
+    # Changed by the credit-lifecycle fix. This used to assert the credit was burnt here, against
+    # the plain quote's revision 2. That burn is what lost credits whenever the quote was then
+    # re-priced, expired or abandoned, so a redemption now only *reserves*: the credit row is
+    # untouched and the plain quote's revision 2 carries it. It is spent when that quote becomes an
+    # order (`spend_reserved_remedy_credits`, inside `OrderRepository.create`).
     with connection.cursor() as cursor:
         cursor.execute(
             "SELECT redeemed_at, redeemed_quote_id, redeemed_quote_revision FROM remedy_credits "
             "WHERE id = %s",
             (credit_id,),
         )
-        burnt = cursor.fetchone()
-    assert burnt is not None
-    assert burnt[0] is not None
-    assert UUID(str(burnt[1])) == plain_quote_id and int(burnt[2]) == 2
+        reserved = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT count(*) FROM quote_revisions r,
+                 jsonb_array_elements(r.snapshot -> 'adjustments') AS a
+            WHERE r.quote_id = %s AND r.revision = 2 AND a ->> 'kind' = 'REMEDY_CREDIT'
+            """,
+            (plain_quote_id,),
+        )
+        carried = cursor.fetchone()
+    assert reserved is not None
+    assert reserved == (None, None, None)
+    assert carried is not None and carried[0] == 1
 
     # And the promoted bag the credit was refused against still sells, at the price it was quoted.
     accepted_at = NOW + timedelta(minutes=2)
@@ -1368,4 +1563,9 @@ def test_a_credit_refused_over_a_non_stacking_programme_survives_and_spends_late
     with connection.cursor() as cursor:
         cursor.execute("SELECT count(*) FROM orders WHERE id = %s", (order_id,))
         orders = cursor.fetchone()
+        cursor.execute("SELECT redeemed_at FROM remedy_credits WHERE id = %s", (credit_id,))
+        still_owed = cursor.fetchone()
     assert orders is not None and orders[0] == 1
+    # The promoted order never carried the credit, so creating it spent nothing: the credit is
+    # still reserved only on the plain quote, and still owed.
+    assert still_owed is not None and still_owed[0] is None

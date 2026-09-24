@@ -139,9 +139,10 @@ the Staff PWA, while TypeScript is isolated to the non-authoritative OpenClaw co
 
 - [Codex and engineer cross-machine handoff](./docs/CODEX_CROSS_MACHINE_HANDOFF.md)
 - [English build engineering specification](./BUILD_ENGINEERING_SPEC.md)
-- [Current delivery and production status](./docs/STATUS.md)
+- [Staging readiness, measured](./docs/STAGING_READINESS_2026-09.md)
 - [Engineering continuation brief](./context/PROJECT_CONTINUATION.md)
-- [Delivery board](./docs/DELIVERY_BOARD.md)
+- Live delivery status: `uv run python scripts/report_delivery_status.py` -- generated from the
+  queue on every run, so it cannot go stale the way the hand-written board and status page did
 - [Stable program plan](./delivery/PROGRAM_PLAN.yaml)
 - [Release gate registry](./delivery/GATE_REGISTRY.yaml)
 - [Production agent runtime ADR](./docs/adr/0002-production-agent-runtime-and-trust-boundaries.md)

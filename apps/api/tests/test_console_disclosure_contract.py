@@ -538,7 +538,62 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     notice both said the envelope must be decided by somebody other than "người vừa tạo",
     #     which named the wrong act now that the rule measures against the export request's own
     #     requester.
-    assert sum(counts.values()) == _registry()["total"] == 348
+    #
+    # 347 after ORDER-LOOKUP-001: -2 retired, +1 added, 3 re-keyed. Net -1.
+    #
+    #   * The two retirements are order detail's eyebrow and guardrail, "Ghép từ bảng đơn · máy chủ
+    #     chưa có cách đọc một đơn riêng lẻ" and "Máy chủ chưa có cách đọc một đơn riêng lẻ…". Both
+    #     stopped being true when `GET /internal/v1/orders/{order_id}` shipped, so they were deleted
+    #     rather than reworded -- the same exit QUOTE-ACCEPT-001 and REMEDY-001 took.
+    #   * The addition is the detail screen's 404 notice, which says only what the server's single
+    #     answer for "missing" and "another store's" allows: the id is wrong or the order is in a
+    #     store you do not work in.
+    #   * Re-keyed: the board's read-model note (it said the server stores no amount for an order,
+    #     and now the board shows one; what remains true is that no customer name is stored, by
+    #     DEC-013), order detail's four-axes hint (it pointed transitions at the board because only
+    #     the board held a row version), and the create panel's guardrail, whose text is unchanged
+    #     but whose quote marks are now literal characters rather than `“` escapes -- the
+    #     registry used to record the escape sequence itself as the sentence.
+    #
+    # 373 on its own branch after the pre-staging console defect round (B2/M1-M6): +25 added,
+    # 2 re-keyed, 0 retired.
+    #   * +24 in `core/errors.js`: the new `REFUSAL` table is registered through `CLAIM_TABLES`.
+    #     `classify` used to put the server's English 409 prose ("this order request already has a
+    #     quote; add a revision instead") in the notice title; each entry is the Vietnamese sentence
+    #     now shown instead, and several say what the server did ("Không có gì được ghi"), so they
+    #     are claims and belong on the register. The prose itself is kept, collapsed, as detail.
+    #   * +1 in `screens/exports.js`: the in-progress export now survives a trip to `#/approvals`
+    #     in memory only, and a hint says exactly that -- it is remembered across screens, and not
+    #     across a reload or a sign-out (the stash is cleared when the session loses its principal).
+    #   * 2 re-keyed. `MESSAGES.NOT_SUPPORTED` no longer tells every refused payment "dữ liệu bạn
+    #     nhập không sai" -- false for a cashier who typed 13.200 against 132.000 -- and
+    #     `REASON_NOTE.AMOUNT_IS_NOT_THE_EXACT_TOTAL` now says to check and retype, and names
+    #     DEC-010 as the owner's (resolved) decision rather than implying the case is still open.
+    #
+    # 372 once both land: the two rounds touched disjoint sentences, so 348 - 2 + 1 + 25.
+    #
+    # 352 on its own branch after the remedy money fixes (split-claim accumulation and the credit
+    # lifecycle): +4, all
+    # `REASON_NOTE` glosses in `core/i18n.js`, and 348 + 4 = 352. Three are refusals the counter can
+    # now meet and `test_every_remedy_refusal_the_counter_can_meet_is_glossed_for_them` requires:
+    # `REMEDY_INCIDENT_NOT_OPEN` (a proposal against an incident that already has its outcome),
+    # `REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED` (one 10% credit per late delivery) and
+    # `REMEDY_CREDIT_ALREADY_ON_QUOTE` (the same credit presented twice on one bill). The fourth is
+    # `REMEDY_CREDIT_RELEASED`, the reason code a re-priced revision carries when it could not keep
+    # a credit its parent reserved -- a staff member has to tell the customer before they agree.
+    # One sentence was re-keyed without changing the count: `REMEDY_CEILING_EXCEEDED` now says the
+    # ceiling counts every earlier proposal on the same garment, because it does.
+    #
+    # 376 with all three rounds landed: disjoint sentences again, so 372 + 4.
+    #
+    # 381 after the real-API browser run on the merged tree: +5 `REFUSAL` entries for the
+    # cancellation refusals, none of which had a Vietnamese title. Two are the contradictions
+    # DEC-024 lets the record check ("the order records custody of the goods", "production has
+    # begun"): the first Vietnamese pass fell back to the generic title for them and hid the fact
+    # on record under "Chi tiết kỹ thuật", which verify_workflow_conformance.py caught. Three
+    # arrived with CANCEL-REFUND-001 (a paid order whose resolution does not say the money went
+    # back; an unsupported balance shape; a resolution not yet chosen).
+    assert sum(counts.values()) == _registry()["total"] == 381
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

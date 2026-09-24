@@ -63,17 +63,17 @@ def publish_pricebook(connection: Any, *, actor_id: UUID, source: bytes) -> tupl
 
     repository = ConfigurationRepository({CONFIG_TYPE: validate_pricebook})
     with connection.cursor() as cursor:
-        # Ask before writing. Publishing the same pricebook twice would create a second version of
-        # an identical document, and every quote citing version 1 would start looking out of date
-        # for no reason. Idempotency here is correctness, not convenience.
-        cursor.execute(
-            """
-            SELECT version FROM configuration_versions
-            WHERE config_type = %s AND snapshot_hash = %s AND lifecycle = 'PUBLISHED'
-            """,
-            (CONFIG_TYPE, digest),
-        )
-        if cursor.fetchone() is not None:
+        # Ask before writing. Publishing the pricebook already in force would create a second
+        # version of an identical document, and every quote citing it would start looking out of
+        # date for no reason. Idempotency here is correctness, not convenience.
+        #
+        # The question is "is this the one in force", not "was this ever published". It used to be
+        # the second, so going back to an earlier pricebook -- publish v1, publish v2, publish v1's
+        # document again -- answered "already published" and left v2's prices at the counter
+        # (invariants 4 and 11). A revert is a new version with the earlier content: v3 = v1, with
+        # its own event and audit rows, and v1 and v2 exactly as they were.
+        in_force = ConfigurationRepository.latest_published(cursor, CONFIG_TYPE)
+        if in_force is not None and in_force.snapshot_hash == digest:
             return digest, False
         cursor.execute(
             "SELECT coalesce(max(version), 0) FROM configuration_versions WHERE config_type = %s",

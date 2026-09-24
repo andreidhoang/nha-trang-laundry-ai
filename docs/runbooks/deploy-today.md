@@ -102,7 +102,17 @@ Then, and this is the part that turns into a mysterious morning if it is skipped
 
 ## 4. Secrets
 
-Fourteen declared in `compose.r1.yaml`, plus one file for alerts that is not a Docker secret.
+Sixteen declared in `compose.r1.yaml`, plus one file for alerts that is not a Docker secret.
+This said fourteen, and the list below created fourteen: `r1_hash_key` and
+`r1_backup_source_password` were missing, and without the first the API does not start.
+
+> **Not exercised end to end.** The only deployment path run from a clean machine to a working
+> counter is `docs/runbooks/shop-till-mac.md`, which supplies these secrets as files through
+> `compose.shop-local.yaml`. This server path declares them `external: true`, which Docker only
+> honours through swarm (`docker stack deploy`); whether `docker compose up` accepts them on your
+> Docker version has not been measured. Staging on a server: prove it on a scratch host first, or
+> use the file overlay the till uses.
+
 External Docker secrets: never in the repository, never in an image layer, never in a compose file.
 
 ```bash
@@ -126,6 +136,12 @@ printf '%s' '<keycloak db password>'    | docker secret create r1_keycloak_datab
 
 printf '%s' 'age1...'                   | docker secret create r1_backup_encryption_recipients -
 docker secret create r1_backup_repository_credential ./rclone.conf
+# HASH-KEYING-001: the per-deployment key for the two commitments that outlive a purge. Random,
+# never typed, never reused across deployments. Omitting it and the API and worker refuse to start.
+python3 -c 'import secrets; print(secrets.token_urlsafe(48), end="")' | docker secret create r1_hash_key -
+# The password of `laundry_backup`, the REPLICATION role the base backup connects as. It must equal
+# the password in the CREATE ROLE laundry_backup statement below.
+printf '%s' '<laundry_backup password>' | docker secret create r1_backup_source_password -
 ```
 
 `r1_keycloak_bootstrap_admin_password` used to be created here and is not any more: no compose file
@@ -175,7 +191,9 @@ docker compose -f compose.r1.yaml exec postgres psql -U laundry_migrate -d postg
 # `retention_purge` group role behind the retention schedule and requires its grant to ship in the
 # same migration as the purgeable table. The migration creates that role (NOLOGIN, no password,
 # guarded by pg_roles so re-applying is a no-op); you attach a login identity to it below.
-docker compose -f compose.r1.yaml exec postgres psql -U postgres -d postgres -c "
+# `laundry_migrate` is POSTGRES_USER, so it is the cluster's bootstrap superuser; there is no
+# `postgres` role, and this line used to connect as one.
+docker compose -f compose.r1.yaml exec postgres psql -U laundry_migrate -d postgres -c "
   ALTER ROLE laundry_migrate CREATEROLE;"
 
 docker compose -f compose.r1.yaml up -d migrate          # runs once and exits; must exit 0

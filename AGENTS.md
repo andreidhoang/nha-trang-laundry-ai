@@ -12,7 +12,7 @@ uv sync --all-packages --all-groups
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy apps packages
-uv run pytest
+DATABASE_URL=... uv run pytest --require-postgres-integration   # bare `pytest` skips every DB test and stays green
 uv run python scripts/verify_contracts.py
 uv run python scripts/check_context_drift.py
 uv run python scripts/report_delivery_status.py

@@ -5,7 +5,15 @@ most have been run locally; the sequence has never been executed end to end on a
 machine, because no machine exists. Treat step ordering as verified and step *outcomes* as expected.
 
 This exists because the distance between this repository and a shop using it is now mostly not code.
-It is fourteen secrets, one host, and the sequence below.
+It is sixteen secrets, one host, and the sequence below.
+
+> **Not exercised end to end.** The only deployment path run from a clean machine to a working
+> counter is `docs/runbooks/shop-till-mac.md`, which supplies these secrets as files through
+> `compose.shop-local.yaml`. This server path declares them `external: true`, which Docker only
+> honours through swarm (`docker stack deploy`); whether `docker compose up` accepts them on your
+> Docker version has not been measured. Staging on a server: prove it on a scratch host first, or
+> use the file overlay the till uses.
+
 
 ## 0. Before you start — what must already be true
 
@@ -30,7 +38,8 @@ below with `This node is not a swarm manager`. One node is a swarm:
 docker swarm init
 ```
 
-`compose.r1.yaml` declares **fourteen** external Docker secrets. External means the compose file
+`compose.r1.yaml` declares **sixteen** external Docker secrets (this said fourteen and omitted
+`r1_hash_key` and `r1_backup_source_password`, both created below). External means the compose file
 never contains them and they are never in this repository — see
 `docs/runbooks/provider-credentials.md`.
 
@@ -66,6 +75,12 @@ docker secret create r1_backup_encryption_recipients ./recipients.txt
 # An rclone configuration naming the archive repository, with a credential that can write and
 # cannot delete (DEC-026).
 docker secret create r1_backup_repository_credential ./rclone.conf
+# HASH-KEYING-001: the per-deployment key for the two commitments that outlive a purge. Random,
+# never typed, never reused across deployments. Omitting it and the API and worker refuse to start.
+python3 -c 'import secrets; print(secrets.token_urlsafe(48), end="")' | docker secret create r1_hash_key -
+# The password of `laundry_backup`, the REPLICATION role the base backup connects as. It must equal
+# the password in the CREATE ROLE laundry_backup statement below.
+printf '%s' '<laundry_backup password>' | docker secret create r1_backup_source_password -
 ```
 
 ## 1a. Database roles

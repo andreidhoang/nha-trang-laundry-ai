@@ -566,6 +566,13 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Áp dụng giá đã duyệt",
         "Khách đã chốt giá",
         "Tạo đơn",
+        # ORDER-LOOKUP-001. Pickup, the step that could not be done on this software: find the
+        # order by the number on the customer's slip, open it, and read out the amount printed
+        # beside the payment field.
+        "Tìm theo số phiếu",
+        "Mở đơn",
+        "Chuyển trạng thái đơn này",
+        "Phải thu",
         # REMEDY-001. The five presses that take an incident to an outcome, plus the three
         # sentences the guide tells staff to react to. Pinned for the same reason as the band
         # procedure: this one is new to every staff member, it is performed with an unhappy

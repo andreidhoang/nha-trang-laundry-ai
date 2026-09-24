@@ -122,6 +122,11 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/orders/{}/production-transition",
         "/internal/v1/orders/{}/settlement",
         "/internal/v1/orders/{}/delivery-legs",
+        # ORDER-LOOKUP-001. The only read that reaches an order older than the board's newest page,
+        # and the only one that hands back its row version for `If-Match`. Order detail and the
+        # board's "?order=" hand-off both depend on it; losing it puts every order older than about
+        # three days of trade back out of reach at pickup.
+        "/internal/v1/orders/{}",
         # RANGE-PRICE-001. Twenty of the forty-four published services are priced by inspection,
         # and these three are the whole of the console's half of closing one: read the revision to
         # learn the band the customer was shown, propose an amount inside it, and -- after a second
@@ -384,3 +389,24 @@ def test_every_mutating_console_call_carries_an_idempotency_key() -> None:
         "these console calls would throw in the browser before reaching the server; "
         f"give each one an idempotencyKey: {offenders}"
     )
+
+
+def test_only_a_pinned_read_may_be_marked_as_one() -> None:
+    """`data-intent="read"` exempts a button from the "auditor sees no live write control" checks.
+
+    Both real-API browser scripts count a live `data-requires-network` or submit button on the order
+    board as a write an auditor must not be offered. ORDER-LOOKUP-001 put the first *read* form on
+    that screen -- "Tìm theo số phiếu", a GET an auditor is entitled to -- and both checks failed on
+    it while all three writes were correctly disabled. The marker is what lets the checks tell the
+    two apart. Marking a write as a read would switch the check off for it, so each use is pinned
+    here and a new one is a reviewed change, not a one-word edit.
+    """
+
+    pinned = {("screens/orders.js", '"Tìm"')}
+    found = set()
+    for path in (WEB / "src").rglob("*.js"):
+        text = path.read_text("utf-8")
+        for match in re.finditer(r'dataIntent:\s*"read"', text):
+            label = re.search(r'"[^"]+"', text[match.end() : match.end() + 60])
+            found.add((path.relative_to(WEB / "src").as_posix(), label.group(0) if label else "?"))
+    assert found == pinned

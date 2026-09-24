@@ -275,6 +275,12 @@ class OrderBalanceStatus(StrEnum):
     PAID = "PAID"
     OVERPAID = "OVERPAID"
     ON_ACCOUNT = "ON_ACCOUNT"
+    #: `DEC-024`. The order was paid in full and then cancelled under a custody resolution that
+    #: charges the customer nothing, so the settled amount went back across the counter and an
+    #: `order_refunds` row records it. Reachable only from `PAID`, only by that cancellation, and
+    #: never by a staff-typed amount. Before it existed such an order stayed `PAID`, and the day's
+    #: takings counted money that was no longer in the drawer.
+    REFUNDED = "REFUNDED"
 
 
 class ApprovalAction(StrEnum):

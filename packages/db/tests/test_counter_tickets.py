@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -132,6 +132,44 @@ def test_numbers_restart_each_day_and_never_repeat_within_one(
     assert [ticket.ticket_number for ticket in today] == [1, 2, 3]
     assert tomorrow.ticket_number == 1
     assert len({ticket.ticket_id for ticket in today}) == 3
+
+
+def test_a_ticket_belongs_to_the_local_business_day_not_the_utc_one(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """06:30 in Nha Trang is 23:30 UTC the evening before, and it is this morning's number.
+
+    The day used to be `moment.astimezone(UTC).date()`, so numbering rolled over at 07:00 local and
+    a ticket handed out at 06:30 carried yesterday's date and continued yesterday's sequence. The
+    takings, the day counts and the exports all cut the day at local midnight; the counter did not.
+    """
+
+    store_id = uuid4()
+    staff = _member(postgres_connection, store_id, StaffRole.OPERATOR)
+    repository = CounterTicketRepository()
+    evening = repository.issue(
+        postgres_connection,
+        store_id=store_id,
+        principal=staff,
+        correlation_id=uuid4(),
+        # 21:00 local on the 23rd.
+        issued_at=datetime(2026, 9, 23, 14, 0, tzinfo=UTC),
+    )
+    dawn = repository.issue(
+        postgres_connection,
+        store_id=store_id,
+        principal=staff,
+        correlation_id=uuid4(),
+        # 06:30 local on the 24th, still the 23rd in UTC.
+        issued_at=datetime(2026, 9, 23, 23, 30, tzinfo=UTC),
+    )
+    assert evening.issued_on == date(2026, 9, 23)
+    assert dawn.issued_on == date(2026, 9, 24)
+    # A new day starts a new count, so the first customer of the morning is số 1.
+    assert (evening.ticket_number, dawn.ticket_number) == (1, 1)
+    with postgres_connection.cursor() as cursor:
+        cursor.execute("SELECT issued_on FROM counter_tickets WHERE id = %s", (dawn.ticket_id,))
+        assert cursor.fetchone() == (date(2026, 9, 24),)
 
 
 def test_two_stores_do_not_share_a_counter(

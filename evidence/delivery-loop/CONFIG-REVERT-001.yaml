@@ -1,0 +1,63 @@
+schema_version: 1
+work_item: CONFIG-REVERT-001
+recorded_at: '2026-09-24T21:00:00+07:00'
+requirement_contract: Republishing content identical to an older pricebook, promotion programme or remedy
+  policy returned 'already published' and the newer version stayed in force (invariants 4 and 11).
+rollback_impact: No schema change. A code revert restores the no-op on an older document. Migrations are
+  forward-only; a code revert past 0046/0047 leaves them applied, which is safe as stated per item. Rolling
+  the data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 now
+  takes before every upgrade.
+unresolved_assumptions: Two concurrent publishes can pick the same next version number; the unique constraint
+  rejects one, as before this change.
+evidence:
+  the_in_force_version_is_still_a_no_op: The idempotency control passes before and after; removing the
+    in-force check fails it.
+  an_older_document_becomes_a_new_version: 'test_configuration_revert.py: the three revert tests failed
+    with assert (digest, False) == (digest, True) before and pass after; restoring the old check in any
+    one publish function fails exactly that type''s test.'
+  no_published_version_is_mutated: The revert goes through the normal create-and-publish path as the next
+    version; the 0002 immutability trigger is untouched.
+  rollback_assessment: No schema change. A code revert restores the no-op on an older document. Migrations
+    are forward-only; a code revert past 0046/0047 leaves them applied, which is safe as stated per item.
+    Rolling the data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section
+    8 now takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 572 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 257 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 1749 passed, 4 skipped in 321.55s (0:05:21)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 58 served
+    internal API operations against their contract. Validated 381 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 137 source references, 28 decisions, 4 gates, 9 phases, 143 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_daily_operations.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-24, against a database created empty and migrated 0001-0047 (0045 unused) on the merged
+    tree, real RS256 identity provider, real FastAPI process. The first run on the merged tree was 69/1;
+    the failure was traced to the check, not the product (see CONSOLE-DEADENDS-001) before anything changed.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_workflow_conformance.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: '86 ok, 1 failed (coverage only: 40/49 declared controls exercised, identical to main at 9287596)'
+  note: First run on the merged tree was 82/5. Four were real findings about the merged console and are
+    fixed in ca395c2; the fifth is the pre-existing coverage line.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_console_interaction.py
+  status: PASSED
+  result: 170 passed, 0 failed
+  note: Stubbed API. Run after every console merge and after ca395c2.

@@ -50,7 +50,7 @@ def main() -> int:
         digest, created = publish_pricebook(
             connection, actor_id=arguments.actor_id, source=arguments.source.read_bytes()
         )
-    state = "published" if created else "already published"
+    state = "published" if created else "already in force"
     print(f"pricebook {state}: JCS-SHA256-V1:{digest}")
     return 0
 

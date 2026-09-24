@@ -1,0 +1,72 @@
+schema_version: 1
+work_item: CANCEL-REFUND-001
+recorded_at: '2026-09-24T21:00:00+07:00'
+requirement_contract: 'A paid order cancelled under a resolution DEC-024 says is not charged kept its
+  settlement and read PAID, so ''tien da thu hom nay'' (DEC-014) exceeded the drawer. Found independently
+  by two reviewers. Required: refund recorded atomically and equal to the settlement; takings net of refunds
+  per business day; invariant 2 kept.'
+rollback_impact: Migration 0046 only adds (a table, constraints, triggers). With it applied and code reverted,
+  the old code cannot cancel a paid order -- the trigger refuses -- which fails safe. Migrations are forward-only;
+  a code revert past 0046/0047 leaves them applied, which is safe as stated per item. Rolling the data
+  back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 now takes before
+  every upgrade.
+unresolved_assumptions: DEC-024's instruction that SHOP_FAULT_NO_CHARGE opens a DEC-004 incident is not
+  automated. No backfill of paid orders cancelled before 0046. Whether a refunded item keeps a damage
+  ceiling is an owner question.
+evidence:
+  the_refund_equals_the_settlement_by_schema: A composite FK to order_settlements (id, order_id, store_id,
+    paid_amount_vnd) makes a differing refund unrepresentable; a trigger refuses REFUNDED without a refund
+    row and a refund without its cancellation.
+  takings_are_non_negative_and_net_of_refunds: 'collected_vnd keeps its v1 meaning (gross); refunded_vnd
+    gross; net_vnd with net_direction IN/OUT; the response model declares ge=0. Refund-only day: (0, 110000,
+    110000, OUT). Live: a paid order cancelled SHOP_FAULT_NO_CHARGE moved collected 876000->1016000, refunded
+    0->140000, net unchanged, balance REFUNDED.'
+  refund_mutation_event_audit_outbox_are_atomic: test_the_refund_the_transition_and_its_ledger_rows_commit_together
+    and test_the_cancellation_event_audit_and_outbox_name_the_refund.
+  no_late_credit_on_a_refunded_bill: 'Exists only with both money branches merged: test_a_late_delivery_credit_on_a_fully_refunded_order_is_refused
+    failed on the merged tree (DID NOT RAISE) and passes after 84c9648.'
+  rollback_assessment: Migration 0046 only adds (a table, constraints, triggers). With it applied and
+    code reverted, the old code cannot cancel a paid order -- the trigger refuses -- which fails safe.
+    Migrations are forward-only; a code revert past 0046/0047 leaves them applied, which is safe as stated
+    per item. Rolling the data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+    section 8 now takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 572 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 257 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 1749 passed, 4 skipped in 321.55s (0:05:21)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 58 served
+    internal API operations against their contract. Validated 381 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 137 source references, 28 decisions, 4 gates, 9 phases, 143 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_daily_operations.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-24, against a database created empty and migrated 0001-0047 (0045 unused) on the merged
+    tree, real RS256 identity provider, real FastAPI process. The first run on the merged tree was 69/1;
+    the failure was traced to the check, not the product (see CONSOLE-DEADENDS-001) before anything changed.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_workflow_conformance.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: '86 ok, 1 failed (coverage only: 40/49 declared controls exercised, identical to main at 9287596)'
+  note: First run on the merged tree was 82/5. Four were real findings about the merged console and are
+    fixed in ca395c2; the fifth is the pre-existing coverage line.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_console_interaction.py
+  status: PASSED
+  result: 170 passed, 0 failed
+  note: Stubbed API. Run after every console merge and after ca395c2.

@@ -68,27 +68,28 @@ def publish_promotion_policy(
 ) -> tuple[str, bool]:
     """Publish one promotion programme, returning its digest and whether this call created it.
 
-    Idempotent on the digest for the reason `publish_remedy_policy` is: republishing an identical
-    document would create a second version of the same programme, and every quote citing version 1
-    would start refusing acceptance with `PROMOTION_CHANGED_SINCE_QUOTE` for no reason at all --
-    `accept_quote_revision` compares version identity before it compares dong.
+    Idempotent on the digest *of the programme in force*, for the reason `publish_remedy_policy`
+    is: republishing the document already in force would create a second version of the same
+    programme, and every quote citing it would start refusing acceptance with
+    `PROMOTION_CHANGED_SINCE_QUOTE` for no reason at all -- `accept_quote_revision` compares
+    version identity before it compares dong.
 
-    A *different* document is a new version, and that is the whole point of the item: the owner
-    starts a programme, changes a rate or retires an expired one by publishing, with no deploy.
+    A document that is not in force is a new version, and that is the whole point of the item: the
+    owner starts a programme, changes a rate, retires an expired one or restores an earlier one by
+    publishing, with no deploy. Restoring is not special: it is the next version with the earlier
+    content, and every earlier version stays exactly as it was published.
     """
 
     validate_promotion_policy_document(payload)
     digest = snapshot_hash(payload)
     repository = promotion_configuration_repository()
     with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT version FROM configuration_versions
-            WHERE config_type = %s AND snapshot_hash = %s AND lifecycle = 'PUBLISHED'
-            """,
-            (PROMOTION_POLICY_CONFIG_TYPE, digest),
-        )
-        if cursor.fetchone() is not None:
+        # "Is this the programme in force", not "was it ever published". The second made restoring
+        # an earlier programme impossible: its digest was found on the old version, the call
+        # answered "already published", and the newer programme stayed in force. A restore is a
+        # new version with the earlier content, exactly as `publish_pricebook` does it.
+        in_force = ConfigurationRepository.latest_published(cursor, PROMOTION_POLICY_CONFIG_TYPE)
+        if in_force is not None and in_force.snapshot_hash == digest:
             return digest, False
         cursor.execute(
             "SELECT coalesce(max(version), 0) FROM configuration_versions WHERE config_type = %s",

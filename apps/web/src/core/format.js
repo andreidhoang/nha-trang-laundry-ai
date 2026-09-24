@@ -113,6 +113,54 @@ export function parseDong(value) {
 }
 
 /**
+ * `QUANTITY_PATTERN` in `packages/domain/.../pricing.py`, mirrored byte for byte. The domain is the
+ * authority and still checks; this copy exists so the counter hears about a bad weight while typing
+ * rather than as `MISSING_REQUIRED_FACT` after pressing.
+ */
+const QUANTITY_PATTERN = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
+
+/**
+ * Units the domain prices by whole count (`COUNT_UNITS` in `pricing.py`): a fraction is refused.
+ */
+const COUNT_UNITS = new Set(["ITEM", "PAIR", "SET", "ANIMAL_PLUSH_ITEM", "CASE"]);
+
+/**
+ * Read a typed weight or count into the exact string the pricing engine accepts, or refuse it.
+ *
+ * A Vietnamese counter writes five and a half kilos as "5,5". The engine only reads "5.5", and it
+ * answered "5,5" with `MISSING_REQUIRED_FACT` -- while the 6 kg notice on the same line had already
+ * read it as 5.5 and warned about the cliff, so the screen treated one keystroke as two different
+ * weights. So there is one reader, used by both:
+ *
+ *   - Surrounding spaces are dropped (a phone keyboard adds them after autocomplete).
+ *   - A single "," with no "." is read as the decimal mark and becomes "." -- but only when the
+ *     result is a quantity the domain's own pattern accepts. Nothing else is rewritten: digits are
+ *     never added, removed or rounded, so the number sent is the number typed.
+ *   - Everything the domain's `_quantity` refuses is refused here too, with no guess: not the
+ *     pattern, zero, more than three decimals, more than nine whole digits, or a fraction on a unit
+ *     priced by count. "5.500,5", "1,2,3" and "5 kg" are mistakes to report, not numbers to fix.
+ *
+ * This is the opposite choice from `parseDong`, deliberately: a comma in money is a decimal the
+ * đồng does not have, so it is refused; a comma in a weight is the ordinary way to write one.
+ *
+ * @param {string} value what the operator typed
+ * @param {string} [unit] the line's unit, when known; decides whether a fraction is allowed
+ * @returns {string|null} the string to send, or null when it is not a quantity
+ */
+export function parseQuantity(value, unit = "") {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return null;
+  const commas = trimmed.split(",").length - 1;
+  const candidate = commas === 1 && !trimmed.includes(".") ? trimmed.replace(",", ".") : trimmed;
+  if (!QUANTITY_PATTERN.test(candidate)) return null;
+  const [whole, fraction = ""] = candidate.split(".");
+  if (whole.length > 9 || fraction.length > 3) return null;
+  if (!/[1-9]/.test(candidate)) return null;
+  if (fraction && /[1-9]/.test(fraction) && COUNT_UNITS.has(unit)) return null;
+  return candidate;
+}
+
+/**
  * Format a min/max pair the way the price rules require it to be read.
  *
  * A range must be shown whole — `ENGINEERING_SPEC_V1.md:233` says the UI shows only the entire

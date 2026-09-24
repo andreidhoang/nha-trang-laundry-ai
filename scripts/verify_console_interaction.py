@@ -191,10 +191,17 @@ ORDER_CREATED = {
 SETTLEMENTS_TODAY = {
     "collected_vnd": 1_285_000,
     "settlement_count": 7,
+    # `collected-today-v2` (DEC-024): refunds and the drawer's net movement travel beside the
+    # takings, every amount non-negative. No refund in this fixture, so the drawer moved IN by
+    # exactly what was collected.
+    "refunded_vnd": 0,
+    "refund_count": 0,
+    "net_vnd": 1_285_000,
+    "net_direction": "IN",
     "business_timezone": "Asia/Ho_Chi_Minh",
     # OPS-BOARD-001, invariant 18: the rule that produced the figure travels with the figure, and
     # the takings card renders it beneath the amount.
-    "query_version": "collected-today-v1:391bd9369153e5ae",
+    "query_version": "collected-today-v2:c266d2f11377a64c",
 }
 
 #: What `GET /internal/v1/stores/{id}/day-summary` returns. Two statuses rather than one, because
@@ -496,6 +503,9 @@ EXPORT_REQUEST_CONTENT = {
         "expected_total_vnd",
         "paid_amount_vnd",
         "settlement_attested_at",
+        "balance_status",
+        "refunded_amount_vnd",
+        "refunded_at",
     ],
     "excludes": [
         "customer_incident_evidence.summary",
@@ -503,7 +513,7 @@ EXPORT_REQUEST_CONTENT = {
         "assistant_turn_payloads.answer",
         "orders.bound_contact_id",
     ],
-    "query_version": "store-day-orders-export-v1:7489179454314e46",
+    "query_version": "store-day-orders-export-v2:3f884e227d6a2d05",
     "statement_vi": (
         "Xuất bản sao hồ sơ của chính cửa hàng cho ngày 2026-09-16 (theo giờ Việt Nam): mã đơn, "
         "trạng thái, mốc thời gian và số tiền đã thu của những đơn MỞ trong ngày đó. Ngày được "

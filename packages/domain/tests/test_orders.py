@@ -355,3 +355,73 @@ def test_a_resolution_the_order_record_contradicts_is_refused() -> None:
         ).commercial
         is CommercialOrderStatus.CANCELLED
     )
+
+
+def _reviewed_cancel(
+    balance: OrderBalanceStatus,
+    resolution: CustodyResolution | None,
+    production: ProductionStatus = ProductionStatus.NOT_STARTED,
+) -> OrderState:
+    return transition_commercial(
+        state(
+            commercial=CommercialOrderStatus.CANCELLATION_REVIEW,
+            intake=IntakeStatus.ACCEPTED,
+            production=production,
+            balance=balance,
+        ),
+        CommercialOrderStatus.CANCELLED,
+        cancellation_approved=True,
+        custody_and_financial_resolution_recorded=True,
+        custody_resolution=resolution,
+    )
+
+
+def test_a_paid_order_cancelled_without_charge_reads_refunded() -> None:
+    """DEC-024: the two resolutions that charge the customer nothing hand the money back.
+
+    Before this the balance was left `PAID`, and the day's takings counted money that had gone back
+    across the counter.
+    """
+    unwashed = _reviewed_cancel(
+        OrderBalanceStatus.PAID, CustodyResolution.RETURNED_UNWASHED_REFUNDED
+    )
+    assert (unwashed.commercial, unwashed.balance) == (
+        CommercialOrderStatus.CANCELLED,
+        OrderBalanceStatus.REFUNDED,
+    )
+    shop_fault = _reviewed_cancel(
+        OrderBalanceStatus.PAID,
+        CustodyResolution.SHOP_FAULT_NO_CHARGE,
+        production=ProductionStatus.RELEASED,
+    )
+    assert shop_fault.balance is OrderBalanceStatus.REFUNDED
+
+
+def test_an_unpaid_cancellation_keeps_its_balance() -> None:
+    for resolution in (
+        CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        CustodyResolution.SHOP_FAULT_NO_CHARGE,
+        None,
+    ):
+        assert _reviewed_cancel(OrderBalanceStatus.UNPAID, resolution).balance is (
+            OrderBalanceStatus.UNPAID
+        )
+
+
+def test_a_paid_order_is_never_cancelled_with_the_money_still_counted() -> None:
+    """No resolution -- or a missing one -- may leave a cancelled order reading `PAID`."""
+    with pytest.raises(OrderTransitionError, match="HUMAN_APPROVAL_REQUIRED"):
+        _reviewed_cancel(OrderBalanceStatus.PAID, None)
+    # NOT_RECEIVED is refused on custody first; the money rule is the second statement of it.
+    with pytest.raises(OrderTransitionError):
+        _reviewed_cancel(OrderBalanceStatus.PAID, CustodyResolution.NOT_RECEIVED)
+
+
+def test_a_balance_shape_dec_010_does_not_support_is_refused_rather_than_guessed() -> None:
+    for balance in (
+        OrderBalanceStatus.PARTIALLY_PAID,
+        OrderBalanceStatus.OVERPAID,
+        OrderBalanceStatus.ON_ACCOUNT,
+    ):
+        with pytest.raises(OrderTransitionError, match="NOT_SUPPORTED"):
+            _reviewed_cancel(balance, CustodyResolution.RETURNED_UNWASHED_REFUNDED)

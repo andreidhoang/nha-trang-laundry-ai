@@ -18,8 +18,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from nha_trang_laundry_domain.catalog import FulfillmentMode
 from nha_trang_laundry_domain.settlement import (
@@ -44,11 +45,37 @@ SETTLEMENT_ROLES = frozenset({StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, Sta
 BUSINESS_TIMEZONE = "Asia/Ho_Chi_Minh"
 
 #: The takings figure, as one statement so that one edit moves one rule (`OPS-BOARD-001`).
+#:
+#: v2 (`DEC-024`): money in and money out, each on its own local business day, and the drawer's
+#: net movement between them. v1 summed settlements alone and offered nothing else, so a paid order
+#: cancelled with the cash handed back left the only figure on the card above the drawer by exactly
+#: the refund. A refund is dated by when the money went back, not by when it first came in: a
+#: refund today of yesterday's payment moves today's drawer, and yesterday's figures do not move.
+#:
+#: Every amount is non-negative (invariant 2). The net is a magnitude plus a direction -- the same
+#: shape as `order_refunds.direction` -- because a day whose only money event was a refund really
+#: did end with less in the drawer, and a minus sign is one rendering slip from a doubled figure.
+#: `collected_vnd` keeps its v1 meaning, the gross sum of settlements; only new fields were added.
+#:
+#: The business day is a parameter rather than `now()` inside the statement, so a figure can be
+#: reproduced for a named day and a test can hold the clock still.
 _COLLECTED_TODAY_SQL = """
-    SELECT coalesce(sum(paid_amount_vnd), 0), count(*)
-    FROM order_settlements
-    WHERE store_id = %s
-      AND (attested_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date
+    WITH settled AS (
+        SELECT coalesce(sum(paid_amount_vnd), 0) AS amount, count(*) AS entries
+        FROM order_settlements
+        WHERE store_id = %(store)s
+          AND (attested_at AT TIME ZONE %(zone)s)::date = %(business_date)s
+    ), refunded AS (
+        SELECT coalesce(sum(refunded_amount_vnd), 0) AS amount, count(*) AS entries
+        FROM order_refunds
+        WHERE store_id = %(store)s
+          AND direction = 'TO_CUSTOMER'
+          AND (refunded_at AT TIME ZONE %(zone)s)::date = %(business_date)s
+    )
+    SELECT settled.amount, settled.entries, refunded.amount, refunded.entries,
+           abs(settled.amount - refunded.amount),
+           CASE WHEN settled.amount >= refunded.amount THEN 'IN' ELSE 'OUT' END
+    FROM settled, refunded
 """
 
 #: The published version of the rule above, travelling with the figure under invariant 18.
@@ -56,7 +83,11 @@ _COLLECTED_TODAY_SQL = """
 #: This is the one money figure the console shows, so "which rule produced it" is not a developer
 #: convenience: the day boundary is hashed with the SQL because moving it would change the total
 #: while leaving the statement word for word identical.
-COLLECTED_TODAY_QUERY = query_version("collected-today-v1", _COLLECTED_TODAY_SQL, BUSINESS_TIMEZONE)
+COLLECTED_TODAY_QUERY = query_version("collected-today-v2", _COLLECTED_TODAY_SQL, BUSINESS_TIMEZONE)
+
+
+#: Which way the counter's drawer moved over a day: money in (including no change) or money out.
+DrawerDirection = Literal["IN", "OUT"]
 
 
 class SettlementAuthorizationError(PermissionError):
@@ -96,16 +127,34 @@ class StoredSettlement:
 
 @dataclass(frozen=True, slots=True)
 class CollectedToday:
-    """What one store's counter took in, on today's local business day.
+    """What one store's counter took in and handed back, on one local business day.
 
-    Deliberately two integers and nothing else. `collected_vnd` is a sum of `paid_amount_vnd`, a
-    BIGINT column the database itself constrains to equal `expected_total_vnd`, so it cannot be a
-    partial payment, a deposit or a rounded figure — every row it sums is a customer who paid the
-    quoted total in full and took their goods.
+    Every amount is a non-negative integer of VND (invariant 2), and all of them are computed by the
+    database.
+
+    `collected_vnd` is the figure labelled *tiền đã thu*, unchanged in meaning since v1: the sum of
+    `paid_amount_vnd`, a BIGINT column the database constrains to equal `expected_total_vnd`, so
+    every row in it is a customer who paid the quoted total in full -- and that money came in,
+    whatever happened to the order afterwards. It is not "a customer who paid and took their
+    goods": a prepaid delivery (`DEC-023`) pays before the goods leave, and an order can be
+    cancelled after it was paid.
+
+    `refunded_vnd` sums `order_refunds.refunded_amount_vnd`: the whole settled amount of an order
+    cancelled under a `DEC-024` resolution that charges the customer nothing, dated by when the
+    money went back.
+
+    `net_vnd` and `net_direction` are what the drawer did that day: the magnitude of collected minus
+    refunded, and `IN` when that is zero or more, `OUT` when refunds exceeded takings. A refund-only
+    day really did end lighter than it began, and saying so as a direction keeps every amount
+    non-negative instead of clamping the truth away or publishing a minus sign.
     """
 
     collected_vnd: int
     settlement_count: int
+    refunded_vnd: int = 0
+    refund_count: int = 0
+    net_vnd: int = 0
+    net_direction: DrawerDirection = "IN"
 
 
 class SettlementRepository:
@@ -303,19 +352,27 @@ class SettlementRepository:
 
     @staticmethod
     def collected_today(
-        cursor: Any, *, store_id: UUID, principal: StaffPrincipal
+        cursor: Any,
+        *,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        as_of: datetime | None = None,
     ) -> CollectedToday:
-        """Sum today's attested settlements for one store.
+        """Today's settlements, today's refunds, and the drawer's net movement, for one store.
 
         This is the only money figure the console reads, and its narrowness is the reason it is
         safe to show. It is not revenue: it does not know about work in progress, about an order
-        delivered but unpaid, about a refund (the schema has no such row), or about anything that
-        happened before today's local midnight. It is one question — "how much came across the
-        counter today" — answered by summing an append-only ledger.
+        delivered but unpaid, or about anything that happened outside the named local day. It is
+        one question — "how much did the counter's drawer change by today" — answered from two
+        append-only ledgers, money in and money out.
 
-        The database does the arithmetic. Nothing here adds, rounds, converts or reconciles, and no
-        model is involved at any point: `SUM` over a BIGINT column is exact in a way that a
-        floating-point total in application code would not be.
+        The database does the arithmetic. Nothing here adds, subtracts, rounds, converts or
+        reconciles, and no model is involved at any point: `SUM` over BIGINT columns is exact in a
+        way that a floating-point total in application code would not be.
+
+        `as_of` names the instant whose local business day is meant; it defaults to the server's
+        clock and exists so a figure can be reproduced for a named day. It is a parameter of this
+        method, not of any request.
 
         `coalesce` matters: a store with no settlements today must read as 0, not as null, because
         the caller renders this number and "chưa thu đồng nào" is a real answer.
@@ -326,11 +383,28 @@ class SettlementRepository:
             store_id=store_id,
             error=SettlementAuthorizationError,
         )
-        cursor.execute(_COLLECTED_TODAY_SQL, (store_id, BUSINESS_TIMEZONE, BUSINESS_TIMEZONE))
+        moment = as_of or datetime.now(UTC)
+        business_date = moment.astimezone(ZoneInfo(BUSINESS_TIMEZONE)).date()
+        cursor.execute(
+            _COLLECTED_TODAY_SQL,
+            {"store": store_id, "zone": BUSINESS_TIMEZONE, "business_date": business_date},
+        )
         row = cursor.fetchone()
         if row is None:  # pragma: no cover - an aggregate always returns one row
             return CollectedToday(collected_vnd=0, settlement_count=0)
-        return CollectedToday(collected_vnd=int(row[0]), settlement_count=int(row[1]))
+        direction = str(row[5])
+        if direction not in ("IN", "OUT"):  # pragma: no cover - the CASE has exactly two arms
+            # Not a counter-facing refusal: nothing staff did can reach this, so it has no reason
+            # code and no Vietnamese note. It fails loudly rather than guessing a direction.
+            raise RuntimeError("the drawer direction is not one the rule produces")
+        return CollectedToday(
+            collected_vnd=int(row[0]),
+            settlement_count=int(row[1]),
+            refunded_vnd=int(row[2]),
+            refund_count=int(row[3]),
+            net_vnd=int(row[4]),
+            net_direction="IN" if direction == "IN" else "OUT",
+        )
 
 
 def _uuid(value: object) -> UUID:
@@ -346,6 +420,7 @@ __all__ = [
     "COLLECTED_TODAY_QUERY",
     "SETTLEMENT_ROLES",
     "CollectedToday",
+    "DrawerDirection",
     "SettlementAuthorizationError",
     "SettlementCommand",
     "SettlementRepository",

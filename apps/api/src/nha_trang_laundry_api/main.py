@@ -2156,15 +2156,28 @@ def list_quotes(
 # order, and the database itself constrains `paid_amount_vnd = expected_total_vnd`, so every row is
 # a customer who paid the quoted total in full at the counter. Summing it involves no policy, no
 # proration and no model. Revenue would require answering what to do about work in progress,
-# delivery collections, refunds and B2B accounts — all of which are DEC-010, and none of which this
-# route pretends to have settled.
+# delivery collections, partial refunds and B2B accounts — all of which are DEC-010, and none of
+# which this route pretends to have settled.
+#
+# The one refund that does exist travels beside it (`collected-today-v2`): a paid order cancelled
+# under a DEC-024 resolution that charges the customer nothing hands the whole settled amount back,
+# and an append-only `order_refunds` row records it. With only the takings on the card, the card
+# read above the drawer by every refund.
 
 
 class CollectedTodayResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    collected_vnd: int
-    settlement_count: int
+    #: `collected-today-v2` (`DEC-024`). Every amount is non-negative integer VND (invariant 2),
+    #: and every one is computed by the database: `collected_vnd` is today's settlements, gross,
+    #: exactly as in v1; `refunded_vnd` is today's refunds, gross; `net_vnd` is the magnitude of
+    #: the drawer's movement and `net_direction` says which way. The console does no arithmetic.
+    collected_vnd: int = Field(ge=0)
+    settlement_count: int = Field(ge=0)
+    refunded_vnd: int = Field(ge=0)
+    refund_count: int = Field(ge=0)
+    net_vnd: int = Field(ge=0)
+    net_direction: Literal["IN", "OUT"]
     business_timezone: str
     #: `OPS-BOARD-001`, invariant 18: the identifier of the rule that produced the figure travels
     #: with the figure. This is the only money the console shows, so it is the one where "which
@@ -2195,6 +2208,10 @@ def collected_today(
     return CollectedTodayResponse(
         collected_vnd=collected.collected_vnd,
         settlement_count=collected.settlement_count,
+        refunded_vnd=collected.refunded_vnd,
+        refund_count=collected.refund_count,
+        net_vnd=collected.net_vnd,
+        net_direction=collected.net_direction,
         business_timezone=BUSINESS_TIMEZONE,
         query_version=COLLECTED_TODAY_QUERY.label,
     )

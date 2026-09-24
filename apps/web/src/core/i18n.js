@@ -462,6 +462,7 @@ export const ENUM_GLOSS = {
   PAID: "đã thanh toán",
   OVERPAID: "thu thừa",
   ON_ACCOUNT: "ghi nợ",
+  REFUNDED: "đã hoàn tiền",
   // OrderRequestStatus — `order_requests.status CHECK (status IN ('DRAFT','SUBMITTED','CANCELLED'))`;
   // DRAFT and CANCELLED share the glosses declared above with the same meaning here
   SUBMITTED: "đã gửi",

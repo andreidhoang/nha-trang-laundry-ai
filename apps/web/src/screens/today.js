@@ -127,6 +127,20 @@ const TILES = [
 ];
 
 /**
+ * The drawer's movement for the day, in words. `net_vnd` and `net_direction` arrive already
+ * computed by the server; this only picks the word, so no minus sign and no arithmetic reach the
+ * screen.
+ *
+ * @param {number} amount non-negative VND
+ * @param {"IN" | "OUT"} direction
+ * @returns {string}
+ */
+function drawerLine(amount, direction) {
+  if (amount === 0) return "Tiền trong két hôm nay: không đổi.";
+  return `Tiền trong két hôm nay: ${direction === "OUT" ? "giảm" : "tăng"} ${money(amount)}.`;
+}
+
+/**
  * "Tiền hôm nay" — the fourth question of the owner's morning, and the only money on this screen.
  *
  * The reason a figure may be shown here at all is what it is a sum *of*. `order_settlements` is an
@@ -136,10 +150,12 @@ const TILES = [
  * adds, rounds or converts, and no model is involved at any point.
  *
  * What it is not is stated on the card, not buried: this is money taken today, not doanh thu.
- * Orders still in the wash, goods delivered but unpaid, and every question about refunds, deposits
- * and B2B accounts are outside it — DEC-010 (resolved) deliberately defers them. An owner who
- * reads this as revenue would be wrong in a direction that matters, so the card names the boundary
- * itself and
+ * Orders still in the wash, goods delivered but unpaid, and every question about partial refunds,
+ * deposits and B2B accounts are outside it — DEC-010 (resolved) deliberately defers them. The one
+ * refund that exists — a paid order cancelled under DEC-024 with the whole amount handed back — is
+ * shown beside the takings with the drawer's net movement, on the day it happened
+ * (`collected-today-v2`). The headline is still the gross takings. An owner who reads this as
+ * revenue would be wrong in a direction that matters, so the card names the boundary itself and
  * the assistant still refuses revenue questions.
  *
  * @returns {{card: HTMLElement, amountNode: HTMLElement, body: HTMLElement}}
@@ -164,6 +180,15 @@ function takingsCard() {
           "tại quầy. Có hai trường hợp và cả hai đều đã trả đủ: khách tự lấy đồ về, hoặc đã trả " +
           "đủ rồi tiệm giao tận nơi sau. Nên tiền đã thu không có nghĩa là đồ đã ra khỏi tiệm. " +
           "Máy chủ cộng trực tiếp từ sổ ghi tất toán; màn hình này không tự cộng.",
+      ),
+      h(
+        "p",
+        null,
+        // DEC-024: refunds are shown beside the takings rather than taken out of them, on the day
+        // the money went back. Said here so a drawer that "giảm" reads as the truth, not a fault.
+        "Hoàn tiền ghi riêng: khi đơn đã trả tiền bị huỷ (trả đồ chưa giặt, hoặc lỗi của tiệm " +
+          "nên không thu tiền), số tiền hoàn lại hiện bên dưới, tính vào ngày hoàn, kèm tiền " +
+          "trong két hôm nay tăng hay giảm bao nhiêu. Máy chủ tính cả hai con số.",
       ),
       h(
         "p",
@@ -324,6 +349,16 @@ export function render_() {
             ? "Chưa có đơn nào tất toán hôm nay."
             : `${result.settlement_count} đơn đã tất toán hôm nay (giờ Việt Nam).`,
         ),
+        // `collected-today-v2` (DEC-024): the headline stays what was collected. When money also
+        // went back, the refund and the drawer's movement are shown in words, both exactly as the
+        // server computed them -- every amount non-negative, the direction a word, and no
+        // arithmetic on this screen.
+        result.refunded_vnd > 0
+          ? [
+              h("p", { class: "hint" }, `Đã hoàn lại ${money(result.refunded_vnd)}.`),
+              h("p", { class: "hint" }, drawerLine(result.net_vnd, result.net_direction)),
+            ]
+          : null,
         // The rule that produced the figure, beside the figure. Invariant 18 wants the version to
         // travel with the number, and a total printed or photographed off this screen is exactly
         // the case where "which rule was this" stops being answerable any other way.

@@ -205,7 +205,8 @@
       "PARTIALLY_PAID",
       "PAID",
       "OVERPAID",
-      "ON_ACCOUNT"
+      "ON_ACCOUNT",
+      "REFUNDED"
     ],
     "SlaLifecycle": [
       "DRAFT",

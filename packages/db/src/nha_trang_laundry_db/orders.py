@@ -694,6 +694,18 @@ class OrderRepository:
                 raise OrderStateError(str(error)) from error
 
             next_version = command.expected_row_version + 1
+            # DEC-024. The domain decided whether money goes back; this reads how much, from the
+            # settlement ledger, under the order lock already held. Nobody types the amount: it is
+            # the settled amount, and `order_refunds`' composite key to `order_settlements` makes it
+            # impossible for the row to say anything else.
+            refund = (
+                _refund_for_cancellation(
+                    connection, order_id=command.order_id, resolution=command.custody_resolution
+                )
+                if current.balance is OrderBalanceStatus.PAID
+                and next_state.balance is OrderBalanceStatus.REFUNDED
+                else None
+            )
             closed_at = (
                 occurred_at if next_state.commercial is CommercialOrderStatus.COMPLETED else None
             )
@@ -753,10 +765,35 @@ class OrderRepository:
             )
 
             def mutation(cursor: Any) -> None:
+                # The refund row first: `order_refund_consistency` refuses to let the order read
+                # REFUNDED unless one exists, and the deferred check on `order_refunds` refuses to
+                # commit one beside an order that is not cancelled. Either write alone fails.
+                if refund is not None:
+                    cursor.execute(
+                        """
+                        INSERT INTO order_refunds (
+                            id, order_id, store_id, settlement_id, refunded_amount_vnd,
+                            direction, custody_resolution, attested_by_staff_id, refunded_at,
+                            created_at
+                        ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s)
+                        """,
+                        (
+                            refund.refund_id,
+                            command.order_id,
+                            refund.store_id,
+                            refund.settlement_id,
+                            refund.amount_vnd,
+                            refund.resolution.value,
+                            command.principal.staff_user_id,
+                            occurred_at,
+                            occurred_at,
+                        ),
+                    )
                 cursor.execute(
                     """
                     UPDATE orders
                     SET commercial_status = %s, intake_status = %s, production_status = %s,
+                        balance_status = %s,
                         production_resume_status = %s, production_accepted_at = %s,
                         production_ready_at = COALESCE(
                             %s, CASE WHEN %s THEN production_ready_at ELSE NULL END
@@ -770,6 +807,7 @@ class OrderRepository:
                         next_state.commercial.value,
                         next_state.intake.value,
                         next_state.production.value,
+                        next_state.balance.value,
                         (
                             next_state.production_resume_status.value
                             if next_state.production_resume_status
@@ -826,12 +864,14 @@ class OrderRepository:
                             "dimension": dimension,
                             "target": target,
                             "custody_resolution": command.custody_resolution.value,
+                            **({} if refund is None else {"refund": refund.document()}),
                         }
                     ),
                     audit_action="ORDER_STATE_TRANSITION",
                     actor_type="STAFF",
                     actor_id=command.principal.staff_user_id,
                     correlation_id=command.correlation_id,
+                    audit_details=None if refund is None else {"refund": refund.document()},
                     outbox_events=(
                         OutboxEvent(
                             "order.state_transitioned.v1",
@@ -842,6 +882,20 @@ class OrderRepository:
                                 "row_version": next_version,
                             },
                             f"order:{command.order_id}:version:{next_version}",
+                        ),
+                        # Money leaving the drawer is its own downstream fact, keyed once per order
+                        # because an order is refunded at most once -- the same shape as
+                        # `order:{id}:settlement` for the money that came in.
+                        *(
+                            ()
+                            if refund is None
+                            else (
+                                OutboxEvent(
+                                    "order.refund_recorded.v1",
+                                    {"order_id": str(command.order_id), **refund.document()},
+                                    f"order:{command.order_id}:refund",
+                                ),
+                            )
                         ),
                     ),
                     occurred_at=occurred_at,
@@ -925,6 +979,58 @@ class OrderRepository:
             error=OrderNotVisibleError,
         )
         return _order_view_row(row)
+
+
+@dataclass(frozen=True)
+class _CancellationRefund:
+    """The whole settled amount going back to the customer, as `DEC-024` resolves it."""
+
+    refund_id: UUID
+    settlement_id: UUID
+    store_id: UUID
+    amount_vnd: int
+    resolution: CustodyResolution
+
+    def document(self) -> dict[str, object]:
+        return {
+            "refund_id": str(self.refund_id),
+            "settlement_id": str(self.settlement_id),
+            "refunded_amount_vnd": self.amount_vnd,
+            "direction": "TO_CUSTOMER",
+            "custody_resolution": self.resolution.value,
+        }
+
+
+def _refund_for_cancellation(
+    connection: Any, *, order_id: UUID, resolution: CustodyResolution | None
+) -> _CancellationRefund:
+    """Read the settlement a refunding cancellation reverses, or refuse.
+
+    Called only after the domain answered `REFUNDED`, which it does only for a resolution in
+    `CUSTOMER_NOT_CHARGED_RESOLUTIONS` -- so both refusals here are states no command writes. An
+    order that reads `PAID` with no settlement row means the books already disagree, and refunding
+    against a guess would make that worse rather than visible.
+    """
+
+    if resolution is None:
+        raise OrderStateError("HUMAN_APPROVAL_REQUIRED: a refund needs a custody resolution")
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id, store_id, paid_amount_vnd FROM order_settlements WHERE order_id = %s",
+            (order_id,),
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise OrderStateError(
+            "the order reads paid but no settlement records the payment; nothing can be refunded"
+        )
+    return _CancellationRefund(
+        refund_id=uuid4(),
+        settlement_id=_uuid(row[0]),
+        store_id=_uuid(row[1]),
+        amount_vnd=int(row[2]),
+        resolution=resolution,
+    )
 
 
 def _order_state(row: tuple[object, ...]) -> OrderState:

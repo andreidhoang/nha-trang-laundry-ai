@@ -52,6 +52,8 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0042", "remedy_proposals"),
         ("0043", "range_price_proposals"),
         ("0044", "ops_board_export"),
+        # 0045 is reserved for REMEDY-CUMULATIVE-001 / CREDIT-RESERVATION-001, merged after this.
+        ("0046", "order_refunds"),
         ("0047", "order_lookup"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)

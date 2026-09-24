@@ -554,7 +554,24 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     the board held a row version), and the create panel's guardrail, whose text is unchanged
     #     but whose quote marks are now literal characters rather than `“` escapes -- the
     #     registry used to record the escape sequence itself as the sentence.
-    assert sum(counts.values()) == _registry()["total"] == 347
+    #
+    # 373 on its own branch after the pre-staging console defect round (B2/M1-M6): +25 added,
+    # 2 re-keyed, 0 retired.
+    #   * +24 in `core/errors.js`: the new `REFUSAL` table is registered through `CLAIM_TABLES`.
+    #     `classify` used to put the server's English 409 prose ("this order request already has a
+    #     quote; add a revision instead") in the notice title; each entry is the Vietnamese sentence
+    #     now shown instead, and several say what the server did ("Không có gì được ghi"), so they
+    #     are claims and belong on the register. The prose itself is kept, collapsed, as detail.
+    #   * +1 in `screens/exports.js`: the in-progress export now survives a trip to `#/approvals`
+    #     in memory only, and a hint says exactly that -- it is remembered across screens, and not
+    #     across a reload or a sign-out (the stash is cleared when the session loses its principal).
+    #   * 2 re-keyed. `MESSAGES.NOT_SUPPORTED` no longer tells every refused payment "dữ liệu bạn
+    #     nhập không sai" -- false for a cashier who typed 13.200 against 132.000 -- and
+    #     `REASON_NOTE.AMOUNT_IS_NOT_THE_EXACT_TOTAL` now says to check and retype, and names
+    #     DEC-010 as the owner's (resolved) decision rather than implying the case is still open.
+    #
+    # 372 once both land: the two rounds touched disjoint sentences, so 348 - 2 + 1 + 25.
+    assert sum(counts.values()) == _registry()["total"] == 372
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

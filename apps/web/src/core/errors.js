@@ -81,14 +81,19 @@ const MESSAGES = {
   IDEMPOTENCY_CONFLICT: "Cùng một khoá thao tác đã dùng cho nội dung khác. Hãy tải lại rồi nhập lại.",
   REQUIRE_HUMAN: "Cần người quyết định. Máy chủ không tự chọn.",
   // Not the same thing as invalid input, and rendering it as one is what sends a staff member
-  // looking for a workaround. The data was fine; either the shop has not decided that this case is
-  // allowed, or the order is not in a state where it applies. `reason_code` says which, and
-  // `decision` names the open question when there is one -- there is not always: `ALREADY_SETTLED`
-  // and `ORDER_NOT_ACTIVE` come with `decision: null`, and calling those "not supported yet" would
-  // be its own small lie.
+  // looking for a workaround: the shop has decided this case is not taken, or the order is not in
+  // a state where it applies. `reason_code` says which, and `decision` names the owner decision
+  // behind it when there is one -- there is not always: `ALREADY_SETTLED` and `ORDER_NOT_ACTIVE`
+  // come with `decision: null`.
+  //
+  // This sentence used to add "và dữ liệu bạn nhập không sai" for every code. That is false for
+  // the commonest one: `AMOUNT_IS_NOT_THE_EXACT_TOTAL` is what a cashier gets for typing "13.200"
+  // against a 132.000 total, and telling them their input was not wrong -- and not to retype it --
+  // kept a keystroke error on the till. That code now has its own sentence in `REFUSAL` below; this
+  // one no longer claims anything about the input.
   NOT_SUPPORTED:
-    "Máy chủ không ghi nhận khoản này, và dữ liệu bạn nhập không sai. Mã lý do bên dưới nói rõ " +
-    "vì sao; đừng nhập lại kiểu khác để lách.",
+    "Máy chủ không ghi nhận khoản này. Mã lý do bên dưới nói rõ vì sao và cần làm gì; đừng nhập " +
+    "kiểu khác để lách.",
   INVALID: "Dữ liệu nhập không hợp lệ.",
   PRECONDITION_REQUIRED: "Thiếu phiên bản dòng dữ liệu. Hãy tải lại màn hình.",
   TOO_LARGE: "Nội dung quá lớn.",
@@ -98,6 +103,121 @@ const MESSAGES = {
     "Chưa có bảng giá được duyệt cho cửa hàng này. Không có bảng giá thì không có giá.",
   FAULT: "Máy chủ gặp lỗi. Đừng thử lại — hãy kiểm tra bảng đơn để xem lệnh đã vào hay chưa.",
 };
+
+/**
+ * Short Vietnamese titles for the refusals this API really sends, keyed by a stable name.
+ *
+ * Most 409s carry `str(error)` from a repository -- English prose written for an engineer -- and
+ * `classify` used to put that prose in the notice title. So a counter holding a customer's bag read
+ * "this order request already has a quote; add a revision instead" as the headline of the screen.
+ * The prose is still kept, verbatim, as `detail`: `errorNotice` shows it collapsed under "Chi tiết
+ * kỹ thuật", because it is what an engineer greps the server for.
+ *
+ * Every key here is reached through `REFUSAL_TEXT` below, and every string there was copied from
+ * a `raise` in `apps/api` or `packages/db`/`packages/domain`, not written from memory.
+ */
+const REFUSAL = {
+  QUOTE_EXPIRED:
+    "Báo giá này đã quá hạn nên không chốt được. Tính giá lại, rồi đọc giá mới cho khách.",
+  QUOTE_ALREADY_EXISTS:
+    "Yêu cầu này đã có báo giá rồi. Hãy thêm bản sửa đổi cho báo giá đó, không tạo báo giá mới.",
+  QUOTE_ALREADY_ACCEPTED:
+    "Bản giá này đã được chốt rồi. Tải lại danh sách báo giá để xem bản đã chốt.",
+  QUOTE_MOVED:
+    "Báo giá vừa đổi trong lúc bạn đang xem. Tải lại, rồi đọc lại giá cho khách.",
+  QUOTE_STALE:
+    "Báo giá đã có bản mới hơn hoặc đã đóng. Tải lại danh sách báo giá, chọn bản mới nhất rồi làm lại.",
+  QUOTE_MISSING: "Không tìm thấy báo giá này trong cửa hàng đang chọn, hoặc báo giá đã đóng.",
+  QUOTE_NOT_ACCEPTED:
+    "Chưa tạo đơn được: báo giá chưa được khách chốt, đã có bản mới hơn, hoặc đã quá hạn. Mở " +
+    "báo giá, chốt lại với khách rồi mới tạo đơn.",
+  NEWER_PRICE_AGREED:
+    "Khách đã chốt một giá mới hơn cho báo giá này. Dùng bản đã chốt mới nhất và đọc lại cho khách.",
+  QUOTE_ALREADY_ORDERED:
+    "Báo giá này đã được dùng để tạo đơn rồi. Mỗi báo giá chỉ tạo một đơn — tìm đơn đó trên bảng đơn.",
+  BALANCE_NOT_SETTLED: "Chưa hoàn tất được: đơn chưa thu tiền. Ghi nhận tất toán trước.",
+  FULFILLMENT_INCOMPLETE: "Chưa hoàn tất được: đồ chưa được giao hoặc trả cho khách.",
+  PRODUCTION_NOT_RELEASED: "Chưa hoàn tất được: đồ của đơn này chưa làm xong.",
+  ORDER_CLOSED: "Đơn này đã đóng, không chuyển trạng thái được nữa.",
+  ORDER_NOT_ACTIVE: "Đơn này không còn đang chạy, nên không làm tiếp bước này được.",
+  INTAKE_NOT_ACCEPTED: "Chưa làm bước này được: tiệm chưa nhận xong đồ của đơn này.",
+  HANDOFF_FIRST: "Cần ghi nhận đã nhận đồ từ khách trước, rồi mới làm bước này.",
+  CANCEL_NEEDS_REVIEW:
+    "Đơn đã bắt đầu làm nên không huỷ thẳng được. Đưa đơn sang “Đang xét huỷ” trước.",
+  INVALID_STATE_TRANSITION:
+    "Đơn đang ở trạng thái không cho phép bước này. Tải lại đơn để xem trạng thái hiện tại.",
+  ORDER_MISSING: "Không tìm thấy đơn này trong cửa hàng đang chọn.",
+  APPROVAL_EXPIRED: "Phiếu duyệt đã hết hạn. Cần tạo phiếu mới rồi xin duyệt lại.",
+  APPROVAL_NOT_PENDING: "Phiếu này đã được quyết định rồi. Tải lại hàng chờ để xem.",
+  APPROVAL_STALE: "Phiếu vừa đổi trong lúc bạn đang xem. Tải lại hàng chờ rồi đọc lại phiếu.",
+  ROW_VERSION_INVALID: "Phiên bản dòng không hợp lệ. Tải lại màn hình rồi làm lại.",
+  // The one `NOT_SUPPORTED` code that *is* a typing mistake as often as it is a customer paying
+  // the wrong amount. DEC-010 is resolved: the shop takes the exact total in one payment, and
+  // nothing else. So the sentence says what is true at the till -- check the figure and type it
+  // again -- instead of the general refusal's "đừng nhập kiểu khác để lách".
+  AMOUNT_IS_NOT_THE_EXACT_TOTAL:
+    "Máy chủ không ghi nhận khoản này: số tiền phải đúng bằng tổng của đơn. Kiểm tra lại số vừa " +
+    "gõ rồi nhập lại.",
+};
+
+/**
+ * Server text -> `REFUSAL` key. Matched by prefix, most specific first, because several refusals
+ * share a machine-readable prefix (`INVALID_STATE_TRANSITION: …`) and only the tail says which.
+ *
+ * @type {ReadonlyArray<readonly [string, keyof typeof REFUSAL]>}
+ */
+const REFUSAL_TEXT = [
+  // apps/api operations.py -- accept_quote / create_quote / range prices
+  ["QUOTE_EXPIRED", "QUOTE_EXPIRED"],
+  ["this order request already has a quote", "QUOTE_ALREADY_EXISTS"],
+  ["quote moved since it was read", "QUOTE_MOVED"],
+  ["quote content changed since it was read", "QUOTE_MOVED"],
+  ["quote is missing, closed, or not in this store", "QUOTE_MISSING"],
+  ["quote is missing or not in this store", "QUOTE_MISSING"],
+  // packages/db quotes.py
+  ["this quote revision has already been accepted", "QUOTE_ALREADY_ACCEPTED"],
+  ["quote is missing, closed, or stale", "QUOTE_STALE"],
+  ["quote revision must be sequential", "QUOTE_STALE"],
+  // packages/db orders.py -- create_order
+  ["accepted exact quote is missing, stale, or expired", "QUOTE_NOT_ACCEPTED"],
+  ["the customer agreed a newer price for this quote", "NEWER_PRICE_AGREED"],
+  ["this quote has already been converted into an order", "QUOTE_ALREADY_ORDERED"],
+  ["order is missing", "ORDER_MISSING"],
+  // packages/domain orders.py -- transitions
+  ["INVALID_STATE_TRANSITION: balance is not settled", "BALANCE_NOT_SETTLED"],
+  ["INVALID_STATE_TRANSITION: fulfillment is incomplete", "FULFILLMENT_INCOMPLETE"],
+  ["INVALID_STATE_TRANSITION: production is not released", "PRODUCTION_NOT_RELEASED"],
+  ["INVALID_STATE_TRANSITION: order is closed", "ORDER_CLOSED"],
+  ["INVALID_STATE_TRANSITION: order is not active", "ORDER_NOT_ACTIVE"],
+  ["INVALID_STATE_TRANSITION: intake is not accepted", "INTAKE_NOT_ACCEPTED"],
+  ["INVALID_STATE_TRANSITION: handoff must be recorded first", "HANDOFF_FIRST"],
+  ["INVALID_STATE_TRANSITION", "INVALID_STATE_TRANSITION"],
+  ["HUMAN_APPROVAL_REQUIRED: work has begun", "CANCEL_NEEDS_REVIEW"],
+  // packages/db approvals.py, apps/api operations.py
+  ["approval expired", "APPROVAL_EXPIRED"],
+  ["approval is not pending", "APPROVAL_NOT_PENDING"],
+  ["approval decision is stale", "APPROVAL_STALE"],
+  ["approval state is stale", "APPROVAL_STALE"],
+  ["approval resource version or hash is stale", "APPROVAL_STALE"],
+  ["approval policy version is stale", "APPROVAL_STALE"],
+  // apps/api main.py _parse_if_match
+  ["If-Match is invalid", "ROW_VERSION_INVALID"],
+];
+
+/**
+ * The Vietnamese title for a refusal the server phrased in English, or "" when it is not one this
+ * console recognises -- in which case the caller uses the generic sentence for the kind.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function refusalTitle(text) {
+  if (!text) return "";
+  for (const [prefix, key] of REFUSAL_TEXT) {
+    if (text.startsWith(prefix)) return REFUSAL[key];
+  }
+  return "";
+}
 
 /**
  * @param {ErrorKind} kind
@@ -171,6 +291,10 @@ export function classify(status, detail, context = {}) {
   const of = (kind, more = {}) =>
     new ApiError({ kind, message: MESSAGES[kind], ...base, ...more });
 
+  // A recognised refusal gets its Vietnamese title; anything else gets the kind's generic one. The
+  // server's own text is never the title any more -- it stays in `detail`, shown collapsed.
+  const titled = (/** @type {ErrorKind} */ kind) => refusalTitle(text) || MESSAGES[kind];
+
   if (status === 401) return of("SESSION_ENDED");
   if (status === 403) return of("DENIED");
   if (status === 404) return of("MISSING");
@@ -183,9 +307,12 @@ export function classify(status, detail, context = {}) {
     if (text.startsWith("STALE_VERSION")) return of("STALE");
     if (text === "IDEMPOTENCY_CONFLICT") return of("IDEMPOTENCY_CONFLICT");
     if (text.startsWith("HUMAN_APPROVAL_REQUIRED")) {
-      return of("REQUIRE_HUMAN", { reasonCodes: ["HUMAN_APPROVAL_REQUIRED"] });
+      return of("REQUIRE_HUMAN", {
+        message: titled("REQUIRE_HUMAN"),
+        reasonCodes: ["HUMAN_APPROVAL_REQUIRED"],
+      });
     }
-    return of("CONFLICT", { message: text || MESSAGES.CONFLICT });
+    return of("CONFLICT", { message: titled("CONFLICT") });
   }
 
   if (status === 422) {
@@ -222,6 +349,10 @@ export function classify(status, detail, context = {}) {
         // when the only useful next move is the one `STALE` already offers, a reload.
         if (codes.includes("STALE_VERSION")) return of("STALE", { reasonCodes: codes });
         return of("NOT_SUPPORTED", {
+          // A mistyped payment is the one refusal here whose honest answer is "type it again".
+          ...(codes.includes("AMOUNT_IS_NOT_THE_EXACT_TOTAL")
+            ? { message: REFUSAL.AMOUNT_IS_NOT_THE_EXACT_TOTAL }
+            : {}),
           reasonCodes: codes,
           decision: typeof detail.decision === "string" ? detail.decision : "",
         });
@@ -229,15 +360,15 @@ export function classify(status, detail, context = {}) {
       return of("INVALID", { reasonCodes: reasonCodesOf(detail) });
     }
     if (Array.isArray(detail)) return of("INVALID", { fieldErrors: fieldErrorsOf(detail) });
-    return of("INVALID", { message: text || MESSAGES.INVALID });
+    return of("INVALID", { message: titled("INVALID") });
   }
 
   if (status === 503) {
     if (text === "pricebook unavailable") return of("PRICEBOOK_UNAVAILABLE");
-    return of("UNAVAILABLE", { message: text || MESSAGES.UNAVAILABLE });
+    return of("UNAVAILABLE", { message: titled("UNAVAILABLE") });
   }
 
   if (status >= 500) return of("FAULT");
-  if (status === 400) return of("INVALID", { message: text || MESSAGES.INVALID });
-  return of("CONFLICT", { message: text || MESSAGES.CONFLICT });
+  if (status === 400) return of("INVALID", { message: titled("INVALID") });
+  return of("CONFLICT", { message: titled("CONFLICT") });
 }

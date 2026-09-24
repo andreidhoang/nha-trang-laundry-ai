@@ -11,7 +11,7 @@
 import { isTruncated } from "../core/api.js";
 import { BAND, bandVerdict } from "../core/bands.js";
 import { field, h, render } from "../core/dom.js";
-import { UNKNOWN, count, money, moneyRange, timeOnly } from "../core/format.js";
+import { UNKNOWN, count, money, moneyRange, parseQuantity, timeOnly } from "../core/format.js";
 import { PRICE_STATE, REASON_NOTE, enumLabel, enumVi, warningFor } from "../core/i18n.js";
 
 /**
@@ -302,7 +302,12 @@ export function amount(spec) {
  */
 export function pricingCliffNotice(quantityText, unit) {
   if (unit !== "KG") return null;
-  const parsed = Number.parseFloat(String(quantityText).replace(",", "."));
+  // `parseQuantity`, the same reader that decides what the quote sends. This used its own
+  // `parseFloat` on a comma-swapped copy, so "5,5" was 5.5 kg here and a refused string on the
+  // wire: the notice warned about a weight the server never saw. A quantity the reader refuses
+  // still shows the notice (the rule above), and the line shows its own refusal beside it.
+  const accepted = parseQuantity(quantityText, unit);
+  const parsed = accepted === null ? Number.NaN : Number(accepted);
   const nearBoundary = !Number.isFinite(parsed) || (parsed >= 5 && parsed <= 7);
   if (!nearBoundary) return null;
   return h(
@@ -588,8 +593,16 @@ export function skeleton(rows = 3) {
  * The correlation id is always shown. It is the one string that appears both here and in the
  * server log, so "lỗi khi tạo báo giá" becomes a searchable event rather than a story.
  *
+ * `title` replaces the kind's generic sentence when the caller knows something more exact about
+ * *this* control -- for example that it still holds the same idempotency key, so pressing again
+ * cannot record twice, which the generic FAULT sentence ("Đừng thử lại") cannot know. It is a
+ * replacement, never an omission: the caller must say at least as much as the sentence it replaces.
+ *
+ * `actions` are the next steps the caller can offer, rendered inside the notice so the reason and
+ * the way out are read together.
+ *
  * @param {import("../core/errors.js").ApiError|Error} error
- * @param {{onRetry?: () => void}} [options]
+ * @param {{onRetry?: () => void, title?: string, actions?: HTMLElement[]}} [options]
  * @returns {HTMLElement}
  */
 export function errorNotice(error, options = {}) {
@@ -609,21 +622,20 @@ export function errorNotice(error, options = {}) {
   return h(
     "div",
     { class: "notice", dataState: state, role: "alert" },
-    h("p", { class: "notice__title" }, error.message),
-    isApi && api.detail && api.detail !== error.message
-      ? h("p", { class: "mono" }, api.detail)
-      : null,
+    h("p", { class: "notice__title" }, options.title || error.message),
     isApi && api.reasonCodes.length ? reasonCodeList(api.reasonCodes, "Mã lý do") : null,
-    // A `NOT_SUPPORTED` refusal is owned by an open decision. Naming it is what separates "the
-    // owner has not decided this yet" from "you did something wrong", and it is the string the
-    // operator repeats when they ask.
+    // A `NOT_SUPPORTED` refusal names the owner decision behind it, and it is the string the
+    // operator repeats when they ask. This line used to say "Quyết định còn bỏ ngỏ" -- still
+    // open -- for every value the server sends, and every one of them (DEC-001, DEC-003, DEC-010)
+    // is resolved. The sentence now says only what is true either way: the rule is the owner's,
+    // and the counter does not change it.
     isApi && api.decision
       ? h(
           "p",
           null,
-          "Quyết định còn bỏ ngỏ: ",
+          "Quy định này theo quyết định ",
           h("span", { class: "mono" }, api.decision),
-          ". Chủ tiệm là người trả lời câu này, không phải quầy.",
+          " của chủ tiệm; quầy không tự đổi được.",
         )
       : null,
     isApi && api.fieldErrors.length
@@ -641,6 +653,13 @@ export function errorNotice(error, options = {}) {
     isApi && api.correlationId
       ? h("p", { class: "hint mono" }, `mã theo dõi: ${api.correlationId}`)
       : null,
+    // The server's own words, verbatim -- English prose, or the raw JSON envelope of a 422 -- kept
+    // for whoever greps the log, and collapsed so they are never the first thing a counter reads.
+    // The Vietnamese title above and the reason codes carry the meaning; this carries the evidence.
+    isApi && api.detail && api.detail !== error.message
+      ? explain("Chi tiết kỹ thuật", h("p", { class: "mono" }, api.detail))
+      : null,
+    options.actions?.length ? h("div", { class: "form__actions" }, options.actions) : null,
     options.onRetry && isApi && api.retryable
       ? h(
           "div",

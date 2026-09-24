@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 320
+  DESCRIPTIVE: 345
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 5
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 347
+total: 372
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -83,11 +83,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/errors.js#MESSAGES.NOT_SUPPORTED:ae91f0ded8aa
+- slot_id: core/errors.js#MESSAGES.NOT_SUPPORTED:21cb195444b1
   module: core/errors.js
   key: MESSAGES.NOT_SUPPORTED
-  text: Máy chủ không ghi nhận khoản này, và dữ liệu bạn nhập không sai. Mã lý do bên dưới nói rõ vì sao;
-    đừng nhập lại kiểu khác để lách.
+  text: Máy chủ không ghi nhận khoản này. Mã lý do bên dưới nói rõ vì sao và cần làm gì; đừng nhập kiểu
+    khác để lách.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -112,6 +112,200 @@ disclosures:
   module: core/errors.js
   key: MESSAGES.FAULT
   text: Máy chủ gặp lỗi. Đừng thử lại — hãy kiểm tra bảng đơn để xem lệnh đã vào hay chưa.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.QUOTE_EXPIRED:6afc9bd9b942
+  module: core/errors.js
+  key: REFUSAL.QUOTE_EXPIRED
+  text: Báo giá này đã quá hạn nên không chốt được. Tính giá lại, rồi đọc giá mới cho khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.QUOTE_ALREADY_EXISTS:9b2a4465d2c8
+  module: core/errors.js
+  key: REFUSAL.QUOTE_ALREADY_EXISTS
+  text: Yêu cầu này đã có báo giá rồi. Hãy thêm bản sửa đổi cho báo giá đó, không tạo báo giá mới.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.QUOTE_ALREADY_ACCEPTED:550d0a56de20
+  module: core/errors.js
+  key: REFUSAL.QUOTE_ALREADY_ACCEPTED
+  text: Bản giá này đã được chốt rồi. Tải lại danh sách báo giá để xem bản đã chốt.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.QUOTE_MOVED:d359ec184344
+  module: core/errors.js
+  key: REFUSAL.QUOTE_MOVED
+  text: Báo giá vừa đổi trong lúc bạn đang xem. Tải lại, rồi đọc lại giá cho khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.QUOTE_STALE:5316126d912e
+  module: core/errors.js
+  key: REFUSAL.QUOTE_STALE
+  text: Báo giá đã có bản mới hơn hoặc đã đóng. Tải lại danh sách báo giá, chọn bản mới nhất rồi làm lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.QUOTE_MISSING:329119b76bf8
+  module: core/errors.js
+  key: REFUSAL.QUOTE_MISSING
+  text: Không tìm thấy báo giá này trong cửa hàng đang chọn, hoặc báo giá đã đóng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.QUOTE_NOT_ACCEPTED:ca6f4cd11b89
+  module: core/errors.js
+  key: REFUSAL.QUOTE_NOT_ACCEPTED
+  text: 'Chưa tạo đơn được: báo giá chưa được khách chốt, đã có bản mới hơn, hoặc đã quá hạn. Mở báo giá,
+    chốt lại với khách rồi mới tạo đơn.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.NEWER_PRICE_AGREED:f9399521bd6a
+  module: core/errors.js
+  key: REFUSAL.NEWER_PRICE_AGREED
+  text: Khách đã chốt một giá mới hơn cho báo giá này. Dùng bản đã chốt mới nhất và đọc lại cho khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.QUOTE_ALREADY_ORDERED:fa33077fff10
+  module: core/errors.js
+  key: REFUSAL.QUOTE_ALREADY_ORDERED
+  text: Báo giá này đã được dùng để tạo đơn rồi. Mỗi báo giá chỉ tạo một đơn — tìm đơn đó trên bảng đơn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.BALANCE_NOT_SETTLED:89728bf5f343
+  module: core/errors.js
+  key: REFUSAL.BALANCE_NOT_SETTLED
+  text: 'Chưa hoàn tất được: đơn chưa thu tiền. Ghi nhận tất toán trước.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.FULFILLMENT_INCOMPLETE:69be4dfae18f
+  module: core/errors.js
+  key: REFUSAL.FULFILLMENT_INCOMPLETE
+  text: 'Chưa hoàn tất được: đồ chưa được giao hoặc trả cho khách.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.PRODUCTION_NOT_RELEASED:41fb16c4436a
+  module: core/errors.js
+  key: REFUSAL.PRODUCTION_NOT_RELEASED
+  text: 'Chưa hoàn tất được: đồ của đơn này chưa làm xong.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.ORDER_CLOSED:abbe6a75ef9b
+  module: core/errors.js
+  key: REFUSAL.ORDER_CLOSED
+  text: Đơn này đã đóng, không chuyển trạng thái được nữa.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.ORDER_NOT_ACTIVE:5170ac9b0c70
+  module: core/errors.js
+  key: REFUSAL.ORDER_NOT_ACTIVE
+  text: Đơn này không còn đang chạy, nên không làm tiếp bước này được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.INTAKE_NOT_ACCEPTED:939b80cdeae3
+  module: core/errors.js
+  key: REFUSAL.INTAKE_NOT_ACCEPTED
+  text: 'Chưa làm bước này được: tiệm chưa nhận xong đồ của đơn này.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.HANDOFF_FIRST:b25994aac749
+  module: core/errors.js
+  key: REFUSAL.HANDOFF_FIRST
+  text: Cần ghi nhận đã nhận đồ từ khách trước, rồi mới làm bước này.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.CANCEL_NEEDS_REVIEW:5c32e2d27621
+  module: core/errors.js
+  key: REFUSAL.CANCEL_NEEDS_REVIEW
+  text: Đơn đã bắt đầu làm nên không huỷ thẳng được. Đưa đơn sang “Đang xét huỷ” trước.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.INVALID_STATE_TRANSITION:5497e5ce6b9a
+  module: core/errors.js
+  key: REFUSAL.INVALID_STATE_TRANSITION
+  text: Đơn đang ở trạng thái không cho phép bước này. Tải lại đơn để xem trạng thái hiện tại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.ORDER_MISSING:83293aeb87dc
+  module: core/errors.js
+  key: REFUSAL.ORDER_MISSING
+  text: Không tìm thấy đơn này trong cửa hàng đang chọn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.APPROVAL_EXPIRED:e60952d1a70b
+  module: core/errors.js
+  key: REFUSAL.APPROVAL_EXPIRED
+  text: Phiếu duyệt đã hết hạn. Cần tạo phiếu mới rồi xin duyệt lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.APPROVAL_NOT_PENDING:0a69cfce0041
+  module: core/errors.js
+  key: REFUSAL.APPROVAL_NOT_PENDING
+  text: Phiếu này đã được quyết định rồi. Tải lại hàng chờ để xem.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.APPROVAL_STALE:84077c2b09e9
+  module: core/errors.js
+  key: REFUSAL.APPROVAL_STALE
+  text: Phiếu vừa đổi trong lúc bạn đang xem. Tải lại hàng chờ rồi đọc lại phiếu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.ROW_VERSION_INVALID:786170f0341e
+  module: core/errors.js
+  key: REFUSAL.ROW_VERSION_INVALID
+  text: Phiên bản dòng không hợp lệ. Tải lại màn hình rồi làm lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.AMOUNT_IS_NOT_THE_EXACT_TOTAL:4bd0ea397974
+  module: core/errors.js
+  key: REFUSAL.AMOUNT_IS_NOT_THE_EXACT_TOTAL
+  text: 'Máy chủ không ghi nhận khoản này: số tiền phải đúng bằng tổng của đơn. Kiểm tra lại số vừa gõ
+    rồi nhập lại.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -314,11 +508,13 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.AMOUNT_IS_NOT_THE_EXACT_TOTAL:804d7c23361e
+- slot_id: core/i18n.js#REASON_NOTE.AMOUNT_IS_NOT_THE_EXACT_TOTAL:f40e115e8676
   module: core/i18n.js
   key: REASON_NOTE.AMOUNT_IS_NOT_THE_EXACT_TOTAL
-  text: Chỉ nhận đúng tổng đã báo, đủ một lần. Trả thiếu, trả thừa, đặt cọc hay trả góp đều chưa được
-    hỗ trợ. Hãy thu đúng tổng, hoặc báo giá lại nếu con số đã thay đổi.
+  text: 'Số tiền phải đúng bằng tổng của đơn, thu đủ một lần. Gõ nhầm một chữ số (ví dụ 13.200 thay vì
+    132.000) cũng bị từ chối như vậy: kiểm tra lại số rồi nhập lại. Trả thiếu, trả thừa, đặt cọc hay trả
+    góp không được nhận — chủ tiệm đã quyết định như vậy (DEC-010). Nếu tổng khách phải trả đã đổi thì
+    báo giá lại.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1343,6 +1539,15 @@ disclosures:
   key: notice
   text: Phong bì có hiệu lực 10 phút và phải do một chủ tiệm khác với người đã tạo yêu cầu xuất này quyết
     định. Mở
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/exports.js#hint:16d287f1aab6
+  module: screens/exports.js
+  key: hint
+  text: Màn hình này nhớ yêu cầu và phong bì khi bạn chuyển sang màn hình khác rồi quay lại. Tải lại trang
+    hoặc đăng xuất thì không còn nhớ.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

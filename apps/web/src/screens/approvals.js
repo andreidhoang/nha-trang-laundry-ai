@@ -232,7 +232,7 @@ function hasBinding(item) {
  * `MESSAGE_DRAFT` sees the content reason.
  *
  * @param {any} item
- * @param {() => Promise<void>} onDecided
+ * @param {(message: string) => Promise<void>} onDecided
  * @param {{allowed: boolean, reason: string}} verdict
  * @param {string|null} [contentBlock] why this card's content cannot be shown yet, if it cannot
  * @returns {HTMLElement}
@@ -271,12 +271,20 @@ function decisionControls(item, onDecided, verdict, contentBlock = null) {
     );
   }
 
+  // Kept across a failure, like every write key on this console: a second press after a lost answer
+  // carries the same key, so the server replays the recorded decision instead of deciding twice.
   const submission = new Submission(`approval-decision-${item.approval_request_id}`);
+  // Where a failure is explained: a sibling of the buttons, never their parent. This used to be
+  // `render(host.parentElement)`, which emptied the container holding Duyệt, Từ chối and the status
+  // line -- so on a 504 both buttons vanished and the notice was the only thing left on the card.
+  const failureHost = h("div");
 
   /** @param {"APPROVED"|"REJECTED"} decision */
   const send = async (decision, button, sibling) => {
     button.disabled = true;
     sibling.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    render(failureHost);
     setResult(host, "warn", decision === "APPROVED" ? "Đang ghi phê duyệt…" : "Đang ghi từ chối…");
     try {
       await request(
@@ -297,6 +305,7 @@ function decisionControls(item, onDecided, verdict, contentBlock = null) {
         },
       );
       submission.reset();
+      button.removeAttribute("aria-busy");
       // Reported to the screen, not to this card. `onDecided()` reloads the queue and a decided
       // envelope is no longer `REQUESTED`, so the card this line lives in is removed a moment
       // later -- the operator would watch the row vanish with no statement that their decision
@@ -308,19 +317,39 @@ function decisionControls(item, onDecided, verdict, contentBlock = null) {
           : `Đã từ chối phiếu ${shortId(item.approval_request_id)}. Phiếu rời khỏi hàng chờ.`,
       );
     } catch (error) {
+      button.removeAttribute("aria-busy");
       button.disabled = false;
       sibling.disabled = false;
       const stale = error.kind === "STALE" || error.kind === "PRECONDITION_REQUIRED";
-      setResult(
-        host,
-        error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
-        stale
-          ? "Phiếu này vừa đổi trong lúc bạn đang xem, nên quyết định của bạn bị từ chối và " +
-            "không có gì được ghi. Tải lại hàng chờ rồi đọc lại phiếu mới."
-          : "Không ghi được quyết định. Máy chủ nêu lý do bên dưới, nguyên văn. Không có gì " +
-            "được ghi.",
+      // A lost answer is not a refusal. The decision may have been recorded, so "không có gì được
+      // ghi" would be a guess; what is certain is that a second press cannot decide twice, because
+      // it carries the same key and an envelope can only leave REQUESTED once.
+      const unknown =
+        error.kind === "TIMEOUT" ||
+        error.kind === "NETWORK" ||
+        error.kind === "FAULT" ||
+        error.kind === "UNAVAILABLE";
+      setResult(host, null, null);
+      render(
+        failureHost,
+        errorNotice(error, {
+          title: stale
+            ? "Phiếu này vừa đổi trong lúc bạn đang xem, nên quyết định của bạn bị từ chối và " +
+              "không có gì được ghi. Tải lại hàng chờ rồi đọc lại phiếu mới."
+            : unknown
+              ? "Không ghi được quyết định: máy chủ không trả lời được, nên chưa biết quyết định " +
+                "đã vào hay chưa. Tải lại hàng chờ — phiếu đã rời hàng chờ thì quyết định đã được " +
+                "ghi. Phiếu còn đó thì bấm lại; máy chủ không ghi một phiếu hai lần."
+              : `Không ghi được quyết định: ${error.message} Không có gì được ghi.`,
+          actions: [
+            h(
+              "button",
+              { type: "button", dataVariant: "quiet", onClick: () => void onDecided("") },
+              "Tải lại hàng chờ",
+            ),
+          ],
+        }),
       );
-      render(host.parentElement || host, errorNotice(error));
     }
   };
 
@@ -355,6 +384,7 @@ function decisionControls(item, onDecided, verdict, contentBlock = null) {
         "chối ở bước này.",
     ),
     host,
+    failureHost,
   );
 }
 
@@ -492,7 +522,7 @@ function exportContents(record) {
  * @param {any} item
  * @param {HTMLElement} contentHost
  * @param {HTMLElement} controlsHost
- * @param {() => Promise<void>} onDecided
+ * @param {(message: string) => Promise<void>} onDecided
  * @param {{allowed: boolean, reason: string}} verdict
  * @returns {Promise<void>}
  */
@@ -590,7 +620,7 @@ async function loadExportRequest(item, contentHost, controlsHost, onDecided, ver
  *
  * @param {any} item
  * @param {(host: HTMLElement, expiresAt: string) => void} registerClock
- * @param {() => Promise<void>} onDecided
+ * @param {(message: string) => Promise<void>} onDecided
  * @param {{allowed: boolean, reason: string}} verdict
  * @returns {HTMLElement}
  */
@@ -701,7 +731,7 @@ function approvalCard(item, registerClock, onDecided, verdict) {
  * @param {any} item
  * @param {HTMLElement} contentHost
  * @param {HTMLElement} controlsHost
- * @param {() => Promise<void>} onDecided
+ * @param {(message: string) => Promise<void>} onDecided
  * @param {{allowed: boolean, reason: string}} verdict
  * @returns {Promise<void>}
  */
@@ -974,7 +1004,9 @@ export function render_() {
         item,
         (host, expiresAt) => clocks.push({ host, expiresAt }),
         async (message) => {
-          setResult(decisionStatus, "ok", message);
+          // Empty when a card asks only for a re-read after a failed decision -- nothing was
+          // recorded that this line could truthfully announce.
+          if (message) setResult(decisionStatus, "ok", message);
           await queue.reload();
         },
         decideVerdict,

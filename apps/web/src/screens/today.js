@@ -137,8 +137,9 @@ const TILES = [
  *
  * What it is not is stated on the card, not buried: this is money taken today, not doanh thu.
  * Orders still in the wash, goods delivered but unpaid, and every question about refunds, deposits
- * and B2B accounts are outside it — those are DEC-010 and unanswered. An owner who reads this as
- * revenue would be wrong in a direction that matters, so the card names the boundary itself and
+ * and B2B accounts are outside it — DEC-010 (resolved) deliberately defers them. An owner who
+ * reads this as revenue would be wrong in a direction that matters, so the card names the boundary
+ * itself and
  * the assistant still refuses revenue questions.
  *
  * @returns {{card: HTMLElement, amountNode: HTMLElement, body: HTMLElement}}

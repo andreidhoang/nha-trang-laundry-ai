@@ -4,9 +4,12 @@
  * This screen is the reason the console exists, and it is also the easiest place to do harm, so a
  * few of its choices are deliberate rather than incidental:
  *
- *   - **The quantity is sent exactly as typed.** Not trimmed of a trailing zero, not parsed into a
- *     number and re-serialized. `DEC-001` — how many decimal places a weight may carry — is an open
- *     business decision, and `6` and `6.0` are different strings to a server that has not made it.
+ *   - **The quantity's digits are sent exactly as typed.** Not trimmed of a trailing zero, not
+ *     parsed into a number and re-serialized: `6` and `6.0` stay different strings. The one
+ *     rewrite is the decimal mark -- "5,5", the way the counter writes it, is sent as "5.5",
+ *     because that is the only spelling the domain's `QUANTITY_PATTERN` accepts -- and it is done by
+ *     `parseQuantity`, which also refuses inline whatever the domain would refuse, so a bad weight
+ *     is caught while typing and the 6 kg notice reads the same number the server does.
  *   - **No total is ever computed here.** The response carries a service subtotal and, separately,
  *     a display total that is usually null because the delivery fee is unresolved. Adding the first
  *     to a guess at the second is precisely the defect `ENGINEERING_SPEC_V1.md:530` forbids.
@@ -58,6 +61,7 @@ import {
   matchesFilter,
   money,
   parseDong,
+  parseQuantity,
   quantity as quantityText,
   shortHash,
   shortId,
@@ -178,6 +182,23 @@ function serviceGroups(services) {
 }
 
 /**
+ * Why a typed quantity cannot be sent, in the counter's words. Shared by the inline note under the
+ * field and by `validate()`, so the sentence read while typing is the one read after pressing.
+ *
+ * @param {string} typed
+ * @param {string} unit
+ * @returns {string}
+ */
+function quantityRefusal(typed, unit) {
+  const byCount = unit && unit !== "KG";
+  return (
+    `Không đọc được “${typed}”. Gõ một số, ví dụ 5,5 hoặc 5.5 — lớn hơn 0, tối đa 3 chữ số sau ` +
+    "dấu thập phân, không kèm chữ." +
+    (byCount ? " Món tính theo cái/đôi/bộ thì phải là số nguyên." : "")
+  );
+}
+
+/**
  * @returns {Line}
  */
 function blankLine() {
@@ -228,8 +249,32 @@ function lineEditor({ catalog, lines, onStructuralChange, onValueChange, onAddLi
       // price. Before a pick there is no unit to be near a boundary of, and an empty quantity
       // parses to NaN — which the notice treats as "near the cliff" and would announce on every
       // blank line the operator adds.
-      const refreshCliff = () =>
+      const refreshCliff = () => {
         render(cliffHost, line.serviceCode ? pricingCliffNotice(line.quantity, line.unit) : null);
+        refreshQuantity();
+      };
+
+      // What the server will receive for this line, read by the same `parseQuantity` the send path
+      // and the 6 kg notice use. Silent while the box is empty or already in the server's spelling;
+      // says so when a comma is about to become a dot; refuses inline when nothing can be sent.
+      // `form__result` rather than a new style: it already hides when empty and turns red on
+      // `data-state="danger"`, which is exactly the refused-weight case.
+      const quantityNote = h("p", { class: "form__result", "aria-live": "polite" });
+      const refreshQuantity = () => {
+        const typed = line.quantity.trim();
+        const accepted = typed ? parseQuantity(typed, line.unit) : null;
+        quantityInput.setAttribute("aria-invalid", typed && accepted === null ? "true" : "false");
+        if (!typed || accepted === typed) {
+          quantityNote.removeAttribute("data-state");
+          render(quantityNote);
+        } else if (accepted === null) {
+          quantityNote.dataset.state = "danger";
+          render(quantityNote, quantityRefusal(typed, line.unit));
+        } else {
+          quantityNote.removeAttribute("data-state");
+          render(quantityNote, `Máy chủ sẽ nhận: ${accepted}`);
+        }
+      };
 
       // The unit is shown, never chosen. Every published service has exactly one canonical unit,
       // so offering a second control was offering the operator a way to contradict the pricebook —
@@ -274,7 +319,7 @@ function lineEditor({ catalog, lines, onStructuralChange, onValueChange, onAddLi
 
       const quantityInput = h("input", {
         // Deliberately `text`, not `number`. A number input lets the browser normalize, step and
-        // localize the value, and the server is entitled to see the operator's exact keystrokes.
+        // localize the value; `parseQuantity` is the only thing allowed to read it.
         type: "text",
         inputmode: "decimal",
         value: line.quantity,
@@ -340,9 +385,12 @@ function lineEditor({ catalog, lines, onStructuralChange, onValueChange, onAddLi
           labelled({
             id: `${prefix}-qty`,
             label: "Khối lượng / số lượng",
-            hint: "Gửi nguyên văn như bạn gõ. Màn hình này không làm tròn và không đổi định dạng.",
+            hint:
+              "Gõ 5,5 hay 5.5 đều được; máy chủ nhận 5.5. Màn hình này không làm tròn và không " +
+              "thêm bớt chữ số nào.",
             control: quantityInput,
           }),
+          quantityNote,
           labelled({
             id: `${prefix}-basis`,
             label: "Cơ sở khối lượng",
@@ -430,8 +478,19 @@ function createOrderHandoff(result, contactId) {
  * The button sends the revision and its digest back. The operator is confirming a specific price on
  * their screen, and the server refuses if either has moved — a quote reprised while the customer was
  * deciding must be read to them again, not silently accepted.
+ *
+ * `actions` are the two ways out of a refusal the screen can offer: go back to the form to price
+ * the bag again, and re-read the recorded quotes. Both are navigation; neither writes anything.
+ *
+ * @param {any} result
+ * @param {string} store
+ * @param {((accepted: any) => Promise<void>)|null} onAccepted
+ * @param {{allowed: boolean, reason: string}} writeVerdict
+ * @param {string|null} contactId
+ * @param {{onReprice?: () => void, onReload?: () => void}} [actions]
+ * @returns {HTMLElement}
  */
-function acceptControl(result, store, onAccepted, writeVerdict, contactId) {
+function acceptControl(result, store, onAccepted, writeVerdict, contactId, actions = {}) {
   // `status`, not `finality`, since RANGE-PRICE-001. This read `finality === "APPROVED_EXACT"`,
   // which was an exact test for "the customer has agreed" only while the composer could produce
   // nothing but `ESTIMATE` before acceptance. `apply_range_prices` now produces
@@ -469,8 +528,17 @@ function acceptControl(result, store, onAccepted, writeVerdict, contactId) {
       ),
     );
   }
+  // The key survives a failure on purpose. A press that timed out may have committed; pressing
+  // again with the *same* key makes the server hand back the recorded answer instead of recording
+  // a second one (`staff-quote-accept` is an idempotent command). It is replaced only on success.
   const accepting = new Submission(`quote-accept-${result.quote_id}-${result.revision}`);
   const host = resultLine();
+  // Where a failure is explained. A sibling of the button, never its parent: this function used to
+  // `render(host.parentElement)` on every press, which emptied the container holding the hint, the
+  // button and the status line -- so the button vanished on tap, and a refusal (a 409
+  // QUOTE_EXPIRED, say) was drawn into a node no longer on the page. The counter saw nothing at all.
+  const failureHost = h("div");
+  const blockedNote = h("p", { class: "hint" });
   const button = h(
     "button",
     {
@@ -482,8 +550,10 @@ function acceptControl(result, store, onAccepted, writeVerdict, contactId) {
       dataRequiresNetwork: "true",
       onClick: async () => {
         button.disabled = true;
+        button.setAttribute("aria-busy", "true");
         setResult(host, "warn", "Đang ghi lời xác nhận…");
-        render(host.parentElement || host);
+        render(failureHost);
+        render(blockedNote);
         try {
           const accepted = await request(
             // One template literal on purpose: `test_every_path_the_console_calls_is_a_route`
@@ -500,27 +570,42 @@ function acceptControl(result, store, onAccepted, writeVerdict, contactId) {
             },
           );
           accepting.reset();
+          button.removeAttribute("aria-busy");
           setResult(host, "ok", `Đã chốt. Bản sửa đổi ${accepted.revision} là giá cuối.`);
           if (onAccepted) await onAccepted(accepted);
         } catch (error) {
-          button.disabled = false;
-          // An expired price is the one refusal here that has a next action, and it is the same
-          // action every time: price the bag again. The server marks it with a prefix so this does
-          // not have to match on prose (`FR-QTE-010`).
-          const expired = String(error.detail || "").startsWith("QUOTE_EXPIRED");
-          setResult(
-            host,
-            error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
-            expired
-              ? "Báo giá này đã quá hạn (mỗi báo giá có giá trị một ngày), nên không chốt được " +
-                "nữa. Hãy cân lại và bấm “Tính giá” để ra giá hôm nay, rồi đọc lại cho khách. " +
-                "Không có gì được ghi."
-              : error.kind === "REQUIRE_HUMAN"
-                ? "Chưa chốt được. Máy chủ nêu lý do bên dưới — thường là khối lượng mới là khách " +
-                  "ước lượng, cần cân lại rồi báo giá lại."
-                : "Không ghi được lời xác nhận.",
+          button.removeAttribute("aria-busy");
+          const failure = acceptFailure(/** @type {any} */ (error));
+          // A press that cannot succeed a second time leaves the button on screen, disabled, with
+          // the reason beside it -- a denied control is shown with its reason, never removed.
+          // Anything else re-arms it: the operator decides whether to press again.
+          button.disabled = failure.final;
+          render(blockedNote, failure.final ? failure.blocked : null);
+          setResult(host, null, null);
+          render(
+            failureHost,
+            errorNotice(error, {
+              title: failure.title,
+              actions: [
+                failure.reprice && actions.onReprice
+                  ? h(
+                      "button",
+                      { type: "button", dataVariant: "primary", onClick: actions.onReprice },
+                      "Tính giá lại",
+                    )
+                  : null,
+                actions.onReload
+                  ? h(
+                      "button",
+                      { type: "button", dataVariant: "quiet", onClick: actions.onReload },
+                      icon("refresh"),
+                      "Tải lại danh sách báo giá",
+                    )
+                  : null,
+              ].filter(Boolean),
+            }),
           );
-          render(host.parentElement || host, errorNotice(error));
+          revealError(failureHost);
         }
       },
     },
@@ -531,11 +616,88 @@ function acceptControl(result, store, onAccepted, writeVerdict, contactId) {
     { class: "stack stack--tight" },
     h("p", { class: "hint" }, "Bấm khi khách đã nghe giá và đồng ý. Tên bạn sẽ được ghi lại."),
     gated(button, writeVerdict),
+    blockedNote,
     host,
+    failureHost,
   );
 }
 
-function revisionResult(result, store, onAccepted, writeVerdict, contactId = null) {
+/**
+ * What to tell the counter when "Khách đã chốt giá" fails, and whether pressing it again can help.
+ *
+ * Every failure gets a sentence and a way forward; none is left as a bare status. Three shapes:
+ *
+ *   - **The price itself is no longer agreeable** -- expired, or refused for a missing fact. The
+ *     way forward is pricing again, so the button is disabled with the reason and "Tính giá lại"
+ *     takes the operator to the form.
+ *   - **The quote moved underneath the screen** -- a newer revision, already accepted, stale. The
+ *     way forward is re-reading; the button stays live because the server, not this screen,
+ *     decides whether the next press is refused.
+ *   - **The answer was lost** -- timeout, network, a 5xx. The attestation may have landed. Pressing
+ *     again is safe *here*, and only here, because the control still holds the same idempotency
+ *     key: a replay returns the recorded acceptance instead of recording a second one.
+ *
+ * @param {any} error
+ * @returns {{title: string, final: boolean, reprice: boolean, blocked: string}}
+ */
+function acceptFailure(error) {
+  const detail = String(error?.detail || "");
+  // The server marks an expired price with a prefix, so this does not match on prose (`FR-QTE-010`).
+  if (detail.startsWith("QUOTE_EXPIRED")) {
+    return {
+      title:
+        "Báo giá này đã quá hạn (mỗi báo giá có giá trị một ngày), nên không chốt được nữa. " +
+        "Không có gì được ghi. Cân lại, bấm “Tính giá” để ra giá hôm nay, rồi đọc lại cho khách.",
+      final: true,
+      reprice: true,
+      blocked: "Không bấm được: báo giá đã quá hạn. Tính giá lại trước.",
+    };
+  }
+  if (error?.kind === "REQUIRE_HUMAN") {
+    return {
+      title:
+        "Chưa chốt được. Máy chủ nêu lý do bên dưới — thường là khối lượng mới là khách ước " +
+        "lượng, cần cân lại rồi tính giá lại. Không có gì được ghi.",
+      final: true,
+      reprice: true,
+      blocked: "Không bấm được: cần tính giá lại trước khi khách chốt.",
+    };
+  }
+  const unknown =
+    error?.kind === "TIMEOUT" ||
+    error?.kind === "NETWORK" ||
+    error?.kind === "FAULT" ||
+    error?.kind === "UNAVAILABLE";
+  if (unknown) {
+    return {
+      title:
+        "Chưa biết lời xác nhận đã được ghi hay chưa. Tải lại danh sách báo giá: nếu có bản " +
+        "“Đã chốt” mới thì xong, đừng bấm nữa. Nếu chưa có, bấm lại “Khách đã chốt giá” — lần " +
+        "bấm lại dùng cùng mã thao tác, nên máy chủ không ghi hai lần.",
+      final: false,
+      reprice: false,
+      blocked: "",
+    };
+  }
+  if (error?.kind === "OFFLINE") {
+    return {
+      title: `${error.message} Có mạng lại thì bấm lại “Khách đã chốt giá”.`,
+      final: false,
+      reprice: false,
+      blocked: "",
+    };
+  }
+  // A 409 of any other shape: already accepted, a newer revision, stale. `classify` has already
+  // given it a Vietnamese title from the server's own words, and the raw text is collapsed below.
+  return {
+    title: `Chưa chốt được: ${error?.message || "máy chủ từ chối."} Không có gì được ghi.`,
+    final: false,
+    reprice: false,
+    blocked: "",
+  };
+}
+
+function revisionResult(result, store, onAccepted, writeVerdict, contactId = null, actions = {}) {
   return h(
     "div",
     { class: "card stack" },
@@ -545,7 +707,7 @@ function revisionResult(result, store, onAccepted, writeVerdict, contactId = nul
       h("h3", null, `Bản sửa đổi ${result.revision}`),
       h("div", { class: "row" }, priceStateBadge(result.finality)),
     ),
-    acceptControl(result, store, onAccepted, writeVerdict, contactId),
+    acceptControl(result, store, onAccepted, writeVerdict, contactId, actions),
     result.replayed
       ? h(
           "div",
@@ -1343,7 +1505,7 @@ export function render_(context) {
   // envelope in mind and the newest revision is the right answer for them.
   const openRevision = String(context?.query?.get("revision") || "").trim();
 
-  /** @type {{lines: Line[], fulfillmentMode: string, verifiedDistanceM: string, manualFeeVnd: string, customerAcknowledgedFee: boolean, orderRequestId: string, quoteId: string, expectedRevision: string, rowVersion: string, requestSummary: any|null}} */
+  /** @type {{lines: Line[], fulfillmentMode: string, verifiedDistanceM: string, manualFeeVnd: string, customerAcknowledgedFee: boolean, orderRequestId: string, quoteId: string, quoteRequestId: string, expectedRevision: string, rowVersion: string, requestSummary: any|null}} */
   const draft = {
     lines: [blankLine()],
     fulfillmentMode: "SELF_DROP_SELF_COLLECT",
@@ -1352,10 +1514,58 @@ export function render_(context) {
     customerAcknowledgedFee: false,
     orderRequestId: "",
     quoteId: "",
+    // The intake the tracked quote was written for, when this screen wrote it; "" when the quote
+    // was picked from the list and its intake is not known here. Lets a switch to a *different*
+    // intake drop revision mode instead of sending one customer's lines as another's revision.
+    quoteRequestId: "",
     expectedRevision: "0",
     rowVersion: "",
     requestSummary: null,
   };
+
+  /**
+   * Hold the revision the server just returned as the one the next "Tính giá" revises.
+   *
+   * Before this, the form never learned about its own writes. After the first quote it stayed in
+   * create mode, so the second press omitted `quote_id` and the server answered "this order request
+   * already has a quote; add a revision instead"; and after a revision it kept the *old*
+   * `expected_current_revision` and `If-Match`, so the next revision was refused as stale while the
+   * card above it read "Bản sửa đổi 2 / v2". Every successful write -- a price, an acceptance, a
+   * closed band -- now advances the draft to exactly what the server said is current.
+   *
+   * @param {any} revision a `QuoteRevisionResponse`
+   */
+  function track(revision) {
+    if (!revision?.quote_id || !Number.isInteger(revision.revision)) return;
+    if (draft.quoteId !== revision.quote_id) draft.quoteRequestId = draft.orderRequestId.trim();
+    draft.quoteId = String(revision.quote_id);
+    draft.expectedRevision = String(revision.revision);
+    draft.rowVersion = String(revision.row_version);
+    invalidateKey();
+    refreshRevisionBanner();
+  }
+
+  /** Leave revision mode: the next "Tính giá" opens a new quote. */
+  function untrack() {
+    draft.quoteId = "";
+    draft.quoteRequestId = "";
+    draft.expectedRevision = "0";
+    draft.rowVersion = "";
+    invalidateKey();
+    refreshRevisionBanner();
+  }
+
+  /**
+   * Binding the form to another intake while a quote is tracked for a different one ends revision
+   * mode: that quote belongs to the other customer.
+   *
+   * @param {string} requestId
+   */
+  function followRequest(requestId) {
+    if (draft.quoteId && draft.quoteRequestId && draft.quoteRequestId !== requestId.trim()) {
+      untrack();
+    }
+  }
 
   // The four modes the server's FulfillmentMode enum accepts. Changing it invalidates the
   // idempotency key for the same reason a line edit does: the server hashes the payload with it.
@@ -1452,6 +1662,45 @@ export function render_(context) {
   const summaryHost = h("div");
   const openHost = h("div");
   const pickerHost = h("div", null, skeleton(2));
+  // Owned by the screen, not by one build of the form, so a successful write can switch the form
+  // into revision mode -- and keep its revision and row version current -- without rebuilding the
+  // line editor under the operator's thumb.
+  const revisionBanner = h("div");
+
+  function refreshRevisionBanner() {
+    render(
+      revisionBanner,
+      draft.quoteId
+        ? h(
+            "div",
+            { class: "notice", dataState: "info", id: "quote-revision-banner" },
+            h("p", { class: "notice__title" }, `Thêm bản sửa đổi cho ${shortId(draft.quoteId)}`),
+            h(
+              "p",
+              null,
+              `Sẽ gửi kèm bản hiện tại r${draft.expectedRevision} và phiên bản dòng v${draft.rowVersion}. ` +
+                "Nếu ai đó vừa sửa báo giá này, máy chủ sẽ từ chối và bạn tải lại.",
+            ),
+            h(
+              "div",
+              { class: "form__actions" },
+              h(
+                "button",
+                {
+                  type: "button",
+                  dataVariant: "quiet",
+                  onClick: () => {
+                    untrack();
+                    redrawBuilder();
+                  },
+                },
+                "Bỏ, tạo báo giá mới",
+              ),
+            ),
+          )
+        : null,
+    );
+  }
 
   // Any edit invalidates the idempotency key: the server hashes the payload alongside it, so
   // replaying the old key with changed content is a 409 rather than a replay. This is the whole
@@ -1544,8 +1793,11 @@ export function render_(context) {
 
   const pickRevision = (item) => {
     draft.quoteId = item.quote_id;
+    // Picked from the list: which intake it belongs to is not in the row, so it is not guessed.
+    draft.quoteRequestId = "";
     draft.expectedRevision = String(item.revision);
     draft.rowVersion = String(item.row_version);
+    refreshRevisionBanner();
     redrawBuilder();
     builderBody.scrollIntoView({ block: "start", behavior: "smooth" });
   };
@@ -1620,6 +1872,7 @@ export function render_(context) {
   /** Bind the form to an intake the server already returned. No fetch needed — the row is real. */
   const pickRequest = (item) => {
     draft.orderRequestId = item.order_request_id;
+    followRequest(item.order_request_id);
     draft.requestSummary = item;
     invalidateKey();
     refreshSummary();
@@ -1720,6 +1973,7 @@ export function render_(context) {
         `/internal/v1/stores/${encodeURIComponent(store)}/order-requests/${encodeURIComponent(id)}`,
       );
       draft.orderRequestId = item.order_request_id;
+      followRequest(item.order_request_id);
       draft.requestSummary = item;
       invalidateKey();
       refreshSummary();
@@ -1888,6 +2142,11 @@ export function render_(context) {
       }
       if (!line.quantity.trim()) return `Dòng ${index + 1}: chưa nhập khối lượng.`;
       if (line.quantity.length > 16) return `Dòng ${index + 1}: khối lượng quá 16 ký tự.`;
+      // Refused here rather than sent: the engine answers an unreadable quantity with
+      // MISSING_REQUIRED_FACT, which reads as "a fact is missing" to somebody who typed one.
+      if (parseQuantity(line.quantity, line.unit) === null) {
+        return `Dòng ${index + 1}: ${quantityRefusal(line.quantity.trim(), line.unit)}`;
+      }
     }
     if (draft.quoteId && !draft.rowVersion) {
       return "Thêm bản sửa đổi cần phiên bản dòng hiện tại; hãy chọn lại báo giá từ danh sách.";
@@ -1912,6 +2171,8 @@ export function render_(context) {
    */
   function paintRevision(revision) {
     const contactId = draft.requestSummary?.contact_binding_id ?? null;
+    // Every revision painted here is one the server just wrote, so it is the current one.
+    track(revision);
     render(
       resultHost,
       revisionResult(
@@ -1933,6 +2194,19 @@ export function render_(context) {
         },
         writeVerdict,
         contactId,
+        {
+          // Back to the form, which `track` has already put in revision mode for this quote, so
+          // the next "Tính giá" writes a new revision at today's price. Nothing is sent from here.
+          onReprice: () => {
+            builderBody.scrollIntoView({ block: "start", behavior: "smooth" });
+            const first = builderBody.querySelector("#quote-line-0-qty");
+            if (first instanceof HTMLElement) first.focus({ preventScroll: true });
+          },
+          onReload: () => {
+            void list.reload();
+            list.host.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          },
+        },
       ),
       revision.finality === "RANGE"
         ? bandCloser({
@@ -2024,8 +2298,9 @@ export function render_(context) {
       bound_order_request_id: draft.orderRequestId.trim(),
       lines: draft.lines.map((line) => ({
         service_code: line.serviceCode,
-        // Verbatim. See the module note.
-        quantity: line.quantity,
+        // The typed digits, with "," read as the decimal mark. See the module note; `validate()`
+        // has already refused anything this would turn into null.
+        quantity: parseQuantity(line.quantity, line.unit),
         unit: line.unit,
         quantity_basis: line.basis,
       })),
@@ -2102,7 +2377,6 @@ export function render_(context) {
   }
 
   function buildForm() {
-    const revisionMode = Boolean(draft.quoteId);
     const orderRequestInput = h("input", {
       type: "text",
       value: draft.orderRequestId,
@@ -2111,6 +2385,7 @@ export function render_(context) {
       placeholder: "00000000-0000-0000-0000-000000000000",
       onInput: (event) => {
         draft.orderRequestId = event.target.value;
+        followRequest(event.target.value);
         draft.requestSummary = null;
         refreshSummary();
         submission.reset();
@@ -2120,37 +2395,9 @@ export function render_(context) {
     return h(
       "form",
       { class: "form", onSubmit: submit },
-      revisionMode
-        ? h(
-            "div",
-            { class: "notice", dataState: "info" },
-            h("p", { class: "notice__title" }, `Thêm bản sửa đổi cho ${shortId(draft.quoteId)}`),
-            h(
-              "p",
-              null,
-              `Sẽ gửi kèm bản hiện tại r${draft.expectedRevision} và phiên bản dòng v${draft.rowVersion}. ` +
-                "Nếu ai đó vừa sửa báo giá này, máy chủ sẽ từ chối và bạn tải lại.",
-            ),
-            h(
-              "div",
-              { class: "form__actions" },
-              h(
-                "button",
-                {
-                  type: "button",
-                  dataVariant: "quiet",
-                  onClick: () => {
-                    draft.quoteId = "";
-                    draft.expectedRevision = "0";
-                    draft.rowVersion = "";
-                    redrawBuilder();
-                  },
-                },
-                "Bỏ, tạo báo giá mới",
-              ),
-            ),
-          )
-        : null,
+      // Screen-owned and refreshed by `track`, so it always names the revision and row version the
+      // next press will actually send.
+      revisionBanner,
       // The bare-UUID path survives as a collapsed recovery hatch, not the default: picking from
       // Tiếp nhận or arriving with `?request=` binds a row the server returned, while a typed id
       // is a claim nobody checked. Typing here clears any resolved summary, because the claim and

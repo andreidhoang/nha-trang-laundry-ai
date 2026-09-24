@@ -2666,6 +2666,10 @@ def _raise_remedy_error(error: Exception) -> NoReturn:
             detail["window_closes_at"] = error.window_closes_at.isoformat()
         if error.threshold_minutes is not None:
             detail["threshold_minutes"] = error.threshold_minutes
+        if error.committed_vnd is not None:
+            # What earlier proposals already committed against the same item. The ceiling alone
+            # would tell staff "at most 500.000 d" about a garment that already has 300.000 d on it.
+            detail["committed_vnd"] = error.committed_vnd
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail) from error
     _raise_operations_error(error)
 

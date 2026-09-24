@@ -46,12 +46,17 @@ from nha_trang_laundry_domain.catalog import (
     FulfillmentMode,
     PolicyOutcome,
 )
-from nha_trang_laundry_domain.quote_composition import ComposedQuote, redeem_remedy_credit
+from nha_trang_laundry_domain.quote_composition import (
+    ComposedQuote,
+    redeem_remedy_credit,
+    reserved_remedy_credits,
+)
 from nha_trang_laundry_domain.quotes import ExactLineAmounts, parse_quote_revision
 from nha_trang_laundry_domain.remedies import (
     REMEDY_POLICY_CONFIG_TYPE,
     REMEDY_POLICY_VERSION,
     RemedyAuthorized,
+    RemedyCommitments,
     RemedyCredit,
     RemedyKind,
     RemedyOrderFacts,
@@ -121,12 +126,14 @@ class RemedyStateError(ValueError):
         ceiling_vnd: int | None = None,
         window_closes_at: datetime | None = None,
         threshold_minutes: int | None = None,
+        committed_vnd: int | None = None,
     ) -> None:
         self.reason_code = reason_code
         self.authority = authority
         self.ceiling_vnd = ceiling_vnd
         self.window_closes_at = window_closes_at
         self.threshold_minutes = threshold_minutes
+        self.committed_vnd = committed_vnd
         super().__init__(message)
 
 
@@ -305,8 +312,9 @@ class RemedyOptions:
     defect_window_open: bool = False
     #: The 5x cap per priced line of the order's own revision, keyed by `line_id`.
     damage_line_ceilings_vnd: Mapping[str, int] | None = None
-    #: The 10% the server computed, or `None` when the order records no settled total or no
-    #: succeeded return leg -- in which case the credit is not available and the form must say so.
+    #: The 10% the server computed, or `None` when the order records no settled total, no
+    #: succeeded return leg, or already has a late-delivery credit proposed or paid -- in which case
+    #: the credit is not available and the form must say so.
     late_delivery_credit_vnd: int | None = None
     late_delivery_threshold_minutes: int | None = None
     #: Always `LOSS_POLICY_UNRESOLVED`. Present so the console can render `components.unsupported`
@@ -327,6 +335,22 @@ class _OrderRecord:
     #: domain decides nothing from it -- it is persistence provenance.
     quote_snapshot_hash: str
     facts: RemedyOrderFacts
+    #: The incident's status when it was read, unlocked. The pre-check refuses on it so a closed
+    #: incident is answered before an approval envelope is raised; the binding check is repeated
+    #: under the row lock in the proposal's own transaction.
+    incident_status: str
+
+
+#: The incident states a remedy may still be proposed against. `0014`'s ladder is
+#: `OPEN -> UNDER_REVIEW -> CLOSED`, and `execute` writes `CLOSED` when a remedy reaches its
+#: outcome: an incident that has an outcome is not a place to hang another one.
+_PROPOSABLE_INCIDENT_STATUSES = frozenset({"OPEN", "UNDER_REVIEW"})
+
+#: The `approval_request_states` a proposal waiting on the owner can never leave, other than
+#: approval. `0008`'s transition guard admits no way out of any of them, and `execute` requires an
+#: `APPROVED` envelope, so a proposal whose envelope is in one of these can never pay. These are the
+#: "terminal non-paying" states: `RemedyStatus` itself has no such member.
+_DEAD_ENVELOPE_STATUSES = ("REJECTED", "EXPIRED", "CANCELLED")
 
 
 class RemedyProposalRepository:
@@ -352,6 +376,9 @@ class RemedyProposalRepository:
             return RemedyOptions(
                 incident_id=incident_id, order_id=record.order_id, policy_published=False
             )
+        # Only the order-level count matters to the probe below: a late-delivery credit already
+        # proposed or paid for this order means there is no second one to offer.
+        prior = _read_commitments(cursor, order_id=record.order_id, order_line_id=None)
         policy, facts = published.policy, record.facts
         at = datetime.now(UTC)
         rewash_closes = _window_close(facts, days=policy.free_rewash_window_days)
@@ -369,6 +396,7 @@ class RemedyProposalRepository:
                     attested_late_by_minutes=policy.late_delivery_threshold_minutes + 1,
                 ),
                 requested_at=at,
+                committed=prior,
             )
             credit = probe.amount_vnd if isinstance(probe, RemedyAuthorized) else None
         return RemedyOptions(
@@ -409,7 +437,13 @@ class RemedyProposalRepository:
                 cursor, store_id=command.store_id, incident_id=command.incident_id
             )
             published = read_published_remedy_policy(cursor)
+            committed = _read_commitments(
+                cursor, order_id=record.order_id, order_line_id=command.order_line_id
+            )
 
+        # Before the policy and before any envelope: an incident that already reached its outcome
+        # is answered first, whatever the figures would have said. Re-checked under the lock below.
+        _require_proposable_incident(record.incident_status)
         if published is None:
             # Invariant 11, and it applies to every kind including the ones that move no money: the
             # 7-day rewash window is itself one of the owner's published figures.
@@ -419,27 +453,28 @@ class RemedyProposalRepository:
                 authority="INVARIANT-11",
             )
 
-        outcome = evaluate_remedy(
-            policy=published.policy,
-            facts=record.facts,
-            request=RemedyRequest(
-                kind=command.kind,
-                store_fault_attested=command.store_fault_attested,
-                order_line_id=command.order_line_id,
-                amount_vnd=command.amount_vnd,
-                attested_late_by_minutes=command.attested_late_by_minutes,
-            ),
-            requested_at=proposed_at,
+        request = RemedyRequest(
+            kind=command.kind,
+            store_fault_attested=command.store_fault_attested,
+            order_line_id=command.order_line_id,
+            amount_vnd=command.amount_vnd,
+            attested_late_by_minutes=command.attested_late_by_minutes,
         )
-        if isinstance(outcome, RemedyRefused):
-            raise RemedyStateError(
-                "this remedy is not authorised",
-                reason_code=outcome.reason_code,
-                authority=outcome.authority,
-                ceiling_vnd=outcome.ceiling_vnd,
-                window_closes_at=outcome.window_closes_at,
-                threshold_minutes=outcome.threshold_minutes,
+
+        policy = published.policy
+
+        def decide(prior: RemedyCommitments) -> Any:
+            return evaluate_remedy(
+                policy=policy,
+                facts=record.facts,
+                request=request,
+                requested_at=proposed_at,
+                committed=prior,
             )
+
+        outcome = decide(committed)
+        if isinstance(outcome, RemedyRefused):
+            raise _refusal_error(outcome)
 
         proposal_id = uuid4()
         if isinstance(outcome, RemedyUnresolved):
@@ -480,6 +515,30 @@ class RemedyProposalRepository:
         )
 
         def mutation(cursor: Any) -> None:
+            # Rule 4: the committed total that binds is the one read under the order-row lock, in
+            # this transaction. The pre-check above could not see a proposal another counter was
+            # writing at the same moment; this read can, because that writer holds the same lock
+            # until it commits, and this one waits for it.
+            locked_status = _lock_proposable_incident(
+                cursor, order_id=record.order_id, incident_id=command.incident_id
+            )
+            locked = _read_commitments(
+                cursor, order_id=record.order_id, order_line_id=command.order_line_id
+            )
+            if locked != committed:
+                recheck = decide(locked)
+                if isinstance(recheck, RemedyRefused):
+                    raise _refusal_error(recheck)
+                if recheck != outcome:
+                    # Still allowable, but no longer on the terms the pre-check decided -- most
+                    # often a staff authorisation that now needs the owner, whose envelope was not
+                    # raised. Refused rather than upgraded here: the proposal is recorded exactly as
+                    # it was decided or not at all, and proposing again decides it afresh.
+                    raise RemedyStateError(
+                        "another remedy was recorded against this order while yours was being "
+                        "checked; propose it again",
+                        reason_code="STALE_VERSION",
+                    )
             _insert_proposal(
                 cursor,
                 proposal_id=proposal_id,
@@ -496,7 +555,12 @@ class RemedyProposalRepository:
                 approval_id=approval_id,
                 proposed_at=proposed_at,
             )
-            _open_incident_review(cursor, command.incident_id, fault=command.store_fault_attested)
+            _open_incident_review(
+                cursor,
+                command.incident_id,
+                fault=command.store_fault_attested,
+                locked_status=locked_status,
+            )
 
         commit_material_change(
             connection,
@@ -588,6 +652,10 @@ class RemedyProposalRepository:
         )
 
         def mutation(cursor: Any) -> None:
+            # A loss record moves no money, so nothing is summed; the incident rule still applies.
+            locked_status = _lock_proposable_incident(
+                cursor, order_id=record.order_id, incident_id=command.incident_id
+            )
             _insert_proposal(
                 cursor,
                 proposal_id=proposal_id,
@@ -604,7 +672,12 @@ class RemedyProposalRepository:
                 approval_id=None,
                 proposed_at=proposed_at,
             )
-            _open_incident_review(cursor, command.incident_id, fault=command.store_fault_attested)
+            _open_incident_review(
+                cursor,
+                command.incident_id,
+                fault=command.store_fault_attested,
+                locked_status=locked_status,
+            )
 
         commit_material_change(
             connection,
@@ -706,7 +779,7 @@ class RemedyProposalRepository:
                 """
                 SELECT p.store_id, p.incident_id, p.order_id, p.kind, p.status, p.amount_vnd,
                        p.approval_id, p.proposal_hash, p.policy_version_id, p.row_version,
-                       o.bound_contact_id
+                       o.bound_contact_id, p.order_line_id, p.ceiling_vnd
                 FROM remedy_proposals p
                 JOIN orders o ON o.id = p.order_id
                 WHERE p.id = %s
@@ -760,6 +833,17 @@ class RemedyProposalRepository:
         event_type = REWASH_COMMANDED if credit_id is None else CREDIT_EXECUTED
 
         def mutation(cursor: Any) -> None:
+            _recheck_before_paying(
+                cursor,
+                proposal_id=command.proposal_id,
+                order_id=order_id,
+                kind=kind,
+                amount_vnd=amount_vnd,
+                order_line_id=None if row[11] is None else str(row[11]),
+                ceiling_vnd=None if row[12] is None else int(row[12]),
+                staff_authorized=row[6] is None,
+                policy_version_id=_uuid(row[8]),
+            )
             cursor.execute(
                 """
                 UPDATE remedy_proposals
@@ -897,17 +981,25 @@ class StoredCreditRedemption:
 
 
 class RemedyCreditRepository:
-    """Spend one issued credit against one open quote revision, exactly once."""
+    """Reserve one issued credit on an open quote; it is spent when that quote becomes an order."""
 
     def redeem(
         self, connection: Any, command: RemedyCreditRedemptionCommand
     ) -> StoredCreditRedemption:
-        """Derive a credited revision and burn the credit in the same transaction.
+        """Derive a credited revision that **reserves** the credit. Nothing about the credit moves.
 
-        Invariant 5, and the reason `QuoteRepository.create_revision` grew an `also_mutate` hook:
-        writing the discount without burning the credit lets one voucher be spent twice, and burning
-        it without the discount robs the customer. Neither is a state this counter can recover from
-        by hand, so they commit together or not at all.
+        Corrected by the credit-lifecycle fix. This used to burn the credit -- set `redeemed_at` --
+        in the transaction that wrote the credited revision, so everything that happened to the
+        quote afterwards lost it: re-pricing composed a revision without the credit, an expired
+        quote could not be accepted, an abandoned one was never converted, and `0042` rightly
+        forbids handing a spent credit back. Now the revision's `REMEDY_CREDIT` adjustment is the
+        reservation, a reprice carries it forward (`compose_quote_revision`), and
+        `spend_reserved_remedy_credits` spends it inside `OrderRepository.create`. A credit reserved
+        on two quotes is spent by whichever becomes an order first; the other conversion is refused.
+
+        What is still checked here, under the credit's row lock and again inside the revision's own
+        transaction: the credit exists in this store and has not been spent. Reserving a spent
+        credit would put a discount on a bill that no order could ever honour.
 
         The credit is a **bearer instrument** and is deliberately not matched against the new
         quote's contact binding. A returning walk-in is issued a fresh counter ticket, so requiring
@@ -985,31 +1077,25 @@ class RemedyCreditRepository:
             raise RemedyStateError(
                 "this credit cannot be applied to this quote",
                 reason_code=reason,
-                ceiling_vnd=priced.data.totals.net_service_subtotal_min_vnd,
-            )
-        snapshot = composition.snapshot
-        expected_version = int(credit_row[3])
-
-        def burn(cursor: Any) -> None:
-            cursor.execute(
-                """
-                UPDATE remedy_credits
-                SET redeemed_at = %s, redeemed_quote_id = %s, redeemed_quote_revision = %s,
-                    row_version = row_version + 1
-                WHERE id = %s AND row_version = %s AND redeemed_at IS NULL
-                RETURNING id
-                """,
-                (
-                    redeemed_at,
-                    snapshot.data.quote_id,
-                    snapshot.data.revision,
-                    command.credit_id,
-                    expected_version,
+                # What was left to discount, for the one refusal where that is the answer.
+                ceiling_vnd=(
+                    priced.data.totals.net_service_subtotal_min_vnd
+                    if reason == RemedyRefusal.REMEDY_CREDIT_UNALLOCATABLE.value
+                    else None
                 ),
             )
-            if cursor.fetchone() is None:
-                # The compare-and-swap that makes "exactly once" true under concurrency. The row
-                # lock above serialises two redemptions; this refuses the loser after it wakes up.
+        snapshot = composition.snapshot
+
+        def still_unspent(cursor: Any) -> None:
+            # Re-read under the row lock inside the revision's own transaction. The read above may
+            # have run in autocommit, where its lock ended with the statement; an order that spent
+            # the credit in between must not be followed by a reservation of it.
+            cursor.execute(
+                "SELECT redeemed_at FROM remedy_credits WHERE id = %s FOR UPDATE",
+                (command.credit_id,),
+            )
+            row = cursor.fetchone()
+            if row is None or row[0] is not None:
                 raise RemedyStateError(
                     "this credit has already been redeemed",
                     reason_code=RemedyRefusal.REMEDY_CREDIT_ALREADY_REDEEMED.value,
@@ -1028,7 +1114,7 @@ class RemedyCreditRepository:
                 correlation_id=command.correlation_id,
                 occurred_at=redeemed_at,
             ),
-            also_mutate=burn,
+            also_mutate=still_unspent,
         )
         return StoredCreditRedemption(
             credit_id=command.credit_id,
@@ -1039,6 +1125,173 @@ class RemedyCreditRepository:
             net_service_subtotal_vnd=snapshot.data.totals.net_service_subtotal_min_vnd,
             display_total_vnd=snapshot.data.totals.display_total_min_vnd,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ReservedRemedyCredits:
+    """What a quote revision reserves, and which of those another order has already spent.
+
+    The two inputs `compose_quote_revision` needs to re-price a credited quote honestly: carry the
+    first, release the second.
+    """
+
+    credits: tuple[RemedyCredit, ...] = ()
+    spent_ids: frozenset[UUID] = frozenset()
+
+
+def read_reserved_remedy_credits(
+    cursor: Any, *, store_id: UUID, quote_id: UUID, revision: int
+) -> ReservedRemedyCredits:
+    """The credits one stored revision reserves, for the caller about to re-price it.
+
+    Both composing callers -- the counter's `create_quote` and the agent estimate tool -- read the
+    revision they are replacing through this, so there is one answer to "what does this bill
+    carry". A quote that is not this store's, or a revision that does not exist, reserves nothing
+    here; the write that follows refuses it for its own reasons. A credit row that is missing or not
+    this store's is treated as spent: it could not be spent by an order in this store, so it must
+    not ride on one of its bills.
+    """
+
+    container = QuoteRepository.find_container_by_id(cursor, store_id, quote_id)
+    if container is None:
+        return ReservedRemedyCredits()
+    stored = QuoteRepository.get_revision(cursor, quote_id, revision)
+    if stored is None:
+        return ReservedRemedyCredits()
+    credits = reserved_remedy_credits(
+        parse_quote_revision(json.loads(stored.document.canonical_json))
+    )
+    if not credits:
+        return ReservedRemedyCredits()
+    cursor.execute(
+        """
+        SELECT id FROM remedy_credits
+        WHERE id = ANY(%s) AND store_id = %s AND redeemed_at IS NULL
+        """,
+        ([credit.credit_id for credit in credits], store_id),
+    )
+    unspent = {_uuid(row[0]) for row in cursor.fetchall()}
+    return ReservedRemedyCredits(
+        credits=credits,
+        spent_ids=frozenset(c.credit_id for c in credits if c.credit_id not in unspent),
+    )
+
+
+def spend_reserved_remedy_credits(
+    connection: Any,
+    *,
+    store_id: UUID,
+    quote_id: UUID,
+    revision: int,
+    order_id: UUID,
+    actor_id: UUID,
+    correlation_id: UUID,
+    occurred_at: datetime,
+) -> tuple[UUID, ...]:
+    """Spend every credit the order's accepted revision reserves. Called inside order creation.
+
+    This is the moment the credit-lifecycle fix moved the spend to: the credit leaves the
+    customer's hands when the bill it discounts becomes an order, and not before. It runs inside
+    `OrderRepository.create`'s transaction, so the order, the spend, and each spend's own domain
+    event, audit row and outbox row commit together or not at all (invariant 5); a nested
+    `commit_material_change` is a savepoint inside that transaction.
+
+    Each credit is locked `FOR UPDATE` in id order -- a fixed order, so two orders spending
+    overlapping credits cannot deadlock -- and spent by the compare-and-swap `0042`'s trigger
+    already expects: `redeemed_at` from NULL to set, once, naming this quote revision. A credit that
+    is already spent, belongs to another store, or no longer matches the amount the revision took
+    off is refused with `RemedyStateError`, which rolls the whole order back. The first order to
+    spend a credit reserved on two quotes wins; the second is told why.
+    """
+
+    with connection.cursor() as cursor:
+        stored = QuoteRepository.get_revision(cursor, quote_id, revision)
+    if stored is None:
+        return ()
+    credits = reserved_remedy_credits(
+        parse_quote_revision(json.loads(stored.document.canonical_json))
+    )
+    spent: list[UUID] = []
+    for credit in sorted(credits, key=lambda item: item.credit_id):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT store_id, amount_vnd, policy_version_id, redeemed_at, row_version
+                FROM remedy_credits WHERE id = %s
+                FOR UPDATE
+                """,
+                (credit.credit_id,),
+            )
+            row = cursor.fetchone()
+        if row is None or _uuid(row[0]) != store_id:
+            raise RemedyStateError(
+                "the quote carries a remedy credit this store never issued",
+                reason_code="REMEDY_CREDIT_NOT_FOUND",
+            )
+        if row[3] is not None:
+            raise RemedyStateError(
+                "this quote carries a remedy credit that another order has already spent; price "
+                "the bag again and the credit will be released from it",
+                reason_code=RemedyRefusal.REMEDY_CREDIT_ALREADY_REDEEMED.value,
+                authority="DEC-015",
+            )
+        if int(row[1]) != credit.amount_vnd or _uuid(row[2]) != credit.policy_version_id:
+            # Unreachable while credits land whole: the adjustment is always the full face value
+            # under the credit's own policy version. Refused rather than spent if it ever is not.
+            raise RemedyStateError(
+                "the quote's credit does not match the credit that was issued",
+                reason_code="REMEDY_CREDIT_NOT_FOUND",
+            )
+        version = int(row[4])
+
+        def spend(cursor: Any, credit_id: UUID = credit.credit_id, version: int = version) -> None:
+            cursor.execute(
+                """
+                UPDATE remedy_credits
+                SET redeemed_at = %s, redeemed_quote_id = %s, redeemed_quote_revision = %s,
+                    row_version = row_version + 1
+                WHERE id = %s AND row_version = %s AND redeemed_at IS NULL
+                RETURNING id
+                """,
+                (occurred_at, quote_id, revision, credit_id, version),
+            )
+            if cursor.fetchone() is None:
+                raise RemedyStateError(
+                    "this credit has already been redeemed",
+                    reason_code=RemedyRefusal.REMEDY_CREDIT_ALREADY_REDEEMED.value,
+                    authority="DEC-015",
+                )
+
+        commit_material_change(
+            connection,
+            MaterialChange(
+                aggregate_type="REMEDY_CREDIT",
+                aggregate_id=credit.credit_id,
+                aggregate_version=version + 1,
+                event_type=REMEDY_CREDIT_REDEEMED,
+                event_payload={
+                    "order_id": str(order_id),
+                    "quote_id": str(quote_id),
+                    "quote_revision": revision,
+                    "amount_vnd": credit.amount_vnd,
+                },
+                audit_action="REMEDY_CREDIT_SPEND",
+                actor_type="STAFF",
+                actor_id=actor_id,
+                correlation_id=correlation_id,
+                outbox_events=(
+                    OutboxEvent(
+                        "remedy.credit_redeemed.v1",
+                        {"credit_id": str(credit.credit_id), "order_id": str(order_id)},
+                        f"remedy-credit:{credit.credit_id}:redeemed",
+                    ),
+                ),
+                occurred_at=occurred_at,
+            ),
+            spend,
+        )
+        spent.append(credit.credit_id)
+    return tuple(spent)
 
 
 # --- reading the order's recorded facts ----------------------------------------------------------
@@ -1062,7 +1315,8 @@ def _read_order_for_incident(cursor: Any, *, store_id: UUID, incident_id: UUID) 
                    WHERE dl.order_id = o.id AND dl.leg_kind = 'RETURN' AND dl.outcome = 'SUCCEEDED'
                    ORDER BY dl.recorded_at
                    LIMIT 1
-               ) AS returned_at
+               ) AS returned_at,
+               i.status
         FROM customer_incidents i
         JOIN orders o ON o.id = i.order_id
         JOIN quote_revisions r
@@ -1097,7 +1351,85 @@ def _read_order_for_incident(cursor: Any, *, store_id: UUID, incident_id: UUID) 
             expects_return_leg=expects_return,
             return_leg_succeeded=delivered_at is not None,
         ),
+        incident_status=str(row[9]),
     )
+
+
+def _read_commitments(
+    cursor: Any, *, order_id: UUID, order_line_id: str | None
+) -> RemedyCommitments:
+    """What earlier proposals already committed against this order, for `evaluate_remedy`.
+
+    Every proposal counts except one that can never pay: a proposal waiting on the owner whose
+    envelope reached a terminal non-approval state (`_DEAD_ENVELOPE_STATUSES`). Nothing else is
+    excluded -- a staff-authorised proposal nobody has executed yet is still money the counter can
+    hand over, so it is committed. Fail-closed at every edge: a missing envelope state row reads as
+    live, and an envelope that dies concurrently is still counted by the reader that raced it.
+
+    Called twice by `propose`: once unlocked to decide whether the owner is needed before anything
+    is written, and once under the order-row lock inside the transaction that inserts, which is the
+    read that binds. The second is what stops two counters both reading "nothing committed yet".
+    """
+
+    cursor.execute(
+        """
+        SELECT
+            coalesce(sum(p.amount_vnd) FILTER (
+                WHERE p.kind = 'DAMAGE_COMPENSATION' AND p.order_line_id = %s
+            ), 0),
+            count(*) FILTER (WHERE p.kind = 'LATE_DELIVERY_CREDIT')
+        FROM remedy_proposals p
+        LEFT JOIN approval_request_states s ON s.approval_request_id = p.approval_id
+        WHERE p.order_id = %s
+          AND NOT (
+              p.status = 'OWNER_APPROVAL_REQUIRED'
+              AND coalesce(s.status, 'REQUESTED') = ANY(%s)
+          )
+        """,
+        (order_line_id, order_id, list(_DEAD_ENVELOPE_STATUSES)),
+    )
+    row = cursor.fetchone()
+    assert row is not None
+    return RemedyCommitments(line_committed_vnd=int(row[0]), late_delivery_credits=int(row[1]))
+
+
+def _lock_proposable_incident(cursor: Any, *, order_id: UUID, incident_id: UUID) -> str:
+    """Take the locks a proposal is decided under, and re-check the incident while holding them.
+
+    The order row first, then the incident row, always in that order -- `execute` takes the
+    proposal, then the order, then writes the incident, so no path waits on these two the other way
+    round. The order row is the one that matters for money: `DEC-004`'s ceilings are about an item
+    and an order, and two incidents on one order must serialise even though they share no incident
+    row. `FOR UPDATE` rather than a weaker mode so that two proposers conflict with each other, and
+    it is held until the proposal's transaction ends.
+    """
+
+    cursor.execute("SELECT id FROM orders WHERE id = %s FOR UPDATE", (order_id,))
+    if cursor.fetchone() is None:
+        raise RemedyStateError(
+            "the incident is missing, not this store's, or names no order",
+            reason_code="REMEDY_INCIDENT_NOT_FOUND",
+        )
+    cursor.execute("SELECT status FROM customer_incidents WHERE id = %s FOR UPDATE", (incident_id,))
+    row = cursor.fetchone()
+    if row is None:
+        raise RemedyStateError(
+            "the incident is missing, not this store's, or names no order",
+            reason_code="REMEDY_INCIDENT_NOT_FOUND",
+        )
+    status = str(row[0])
+    _require_proposable_incident(status)
+    return status
+
+
+def _require_proposable_incident(status: str) -> None:
+    if status not in _PROPOSABLE_INCIDENT_STATUSES:
+        raise RemedyStateError(
+            "this incident has already reached its outcome; open a new incident for a new "
+            "complaint",
+            reason_code="REMEDY_INCIDENT_NOT_OPEN",
+            authority="DEC-004",
+        )
 
 
 def _line_amounts(snapshot: object) -> dict[str, int]:
@@ -1241,7 +1573,9 @@ def _insert_proposal(
     )
 
 
-def _open_incident_review(cursor: Any, incident_id: UUID, *, fault: bool) -> None:
+def _open_incident_review(
+    cursor: Any, incident_id: UUID, *, fault: bool, locked_status: str
+) -> None:
     """Move the incident onto the ladder `0014` drew and set the flag `0039` left writable.
 
     `fault_decided` records that a named staff member made the store-fault determination `DEC-004`
@@ -1249,15 +1583,167 @@ def _open_incident_review(cursor: Any, incident_id: UUID, *, fault: bool) -> Non
     `store_fault_attested` on the proposal. The distinction matters for the same reason
     `AcquisitionSource.UNKNOWN` exists: a decision recorded as not-taken is different from one
     recorded as no.
+
+    `locked_status` is what `_lock_proposable_incident` read while holding the row, so it is the
+    status this transaction is actually acting on. Only `OPEN` moves; an incident already
+    `UNDER_REVIEW` keeps its first fault finding. The UPDATE used to run blind -- no status check
+    beforehand and no row count afterwards -- which is how a proposal could be written against an
+    incident a remedy had already closed. Now a missed row is an error rather than a shrug: under
+    the lock it cannot happen, and if it ever does the proposal must not be recorded.
     """
 
+    _require_proposable_incident(locked_status)
+    if locked_status != "OPEN":
+        return
     cursor.execute(
         """
         UPDATE customer_incidents
         SET status = 'UNDER_REVIEW', fault_decided = %s
         WHERE id = %s AND status = 'OPEN'
+        RETURNING id
         """,
         (fault, incident_id),
+    )
+    if cursor.fetchone() is None:
+        raise RemedyStateError(
+            "the incident changed while the proposal was being recorded",
+            reason_code="STALE_VERSION",
+        )
+
+
+def _recheck_before_paying(
+    cursor: Any,
+    *,
+    proposal_id: UUID,
+    order_id: UUID,
+    kind: RemedyKind,
+    amount_vnd: int | None,
+    order_line_id: str | None,
+    ceiling_vnd: int | None,
+    staff_authorized: bool,
+    policy_version_id: UUID,
+) -> None:
+    """Refuse to pay a proposal that would break a limit `propose` enforces, whoever wrote it.
+
+    `propose` is the gate, and a proposal it wrote can never fail here. This is the second line, for
+    rows it did not write: the ones a deployed database already holds from before the limits became
+    cumulative -- three 80.000 d staff authorisations on one item, say -- and any future writer that
+    forgets the rule. It re-checks, over what has actually been **paid** (`EXECUTED`), the two
+    invariants the cumulative rule guarantees regardless of the order proposals were made in:
+
+    * everything paid on one item, this included, is within the item's ceiling;
+    * everything paid on one item *without the owner* -- proposals carrying no envelope -- is within
+      the staff limit of this proposal's own policy version. The last staff authorisation on an
+      item had every earlier one in its committed total, so under the rule this sum can never
+      exceed the limit; a row set where it does was not written under the rule.
+
+    And one late-delivery credit per order. The order row is locked first, as `propose` locks it,
+    so a proposal and a payment on the same order serialise rather than each checking a sum the
+    other is changing.
+    """
+
+    cursor.execute("SELECT id FROM orders WHERE id = %s FOR UPDATE", (order_id,))
+    if kind is RemedyKind.LATE_DELIVERY_CREDIT:
+        cursor.execute(
+            """
+            SELECT count(*) FROM remedy_proposals
+            WHERE order_id = %s AND kind = 'LATE_DELIVERY_CREDIT' AND status = 'EXECUTED'
+              AND id <> %s
+            """,
+            (order_id, proposal_id),
+        )
+        paid = cursor.fetchone()
+        if paid is not None and int(paid[0]) > 0:
+            raise RemedyStateError(
+                "a late-delivery credit has already been paid for this order",
+                reason_code=RemedyRefusal.REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED.value,
+                authority="DEC-004",
+            )
+        return
+    if kind is not RemedyKind.DAMAGE_COMPENSATION:
+        return
+    assert amount_vnd is not None and ceiling_vnd is not None and order_line_id is not None
+    cursor.execute(
+        """
+        SELECT coalesce(sum(amount_vnd), 0),
+               coalesce(sum(amount_vnd) FILTER (WHERE approval_id IS NULL), 0)
+        FROM remedy_proposals
+        WHERE order_id = %s AND kind = 'DAMAGE_COMPENSATION' AND order_line_id = %s
+          AND status = 'EXECUTED' AND id <> %s
+        """,
+        (order_id, order_line_id, proposal_id),
+    )
+    sums = cursor.fetchone()
+    assert sums is not None
+    paid_total, paid_by_staff = int(sums[0]), int(sums[1])
+    if paid_total + amount_vnd > ceiling_vnd:
+        raise RemedyStateError(
+            "paying this would take the item past its compensation ceiling",
+            reason_code=RemedyRefusal.REMEDY_CEILING_EXCEEDED.value,
+            authority="DEC-004",
+            ceiling_vnd=ceiling_vnd,
+            committed_vnd=paid_total,
+        )
+    if not staff_authorized:
+        return
+    policy = _policy_by_version(cursor, policy_version_id)
+    if policy is None:
+        # The staff limit this proposal was checked against cannot be read back, so whether staff
+        # alone may pay it cannot be answered. Invariant 11: that is a stop.
+        raise RemedyStateError(
+            "the remedy policy this proposal cites cannot be read",
+            reason_code=RemedyRefusal.REMEDY_POLICY_UNPUBLISHED.value,
+            authority="INVARIANT-11",
+        )
+    if paid_by_staff + amount_vnd > policy.staff_approval_ceiling_vnd:
+        raise RemedyStateError(
+            "staff alone have already paid up to their limit on this item; the owner must approve",
+            reason_code="REMEDY_APPROVAL_REQUIRED",
+            authority="DEC-004",
+        )
+
+
+def _policy_by_version(cursor: Any, version_id: UUID) -> RemedyPolicy | None:
+    """The `REMEDY_POLICY` version a proposal cites, digest-checked and parsed, or `None`.
+
+    The version the proposal was *checked against*, not the one in force now: invariant 4 keeps a
+    published document immutable, so a proposal made under version 1 is judged by version 1's staff
+    limit even after version 2 is published. `RETIRED` is read for the same reason -- retiring a
+    document ends its use for new decisions, not the meaning of the ones already made under it.
+    """
+
+    cursor.execute(
+        """
+        SELECT payload, snapshot_hash FROM configuration_versions
+        WHERE id = %s AND config_type = %s AND lifecycle IN ('PUBLISHED', 'RETIRED')
+        """,
+        (version_id, REMEDY_POLICY_CONFIG_TYPE),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    payload = row[0]
+    if not isinstance(payload, Mapping) or not hmac.compare_digest(
+        snapshot_hash(payload), str(row[1])
+    ):
+        return None
+    try:
+        return parse_remedy_policy(payload)
+    except RemedyPolicyError:
+        return None
+
+
+def _refusal_error(refused: RemedyRefused) -> RemedyStateError:
+    """The domain's refusal, carried to the caller with every figure that explains it."""
+
+    return RemedyStateError(
+        "this remedy is not authorised",
+        reason_code=refused.reason_code,
+        authority=refused.authority,
+        ceiling_vnd=refused.ceiling_vnd,
+        window_closes_at=refused.window_closes_at,
+        threshold_minutes=refused.threshold_minutes,
+        committed_vnd=refused.committed_vnd,
     )
 
 
@@ -1291,10 +1777,13 @@ __all__ = [
     "RemedyProposalCommand",
     "RemedyProposalRepository",
     "RemedyStateError",
+    "ReservedRemedyCredits",
     "StoredCreditRedemption",
     "StoredRemedyExecution",
     "StoredRemedyProposal",
     "publish_remedy_policy",
     "read_published_remedy_policy",
+    "read_reserved_remedy_credits",
+    "spend_reserved_remedy_credits",
     "validate_remedy_policy",
 ]

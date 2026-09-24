@@ -538,7 +538,18 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     notice both said the envelope must be decided by somebody other than "người vừa tạo",
     #     which named the wrong act now that the rule measures against the export request's own
     #     requester.
-    assert sum(counts.values()) == _registry()["total"] == 348
+    #
+    # 352 after the remedy money fixes (split-claim accumulation and the credit lifecycle): +4, all
+    # `REASON_NOTE` glosses in `core/i18n.js`, and 348 + 4 = 352. Three are refusals the counter can
+    # now meet and `test_every_remedy_refusal_the_counter_can_meet_is_glossed_for_them` requires:
+    # `REMEDY_INCIDENT_NOT_OPEN` (a proposal against an incident that already has its outcome),
+    # `REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED` (one 10% credit per late delivery) and
+    # `REMEDY_CREDIT_ALREADY_ON_QUOTE` (the same credit presented twice on one bill). The fourth is
+    # `REMEDY_CREDIT_RELEASED`, the reason code a re-priced revision carries when it could not keep
+    # a credit its parent reserved -- a staff member has to tell the customer before they agree.
+    # One sentence was re-keyed without changing the count: `REMEDY_CEILING_EXCEEDED` now says the
+    # ceiling counts every earlier proposal on the same garment, because it does.
+    assert sum(counts.values()) == _registry()["total"] == 352
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

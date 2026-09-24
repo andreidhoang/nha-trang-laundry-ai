@@ -15,6 +15,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from nha_trang_laundry_domain.catalog import AdjustmentDirection, PolicyOutcome, PromotionResolution
 from nha_trang_laundry_domain.promotion import CURRENT_PROMOTION as _PROMOTION
 from nha_trang_laundry_domain.promotion import (
@@ -24,8 +26,10 @@ from nha_trang_laundry_domain.promotion import (
     evaluate_promotion,
 )
 from nha_trang_laundry_domain.remedies import (
+    NO_PRIOR_COMMITMENTS,
     REMEDY_REFUSAL_AUTHORITIES,
     RemedyAuthorized,
+    RemedyCommitments,
     RemedyKind,
     RemedyOrderFacts,
     RemedyPolicy,
@@ -68,9 +72,22 @@ def facts(**overrides: object) -> RemedyOrderFacts:
     return RemedyOrderFacts(**base)  # type: ignore[arg-type]
 
 
-def decide(request: RemedyRequest, *, at: datetime = NOW, **fact_overrides: object) -> object:
+def decide(
+    request: RemedyRequest,
+    *,
+    at: datetime = NOW,
+    committed: RemedyCommitments = NO_PRIOR_COMMITMENTS,
+    **fact_overrides: object,
+) -> object:
+    # `committed` became a required input of `evaluate_remedy` when the figures became cumulative.
+    # Every test written before that is about the first proposal against an item, which is exactly
+    # what `NO_PRIOR_COMMITMENTS` states; the cumulative tests at the end pass their own.
     return evaluate_remedy(
-        policy=POLICY, facts=facts(**fact_overrides), request=request, requested_at=at
+        policy=POLICY,
+        facts=facts(**fact_overrides),
+        request=request,
+        requested_at=at,
+        committed=committed,
     )
 
 
@@ -464,3 +481,115 @@ def test_a_policy_is_only_a_policy_when_every_figure_is_an_integer() -> None:
     assert POLICY.staff_approval_ceiling_vnd == 100_000
     assert POLICY.damage_compensation_multiple == 5
     assert POLICY.late_delivery_credit_rate_bps == 1_000
+
+
+# --- the figures are per item, not per form -------------------------------------------------------
+#
+# The defect: a claim split into three 80.000 d proposals passed a per-request 100.000 d staff limit
+# three times. Both damage figures are now compared against what the line already carries plus what
+# is asked for, and these pin the arithmetic at its edges.
+
+
+def _damage(amount: int, line_committed: int) -> object:
+    return decide(
+        RemedyRequest(
+            kind=RemedyKind.DAMAGE_COMPENSATION,
+            store_fault_attested=True,
+            order_line_id="line-1",
+            amount_vnd=amount,
+        ),
+        committed=RemedyCommitments(line_committed_vnd=line_committed, late_delivery_credits=0),
+    )
+
+
+@pytest.mark.parametrize(
+    ("committed", "amount", "owner"),
+    [
+        (0, 100_000, False),  # the limit itself, alone: staff
+        (20_000, 80_000, False),  # 100.000 in total, inclusive: staff
+        (20_000, 80_001, True),  # one dong over, in total: owner
+        (80_000, 80_000, True),  # the reproduction's second proposal
+        (100_000, 1, True),  # anything at all once the limit is used up
+    ],
+)
+def test_the_staff_limit_applies_to_the_item_total(
+    committed: int, amount: int, owner: bool
+) -> None:
+    outcome = _damage(amount, committed)
+    assert isinstance(outcome, RemedyAuthorized)
+    assert outcome.requires_owner_approval is owner
+    # The amount recorded is what this proposal asks for, never the running total.
+    assert outcome.amount_vnd == amount
+
+
+def test_the_item_ceiling_is_cumulative_and_inclusive() -> None:
+    """500.000 d on a 100.000 d line: reachable exactly, never exceeded, whoever approves."""
+
+    at_ceiling = _damage(200_000, 300_000)
+    assert isinstance(at_ceiling, RemedyAuthorized) and at_ceiling.requires_owner_approval
+    over = _damage(200_001, 300_000)
+    assert isinstance(over, RemedyRefused)
+    assert over.refusal is RemedyRefusal.REMEDY_CEILING_EXCEEDED
+    # Refused naming the ceiling and what is already on the item, never truncated to the remainder.
+    assert (over.ceiling_vnd, over.committed_vnd) == (500_000, 300_000)
+
+
+def test_a_second_late_delivery_credit_is_refused_before_anything_is_computed() -> None:
+    outcome = decide(
+        RemedyRequest(
+            kind=RemedyKind.LATE_DELIVERY_CREDIT,
+            store_fault_attested=True,
+            attested_late_by_minutes=150,
+        ),
+        committed=RemedyCommitments(line_committed_vnd=0, late_delivery_credits=1),
+        expects_return_leg=True,
+        return_leg_succeeded=True,
+    )
+    assert isinstance(outcome, RemedyRefused)
+    assert outcome.refusal is RemedyRefusal.REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED
+    assert REMEDY_REFUSAL_AUTHORITIES[outcome.refusal] == "DEC-004"
+
+
+@pytest.mark.parametrize("bad", [-1, True, 1.0, "0"])
+def test_a_committed_total_that_is_not_money_is_refused(bad: object) -> None:
+    with pytest.raises(RemedyPolicyError):
+        RemedyCommitments(line_committed_vnd=bad, late_delivery_credits=0)  # type: ignore[arg-type]
+
+
+@given(
+    amounts=st.lists(st.integers(min_value=1, max_value=600_000), min_size=1, max_size=8),
+    line_amount=st.integers(min_value=1, max_value=200_000),
+)
+@settings(max_examples=300, deadline=None)
+def test_no_sequence_of_proposals_pays_more_than_the_figures_allow(
+    amounts: list[int], line_amount: int
+) -> None:
+    """Whatever split a counter tries, the item never carries more than 5x its fee, and never more
+    than the staff limit without the owner. The repository feeds each accepted amount back in as
+    the next proposal's committed total, exactly as this loop does."""
+
+    committed = staff_only = 0
+    ceiling = line_amount * POLICY.damage_compensation_multiple
+    for amount in amounts:
+        outcome = evaluate_remedy(
+            policy=POLICY,
+            facts=facts(line_amounts_vnd={"line-1": line_amount}),
+            request=RemedyRequest(
+                kind=RemedyKind.DAMAGE_COMPENSATION,
+                store_fault_attested=True,
+                order_line_id="line-1",
+                amount_vnd=amount,
+            ),
+            requested_at=NOW,
+            committed=RemedyCommitments(line_committed_vnd=committed, late_delivery_credits=0),
+        )
+        if isinstance(outcome, RemedyRefused):
+            assert outcome.refusal is RemedyRefusal.REMEDY_CEILING_EXCEEDED
+            assert committed + amount > ceiling
+            continue
+        assert isinstance(outcome, RemedyAuthorized)
+        committed += amount
+        if not outcome.requires_owner_approval:
+            staff_only += amount
+        assert committed <= ceiling
+        assert staff_only <= POLICY.staff_approval_ceiling_vnd

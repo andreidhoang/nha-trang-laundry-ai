@@ -27,6 +27,7 @@ from nha_trang_laundry_domain.orders import (
 
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.remedies import RemedyStateError, spend_reserved_remedy_credits
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -398,6 +399,23 @@ class OrderRepository:
                         occurred_at,
                     ),
                 )
+                # The credit-lifecycle fix: a remedy credit on this bill is spent now, in the same
+                # transaction as the order it discounts, and not when it was first put on the quote.
+                # A credit another order already spent refuses this one and rolls it back -- the
+                # customer was read a total that included a discount the shop can no longer give.
+                try:
+                    spend_reserved_remedy_credits(
+                        connection,
+                        store_id=command.store_id,
+                        quote_id=command.accepted_quote_id,
+                        revision=command.accepted_quote_revision,
+                        order_id=order_id,
+                        actor_id=command.principal.staff_user_id,
+                        correlation_id=command.correlation_id,
+                        occurred_at=occurred_at,
+                    )
+                except RemedyStateError as error:
+                    raise OrderStateError(f"{error.reason_code}: {error}") from error
 
             commit_material_change(
                 connection,

@@ -91,6 +91,12 @@ REMEDY_CREDIT_REASON_CODE: Final = "REMEDY_CREDIT_DEC_004"
 #: its discount is a remedy rather than a promotion nobody can find.
 REMEDY_CREDIT_APPLIED: Final = "REMEDY_CREDIT_APPLIED"
 
+#: Stamped on a re-priced revision that could not carry a credit its parent reserved -- the bill got
+#: smaller than the credit, became a band, or the credit was spent by another order meanwhile. The
+#: credit is not shrunk to fit and not lost: it stays owed in full, and a calculation trace named
+#: `REMEDY_CREDIT_RELEASED_<credit id>` on the same revision says which credit and why.
+REMEDY_CREDIT_RELEASED: Final = "REMEDY_CREDIT_RELEASED"
+
 
 class RemedyKind(StrEnum):
     """The four outcomes an incident can reach. There is deliberately no fifth."""
@@ -171,6 +177,13 @@ class RemedyRefusal(StrEnum):
     #: make, and this code will not rank them on the owner's behalf. Refused before the credit is
     #: touched, so it stays unredeemed and a person can spend it on a bill with no programme on it.
     REMEDY_CREDIT_PROMOTION_NOT_STACKABLE = "REMEDY_CREDIT_PROMOTION_NOT_STACKABLE"
+    #: A late-delivery credit has already been proposed or paid for this order. `DEC-004` gives one
+    #: 10% credit for one late delivery; a second incident about the same delivery, or a second
+    #: proposal on the same incident, is the same lateness counted twice.
+    REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED = "REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED"
+    #: The revision this credit would be reserved on already carries it. A credit lands on a bill
+    #: once; presenting it again against the same quote would discount the same bill twice.
+    REMEDY_CREDIT_ALREADY_ON_QUOTE = "REMEDY_CREDIT_ALREADY_ON_QUOTE"
 
 
 #: Which invariant or decision owns each refusal, in the shape `settlement.REFUSAL_DECISIONS` and
@@ -203,6 +216,10 @@ REMEDY_REFUSAL_AUTHORITIES: Final = {
     # to that question is REQUIRE_HUMAN. Naming DEC-004 as the authority is the caller being told
     # exactly what would have to change: the owner deciding which instrument wins, not this code.
     RemedyRefusal.REMEDY_CREDIT_PROMOTION_NOT_STACKABLE: "DEC-004",
+    # DEC-004 gives one 10% credit per late delivery, not one per complaint about it.
+    RemedyRefusal.REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED: "DEC-004",
+    # DEC-015: a bearer credit is spent once, and it cannot discount one bill twice either.
+    RemedyRefusal.REMEDY_CREDIT_ALREADY_ON_QUOTE: "DEC-015",
 }
 
 
@@ -308,6 +325,40 @@ class RemedyOrderFacts:
 
 
 @dataclass(frozen=True, slots=True)
+class RemedyCommitments:
+    """What earlier proposals have already committed against the thing this request is about.
+
+    `DEC-004`'s two damage figures -- 5x the item's cleaning fee, and 100.000 d before the owner
+    must decide -- are limits on what the shop pays **for one item**, not on what one form asks
+    for. Checked per request, a claim split into three 80.000 d proposals passed the staff limit
+    three times and paid 240.000 d with no owner; the lead reproduced exactly that. So every figure
+    is compared against what was already committed *plus* what is asked for now.
+
+    Server-derived and never a staff input (invariant 9), for the same reason `RemedyOrderFacts`
+    is: the repository sums stored proposals under a row lock and passes the total in. This module
+    decides from it and never computes it, so the answer is reproducible from the two numbers
+    alone.
+
+    "Committed" means every earlier proposal that can still pay or already paid. `RemedyStatus` has
+    no terminal non-paying member; a proposal is dead only when the owner's `APPROVE_REMEDY`
+    envelope it waits on has reached `REJECTED`, `EXPIRED` or `CANCELLED`, which the repository
+    reads and this type does not need to know about.
+    """
+
+    #: Sum of `amount_vnd` over live-or-paid `DAMAGE_COMPENSATION` proposals on the same order line.
+    line_committed_vnd: int
+    #: How many live-or-paid `LATE_DELIVERY_CREDIT` proposals the order already has.
+    late_delivery_credits: int
+
+    def __post_init__(self) -> None:
+        for value in (self.line_committed_vnd, self.late_delivery_credits):
+            # Invariant 2, and `bool` excluded because `True` is an `int`. A negative "committed"
+            # total would hand a request headroom nobody granted.
+            if not _valid_amount(value):
+                raise RemedyPolicyError("prior remedy commitments must be non-negative integers")
+
+
+@dataclass(frozen=True, slots=True)
 class RemedyRequest:
     """What a named staff member asked for. Only attested facts and a choice of kind."""
 
@@ -368,6 +419,9 @@ class RemedyRefused:
     ceiling_vnd: int | None = None
     window_closes_at: datetime | None = None
     threshold_minutes: int | None = None
+    #: What earlier proposals had already committed against the same item, when that is why the
+    #: ceiling was reached. Staff need both numbers to tell a customer what is still possible.
+    committed_vnd: int | None = None
     outcome: PolicyOutcome = PolicyOutcome.DENY
 
     @property
@@ -388,6 +442,7 @@ def evaluate_remedy(
     facts: RemedyOrderFacts,
     request: RemedyRequest,
     requested_at: datetime,
+    committed: RemedyCommitments,
 ) -> RemedyOutcome:
     """Decide one remedy request against the published figures and the order's recorded facts.
 
@@ -395,6 +450,9 @@ def evaluate_remedy(
     ordering is the point: every later branch reads a published figure, and the figures do not apply
     to loss. A loss case that reached them would be answered by analogy, which is exactly what the
     decision packet forbids without asking the owner first.
+
+    `committed` is required and has no default, deliberately: a caller that has not summed what the
+    item already carries has not asked the question `DEC-004` asks. See `RemedyCommitments`.
     """
 
     _require_aware(requested_at)
@@ -408,7 +466,7 @@ def evaluate_remedy(
         return RemedyRefused(RemedyRefusal.REMEDY_STORE_FAULT_NOT_ATTESTED)
 
     if request.kind is RemedyKind.LATE_DELIVERY_CREDIT:
-        return _evaluate_late_delivery(policy, facts, request)
+        return _evaluate_late_delivery(policy, facts, request, committed)
 
     window = (
         timedelta(days=policy.free_rewash_window_days)
@@ -446,8 +504,17 @@ def evaluate_remedy(
     # `DEC-004`: capped at 5x *that item's* cleaning fee -- what the store charged, not retail or
     # replacement value. The multiple is published; the fee is the order's own stored line amount.
     ceiling = line_amount * policy.damage_compensation_multiple
-    if request.amount_vnd > ceiling:
-        return RemedyRefused(RemedyRefusal.REMEDY_CEILING_EXCEEDED, ceiling_vnd=ceiling)
+    # Both figures are about the item, so both are compared against the item's running total: what
+    # earlier proposals on this line already committed, plus this one. Owner approval answers the
+    # staff limit; it is not a way past the item's own ceiling, so the ceiling is checked first and
+    # regardless of who would approve.
+    total = committed.line_committed_vnd + request.amount_vnd
+    if total > ceiling:
+        return RemedyRefused(
+            RemedyRefusal.REMEDY_CEILING_EXCEEDED,
+            ceiling_vnd=ceiling,
+            committed_vnd=committed.line_committed_vnd,
+        )
     return RemedyAuthorized(
         kind=request.kind,
         amount_vnd=request.amount_vnd,
@@ -455,12 +522,17 @@ def evaluate_remedy(
         ceiling_vnd=ceiling,
         window_opened_at=opened_at,
         window_closes_at=closes_at,
-        requires_owner_approval=request.amount_vnd > policy.staff_approval_ceiling_vnd,
+        # Inclusive, as it always was: "staff may approve up to 100.000 d" -- now of the item's
+        # total, so a claim split into pieces reaches the owner exactly when the whole would have.
+        requires_owner_approval=total > policy.staff_approval_ceiling_vnd,
     )
 
 
 def _evaluate_late_delivery(
-    policy: RemedyPolicy, facts: RemedyOrderFacts, request: RemedyRequest
+    policy: RemedyPolicy,
+    facts: RemedyOrderFacts,
+    request: RemedyRequest,
+    committed: RemedyCommitments,
 ) -> RemedyOutcome:
     """The 10% credit, computed by the server from the settled total.
 
@@ -471,6 +543,10 @@ def _evaluate_late_delivery(
     """
 
     assert request.attested_late_by_minutes is not None
+    if committed.late_delivery_credits:
+        # One late delivery, one credit. Checked first because it is the fact that decides: every
+        # later check would pass again for the same delivery and compute the same 10% again.
+        return RemedyRefused(RemedyRefusal.REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED)
     if not (facts.expects_return_leg and facts.return_leg_succeeded):
         return RemedyRefused(RemedyRefusal.REMEDY_DELIVERY_NOT_RECORDED)
     if request.attested_late_by_minutes <= policy.late_delivery_threshold_minutes:
@@ -655,8 +731,14 @@ def _require_aware(value: datetime) -> None:
         raise RemedyPolicyError("a remedy must be evaluated against an aware timestamp")
 
 
+#: Nothing committed yet: the first proposal against an item or an order. Defined after
+#: `_valid_amount`, which `RemedyCommitments` validates with.
+NO_PRIOR_COMMITMENTS: Final = RemedyCommitments(line_committed_vnd=0, late_delivery_credits=0)
+
+
 __all__ = [
     "MAX_JCS_INTEGER",
+    "NO_PRIOR_COMMITMENTS",
     "REMEDY_CREDIT_APPLIED",
     "REMEDY_CREDIT_REASON_CODE",
     "REMEDY_POLICY_CONFIG_TYPE",
@@ -665,6 +747,7 @@ __all__ = [
     "REMEDY_PROPOSAL_DOCUMENT_SCHEMA",
     "REMEDY_REFUSAL_AUTHORITIES",
     "CreditAllocation",
+    "RemedyCommitments",
     "RemedyCredit",
     "RemedyKind",
     "RemedyOrderFacts",

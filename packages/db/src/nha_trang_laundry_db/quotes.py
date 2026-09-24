@@ -4,14 +4,23 @@ from __future__ import annotations
 
 import hmac
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_domain.canonical import CanonicalDocument, canonical_document
-from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot, verify_quote_snapshot
+from nha_trang_laundry_domain.quote_composition import (
+    released_remedy_credit_ids,
+    reserved_remedy_credits,
+)
+from nha_trang_laundry_domain.quotes import (
+    ImmutableQuoteSnapshot,
+    QuoteSnapshotError,
+    parse_quote_revision,
+    verify_quote_snapshot,
+)
 
 from nha_trang_laundry_db.identity import StaffPrincipal
 from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
@@ -105,6 +114,65 @@ class QuoteSummary:
     valid_until: datetime | None
 
 
+#: The refusal prefix for a revision that would lose a reserved remedy credit. Spelled into the
+#: message so the console's reason classifier can read it the way it reads `QUOTE_EXPIRED`.
+REMEDY_CREDIT_DROPPED = "REMEDY_CREDIT_DROPPED"
+
+
+def _refuse_a_silently_dropped_credit(
+    cursor: Any, snapshot: ImmutableQuoteSnapshot, *, parent_revision: int
+) -> None:
+    """A new revision carries every credit its parent reserved, or says it released it.
+
+    The credit-lifecycle fix made a remedy credit a reservation on a quote, spent only when an order
+    is created from it. That is only safe if no revision can quietly stop carrying one: the defect
+    it fixed was exactly a reprice that composed a revision without the credit, leaving a customer
+    11.000 d worse off with nothing on the bill to say so. `compose_quote_revision` carries credits
+    when it is told about them; this is the wall for a caller that did not tell it -- today's three
+    derivations (`accept_quote_revision`, `close_range_prices`, `redeem_remedy_credit`) keep their
+    parent's adjustments by construction, and the two composing callers read the reservation first.
+
+    Runs inside the revision's own transaction, after the container compare-and-swap, so the parent
+    it reads is the one this revision replaces. Only a parent that carries a `REMEDY_CREDIT` row is
+    parsed -- the credit can only have been reserved through a stored revision, so a parent with no
+    such row has nothing to lose -- and a credit-carrying parent this cannot read is refused, since
+    whether the child keeps its credit cannot then be answered.
+    """
+
+    cursor.execute(
+        """
+        SELECT snapshot FROM quote_revisions
+        WHERE quote_id = %s AND revision = %s
+          AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(snapshot -> 'adjustments') AS a
+              WHERE a ->> 'kind' = 'REMEDY_CREDIT'
+          )
+        """,
+        (snapshot.data.quote_id, parent_revision),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return
+    if not isinstance(row[0], Mapping):
+        raise QuoteStateError("the revision this one replaces is unreadable")
+    try:
+        parent = parse_quote_revision(row[0])
+        reserved = {credit.credit_id for credit in reserved_remedy_credits(parent)}
+        if not reserved:
+            return
+        carried = {credit.credit_id for credit in reserved_remedy_credits(snapshot)}
+        released = released_remedy_credit_ids(snapshot)
+    except (QuoteSnapshotError, KeyError, TypeError, ValueError) as error:
+        raise QuoteStateError("the revision this one replaces is unreadable") from error
+    dropped = reserved - carried - released
+    if dropped:
+        raise QuoteStateError(
+            f"{REMEDY_CREDIT_DROPPED}: this revision would lose a remedy credit the quote had "
+            "reserved without saying so; price it again through the counter so the credit is "
+            "carried or released"
+        )
+
+
 class QuoteRepository:
     """Create-only quote revisions with optimistic container concurrency."""
 
@@ -117,12 +185,12 @@ class QuoteRepository:
     ) -> None:
         """Write one revision, and optionally one caller mutation in the same transaction.
 
-        `also_mutate` exists for invariant 5 and for one caller. `REMEDY-001` spends a remedy credit
-        by deriving a revision that carries its discount, and the credit's single-use
-        compare-and-swap has to commit with that revision or neither: burning the credit without the
-        discount robs the customer, and writing the discount without burning the credit lets one
-        voucher be spent twice. Two transactions cannot express that, and a second copy of the
-        INSERT above would put two writers of `quote_revisions` in the repository.
+        `also_mutate` exists for invariant 5 and for one caller. `REMEDY-001` reserves a remedy
+        credit by deriving a revision that carries its discount, and the check that the credit is
+        still unspent has to hold, under the credit's row lock, in the same transaction as that
+        revision. (It used to *burn* the credit here, which is how a reprice or an abandoned quote
+        lost it; the credit is now spent by `OrderRepository.create`.) A second copy of the INSERT
+        above would put two writers of `quote_revisions` in the repository.
 
         It runs on the same cursor, after the revision is written, inside
         `commit_material_change`'s transaction. A caller that raises from it rolls the revision back
@@ -181,6 +249,9 @@ class QuoteRepository:
                 )
                 if cursor.fetchone() is None:
                     raise QuoteStateError("quote is missing, closed, or stale")
+                _refuse_a_silently_dropped_credit(
+                    cursor, snapshot, parent_revision=command.expected_current_revision
+                )
             totals = data.totals
             cursor.execute(
                 """

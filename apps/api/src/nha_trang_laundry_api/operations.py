@@ -84,6 +84,8 @@ from nha_trang_laundry_db.remedies import (
     RemedyOptions,
     RemedyProposalCommand,
     RemedyProposalRepository,
+    ReservedRemedyCredits,
+    read_reserved_remedy_credits,
 )
 from nha_trang_laundry_db.settlement import (
     CollectedToday,
@@ -1211,6 +1213,20 @@ class OperationsService:
                 # supports rather than an error: the quote composes at list price and says
                 # `PROMOTION_NOT_PUBLISHED`. Invariant 11 -- there is no constant to fall back on.
                 promotion = read_published_promotion_program(cursor)
+                # A re-price carries the remedy credits the revision it replaces had reserved, and
+                # releases any another order has spent since. Before the credit-lifecycle fix this
+                # composed from the lines alone and the credit vanished from the bill; now
+                # `QuoteRepository.create_revision` would refuse a revision that dropped one.
+                reserved = (
+                    read_reserved_remedy_credits(
+                        cursor,
+                        store_id=store_id,
+                        quote_id=quote_id,
+                        revision=expected_current_revision,
+                    )
+                    if quote_id is not None and expected_current_revision > 0
+                    else ReservedRemedyCredits()
+                )
             composition = compose_quote_revision(
                 quote_id=target_id,
                 revision=revision,
@@ -1225,6 +1241,8 @@ class OperationsService:
                 customer_acknowledged_manual_fee=customer_acknowledged_manual_fee,
                 present_range_as_band=present_range_as_band,
                 promotion=promotion,
+                remedy_credits=reserved.credits,
+                spent_remedy_credit_ids=reserved.spent_ids,
             )
             if isinstance(composition, UnresolvedQuote):
                 # Nothing is written and no idempotency record is claimed: an unresolved quote is

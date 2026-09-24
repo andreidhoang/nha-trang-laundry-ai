@@ -87,7 +87,7 @@ from nha_trang_laundry_observability import (
     current_correlation,
 )
 from opentelemetry import metrics, trace
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse, StreamingResponse
 
@@ -240,13 +240,23 @@ class StaffCreateResponse(BaseModel):
 
 
 class StrictRequest(BaseModel):
+    """Every request body: no unknown keys, and no coercion into an integer or a boolean.
+
+    Integer and boolean fields on subclasses are `StrictInt` / `StrictBool`. Pydantic's lax mode
+    turns `true` into 1 and "120000" into 120000 before the domain sees the value, which bypasses
+    the domain's own `not isinstance(x, bool)` guards -- `paid_amount_vnd: true` was 1 ₫ and
+    `verified_distance_m: true` was 1 m, inside the free-delivery zone. Not `strict=True` on the
+    whole model: that would also refuse the ISO strings JSON must carry UUIDs and datetimes as.
+    `test_request_strictness.py` enumerates every request model, so a new `int` field fails there.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
 
 class OrderCreateRequest(StrictRequest):
     bound_contact_id: UUID
     quote_id: UUID
-    quote_revision: int = Field(ge=1)
+    quote_revision: StrictInt = Field(ge=1)
     quote_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     fulfillment_mode: FulfillmentMode
     customer_final_quote_accepted_at: datetime
@@ -272,7 +282,7 @@ class IntakeTransitionRequest(StrictRequest):
     #: Whether a human has confirmed the shop has capacity for this order. The system never decides
     #: this: `evaluate_delivery` returns REQUIRE_HUMAN for every slot because Shadow stage has no
     #: auto-confirmable capacity, so it is the operator's word or nothing.
-    slot_approved: bool = False
+    slot_approved: StrictBool = False
 
 
 class ProductionTransitionRequest(StrictRequest):
@@ -287,7 +297,7 @@ class ApprovalRequest(StrictRequest):
     action: ApprovalAction
     resource_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,127}$")
     resource_id: UUID
-    resource_version: int = Field(ge=1, le=MAX_CANONICAL_INT)
+    resource_version: StrictInt = Field(ge=1, le=MAX_CANONICAL_INT)
     snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     rendered_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     policy_version: str = Field(min_length=1, max_length=200)
@@ -297,13 +307,13 @@ class ApprovalDecisionRequest(StrictRequest):
     decision: ApprovalDecision
     reason_code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,99}$")
     note: str | None = Field(default=None, min_length=1, max_length=500)
-    resource_version: int = Field(ge=1, le=MAX_CANONICAL_INT)
+    resource_version: StrictInt = Field(ge=1, le=MAX_CANONICAL_INT)
     snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     rendered_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
 
 
 class ManualSendPrepareRequest(StrictRequest):
-    observed_resource_version: int = Field(ge=1, le=MAX_CANONICAL_INT)
+    observed_resource_version: StrictInt = Field(ge=1, le=MAX_CANONICAL_INT)
     observed_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     observed_rendered_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     recipient_binding_id: UUID
@@ -311,7 +321,7 @@ class ManualSendPrepareRequest(StrictRequest):
 
 
 class ManualSendAttestationRequest(StrictRequest):
-    observed_resource_version: int = Field(ge=1, le=MAX_CANONICAL_INT)
+    observed_resource_version: StrictInt = Field(ge=1, le=MAX_CANONICAL_INT)
     exact_rendered_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     sent_at: datetime
 
@@ -347,20 +357,20 @@ class RemedyProposalRequest(StrictRequest):
     #: The staff finding `DEC-004` rests every remedy on. Required, with no default: a remedy is
     #: authorised by somebody deciding the store was at fault, and a default would decide it for
     #: them in whichever direction the default pointed.
-    store_fault_attested: bool
+    store_fault_attested: StrictBool
     order_line_id: str | None = Field(default=None, min_length=1, max_length=64)
-    amount_vnd: int | None = Field(default=None, ge=0, le=MAX_CANONICAL_INT)
+    amount_vnd: StrictInt | None = Field(default=None, ge=0, le=MAX_CANONICAL_INT)
     #: How late the delivery was, attested by the staff member who handled it. The shop records no
     #: promised arrival time, so this cannot be derived; that a return leg happened at all is
     #: checked against the record, and this is refused unless it clears the published threshold.
-    attested_late_by_minutes: int | None = Field(default=None, ge=0, le=MAX_CANONICAL_INT)
+    attested_late_by_minutes: StrictInt | None = Field(default=None, ge=0, le=MAX_CANONICAL_INT)
 
 
 class RemedyCreditRedemptionRequest(StrictRequest):
     """Which credit to spend, and the caller's evidence that it read the quote it is spending on."""
 
     credit_id: UUID
-    expected_current_revision: int = Field(ge=1)
+    expected_current_revision: StrictInt = Field(ge=1)
     expected_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
 
 
@@ -503,10 +513,10 @@ class ManualSendResponse(BaseModel):
 class SettlementRequest(StrictRequest):
     # An integer of đồng. VND has no minor unit, and a float would introduce a representation the
     # currency does not have on the one field that decides whether a customer paid.
-    paid_amount_vnd: int = Field(ge=0, le=MAX_CANONICAL_INT)
+    paid_amount_vnd: StrictInt = Field(ge=0, le=MAX_CANONICAL_INT)
     # Explicit rather than defaulted. "The customer took their goods" is the fact being attested,
     # and a default true would let a staff member attest to it by not mentioning it.
-    collected_by_customer: bool
+    collected_by_customer: StrictBool
 
 
 class SettlementResponse(BaseModel):
@@ -542,20 +552,20 @@ class QuoteCreateRequest(StrictRequest):
     fulfillment_mode: FulfillmentMode
     # Delivery facts. Absent is not zero -- an absent distance makes the fee REQUIRE_HUMAN, which
     # is why the quote then carries no total rather than a total that understates the price.
-    verified_distance_m: int | None = Field(default=None, ge=0, le=100_000)
+    verified_distance_m: StrictInt | None = Field(default=None, ge=0, le=100_000)
     planned_transport_weight_kg: str | None = Field(default=None, max_length=32)
-    approved_manual_fee_vnd: int | None = Field(default=None, ge=0)
-    customer_acknowledged_manual_fee: bool = False
+    approved_manual_fee_vnd: StrictInt | None = Field(default=None, ge=0)
+    customer_acknowledged_manual_fee: StrictBool = False
     # Absent means "open a new quote". Present means "add a revision to this one", and then
     # expected_current_revision plus If-Match carry the compare-and-swap: a correction is always a
     # new revision, never an update to an existing one.
     quote_id: UUID | None = None
-    expected_current_revision: int = Field(default=0, ge=0)
+    expected_current_revision: StrictInt = Field(default=0, ge=0)
     # Off unless asked for. A range-priced service is refused by default -- which is what every
     # caller before `RANGE-PRICE-001` relied on -- and storing the band instead is a deliberate
     # act: it produces a revision with a minimum and a maximum and no single total, which a caller
     # expecting a price must not receive by accident.
-    present_range_as_band: bool = False
+    present_range_as_band: StrictBool = False
 
 
 class QuotePromotionResponse(BaseModel):
@@ -630,13 +640,13 @@ class RangePriceChoiceRequest(StrictRequest):
     """
 
     service_code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,62}$")
-    amount_vnd: int = Field(ge=0, le=MAX_CANONICAL_INT)
+    amount_vnd: StrictInt = Field(ge=0, le=MAX_CANONICAL_INT)
 
 
 class RangePriceRequest(StrictRequest):
     """The amounts, and the caller's evidence that it is pricing the revision it was shown."""
 
-    expected_current_revision: int = Field(ge=1)
+    expected_current_revision: StrictInt = Field(ge=1)
     expected_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     choices: list[RangePriceChoiceRequest] = Field(min_length=1, max_length=20)
 
@@ -1786,7 +1796,7 @@ class QuoteAcceptRequest(StrictRequest):
     would record a customer agreeing to something they never saw.
     """
 
-    expected_current_revision: int = Field(ge=1)
+    expected_current_revision: StrictInt = Field(ge=1)
     expected_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
 
 

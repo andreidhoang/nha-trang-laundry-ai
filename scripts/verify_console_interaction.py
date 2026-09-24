@@ -191,15 +191,17 @@ ORDER_CREATED = {
 SETTLEMENTS_TODAY = {
     "collected_vnd": 1_285_000,
     "settlement_count": 7,
-    # `collected-today-v2` (DEC-024): the net above is settlements minus refunds, and both legs
-    # travel beside it. No refund in this fixture, so the net equals what was settled.
-    "settled_vnd": 1_285_000,
+    # `collected-today-v2` (DEC-024): refunds and the drawer's net movement travel beside the
+    # takings, every amount non-negative. No refund in this fixture, so the drawer moved IN by
+    # exactly what was collected.
     "refunded_vnd": 0,
     "refund_count": 0,
+    "net_vnd": 1_285_000,
+    "net_direction": "IN",
     "business_timezone": "Asia/Ho_Chi_Minh",
     # OPS-BOARD-001, invariant 18: the rule that produced the figure travels with the figure, and
     # the takings card renders it beneath the amount.
-    "query_version": "collected-today-v2:4c5ad5da56daa1e9",
+    "query_version": "collected-today-v2:c266d2f11377a64c",
 }
 
 #: What `GET /internal/v1/stores/{id}/day-summary` returns. Two statuses rather than one, because

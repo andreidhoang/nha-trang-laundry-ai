@@ -334,10 +334,11 @@ def test_the_day_count_and_takings_versions_are_pinned_too() -> None:
     """The other two figures the day surfaces publish, held to the same rule."""
     assert TODAY_STATUS_COUNTS_QUERY.label == "today-status-counts-v1:cd422085b053d921"
     # v1 (`391bd9369153e5ae`) summed settlements alone, so a paid order cancelled with the cash
-    # handed back under DEC-024 stayed in the day's takings. v2 subtracts `order_refunds` on the
-    # refund's own business day and takes that day as a parameter instead of `now()` -- a changed
-    # rule, so a new identifier, not a bumped digest under the old one.
-    assert COLLECTED_TODAY_QUERY.label == "collected-today-v2:4c5ad5da56daa1e9"
+    # handed back under DEC-024 left the card above the drawer. v2 keeps that gross sum as
+    # `collected_vnd` and adds today's `order_refunds` and the drawer's net movement as a
+    # non-negative magnitude plus IN/OUT, each leg on its own business day, with the day a
+    # parameter instead of `now()` -- a changed rule, so a new identifier, not a bumped digest.
+    assert COLLECTED_TODAY_QUERY.label == "collected-today-v2:c266d2f11377a64c"
 
 
 def test_a_changed_rule_produces_a_different_digest_under_the_same_identifier() -> None:

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -36,7 +36,11 @@ from nha_trang_laundry_db.orders import (
     OrderStateError,
     OrderTransitionCommand,
 )
-from nha_trang_laundry_db.settlement import SettlementCommand, SettlementRepository
+from nha_trang_laundry_db.settlement import (
+    CollectedToday,
+    SettlementCommand,
+    SettlementRepository,
+)
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
@@ -216,11 +220,33 @@ def _refunds(connection: Any, order_id: UUID) -> list[tuple[Any, ...]]:
         return list(cursor.fetchall())
 
 
-def _takings(connection: Any, store_id: UUID, staff: StaffPrincipal, as_of: datetime) -> Any:
+def _takings(
+    connection: Any, store_id: UUID, staff: StaffPrincipal, as_of: datetime
+) -> CollectedToday:
+    """Read the figure, and hold every read in every scenario to invariant 2.
+
+    Every numeric field of the result is money or a count, and none of them may ever be negative --
+    including on a refund-only day, where the drawer's fall is a direction, not a sign.
+    """
     with connection.cursor() as cursor:
-        return SettlementRepository.collected_today(
+        takings = SettlementRepository.collected_today(
             cursor, store_id=store_id, principal=staff, as_of=as_of
         )
+    numeric = {
+        name: value
+        for name, value in asdict(takings).items()
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
+    assert set(numeric) == {
+        "collected_vnd",
+        "settlement_count",
+        "refunded_vnd",
+        "refund_count",
+        "net_vnd",
+    }
+    assert all(value >= 0 for value in numeric.values()), numeric
+    assert takings.net_direction in ("IN", "OUT")
+    return takings
 
 
 def _refund_table_rows(connection: Any, order_id: UUID) -> int:
@@ -239,8 +265,9 @@ def test_a_prepaid_delivery_cancelled_unwashed_and_refunded_leaves_takings_at_th
 ) -> None:
     """The exact scenario both reviewers found: DEC-023 prepaid, DEC-024 refunded in full.
 
-    Before the fix `collected_vnd` read 110,000 with 0 in the drawer, the order read `PAID`, and no
-    record anywhere said money had gone back across the counter.
+    Before the fix the card read 110,000 collected with 0 in the drawer, the order read `PAID`, and
+    no record anywhere said money had gone back across the counter. `collected_vnd` keeps meaning
+    what was collected; the refund and the drawer's net movement now travel beside it.
     """
     store_id = uuid4()
     staff = _staff(connection, store_id)
@@ -270,11 +297,10 @@ def test_a_prepaid_delivery_cancelled_unwashed_and_refunded_leaves_takings_at_th
     ]
 
     takings = _takings(connection, store_id, staff, now)
-    assert takings.collected_vnd == 0
-    assert takings.settled_vnd == QUOTED_TOTAL
-    assert takings.settlement_count == 1
-    assert takings.refunded_vnd == QUOTED_TOTAL
-    assert takings.refund_count == 1
+    assert (takings.collected_vnd, takings.settlement_count) == (QUOTED_TOTAL, 1)
+    assert (takings.refunded_vnd, takings.refund_count) == (QUOTED_TOTAL, 1)
+    # The drawer took 110,000 and handed 110,000 back: it did not move.
+    assert (takings.net_vnd, takings.net_direction) == (0, "IN")
 
 
 def test_shop_fault_no_charge_on_a_paid_collected_order_refunds_the_settled_amount(
@@ -300,7 +326,9 @@ def test_shop_fault_no_charge_on_a_paid_collected_order_refunds_the_settled_amou
     assert [(row[0], row[1], row[2]) for row in refunds] == [
         (QUOTED_TOTAL, "TO_CUSTOMER", "SHOP_FAULT_NO_CHARGE")
     ]
-    assert _takings(connection, store_id, staff, now).collected_vnd == 0
+    takings = _takings(connection, store_id, staff, now)
+    assert (takings.collected_vnd, takings.refunded_vnd) == (QUOTED_TOTAL, QUOTED_TOTAL)
+    assert (takings.net_vnd, takings.net_direction) == (0, "IN")
 
 
 def test_a_refund_today_of_yesterdays_payment_reduces_today_and_leaves_yesterday_alone(
@@ -327,21 +355,22 @@ def test_a_refund_today_of_yesterdays_payment_reduces_today_and_leaves_yesterday
     early.cancel_after_review(CustodyResolution.RETURNED_UNWASHED_REFUNDED, at=today)
 
     on_the_day = _takings(connection, store_id, staff, today)
-    assert (on_the_day.settled_vnd, on_the_day.refunded_vnd) == (QUOTED_TOTAL, QUOTED_TOTAL)
-    assert on_the_day.collected_vnd == 0
+    assert (on_the_day.collected_vnd, on_the_day.refunded_vnd) == (QUOTED_TOTAL, QUOTED_TOTAL)
+    assert (on_the_day.net_vnd, on_the_day.net_direction) == (0, "IN")
     the_day_before = _takings(connection, store_id, staff, yesterday)
     assert the_day_before.collected_vnd == QUOTED_TOTAL
     assert (the_day_before.refunded_vnd, the_day_before.refund_count) == (0, 0)
+    assert (the_day_before.net_vnd, the_day_before.net_direction) == (QUOTED_TOTAL, "IN")
 
 
-def test_a_refund_with_no_payment_the_same_day_takes_the_day_below_zero(
+def test_a_refund_only_day_says_the_drawer_went_down_without_a_negative_number(
     connection: psycopg.Connection[Any],
 ) -> None:
-    """The figure is what the drawer did, so it may be negative, and it is not clamped.
+    """The drawer's fall is a direction, not a sign, and it is not clamped away either.
 
     A day on which the only money event was 110,000 handed back to a customer is a day the drawer
-    ended 110,000 lighter than it started. Showing 0 would be the same defect as before in the
-    other direction: a number that does not match the cash.
+    ended 110,000 lighter than it started. Showing "no change" would be the original defect in the
+    other direction; showing -110,000 would break invariant 2. So: 110,000, OUT.
     """
     store_id = uuid4()
     staff = _staff(connection, store_id)
@@ -353,9 +382,9 @@ def test_a_refund_with_no_payment_the_same_day_takes_the_day_below_zero(
     order.cancel_after_review(CustodyResolution.RETURNED_UNWASHED_REFUNDED, at=today)
 
     takings = _takings(connection, store_id, staff, today)
-    assert (takings.settled_vnd, takings.settlement_count) == (0, 0)
+    assert (takings.collected_vnd, takings.settlement_count) == (0, 0)
     assert (takings.refunded_vnd, takings.refund_count) == (QUOTED_TOTAL, 1)
-    assert takings.collected_vnd == -QUOTED_TOTAL
+    assert (takings.net_vnd, takings.net_direction) == (QUOTED_TOTAL, "OUT")
 
 
 # --- atomicity and the database's own second line ----------------------------------------------
@@ -480,7 +509,10 @@ def test_replaying_the_cancellation_returns_the_prior_result_and_refunds_once(
     assert again.replayed
     assert (again.balance, again.row_version) == (first.balance, first.row_version)
     assert _refund_table_rows(connection, order.order_id) == 1
-    assert _takings(connection, store_id, staff, now).collected_vnd == 0
+    takings = _takings(connection, store_id, staff, now)
+    # One refund, not two: a replayed cancellation would otherwise show the drawer going OUT.
+    assert (takings.refunded_vnd, takings.refund_count) == (QUOTED_TOTAL, 1)
+    assert (takings.net_vnd, takings.net_direction) == (0, "IN")
 
 
 def test_the_database_refuses_a_paid_order_cancelled_without_a_refund(
@@ -596,7 +628,9 @@ def test_cancelling_an_unpaid_order_is_unchanged(connection: psycopg.Connection[
     )
     assert _refund_table_rows(connection, direct.order_id) == 0
 
-    assert _takings(connection, store_id, staff, now).collected_vnd == 0
+    assert _takings(connection, store_id, staff, now) == CollectedToday(
+        collected_vnd=0, settlement_count=0
+    )
 
 
 def test_a_paid_order_that_completes_stays_paid_and_counted(
@@ -615,6 +649,7 @@ def test_a_paid_order_that_completes_stays_paid_and_counted(
     assert _refund_table_rows(connection, order.order_id) == 0
     takings = _takings(connection, store_id, staff, now)
     assert (takings.collected_vnd, takings.refunded_vnd) == (QUOTED_TOTAL, 0)
+    assert (takings.net_vnd, takings.net_direction) == (QUOTED_TOTAL, "IN")
 
 
 def test_a_paid_order_cannot_be_resolved_as_never_received(

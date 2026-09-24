@@ -122,6 +122,11 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/orders/{}/production-transition",
         "/internal/v1/orders/{}/settlement",
         "/internal/v1/orders/{}/delivery-legs",
+        # ORDER-LOOKUP-001. The only read that reaches an order older than the board's newest page,
+        # and the only one that hands back its row version for `If-Match`. Order detail and the
+        # board's "?order=" hand-off both depend on it; losing it puts every order older than about
+        # three days of trade back out of reach at pickup.
+        "/internal/v1/orders/{}",
         # RANGE-PRICE-001. Twenty of the forty-four published services are priced by inspection,
         # and these three are the whole of the console's half of closing one: read the revision to
         # learn the band the customer was shown, propose an amount inside it, and -- after a second

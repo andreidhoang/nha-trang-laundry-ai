@@ -32,8 +32,8 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 8 | Chuyển **nhận đồ** sang *Đã nhận*, tích **Đã duyệt lịch** | Đơn hàng |
 | 9 | Chuyển **thương mại** lần lượt tới *Đang chạy* | Đơn hàng |
 | 10 | Giặt xong thì chuyển **sản xuất**: xếp hàng → đang giặt → kiểm tra → sẵn sàng | Đơn hàng |
-| 11 | Khách tới lấy → chuyển **sản xuất** sang *Đã giao ra* | Đơn hàng |
-| 12 | Thu tiền → nhập số tiền, tích **Khách đã tự lấy đồ**, bấm **Ghi nhận tất toán** | Chi tiết đơn |
+| 11 | Khách tới lấy → **Tìm theo số phiếu** (hỏi ngày trên phiếu nếu không phải hôm nay), bấm **Mở đơn**, rồi **Chuyển trạng thái đơn này**: **sản xuất** sang *Đã giao ra* | Đơn hàng |
+| 12 | Đọc cho khách số **Phải thu** ngay trên ô tiền, nhập đúng số đó, tích **Khách đã tự lấy đồ**, bấm **Ghi nhận tất toán** | Chi tiết đơn |
 | 13 | Chuyển **thương mại** sang *Hoàn tất* | Đơn hàng |
 
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)

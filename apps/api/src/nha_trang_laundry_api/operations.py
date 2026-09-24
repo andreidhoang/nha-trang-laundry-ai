@@ -28,7 +28,11 @@ from nha_trang_laundry_db.channel import (
     ContactChannelBindingRepository,
 )
 from nha_trang_laundry_db.configurations import ConfigurationRepository, snapshot_hash
-from nha_trang_laundry_db.counter_tickets import CounterTicketRepository, IssuedTicket
+from nha_trang_laundry_db.counter_tickets import (
+    CounterTicketRepository,
+    IssuedTicket,
+    ticket_business_date,
+)
 from nha_trang_laundry_db.delivery_legs import (
     DeliveryLegKind,
     DeliveryLegOutcome,
@@ -60,7 +64,9 @@ from nha_trang_laundry_db.orders import (
     OrderRepository,
     OrderStateError,
     OrderTransitionCommand,
+    OrderView,
     StoredOrder,
+    TicketReference,
 )
 from nha_trang_laundry_db.promotions import read_published_promotion_program
 from nha_trang_laundry_db.quotes import (
@@ -281,6 +287,9 @@ class QuoteRevisionView:
     valid_until: datetime | None
     reason_codes: tuple[str, ...]
     lines: tuple[QuoteLineView, ...]
+    #: When the customer agreed the price that produced this revision (`DEC-021`), read from the
+    #: attestation. Null for a revision no acceptance produced.
+    customer_accepted_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -634,15 +643,50 @@ class OperationsService:
         )
 
     def list_orders(
-        self, *, store_id: UUID, principal: StaffPrincipal, limit: int
-    ) -> tuple[StoredOrder, ...]:
+        self,
+        *,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        limit: int,
+        open_only: bool = False,
+        ticket_number: int | None = None,
+        ticket_date: date | None = None,
+    ) -> tuple[OrderView, ...]:
+        """The board, optionally narrowed to open orders or to one walk-in ticket.
+
+        A ticket number with no date means today's, on the server's clock and the counter's own
+        business day -- the rule the number was issued under (`ticket_business_date`). "Phiếu số
+        17" at the counter means today's 17 unless the slip says otherwise, and a browser's clock
+        or timezone is not the authority on which day it is in the shop.
+        """
+
+        ticket: TicketReference | None = None
+        if ticket_number is not None:
+            ticket = TicketReference(
+                number=ticket_number,
+                issued_on=ticket_date or ticket_business_date(datetime.now(UTC)),
+            )
         with (
             self._connection_factory(self._database_url) as connection,
             connection.cursor() as cursor,
         ):
             return self._orders.list_for_store(
-                cursor, store_id=store_id, principal=principal, limit=limit
+                cursor,
+                store_id=store_id,
+                principal=principal,
+                limit=limit,
+                open_only=open_only,
+                ticket=ticket,
             )
+
+    def read_order(self, *, order_id: UUID, principal: StaffPrincipal) -> OrderView:
+        """One order by id. The store, and so the membership check, come from the row."""
+
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return self._orders.read_for_principal(cursor, order_id=order_id, principal=principal)
 
     # --- SHADOW-CONSOLE-001 -----------------------------------------------------------------
     #
@@ -1605,11 +1649,17 @@ class OperationsService:
                 raise QuoteStateError("quote is missing or not in this store")
             target = container.current_revision if revision is None else revision
             stored = QuoteRepository.get_revision(cursor, quote_id, target)
+            accepted_at = QuoteAcceptanceRepository.accepted_at_for_final_revision(
+                cursor, store_id=store_id, quote_id=quote_id, final_revision=target
+            )
         if stored is None:
             raise QuoteStateError("quote revision is missing")
         priced = parse_quote_revision(json.loads(stored.document.canonical_json))
         return _quote_revision_view(
-            priced, snapshot_hash=stored.document.snapshot_hash, row_version=container.row_version
+            priced,
+            snapshot_hash=stored.document.snapshot_hash,
+            row_version=container.row_version,
+            customer_accepted_at=accepted_at,
         )
 
     def _bound_band_revision(
@@ -2721,7 +2771,11 @@ def _require_range_price_approval(
 
 
 def _quote_revision_view(
-    priced: ImmutableQuoteSnapshot, *, snapshot_hash: str, row_version: int
+    priced: ImmutableQuoteSnapshot,
+    *,
+    snapshot_hash: str,
+    row_version: int,
+    customer_accepted_at: datetime | None = None,
 ) -> QuoteRevisionView:
     """Project a stored revision for reading. Nothing is computed; every field is read off it."""
 
@@ -2762,6 +2816,7 @@ def _quote_revision_view(
             )
             for line in data.lines
         ),
+        customer_accepted_at=customer_accepted_at,
     )
 
 

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
@@ -23,6 +24,30 @@ from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commi
 #: Who may hand a customer a ticket. The same set that may take a payment or accept a quote: this is
 #: counter work, and a rule that stopped the person at the counter doing it would be worked around.
 TICKET_ROLES = frozenset({StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.OPERATOR})
+
+
+#: The day a ticket number belongs to is the shop's day, cut at local midnight in Nha Trang -- the
+#: boundary the takings (`settlement.BUSINESS_TIMEZONE`), the day counts and the exports use.
+BUSINESS_TIMEZONE = "Asia/Ho_Chi_Minh"
+_BUSINESS_ZONE = ZoneInfo(BUSINESS_TIMEZONE)
+
+
+def ticket_business_date(moment: datetime) -> date:
+    """The counter's business day for an instant: one definition, for issuing and for finding.
+
+    Until 2026-09-24 `issue` took `moment.astimezone(UTC).date()`. Nha Trang is UTC+7, so the ticket
+    day rolled over at 07:00 local rather than at midnight, and a ticket handed out at 06:30 carried
+    the previous day's date and continued the previous day's sequence. Nothing else in the shop cuts
+    its day that way. The lookup a counter makes at pickup ("phiếu số 17 hôm nay") must use exactly
+    the rule the number was issued under, so both read it from here.
+
+    A naive datetime is refused rather than guessed at: which day it is depends entirely on the
+    zone, and assuming one is how the UTC date got here in the first place.
+    """
+
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise ValueError("a ticket's business day needs a timezone-aware instant")
+    return moment.astimezone(_BUSINESS_ZONE).date()
 
 
 class CounterTicketError(ValueError):
@@ -80,7 +105,11 @@ class CounterTicketRepository:
         if not principal.roles & TICKET_ROLES or not principal.mfa_verified:
             raise StoreAccessError("issuing a ticket requires an operations role with MFA")
         moment = issued_at or datetime.now(UTC)
-        issued_on = moment.astimezone(UTC).date()
+        # The local business day. Rows written before 2026-09-24 between 00:00 and 07:00 local carry
+        # the UTC date instead; they are append-only history and are not rewritten. Numbering stays
+        # collision-free across the change because the next number is always max+1 for the day key
+        # the row is written under, under the advisory lock below.
+        issued_on = ticket_business_date(moment)
         ticket_id = uuid4()
         assigned: list[int] = []
 
@@ -156,8 +185,10 @@ class CounterTicketRepository:
 
 
 __all__ = [
+    "BUSINESS_TIMEZONE",
     "TICKET_ROLES",
     "CounterTicketError",
     "CounterTicketRepository",
     "IssuedTicket",
+    "ticket_business_date",
 ]

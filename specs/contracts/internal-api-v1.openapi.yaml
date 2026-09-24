@@ -147,6 +147,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}:
+    get:
+      operationId: read_order
+      summary: One order, by id, for a member of the store the order belongs to.
+      x-authorization-dependencies:
+      - current_principal
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/orders/{order_id}/delivery-legs:
     post:
       operationId: record_delivery_leg
@@ -705,7 +722,7 @@ paths:
   /internal/v1/stores/{store_id}/orders:
     get:
       operationId: list_orders
-      summary: list_orders
+      summary: The store's orders, newest first.
       x-authorization-dependencies:
       - current_principal
       - get_operations_service

@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 349
+  DESCRIPTIVE: 354
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 5
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 376
+total: 381
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -249,6 +249,50 @@ disclosures:
   module: core/errors.js
   key: REFUSAL.CANCEL_NEEDS_REVIEW
   text: Đơn đã bắt đầu làm nên không huỷ thẳng được. Đưa đơn sang “Đang xét huỷ” trước.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.CUSTODY_RECORDED:2634f81c0d22
+  module: core/errors.js
+  key: REFUSAL.CUSTODY_RECORDED
+  text: 'Không huỷ theo “chưa từng nhận đồ” được: đơn này đã ghi nhận tiệm nhận đồ của khách. Chọn cách
+    xử lý đúng với việc đồ đang ở tiệm.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.PRODUCTION_BEGUN:f0da599fd34a
+  module: core/errors.js
+  key: REFUSAL.PRODUCTION_BEGUN
+  text: 'Không huỷ theo “trả lại, chưa giặt” được: đơn này đã ghi nhận bắt đầu giặt. Chọn cách xử lý khác,
+    hoặc báo chủ tiệm.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.CANCEL_RESOLUTION_MISSING:f9ebe8f5df8c
+  module: core/errors.js
+  key: REFUSAL.CANCEL_RESOLUTION_MISSING
+  text: Huỷ đơn cần chọn trước cách xử lý đồ và tiền của khách. Chọn một cách rồi bấm lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.PAID_RESOLUTION_UNCLEAR:f07fc7b070a1
+  module: core/errors.js
+  key: REFUSAL.PAID_RESOLUTION_UNCLEAR
+  text: Đơn đã thu tiền, và cách xử lý này không nói khách có được hoàn tiền hay không, nên máy không
+    huỷ. Báo chủ tiệm.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.CANCEL_BALANCE_UNSUPPORTED:4a1193aa51bb
+  module: core/errors.js
+  key: REFUSAL.CANCEL_BALANCE_UNSUPPORTED
+  text: Công nợ của đơn đang ở dạng máy chưa hỗ trợ khi huỷ (DEC-010). Báo chủ tiệm; đừng huỷ kiểu khác
+    để lách.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

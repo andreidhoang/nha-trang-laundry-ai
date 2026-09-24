@@ -671,7 +671,11 @@ with sync_playwright() as pw:
     apage.wait_for_timeout(1500)
     shot(apage, "19-auditor.png")
     atext = apage.locator("main").first.inner_text() or ""
-    submits = apage.locator("form.form button[type=submit]")
+    # Writes only. "Tìm theo số phiếu" (ORDER-LOOKUP-001) is the first read form on this screen,
+    # and an auditor is entitled to it; it is marked `data-intent="read"` and asserted usable
+    # below, so excluding it here narrows nothing the check was about.
+    submits = apage.locator("form.form button[type=submit]:not([data-intent='read'])")
+    reads = apage.locator("form.form button[type=submit][data-intent='read']")
     print(f"      the auditor's submit buttons ({submits.count()}):")
     for i in range(submits.count()):
         b = submits.nth(i)
@@ -720,6 +724,11 @@ with sync_playwright() as pw:
         "the auditor is told they may not write, and the write controls are disabled",
         disabled,
         f"{submits.count()} submit buttons, all disabled={disabled}",
+    )
+    ok(
+        "and the auditor can still look an order up by its ticket, which is a read",
+        reads.count() == 1 and not reads.first.is_disabled(),
+        f"{reads.count()} read control(s)",
     )
     hints = apage.locator("form.form p.hint").all_text_contents()
     print("      what the auditor's order screen actually says:")

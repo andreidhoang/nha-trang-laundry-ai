@@ -389,3 +389,24 @@ def test_every_mutating_console_call_carries_an_idempotency_key() -> None:
         "these console calls would throw in the browser before reaching the server; "
         f"give each one an idempotencyKey: {offenders}"
     )
+
+
+def test_only_a_pinned_read_may_be_marked_as_one() -> None:
+    """`data-intent="read"` exempts a button from the "auditor sees no live write control" checks.
+
+    Both real-API browser scripts count a live `data-requires-network` or submit button on the order
+    board as a write an auditor must not be offered. ORDER-LOOKUP-001 put the first *read* form on
+    that screen -- "Tìm theo số phiếu", a GET an auditor is entitled to -- and both checks failed on
+    it while all three writes were correctly disabled. The marker is what lets the checks tell the
+    two apart. Marking a write as a read would switch the check off for it, so each use is pinned
+    here and a new one is a reviewed change, not a one-word edit.
+    """
+
+    pinned = {("screens/orders.js", '"Tìm"')}
+    found = set()
+    for path in (WEB / "src").rglob("*.js"):
+        text = path.read_text("utf-8")
+        for match in re.finditer(r'dataIntent:\s*"read"', text):
+            label = re.search(r'"[^"]+"', text[match.end() : match.end() + 60])
+            found.add((path.relative_to(WEB / "src").as_posix(), label.group(0) if label else "?"))
+    assert found == pinned

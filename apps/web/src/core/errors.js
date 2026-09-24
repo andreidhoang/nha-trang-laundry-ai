@@ -144,6 +144,24 @@ const REFUSAL = {
   HANDOFF_FIRST: "Cần ghi nhận đã nhận đồ từ khách trước, rồi mới làm bước này.",
   CANCEL_NEEDS_REVIEW:
     "Đơn đã bắt đầu làm nên không huỷ thẳng được. Đưa đơn sang “Đang xét huỷ” trước.",
+  // The two contradictions `DEC-024` lets the record check. The console used to show the server's
+  // English, which at least said *which* fact; the first Vietnamese pass dropped these to the
+  // generic title and hid the fact under "Chi tiết kỹ thuật". Staff choosing how to cancel need
+  // to be told what the order already records, in the headline.
+  CUSTODY_RECORDED:
+    "Không huỷ theo “chưa từng nhận đồ” được: đơn này đã ghi nhận tiệm nhận đồ của khách. " +
+    "Chọn cách xử lý đúng với việc đồ đang ở tiệm.",
+  PRODUCTION_BEGUN:
+    "Không huỷ theo “trả lại, chưa giặt” được: đơn này đã ghi nhận bắt đầu giặt. " +
+    "Chọn cách xử lý khác, hoặc báo chủ tiệm.",
+  CANCEL_RESOLUTION_MISSING:
+    "Huỷ đơn cần chọn trước cách xử lý đồ và tiền của khách. Chọn một cách rồi bấm lại.",
+  PAID_RESOLUTION_UNCLEAR:
+    "Đơn đã thu tiền, và cách xử lý này không nói khách có được hoàn tiền hay không, nên máy " +
+    "không huỷ. Báo chủ tiệm.",
+  CANCEL_BALANCE_UNSUPPORTED:
+    "Công nợ của đơn đang ở dạng máy chưa hỗ trợ khi huỷ (DEC-010). Báo chủ tiệm; đừng huỷ " +
+    "kiểu khác để lách.",
   INVALID_STATE_TRANSITION:
     "Đơn đang ở trạng thái không cho phép bước này. Tải lại đơn để xem trạng thái hiện tại.",
   ORDER_MISSING: "Không tìm thấy đơn này trong cửa hàng đang chọn.",
@@ -191,8 +209,13 @@ const REFUSAL_TEXT = [
   ["INVALID_STATE_TRANSITION: order is not active", "ORDER_NOT_ACTIVE"],
   ["INVALID_STATE_TRANSITION: intake is not accepted", "INTAKE_NOT_ACCEPTED"],
   ["INVALID_STATE_TRANSITION: handoff must be recorded first", "HANDOFF_FIRST"],
+  ["INVALID_STATE_TRANSITION: the order records custody of the goods", "CUSTODY_RECORDED"],
+  ["INVALID_STATE_TRANSITION: production has begun on the goods", "PRODUCTION_BEGUN"],
   ["INVALID_STATE_TRANSITION", "INVALID_STATE_TRANSITION"],
   ["HUMAN_APPROVAL_REQUIRED: work has begun", "CANCEL_NEEDS_REVIEW"],
+  ["HUMAN_APPROVAL_REQUIRED: cancellation resolution is incomplete", "CANCEL_RESOLUTION_MISSING"],
+  ["HUMAN_APPROVAL_REQUIRED: the order was paid, and this resolution", "PAID_RESOLUTION_UNCLEAR"],
+  ["NOT_SUPPORTED: cancelling an order with this balance", "CANCEL_BALANCE_UNSUPPORTED"],
   // packages/db approvals.py, apps/api operations.py
   ["approval expired", "APPROVAL_EXPIRED"],
   ["approval is not pending", "APPROVAL_NOT_PENDING"],

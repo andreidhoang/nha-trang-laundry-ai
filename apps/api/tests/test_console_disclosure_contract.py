@@ -585,7 +585,15 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # ceiling counts every earlier proposal on the same garment, because it does.
     #
     # 376 with all three rounds landed: disjoint sentences again, so 372 + 4.
-    assert sum(counts.values()) == _registry()["total"] == 376
+    #
+    # 381 after the real-API browser run on the merged tree: +5 `REFUSAL` entries for the
+    # cancellation refusals, none of which had a Vietnamese title. Two are the contradictions
+    # DEC-024 lets the record check ("the order records custody of the goods", "production has
+    # begun"): the first Vietnamese pass fell back to the generic title for them and hid the fact
+    # on record under "Chi tiết kỹ thuật", which verify_workflow_conformance.py caught. Three
+    # arrived with CANCEL-REFUND-001 (a paid order whose resolution does not say the money went
+    # back; an unsupported balance shape; a resolution not yet chosen).
+    assert sum(counts.values()) == _registry()["total"] == 381
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

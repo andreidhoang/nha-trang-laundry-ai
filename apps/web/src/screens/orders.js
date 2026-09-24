@@ -588,7 +588,13 @@ export function render_(context) {
     h(
       "div",
       { class: "form__actions" },
-      h("button", { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" }, "Tìm"),
+      h(
+        "button",
+        // A read. `data-intent="read"` is how the role checks tell it from a write control;
+        // `test_staff_console_contract.py` pins which buttons may carry it.
+        { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true", dataIntent: "read" },
+        "Tìm",
+      ),
     ),
     lookupResult,
   );

@@ -52,7 +52,7 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0042", "remedy_proposals"),
         ("0043", "range_price_proposals"),
         ("0044", "ops_board_export"),
-        # 0045 is reserved for REMEDY-CUMULATIVE-001 / CREDIT-RESERVATION-001, merged after this.
+        # No 0045: it was reserved for the remedy fixes, which turned out to need no schema change.
         ("0046", "order_refunds"),
         ("0047", "order_lookup"),
     ]

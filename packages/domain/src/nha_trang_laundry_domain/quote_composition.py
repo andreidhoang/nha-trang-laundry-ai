@@ -95,6 +95,7 @@ from nha_trang_laundry_domain.range_prices import (
 from nha_trang_laundry_domain.remedies import (
     REMEDY_CREDIT_APPLIED,
     REMEDY_CREDIT_REASON_CODE,
+    REMEDY_CREDIT_RELEASED,
     RemedyCredit,
     RemedyRefusal,
     RemedyRefused,
@@ -106,6 +107,12 @@ QUOTE_ENGINE_VERSION: Final = "quote-engine-v1"
 #: quote engine's own version because the credit is applied to an already-priced revision and did
 #: not re-run the engine.
 REMEDY_CREDIT_COMPONENT_VERSION: Final = "remedy-credit-v1"
+#: `adjustment_id` prefix of the `REMEDY_CREDIT` row a reserved credit becomes; the credit's own id
+#: follows it. The adjustment is the reservation: which credits a quote carries is read from it.
+REMEDY_CREDIT_ADJUSTMENT_PREFIX: Final = "remedy-credit-"
+#: Calculation-trace component prefix for a credit a re-priced revision could not carry. The
+#: credit's id follows, upper-case hex, so it fits `quotes.CODE_PATTERN` (55 of 63 characters).
+REMEDY_CREDIT_RELEASED_COMPONENT_PREFIX: Final = "REMEDY_CREDIT_RELEASED_"
 QUOTE_ENGINE_HASH: Final = canonical_document({"engine": QUOTE_ENGINE_VERSION}).snapshot_hash
 PRICING_COMPONENT_VERSION: Final = "pricing-v1"
 QUOTE_VALIDITY: Final = timedelta(days=1)
@@ -804,8 +811,117 @@ def compose_quote_revision(
     range_prices: RangePriceAttestation | None = None,
     present_range_as_band: bool = False,
     promotion: PublishedPromotionProgram | None = None,
+    remedy_credits: tuple[RemedyCredit, ...] = (),
+    spent_remedy_credit_ids: frozenset[UUID] = frozenset(),
 ) -> QuoteComposition:
     """Price the requested lines and assemble one immutable revision, or refuse with reasons.
+
+    `remedy_credits` are the credits the revision being replaced had **reserved** -- read back from
+    it with `reserved_remedy_credits` -- and they are carried into this one. `REMEDY-001` composed a
+    re-priced revision from the requested lines alone, so a credit redeemed against revision 2 was
+    simply absent from revision 3 while the credit row said it had been spent: the customer added a
+    shirt and lost 11.000 d. A credit is now only reserved by a quote and spent by the order made
+    from it (`OrderRepository.create`), and a reprice keeps the reservation.
+
+    Each credit lands whole or not at all, through the same `redeem_remedy_credit` a first
+    reservation uses, so there is one allocator and one set of refusals. A credit this revision
+    cannot carry -- the bill is now smaller than the credit, the revision is a band or already
+    owner-approved, or `spent_remedy_credit_ids` says another order spent it meanwhile -- is
+    **released** from the quote rather than shrunk to fit: the revision carries
+    `REMEDY_CREDIT_RELEASED` and a `REMEDY_CREDIT_RELEASED_<id>` trace naming the credit and why,
+    and the credit, never spent, stays owed in full. Shrinking it would make the bill non-negative
+    by cancelling part of a debt nobody decided to cancel; the released credit can be reserved again
+    on any bill it fits. `QuoteRepository.create_revision` refuses a revision that drops a parent's
+    credit without that statement, so a caller that forgets to pass `remedy_credits` fails loudly.
+
+    A carried credit is "on the bag first" for the promotion's stacking test, exactly as a credit
+    redeemed before acceptance is, so a programme that may not stack is withheld rather than
+    compounded -- unless every carried credit ends up released, in which case the revision is
+    composed again without them and the programme applies as if they had never been there.
+
+    Every other parameter -- `fulfillment_mode`, the three fates of a range-priced line, and
+    `promotion` -- is described on `_compose_fresh`, which does the pricing.
+    """
+
+    credits: list[RemedyCredit] = []
+    for credit in remedy_credits:
+        if all(credit.credit_id != kept.credit_id for kept in credits):
+            credits.append(credit)
+    live = tuple(item for item in credits if item.credit_id not in spent_remedy_credit_ids)
+    released: list[tuple[RemedyCredit, str]] = [
+        (item, RemedyRefusal.REMEDY_CREDIT_ALREADY_REDEEMED.value)
+        for item in credits
+        if item.credit_id in spent_remedy_credit_ids
+    ]
+
+    def fresh(carried: tuple[RemedyCredit, ...]) -> QuoteComposition:
+        return _compose_fresh(
+            quote_id=quote_id,
+            revision=revision,
+            rules=rules,
+            requested=requested,
+            pricebook=pricebook,
+            priced_at=priced_at,
+            fulfillment_mode=fulfillment_mode,
+            verified_distance_m=verified_distance_m,
+            planned_transport_weight_kg=planned_transport_weight_kg,
+            approved_manual_fee_vnd=approved_manual_fee_vnd,
+            customer_acknowledged_manual_fee=customer_acknowledged_manual_fee,
+            range_prices=range_prices,
+            present_range_as_band=present_range_as_band,
+            promotion=promotion,
+            carried=carried,
+        )
+
+    composition = fresh(live)
+    if not credits or isinstance(composition, UnresolvedQuote):
+        return composition
+    snapshot = composition.snapshot
+    landed = 0
+    for credit in live:
+        carried = redeem_remedy_credit(priced=snapshot, revision=revision, credit=credit)
+        if isinstance(carried, ComposedQuote):
+            snapshot = carried.snapshot
+            landed += 1
+        else:
+            released.append((credit, carried.reason_codes[0]))
+    if live and not landed:
+        # Every carried credit was released, so none of them is on the bag after all and the
+        # programme's stacking test must not see them. Composed again from the same inputs.
+        composition = fresh(())
+        if isinstance(composition, UnresolvedQuote):
+            return composition
+        snapshot = composition.snapshot
+    if released:
+        stated = _state_released_credits(snapshot, tuple(released))
+        if stated is None:
+            return UnresolvedQuote((ErrorCode.VALIDATION_ERROR.value,))
+        snapshot = stated
+    return ComposedQuote(snapshot)
+
+
+def _compose_fresh(
+    *,
+    quote_id: UUID,
+    revision: int,
+    rules: dict[str, PriceRule],
+    requested: tuple[RequestedLine, ...],
+    pricebook: PricebookProvenance,
+    priced_at: datetime,
+    fulfillment_mode: FulfillmentMode,
+    verified_distance_m: int | None,
+    planned_transport_weight_kg: str | None,
+    approved_manual_fee_vnd: int | None,
+    customer_acknowledged_manual_fee: bool,
+    range_prices: RangePriceAttestation | None,
+    present_range_as_band: bool,
+    promotion: PublishedPromotionProgram | None,
+    carried: tuple[RemedyCredit, ...],
+) -> QuoteComposition:
+    """Price the requested lines and assemble one immutable revision, or refuse with reasons.
+
+    `carried` credits are not applied here -- `compose_quote_revision` lands them afterwards -- but
+    the promotion's stacking test sees them, because they are on the bag before the programme is.
 
     `fulfillment_mode` has no default on purpose. Whether the shop is carrying this laundry decides
     whether a delivery fee exists at all, and guessing it would be this code deciding a fact about
@@ -984,11 +1100,10 @@ def compose_quote_revision(
     promoted = _promotion_outcome(
         published=promotion,
         lines=tuple(lines),
-        # Delivery is the only adjustment a fresh composition can carry and it is a DEBIT, so
-        # nothing here is ever another promotion. Passed from the real tuple rather than as a
-        # literal `()`, so that an adjustment added to this function later is tested for stacking
-        # instead of being assumed away.
-        adjustments=delivery_adjustments,
+        # Delivery is a DEBIT and never another promotion. The carried remedy credits are credits
+        # already on this bag, so they are what `stacking_allowed` is tested against -- stated as
+        # the adjustments they will become, at face value, since each lands whole or is released.
+        adjustments=delivery_adjustments + tuple(_carried_placeholder(item) for item in carried),
         banded=banded,
         # The moment the price is computed. A promotion keyed to `accepted_at` cannot be resolved
         # here because acceptance has not happened; the engine answers PROVISIONAL and says so, and
@@ -1707,7 +1822,15 @@ def redeem_remedy_credit(
     revision: int,
     credit: RemedyCredit,
 ) -> ComposedQuote | UnresolvedQuote:
-    """Spend one remedy credit against the next bill. `REMEDY-001`, `DEC-004`.
+    """Reserve one remedy credit on the next bill. `REMEDY-001`, `DEC-004`.
+
+    **Reserve, not spend** -- corrected by the credit-lifecycle fix. This used to be the moment the
+    credit was burnt, in the transaction that wrote this revision, and so everything that happened
+    to the quote afterwards lost it: a reprice composed a revision without it, an expired or
+    abandoned quote held a credit nobody could get back. The adjustment written here is now only
+    the reservation (`reserved_remedy_credits` reads it back); `OrderRepository.create` spends the
+    credit when this quote's accepted revision becomes an order, and a reprice carries it forward
+    through `compose_quote_revision`.
 
     "10% credit on the next bill" needs a next bill, and this is where one gets it. The credit
     becomes a `REMEDY_CREDIT` adjustment on a **new revision derived from the stored one**, never an
@@ -1762,6 +1885,11 @@ def redeem_remedy_credit(
     """
 
     data = priced.data
+    if any(item.credit_id == credit.credit_id for item in reserved_remedy_credits(priced)):
+        # First, because it is the one refusal that is about the credit and this bill together: the
+        # bill already carries it. Without this the snapshot validator would refuse the duplicate
+        # adjustment id and the counter would read `VALIDATION_ERROR` for a plain double-tap.
+        return UnresolvedQuote((RemedyRefusal.REMEDY_CREDIT_ALREADY_ON_QUOTE.value,))
     if data.finality is QuoteFinality.RANGE or data.status in _UNCREDITABLE_STATUSES:
         return UnresolvedQuote((RemedyRefusal.REMEDY_CREDIT_REVISION_NOT_OPEN.value,))
     frozen = frozen_promotion(priced)
@@ -1824,8 +1952,8 @@ def redeem_remedy_credit(
     )
     adjustment = QuoteAdjustmentSnapshot(
         # Scoped by the credit's own identifier, so two credits on one revision cannot collide and
-        # the adjustment on the stored snapshot names the instrument that was spent.
-        adjustment_id=f"remedy-credit-{credit.credit_id}",
+        # the adjustment on the stored snapshot names the instrument it reserves.
+        adjustment_id=f"{REMEDY_CREDIT_ADJUSTMENT_PREFIX}{credit.credit_id}",
         kind=QuoteAdjustmentKind.REMEDY_CREDIT,
         direction=AdjustmentDirection.CREDIT,
         amount_min_vnd=allocated.total_vnd,
@@ -1883,6 +2011,117 @@ def redeem_remedy_credit(
         # priced quote would be worse than refusing, exactly as the other two derivations decide.
         return UnresolvedQuote((ErrorCode.VALIDATION_ERROR.value,))
     return ComposedQuote(snapshot)
+
+
+def reserved_remedy_credits(priced: ImmutableQuoteSnapshot) -> tuple[RemedyCredit, ...]:
+    """The remedy credits a stored revision reserves, read back from its `REMEDY_CREDIT` rows.
+
+    The adjustment *is* the reservation. There is no separate reservation table because none is
+    needed: the revision is immutable (invariant 4), it names each credit by id, and it states the
+    amount it took off, which is always the credit's full face value -- a credit lands whole or is
+    released, never partly. Three readers use this: a reprice carries these forward,
+    `QuoteRepository.create_revision` refuses a child that silently drops one, and
+    `OrderRepository.create` spends exactly these when the accepted revision becomes an order.
+
+    In the snapshot's own adjustment order, which `build_quote_snapshot` sorts by id, so every
+    reader sees the same sequence.
+    """
+
+    credits: list[RemedyCredit] = []
+    for item in priced.data.adjustments:
+        if item.kind is not QuoteAdjustmentKind.REMEDY_CREDIT:
+            continue
+        if not item.adjustment_id.startswith(REMEDY_CREDIT_ADJUSTMENT_PREFIX):
+            raise QuoteSnapshotError("a remedy credit adjustment does not name its credit")
+        if item.source_version_id is None or item.amount_min_vnd != item.amount_max_vnd:
+            raise QuoteSnapshotError("a remedy credit adjustment is not an exact, sourced credit")
+        try:
+            credit_id = UUID(item.adjustment_id.removeprefix(REMEDY_CREDIT_ADJUSTMENT_PREFIX))
+        except ValueError as error:
+            raise QuoteSnapshotError(
+                "a remedy credit adjustment does not name its credit"
+            ) from error
+        credits.append(
+            RemedyCredit(
+                credit_id=credit_id,
+                amount_vnd=item.amount_min_vnd,
+                policy_version_id=item.source_version_id,
+                approval_id=item.approval_id,
+            )
+        )
+    return tuple(credits)
+
+
+def released_remedy_credit_ids(priced: ImmutableQuoteSnapshot) -> frozenset[UUID]:
+    """The credits this revision states it released, from its `REMEDY_CREDIT_RELEASED_*` traces."""
+
+    released: set[UUID] = set()
+    prefix = REMEDY_CREDIT_RELEASED_COMPONENT_PREFIX
+    for trace in priced.data.calculation_traces:
+        if trace.component.startswith(prefix):
+            try:
+                released.add(UUID(hex=trace.component.removeprefix(prefix)))
+            except ValueError as error:
+                raise QuoteSnapshotError(
+                    "a released-credit trace does not name its credit"
+                ) from error
+    return frozenset(released)
+
+
+def _carried_placeholder(credit: RemedyCredit) -> QuoteAdjustmentSnapshot:
+    """What a carried credit will be on the revision, for the promotion's stacking test only."""
+
+    return QuoteAdjustmentSnapshot(
+        adjustment_id=f"{REMEDY_CREDIT_ADJUSTMENT_PREFIX}{credit.credit_id}",
+        kind=QuoteAdjustmentKind.REMEDY_CREDIT,
+        direction=AdjustmentDirection.CREDIT,
+        amount_min_vnd=credit.amount_vnd,
+        amount_max_vnd=credit.amount_vnd,
+        reason_code=REMEDY_CREDIT_REASON_CODE,
+        source_version_id=credit.policy_version_id,
+        approval_id=credit.approval_id,
+    )
+
+
+def _state_released_credits(
+    snapshot: ImmutableQuoteSnapshot, released: tuple[tuple[RemedyCredit, str], ...]
+) -> ImmutableQuoteSnapshot | None:
+    """Write onto the revision which reserved credits it could not carry, and why.
+
+    Nothing about the money moves here: the lines and totals are already those of a bill without
+    the credit. What is added is the statement -- a reason code a console can gloss, and one trace
+    per credit naming it, its face value and the refusal that released it -- because a credit that
+    vanished from a bill with no word on the bill is the defect this replaces.
+    """
+
+    data = snapshot.data
+    prefix = REMEDY_CREDIT_RELEASED_COMPONENT_PREFIX
+    try:
+        return build_quote_snapshot(
+            replace(
+                data,
+                reason_codes=(*data.reason_codes, REMEDY_CREDIT_RELEASED),
+                calculation_traces=(
+                    *data.calculation_traces,
+                    *(
+                        capture_calculation_trace(
+                            f"{prefix}{credit.credit_id.hex.upper()}",
+                            REMEDY_CREDIT_COMPONENT_VERSION,
+                            {
+                                "credit_id": str(credit.credit_id),
+                                "credit_vnd": credit.amount_vnd,
+                                "policy_version_id": str(credit.policy_version_id),
+                                "reason_code": reason,
+                                "outcome": "RELEASED_UNSPENT",
+                            },
+                        )
+                        for credit, reason in released
+                    ),
+                ),
+            )
+        )
+    except QuoteSnapshotError:
+        return None
 
 
 def _line_list(line: QuoteLineSnapshot) -> int:
@@ -2066,7 +2305,9 @@ __all__ = [
     "PROMOTION_REASON_CODES",
     "QUOTE_ENGINE_HASH",
     "QUOTE_ENGINE_VERSION",
+    "REMEDY_CREDIT_ADJUSTMENT_PREFIX",
     "REMEDY_CREDIT_COMPONENT_VERSION",
+    "REMEDY_CREDIT_RELEASED_COMPONENT_PREFIX",
     "ComposedQuote",
     "FrozenPromotion",
     "PricebookProvenance",
@@ -2078,5 +2319,7 @@ __all__ = [
     "compose_quote_revision",
     "frozen_promotion",
     "redeem_remedy_credit",
+    "released_remedy_credit_ids",
+    "reserved_remedy_credits",
     "stored_price_bands",
 ]

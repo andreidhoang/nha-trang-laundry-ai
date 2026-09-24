@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 345
+  DESCRIPTIVE: 349
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 5
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 372
+total: 376
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -598,12 +598,51 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CEILING_EXCEEDED:f1b2cde07616
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CEILING_EXCEEDED:05407441dff0
   module: core/i18n.js
   key: REASON_NOTE.REMEDY_CEILING_EXCEEDED
-  text: Số tiền vượt trần máy chủ tính từ chính dòng đã có giá của đơn (5 lần phí giặt món đó). Máy chủ
-    từ chối kèm con số trần và không tự hạ xuống — hạ xuống là trả cho khách ít hơn số bạn vừa thoả thuận.
-    Nhập lại trong trần, hoặc báo chủ tiệm nếu vụ này cần khác đi.
+  text: Tổng bồi thường cho món này vượt trần máy chủ tính từ chính dòng đã có giá của đơn (5 lần phí
+    giặt món đó) — tính cả các đề nghị trước đã ghi cho cùng món, dù ai duyệt. Máy chủ từ chối kèm con
+    số trần và số đã ghi, và không tự hạ xuống. Chỉ còn được đề nghị phần chênh lệch; báo chủ tiệm nếu
+    vụ này cần khác đi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_INCIDENT_NOT_OPEN:309927460436
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_INCIDENT_NOT_OPEN
+  text: Sự cố này đã có kết quả và đã đóng, nên không ghi thêm đề nghị bồi hoàn nào vào đó. Nếu khách
+    báo một vấn đề mới, mở một sự cố mới cho đơn; các mức trần vẫn tính chung theo từng món.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED:dd6d064747be
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED
+  text: Đơn này đã có một khoản giảm trừ giao trễ được đề nghị hoặc đã trả. Một lần giao trễ chỉ được
+    một khoản 10%, dù mở bao nhiêu sự cố về nó. Không có gì được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CREDIT_ALREADY_ON_QUOTE:f81ba2514190
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_CREDIT_ALREADY_ON_QUOTE
+  text: Phiếu giảm trừ này đã nằm trên bản báo giá này rồi. Một phiếu chỉ trừ vào một hoá đơn một lần;
+    không có gì được ghi và tổng không đổi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CREDIT_RELEASED:ff3dec0cc884
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_CREDIT_RELEASED
+  text: 'Bản báo giá trước có phiếu giảm trừ, nhưng bản vừa tính lại không trừ được phiếu đó — hoá đơn
+    mới nhỏ hơn giá trị phiếu, là khoảng giá, hoặc phiếu đã được dùng cho đơn khác. Phiếu KHÔNG bị trừ
+    và không bị cắt bớt: nếu chưa dùng ở đơn khác thì khách vẫn còn nguyên. Nói rõ với khách trước khi
+    chốt; muốn trừ lại thì trừ vào một hoá đơn đủ lớn.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

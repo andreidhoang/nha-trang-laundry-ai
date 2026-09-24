@@ -285,10 +285,30 @@ export const REASON_NOTE = {
   LOSS_POLICY_UNRESOLVED:
     "Chủ tiệm chưa quyết chính sách cho trường hợp mất đồ, và mức của hàng hỏng không được mượn " +
     "sang. Sự cố vẫn được ghi — đó mới là việc phải làm ở quầy. Báo chủ tiệm trong ngày.",
+  // Re-keyed when the two damage figures became cumulative per item: the ceiling is compared against
+  // what earlier proposals on the same garment already committed plus this one, and the refusal
+  // carries both numbers (`ceiling_vnd`, `committed_vnd`).
   REMEDY_CEILING_EXCEEDED:
-    "Số tiền vượt trần máy chủ tính từ chính dòng đã có giá của đơn (5 lần phí giặt món đó). " +
-    "Máy chủ từ chối kèm con số trần và không tự hạ xuống — hạ xuống là trả cho khách ít hơn số " +
-    "bạn vừa thoả thuận. Nhập lại trong trần, hoặc báo chủ tiệm nếu vụ này cần khác đi.",
+    "Tổng bồi thường cho món này vượt trần máy chủ tính từ chính dòng đã có giá của đơn (5 lần phí " +
+    "giặt món đó) — tính cả các đề nghị trước đã ghi cho cùng món, dù ai duyệt. Máy chủ từ chối kèm " +
+    "con số trần và số đã ghi, và không tự hạ xuống. Chỉ còn được đề nghị phần chênh lệch; báo chủ " +
+    "tiệm nếu vụ này cần khác đi.",
+  REMEDY_INCIDENT_NOT_OPEN:
+    "Sự cố này đã có kết quả và đã đóng, nên không ghi thêm đề nghị bồi hoàn nào vào đó. Nếu khách " +
+    "báo một vấn đề mới, mở một sự cố mới cho đơn; các mức trần vẫn tính chung theo từng món.",
+  REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED:
+    "Đơn này đã có một khoản giảm trừ giao trễ được đề nghị hoặc đã trả. Một lần giao trễ chỉ được " +
+    "một khoản 10%, dù mở bao nhiêu sự cố về nó. Không có gì được ghi.",
+  REMEDY_CREDIT_ALREADY_ON_QUOTE:
+    "Phiếu giảm trừ này đã nằm trên bản báo giá này rồi. Một phiếu chỉ trừ vào một hoá đơn một lần; " +
+    "không có gì được ghi và tổng không đổi.",
+  // A quote reason code, not a refusal: a re-priced revision that could not carry a credit its
+  // previous revision reserved. The credit is not spent and not shrunk, so the customer still has it.
+  REMEDY_CREDIT_RELEASED:
+    "Bản báo giá trước có phiếu giảm trừ, nhưng bản vừa tính lại không trừ được phiếu đó — hoá đơn " +
+    "mới nhỏ hơn giá trị phiếu, là khoảng giá, hoặc phiếu đã được dùng cho đơn khác. Phiếu KHÔNG bị " +
+    "trừ và không bị cắt bớt: nếu chưa dùng ở đơn khác thì khách vẫn còn nguyên. Nói rõ với khách " +
+    "trước khi chốt; muốn trừ lại thì trừ vào một hoá đơn đủ lớn.",
   REMEDY_WINDOW_CLOSED:
     "Đã quá cửa sổ chủ tiệm công bố cho loại này, đo từ lúc khách nhận đồ. Nói với khách đúng mốc " +
     "đã qua chứ không chỉ nói là hết hạn. Muốn làm ngoài cửa sổ thì phải hỏi chủ tiệm.",

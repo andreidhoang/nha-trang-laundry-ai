@@ -47,6 +47,7 @@ from nha_trang_laundry_db.quotes import (
     QuoteRevisionCommand,
     QuoteStateError,
 )
+from nha_trang_laundry_db.remedies import ReservedRemedyCredits, read_reserved_remedy_credits
 from nha_trang_laundry_domain.approvals import (
     APPROVAL_POLICIES,
     APPROVAL_RESOURCE_TYPES,
@@ -477,6 +478,18 @@ class DomainAgentToolBackend:
                     store_id=claims.store_id,
                     bound_order_request_id=bound.order_request_id,
                 )
+                # An estimate replacing a revision that reserves a remedy credit carries it, exactly
+                # as the counter's re-price does; `create_revision` refuses one that drops it.
+                reserved = (
+                    read_reserved_remedy_credits(
+                        cursor,
+                        store_id=claims.store_id,
+                        quote_id=container.quote_id,
+                        revision=container.current_revision,
+                    )
+                    if container is not None
+                    else ReservedRemedyCredits()
+                )
             quote_id = container.quote_id if container is not None else uuid4()
             expected_revision = container.current_revision if container is not None else 0
             expected_row_version = container.row_version if container is not None else 0
@@ -499,6 +512,8 @@ class DomainAgentToolBackend:
                     else str(fulfillment["planned_transport_weight_kg"])
                 ),
                 promotion=promotion,
+                remedy_credits=reserved.credits,
+                spent_remedy_credit_ids=reserved.spent_ids,
             )
             if isinstance(composition, UnresolvedQuote):
                 # The engine's own reason codes, nothing persisted, no idempotency key

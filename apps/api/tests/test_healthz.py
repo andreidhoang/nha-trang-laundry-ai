@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -17,11 +17,12 @@ from nha_trang_laundry_db.approvals import StoredApproval
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.incidents import IncidentSummary
 from nha_trang_laundry_db.manual_sends import StoredManualSend
-from nha_trang_laundry_db.orders import StoredOrder
+from nha_trang_laundry_db.orders import OrderView
 from nha_trang_laundry_db.quotes import QuoteSummary
 from nha_trang_laundry_domain.catalog import (
     ActorRole,
     CommercialOrderStatus,
+    FulfillmentMode,
     IntakeStatus,
     OrderBalanceStatus,
     ProductionStatus,
@@ -56,20 +57,36 @@ class StubIdentityService:
 
 class StubOperationsService:
     def list_orders(
-        self, *, store_id: UUID, principal: StaffPrincipal, limit: int
-    ) -> tuple[StoredOrder, ...]:
+        self,
+        *,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        limit: int,
+        open_only: bool,
+        ticket_number: int | None,
+        ticket_date: date | None,
+    ) -> tuple[OrderView, ...]:
         assert store_id == STORE_ID
         assert principal.staff_user_id == OWNER_ID
         assert limit == 100
+        # The unfiltered board is what a bare GET asks for.
+        assert (open_only, ticket_number, ticket_date) == (False, None, None)
         return (
-            StoredOrder(
-                ORDER_ID,
-                STORE_ID,
-                CommercialOrderStatus.REQUESTED,
-                IntakeStatus.AWAITING_HANDOFF,
-                ProductionStatus.NOT_STARTED,
-                OrderBalanceStatus.UNPAID,
-                1,
+            OrderView(
+                order_id=ORDER_ID,
+                store_id=STORE_ID,
+                commercial=CommercialOrderStatus.REQUESTED,
+                intake=IntakeStatus.AWAITING_HANDOFF,
+                production=ProductionStatus.NOT_STARTED,
+                balance=OrderBalanceStatus.UNPAID,
+                row_version=1,
+                fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
+                created_at=datetime(2026, 8, 1, tzinfo=UTC),
+                quote_id=APPROVAL_ID,
+                quote_revision=2,
+                payable_total_vnd=110_000,
+                ticket_number=7,
+                ticket_issued_on=date(2026, 8, 1),
             ),
         )
 

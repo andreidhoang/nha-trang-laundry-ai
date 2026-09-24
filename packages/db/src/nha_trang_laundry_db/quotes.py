@@ -489,3 +489,31 @@ class QuoteAcceptanceRepository:
             mutation,
         )
         return acceptance_id
+
+    @staticmethod
+    def accepted_at_for_final_revision(
+        cursor: Any, *, store_id: UUID, quote_id: UUID, final_revision: int
+    ) -> datetime | None:
+        """When the customer agreed the price that produced `final_revision`, as attested.
+
+        Null for any revision no acceptance produced -- a priced revision, or one derived by a
+        range-price closure nobody has agreed to yet. The order form prefills "Thời điểm khách chốt
+        giá" from this, which is the server's own record of the moment rather than a time a person
+        at a busy counter re-types from memory. Scoped to the store in the predicate, as every read
+        of a quote is.
+        """
+
+        cursor.execute(
+            """
+            SELECT accepted_at FROM quote_acceptances
+            WHERE store_id = %s AND quote_id = %s AND final_revision = %s
+            """,
+            (store_id, quote_id, final_revision),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        value = row[0]
+        if not isinstance(value, datetime) or value.tzinfo is None:
+            raise QuoteIntegrityError("stored acceptance time is invalid")
+        return value

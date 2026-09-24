@@ -11,7 +11,7 @@ from typing import Annotated, Literal, NoReturn
 from urllib.parse import urlencode
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.staticfiles import StaticFiles
 from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
 from nha_trang_laundry_db.approvals import (
@@ -43,7 +43,9 @@ from nha_trang_laundry_db.manual_sends import (
 )
 from nha_trang_laundry_db.orders import (
     OrderAuthorizationError,
+    OrderNotVisibleError,
     OrderStateError,
+    OrderView,
     StoredOrder,
 )
 from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
@@ -463,6 +465,30 @@ class OrderResponse(BaseModel):
     replayed: bool
 
 
+class OrderViewResponse(OrderResponse):
+    """An order as the counter reads it: the command result's fields, plus what pickup needs.
+
+    Returned by the board and by the read by id -- never by a command, whose reply is the stored
+    idempotent result and carries the eight fields above only. Every addition is a stored fact:
+
+    * `payable_total_vnd` -- the bound quote revision's total, from the same columns the settlement
+      checks a payment against, so the number shown is the number the counter can take. Null when
+      that revision presents no single total, never zero. It does not change once paid; `balance`
+      says whether it has been.
+    * `ticket_number` / `ticket_issued_on` -- the walk-in ticket the order is tracked by
+      (`DEC-013`), null when the customer reference is a channel binding instead.
+    * `quote_id` / `quote_revision` -- the accepted revision the order is bound to.
+    """
+
+    fulfillment_mode: str
+    created_at: datetime
+    quote_id: UUID
+    quote_revision: int
+    payable_total_vnd: int | None
+    ticket_number: int | None
+    ticket_issued_on: date | None
+
+
 class ApprovalResponse(BaseModel):
     approval_request_id: UUID
     status: str
@@ -721,6 +747,9 @@ class QuoteRevisionDetailResponse(BaseModel):
     valid_until: datetime | None
     reason_codes: list[str]
     lines: list[QuoteLineResponse]
+    #: When the customer agreed the price that produced this revision, from the `DEC-021`
+    #: attestation. Null for a revision no acceptance produced.
+    customer_accepted_at: datetime | None = None
 
 
 class QuoteSummaryResponse(BaseModel):
@@ -1288,21 +1317,67 @@ def list_member_stores(
     )
 
 
-@app.get("/internal/v1/stores/{store_id}/orders", response_model=list[OrderResponse])
+@app.get("/internal/v1/stores/{store_id}/orders", response_model=list[OrderViewResponse])
 def list_orders(
     store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
     limit: int = 100,
-) -> list[OrderResponse]:
+    open_only: Annotated[bool, Query(alias="open")] = False,
+    ticket: Annotated[int | None, Query(ge=1, le=100_000)] = None,
+    ticket_date: date | None = None,
+) -> list[OrderViewResponse]:
+    """The store's orders, newest first.
+
+    `open=true` keeps every order not yet completed or cancelled, whatever its age -- the board's
+    newest hundred is three days of trade, and laundry is collected later than that. `ticket=17`
+    finds the order a walk-in ticket tracks (`DEC-013`); numbers restart daily, so it means today's
+    17 on the shop's business day unless `ticket_date` names the day on the slip.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    if ticket_date is not None and ticket is None:
+        # A date alone is not a lookup; answering the whole board would look like one.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="ticket_date needs a ticket number"
+        )
+    try:
+        return [
+            _order_view_response(item)
+            for item in service.list_orders(
+                store_id=store_id,
+                principal=principal,
+                limit=limit,
+                open_only=open_only,
+                ticket_number=ticket,
+                ticket_date=ticket_date,
+            )
+        ]
+    except (OrderAuthorizationError, ValueError) as error:
+        _raise_operations_error(error)
+
+
+@app.get("/internal/v1/orders/{order_id}", response_model=OrderViewResponse)
+def read_order(
+    order_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> OrderViewResponse:
+    """One order, by id, for a member of the store the order belongs to.
+
+    The only way to reach an order that has left the board's newest page, and the only read that
+    hands back a `row_version` for one -- which every transition needs as `If-Match`. The store is
+    the row's, never the request's. A missing order and another store's order are the same 404, so
+    the route cannot be used to learn which ids exist where; a role that may not read orders at all
+    is the usual opaque 403.
+    """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
     try:
-        return [
-            _order_response(item)
-            for item in service.list_orders(store_id=store_id, principal=principal, limit=limit)
-        ]
-    except (OrderAuthorizationError, ValueError) as error:
+        return _order_view_response(service.read_order(order_id=order_id, principal=principal))
+    except OrderNotVisibleError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order unavailable") from error
+    except OrderAuthorizationError as error:
         _raise_operations_error(error)
 
 
@@ -2035,6 +2110,7 @@ def read_quote(
             )
             for line in view.lines
         ],
+        customer_accepted_at=view.customer_accepted_at,
     )
 
 
@@ -2684,6 +2760,27 @@ def _order_response(stored: StoredOrder) -> OrderResponse:
         balance=stored.balance.value,
         row_version=stored.row_version,
         replayed=stored.replayed,
+    )
+
+
+def _order_view_response(view: OrderView) -> OrderViewResponse:
+    return OrderViewResponse(
+        order_id=view.order_id,
+        store_id=view.store_id,
+        commercial=view.commercial,
+        intake=view.intake.value,
+        production=view.production.value,
+        balance=view.balance.value,
+        row_version=view.row_version,
+        # A read, so nothing was replayed. Kept so a list item and a command result share a shape.
+        replayed=False,
+        fulfillment_mode=view.fulfillment_mode.value,
+        created_at=view.created_at,
+        quote_id=view.quote_id,
+        quote_revision=view.quote_revision,
+        payable_total_vnd=view.payable_total_vnd,
+        ticket_number=view.ticket_number,
+        ticket_issued_on=view.ticket_issued_on,
     )
 
 

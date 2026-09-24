@@ -73,6 +73,7 @@ from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
     CommercialOrderStatus,
+    CustodyResolution,
     FulfillmentMode,
     IntakeStatus,
     PolicyOutcome,
@@ -1115,6 +1116,70 @@ def test_a_late_delivery_credit_on_an_order_nobody_delivered_is_refused(
             attested_late_by_minutes=150,
         )
     assert refused.value.reason_code == RemedyRefusal.REMEDY_DELIVERY_NOT_RECORDED.value
+
+
+def test_a_late_delivery_credit_on_a_fully_refunded_order_is_refused(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """Ten percent of the bill, when the whole bill was handed back, is ten percent of nothing.
+
+    Two fixes met here. `CANCEL-REFUND-001` records a refund when a paid order is cancelled under a
+    resolution `DEC-024` says is not charged, and leaves the settlement row in place because the
+    refund references it. The late-delivery credit reads that settlement row as "what the customer
+    paid". So a delivered order cancelled `SHOP_FAULT_NO_CHARGE` and refunded in full could then
+    also mint a 10% credit on money the customer already has back. Found by the refund fixer as a
+    residual risk; it exists only with both branches merged.
+
+    Whether a refunded item's *damage* ceiling still applies is not decided here: the ceiling reads
+    the quoted line price, not the settlement, and `DEC-004` does not say. That is the owner's.
+    """
+
+    store_id, staff, order_id, incident_id = _shop(
+        connection, mode=FulfillmentMode.PICKUP_AND_RETURN
+    )
+    DeliveryLegRepository().record(
+        connection,
+        RecordDeliveryLegCommand(
+            order_id=order_id,
+            leg_kind=DeliveryLegKind.RETURN,
+            outcome=DeliveryLegOutcome.SUCCEEDED,
+            principal=staff,
+            correlation_id=uuid4(),
+            recorded_at=NOW,
+        ),
+    )
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT row_version FROM orders WHERE id = %s", (order_id,))
+        row = cursor.fetchone()
+    assert row is not None
+    version = _advance(
+        connection,
+        order_id,
+        staff,
+        int(row[0]),
+        commercial_target=CommercialOrderStatus.CANCELLATION_REVIEW,
+    ).row_version
+    cancelled = _advance(
+        connection,
+        order_id,
+        staff,
+        version,
+        commercial_target=CommercialOrderStatus.CANCELLED,
+        custody_resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE,
+    )
+    assert cancelled.balance.value == "REFUNDED"
+
+    with pytest.raises(RemedyStateError) as refused:
+        _propose(
+            connection,
+            store_id,
+            incident_id,
+            staff,
+            kind=RemedyKind.LATE_DELIVERY_CREDIT,
+            store_fault_attested=True,
+            attested_late_by_minutes=150,
+        )
+    assert refused.value.reason_code == RemedyRefusal.REMEDY_ORDER_NOT_SETTLED.value
 
 
 def test_lateness_below_the_published_threshold_is_refused_with_the_threshold_named(

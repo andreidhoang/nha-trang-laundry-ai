@@ -1320,7 +1320,13 @@ def _read_order_for_incident(cursor: Any, *, store_id: UUID, incident_id: UUID) 
         JOIN orders o ON o.id = i.order_id
         JOIN quote_revisions r
           ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
-        LEFT JOIN order_settlements s ON s.order_id = o.id
+        -- A settlement that has been refunded is not a charge. `order_refunds` keeps the
+        -- settlement row it references, so reading `paid_amount_vnd` alone let a delivered order
+        -- cancelled SHOP_FAULT_NO_CHARGE and refunded in full also earn a late-delivery credit on
+        -- the money already handed back. Excluding it reads as "not settled", which refuses.
+        LEFT JOIN order_settlements s
+          ON s.order_id = o.id
+         AND NOT EXISTS (SELECT 1 FROM order_refunds rf WHERE rf.settlement_id = s.id)
         WHERE i.id = %s AND i.store_id = %s
         """,
         (incident_id, store_id),

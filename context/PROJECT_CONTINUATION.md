@@ -1,7 +1,22 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-09-18 (Asia/Ho_Chi_Minh)
-**Active work item:** `INCIDENT-INTAKE-001`. **126 queue items.** Migrations run `0001`–`0039`.
+**Last reconciled:** 2026-09-24 (Asia/Ho_Chi_Minh)
+**Active work item:** none. **143 queue items.** Migrations run `0001`–`0047` (`0045` unused).
+Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
+
+## Pre-staging review, 2026-09-24 — read before trusting the section below
+
+Five independent reviewers read `main` at `9287596` while every gate was green (1574 passed) and
+both real-API browser scripts passed. They found money defects in work marked COMPLETE: one
+complaint could mint unlimited staff-authorised credits (reproduced: 240.000 d, no owner); a credit
+the shop owed was lost on a reprice; a refunded cancellation stayed in "tiền đã thu"; the owner could
+not return to an earlier price list; and a customer coming back after about three days had an order
+staff could not find or see the amount of. All are fixed, each with a test that fails on the old
+code, and the real-API browser run on the merged tree caught four more before merge.
+
+**So the sentence below -- "Everything buildable without one is done" -- was not true on
+2026-09-18**, and a green suite is why nobody could see it. Verdict, conditions and what remains:
+`docs/STAGING_READINESS_2026-09.md`. Findings and decisions: `context/tasks/TASK-staging-review-001.md`.
 
 ## Owner-directed, outside the queue — the unified customer agent, 2026-09-18
 

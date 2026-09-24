@@ -271,7 +271,15 @@ def test_context_drift_check_passes() -> None:
     # rests on deserves to be findable later: storing content for DISPLAY is not the same act as
     # comparing a hash against stored content, which `approvals.py` rightly calls theatre. The
     # application path still re-derives the digest from the amounts in hand.
-    assert "132 work items" in result.stdout
+    #
+    # 143 after the pre-staging review (TASK-staging-review-001): +11. Seven are the defects five
+    # independent reviewers found in work already marked COMPLETE -- STAGING-REVIEW-001,
+    # REMEDY-CUMULATIVE-001, CREDIT-RESERVATION-001, CANCEL-REFUND-001, CONFIG-REVERT-001,
+    # ORDER-LOOKUP-001, CONSOLE-DEADENDS-001 -- and four are follow-ups recorded rather than built,
+    # each with the reason in the packet: SHOP-ALERT-DELIVERY-001 (nothing here can watch an alert
+    # arrive), AGENT-SHADOW-DEFECTS-001 (blocks G1, not staging), OPS-HARDENING-002 and
+    # API-INTEGRITY-002.
+    assert "143 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

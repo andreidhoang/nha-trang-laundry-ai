@@ -34,7 +34,7 @@ import { h, render } from "../core/dom.js";
 import { UNKNOWN, dateTime, integer, shortHash, shortId } from "../core/format.js";
 import { REASON_NOTE } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
-import { principal, storeId } from "../core/session.js";
+import { principal, storeId, subscribe } from "../core/session.js";
 import {
   errorNotice,
   facts,
@@ -51,6 +51,41 @@ import {
 const EXPORT_ACTION = "EXPORT_SANITIZED_DATA";
 
 /**
+ * The export in progress, per viewer and store, kept for the life of the page.
+ *
+ * Step 2 tells the owner to open `#/approvals` and come back, and until this existed coming back
+ * rebuilt the screen from nothing: the date, the request and the approval id were gone, so the
+ * "Xuất tệp" the instructions pointed at was not there, and the only way forward was to raise a
+ * second request and a second envelope for the same day.
+ *
+ * Module state, in memory only -- invariant 3 of the UX refactor spec allows nothing else on a
+ * shared counter phone, and `incidents.js` carries its order hand-off the same way. It survives
+ * moving between screens, which is the round trip the instructions describe; it does not survive a
+ * reload, and the screen says so rather than pretending otherwise. Keyed by staff user and store,
+ * so a different person signing in on the same tab -- or the same person switching store -- never
+ * inherits someone else's half-finished export.
+ *
+ * @type {Map<string, {businessDate: string, created: any, approvalId: string}>}
+ */
+const inProgress = new Map();
+
+// Signing out does not always reload the page (there is no issuer to navigate to on some
+// deployments), so the stash is dropped the moment the session has nobody in it. That is what
+// makes the screen's own sentence -- "đăng xuất thì không còn nhớ" -- true on every deployment.
+subscribe(() => {
+  if (!principal()) inProgress.clear();
+});
+
+/**
+ * @param {any} me the session principal
+ * @param {string|null} store
+ * @returns {string}
+ */
+function progressKey(me, store) {
+  return `${me?.staffUserId || ""}|${store || ""}`;
+}
+
+/**
  * The reason code a refusal carried, wherever the server put it.
  *
  * A `REQUIRE_HUMAN` refusal arrives with `reasonCodes`; a conflict arrives with the bare code as
@@ -62,7 +97,9 @@ const EXPORT_ACTION = "EXPORT_SANITIZED_DATA";
  */
 function reasonCodeOf(error) {
   const fromList = Array.isArray(error?.reasonCodes) ? error.reasonCodes[0] : "";
-  return fromList || (typeof error?.message === "string" ? error.message : "");
+  // `detail`, not `message`: the message is the Vietnamese title `classify` gives a refusal, and
+  // the bare code the server sent (`EXPORT_ALREADY_PRODUCED`, …) is kept verbatim in `detail`.
+  return fromList || (typeof error?.detail === "string" ? error.detail : "");
 }
 
 /**
@@ -157,21 +194,38 @@ function download(produced) {
  */
 export function render_() {
   const store = storeId();
-  const verdict = can(principal(), "EXPORT_DATA");
+  const me = principal();
+  const verdict = can(me, "EXPORT_DATA");
   const requestSubmission = new Submission("export-request");
   const approvalSubmission = new Submission("export-approval");
   const executeSubmission = new Submission("export-execute");
+  const key = progressKey(me, store);
+  const saved = inProgress.get(key) || null;
 
   /** @type {{businessDate: string}} */
-  const draft = { businessDate: "" };
+  const draft = { businessDate: saved?.businessDate || "" };
 
   /**
-   * The request this screen is working on, and the envelope raised for it. Module-free, in memory
-   * only: an export request identifier is a step in a conversation, not something to persist.
+   * The request this screen is working on, and the envelope raised for it. In memory only: an
+   * export request identifier is a step in a conversation, not something to persist on a device.
+   * Restored from `inProgress` so the conversation survives the trip to `#/approvals` and back.
    *
    * @type {{created: any, approvalId: string}}
    */
-  const stage = { created: null, approvalId: "" };
+  const stage = { created: saved?.created || null, approvalId: saved?.approvalId || "" };
+
+  /** Record where this viewer is, or forget it once there is nothing in progress. */
+  function remember() {
+    if (stage.created) {
+      inProgress.set(key, {
+        businessDate: draft.businessDate,
+        created: stage.created,
+        approvalId: stage.approvalId,
+      });
+    } else {
+      inProgress.delete(key);
+    }
+  }
 
   const result = resultLine();
   const stageHost = h("div", { class: "stack" });
@@ -180,6 +234,7 @@ export function render_() {
   const dateInput = h("input", {
     type: "date",
     autocomplete: "off",
+    value: draft.businessDate,
     onInput: (event) => {
       draft.businessDate = event.target.value;
       requestSubmission.reset();
@@ -188,6 +243,7 @@ export function render_() {
       // approved.
       stage.created = null;
       stage.approvalId = "";
+      remember();
       render(stageHost);
       render(producedHost);
     },
@@ -211,6 +267,7 @@ export function render_() {
       requestSubmission.reset();
       stage.created = created;
       stage.approvalId = "";
+      remember();
       setResult(
         result,
         "ok",
@@ -255,6 +312,7 @@ export function render_() {
       });
       approvalSubmission.reset();
       stage.approvalId = approval.approval_request_id;
+      remember();
       setResult(
         result,
         "ok",
@@ -291,6 +349,9 @@ export function render_() {
         },
       );
       executeSubmission.reset();
+      // One approval releases one file, and this one has. Nothing is in progress any more, so a
+      // later visit starts clean instead of offering "Xuất tệp" for an envelope already spent.
+      inProgress.delete(key);
       setResult(
         result,
         "ok",
@@ -387,6 +448,12 @@ export function render_() {
                 h("a", { href: "#/approvals" }, "màn hình Duyệt"),
                 " để chủ tiệm xử lý, rồi quay lại bấm Xuất tệp.",
               ),
+              h(
+                "p",
+                { class: "hint" },
+                "Màn hình này nhớ yêu cầu và phong bì khi bạn chuyển sang màn hình khác rồi quay " +
+                  "lại. Tải lại trang hoặc đăng xuất thì không còn nhớ.",
+              ),
             )
           : null,
         h(
@@ -448,6 +515,18 @@ export function render_() {
     ),
     verdict,
   );
+
+  // Coming back from `#/approvals`: put the viewer exactly where they left off.
+  if (stage.created) {
+    renderStage();
+    setResult(
+      result,
+      "ok",
+      `Đang tiếp tục yêu cầu xuất ${shortId(stage.created.export_request_id)} cho ngày ` +
+        `${String(stage.created.business_date)}` +
+        (stage.approvalId ? ` · phong bì duyệt ${shortId(stage.approvalId)}.` : "."),
+    );
+  }
 
   return h(
     "section",

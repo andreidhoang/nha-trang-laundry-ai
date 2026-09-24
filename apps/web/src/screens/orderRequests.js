@@ -37,6 +37,7 @@ import {
   explain,
   facts,
   gated,
+  gatedFields,
   labelled,
   markUpdated,
   panel,
@@ -194,6 +195,15 @@ export function render_() {
 
   /** @type {{contactId: string}} */
   const draft = { contactId: "" };
+  /**
+   * The "Mã khách" box of the current form build. Held so a successful intake can clear the box
+   * together with `draft.contactId` -- clearing only the draft left the used id on screen while
+   * the form would submit nothing, and the next press answered "Mã khách chưa đúng dạng" about a
+   * value the operator could plainly see was a well-formed id.
+   *
+   * @type {HTMLInputElement|null}
+   */
+  let contactField = null;
 
   const formHost = h("div");
   const resultHost = h("div", { class: "stack" });
@@ -286,6 +296,10 @@ export function render_() {
       // Confirmed exactly once, in one place. The next intake is a new intent.
       submission.reset();
       draft.contactId = "";
+      if (contactField) {
+        contactField.value = "";
+        contactField.setAttribute("aria-invalid", "false");
+      }
       result.dataset.state = "ok";
       result.textContent = "Đã ghi nhận. Có thể báo giá cho yêu cầu này.";
       render(resultHost, createdCard(created));
@@ -321,6 +335,7 @@ export function render_() {
         submission.reset();
       },
     });
+    contactField = /** @type {HTMLInputElement} */ (contactInput);
 
     // "Phát phiếu" — DEC-013. The route takes no body because nothing about the customer is
     // collected; it hands back a number to say out loud and a reference to carry on the order.
@@ -357,13 +372,17 @@ export function render_() {
             render(resultHost, errorNotice(error));
             revealError(resultHost);
           } finally {
-            ticketButton.disabled = false;
+            // Never re-arm a control `gated()` disabled for the role; that is its own reason.
+            if (ticketButton.getAttribute("data-denied") !== "true") ticketButton.disabled = false;
           }
         },
       },
       "Phát phiếu (khách vãng lai)",
     );
-    const ticketRow = h("div", { class: "row" }, ticketButton, ticketNote);
+    // Gated like every other write on this form. `issue_counter_ticket` depends on
+    // `require_operations_staff`, the same gate as the intake itself, so it shares the form's
+    // verdict: an AUDITOR used to get a live button here and a 403 after pressing it.
+    const ticketRow = h("div", { class: "row" }, gated(ticketButton, writeVerdict), ticketNote);
 
     return h(
       "form",
@@ -413,7 +432,9 @@ export function render_() {
     );
   }
 
-  render(formHost, buildForm());
+  // The "Mã khách" box goes dead for a role that cannot submit, like `#/exports` and the order
+  // board: typing an id into a form whose buttons are refused is work thrown away.
+  render(formHost, gatedFields(buildForm(), writeVerdict));
   void loadList();
 
   return h(

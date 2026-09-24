@@ -244,9 +244,13 @@ export const REASON_NOTE = {
   // `SettlementRefusal`, exactly as packages/domain/.../settlement.py names them. Each says what
   // the counter should do now, because a staff member holding a customer's money needs a next
   // action and not only a refusal.
+  // DEC-010 is resolved: exact payment in full, once. The commonest way to meet this code is a
+  // slipped keystroke -- "13.200" for 132.000 -- so the note says to check and retype first.
   AMOUNT_IS_NOT_THE_EXACT_TOTAL:
-    "Chỉ nhận đúng tổng đã báo, đủ một lần. Trả thiếu, trả thừa, đặt cọc hay trả góp đều chưa " +
-    "được hỗ trợ. Hãy thu đúng tổng, hoặc báo giá lại nếu con số đã thay đổi.",
+    "Số tiền phải đúng bằng tổng của đơn, thu đủ một lần. Gõ nhầm một chữ số (ví dụ 13.200 thay " +
+    "vì 132.000) cũng bị từ chối như vậy: kiểm tra lại số rồi nhập lại. Trả thiếu, trả thừa, đặt " +
+    "cọc hay trả góp không được nhận — chủ tiệm đã quyết định như vậy (DEC-010). Nếu tổng khách " +
+    "phải trả đã đổi thì báo giá lại.",
   COLLECTION_WAS_NOT_BY_THE_CUSTOMER:
     "Ô “khách đã tự lấy đồ” phải khớp với hình thức của đơn: khách tự lấy thì tích, đơn giao tận " +
     "nơi thì để trống và chặng giao mới là thứ đóng đơn.",

@@ -89,8 +89,14 @@ CLAIM_CLASSES = ("notice__title", "screen__lede", "hint", "eyebrow", "notice")
 #: rendered as `hint: KIND_NOTE[draft.kind]` or through `planNotice`, so the literal-scanning
 #: passes above see a variable and register nothing. Ten refusal sentences and the loss claim would
 #: have been the console's least-covered honesty chrome while sitting in its newest screen.
+#:
+#: `REFUSAL` joined when CONSOLE-DEFECTS-B2 stopped putting the server's English 409 prose in
+#: notice titles. Each entry is the Vietnamese sentence a counter reads *instead* of that prose --
+#: "Không có gì được ghi", "đơn chưa thu tiền" -- so each is a claim about what the server did, and
+#: it would otherwise sit behind the same variable-lookup blind spot described above.
 CLAIM_TABLES = (
     ("core/errors.js", "MESSAGES"),
+    ("core/errors.js", "REFUSAL"),
     ("core/i18n.js", "REASON_NOTE"),
     ("screens/remedies.js", "PLAN_NOTE"),
     ("screens/remedies.js", "KIND_NOTE"),

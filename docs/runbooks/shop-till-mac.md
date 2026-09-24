@@ -181,7 +181,15 @@ first sign-in, including you. Then:
 # pilot week is exactly when a step gets run twice.
 ./scripts/shop-admin bootstrap_owner.py --oidc-subject '<your Keycloak user id>' --display-name 'Hoài Ngọc'
 ./scripts/shop-admin publish_pricebook.py --actor-id '<owner staff uuid>'
+./scripts/shop-admin publish_remedy_policy.py --actor-id '<owner staff uuid>'
+./scripts/shop-admin publish_promotion_policy.py --actor-id '<owner staff uuid>'
 ```
+
+The last two were in no runbook. Without the remedy policy, the first complaint a customer brings
+reaches the counter and every remedy request refuses with `REMEDY_POLICY_UNPUBLISHED` -- fail-closed,
+correctly, and still a dead end in front of a customer. The promotion document that ships has
+already ended; publishing it is what makes a quote say the programme has ended instead of a bare
+zero, and it is the version the owner edits to start the next one.
 
 `OWNER_ADMIN` is not implicitly a member of the store — assign yourself from the Nhân sự screen.
 Until the pricebook is published, pricing answers 503 by design and the shop cannot quote.
@@ -203,21 +211,61 @@ that sleeps. `deploy/shop-till/README.md` has the detail and the two other macOS
 **Keep the Mac awake during shop hours.** System Settings → Lock Screen → *Turn display off* is
 fine; sleep is not. Closing the lid stops the containers.
 
-## 6. What stays on paper this week
+## 6. What still needs a person, not paper
 
-Two counter events the software cannot record yet. Neither is a defect to be fixed by an engineer;
-both are questions waiting on you, and both have a decision packet.
+This section used to say range-priced items and complaints stay on paper. Both have since been
+built, and `docs/HUONG_DAN_CA_LAM_VIEC_VI.md` already tells staff so -- **writing them on paper now
+loses the record**, because the copy on the machine is the one nobody can alter.
 
 | Situation | This week |
 |---|---|
-| A customer brings **a suit, a coat, áo dài, leather shoes or bags, a pillow, a sofa cover, a carpet, or asks for stain treatment** — 20 of the 43 published services are price *ranges* | The console refuses to turn a range into a single number by design (`DEC-001`). Agree the price with the customer, write it on the ticket, and keep the ticket. Wash-and-dry by the kilo and the 22 fixed-price services quote normally. |
-| A customer **complains** | The incident form cannot be completed — it requires two values nothing in the system produces (`docs/DECISION_REQUEST_INCIDENT_INTAKE_2026-09.md`). Write the complaint in the book against the ticket number and tell the owner the same day. |
+| A customer brings **a suit, a coat, áo dài, leather shoes or bags, a pillow, a sofa cover, a carpet, or asks for stain treatment** -- 20 of the published services are price *ranges* | Quote it on the console. Staff agree the figure with the customer and the **owner approves it from their own signed-in session, with MFA, within ten minutes** (`RANGE-PRICE-001`). If the owner cannot be reached, that item cannot be sold on the machine: say so, and do not type a number to get past it. Who else may approve is `DEC-029`, still open. |
+| A customer **complains** | Record it on the **Sự cố** screen against the order, then propose the remedy there. Staff may authorise up to 100.000 ₫ **in total per item** -- above that, or past five times what the shop charged for it, the owner approves (`DEC-004`). **A lost item is the exception**: loss has no ratified figure, so the console records the complaint and refuses any amount. Tell the owner the same day. |
 
-Both are listed on the console's own **Chưa hỗ trợ** screen, so staff can read them there rather
-than remembering.
+Both limits are listed on the console's own **Chưa hỗ trợ** screen, so staff can read them there
+rather than remembering.
 
 ## 7. Ending the week
 
 The week ends by restoring the shop's real data somewhere else, which *is*
 `docs/runbooks/restore-drill.md`. `BACKUP-RESTORE-001` completes on a drill result and never on
 configuration — so do it once, with real consequences, on data somebody cares about.
+
+## 8. Taking a new version -- every time, outside shop hours
+
+Staging means updates, and every update lands on the shop's real ledger. Migrations run
+automatically on `up` and are **forward-only**: some drop columns. There is no command that takes a
+database back to the previous version's schema, so the order below is not optional and step 1 is
+the whole of the rollback plan.
+
+```bash
+C="-f compose.r1.yaml -f compose.shop-local.yaml -f compose.shop-till.yaml --profile self-managed-database"
+
+# 0. Outside shop hours, with nobody mid-transaction at the counter.
+
+# 1. A base backup taken now, and proof it completed -- the marker is written only on success.
+docker compose $C exec -T postgres /usr/local/bin/base-backup.sh
+docker compose $C exec -T postgres sh -c 'cat "$BACKUP_STAGING_DIR/last-success"'
+
+# 2. Keep what you are leaving. `--build` overwrites the :local tags, so without this there is
+#    no previous image to go back to.
+git rev-parse HEAD > .shop/previous-version
+for i in api worker postgres idp tls; do
+  docker image tag "nha-trang-laundry-$i:local" "nha-trang-laundry-$i:previous"
+done
+
+# 3. Take the new code and check it before building.
+git pull --ff-only
+uv run python scripts/preflight_shop_till.py
+
+# 4. Apply. The migrate service runs first; the API does not start if it fails.
+docker compose $C up -d --build
+
+# 5. One whole transaction by hand, as in section 4, before the first customer.
+```
+
+**Going back.** If step 4 applied **no new migration** (compare `ls packages/db/migrations` at the
+two versions), re-tag the `:previous` images to `:local`, `git checkout "$(cat .shop/previous-version)"`,
+and `docker compose $C up -d` without `--build`. If it **did** apply one, the previous code cannot
+run against the new schema: going back means `docs/runbooks/restore-drill.md` to the moment before
+step 4, from the backup step 1 took -- which is why step 1 is not skippable.

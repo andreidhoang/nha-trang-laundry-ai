@@ -169,6 +169,48 @@ def test_browser_mutation_requires_exact_origin_and_double_submit_csrf() -> None
     assert accepted.headers["Cache-Control"] == "no-store"
 
 
+@pytest.mark.parametrize(
+    "neighbour",
+    [
+        'consent={"a":1}',  # a JSON-valued cookie another app on the same site set
+        "pref=a b",  # an unquoted space
+        'tracking="unterminated',  # a stray quote
+    ],
+)
+def test_a_cookie_the_strict_parser_rejects_does_not_switch_csrf_off(neighbour: str) -> None:
+    """The middleware and the session lookup must agree on whether a session cookie is present.
+
+    `BrowserSecurityMiddleware` decided "is there a session?" with `http.cookies.SimpleCookie`,
+    which discards the WHOLE header when any cookie in it is malformed, while authentication reads
+    the same header with Starlette's lenient parser and finds the session. So one odd neighbouring
+    cookie made the middleware skip both the Origin and the double-submit checks for a request the
+    API then authenticated -- fail open, against invariant 11. Reproduced by the API reviewer with
+    the real middleware: a cross-origin POST went from 403 to 200.
+    """
+
+    app.dependency_overrides[current_principal] = lambda: StaffPrincipal(
+        OWNER_ID, "owner-subject", frozenset({StaffRole.OWNER_ADMIN}), True
+    )
+    app.dependency_overrides[get_identity_service] = StaffCreationService
+    client = TestClient(app, base_url=ORIGIN)
+    cookie = f"{neighbour}; staff_session=opaque-session"
+    body = {"oidc_subject": "new-staff", "display_name": "New Staff"}
+    try:
+        cross_origin = client.post(
+            "/internal/v1/staff",
+            headers={"Cookie": cookie, "Origin": "https://evil.example"},
+            json=body,
+        )
+        no_token = client.post(
+            "/internal/v1/staff", headers={"Cookie": cookie, "Origin": ORIGIN}, json=body
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert cross_origin.status_code == 403
+    assert no_token.status_code == 403
+
+
 def test_identity_exchange_replaces_session_and_issues_strict_csrf_cookie() -> None:
     app.dependency_overrides[get_identity_service] = BrowserIdentityService
     client = TestClient(app, base_url=ORIGIN)

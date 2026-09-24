@@ -49,28 +49,77 @@ for candidate_name in identity repository fetch_command; do
 done
 
 # The recovery target in UTC, as YYYYMMDDHHMMSS, so it can be compared to the labels the base
-# backups carry. `busybox date -d` parses "YYYY-MM-DD hh:mm:ss" as UTC and rejects an offset, so the
-# offset is applied by hand.
+# backups carry.
+#
+# **Pure POSIX arithmetic, no `date -d` and no `10#`.** The previous version used both and ran only
+# under busybox, which is where it was measured. On the Debian/Ubuntu drill host the runbook sets up,
+# `/bin/sh` is dash, which has no `10#` radix prefix: the runbook's own target '...+07' aborted with
+# "arithmetic expression: expecting EOF" (exit 2) before anything was restored. On macOS, the
+# owner's machines, BSD `date` has no `-d` at all. Days-from-civil and its inverse (Hinnant's
+# algorithms) need only integer `$(( ))`, which every POSIX shell has, so the conversion is the same
+# on every host that can run the rest of this script.
+_decimal() {
+    # "07" -> 7 without the `10#` prefix dash rejects; "08" would otherwise be read as octal.
+    _v=$1
+    while [ "${#_v}" -gt 1 ] && [ "${_v#0}" != "$_v" ]; do _v=${_v#0}; done
+    printf '%s' "$_v"
+}
+_refuse_target() {
+    echo "refusing: RECOVERY_TARGET_TIME is not a timestamp this can read: $target_time" >&2
+    echo "use e.g. '2026-09-03 14:05:00+07'" >&2
+    exit 6
+}
 _target_stamp() {
     _dt=$(printf '%s' "$target_time" | sed -E 's/([+-][0-9]{2}:?[0-9]{2}?|Z)$//' | sed -E 's/\.[0-9]+$//')
     _off=$(printf '%s' "$target_time" | sed -nE 's/.*([+-][0-9]{2}:?[0-9]{2}?|Z)$/\1/p')
-    _epoch=$(date -u -d "$_dt" +%s 2>/dev/null) || {
-        echo "refusing: RECOVERY_TARGET_TIME is not a timestamp this can read: $target_time" >&2
-        echo "use e.g. '2026-09-03 14:05:00+07'" >&2
-        exit 6
-    }
+    case "$_dt" in
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][\ T][0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;;
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][\ T][0-9][0-9]:[0-9][0-9]) _dt="${_dt}:00" ;;
+        *) _refuse_target ;;
+    esac
+    _y=$(_decimal "$(printf '%s' "$_dt" | cut -c1-4)")
+    _mo=$(_decimal "$(printf '%s' "$_dt" | cut -c6-7)")
+    _d=$(_decimal "$(printf '%s' "$_dt" | cut -c9-10)")
+    _h=$(_decimal "$(printf '%s' "$_dt" | cut -c12-13)")
+    _mi=$(_decimal "$(printf '%s' "$_dt" | cut -c15-16)")
+    _s=$(_decimal "$(printf '%s' "$_dt" | cut -c18-19)")
+    [ "$_mo" -ge 1 ] && [ "$_mo" -le 12 ] && [ "$_d" -ge 1 ] && [ "$_d" -le 31 ] \
+        && [ "$_h" -le 23 ] && [ "$_mi" -le 59 ] && [ "$_s" -le 59 ] || _refuse_target
     case "$_off" in
         ""|Z) _shift=0 ;;
         *)
             _sign=$(printf '%s' "$_off" | cut -c1)
-            _hh=$(printf '%s' "$_off" | cut -c2-3)
+            _hh=$(_decimal "$(printf '%s' "$_off" | cut -c2-3)")
             _mm=$(printf '%s' "$_off" | tr -d ':' | cut -c4-5)
             [ -n "$_mm" ] || _mm=0
-            _shift=$(( 10#$_hh * 3600 + 10#$_mm * 60 ))
+            _mm=$(_decimal "$_mm")
+            _shift=$(( _hh * 3600 + _mm * 60 ))
             [ "$_sign" = "-" ] && _shift=$(( -_shift ))
             ;;
     esac
-    date -u -d "@$(( _epoch - _shift ))" +%Y%m%d%H%M%S
+    # days from 1970-01-01 to the civil date
+    _yy=$(( _mo <= 2 ? _y - 1 : _y ))
+    _era=$(( (_yy >= 0 ? _yy : _yy - 399) / 400 ))
+    _yoe=$(( _yy - _era * 400 ))
+    _doy=$(( (153 * (_mo > 2 ? _mo - 3 : _mo + 9) + 2) / 5 + _d - 1 ))
+    _doe=$(( _yoe * 365 + _yoe / 4 - _yoe / 100 + _doy ))
+    _days=$(( _era * 146097 + _doe - 719468 ))
+    _epoch=$(( _days * 86400 + _h * 3600 + _mi * 60 + _s - _shift ))
+    # and back, in UTC
+    _z=$(( _epoch / 86400 ))
+    _rem=$(( _epoch - _z * 86400 ))
+    if [ "$_rem" -lt 0 ]; then _rem=$(( _rem + 86400 )); _z=$(( _z - 1 )); fi
+    _z=$(( _z + 719468 ))
+    _era=$(( (_z >= 0 ? _z : _z - 146096) / 146097 ))
+    _doe=$(( _z - _era * 146097 ))
+    _yoe=$(( (_doe - _doe / 1460 + _doe / 36524 - _doe / 146096) / 365 ))
+    _doy=$(( _doe - (365 * _yoe + _yoe / 4 - _yoe / 100) ))
+    _mp=$(( (5 * _doy + 2) / 153 ))
+    _od=$(( _doy - (153 * _mp + 2) / 5 + 1 ))
+    _om=$(( _mp < 10 ? _mp + 3 : _mp - 9 ))
+    _oy=$(( _yoe + _era * 400 + (_om <= 2 ? 1 : 0) ))
+    printf '%04d%02d%02d%02d%02d%02d\n' "$_oy" "$_om" "$_od" \
+        $(( _rem / 3600 )) $(( (_rem % 3600) / 60 )) $(( _rem % 60 ))
 }
 target_stamp=$(_target_stamp)
 

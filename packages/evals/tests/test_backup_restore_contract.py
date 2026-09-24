@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from copy import deepcopy
 from pathlib import Path
@@ -317,8 +318,11 @@ def test_the_base_backup_is_chosen_by_the_recovery_target_not_by_recency() -> No
     restore = (ROOT / "deploy/production/backup/restore.sh").read_text("utf-8")
     assert "target_stamp" in restore, "the target must be compared against each backup's label"
     assert "taken after the target" in restore, "skipped candidates must say why"
-    # The comparison has to survive an offset: the runbook's own example is '+07'.
-    assert "_shift" in restore and "date -u -d" in restore
+    # The comparison has to survive an offset: the runbook's own example is '+07'. It used to be
+    # pinned here as the text `date -u -d`, which is the part that could not run on the owner's
+    # macOS machines; `test_the_recovery_target_converts_the_same_under_every_posix_shell` below
+    # now proves the conversion by running it.
+    assert "_shift" in restore
     # And it must still be newest-first among the eligible, not oldest-first.
     assert "sort -r" in restore
 
@@ -589,3 +593,100 @@ def test_an_empty_object_already_in_the_repository_is_never_waved_through(
 
     result = _run_upload(tmp_path, "--idempotent", segment, destination)
     assert result.returncode != 0, "an empty object already in the repository must be reported"
+
+
+@pytest.mark.parametrize(
+    ("target", "utc_stamp"),
+    [
+        # The runbook's own example. dash aborted on it with "expecting EOF" (exit 2).
+        ("2026-09-03 14:05:00+07", "20260903070500"),
+        ("2026-09-03 05:31:50+07:00", "20260902223150"),
+        ("2024-02-29 23:59:59Z", "20240229235959"),
+        ("2026-01-01 03:00:00+07", "20251231200000"),
+        ("2025-12-31 23:00:00-05", "20260101040000"),
+        ("2100-03-01 01:00:00+07", "21000228180000"),
+        ("2026-09-03 08:09+0530", "20260903023900"),
+    ],
+)
+def test_the_recovery_target_converts_the_same_under_every_posix_shell(
+    target: str, utc_stamp: str
+) -> None:
+    """The drill host's `/bin/sh` decides whether a restore can start at all.
+
+    `restore.sh` is `#!/bin/sh`, and the conversion used `10#` and GNU `date -d`. It was measured
+    under busybox and worked; on the Debian drill host the runbook provisions, `/bin/sh` is dash and
+    the runbook's own '+07' target aborted before anything was restored, and on macOS BSD `date` has
+    no `-d`. The function is extracted from the script and run under every shell present, so the
+    script's behaviour rather than its spelling is what is held.
+    """
+
+    script = (ROOT / "deploy/production/backup/restore.sh").read_text("utf-8")
+    code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+    assert "10#" not in code and "date -d" not in code and "date -u -d" not in code
+    body = script[script.index("_decimal() {") : script.index("target_stamp=$(_target_stamp)")]
+    shells = [shell for shell in ("dash", "bash", "busybox") if shutil.which(shell)]
+    assert shells, "no POSIX shell available to run the restore script's conversion"
+    for shell in shells:
+        argv = [shell, "sh", "-c"] if shell == "busybox" else [shell, "-c"]
+        result = subprocess.run(
+            [*argv, body + "\n_target_stamp"],
+            env={"PATH": os.environ.get("PATH", ""), "target_time": target},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert (result.returncode, result.stdout.strip()) == (0, utc_stamp), (shell, result.stderr)
+
+
+@pytest.mark.parametrize("target", ["yesterday", "2026-13-01 00:00:00", "2026-09-03 25:00:00+07"])
+def test_an_unreadable_recovery_target_is_refused(target: str) -> None:
+    script = (ROOT / "deploy/production/backup/restore.sh").read_text("utf-8")
+    body = script[script.index("_decimal() {") : script.index("target_stamp=$(_target_stamp)")]
+    shell = shutil.which("dash") or shutil.which("sh") or "sh"
+    result = subprocess.run(
+        [shell, "-c", body + "\n_target_stamp"],
+        env={"PATH": os.environ.get("PATH", ""), "target_time": target},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 6 and "refusing" in result.stderr
+
+
+def test_a_compressor_that_dies_part_way_never_yields_an_encrypted_backup(tmp_path: Path) -> None:
+    """`gzip | age` reported `age`'s status alone, so a short stream was encrypted and marked good.
+
+    The compress/encrypt stage is extracted from `base-backup.sh` and run under `/bin/sh` with a
+    `gzip` that writes a prefix and then fails, and an `age` that always succeeds -- the exact pair
+    the pipeline could not tell apart. The stage must stop, and no artifact may exist to upload.
+    """
+
+    script = (ROOT / "deploy/production/backup/base-backup.sh").read_text("utf-8")
+    stage = script[script.index('compressed="${work}') : script.index('rm -f "$compressed"')]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gzip").write_text("#!/bin/sh\nprintf 'partial'\nexit 1\n")
+    (bin_dir / "age").write_text(
+        '#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\nprintf enc > "$2"\nexit 0\n'
+    )
+    for tool in ("gzip", "age"):
+        (bin_dir / tool).chmod(0o755)
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "base.tar").write_text("tar")
+    result = subprocess.run(
+        [shutil.which("dash") or "sh", "-c", "set -eu\n" + stage],
+        env={
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+            "work": str(work),
+            "label": "b1",
+            "archive": str(work / "base.tar"),
+            "recipients": str(tmp_path / "recipients"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "nothing was uploaded" in result.stderr
+    assert not (work / "b1.tar.gz.age").exists()

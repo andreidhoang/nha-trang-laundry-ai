@@ -510,6 +510,57 @@ def test_an_expired_quote_is_refused_whatever_the_caller_claims(connection: Any)
     assert stored.commercial is CommercialOrderStatus.REQUESTED
 
 
+def test_an_order_citing_a_seal_the_customer_never_agreed_is_refused(connection: Any) -> None:
+    """Invariant #8: an order binds the exact content hash of the agreement it cites.
+
+    The guard in `OrderRepository.create` compares `accepted_quote_snapshot_hash` with the stored
+    one, and nothing proved it. The expiry test above reaches the same refusal message by another
+    route, and the browser check in `verify_daily_operations.py` that claims to prove it submits
+    against a quote that has already been converted, so it is refused by the single-shot guard and
+    the seal comparison never runs. A guard only ever exercised by accident is one a refactor can
+    delete with every check still green. The quote here is OPEN, current, unexpired and the
+    customer's own, so the seal is the only thing wrong with the request.
+    """
+
+    store_id = uuid4()
+    owner = _staff(connection, store_id)
+    quote_id, revision, quote, contact_id = accepted_quote(
+        connection, store_id=store_id, principal=owner
+    )
+
+    def command(seal: str) -> CreateOrderCommand:
+        return CreateOrderCommand(
+            store_id,
+            contact_id,
+            quote_id,
+            revision,
+            seal,
+            FulfillmentMode.SELF_DROP_SELF_COLLECT,
+            owner,
+            f"order-create-{uuid4().hex}",
+            uuid4(),
+            PRICED_AT,
+            AcquisitionSource.WALK_IN,
+        )
+
+    genuine = quote.document.snapshot_hash
+    forged = genuine[: -len("0" * 64)] + ("b" * 64 if not genuine.endswith("b" * 64) else "c" * 64)
+    assert forged != genuine and forged.startswith("JCS-SHA256-V1:")
+
+    with pytest.raises(OrderStateError, match="missing, stale, or expired"):
+        OrderRepository().create(
+            connection, command(forged), evaluated_at=PRICED_AT + timedelta(minutes=1)
+        )
+
+    # The refusal spent nothing: the agreement is still OPEN, so the genuine seal still converts
+    # it. A guard that consumed the quote on the way to refusing would pass the assertion above and
+    # leave the customer with a price nobody can order against.
+    stored = OrderRepository().create(
+        connection, command(genuine), evaluated_at=PRICED_AT + timedelta(minutes=1)
+    )
+    assert stored.commercial is CommercialOrderStatus.REQUESTED
+
+
 def test_an_order_request_reaches_a_terminal_status_with_its_order(connection: Any) -> None:
     """COUNTER-DEFECTS-001: `order_requests.status` was written by nothing.
 

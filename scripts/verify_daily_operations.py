@@ -599,7 +599,11 @@ with sync_playwright() as pw:
         f"HTTP {last[1]} {last[3][:110]}",
     )
 
-    # 2. A tampered seal is refused even with a real quote id.
+    # 2. The agreement this morning's order spent cannot be spent again, whatever seal is
+    # offered. This used to claim it proved the seal comparison; it never did, because the
+    # quote is already CONVERTED and the single-shot guard refuses first. The seal guard is
+    # proven on an OPEN quote by test_an_order_citing_a_seal_the_customer_never_agreed_is_refused
+    # in packages/db/tests/test_order_transition_scoping.py.
     page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
     page.wait_for_timeout(1200)
     page.locator("#order-contact").fill(ticket_ref)
@@ -613,8 +617,8 @@ with sync_playwright() as pw:
     page.wait_for_timeout(1800)
     last = [c for c in api_calls if c[0] == "POST" and c[2].endswith("/orders")][-1]
     ok(
-        "a price seal that does not match the accepted revision is refused",
-        last[1] >= 400,
+        "an agreement already turned into an order cannot be ordered twice, even re-sealed",
+        last[1] == 409 and "already been converted" in last[3],
         f"HTTP {last[1]} {last[3][:110]}",
     )
 

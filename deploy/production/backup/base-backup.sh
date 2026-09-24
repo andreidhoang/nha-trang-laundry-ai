@@ -59,11 +59,27 @@ archive="${work}/base.tar"
     exit 1
 }
 
+# Two stages, two statuses -- the defect `archive-wal.sh` already documents and fixed, which this
+# file kept. `gzip | age` in one pipeline reports only `age`'s status in POSIX sh, so a gzip that
+# died part-way (a read error, a full staging volume) fed `age` a prefix, `age` encrypted it and
+# exited 0, the `-s` guard below passed because a truncated artifact is not empty, and the success
+# marker was written for a backup that cannot be restored. `gzip -t` then proves the stream is whole
+# before anything is encrypted, let alone uploaded.
+compressed="${work}/${label}.tar.gz"
 encrypted="${work}/${label}.tar.gz.age"
-if ! gzip -c "$archive" | age -R "$recipients" -o "$encrypted"; then
-    echo "base-backup: compress/encrypt failed for ${label}; nothing was uploaded" >&2
+if ! gzip -c "$archive" > "$compressed"; then
+    echo "base-backup: compression failed for ${label}; nothing was uploaded" >&2
     exit 1
 fi
+if ! gzip -t "$compressed"; then
+    echo "base-backup: compressed stream for ${label} failed verification; nothing was uploaded" >&2
+    exit 1
+fi
+if ! age -R "$recipients" -o "$encrypted" "$compressed"; then
+    echo "base-backup: encryption failed for ${label}; nothing was uploaded" >&2
+    exit 1
+fi
+rm -f "$compressed"
 [ -s "$encrypted" ] || {
     echo "base-backup: ${label} encrypted to an empty artifact; nothing was uploaded" >&2
     exit 1

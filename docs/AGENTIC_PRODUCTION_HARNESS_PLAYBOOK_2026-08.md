@@ -147,8 +147,8 @@ Then, in under 200 words:
 3. What its task_packet declares as acceptance checks.
 4. One sentence: what would make a completion claim on this item a lie?
 
-Do not read PROJECT_CONTINUATION.md, STATUS.md or DELIVERY_BOARD.md to answer this. Those are
-projections. If a projection disagrees with the queue, the queue wins and the projection is a
+Do not read PROJECT_CONTINUATION.md to answer this. It is a
+projection. If a projection disagrees with the queue, the queue wins and the projection is a
 bug — tell me, don't reconcile it silently.
 ```
 

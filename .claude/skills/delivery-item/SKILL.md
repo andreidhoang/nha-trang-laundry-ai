@@ -37,7 +37,8 @@ active, start only the item the controller selected.
 of which two were already `RESOLVED`. Read `context/DECISION_REGISTRY.yaml` directly. Report the
 discrepancy; do not silently reconcile it.
 
-`PROJECT_CONTINUATION.md`, `STATUS.md` and `DELIVERY_BOARD.md` are projections, not authority. Where
+`PROJECT_CONTINUATION.md` is a projection, not authority (`STATUS.md` and `DELIVERY_BOARD.md` were
+removed on 2026-09-24 for exactly this reason: both had drifted and nothing regenerated them). Where
 a projection disagrees with the queue, the queue wins and the projection is a bug to report.
 
 ## 2. Scope before writing

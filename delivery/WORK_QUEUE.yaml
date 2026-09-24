@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-22'
+last_updated: '2026-09-24'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -4143,7 +4143,7 @@ items:
 - id: STAGING-REVIEW-001
   phase: PRODUCTION_HARDENING
   title: Five independent reviewers before real staff touch the application
-  status: PENDING
+  status: COMPLETE
   priority: 286
   depends_on: []
   context_domains:
@@ -4174,7 +4174,7 @@ items:
 - id: REMEDY-CUMULATIVE-001
   phase: PRODUCTION_HARDENING
   title: One complaint cannot mint unlimited staff-authorised credits
-  status: PENDING
+  status: COMPLETE
   priority: 287
   depends_on:
   - REMEDY-001
@@ -4203,8 +4203,9 @@ items:
   blocked_by_decisions: []
 - id: CREDIT-RESERVATION-001
   phase: PRODUCTION_HARDENING
-  title: A remedy credit the shop owes survives a reprice, an expiry and an abandoned quote
-  status: PENDING
+  title: A remedy credit the shop owes survives a reprice, an expiry and an abandoned
+    quote
+  status: COMPLETE
   priority: 288
   depends_on:
   - REMEDY-001
@@ -4231,8 +4232,9 @@ items:
   blocked_by_decisions: []
 - id: CANCEL-REFUND-001
   phase: PRODUCTION_HARDENING
-  title: A paid order cancelled without charge records its refund, and takings match the drawer
-  status: PENDING
+  title: A paid order cancelled without charge records its refund, and takings match
+    the drawer
+  status: COMPLETE
   priority: 289
   depends_on:
   - ORDER-EXIT-001
@@ -4261,8 +4263,9 @@ items:
   blocked_by_decisions: []
 - id: CONFIG-REVERT-001
   phase: PRODUCTION_HARDENING
-  title: Republishing an earlier pricebook, promotion or remedy policy puts it back in force
-  status: PENDING
+  title: Republishing an earlier pricebook, promotion or remedy policy puts it back
+    in force
+  status: COMPLETE
   priority: 290
   depends_on: []
   context_domains:
@@ -4288,7 +4291,7 @@ items:
 - id: ORDER-LOOKUP-001
   phase: PRODUCTION_HARDENING
   title: Staff find the order a customer comes back for, and see what they owe
-  status: PENDING
+  status: COMPLETE
   priority: 291
   depends_on: []
   context_domains:
@@ -4316,7 +4319,7 @@ items:
 - id: CONSOLE-DEADENDS-001
   phase: PRODUCTION_HARDENING
   title: The places a counter shift got stuck on the console
-  status: PENDING
+  status: COMPLETE
   priority: 292
   depends_on: []
   context_domains:
@@ -4399,7 +4402,8 @@ items:
   blocked_by_decisions: []
 - id: OPS-HARDENING-002
   phase: PRODUCTION_HARDENING
-  title: Readiness that touches the database, query timeouts, log rotation, image pins
+  title: Readiness that touches the database, query timeouts, log rotation, image
+    pins
   status: PENDING
   priority: 295
   depends_on:
@@ -4425,7 +4429,8 @@ items:
   blocked_by_decisions: []
 - id: API-INTEGRITY-002
   phase: PRODUCTION_HARDENING
-  title: A manual send goes to the approved recipient; unknown sends respect store boundaries
+  title: A manual send goes to the approved recipient; unknown sends respect store
+    boundaries
   status: PENDING
   priority: 296
   depends_on: []

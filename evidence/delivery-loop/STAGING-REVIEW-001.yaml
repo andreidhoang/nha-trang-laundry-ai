@@ -1,0 +1,77 @@
+schema_version: 1
+work_item: STAGING-REVIEW-001
+recorded_at: '2026-09-24T21:00:00+07:00'
+requirement_contract: 'context/tasks/TASK-staging-review-001.md: five independent read-only reviewers
+  (money, API authority, console, agentic runtime, operations) against main at 9287596 with every gate
+  green; every finding reproduced before it was fixed and fixed with a test that fails on the previous
+  code. This record covers the lead''s share.'
+rollback_impact: Code and runbook changes only; no schema. Reverting restores the defects named below,
+  each of which is reproduced in its commit message. Migrations are forward-only; a code revert past 0046/0047
+  leaves them applied, which is safe as stated per item. Rolling the data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 now takes before every upgrade.
+unresolved_assumptions: The server runbooks remain unexercised end to end (stated in both). Alert delivery
+  is SHOP-ALERT-DELIVERY-001, not built here because nothing in this environment can watch an alert arrive.
+evidence:
+  every_fix_has_a_test_that_fails_on_the_previous_code: 'Restore conversion: 7 failed against main''s
+    restore.sh, 34 passed after. Backup stage: the old `gzip | age` pipeline demonstrated to exit 0 with
+    artifact ''partial''; the new stage refuses. CSRF: 3 failed, 9 passed after. Request strictness: 70
+    failed against the previous models, 81 passed after. Price seal on an OPEN quote: the new test kills
+    its mutant (DID NOT RAISE with the comparison removed).'
+  restore_runs_under_dash_and_without_gnu_date: 22 of 22 recovery targets (leap days, 2100, negative offsets,
+    day rollover) match a Python reference under dash and bash; malformed targets exit 6. test_the_recovery_target_converts_the_same_under_every_posix_shell
+    runs the extracted function under every shell present and forbids `10#` and `date -d` in executable
+    lines.
+  a_truncated_backup_is_never_encrypted_or_marked_good: 'test_a_compressor_that_dies_part_way_never_yields_an_encrypted_backup
+    runs the extracted stage with a gzip that writes a prefix and fails and an age that always succeeds:
+    non-zero exit, ''nothing was uploaded'', no artifact.'
+  csrf_does_not_switch_off_on_a_malformed_cookie: The reviewer's own repro with the real middleware went
+    from 403/200/200 to 403/403/403. The middleware now reads cookies with the parser authentication uses.
+  no_request_field_coerces_a_boolean_or_string_into_money: 'Every int/bool field on the 22 StrictRequest
+    subclasses is StrictInt/StrictBool; the test enumerates the models so a new field is covered automatically.
+    Live: paid_amount_vnd=true answered 422 against the running API.'
+  real_api_browser_runs_on_a_database_migrated_from_empty: 'See supplementary_checks: daily operations
+    71/0, conformance 86/1 (coverage line only), stubbed console 170/0.'
+  rollback_assessment: Code and runbook changes only; no schema. Reverting restores the defects named
+    below, each of which is reproduced in its commit message. Migrations are forward-only; a code revert
+    past 0046/0047 leaves them applied, which is safe as stated per item. Rolling the data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 now takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 572 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 257 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 1749 passed, 4 skipped in 321.55s (0:05:21)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 58 served
+    internal API operations against their contract. Validated 381 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 137 source references, 28 decisions, 4 gates, 9 phases, 143 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_daily_operations.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-24, against a database created empty and migrated 0001-0047 (0045 unused) on the merged
+    tree, real RS256 identity provider, real FastAPI process. The first run on the merged tree was 69/1;
+    the failure was traced to the check, not the product (see CONSOLE-DEADENDS-001) before anything changed.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_workflow_conformance.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: '86 ok, 1 failed (coverage only: 40/49 declared controls exercised, identical to main at 9287596)'
+  note: First run on the merged tree was 82/5. Four were real findings about the merged console and are
+    fixed in ca395c2; the fifth is the pre-existing coverage line.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_console_interaction.py
+  status: PASSED
+  result: 170 passed, 0 failed
+  note: Stubbed API. Run after every console merge and after ca395c2.

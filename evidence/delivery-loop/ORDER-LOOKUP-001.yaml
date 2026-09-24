@@ -1,0 +1,70 @@
+schema_version: 1
+work_item: ORDER-LOOKUP-001
+recorded_at: '2026-09-24T21:00:00+07:00'
+requirement_contract: 'At pickup staff could not find the order a customer came back for: the board was
+  the newest 100, there was no read by id, and the row version a transition needs came only from that
+  list; the counter ticket (DEC-013) was shown once; no order screen showed the amount the settlement
+  demands. Found by three of five reviewers. Counter tickets were numbered on the UTC day.'
+rollback_impact: Migration 0047 is indexes only; rollback is three DROP INDEX with no data impact. Migrations
+  are forward-only; a code revert past 0046/0047 leaves them applied, which is safe as stated per item.
+  Rolling the data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section
+  8 now takes before every upgrade.
+unresolved_assumptions: 'No cursor pagination: closed orders past the newest 100 are reachable by ticket
+  or id. Tickets issued 00:00-07:00 local before this change carry the previous UTC date and are found
+  under it. The delivery-leg form still takes a typed order id.'
+evidence:
+  an_order_past_the_newest_hundred_is_readable_and_transitionable: 'test_order_lookup.py and test_order_lookup_postgres.py:
+    order #101 read by id and transitioned over HTTP with If-Match. EXPLAIN over 6.000 rows: both board
+    queries use their index, no sequential scan.'
+  ticket_lookup_uses_the_local_business_day: 'A ticket issued at 06:30 local (23:30 UTC the day before)
+    is dated the local day; the test failed on 9287596 (date(2026,9,23) == date(2026,9,24)). Live: ticket
+    29 today -> 1 order; the same number on 2026-01-01 -> 0.'
+  another_stores_order_is_indistinguishable_from_a_missing_one: 'Same 404 ''order unavailable'' for both,
+    so the route cannot enumerate which ids exist where; live: unknown id -> 404.'
+  the_amount_shown_is_the_stored_snapshot_total: 'payable_total_vnd reads the display_total columns SettlementRepository.record
+    checks against, null (never 0) for a range; live: 140000 on board, detail and payment panel, and a
+    settlement of exactly that amount accepted.'
+  rollback_assessment: Migration 0047 is indexes only; rollback is three DROP INDEX with no data impact.
+    Migrations are forward-only; a code revert past 0046/0047 leaves them applied, which is safe as stated
+    per item. Rolling the data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+    section 8 now takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 572 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 257 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 1749 passed, 4 skipped in 321.55s (0:05:21)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 58 served
+    internal API operations against their contract. Validated 381 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 137 source references, 28 decisions, 4 gates, 9 phases, 143 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_daily_operations.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-24, against a database created empty and migrated 0001-0047 (0045 unused) on the merged
+    tree, real RS256 identity provider, real FastAPI process. The first run on the merged tree was 69/1;
+    the failure was traced to the check, not the product (see CONSOLE-DEADENDS-001) before anything changed.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_workflow_conformance.py
+    --base-url http://127.0.0.1:8100 --idp-url http://127.0.0.1:9000 --store <demo>
+  status: PASSED
+  result: '86 ok, 1 failed (coverage only: 40/49 declared controls exercised, identical to main at 9287596)'
+  note: First run on the merged tree was 82/5. Four were real findings about the merged console and are
+    fixed in ca395c2; the fifth is the pre-existing coverage line.
+- command: CONSOLE_BROWSER_PATH=... uv run --with playwright python scripts/verify_console_interaction.py
+  status: PASSED
+  result: 170 passed, 0 failed
+  note: Stubbed API. Run after every console merge and after ca395c2.

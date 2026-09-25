@@ -937,6 +937,54 @@ def test_approval_request_create_binds_the_real_quote_revision(
         assert cursor.fetchone()[0] == "AGENT_RUNNER"
 
 
+def test_an_agent_approval_binds_the_server_rendering_never_a_model_chosen_hash(
+    connection: Any, backend: DomainAgentToolBackend
+) -> None:
+    """AGENT-SHADOW-DEFECTS-001 F4.
+
+    The model used to choose `rendered_hash`, and the approval bound it to no content: an approver
+    was asked to authorise a digest of a rendering nothing had produced, and every later check
+    compared that digest only with itself. The server now renders what the approval presents --
+    from the stored, hash-verified revision -- and binds that rendering's digest. The model's
+    value is not bound, whatever it says.
+    """
+    from nha_trang_laundry_db.quotes import QuoteRepository
+    from nha_trang_laundry_domain.quote_presentation import render_quote_presentation
+
+    claims, request_id, quote = _quote_for_approval(connection, backend)
+    chosen_by_model = f"sha256:{'b' * 64}"
+    status, payload = _invoke(
+        backend,
+        AgentToolOperation.APPROVAL_REQUEST_CREATE,
+        arguments={
+            "action": "PRESENT_QUOTE",
+            "resource_type": "QUOTE_REVISION",
+            "resource_id": quote["quote_revision_id"],
+            "resource_version": quote["revision"],
+            "snapshot_hash": quote["snapshot_hash"],
+            "rendered_hash": chosen_by_model,
+        },
+        claims=claims,
+        path_parameters={"order_request_id": str(request_id)},
+        idempotency_key="agent-test-approval-render-01",
+    )
+    assert status == 201
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT rendered_hash, resource_id, resource_version FROM approval_requests
+            WHERE id = %s
+            """,
+            (payload["data"]["approval_request_id"],),
+        )
+        bound, quote_id, version = cursor.fetchone()
+        stored = QuoteRepository.get_revision(cursor, quote_id, int(version))
+    assert stored is not None
+    assert bound != f"JCS-SHA256-V1:{'b' * 64}"
+    assert bound == render_quote_presentation(stored.document, action="PRESENT_QUOTE").snapshot_hash
+
+
 def test_approval_request_create_refuses_an_unbound_resource_like_an_authorization_failure(
     connection: Any, backend: DomainAgentToolBackend
 ) -> None:

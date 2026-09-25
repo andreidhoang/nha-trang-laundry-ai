@@ -740,7 +740,7 @@ export const NAV = {
   shadow: "Bản nháp AI",
   assistant: "Trợ lý AI",
   exceptions: "Ngoại lệ",
-  incidents: "Sự cố",
+  incidents: "Khiếu nại",
   remedies: "Bồi hoàn",
   exports: "Xuất dữ liệu",
   system: "Hệ thống",

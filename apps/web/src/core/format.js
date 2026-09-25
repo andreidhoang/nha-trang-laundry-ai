@@ -426,3 +426,26 @@ export function matchesFilter(values, needle) {
   if (!wanted) return true;
   return values.some((value) => value != null && fold(value).includes(wanted));
 }
+
+/**
+ * How long ago something happened, in whole Vietnamese units ("5 phút trước", "3 ngày trước").
+ * CONSOLE-REDESIGN-004: the age of a complaint on its list row. Past a month it is the date, since
+ * "47 ngày trước" is a number a reader has to turn back into a date anyway. A future instant (a
+ * clock skew of seconds) reads "vừa xong", never a negative age.
+ *
+ * @param {string|null|undefined} value
+ * @param {Date} [now]
+ * @returns {string}
+ */
+export function ago(value, now = new Date()) {
+  const parsed = parseInstant(value);
+  if (!parsed) return UNKNOWN;
+  const minutes = Math.floor((now.getTime() - parsed.getTime()) / 60000);
+  if (minutes < 1) return "vừa xong";
+  if (minutes < 60) return `${minutes} phút trước`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} giờ trước`;
+  const days = Math.floor(hours / 24);
+  if (days < 31) return `${days} ngày trước`;
+  return dateOnly(value);
+}

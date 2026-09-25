@@ -997,6 +997,9 @@ export function markUpdated(stamp, at = new Date()) {
  * @param {string} [spec.filter.filteredEmptyText] shown when the filter hides every row
  * @param {boolean} [spec.filterStatusHiddenWhenInactive] hide the status line rather than empty it
  * @param {boolean} [spec.clearMetaOnError]
+ * @param {(nodes: HTMLElement[]) => HTMLElement} [spec.renderRows] wrap the rows (default: a stack)
+ * @param {(text: string) => HTMLElement} [spec.renderEmpty] the empty state (default: `empty`)
+ * @param {() => HTMLElement} [spec.skeleton] the loading placeholder (default: `skeleton`)
  * @param {() => void} [spec.onLoadStart]
  * @param {(items: any[]) => void} [spec.onLoaded]
  * @param {(error: unknown) => void} [spec.onError]
@@ -1011,7 +1014,10 @@ export function markUpdated(stamp, at = new Date()) {
  */
 export function listView(spec) {
   const rows = spec.skeletonRows ?? 3;
-  const host = h("div", null, skeleton(rows));
+  // CONSOLE-REDESIGN-004: the kit's list, empty state and skeleton can replace the V1 ones, so a
+  // rebuilt screen keeps this one fetch/truncation/filter cycle instead of writing a seventh.
+  const placeholder = () => (spec.skeleton ? spec.skeleton() : skeleton(rows));
+  const host = h("div", null, placeholder());
   const countNode = h("span", { class: "count" }, "…");
   const truncation = spec.truncation === null ? null : h("p", { class: "hint" });
   const filterStatus = h("p", { class: "filter-status" });
@@ -1043,19 +1049,18 @@ export function listView(spec) {
           : "";
       }
     }
+    const emptyText =
+      active && spec.filter.filteredEmptyText ? spec.filter.filteredEmptyText : spec.emptyText;
+    const nodes = visible.map((item) => spec.renderItem(item));
     render(
       host,
       visible.length
-        ? h(
-            "div",
-            { class: "stack" },
-            visible.map((item) => spec.renderItem(item)),
-          )
-        : empty(
-            active && spec.filter.filteredEmptyText
-              ? spec.filter.filteredEmptyText
-              : spec.emptyText,
-          ),
+        ? spec.renderRows
+          ? spec.renderRows(nodes)
+          : h("div", { class: "stack" }, nodes)
+        : spec.renderEmpty
+          ? spec.renderEmpty(emptyText)
+          : empty(emptyText),
     );
   }
 
@@ -1075,7 +1080,7 @@ export function listView(spec) {
 
   async function reload() {
     spec.onLoadStart?.();
-    render(host, skeleton(rows));
+    render(host, placeholder());
     try {
       const items = await spec.fetch();
       fetched = items;

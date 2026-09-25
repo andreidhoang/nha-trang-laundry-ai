@@ -139,6 +139,16 @@ DECLARED_CONTROLS = (
     "shell.nav.order-requests",
     "shell.sign-out",
     "staff.store-revoke",
+    # CONSOLE-REDESIGN-004: a complaint is recorded from its ticket and taken to an outcome on its
+    # own page; these are the controls that walk does, none of them an id field.
+    "incidents.create-open",
+    "incidents.ticket",
+    "incidents.summary",
+    "incidents.submit",
+    "remedy.kind",
+    "remedy.fault",
+    "remedy.propose",
+    "remedy.execute",
 )
 
 PASS: list[str] = []
@@ -241,7 +251,8 @@ class Console:
         try:
             return " | ".join(
                 line.strip()
-                for line in self.page.locator(".notice").all_inner_texts()
+                # `.alert` is the V2 kit's inline alert, which carries the same refusals.
+                for line in self.page.locator(".notice, .alert").all_inner_texts()
                 if line.strip()
             )
         except Exception:
@@ -1357,16 +1368,28 @@ def scenario_ai_refuses(console: Console) -> None:
     # and the server derives both digests -- and these checks kept asserting the defect. A test that
     # fails because the product improved is worse than no test: it trains a reader to discount a red
     # line. So they now assert what is true, and what must stay true.
+    # Corrected again by CONSOLE-REDESIGN-004: the form is a sheet opened from "Ghi khiếu nại",
+    # and the record-only fact is the line printed beside it. Same two claims, same weight.
     ok(
         "the incident screen can be completed by the person standing at the counter",
-        "Mở một sự cố" in incidents and "chưa dùng được" not in incidents,
-        [line.strip() for line in incidents.splitlines() if "Mở một sự cố" in line][:1],
+        "Ghi khiếu nại" in incidents and "chưa dùng được" not in incidents,
+        [line.strip() for line in incidents.splitlines() if "Ghi khiếu nại" in line][:1],
+    )
+    opener = console.page.locator("#incident-create-open")
+    if opener.count():
+        opener.first.click()
+        console.page.wait_for_timeout(400)
+    sheet_text = (
+        console.page.locator("dialog#incident-create").inner_text()
+        if console.page.locator("dialog#incident-create[open]").count()
+        else ""
     )
     ok(
         "and it says recording is not the same act as deciding fault or paying for it",
-        "Việc quy lỗi và bồi hoàn" in incidents,
-        "",
+        "chưa quyết ai lỗi, chưa bồi hoàn" in sheet_text,
+        sheet_text[:120].replace("\n", " "),
     )
+    console.page.keyboard.press("Escape")
 
     for route, name in (
         ("#/exceptions", "Ngoại lệ"),
@@ -1726,12 +1749,22 @@ def _collected_suits(console: Console) -> dict:
     return order
 
 
+def _pick_kind(console: Console, kind: str) -> None:
+    """Tap the kind chip ("Khách được gì?"), as staff do. A segmented control, not a select."""
+
+    chip = console.page.locator(f"#remedy-kind button[data-value='{kind}']")
+    chip.wait_for(state="visible")
+    chip.click()
+    console.page.wait_for_timeout(300)
+    touched("remedy.kind")
+
+
 def _propose_remedy(
     console: Console, *, kind: str, amount: str, garment: str = "", fault: bool = True
 ) -> str:
-    """Fill the Bồi hoàn form as staff do, after the incident's caps have been read."""
+    """Fill the remedy form on the incident page as staff do; its caps are read on arrival."""
 
-    console.choose("#remedy-kind", kind)
+    _pick_kind(console, kind)
     console.page.wait_for_timeout(400)
     line = console.page.locator("#remedy-line option")
     if line.count() > 1:
@@ -1744,7 +1777,9 @@ def _propose_remedy(
     box = console.page.locator("#remedy-fault")
     if fault and box.count() and box.get_attribute("type") == "checkbox" and not box.is_checked():
         box.click()
+        touched("remedy.fault")
     console.page.locator("button", has_text="Gửi đề nghị bồi hoàn").first.click()
+    touched("remedy.propose")
     console.page.wait_for_timeout(2200)
     return console.said()
 
@@ -1757,28 +1792,44 @@ def scenario_remedy(console: Console) -> None:
     order = _collected_suits(console)
     order_id = order["order_id"]
     note(f"order {order_id[:8]}…: 3 x áo vest at 30.000 ₫, paid, handed back, closed")
+    # CONSOLE-REDESIGN-004: the order is found by the ticket the customer holds, never pasted.
+    slip = console.call("GET", f"/internal/v1/orders/{order_id}")["body"] or {}
+    ticket_number = str(slip.get("ticket_number") or "")
     console.open("#/incidents")
-    console.type_into("#incident-order", order_id)
-    console.type_into("#incident-summary", "Áo vest thứ hai bị bạc màu cổ áo; áo thứ nhất bị mất")
-    console.page.locator("button[type=submit]", has_text="Ghi sự cố").first.click()
-    console.page.wait_for_timeout(2200)
+    console.page.locator("#incident-create-open").click()
+    touched("incidents.create-open")
+    console.page.wait_for_timeout(300)
+    if slip.get("ticket_issued_on"):
+        console.page.locator("#incident-ticket-date").fill(str(slip["ticket_issued_on"]))
+    console.type_into("#incident-ticket", ticket_number, control="incidents.ticket")
+    console.page.keyboard.press("Enter")
+    console.page.wait_for_timeout(1500)
+    picked = console.page.locator("#incident-create .picked")
+    ok(
+        f"the ticket the customer holds (Phiếu {ticket_number}) finds the order -- no id is typed",
+        picked.count() == 1 and picked.get_attribute("data-order-id") == order_id,
+        picked.inner_text()[:80] if picked.count() else console.said()[:160],
+    )
+    console.type_into(
+        "#incident-summary",
+        "Áo vest thứ hai bị bạc màu cổ áo; áo thứ nhất bị mất",
+        control="incidents.summary",
+    )
+    console.page.locator("#incident-submit").click()
+    touched("incidents.submit")
+    console.page.wait_for_timeout(2500)
     incident = sql(
         f"select id from customer_incidents where order_id='{order_id}' "
         "order by opened_at desc limit 1"
     )
     ok("the complaint is recorded against the order", len(incident) == 36, console.said()[:160])
-    offer = console.page.locator("button", has_text="Đề xuất bồi hoàn")
-    if offer.count():
-        offer.first.click()
-        console.page.wait_for_timeout(1500)
-    else:
-        console.open(f"#/remedies?incident={incident}")
-        console.type_into("#remedy-incident", incident)
-    read = console.page.locator("button", has_text="Đọc mức trần và thời hạn")
-    if read.count():
-        read.first.click()
-        console.page.wait_for_timeout(2200)
-    console.choose("#remedy-kind", "DAMAGE_COMPENSATION")
+    ok(
+        "and its own page opens, with the remedy flow on it",
+        console.page.url.endswith(f"#/incidents/{incident}")
+        and console.page.locator("#remedy-kind").count() == 1,
+        console.page.url,
+    )
+    _pick_kind(console, "DAMAGE_COMPENSATION")
     console.page.wait_for_timeout(400)
     if console.page.locator("#remedy-line option").count() > 1:
         console.page.select_option("#remedy-line", index=1)
@@ -1822,9 +1873,10 @@ def scenario_remedy(console: Console) -> None:
         rows == "60000|t",
         f"{rows} :: {said[:120]}",
     )
-    carry_out = console.page.locator("button", has_text="Thực hiện bồi hoàn")
+    carry_out = console.page.locator("button[data-remedy-execute]")
     if carry_out.count():
         carry_out.first.click()
+        touched("remedy.execute")
         console.page.wait_for_timeout(2200)
     paid_out = sql(
         "select count(*) from remedy_proposals p join remedy_credits c "
@@ -1920,13 +1972,13 @@ def scenario_remedy(console: Console) -> None:
 
     head("12f", "TRẢ SAU — back at the counter, the approved loss is carried out from the list")
     console.sign_in("demo-operations")
-    console.open(f"#/remedies?incident={incident}", settle=1500)
-    if console.page.locator("#remedy-recorded-proposals li").count() == 0:
-        console.type_into("#remedy-incident", incident)
-        read = console.page.locator("button", has_text="Đọc mức trần và thời hạn")
-        if read.count():
-            read.first.click()
-            console.page.wait_for_timeout(2200)
+    # The owner's old link shape, `#/remedies?incident=`, forwards to the incident's own page.
+    console.open(f"#/remedies?incident={incident}", settle=2000)
+    ok(
+        "the remedies address forwards to the complaint's page, from any session",
+        console.page.url.endswith(f"#/incidents/{incident}"),
+        console.page.url,
+    )
     third_id = sql(
         f"select id from remedy_proposals where incident_id='{incident}' and garment_index = 3"
     )
@@ -1951,13 +2003,7 @@ def scenario_remedy(console: Console) -> None:
     )
 
     head("12d", "ĐỌC LẠI — the complaint's claims, the order's credit, the customer's source")
-    console.open(f"#/remedies?incident={incident}", settle=1500)
-    if console.page.locator("#remedy-recorded-proposals li").count() == 0:
-        console.type_into("#remedy-incident", incident)
-        read = console.page.locator("button", has_text="Đọc mức trần và thời hạn")
-        if read.count():
-            read.first.click()
-            console.page.wait_for_timeout(2200)
+    console.open(f"#/incidents/{incident}", settle=2000)
     listed = console.page.locator("#remedy-recorded-proposals li[data-proposal-id]")
     recorded = sql(f"select count(*) from remedy_proposals where incident_id='{incident}'")
     ok(

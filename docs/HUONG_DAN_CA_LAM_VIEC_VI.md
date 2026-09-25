@@ -99,11 +99,14 @@ mất bản ghi** — vì bản trên máy mới là bản không sửa được
 **1. Món có khoảng giá.** Làm theo mục *Món niêm yết theo khoảng giá* ở trên. Vẫn là bạn thoả
 thuận giá với khách — chỉ khác là được ghi lại kèm tên người chốt, thay vì nằm trên một tờ phiếu.
 
-**2. Khách khiếu nại.** Màn hình **Sự cố** dùng được rồi: chọn đơn, gõ nội dung khách phàn nàn
-bằng lời, bấm ghi nhận. Không phải gõ mã gì cả — máy chủ tự sinh.
+**2. Khách khiếu nại.** Vào **Thêm → Khiếu nại**, bấm **“＋ Ghi khiếu nại”**. Gõ **số phiếu**
+trên giấy của khách (phiếu của ngày khác thì chọn *Ngày trên phiếu*) rồi bấm Tìm — máy tự chọn
+đúng đơn. Đang mở một đơn thì bấm ghi khiếu nại ngay trên đơn đó, đơn đã được chọn sẵn. Gõ nội dung
+khách phàn nàn bằng lời, bấm **“Ghi khiếu nại”**. Không phải gõ mã gì cả. Ghi xong máy mở luôn
+trang của khiếu nại đó.
 
-> Mở sự cố **chỉ là ghi nhận**: máy không phán ai sai và không tự quyết bồi hoàn. Hai dòng đó hiện
-> là *chưa quyết định*, và đó là đúng. Vẫn **báo chủ tiệm ngay trong ngày**.
+> Ghi khiếu nại **chỉ là ghi nhận**: máy không phán ai sai và không tự quyết bồi hoàn. Hai dòng đó
+> hiện là *chưa quyết định*, và đó là đúng. Vẫn **báo chủ tiệm ngay trong ngày**.
 
 Những việc thật sự chưa hỗ trợ được liệt kê ở màn hình **Chưa hỗ trợ** trên bảng vận hành.
 
@@ -111,19 +114,22 @@ Những việc thật sự chưa hỗ trợ được liệt kê ở màn hình *
 
 ## Bồi hoàn cho khách — làm trên máy, không thoả thuận miệng
 
-Trước đây phần này làm bằng lời rồi quên. Nay có màn hình **Bồi hoàn**, và mức chủ tiệm đã chốt
-được máy chủ tự áp — nhân viên **không gõ mức trần**.
+Trước đây phần này làm bằng lời rồi quên. Nay bồi hoàn làm ngay trên **trang của khiếu nại**, và
+mức chủ tiệm đã chốt được máy chủ tự áp — nhân viên **không gõ mức trần**.
 
-**Thứ tự đúng, năm bước:**
+**Thứ tự đúng, bốn bước:**
 
-1. Ghi sự cố trước (mục trên). Không có sự cố thì không có bồi hoàn.
-2. Trên dòng sự cố đó bấm **“Đề xuất bồi hoàn”**. Mã sự cố tự mang sang.
-3. Bấm **“Đọc mức trần và thời hạn”**. **Đọc xong mới nói gì với khách.** Màn hình hiện sẵn:
-   trần tối đa, hạn chót còn hay hết, và **có phải chờ chủ tiệm duyệt hay không**. Đọc bước này
-   là để không lỡ hứa với khách một con số rồi mới biết phải chờ chủ tiệm.
-4. Chọn loại, tích ô *“Tôi xác định lỗi thuộc về tiệm”*, điền nốt ô còn trống, bấm
-   **“Gửi đề nghị bồi hoàn”**.
-5. Bấm **“Thực hiện bồi hoàn”**. Xong bước này sự cố mới đóng lại.
+1. Ghi khiếu nại trước (mục trên). Không có khiếu nại thì không có bồi hoàn. Trang khiếu nại mở ra
+   có sẵn mục **Bồi hoàn** bên dưới lời khách.
+2. Ở **“Khách được gì?”** bấm chọn loại. **Đọc dòng tóm tắt xong mới nói gì với khách:** máy hiện
+   sẵn *“Tối đa … · còn … · cần chủ tiệm duyệt nếu trên …”* — trần, hạn còn bao lâu, và **có phải
+   chờ chủ tiệm duyệt hay không** — trước khi có ô nào để gõ số. Đọc bước này là để không lỡ hứa
+   với khách một con số rồi mới biết phải chờ chủ tiệm.
+3. Chọn món (và **“Món thứ mấy”** nếu có), gõ số tiền nếu loại đó cần, tích ô *“Tôi xác định lỗi
+   thuộc về tiệm”*, bấm **“Gửi đề nghị bồi hoàn”**.
+4. Đề nghị hiện ở mục **“Đề nghị đã ghi cho sự cố này”** ngay bên dưới. Dòng nào nhân viên được
+   duyệt thì có nút **“Thực hiện bồi hoàn”** — bấm là xong. Khiếu nại chỉ đóng khi **mọi** đề nghị
+   trên nó đã có kết cục.
 
 **Bốn loại, và ai duyệt:**
 
@@ -160,16 +166,18 @@ dòng. Dòng chỉ có một món thì không cần chọn. Đồ tính theo ký
    thì không tự duyệt được, kể cả chủ tiệm.
    Nếu thẻ hiện **“Khoản bồi hoàn đã đổi so với phiếu”** thì không duyệt được — từ chối, rồi nhờ
    nhân viên đề nghị lại.
-2. **Duyệt xong vẫn chưa trả gì.** Người trực quầy (máy nào cũng được, hôm sau cũng được) mở lại sự
-   cố ở màn hình **Bồi hoàn**, bấm **“Đọc mức trần và thời hạn”**, rồi ở mục
-   **“Đề nghị đã ghi cho sự cố này”** bấm **“Thực hiện bồi hoàn”** trên đúng dòng đó. Nút chỉ hiện ở dòng đã được duyệt mà
-   chưa thực hiện; dòng còn chờ thì ghi rõ là đang chờ chủ tiệm.
-3. Phải thực hiện **trước khi phiếu duyệt hết hạn** (hết ngày hôm sau). Quá hạn thì dòng đó báo
-   không thực hiện được nữa — đề nghị lại từ đầu.
+2. **Duyệt xong vẫn chưa trả gì.** Người trực quầy (máy nào cũng được, hôm sau cũng được) mở lại
+   khiếu nại — ở **Thêm → Khiếu nại**, hoặc **Thêm → Bồi hoàn** (chỉ liệt kê khiếu nại đang mở có
+   đề nghị) — rồi ở mục **“Đề nghị đã ghi cho sự cố này”** bấm **“Thực hiện bồi hoàn”** trên đúng
+   dòng đó. Nút chỉ hiện ở dòng đã được duyệt mà chưa thực hiện; dòng còn chờ thì ghi rõ là đang
+   chờ chủ tiệm, kèm nút **“Chờ chủ tiệm duyệt”** mở màn hình Duyệt.
+3. Phải thực hiện **trước khi phiếu duyệt hết hạn** (hết ngày hôm sau). Quá hạn hoặc bị từ chối
+   thì dòng đó báo không thực hiện được nữa — bấm **“Đề xuất lại”** trên dòng đó để ghi lại từ đầu.
 
 **Ba điều dễ sai ở màn hình này:**
 
-- **Chép mã giảm trừ ngay lúc phát.** Máy hiện **“Chép mã giảm trừ này lại ngay”** kèm nút chép.
+- **Chép mã giảm trừ ngay lúc phát.** Máy in mã to, kèm câu **“Chép mã giảm trừ này lại ngay”**
+  và nút chép.
   Chép vào phiếu giấy của khách **trước khi rời màn hình**. Khách làm mất mã thì tìm lại đơn theo
   số phiếu ở màn hình Đơn hàng, mục **“Khoản giảm trừ của đơn này”** — nhưng chép ngay vẫn là cách
   chắc nhất.

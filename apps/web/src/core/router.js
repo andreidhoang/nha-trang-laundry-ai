@@ -85,6 +85,17 @@ export function navigate(path, query) {
   else location.hash = target;
 }
 
+/**
+ * Go to `path` *instead of* the current address: no new history entry, so Back does not return to
+ * an address that only forwards (CONSOLE-REDESIGN-004: `#/remedies?incident=…` → the incident page).
+ * The second writer of the hash beside `navigate`, and the only other one.
+ *
+ * @param {string} path
+ */
+export function replace(path) {
+  location.replace(`#${path}`);
+}
+
 /** @returns {RouteContext} */
 export function current() {
   const { path, query } = parse(location.hash);

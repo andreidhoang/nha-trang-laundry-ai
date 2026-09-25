@@ -72,6 +72,9 @@ INCIDENTS = [
         "remedy_decided": False,
         "opened_at": "2026-09-17T03:00:00+00:00",
         "evidence_summary": "Áo sơ mi trắng bị ố vàng ở cổ.",
+        # READ-ENRICH-001: the order's walk-in ticket, which is how the list names a complaint.
+        "ticket_number": 17,
+        "ticket_issued_on": "2026-09-17",
     },
     {
         "incident_id": "cccccccc-3333-4333-8444-555555555555",
@@ -83,8 +86,33 @@ INCIDENTS = [
         "remedy_decided": True,
         "opened_at": "2025-09-01T03:00:00+00:00",
         "evidence_summary": None,
+        "ticket_number": None,
+        "ticket_issued_on": None,
     },
 ]
+
+#: CONSOLE-REDESIGN-004: the order the ticket search finds for "17" -- the order of the first
+#: incident above, as `GET /stores/{store}/orders?ticket=17` returns it. The complaint sheet must
+#: send exactly this id, which nobody typed.
+TICKET_ORDER = {
+    "order_id": INCIDENTS[0]["order_id"],
+    "store_id": STORE,
+    "commercial": "COMPLETED",
+    "intake": "ACCEPTED",
+    "production": "RELEASED",
+    "balance": "PAID",
+    "row_version": 9,
+    "replayed": False,
+    "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
+    "created_at": "2026-09-17T01:00:00+00:00",
+    "quote_id": "55555555-6666-4333-8444-888888888888",
+    "quote_revision": 1,
+    "payable_total_vnd": 90_000,
+    "ticket_number": 17,
+    "ticket_issued_on": "2026-09-17",
+    "self_collection_recorded": True,
+    "acquisition_source": "WALK_IN",
+}
 
 
 #: `REMEDY-001`. One `RemedyOptionsResponse`, with `DEC-004`'s own figures rather than round
@@ -1402,7 +1430,12 @@ with sync_playwright() as playwright:
                 # earlier in section 4 depend on this being empty, so the purged-turn check below
                 # opts in rather than changing the world for everything before it.
                 body = state.get("assistant_history") or []
+        elif "/orders?" in url and "ticket=" in url and route.request.method == "GET":
+            # CONSOLE-REDESIGN-004: the complaint sheet finds the order by its ticket number.
+            state.setdefault("ticket_reads", []).append(url)
+            body = [TICKET_ORDER] if "ticket=17" in url else []
         elif "remedy-options" in url:
+            state.setdefault("options_reads", []).append(url)
             # A pure read. Nothing is written and nothing is reserved by asking, which is what lets
             # the console put the ceiling and the owner requirement on screen before anything is
             # typed rather than after a round trip that commits something.
@@ -1443,6 +1476,20 @@ with sync_playwright() as playwright:
                 if state.get("recorded_listed")
                 else {**RECORDED_PROPOSALS, "proposals": []}
             )
+            # CONSOLE-REDESIGN-004: a proposal is carried out from its row in this list, never from
+            # the answer to the proposal, so what section 11 proposed has to come back here -- with
+            # the next step the server would give it at the time of the read.
+            if state.get("session_proposals"):
+                body = {
+                    **body,
+                    "proposals": [
+                        *body["proposals"],
+                        *[
+                            {**row, "next_step": state.get("session_next_step", "AWAIT_OWNER")}
+                            for row in state["session_proposals"]
+                        ],
+                    ],
+                }
         elif "/orders/" in url and "/remedy-credits" in url:
             state.setdefault("credit_reads", []).append(url)
             body = ORDER_CREDITS
@@ -1476,6 +1523,28 @@ with sync_playwright() as playwright:
             # body carries exactly the keys this kind owns and no ceiling of its own. A stub that
             # only returned 201 would certify a console that sends anything at all.
             state.setdefault("remedy_posts", []).append(route.request.post_data)
+            sent = json.loads(route.request.post_data or "{}")
+            state.setdefault("session_proposals", []).append(
+                {
+                    "proposal_id": REMEDY_PROPOSAL_ID,
+                    "kind": sent.get("kind"),
+                    "status": "OWNER_APPROVAL_REQUIRED",
+                    "amount_vnd": sent.get("amount_vnd"),
+                    "ceiling_vnd": 600_000,
+                    "order_line_id": sent.get("order_line_id"),
+                    "attested_late_by_minutes": None,
+                    "window_closes_at": REMEDY_OPTIONS["defect_window_closes_at"],
+                    "approval_id": REMEDY_APPROVAL_ID,
+                    "approval_status": "REQUESTED",
+                    "approval_expires_at": (datetime.now(UTC) + timedelta(hours=20)).isoformat(),
+                    "approval_lapsed": False,
+                    "proposed_by": "00000000-0000-4000-8000-0000000000cc",
+                    "proposed_by_name": "Demo Chủ tiệm",
+                    "proposed_at": datetime.now(UTC).isoformat(),
+                    "executed_at": None,
+                    "credit_id": None,
+                }
+            )
             route.fulfill(
                 status=201,
                 content_type="application/json",
@@ -1503,6 +1572,23 @@ with sync_playwright() as playwright:
                         }
                     ),
                 )
+                return
+            path = url.split("?")[0]
+            tail = path.rsplit("/incidents/", 1)[-1] if "/incidents/" in path else ""
+            if tail and "/" not in tail:
+                # CONSOLE-REDESIGN-004: `GET /stores/{store}/incidents/{id}`, the detail page's own
+                # read. Captured so section 9 can prove the page read the incident it was sent to.
+                state.setdefault("incident_reads", []).append(url)
+                found = [item for item in INCIDENTS if item["incident_id"] == tail]
+                if not found:
+                    route.fulfill(
+                        status=404,
+                        content_type="application/json",
+                        body=json.dumps({"detail": "incident not found"}),
+                    )
+                    return
+                body = found[0]
+                route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
                 return
             # Empty until section 9 asks for rows. The home screen reads this same endpoint, and
             # section 6 asserts an all-clear line that claims only the queues it checked -- so a
@@ -2200,13 +2286,15 @@ with sync_playwright() as playwright:
 
     print()
     print("=" * 74)
-    print("9. OPENING AN INCIDENT — the counter path DEC-028 made completable")
+    print("9. GHI KHIẾU NẠI — the order found by its ticket, the complaint as the customer said it")
     print("=" * 74)
 
     # Until DEC-028 this screen could not be completed by anybody: the request demanded
     # `contact_scope_hash` and `evidence_summary_hash` and nothing in the repository produced
-    # either. Nothing in this file covered it, so the form that could not be submitted was also the
-    # form nothing drove. Both halves changed together.
+    # either. CONSOLE-REDESIGN-004 then removed the last value a person had to paste: the order is
+    # found by the number on the customer's ticket, and the id that is sent is the one the server's
+    # own lookup returned. What is checked is unchanged in kind -- the body is exactly the two keys
+    # the strict request model accepts, the complaint survives typing -- plus the zero-paste claim.
     state["incidents_listed"] = True
     page.goto(f"http://localhost:{PORT}/#/incidents", wait_until="networkidle")
     page.wait_for_timeout(700)
@@ -2222,12 +2310,38 @@ with sync_playwright() as playwright:
         "không phải mất dữ liệu" in body_text.replace("\n", " "),
         "expected the muted absent-value sentence on the CLOSED row",
     )
+    check(
+        "the list names a complaint by its ticket, not by an id",
+        "Phiếu 17" in body_text and INCIDENTS[0]["incident_id"] not in body_text,
+        body_text[:200].replace("\n", " "),
+    )
 
-    summary_box = page.locator("form textarea").first
-    order_box = page.locator("input[type=text]").first
-    check("the complaint is typed into a textarea, not a hash field", summary_box.count() > 0)
+    page.locator("#incident-create-open").click()
+    page.wait_for_timeout(300)
+    summary_box = page.locator("#incident-summary")
+    check(
+        "the complaint is typed into a textarea, not a hash field",
+        summary_box.count() > 0 and summary_box.evaluate("n => n.tagName") == "TEXTAREA",
+    )
 
-    order_box.fill(INCIDENTS[0]["order_id"])
+    page.locator("#incident-ticket").click()
+    page.keyboard.type("17", delay=12)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(600)
+    picked = page.locator("#incident-create .picked")
+    check(
+        "the ticket number finds the order, read from the selected store",
+        any(f"/stores/{STORE}/orders?ticket=17" in url for url in state.get("ticket_reads", [])),
+        repr(state.get("ticket_reads")),
+    )
+    check(
+        "and the order is shown by its ticket, with no id to read or paste",
+        picked.count() == 1
+        and "Phiếu 17" in (picked.text_content() or "")
+        and INCIDENTS[0]["order_id"] not in (picked.text_content() or ""),
+        repr(picked.text_content()) if picked.count() else "nothing picked",
+    )
+
     # Typed, not `fill()`. This whole file exists because a `fill()`-based check certified a screen
     # that rebuilt its form on every keystroke and was unusable by a human.
     summary_box.click()
@@ -2239,8 +2353,8 @@ with sync_playwright() as playwright:
         f"got {typed!r}",
     )
 
-    page.locator("form button[type=submit]").last.click()
-    page.wait_for_timeout(600)
+    page.locator("#incident-submit").click()
+    page.wait_for_timeout(900)
 
     posts = state.get("incident_posts") or []
     sent = json.loads(posts[-1]) if posts else {}
@@ -2251,10 +2365,62 @@ with sync_playwright() as playwright:
         f"keys={sorted(sent)}",
     )
     check(
+        "the order sent is the one the ticket lookup returned -- nobody pasted it",
+        sent.get("order_id") == INCIDENTS[0]["order_id"],
+        f"got {sent.get('order_id')!r}",
+    )
+    check(
         "the complaint reaches the server as the words the staff member typed",
         sent.get("evidence_summary") == "Áo sơ mi trắng bị ố vàng ở cổ.",
         f"got {sent.get('evidence_summary')!r}",
     )
+    check(
+        "recording it opens the complaint's own page",
+        page.evaluate("location.hash") == f"#/incidents/{INCIDENTS[0]['incident_id']}",
+        page.evaluate("location.hash"),
+    )
+    page.wait_for_timeout(600)
+    check(
+        "which reads that incident from the selected store",
+        any(
+            f"/stores/{STORE}/incidents/{INCIDENTS[0]['incident_id']}" in url
+            for url in state.get("incident_reads", [])
+        ),
+        repr(state.get("incident_reads")),
+    )
+    order_link = page.locator("[data-field=incident-order-link]")
+    check(
+        "and links its order by ticket, to the order page",
+        order_link.count() == 1
+        and (order_link.text_content() or "") == "Phiếu 17"
+        and order_link.get_attribute("href") == f"#/orders/{INCIDENTS[0]['order_id']}",
+        repr(order_link.text_content()) if order_link.count() else "absent",
+    )
+    detail_text = page.inner_text("main")
+    check(
+        "recording decides nothing: both flags read 'chưa quyết định'",
+        detail_text.count("chưa quyết định") >= 2,
+        detail_text[:200].replace("\n", " "),
+    )
+
+    # The order page's hand-off: the order arrives already chosen, shown by its ticket.
+    page.evaluate(f"location.hash = '#/orders/{ORDER_VIEW_ID}'")
+    page.wait_for_timeout(1000)
+    handoff = page.locator("button", has_text="Mở sự cố cho đơn này")
+    if handoff.count():
+        handoff.first.click()
+        page.wait_for_timeout(1000)
+    picked = page.locator("#incident-create .picked")
+    check(
+        "the order page hands its order to the complaint sheet, by ticket",
+        page.evaluate("location.hash") == "#/incidents"
+        and picked.count() == 1
+        and "Phiếu 17" in (picked.text_content() or "")
+        and picked.get_attribute("data-order-id") == ORDER_VIEW_ID,
+        repr(picked.text_content()) if picked.count() else "nothing picked",
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(200)
 
     print()
     print("=" * 74)
@@ -2457,9 +2623,15 @@ with sync_playwright() as playwright:
 
     content = page.content()
     check(
-        "the deep link from an incident loads that incident's figures unasked",
-        page.locator("#remedy-incident").input_value() == incident,
-        repr(page.locator("#remedy-incident").input_value()),
+        "the old deep link forwards to the incident's own page, replacing itself in history",
+        page.evaluate("location.hash") == f"#/incidents/{incident}",
+        page.evaluate("location.hash"),
+    )
+    check(
+        "which loads that incident's figures unasked -- there is no read button to press",
+        any(f"/incidents/{incident}/remedy-options" in u for u in state.get("options_reads", []))
+        and page.locator("button", has_text="Đọc mức trần").count() == 0,
+        repr(state.get("options_reads")),
     )
     check(
         "the staff approval ceiling is stated as a figure, not as a rule to remember",
@@ -2475,14 +2647,27 @@ with sync_playwright() as playwright:
     )
 
     # Damage: the one kind where a person chooses the figure, and the only one with a money box.
-    kind = page.locator("#remedy-kind")
+    def kind_pick(value: str) -> None:
+        page.locator(f"#remedy-kind button[data-value='{value}']").click()
+
     check(
         "there is no money box until the kind that needs one is chosen",
         page.locator("#remedy-amount").count() == 0,
     )
 
-    kind.select_option(value="DAMAGE_COMPENSATION")
+    kind_pick("DAMAGE_COMPENSATION")
     page.wait_for_timeout(300)
+    check(
+        "the summary line -- ceiling, time left, owner -- sits above every number box",
+        page.evaluate(
+            """() => {
+                 const summary = document.querySelector('#remedy-summary');
+                 const line = document.querySelector('#remedy-line');
+                 return Boolean(summary && line &&
+                   (summary.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING));
+               }"""
+        ),
+    )
     check(
         "choosing damage asks which priced line was damaged before it asks for money",
         page.locator("#remedy-line").count() == 1 and page.locator("#remedy-amount").count() == 0,
@@ -2609,10 +2794,28 @@ with sync_playwright() as playwright:
         "and links the queue where that happens rather than leaving staff to find it",
         page.locator("a[href='#/approvals']").count() >= 1,
     )
+    own_row = page.locator(
+        f"#remedy-recorded-proposals li[data-proposal-id='{REMEDY_PROPOSAL_ID}']"
+    )
+    check(
+        "the proposal is re-read into the incident's list, where it waits and offers no press",
+        own_row.count() == 1
+        and own_row.get_attribute("data-proposal-next-step") == "AWAIT_OWNER"
+        and own_row.locator("button[data-remedy-execute]").count() == 0,
+        repr(own_row.text_content()) if own_row.count() else "absent",
+    )
 
-    # Executing before the owner has decided. The refusal is a policy answer with a code, and the
-    # sentence it must NOT produce is the one that tells a staff member their typing was wrong.
-    page.locator("button", has_text="Thực hiện bồi hoàn").first.click()
+    # The server marks it executable, and the execute route still re-checks and refuses (the
+    # envelope moved between the read and the press). The refusal is a policy answer with a code,
+    # and the sentence it must NOT produce is the one that tells a staff member their typing was
+    # wrong. Nothing retries it: one press, one request.
+    state["session_next_step"] = "EXECUTE"
+    state["execution_posts"] = []
+    page.evaluate("location.hash = '#/incidents'")
+    page.wait_for_timeout(400)
+    page.evaluate(f"location.hash = '#/incidents/{incident}'")
+    page.wait_for_timeout(1200)
+    page.locator("button[data-remedy-execute]").first.click()
     page.wait_for_timeout(900)
     content = page.content()
     check(
@@ -2624,9 +2827,21 @@ with sync_playwright() as playwright:
         "phải có chủ tiệm duyệt trước khi thực hiện" in content,
     )
 
+    check(
+        "a refused execution is sent once and not retried",
+        len(state.get("execution_posts", [])) == 1,
+        repr(state.get("execution_posts")),
+    )
+
     state["owner_approved"] = True
-    page.locator("button", has_text="Thực hiện bồi hoàn").first.click()
+    page.locator("button[data-remedy-execute]").first.click()
     page.wait_for_timeout(900)
+    posts = state.get("execution_posts", [])
+    check(
+        "the second press reuses the first press's key, so the server can replay, not repeat",
+        len(posts) == 2 and bool(posts[0][1]) and posts[0][1] == posts[1][1],
+        repr(posts),
+    )
     content = page.content()
     check(
         "once the owner has decided, the same press carries the remedy out",
@@ -2641,7 +2856,9 @@ with sync_playwright() as playwright:
     # unsupported capability with no figure at all. The ruling gave loss the damage ceiling and one
     # rule -- every loss claim needs the owner, whatever the amount -- so what is asserted now is
     # that the form never lets a loss read as something staff can approve.
-    kind.select_option(value="LOST_ITEM")
+    state["session_proposals"] = []
+    state.pop("session_next_step", None)
+    kind_pick("LOST_ITEM")
     page.wait_for_timeout(300)
     content = page.content()
     check(
@@ -2678,7 +2895,7 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(500)
     page.evaluate(f"location.hash = '#/remedies?incident={incident}'")
     page.wait_for_timeout(900)
-    page.locator("#remedy-kind").select_option(value="DAMAGE_COMPENSATION")
+    kind_pick("DAMAGE_COMPENSATION")
     page.wait_for_timeout(300)
     page.locator("#remedy-line").select_option(value="line-shirts")
     page.wait_for_timeout(300)
@@ -2738,6 +2955,9 @@ with sync_playwright() as playwright:
         repr(proposed),
     )
     state["remedy_shirts"] = False
+    state["session_proposals"] = []
+    state.pop("session_next_step", None)
+    state["owner_approved"] = False
 
     print()
     print("=" * 74)

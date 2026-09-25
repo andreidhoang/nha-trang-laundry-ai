@@ -1,80 +1,84 @@
 /**
- * Incidents: record that something happened, and nothing more than that.
+ * Khiếu nại: record that a customer complained about an order, and take it to an outcome.
  *
- * This screen is small and its restraint is the point. Four of its choices are deliberate rather
- * than incidental:
+ * `CONSOLE-REDESIGN-004` (spec V2 §5.6) turned the V1 "one form, one list" screen into two task
+ * surfaces:
  *
- *   - **Opening an incident decides nothing.** `FR-INC-002` and `FR-INC-003` separate the intake
- *     record from the authority to say whose fault it was and what the customer gets. The server
- *     honours that separation literally: this route always answers `fault_decided` and
- *     `remedy_decided` as `false`, and nothing on this screen moves either. `REMEDY-001` gave
- *     `remedy_decided` its one writer — carrying out a remedy proposal, on `#/remedies`, which also
- *     closes the incident — and `fault_decided` still has none. So both are rendered as
- *     "chưa quyết định" everywhere they appear, never as a blank or an omitted row, and the remedy
- *     screen is linked from the record rather than implied.
- *   - **The console sends words and computes no digest.** `DEC-028` moved both of this record's
- *     `sha256:` commitments to the server: the contact scope is derived from the order's own
- *     binding, and the evidence digest is taken over the summary that was actually stored. A form
- *     that let a staff member name a contact scope would be a place to file an incident against a
- *     customer of their choosing, so those fields left the request model rather than becoming
- *     optional. What the counter types is the complaint itself, and it is kept in a side table the
- *     retention schedule can empty — which is why a row on the list below can honestly have no
- *     description years later.
- *   - **There is no category picker, because there is no category field.** The HTTP model has three
- *     members and none of them is `category`; the service hardcodes `SERVICE_QUALITY` and
- *     `actor_type=STAFF` (`operations.py:645,657`). Offering a choice the request cannot carry would
- *     be a lie. Stored data does contain `AUTOMATED_MESSAGE_ERROR` — the agent path writes it — which
- *     is why the list below still renders whatever category comes back.
- *   - **`order_id` is required here although the domain permits null.** The domain accepts an
- *     incident bound to a message instead of an order; `IncidentOpenRequest` types `order_id` as a
- *     plain `UUID`, so this HTTP surface cannot express that case at all. The form says so instead
- *     of pretending the field is optional.
+ *   - **`#/incidents`** — the list ("Phiếu 17 · what the customer said · status · age") and the
+ *     "＋ Ghi khiếu nại" sheet. The order is chosen by the number on the customer's ticket
+ *     (`GET …/orders?ticket=N`), or arrives already chosen from the order page; pasting an order
+ *     UUID survives only under "Nhập mã thủ công". A recorded complaint opens its own page.
+ *   - **`#/incidents/:incidentId`** — the complaint, its order, its status, and the whole remedy flow
+ *     inline (`remedyFlow` from `screens/remedies.js`): options read at once, the ceiling before any
+ *     number box, the proposals with the server's next step as their button.
+ *
+ * Four choices from the V1 screen are kept, because they are the point of it:
+ *
+ *   - **Opening an incident decides nothing.** `FR-INC-002`/`FR-INC-003` separate the intake record
+ *     from fault and remedy. The server always answers `fault_decided` and `remedy_decided` false for
+ *     a new incident; `REMEDY-001` gave `remedy_decided` one writer (carrying out a proposal, which
+ *     also closes the incident once every claim has an outcome) and `fault_decided` still has none.
+ *     Both render as "chưa quyết định", never as a blank.
+ *   - **The console sends words and computes no digest** (`DEC-028`): exactly `order_id` and
+ *     `evidence_summary`. The contact scope and the evidence digest are the server's to derive.
+ *   - **There is no category picker, because there is no category field.** The server hardcodes
+ *     `SERVICE_QUALITY` and `actor_type=STAFF`; stored rows may still carry
+ *     `AUTOMATED_MESSAGE_ERROR` (the agent path), so the page renders whatever comes back.
+ *   - **`order_id` is required** although the domain permits a message-bound incident:
+ *     `IncidentOpenRequest` types it as a plain `UUID`.
  *
  * @module screens/incidents
  */
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UNKNOWN, UUID, dateTime, matchesFilter, shortId } from "../core/format.js";
-import { WARNING, enumLabel } from "../core/i18n.js";
+import { UNKNOWN, UUID, ago, dateOnly, dateTime, matchesFilter, money, shortId } from "../core/format.js";
+import { enumLabel, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { navigate } from "../core/router.js";
 import { principal, storeId } from "../core/session.js";
 import {
-  badge,
   boundInput,
   errorNotice,
-  facts,
   gated,
   gatedFields,
   labelled,
   listView,
-  panel,
   resultLine,
-  revealError,
   setResult,
 } from "../ui/components.js";
-// A screen importing a screen, deliberately, and the mirror of what `screens/orderDetail.js` does
-// to this one: the WS6 in-memory carry-over channel, cleared on consumption, not a shared helper.
-import { setRemedyIncidentPrefill } from "./remedies.js";
+import {
+  button,
+  emptyState,
+  infoButton,
+  inlineAlert,
+  keyValues,
+  list,
+  listRow,
+  page,
+  searchField,
+  section,
+  sheet,
+  show,
+  skeletonRows,
+  statusPill,
+  techDetails,
+  toast,
+} from "../ui/kit.js";
+import { remedyFlow } from "./remedies.js";
 
 const LIST_LIMIT = 100;
 
 /**
  * `IncidentOpenRequest.evidence_summary` is `1..2000` characters, and the domain re-checks that
- * length after NFC normalisation and trimming.
- *
- * Held here so a staff member meets the limit while typing instead of as a 422 after the round
- * trip. The server is the authority; this is the legible copy of its rule.
+ * length after NFC normalisation and trimming. Held here so a staff member meets the limit while
+ * typing instead of as a 422 after the round trip. The server is the authority.
  */
 const SUMMARY_MAX = 2000;
 
 /**
- * The two domain refusals this route can answer with, keyed by the server's exact string.
- *
- * The string itself is always shown verbatim by `errorNotice` — it is what an engineer greps for.
- * These notes are rendered beside it, never instead of it, because "incident binding is invalid"
- * tells an operator nothing about what to do with the customer still standing there.
+ * The two domain refusals the create route can answer with, keyed by the server's exact string.
+ * Rendered beside `errorNotice`, never instead of it.
  */
 const REFUSAL_NOTE = {
   "incident order binding is unavailable":
@@ -87,13 +91,10 @@ const REFUSAL_NOTE = {
 };
 
 /**
- * The cross-screen hand-off staged by order detail's "Mở sự cố cho đơn này" action.
+ * The cross-screen hand-off staged by the order page's "Ghi khiếu nại" action.
  *
- * Module state, in memory only — invariant 3 of the UX refactor spec permits nothing else,
- * and an order id is not a secret worth persisting. The render below reads it once and clears
- * it, so a later visit to this form starts empty rather than resurrecting a stale order. It is
- * the same idea as the staff screen's create-to-assign carry-over, but between routes instead
- * of between panels on one screen.
+ * Module state, in memory only — invariant 3 of the UX refactor spec permits nothing else. The list
+ * reads it once on render, clears it, and opens the sheet with that order already chosen.
  */
 let orderPrefill = "";
 
@@ -107,10 +108,7 @@ export function setIncidentOrderPrefill(orderId) {
 }
 
 /**
- * How a fault or remedy flag is shown.
- *
- * Never blank, never an empty state. `false` here does not mean "no fault"; it means nobody has
- * decided yet, and the two read very differently to someone standing in front of a customer.
+ * Never blank, never an empty state. `false` does not mean "no fault"; it means nobody has decided.
  *
  * @param {boolean|null|undefined} decided
  * @returns {string}
@@ -119,23 +117,31 @@ function decisionLabel(decided) {
   return decided === true ? "đã quyết định" : "chưa quyết định";
 }
 
+/** @param {string} status */
+function statusState(status) {
+  return status === "OPEN" ? "warn" : status === "UNDER_REVIEW" ? "info" : status === "CLOSED" ? "ok" : "neutral";
+}
+
 /**
- * The standing statement that this screen records and does not adjudicate.
- *
- * Rendered twice on purpose: once above the form, where it sets the expectation, and once inside
- * the success result, where the operator is looking at two `false` flags and needs to know they are
- * the correct outcome rather than a failure to save something.
+ * @param {any} item an `IncidentSummaryResponse`
+ * @returns {string}
+ */
+function ticketTitle(item) {
+  return Number.isInteger(item?.ticket_number) ? `Phiếu ${item.ticket_number}` : "Khiếu nại";
+}
+
+/**
+ * The standing statement that recording a complaint adjudicates nothing: tier 2, one tap away from
+ * every place a complaint is recorded or read.
  *
  * @returns {HTMLElement}
  */
-function recordOnlyNotice() {
-  return h(
-    "div",
-    { class: "notice", dataState: "info" },
-    h("p", { class: "notice__title" }, "Ghi nhận sự cố — không phán quyết lỗi, không quyết bồi hoàn"),
+function recordOnlyInfo() {
+  return infoButton(
+    "Ghi khiếu nại quyết định những gì?",
     h(
       "p",
-      null,
+      { class: "hint" },
       "Mở sự cố chỉ ghi lại rằng có chuyện xảy ra. Máy chủ luôn trả về fault_decided = false và " +
         "remedy_decided = false cho sự cố vừa mở, và màn hình này không đặt được giá trị nào " +
         "khác. Ai chịu lỗi vẫn không có chỗ nào ghi; khách được bù gì thì có, nhưng là một lệnh " +
@@ -144,262 +150,248 @@ function recordOnlyNotice() {
     h(
       "p",
       { class: "hint" },
-      "Quyết bồi hoàn là một lệnh riêng, ở màn hình ",
-      h("a", { href: "#/remedies" }, "Bồi hoàn"),
-      ". Ở đó máy chủ hiện trần, thời hạn và việc có cần chủ tiệm duyệt hay không trước khi bạn " +
-        "gõ số. Thực hiện xong thì sự cố mới chuyển sang CLOSED.",
+      "Sự cố mở ở đây luôn là SERVICE_QUALITY do nhân viên ghi, luôn ở trạng thái OPEN, và luôn " +
+        "chưa quyết định lỗi lẫn bồi hoàn. Không có route nào trong API này thay đổi ba điều đó.",
     ),
-  );
-}
-
-/**
- * What this form always writes, whatever the operator types.
- *
- * @returns {HTMLElement}
- */
-function hardcodedFieldsNotice() {
-  return h(
-    "div",
-    { class: "notice", dataState: "warn" },
-    h("p", { class: "notice__title" }, "Mọi sự cố mở ở đây đều được ghi giống nhau"),
     h(
       "p",
-      null,
-      "Máy chủ tự đặt category = ",
-      h("span", { class: "mono" }, "SERVICE_QUALITY"),
-      " và actor_type = ",
-      h("span", { class: "mono" }, "STAFF"),
-      ". Yêu cầu HTTP không có trường loại sự cố, nên màn hình này không cho chọn. Loại ",
-      h("span", { class: "mono" }, "AUTOMATED_MESSAGE_ERROR"),
-      " chỉ do đường agent ghi, và vẫn hiện trong danh sách bên dưới.",
+      { class: "hint" },
+      "Máy chủ tự đặt loại sự cố và người ghi. Yêu cầu không có trường loại sự cố, nên không có ô " +
+        "chọn loại. Loại lỗi tin nhắn tự động chỉ do đường agent ghi, và vẫn hiện trong danh sách.",
     ),
-  );
-}
-
-/**
- * The extra note for a refusal whose text this screen recognises.
- *
- * @param {import("../core/errors.js").ApiError|Error} error
- * @returns {HTMLElement|null}
- */
-function refusalNote(error) {
-  const api = /** @type {import("../core/errors.js").ApiError} */ (error);
-  const note = REFUSAL_NOTE[api?.detail] || REFUSAL_NOTE[error?.message];
-  if (!note) return null;
-  return h(
-    "div",
-    { class: "notice", dataState: "info" },
-    h("p", { class: "notice__title" }, "Máy chủ từ chối vì ràng buộc, không phải vì lỗi hệ thống"),
-    h("p", null, note),
-  );
-}
-
-/**
- * Render a created incident.
- *
- * @param {any} result
- * @returns {HTMLElement}
- */
-function incidentResult(result) {
-  return h(
-    "div",
-    { class: "card stack" },
     h(
-      "div",
-      { class: "spread" },
-      h("h3", null, "Đã ghi sự cố"),
-      h(
-        "div",
-        { class: "row" },
-        result.status === "OPEN" ? badge(WARNING.INCIDENT) : null,
-      ),
+      "p",
+      { class: "hint" },
+      "Bồi hoàn là một lệnh riêng, làm ngay trên trang của khiếu nại. Ở đó máy chủ hiện trần, " +
+        "thời hạn và việc có cần chủ tiệm duyệt hay không trước khi bạn gõ số. Khiếu nại chỉ đóng " +
+        "khi mọi đề nghị trên nó đã có kết cục.",
     ),
-    result.replayed
-      ? h(
-          "div",
-          { class: "notice", dataState: "info" },
-          "Kết quả được phát lại: cùng khoá thao tác và cùng nội dung đã gửi trước đó. Không có " +
-            "sự cố mới nào được tạo.",
-        )
-      : null,
-    facts([
-      [
-        "Mã sự cố",
-        h("span", { title: result.incident_id || null }, shortId(result.incident_id)),
-        { mono: true, span: true },
-      ],
-      ["Trạng thái", enumLabel(result.status), { mono: true }],
-      ["Lỗi thuộc về ai", decisionLabel(result.fault_decided)],
-      ["Bồi hoàn cho khách", decisionLabel(result.remedy_decided)],
-    ]),
-    recordOnlyNotice(),
   );
 }
 
 /**
- * What the customer said, or an honest statement that it is no longer held.
+ * What the customer said, or the honest statement that it is no longer held.
  *
- * `evidence_summary` is null in two normal cases and in no abnormal one: an incident the agent path
- * opened never had a summary, and one whose evidence reached 365 days had its summary purged under
- * `INCIDENT_EVIDENCE` while the incident row and its digest survived. Rendering that as a blank cell
- * would read as data lost; it is the retention schedule working, so the cell says so in the same
- * muted register the rest of the console uses for an absent value.
+ * `evidence_summary` is null in two normal cases and no abnormal one: the agent path never stores
+ * one, and a staff summary is purged at 365 days under `INCIDENT_EVIDENCE` while the incident row
+ * and its digest survive. That is the retention schedule working, and the row says so.
  *
  * @param {string|null|undefined} summary
- * @returns {HTMLElement|string}
+ * @returns {string}
  */
-function summaryCell(summary) {
+function summaryLine(summary) {
   const text = typeof summary === "string" ? summary.trim() : "";
-  if (text) return text;
-  return h(
-    "span",
-    null,
-    `${UNKNOWN} `,
-    h(
-      "span",
-      { class: "hint" },
-      "Không còn giữ lời khách phàn nàn. Sự cố do đường agent ghi vốn không kèm mô tả, còn mô tả " +
-        "do nhân viên ghi bị xoá sau 365 ngày theo lịch giữ dữ liệu. Bản ghi sự cố thì vẫn " +
-        "nguyên: đây là chuyện bình thường, không phải mất dữ liệu.",
-    ),
-  );
+  return text || "Không còn lời khách — xoá theo lịch giữ dữ liệu, không phải mất dữ liệu.";
 }
 
 /**
- * One incident on the list.
+ * One complaint on the list.
  *
  * @param {any} item
  * @returns {HTMLElement}
  */
-function incidentCard(item) {
-  return h(
-    "article",
-    { class: "card" },
-    h(
-      "div",
-      { class: "spread" },
-      h("strong", { class: "mono", title: item.incident_id }, shortId(item.incident_id)),
-      // The mandated INCIDENT warning, and only while the record is still open. A closed
-      // incident is history; a red badge on it would train staff to ignore the red badge.
-      item.status === "OPEN" ? badge(WARNING.INCIDENT) : null,
-    ),
-    facts([
-      ["Khách phàn nàn gì", summaryCell(item.evidence_summary), { span: true }],
-      ["Loại", enumLabel(item.category), { mono: true, span: true }],
-      ["Trạng thái", enumLabel(item.status), { mono: true }],
-      [
-        "Đơn liên quan",
-        h("span", { title: item.order_id || null }, shortId(item.order_id)),
-        { mono: true },
-      ],
-      ["Lỗi thuộc về ai", decisionLabel(item.fault_decided)],
-      ["Bồi hoàn cho khách", decisionLabel(item.remedy_decided)],
-      ["Mở lúc", dateTime(item.opened_at)],
-    ]),
-    // Offered on every row, including a closed one: the remedy screen reads the server's own
-    // answer for this incident, and letting it say "đã thực hiện" is more useful than a button
-    // this list hid on a guess about what the server would allow.
-    h(
-      "div",
-      { class: "action-bar" },
-      h(
-        "button",
-        {
-          type: "button",
-          dataVariant: "quiet",
-          onClick: () => {
-            setRemedyIncidentPrefill(item.incident_id);
-            navigate("/remedies", { incident: item.incident_id });
-          },
-        },
-        "Đề xuất bồi hoàn",
-      ),
-    ),
-  );
+function incidentRow(item) {
+  const hasSummary = typeof item.evidence_summary === "string" && item.evidence_summary.trim();
+  return listRow({
+    href: `#/incidents/${encodeURIComponent(String(item.incident_id || ""))}`,
+    leading: "incident",
+    title: ticketTitle(item),
+    // Untrusted text: `listRow` places it as a text node, one line, clipped by CSS.
+    meta: h("span", { class: ["row-item__clip", !hasSummary && "muted"] }, summaryLine(item.evidence_summary)),
+    trailing: statusPill({ state: statusState(item.status), text: enumVi(item.status), token: item.status }),
+    trailingMeta: ago(item.opened_at),
+    data: { incidentId: String(item.incident_id || ""), incidentStatus: String(item.status || "") },
+  });
 }
 
 /**
- * @returns {HTMLElement}
+ * "＋ Ghi khiếu nại" — choose the order by its ticket, type what the customer said, record it.
+ *
+ * @param {object} spec
+ * @param {string} spec.store
+ * @param {{allowed: boolean, reason: string}} spec.verdict
+ * @returns {{node: HTMLElement, open: (orderId?: string) => void}}
  */
-export function render_() {
-  const store = storeId();
+function createSheet(spec) {
+  const { store } = spec;
   const submission = new Submission("incident-open");
-  const writeVerdict = can(principal(), "INCIDENTS_WRITE");
-
-  /** @type {{orderId: string, evidenceSummary: string}} */
-  const draft = { orderId: "", evidenceSummary: "" };
-
-  // A staged hand-off is consumed exactly once, here, before the inputs are built — the
-  // order field opens holding the carried id.
-  const staged = orderPrefill;
-  orderPrefill = "";
-  if (staged) draft.orderId = staged;
-
+  /** @type {{manualOrderId: string, evidenceSummary: string, ticket: string, ticketDate: string}} */
+  const draft = { manualOrderId: "", evidenceSummary: "", ticket: "", ticketDate: "" };
+  /** @type {{orderId: string, title: string, meta: string}|null} the order the complaint is about */
+  let chosen = null;
   /**
-   * The exact payload of the last successful commit.
-   *
-   * The idempotency key is reset after a commit, as it must be — the next submission is a new
-   * intent. But an operator who taps twice on a slow connection would then send the identical body
-   * under a fresh key, and the server would happily record a second incident. So an unchanged
-   * resubmission is refused here, with an instruction, rather than silently duplicated. Nothing is
-   * retried automatically; this only declines to send.
-   *
-   * @type {string}
+   * The exact payload of the last successful commit. The key is reset after a commit, so an
+   * unchanged resubmission would record a second incident under a fresh key; it is refused here
+   * with an instruction instead. Nothing is retried automatically; this only declines to send.
    */
   let lastCommitted = "";
 
-  const resultHost = h("div", { class: "stack" });
   const result = resultLine();
+  const errorHost = h("div");
+  const pickedHost = h("div");
+  const searchHost = h("div", { class: "stack stack--tight" });
 
-  /**
-   * The recorded incidents. The filter narrows the rows already fetched, and nothing else: a
-   * case-insensitive substring test over the raw `incident_id`, `order_id`, `status` and
-   * `evidence_summary` strings — the same values the row renders. The summary is in that list
-   * because "cái áo sơ mi trắng" is how a customer refers to their own complaint, and a null
-   * summary simply never matches. It computes nothing and touches no money field; while it is
-   * active both counts stay on screen so a shortened list never reads as lost data.
-   */
-  const list = listView({
-    limit: LIST_LIMIT,
-    fetch: () =>
-      request(`/internal/v1/stores/${encodeURIComponent(store)}/incidents?limit=${LIST_LIMIT}`),
-    renderItem: incidentCard,
-    emptyText: "Chưa có sự cố nào trong cửa hàng này.",
-    skeletonRows: 2,
-    filter: {
-      placeholder: "Lọc theo mã sự cố, mã đơn, trạng thái, nội dung…",
-      noun: "sự cố",
-      matches: (item, needle) =>
-        matchesFilter(
-          [item.incident_id, item.order_id, item.status, item.evidence_summary],
-          needle,
-        ),
+  const ticket = searchField({
+    id: "incident-ticket",
+    label: "Số phiếu",
+    placeholder: "Số phiếu của khách, vd 17",
+    inputmode: "numeric",
+    onInput: (value) => {
+      draft.ticket = value.trim();
+    },
+    onSubmit: () => void search(),
+  });
+  const ticketDate = h("input", {
+    type: "date",
+    id: "incident-ticket-date",
+    onInput: (event) => {
+      draft.ticketDate = event.target.value;
     },
   });
 
-  const orderInput = boundInput({
-    target: draft,
-    key: "orderId",
-    pattern: UUID,
-    placeholder: "00000000-0000-0000-0000-000000000000",
-    submission,
-  });
+  /** @param {any} order an `OrderViewResponse` */
+  function describe(order) {
+    const number = Number.isInteger(order.ticket_number) ? `Phiếu ${order.ticket_number}` : "Đơn của khách qua kênh";
+    const day = order.ticket_issued_on ? dateOnly(`${order.ticket_issued_on}T12:00:00+07:00`) : dateOnly(order.created_at);
+    return {
+      orderId: String(order.order_id),
+      title: `${number} · ${day}`,
+      meta: `${enumVi(order.commercial)} · ${money(order.payable_total_vnd)}`,
+    };
+  }
 
-  // Not `boundInput`: that helper is a single-line `<input>` matched against a pattern, and a
-  // complaint is prose. The binding it does keep is the same one — the draft key updates on every
+  function choose(value) {
+    chosen = value;
+    submission.reset();
+    renderPicked();
+  }
+
+  function renderPicked() {
+    if (!chosen) {
+      render(pickedHost);
+      searchHost.hidden = false;
+      return;
+    }
+    searchHost.hidden = true;
+    render(
+      pickedHost,
+      h(
+        "div",
+        { class: "picked", dataOrderId: chosen.orderId },
+        h(
+          "div",
+          { class: "picked__main" },
+          h("strong", null, chosen.title),
+          h("span", { class: "row-item__meta" }, chosen.meta),
+        ),
+        button({
+          label: "Đổi",
+          variant: "quiet",
+          onClick: () => {
+            chosen = null;
+            submission.reset();
+            renderPicked();
+            ticket.input.focus();
+          },
+        }),
+      ),
+    );
+  }
+
+  async function search() {
+    const number = draft.ticket.replace(/\D/g, "");
+    if (!number) {
+      show(searchResults, inlineAlert({ state: "warn", title: "Gõ số phiếu trên giấy của khách." }));
+      return;
+    }
+    render(searchResults, skeletonRows(1));
+    const date = draft.ticketDate ? `&ticket_date=${encodeURIComponent(draft.ticketDate)}` : "";
+    try {
+      const found = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/orders?ticket=${encodeURIComponent(number)}${date}`,
+      );
+      const orders = Array.isArray(found) ? found : [];
+      if (orders.length === 1) {
+        render(searchResults);
+        choose(describe(orders[0]));
+        summaryInput.focus();
+        return;
+      }
+      render(
+        searchResults,
+        orders.length
+          ? list(
+              orders.map((order) => {
+                const described = describe(order);
+                return listRow({
+                  onClick: () => {
+                    render(searchResults);
+                    choose(described);
+                  },
+                  title: described.title,
+                  meta: described.meta,
+                  data: { orderId: described.orderId },
+                });
+              }),
+              { label: "Đơn khớp số phiếu" },
+            )
+          : inlineAlert({
+              state: "info",
+              title: `Không có đơn nào mang phiếu ${number} ${draft.ticketDate ? "ngày đó" : "hôm nay"}.`,
+              body: h("p", null, "Số phiếu đánh lại mỗi ngày: chọn đúng ngày trên phiếu rồi tìm lại."),
+            }),
+      );
+    } catch (error) {
+      show(searchResults, errorNotice(error, { onRetry: () => void search() }));
+    }
+  }
+
+  const searchResults = h("div");
+  render(
+    searchHost,
+    h(
+      "div",
+      { class: "ticket-search" },
+      ticket.node,
+      button({ label: "Tìm", onClick: () => void search(), id: "incident-ticket-find" }),
+    ),
+    labelled({
+      id: "incident-ticket-date",
+      label: "Ngày trên phiếu",
+      hint: "Bỏ trống là hôm nay. Số phiếu đánh lại mỗi ngày.",
+      control: ticketDate,
+    }),
+    searchResults,
+    h(
+      "details",
+      { class: "manual" },
+      h("summary", null, "Nhập mã thủ công"),
+      labelled({
+        id: "incident-order",
+        label: "Mã đơn (order_id)",
+        hint: "Chỉ khi không tìm được theo số phiếu. Đơn phải thuộc cửa hàng đang chọn.",
+        control: boundInput({
+          target: draft,
+          key: "manualOrderId",
+          pattern: UUID,
+          placeholder: "00000000-0000-0000-0000-000000000000",
+          submission,
+        }),
+      }),
+    ),
+  );
+
+  // Not `boundInput`: a complaint is prose. The same binding is kept — the draft updates on every
   // keystroke and the idempotency key is retired, so an edited body is never sent under the key of
-  // the body before it. The value is stored raw and trimmed at submit, because trimming as the
-  // operator types eats the space between two words.
+  // the body before it. Stored raw, trimmed at submit.
   const summaryInput = h("textarea", {
-    rows: "3",
+    rows: "4",
     maxlength: String(SUMMARY_MAX),
     autocomplete: "off",
     placeholder: "Khách báo áo sơ mi trắng bị ố vàng ở cổ, nhận đồ sáng nay.",
     onInput: (event) => {
       draft.evidenceSummary = event.target.value;
       submission.reset();
-      // Marked only when there is something typed that still cannot be sent — whitespace alone.
-      // An untouched field is not an error yet, which is how `boundInput` treats an empty value.
       event.target.setAttribute(
         "aria-invalid",
         event.target.value && !event.target.value.trim() ? "true" : "false",
@@ -407,12 +399,18 @@ export function render_() {
     },
   });
 
-  /**
-   * @returns {string} empty when the draft may be sent
-   */
+  /** @returns {string} the order the complaint names, or "" */
+  function orderId() {
+    if (chosen) return chosen.orderId;
+    return UUID.test(draft.manualOrderId) ? draft.manualOrderId : "";
+  }
+
+  /** @returns {string} empty when the draft may be sent */
   function validate() {
-    if (!draft.orderId) return "Chưa nhập mã đơn (UUID). Máy chủ bắt buộc phải có đơn.";
-    if (!UUID.test(draft.orderId)) return "Mã đơn phải là UUID đủ 36 ký tự.";
+    if (!chosen && draft.manualOrderId && !UUID.test(draft.manualOrderId)) {
+      return "Mã đơn nhập tay phải là UUID đủ 36 ký tự.";
+    }
+    if (!orderId()) return "Chưa chọn đơn. Tìm theo số phiếu trên giấy của khách.";
     if (!draft.evidenceSummary.trim()) {
       return "Chưa ghi khách phàn nàn chuyện gì. Viết ít nhất một câu, bằng lời của khách.";
     }
@@ -422,24 +420,18 @@ export function render_() {
     return "";
   }
 
-  /**
-   * @param {SubmitEvent} event
-   */
+  /** @param {SubmitEvent} event */
   async function submit(event) {
     event.preventDefault();
+    render(errorHost);
     const problem = validate();
     if (problem) {
       setResult(result, "danger", problem);
       return;
     }
-
-    // Exactly the two keys `IncidentOpenRequest` declares. It is a `StrictRequest`, so a third
-    // key is a 422 rather than a field quietly ignored — and the two digests on the stored row are
-    // the server's to compute from these.
-    const payload = {
-      order_id: draft.orderId,
-      evidence_summary: draft.evidenceSummary.trim(),
-    };
+    // Exactly the two keys `IncidentOpenRequest` declares. It is a `StrictRequest`, so a third key
+    // is a 422 rather than a field quietly ignored.
+    const payload = { order_id: orderId(), evidence_summary: draft.evidenceSummary.trim() };
     const signature = JSON.stringify(payload);
     if (signature === lastCommitted) {
       setResult(
@@ -450,10 +442,7 @@ export function render_() {
       );
       return;
     }
-
-    setResult(result, "warn", "Đang ghi sự cố…");
-    render(resultHost);
-
+    setResult(result, "warn", "Đang ghi khiếu nại…");
     try {
       const created = await request(`/internal/v1/stores/${encodeURIComponent(store)}/incidents`, {
         method: "POST",
@@ -462,117 +451,313 @@ export function render_() {
       });
       submission.reset();
       lastCommitted = signature;
-      // Confirmed exactly once, in one place.
-      setResult(
-        result,
-        "ok",
-        `Đã ghi sự cố ${shortId(created.incident_id)}. Chưa có phán quyết lỗi và chưa có bồi hoàn.`,
+      setResult(result, null, null);
+      toast(
+        created.replayed
+          ? "Khiếu nại này đã được ghi trước đó — không tạo khiếu nại mới"
+          : `Đã ghi khiếu nại${chosen ? ` · ${chosen.title.split(" · ")[0]}` : ""}`,
       );
-      render(resultHost, incidentResult(created));
-      await list.reload();
+      dialog.close();
+      navigate(`/incidents/${encodeURIComponent(String(created.incident_id))}`);
     } catch (error) {
       // A refusal is the system working. A binding refusal, a denial and a REQUIRE_HUMAN are
       // outcomes with a cause the operator can act on; only the rest are presented as breakage.
-      const note = refusalNote(error);
-      const refused = Boolean(note) || error.kind === "DENIED" || error.kind === "REQUIRE_HUMAN";
+      const api = /** @type {any} */ (error);
+      const note = REFUSAL_NOTE[api?.detail] || REFUSAL_NOTE[api?.message];
+      const refused = Boolean(note) || api.kind === "DENIED" || api.kind === "REQUIRE_HUMAN";
       setResult(
         result,
         refused ? "warn" : "danger",
-        error.kind === "DENIED"
+        api.kind === "DENIED"
           ? "Máy chủ từ chối thao tác này cho phiên hiện tại. Không có sự cố nào được ghi."
           : refused
             ? "Máy chủ từ chối ràng buộc của sự cố. Không có sự cố nào được ghi."
-            : "Không ghi được sự cố.",
+            : "Không ghi được khiếu nại.",
       );
-      // A write is never retried by software, so no retry handler is offered here.
-      const notice = errorNotice(error);
-      render(resultHost, notice, note);
-      revealError(notice);
+      show(
+        errorHost,
+        h(
+          "div",
+          { class: "stack stack--tight" },
+          errorNotice(error),
+          note
+            ? inlineAlert({
+                state: "info",
+                title: "Máy chủ từ chối vì ràng buộc, không phải vì lỗi hệ thống",
+                body: h("p", null, note),
+              })
+            : null,
+        ),
+      );
     }
   }
 
-  const submitButton = h(
-    "button",
-    { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
-    "Ghi sự cố",
-  );
-
-  // `gatedFields` beside `gated`: a role that may not write meets the refusal before typing a
-  // complaint out, not on the press that never comes.
   const form = gatedFields(
     h(
       "form",
-      { class: "form", onSubmit: submit },
-      recordOnlyNotice(),
-      hardcodedFieldsNotice(),
-      labelled({
-        id: "incident-order",
-        label: "Mã đơn (order_id)",
-        hint:
-          "Bắt buộc. Miền cho phép sự cố gắn với một tin nhắn thay vì một đơn, nhưng yêu cầu HTTP " +
-          "này không có trường đó, nên ở đây phải có đơn. Đơn phải thuộc đúng cửa hàng đang chọn.",
-        control: orderInput,
-      }),
+      { class: "form", onSubmit: submit, id: "incident-create-form" },
+      h(
+        "p",
+        { class: "fact-line" },
+        h("span", { class: "hint" }, "Chỉ ghi lời khách — chưa quyết ai lỗi, chưa bồi hoàn gì."),
+        recordOnlyInfo(),
+      ),
+      h("div", { class: "stack stack--tight" }, h("p", { class: "remedy-label" }, "Đơn nào?"), pickedHost, searchHost),
       labelled({
         id: "incident-summary",
         label: "Khách phàn nàn chuyện gì",
-        hint:
-          "Bắt buộc. Viết ngắn theo lời khách: món đồ nào, hỏng hay thiếu thế nào, khách nhận ra " +
-          "lúc nào. Không cần ghi tên, số điện thoại hay địa chỉ — sự cố đã gắn với đơn rồi. " +
-          "Tối đa 2000 ký tự, và nội dung này bị xoá sau 365 ngày theo lịch giữ dữ liệu.",
+        hint: "Theo lời khách: món nào, hỏng hay thiếu thế nào. Không cần tên hay số điện thoại.",
         control: summaryInput,
       }),
-      h("div", { class: "action-bar" }, gated(submitButton, writeVerdict)),
+      gated(
+        button({
+          label: "Ghi khiếu nại",
+          type: "submit",
+          variant: "primary",
+          block: true,
+          network: true,
+          id: "incident-submit",
+        }),
+        spec.verdict,
+      ),
       result,
+      errorHost,
     ),
-    writeVerdict,
+    spec.verdict,
   );
 
-  void list.reload();
+  const dialog = sheet({ title: "Ghi khiếu nại", body: form, id: "incident-create" });
 
-  return h(
+  /** @param {string} [prefillOrderId] */
+  async function open(prefillOrderId) {
+    render(errorHost);
+    setResult(result, null, null);
+    dialog.open();
+    if (!prefillOrderId || !UUID.test(prefillOrderId)) {
+      if (!chosen) ticket.input.focus();
+      return;
+    }
+    // The order page handed its order over: show it by its ticket, read from the server.
+    choose({ orderId: prefillOrderId, title: "Đơn đang mở", meta: "Đang đọc đơn…" });
+    try {
+      const order = await request(`/internal/v1/orders/${encodeURIComponent(prefillOrderId)}`);
+      if (chosen && chosen.orderId === prefillOrderId) choose(describe(order));
+    } catch {
+      if (chosen && chosen.orderId === prefillOrderId) {
+        choose({ orderId: prefillOrderId, title: `Đơn ${shortId(prefillOrderId)}`, meta: "Chưa đọc được đơn" });
+      }
+    }
+    summaryInput.focus();
+  }
+
+  return { node: dialog.node, open: (id) => void open(id) };
+}
+
+/**
+ * @returns {HTMLElement}
+ */
+export function render_() {
+  const store = storeId();
+  const writeVerdict = can(principal(), "INCIDENTS_WRITE");
+
+  const staged = orderPrefill;
+  orderPrefill = "";
+
+  const create = createSheet({ store, verdict: writeVerdict });
+
+  /**
+   * The recorded complaints. The filter narrows the rows already fetched and nothing else: the
+   * ticket number, the ids, the status and the customer's own words, because "cái áo sơ mi trắng"
+   * is how a customer refers to their complaint. While it is active both counts stay on screen.
+   */
+  const view = listView({
+    limit: LIST_LIMIT,
+    fetch: () =>
+      request(`/internal/v1/stores/${encodeURIComponent(store)}/incidents?limit=${LIST_LIMIT}`),
+    renderItem: incidentRow,
+    renderRows: (nodes) => list(nodes, { label: "Khiếu nại của cửa hàng", id: "incident-list" }),
+    renderEmpty: (text) => emptyState({ icon: "incident", title: text }),
+    skeleton: () => skeletonRows(4),
+    emptyText: "Chưa có khiếu nại nào trong cửa hàng này.",
+    filter: {
+      placeholder: "Lọc theo số phiếu, lời khách, trạng thái…",
+      noun: "khiếu nại",
+      filteredEmptyText: "Không có khiếu nại nào khớp bộ lọc.",
+      matches: (item, needle) =>
+        matchesFilter(
+          [
+            Number.isInteger(item.ticket_number) ? `phiếu ${item.ticket_number}` : "",
+            item.incident_id,
+            item.order_id,
+            item.status,
+            enumVi(item.status),
+            item.evidence_summary,
+          ],
+          needle,
+        ),
+    },
+  });
+  void view.reload();
+
+  const addButton = button({
+    label: "＋ Ghi khiếu nại",
+    variant: "primary",
+    id: "incident-create-open",
+    onClick: () => create.open(),
+  });
+
+  const node = h(
     "section",
     { class: "screen" },
-    h(
-      "div",
-      { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "Bản ghi sự cố · Không phán quyết"),
-      h("h1", null, "Sự cố"),
-      h(
-        "p",
-        { class: "screen__lede" },
-        "Ghi lại rằng có chuyện xảy ra: khách phàn nàn gì, về đơn nào. Việc quy lỗi và bồi hoàn " +
-          "không diễn ra ở đây.",
-      ),
-    ),
-    panel({
-      eyebrow: "Lệnh",
-      title: "Mở một sự cố",
-      guardrail:
-        "Sự cố mở ở đây luôn là SERVICE_QUALITY do nhân viên ghi, luôn ở trạng thái OPEN, và luôn " +
-        "chưa quyết định lỗi lẫn bồi hoàn. Không có route nào trong API này thay đổi ba điều đó.",
-      children: h("div", { class: "stack" }, form, resultHost),
+    page({
+      title: "Khiếu nại",
+      action: gated(addButton, writeVerdict),
+      info: recordOnlyInfo(),
     }),
-    panel({
-      eyebrow: "Đã ghi",
-      title: "Sự cố của cửa hàng",
-      count: list.count,
-      children: h(
-        "div",
-        { class: "stack" },
-        list.bar.node,
-        list.filterStatus,
-        list.truncation,
-        list.host,
-      ),
-    }),
+    view.bar.node,
+    view.filterStatus,
+    view.truncation,
+    view.host,
+    create.node,
   );
+  // After the router has put the screen in the document, so the sheet opens over it.
+  if (staged) setTimeout(() => create.open(staged), 0);
+  return node;
+}
+
+/**
+ * `#/incidents/:incidentId` — one complaint and its remedy flow.
+ *
+ * @param {import("../core/router.js").RouteContext} context
+ * @returns {HTMLElement}
+ */
+export function renderDetail(context) {
+  const store = storeId();
+  const incidentId = String(context?.params?.incidentId || "");
+  const back = { href: "#/incidents", label: "Khiếu nại" };
+
+  if (!UUID.test(incidentId)) {
+    return h(
+      "section",
+      { class: "screen" },
+      page({ title: "Khiếu nại", back }),
+      inlineAlert({
+        state: "warn",
+        title: "Địa chỉ này không chỉ tới khiếu nại nào",
+        body: h("p", null, "Mở khiếu nại từ danh sách."),
+      }),
+    );
+  }
+
+  const headHost = h("div", null, page({ title: "Khiếu nại", back }));
+  const cardHost = h("div", null, skeletonRows(3));
+  let generation = 0;
+
+  async function load() {
+    generation += 1;
+    const mine = generation;
+    try {
+      const item = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/incidents/${encodeURIComponent(incidentId)}`,
+      );
+      if (mine !== generation) return;
+      render(
+        headHost,
+        page({
+          title: ticketTitle(item),
+          back,
+          subtitle: `Ghi ${ago(item.opened_at)} · ${dateTime(item.opened_at)}`,
+          action: statusPill({ state: statusState(item.status), text: enumVi(item.status), token: item.status }),
+        }),
+      );
+      render(cardHost, complaintCard(item));
+      flow.setStatus(String(item.status || ""));
+    } catch (error) {
+      if (mine !== generation) return;
+      const api = /** @type {any} */ (error);
+      show(
+        cardHost,
+        api?.status === 404
+          ? inlineAlert({
+              state: "warn",
+              title: "Không tìm thấy khiếu nại này trong cửa hàng đang chọn",
+              body: h("p", null, "Kiểm tra bạn đang đứng đúng cửa hàng, hoặc mở lại từ danh sách."),
+            })
+          : errorNotice(error, { onRetry: () => void load() }),
+      );
+    }
+  }
+
+  const flow = remedyFlow({ store, incidentId, onChanged: () => void load() });
+  void load();
+
+  return h("section", { class: "screen" }, headHost, cardHost, flow.node);
+}
+
+/**
+ * What the customer said, the order it is about, and the two undecided flags.
+ *
+ * @param {any} item an `IncidentSummaryResponse`
+ * @returns {HTMLElement}
+ */
+function complaintCard(item) {
+  const text = typeof item.evidence_summary === "string" ? item.evidence_summary.trim() : "";
+  const orderLink = item.order_id
+    ? h(
+        "a",
+        { href: `#/orders/${encodeURIComponent(String(item.order_id))}`, dataField: "incident-order-link" },
+        Number.isInteger(item.ticket_number) ? `Phiếu ${item.ticket_number}` : "Mở đơn",
+      )
+    : UNKNOWN;
+  return section({
+    title: "Khách phàn nàn",
+    info: recordOnlyInfo(),
+    children: h(
+      "div",
+      { class: "stack" },
+      text
+        ? h("blockquote", { class: "complaint", dataField: "incident-summary" }, text)
+        : h(
+            "p",
+            { class: "complaint complaint--absent", dataField: "incident-summary" },
+            h(
+              "span",
+              { class: "hint" },
+              "Không còn giữ lời khách phàn nàn. Sự cố do đường agent ghi vốn không kèm mô tả, còn mô tả " +
+                "do nhân viên ghi bị xoá sau 365 ngày theo lịch giữ dữ liệu. Bản ghi sự cố thì vẫn " +
+                "nguyên: đây là chuyện bình thường, không phải mất dữ liệu.",
+            ),
+          ),
+      keyValues([
+        ["Đơn", orderLink],
+        ["Lỗi thuộc về ai", decisionLabel(item.fault_decided)],
+        ["Bồi hoàn cho khách", decisionLabel(item.remedy_decided)],
+      ]),
+      techDetails([
+        ["Mã khiếu nại", shortId(item.incident_id), { copy: String(item.incident_id || "") }],
+        item.order_id ? ["Mã đơn", shortId(item.order_id), { copy: String(item.order_id) }] : null,
+        ["Trạng thái", enumLabel(item.status)],
+        ["Loại", enumLabel(item.category)],
+        ["fault_decided", String(item.fault_decided)],
+        ["remedy_decided", String(item.remedy_decided)],
+        ["Ghi lúc", dateTime(item.opened_at), { mono: false }],
+      ]),
+    ),
+  });
 }
 
 export const screen = {
   path: "/incidents",
-  title: "Sự cố",
+  title: "Khiếu nại",
   capability: "INCIDENTS_READ",
   needsStore: true,
   render: render_,
+};
+
+export const detailScreen = {
+  path: "/incidents/:incidentId",
+  title: "Khiếu nại",
+  capability: "INCIDENTS_READ",
+  needsStore: true,
+  render: renderDetail,
 };

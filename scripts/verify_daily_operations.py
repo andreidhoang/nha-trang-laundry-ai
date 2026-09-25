@@ -572,7 +572,7 @@ with sync_playwright() as pw:
     for route, name in [
         ("#/approvals", "Duyệt"),
         ("#/exceptions", "Ngoại lệ"),
-        ("#/incidents", "Sự cố"),
+        ("#/incidents", "Khiếu nại"),
         ("#/shadow", "Bản nháp AI"),
         ("#/staff", "Nhân sự"),
         ("#/system", "Hệ thống"),

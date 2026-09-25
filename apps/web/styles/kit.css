@@ -1239,3 +1239,240 @@ details.accordion[open] .accordion__meta {
     white-space: normal;
   }
 }
+
+/* CONSOLE-REDESIGN-004 — Khiếu nại + bồi hoàn --------------------------------------------------- */
+/* Generic pieces first (clip, picked value, money input, check row), then the remedy flow's own. */
+
+.row-item__clip {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hint[data-state="warn"] {
+  color: var(--warn-fg);
+}
+
+.picked {
+  align-items: center;
+  background: var(--brand-050);
+  border: 1px solid var(--brand-200);
+  border-radius: var(--radius-md);
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+}
+
+.picked__main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ticket-search {
+  align-items: stretch;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.ticket-search > .search {
+  flex: 1 1 auto;
+}
+
+details.manual > summary {
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  min-height: var(--tap-min);
+  padding: var(--space-2) 0;
+}
+
+.money-input {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.money-input > input {
+  flex: 1 1 auto;
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-bold);
+}
+
+.money-input__unit {
+  color: var(--text-secondary);
+  font-weight: var(--weight-bold);
+}
+
+.money-echo {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.check-row {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.check-row__label {
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: flex;
+  font-weight: var(--weight-bold);
+  gap: var(--space-3);
+  min-height: var(--tap-min);
+  padding: var(--space-2) var(--space-3);
+}
+
+.check-row__label input[type="checkbox"] {
+  flex: none;
+  height: 1.375rem;
+  margin: 0;
+  width: 1.375rem;
+}
+
+.check-row__label:has(input:checked) {
+  background: var(--brand-050);
+  border-color: var(--brand-600);
+}
+
+.remedy-label {
+  font-weight: var(--weight-bold);
+  margin: 0;
+}
+
+.remedy-summary {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
+.remedy-summary[data-state="danger"] {
+  background: var(--danger-bg);
+}
+
+.remedy-summary__line {
+  align-items: flex-start;
+  display: flex;
+  font-size: var(--text-base);
+  font-weight: var(--weight-bold);
+  gap: var(--space-2);
+  justify-content: space-between;
+  margin: 0;
+}
+
+.remedy-plan {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.remedy-plan__text {
+  flex: 1 1 auto;
+  padding-top: 0.7rem;
+}
+
+.complaint {
+  border-left: 3px solid var(--brand-400);
+  font-size: var(--text-lg);
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  white-space: pre-wrap;
+}
+
+.complaint--absent {
+  border-left-color: var(--border-strong);
+  font-size: var(--text-base);
+}
+
+.proposals .proposal {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
+.proposal__head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.proposal__meta {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.proposal__amount {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-bold);
+}
+
+.proposal .hint {
+  margin: 0;
+}
+
+.credit-code {
+  background: var(--surface);
+  border: 2px dashed var(--brand-600);
+  border-radius: var(--radius-lg);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+
+.credit-code__label {
+  color: var(--brand-800);
+  font-weight: var(--weight-bold);
+  margin: 0;
+}
+
+.credit-code .copyable__text {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+}
+
+.credit-code__fact {
+  flex: 1 1 auto;
+  font-weight: var(--weight-bold);
+  padding-top: 0.7rem;
+}
+
+.kv__note {
+  color: var(--text-secondary);
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-normal);
+}
+
+/* An empty status or disclosure line takes no room; it gains text (and space) when it has any. */
+.filter-status:empty,
+p.hint:empty {
+  display: none;
+}
+
+/* `hidden` means hidden, whatever display a class gives the element (`.form`, `.stack` are grids). */
+[hidden] {
+  display: none !important;
+}
+
+/* The remedy figures: a fixed two-column grid, so a long value wraps inside its own column. */
+.remedy-summary .kv__row {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+}
+
+.remedy-summary .kv__row dt {
+  flex: initial;
+}

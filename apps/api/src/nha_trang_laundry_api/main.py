@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.staticfiles import StaticFiles
 from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
@@ -23,6 +24,7 @@ from nha_trang_laundry_db.approvals import (
 )
 from nha_trang_laundry_db.assistant import AssistantAuthorizationError
 from nha_trang_laundry_db.channel import ChannelBindingError
+from nha_trang_laundry_db.connection import DatabaseUnavailableError
 from nha_trang_laundry_db.counter_tickets import CounterTicketError
 from nha_trang_laundry_db.delivery_legs import (
     DeliveryLegError,
@@ -1158,6 +1160,70 @@ def _store_access_denied(_request: Request, error: StoreAccessError) -> JSONResp
     return JSONResponse(
         status_code=status.HTTP_403_FORBIDDEN, content={"detail": AUTHORIZATION_DENIED}
     )
+
+
+#: `API-INTEGRITY-003`. A statement cancelled by `statement_timeout`, or a lock not granted within
+#: `lock_timeout` -- the bounds `OPS-HARDENING-002` put on every application connection. The
+#: transaction it was in has rolled back whole: the repositories write a mutation with its event,
+#: audit and outbox rows in one transaction, and the idempotency claim in that same transaction,
+#: so the same request with the same `Idempotency-Key` runs afresh rather than replaying half of
+#: itself.
+DATABASE_BUSY = "DATABASE_BUSY"
+#: No connection could be opened (`DatabaseUnavailableError`): nothing reached the database at all.
+DATABASE_UNAVAILABLE = "DATABASE_UNAVAILABLE"
+#: A lock wait is bounded at five seconds by default and the writer holding it is a single
+#: counter request, so two seconds is long enough for it to finish and short enough that a
+#: person at the counter does not give up.
+DATABASE_BUSY_RETRY_AFTER_SECONDS = 2
+#: A connection that could not be opened is a restart or an exhausted pool, not one slow
+#: request; asking sooner than this only adds to the queue at the door.
+DATABASE_UNAVAILABLE_RETRY_AFTER_SECONDS = 10
+
+
+def _database_refusal(reason_code: str, retry_after_seconds: int) -> JSONResponse:
+    """503, `Retry-After`, and a reason code a console can act on -- never the server's message.
+
+    Before this a timed-out statement escaped as a bare 500, which the console renders as "Máy chủ
+    gặp lỗi. Đừng thử lại" -- the right advice for a fault whose outcome is unknown, and the wrong
+    advice here, where the outcome is known: nothing was written. The body carries no driver text,
+    because a psycopg message names tables, constraints and sometimes the host.
+    """
+
+    _LOGGER.record(
+        component="api",
+        name="database.request_refused",
+        outcome="failed",
+        correlation=current_correlation() or CorrelationContext.new(),
+        fields={"reason_code": reason_code},
+    )
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": {"reason_code": reason_code}},
+        headers={"Retry-After": str(retry_after_seconds)},
+    )
+
+
+@app.exception_handler(psycopg.errors.QueryCanceled)
+@app.exception_handler(psycopg.errors.LockNotAvailable)
+def _database_busy(_request: Request, error: Exception) -> JSONResponse:
+    """Exactly these two SQLSTATEs (57014, 55P03), and deliberately not their parent classes.
+
+    `OperationalError` also covers a connection lost mid-transaction, where a `COMMIT` may or may
+    not have landed; that stays a 500, because "try again" would be a guess. `IntegrityError` and
+    `ProgrammingError` are a refused write and a defect -- neither is a busy database, and a 503
+    would invite a client to retry into the same failure.
+    """
+
+    del _request, error
+    return _database_refusal(DATABASE_BUSY, DATABASE_BUSY_RETRY_AFTER_SECONDS)
+
+
+@app.exception_handler(DatabaseUnavailableError)
+def _database_unavailable(_request: Request, error: Exception) -> JSONResponse:
+    """The connection was never opened, so no statement ran: retrying is safe by construction."""
+
+    del _request, error
+    return _database_refusal(DATABASE_UNAVAILABLE, DATABASE_UNAVAILABLE_RETRY_AFTER_SECONDS)
 
 
 def require_owner(

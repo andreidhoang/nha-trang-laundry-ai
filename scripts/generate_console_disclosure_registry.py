@@ -62,8 +62,9 @@ CAPABILITY_GATES: dict[str, str] = {
     "APPROVALS_READ": "require_approval_staff",
     # `decide_approval` depends on the same route gate as the queue read. The two checks the gate
     # does not make -- maker-checker separation, and the exact resource version and digests -- are
-    # made inside `_authorize_decision` and `_require_exact_binding`, and neither can be predicted
-    # client-side, so the console does not try: it presents the control and lets the refusal speak.
+    # made inside `_authorize_decision`, `_require_exact_binding` and (API-INTEGRITY-003)
+    # `_require_resource_unchanged`, and none can be predicted client-side, so the console does
+    # not try: it presents the control and lets the refusal speak.
     "APPROVALS_DECIDE": "require_approval_staff",
     "QUEUE_READ": "require_approval_staff",
     "MANUAL_SEND": "require_operations_staff",

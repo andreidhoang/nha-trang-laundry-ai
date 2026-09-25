@@ -19,6 +19,8 @@ import { screen as exceptions } from "./exceptions.js";
 import { screen as exports_ } from "./exports.js";
 import { screen as gaps } from "./gaps.js";
 import { screen as incidents } from "./incidents.js";
+import { screen as more } from "./more.js";
+import { screen as newOrder } from "./newOrder.js";
 import { screen as orderDetail } from "./orderDetail.js";
 import { screen as orderRequests } from "./orderRequests.js";
 import { screen as orders } from "./orders.js";
@@ -33,6 +35,7 @@ import { screen as today } from "./today.js";
 /** @type {import("../core/router.js").Route[]} */
 export const ROUTES = [
   today,
+  newOrder,
   orderRequests,
   quotes,
   orders,
@@ -48,4 +51,5 @@ export const ROUTES = [
   system,
   staff,
   gaps,
+  more,
 ];

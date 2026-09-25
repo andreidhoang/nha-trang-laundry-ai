@@ -17,88 +17,21 @@
 import { count, shortId } from "./src/core/format.js";
 import { request } from "./src/core/api.js";
 import { h, render } from "./src/core/dom.js";
-import { NAV, enumVi } from "./src/core/i18n.js";
+import { enumVi } from "./src/core/i18n.js";
+import { NAV_ITEMS, navVerdict } from "./src/core/nav.js";
 import { can } from "./src/core/rbac.js";
 import * as router from "./src/core/router.js";
 import * as session from "./src/core/session.js";
 import { ROUTES } from "./src/screens/index.js";
 import { errorNotice, icon } from "./src/ui/components.js";
+import { avatar, sheet } from "./src/ui/kit.js";
 
 const screenTitle = document.querySelector("#screen-title");
+const storeLabel = document.querySelector("#appbar-store");
 const appbarActions = document.querySelector("#appbar-actions");
 const banners = document.querySelector("#banners");
 const navList = document.querySelector("#nav-list");
 const outlet = document.querySelector("#main");
-
-/**
- * Navigation, grouped by the kind of work: running the shop, supervising the agent, and
- * administering the system. The group labels render only in the desktop sidebar.
- */
-const NAV_ITEMS = [
-  { path: "/", label: NAV.today, icon: "today", group: "Vận hành" },
-  {
-    path: "/order-requests",
-    label: NAV.orderRequests,
-    capability: "QUOTES_READ",
-    icon: "intake",
-    group: "Vận hành",
-  },
-  { path: "/quotes", label: NAV.quotes, capability: "QUOTES_READ", icon: "quote", group: "Vận hành" },
-  { path: "/orders", label: NAV.orders, capability: "ORDERS_READ", icon: "order", group: "Vận hành" },
-  {
-    path: "/sla-board",
-    label: NAV.slaBoard,
-    capability: "SLA_BOARD_READ",
-    icon: "exception",
-    group: "Vận hành",
-  },
-  {
-    path: "/incidents",
-    label: NAV.incidents,
-    capability: "INCIDENTS_READ",
-    icon: "incident",
-    group: "Vận hành",
-  },
-  {
-    path: "/remedies",
-    label: NAV.remedies,
-    capability: "INCIDENTS_READ",
-    icon: "incident",
-    group: "Vận hành",
-  },
-  {
-    path: "/approvals",
-    label: NAV.approvals,
-    capability: "APPROVALS_READ",
-    icon: "approval",
-    group: "Giám sát AI",
-  },
-  {
-    path: "/assistant",
-    label: NAV.assistant,
-    capability: "ASSISTANT",
-    icon: "search",
-    group: "Giám sát AI",
-  },
-  { path: "/shadow", label: NAV.shadow, capability: "SHADOW_READ", icon: "draft", group: "Giám sát AI" },
-  {
-    path: "/exceptions",
-    label: NAV.exceptions,
-    capability: "SHADOW_READ",
-    icon: "exception",
-    group: "Giám sát AI",
-  },
-  {
-    path: "/exports",
-    label: NAV.exports,
-    capability: "EXPORT_DATA",
-    icon: "system",
-    group: "Quản trị",
-  },
-  { path: "/system", label: NAV.system, capability: "QUEUE_READ", icon: "system", group: "Quản trị" },
-  { path: "/staff", label: NAV.staff, capability: "STAFF_ADMIN", icon: "staff", group: "Quản trị" },
-  { path: "/gaps", label: NAV.unsupported, icon: "gaps", group: "Quản trị" },
-];
 
 function currentPath() {
   return router.current().path;
@@ -137,44 +70,46 @@ async function pollApprovals() {
 }
 
 /**
- * The five destinations on the phone's bottom bar, in display order. Every other destination lives
- * behind "Thêm" — same links, same disabled-with-reason rule, nothing hidden. The desktop sidebar
- * ignores this and shows the full grouped list.
- */
-const PHONE_PRIMARY_PATHS = ["/", "/approvals", "/orders", "/shadow", "/quotes"];
-
-/**
- * @param {ReturnType<typeof session.principal>} principal
+ * Whether a path is "under" a nav entry: an order page belongs to Đơn hàng, and every destination
+ * reached from "Thêm" lights the Thêm tab on a phone.
+ *
  * @param {(typeof NAV_ITEMS)[number]} item
+ * @param {string} path
  */
-function navVerdict(principal, item) {
-  return item.capability
-    ? can(principal, item.capability)
-    : { allowed: Boolean(principal), reason: "Chưa có phiên đăng nhập." };
+function isActive(item, path) {
+  if (item.path === "/") return path === "/";
+  if (path === item.path || path.startsWith(`${item.path}/`)) return true;
+  if (item.phoneOnly) {
+    const owner = NAV_ITEMS.find(
+      (other) => !other.phoneOnly && other.path !== "/" && (path === other.path || path.startsWith(`${other.path}/`)),
+    );
+    return Boolean(owner && !owner.tab);
+  }
+  return false;
 }
 
 /**
  * One nav destination. A capability this role lacks is shown and marked, never removed — hiding it
  * teaches staff the feature does not exist; marking it teaches them whom to ask. The reason rides
- * in a `nav__reason` span that CSS reveals where there is room for it (the desktop sidebar and the
- * phone's "Thêm" sheet), because a `title` tooltip is unreachable on touch.
+ * in a `nav__reason` span that CSS reveals where there is room for it (the desktop sidebar), and
+ * `#/more` lists it in full, because a `title` tooltip is unreachable on touch.
  *
  * @param {(typeof NAV_ITEMS)[number]} item
  * @param {{allowed: boolean, reason?: string}} verdict
  * @returns {HTMLElement}
  */
 function navLink(item, verdict) {
-  const active = currentPath() === item.path;
+  const active = isActive(item, currentPath());
   return h(
     "a",
     {
-      class: "nav__link",
+      class: ["nav__link", item.primary && "nav__link--primary"],
       href: `#${item.path}`,
       "aria-current": active ? "page" : null,
       "aria-disabled": verdict.allowed ? null : "true",
       title: verdict.allowed ? item.label : `${item.label} — ${verdict.reason}`,
     },
-    icon(item.icon),
+    item.primary ? h("span", { class: "nav__plus" }, icon(item.icon)) : icon(item.icon),
     h("span", null, item.label),
     item.path === "/approvals" && approvalsBadge
       ? h("span", { class: "nav__badge" }, approvalsBadge)
@@ -187,58 +122,28 @@ function renderNav() {
   const principal = session.principal();
   const children = [];
   let lastGroup = null;
-  /** @type {Array<{item: (typeof NAV_ITEMS)[number], verdict: {allowed: boolean, reason?: string}}>} */
-  const overflow = [];
-  let overflowActive = false;
 
   for (const item of NAV_ITEMS) {
-    if (item.group !== lastGroup) {
+    if (item.group && item.group !== lastGroup && !item.primary) {
       lastGroup = item.group;
       children.push(h("li", { class: "nav__group", "aria-hidden": "true" }, item.group));
     }
     const verdict = navVerdict(principal, item);
-    const isPhonePrimary = PHONE_PRIMARY_PATHS.includes(item.path);
     children.push(
       h(
         "li",
-        { class: isPhonePrimary ? "nav__item nav__item--phone-primary" : "nav__item" },
+        {
+          class: [
+            "nav__item",
+            item.tab && "nav__item--tab",
+            item.tab && `nav__item--tab-${item.tab}`,
+            item.phoneOnly && "nav__item--phone-only",
+          ],
+        },
         navLink(item, verdict),
       ),
     );
-    if (!isPhonePrimary) {
-      overflow.push({ item, verdict });
-      if (currentPath() === item.path) overflowActive = true;
-    }
   }
-
-  // The phone overflow sheet. Native <details>, so there is no state to persist or restore and the
-  // next renderNav — which runs on every route change — closes it behind the chosen destination.
-  const moreChildren = [];
-  let moreGroup = null;
-  for (const { item, verdict } of overflow) {
-    if (item.group !== moreGroup) {
-      moreGroup = item.group;
-      moreChildren.push(h("p", { class: "nav__more-group" }, item.group));
-    }
-    moreChildren.push(navLink(item, verdict));
-  }
-  children.push(
-    h(
-      "li",
-      { class: "nav__more" },
-      h(
-        "details",
-        null,
-        h(
-          "summary",
-          { class: "nav__link", dataActive: overflowActive ? "true" : null },
-          icon("more"),
-          h("span", null, "Thêm"),
-        ),
-        h("div", { class: "nav__more__list" }, ...moreChildren),
-      ),
-    ),
-  );
   render(navList, children);
   publishNavHeight();
 }
@@ -263,27 +168,90 @@ function publishNavHeight() {
   document.documentElement.style.setProperty("--nav-height", `${bar.offsetHeight}px`);
 }
 
+/** The account sheet: who is signed in, with which roles, and the one way out. */
+const accountSheet = sheet({
+  title: "Tài khoản",
+  body: h("div", { class: "stack", id: "account-sheet-body" }),
+  actions: h(
+    "button",
+    {
+      type: "button",
+      dataVariant: "danger",
+      class: "btn btn--block",
+      onClick: () => {
+        accountSheet.close();
+        void session.signOut();
+      },
+    },
+    icon("logout"),
+    h("span", null, "Thoát"),
+  ),
+});
+
 function renderAppbar() {
   const state = session.snapshot();
+  const storeName =
+    state.storeId && state.storeNames?.[state.storeId]
+      ? state.storeNames[state.storeId]
+      : state.storeId
+        ? `Cửa hàng ${shortId(state.storeId)}`
+        : "Giặt Là Sạch Cộng";
+  storeLabel.textContent = storeName;
   if (state.status !== "active" || !state.principal) {
     render(appbarActions, h("span", { class: "appbar__session" }, "Chưa đăng nhập"));
     return;
   }
 
-  const roles = state.principal.roles.join(" · ") || "không có vai trò";
-  const mfa = state.principal.mfaVerified ? "đã xác thực" : "chưa xác thực";
+  const principal = state.principal;
+  const roles = principal.roles.map(enumVi).join(" · ") || "—";
+  const mfa = principal.mfaVerified ? "đã xác thực" : "chưa xác thực";
+  const name = roles;
+  render(
+    accountSheet.body,
+    h(
+      "div",
+      { class: "row" },
+      avatar(name),
+      h(
+        "div",
+        { class: "stack stack--tight" },
+        h("p", { class: "row-item__title" }, name),
+        h("p", { class: "row-item__meta" }, `${roles} · ${mfa} hai bước`),
+      ),
+    ),
+    state.memberStoreIds.length > 1
+      ? h("p", { class: "hint" }, "Đổi cửa hàng ở dải chọn cửa hàng phía trên màn hình.")
+      : null,
+  );
   render(
     appbarActions,
     h(
-      "span",
-      { class: "appbar__session", title: `${roles} · ${mfa} hai bước` },
-      state.principal.roles.map(enumVi).join(" · ") || "—",
+      "button",
+      {
+        type: "button",
+        class: "appbar__account",
+        "aria-label": `Tài khoản: ${roles}, ${mfa} hai bước`,
+        title: `${principal.roles.join(" · ")} · ${mfa} hai bước`,
+        onClick: () => accountSheet.open(),
+      },
+      avatar(name),
+      h("span", { class: "appbar__account-role" }, roles),
       h("span", { class: "sr-only" }, ` ${mfa} hai bước`),
     ),
+    // Kept visible, not only inside the sheet: signing out on a shared counter tablet must never
+    // take a hunt. The icon-only form fits a 360px bar; the label is its accessible name.
     h(
       "button",
-      { type: "button", dataVariant: "quiet", onClick: () => void session.signOut() },
-      "Thoát",
+      {
+        type: "button",
+        dataVariant: "quiet",
+        class: "appbar__signout",
+        "aria-label": "Thoát",
+        title: "Thoát",
+        onClick: () => void session.signOut(),
+      },
+      icon("logout"),
+      h("span", { class: "appbar__signout-label" }, "Thoát"),
     ),
   );
 }

@@ -98,6 +98,84 @@ const ICONS = {
     h("circle", { cx: "12", cy: "12", r: "1.75" }),
     h("circle", { cx: "19", cy: "12", r: "1.75" }),
   ],
+  // V2 kit icons (docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md §3.3). Same 24px stroke grid as above.
+  plus: [
+    h("line", { x1: "12", y1: "5", x2: "12", y2: "19" }),
+    h("line", { x1: "5", y1: "12", x2: "19", y2: "12" }),
+  ],
+  "chevron-right": [h("polyline", { points: "9 18 15 12 9 6" })],
+  "chevron-left": [h("polyline", { points: "15 18 9 12 15 6" })],
+  "chevron-down": [h("polyline", { points: "6 9 12 15 18 9" })],
+  close: [
+    h("line", { x1: "18", y1: "6", x2: "6", y2: "18" }),
+    h("line", { x1: "6", y1: "6", x2: "18", y2: "18" }),
+  ],
+  check: [h("polyline", { points: "20 6 9 17 4 12" })],
+  info: [
+    h("circle", { cx: "12", cy: "12", r: "10" }),
+    h("line", { x1: "12", y1: "16", x2: "12", y2: "12" }),
+    h("line", { x1: "12", y1: "8", x2: "12.01", y2: "8" }),
+  ],
+  clock: [
+    h("circle", { cx: "12", cy: "12", r: "10" }),
+    h("polyline", { points: "12 6 12 12 16 14" }),
+  ],
+  truck: [
+    h("rect", { x: "1", y: "3", width: "15", height: "13", rx: "1" }),
+    h("polygon", { points: "16 8 20 8 23 11 23 16 16 16 16 8" }),
+    h("circle", { cx: "5.5", cy: "18.5", r: "2.5" }),
+    h("circle", { cx: "18.5", cy: "18.5", r: "2.5" }),
+  ],
+  store: [
+    h("path", { d: "M3 9l1.5-5h15L21 9" }),
+    h("path", { d: "M4 9v11h16V9" }),
+    h("path", { d: "M9 20v-6h6v6" }),
+  ],
+  user: [
+    h("path", { d: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" }),
+    h("circle", { cx: "12", cy: "7", r: "4" }),
+  ],
+  cash: [
+    h("rect", { x: "2", y: "6", width: "20", height: "12", rx: "2" }),
+    h("circle", { cx: "12", cy: "12", r: "2.5" }),
+    h("path", { d: "M6 10v4" }),
+    h("path", { d: "M18 10v4" }),
+  ],
+  washer: [
+    h("rect", { x: "3", y: "2", width: "18", height: "20", rx: "2" }),
+    h("circle", { cx: "12", cy: "13", r: "5" }),
+    h("line", { x1: "7", y1: "6", x2: "7.01", y2: "6" }),
+    h("line", { x1: "11", y1: "6", x2: "11.01", y2: "6" }),
+  ],
+  message: [h("path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" })],
+  logout: [
+    h("path", { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" }),
+    h("polyline", { points: "16 17 21 12 16 7" }),
+    h("line", { x1: "21", y1: "12", x2: "9", y2: "12" }),
+  ],
+  printer: [
+    h("polyline", { points: "6 9 6 2 18 2 18 9" }),
+    h("path", { d: "M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" }),
+    h("rect", { x: "6", y: "14", width: "12", height: "8" }),
+  ],
+  tag: [
+    h("path", { d: "M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" }),
+    h("line", { x1: "7", y1: "7", x2: "7.01", y2: "7" }),
+  ],
+  download: [
+    h("path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }),
+    h("polyline", { points: "7 10 12 15 17 10" }),
+    h("line", { x1: "12", y1: "15", x2: "12", y2: "3" }),
+  ],
+  shield: [h("path", { d: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" })],
+  sparkles: [
+    h("path", { d: "M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" }),
+    h("path", { d: "M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" }),
+  ],
+  home: [
+    h("path", { d: "M3 10.5 12 3l9 7.5" }),
+    h("path", { d: "M5 9.5V21h14V9.5" }),
+  ],
 };
 
 /**

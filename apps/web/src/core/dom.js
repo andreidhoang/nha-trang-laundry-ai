@@ -12,6 +12,12 @@
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+/**
+ * Tags created in the SVG namespace. `polyline` and `polygon` were missing, so the intake icon's
+ * arrowhead was created as an unknown HTML element and never drew.
+ */
+const SVG_TAGS = new Set(["svg", "path", "circle", "rect", "line", "polyline", "polygon"]);
+
 /** Attributes that must be set as properties rather than attributes to behave correctly. */
 const PROPERTY_ATTRIBUTES = new Set(["value", "checked", "selected", "disabled", "indeterminate"]);
 
@@ -54,7 +60,7 @@ function appendChild(parent, child) {
  */
 export function h(tag, props, ...children) {
   const element =
-    tag === "svg" || tag === "path" || tag === "circle" || tag === "rect" || tag === "line"
+    SVG_TAGS.has(tag)
       ? document.createElementNS(SVG_NS, tag)
       : document.createElement(tag);
 

@@ -721,6 +721,8 @@ export function enumLabel(value) {
 /** Screen and navigation titles. */
 export const NAV = {
   today: "Hôm nay",
+  newOrder: "Nhận đồ",
+  more: "Thêm",
   orderRequests: "Tiếp nhận",
   quotes: "Báo giá",
   orders: "Đơn hàng",

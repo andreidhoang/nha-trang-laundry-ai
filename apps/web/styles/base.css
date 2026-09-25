@@ -158,11 +158,10 @@ svg {
 
 label,
 .label {
-  color: var(--text-secondary);
+  color: var(--text);
   display: block;
   font-size: var(--text-sm);
   font-weight: var(--weight-bold);
-  letter-spacing: 0.01em;
   margin-bottom: var(--space-1);
 }
 
@@ -298,7 +297,9 @@ button:hover:not(:disabled),
 button[data-variant="primary"] {
   background: var(--brand-800);
   border-color: var(--brand-800);
+  box-shadow: var(--shadow-sm);
   color: var(--text-on-brand);
+  min-height: var(--tap-primary);
 }
 
 button[data-variant="primary"]:hover:not(:disabled) {
@@ -308,13 +309,13 @@ button[data-variant="primary"]:hover:not(:disabled) {
 /* Reserved for actions that commit money, close an incident, or attest that a message left the
  * building. Visually separated from safe actions so the two are never adjacent by accident. */
 button[data-variant="danger"] {
-  background: var(--danger-bg);
+  background: var(--surface);
   border-color: var(--danger-border);
   color: var(--danger-fg);
 }
 
 button[data-variant="danger"]:hover:not(:disabled) {
-  background: var(--danger-border);
+  background: var(--danger-bg);
 }
 
 button[data-variant="quiet"] {

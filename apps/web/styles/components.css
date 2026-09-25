@@ -17,6 +17,14 @@
   padding: var(--space-4);
 }
 
+/* A card nested inside a card (V1 screens nest result cards inside panels) drops to a sunken
+ * surface instead of stacking a second border and shadow — one level of elevation per screen. */
+.card .card {
+  background: var(--surface-sunken);
+  border-color: transparent;
+  box-shadow: none;
+}
+
 /* Hôm nay: an empty queue takes no space — the clear line under the grid says what was checked.
    Written as `.card.tile--clear`, not `.tile--clear`, and the doubled class is load-bearing: every
    tile is also a `.stack`, whose `display: grid` is declared further down this file. At equal
@@ -67,7 +75,8 @@
 .eyebrow {
   color: var(--text-muted);
   font-size: var(--text-xs);
-  font-weight: var(--weight-heavy);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.01em;
 }
 
 /* Badges --------------------------------------------------------------------------------------- */
@@ -75,14 +84,14 @@
 .badge {
   align-items: center;
   background: var(--neutral-bg);
-  border: 1px solid var(--neutral-border);
+  border: 1px solid transparent;
   border-radius: var(--radius-pill);
   color: var(--neutral-fg);
   display: inline-flex;
   font-size: var(--text-xs);
   font-weight: var(--weight-heavy);
   gap: var(--space-1);
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   /* `nowrap` was right when a badge held one short token. These hold a Vietnamese gloss *and* the
    * verbatim enum -- "đã ghi nhận người gửi tay MANUAL_SEND_RECORDED" is 355px at 390px wide --
    * and the dual-language rule is not negotiable, so the badge wraps instead of being clipped. */
@@ -160,39 +169,36 @@
 
 .notice {
   background: var(--neutral-bg);
-  border: 1px solid var(--neutral-border);
-  border-left-width: 4px;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   color: var(--neutral-fg);
-  font-size: var(--text-base);
-  padding: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  padding: var(--space-3) var(--space-4);
 }
 
 .notice[data-state="warn"] {
   background: var(--warn-bg);
-  border-color: var(--warn-border);
   color: var(--warn-fg);
 }
 
 .notice[data-state="danger"] {
   background: var(--danger-bg);
-  border-color: var(--danger-border);
   color: var(--danger-fg);
 }
 
 .notice[data-state="info"] {
   background: var(--info-bg);
-  border-color: var(--info-border);
   color: var(--info-fg);
 }
 
 .notice[data-state="ok"] {
   background: var(--ok-bg);
-  border-color: var(--ok-border);
   color: var(--ok-fg);
 }
 
 .notice__title {
+  font-size: var(--text-base);
   font-weight: var(--weight-heavy);
   margin-bottom: var(--space-1);
 }
@@ -269,6 +275,14 @@
   column-gap: var(--space-3);
   display: grid;
   grid-template-columns: minmax(7.5rem, 34%) 1fr;
+}
+
+/* On a phone a label column costs a third of the width and wraps every value; stack instead. */
+@media (max-width: 29.99rem) {
+  .field {
+    grid-template-columns: 1fr;
+    row-gap: 2px;
+  }
 }
 
 .field--span {
@@ -362,10 +376,11 @@
 
 .empty {
   background: var(--surface-sunken);
-  border: 1px dashed var(--border-strong);
+  border: none;
   border-radius: var(--radius-md);
-  color: var(--text-muted);
-  padding: var(--space-5) var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  padding: var(--space-4);
   text-align: center;
 }
 

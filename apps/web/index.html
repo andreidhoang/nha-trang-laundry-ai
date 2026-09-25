@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#0b3b36">
+    <meta name="theme-color" content="#ffffff">
     <meta name="description" content="Bảng vận hành nội bộ Giặt Là Sạch Cộng">
     <meta name="referrer" content="no-referrer">
 
@@ -26,6 +26,7 @@
     <link rel="stylesheet" href="styles/base.css">
     <link rel="stylesheet" href="styles/components.css">
     <link rel="stylesheet" href="styles/layout.css">
+    <link rel="stylesheet" href="styles/kit.css">
     <link rel="stylesheet" href="styles/print.css" media="print">
     <title>Bảng vận hành</title>
   </head>
@@ -34,11 +35,14 @@
 
     <div class="app">
       <header class="appbar">
-        <div class="appbar__identity">
-          <p class="appbar__eyebrow">GIẶT LÀ SẠCH CỘNG · NỘI BỘ</p>
-          <p class="appbar__title" id="screen-title">Bảng vận hành</p>
-        </div>
-        <div class="row" id="appbar-actions"></div>
+        <a class="appbar__identity" href="#/" aria-label="Về trang Hôm nay">
+          <img class="appbar__logo" src="icon.svg" alt="" width="32" height="32">
+          <span class="appbar__names">
+            <span class="appbar__store" id="appbar-store">Giặt Là Sạch Cộng</span>
+            <span class="appbar__title" id="screen-title">Bảng vận hành</span>
+          </span>
+        </a>
+        <div class="appbar__actions" id="appbar-actions"></div>
       </header>
 
       <div class="banners" id="banners"></div>

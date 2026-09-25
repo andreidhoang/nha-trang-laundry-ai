@@ -1229,13 +1229,23 @@ def _store_access_denied(_request: Request, error: StoreAccessError) -> JSONResp
 #: transaction it was in has rolled back whole: the repositories write a mutation with its event,
 #: audit and outbox rows in one transaction, and the idempotency claim in that same transaction,
 #: so the same request with the same `Idempotency-Key` runs afresh rather than replaying half of
-#: itself.
+#: itself. `API-INTEGRITY-004`: also a transaction PostgreSQL chose to abort to break a deadlock
+#: or a serialization conflict -- rolled back whole in exactly the same way.
 DATABASE_BUSY = "DATABASE_BUSY"
 #: No connection could be opened (`DatabaseUnavailableError`): nothing reached the database at all.
 DATABASE_UNAVAILABLE = "DATABASE_UNAVAILABLE"
 #: A lock wait is bounded at five seconds by default and the writer holding it is a single
 #: counter request, so two seconds is long enough for it to finish and short enough that a
 #: person at the counter does not give up.
+#:
+#: `API-INTEGRITY-004` keeps the same two seconds for a deadlock and a serialization failure, and
+#: they are the case it fits best. PostgreSQL resolves a deadlock by aborting one side after
+#: `deadlock_timeout` (1 s by default), so by the time this answer is on the wire the other side
+#: already holds every lock it was waiting for and is finishing a single counter request. An
+#: immediate retry would race straight back into the writer it just collided with -- two clients
+#: that deadlocked once and both retry at once can deadlock again -- while two seconds is past the
+#: survivor's commit and still inside a person's patience. One reason code, one interval: the
+#: console has no reason to tell these apart, and nothing to do differently if it could.
 DATABASE_BUSY_RETRY_AFTER_SECONDS = 2
 #: A connection that could not be opened is a restart or an exhausted pool, not one slow
 #: request; asking sooner than this only adds to the queue at the door.
@@ -1267,13 +1277,26 @@ def _database_refusal(reason_code: str, retry_after_seconds: int) -> JSONRespons
 
 @app.exception_handler(psycopg.errors.QueryCanceled)
 @app.exception_handler(psycopg.errors.LockNotAvailable)
+@app.exception_handler(psycopg.errors.DeadlockDetected)
+@app.exception_handler(psycopg.errors.SerializationFailure)
 def _database_busy(_request: Request, error: Exception) -> JSONResponse:
-    """Exactly these two SQLSTATEs (57014, 55P03), and deliberately not their parent classes.
+    """Exactly four SQLSTATEs (57014, 55P03, 40P01, 40001), and deliberately not their parents.
 
     `OperationalError` also covers a connection lost mid-transaction, where a `COMMIT` may or may
     not have landed; that stays a 500, because "try again" would be a guess. `IntegrityError` and
     `ProgrammingError` are a refused write and a defect -- neither is a busy database, and a 503
     would invite a client to retry into the same failure.
+
+    `API-INTEGRITY-004` added the deadlock (40P01) and the serialization failure (40001). Both are
+    PostgreSQL choosing this transaction to roll back so another can finish: the server aborts it
+    whole, before any `COMMIT` could succeed, and says so. That is the same known outcome a timeout
+    has -- nothing this request wrote survived, its idempotency claim included -- so the same-key
+    retry runs afresh rather than replaying half of itself. Before this item a deadlock answered 500
+    and the counter was told "Đừng thử lại" about a write the database had certainly discarded.
+
+    Named one by one and not as class 40 (`transaction_rollback`): that class also holds 40003,
+    `statement_completion_unknown`, which is precisely "the outcome is not known", and 40002, a
+    constraint refusing the write at commit. Neither is a busy database.
     """
 
     del _request, error

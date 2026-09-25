@@ -87,6 +87,9 @@ import {
   serviceName,
   unitShort,
 } from "../ui/quoting.js";
+// A screen importing a screen, as `orderDetail.js` does with `incidents.js`: an in-memory,
+// consumed-once hand-off (RECEIPT-PRINT-001), not a shared helper.
+import { offerReceipt } from "./receipt.js";
 
 /**
  * `AcquisitionSource`, complete, in the order the counter hears the answers — and `UNKNOWN` last,
@@ -1796,6 +1799,8 @@ export function render_(context) {
       orderSub.reset();
       flow.busy = false;
       toast(`Đã tạo đơn · ${customerLabel(flow.request)}`);
+      // RECEIPT-PRINT-001: the order page offers "In phiếu cho khách" while the customer is here.
+      offerReceipt(String(created.order_id));
       location.hash = `#/orders/${encodeURIComponent(String(created.order_id))}`;
     } catch (error) {
       flow.busy = false;

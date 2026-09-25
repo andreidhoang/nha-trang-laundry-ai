@@ -89,3 +89,85 @@
     position: static;
   }
 }
+
+/* RECEIPT-PRINT-001 — Phiếu cho khách.
+ *
+ * On the receipt screen only the slip prints: the page header, the "Đọc lúc" line and the action
+ * bar are controls, not the receipt. The slip gets its own named page with thin margins so a
+ * thermal roll (80 mm, 58 mm) is filled edge to edge; its width follows the paper the print dialog
+ * picked rather than a size fixed here, because the console cannot know which printer the counter
+ * has. On paper wider than a roll (A5) the slip is capped and centred instead of stretched.
+ * Everything on the slip is black on white: a thermal head prints no grey, and dark mode must not
+ * reach the paper. */
+@page receipt {
+  margin: 3mm 2mm;
+}
+
+@media print {
+  .toasts,
+  .receipt-screen > :not(.receipt-paper) {
+    display: none !important;
+  }
+
+  html:has(.receipt-screen),
+  html:has(.receipt-screen) body,
+  html:has(.receipt-screen) .app,
+  html:has(.receipt-screen) .main {
+    background: #fff;
+  }
+
+  .receipt-paper {
+    background: #fff;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    color: #000;
+    font-size: 9pt;
+    gap: 2mm;
+    margin: 0 auto;
+    max-width: none;
+    padding: 0;
+    page: receipt;
+    width: 100%;
+  }
+
+  .receipt-paper * {
+    color: #000 !important;
+  }
+
+  .receipt-paper__ticket {
+    font-size: 16pt;
+  }
+
+  .receipt-paper__total-amount {
+    font-size: 12pt;
+  }
+
+  .receipt-paper__day,
+  .receipt-paper__qty,
+  .receipt-paper__meta {
+    font-size: 8pt;
+  }
+
+  .receipt-paper__lines,
+  .receipt-paper__total,
+  .receipt-paper__closing {
+    border-color: #000;
+    padding-top: 2mm;
+  }
+
+  .receipt-paper__lines {
+    gap: 1.5mm;
+  }
+
+  /* A long service name wraps under itself; the amount never wraps. */
+  .receipt-paper__line {
+    align-items: start;
+  }
+}
+
+@media print and (min-width: 100mm) {
+  .receipt-paper {
+    max-width: 90mm;
+  }
+}

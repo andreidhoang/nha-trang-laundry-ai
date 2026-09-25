@@ -449,3 +449,84 @@ def test_a_service_the_owner_left_unconfirmed_is_sold_at_list_price_not_refused(
         row = cursor.fetchone()
     # Two revisions: the priced one and the accepted one. A sold bag, not a blocked counter.
     assert row is not None and row[0] == 2
+
+
+# --- RECEIPT-PRINT-001: the revision read carries what a receipt prints ------------------------
+
+
+def test_the_revision_read_carries_the_list_price_and_the_promotion_a_receipt_prints(
+    connection: Any, service: OperationsService
+) -> None:
+    """A receipt prints each line at its price and the promotion under it, then the stored total.
+
+    Before `RECEIPT-PRINT-001` the read returned each line's *net* amount only -- already
+    discounted -- and no adjustment rows, so a receipt could either print 84.000 d beside the bag
+    and then "Khuyến mãi -36.000 d" (a discount the customer would count twice), or print no
+    promotion at all. The read now returns both halves from the snapshot, and the route adds
+    nothing up: the list amount, the promotion row and the unchanged total are three stored facts.
+    """
+
+    from fastapi.testclient import TestClient
+    from nha_trang_laundry_api.main import app, current_principal, get_operations_service
+
+    _publish_pricebook(connection)
+    _publish_live_programme(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    priced = _quote(service, store_id=store_id, staff=staff)
+    accepted = _accept(service, store_id=store_id, staff=staff, quote=priced)
+    assert isinstance(accepted, QuoteRevisionResult)
+
+    view = service.read_quote(
+        store_id=store_id, quote_id=accepted.quote_id, principal=staff, revision=accepted.revision
+    )
+    (line,) = view.lines
+    assert line.list_amount_vnd == LIST_VND
+    assert line.net_amount_vnd == LIST_VND - LIVE_DISCOUNT_VND
+    (promotion,) = view.adjustments
+    assert promotion.kind == "PROMOTION"
+    assert promotion.direction == "CREDIT"
+    assert promotion.amount_min_vnd == promotion.amount_max_vnd == LIVE_DISCOUNT_VND
+    assert promotion.reason_code == "PROMO_WET30_DRY40_20260717_20260831"
+    assert view.display_total_min_vnd == LIST_VND - LIVE_DISCOUNT_VND
+
+    app.dependency_overrides[get_operations_service] = lambda: service
+    app.dependency_overrides[current_principal] = lambda: staff
+    try:
+        response = TestClient(app).get(
+            f"/internal/v1/stores/{store_id}/quotes/{accepted.quote_id}",
+            params={"revision": accepted.revision},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["lines"][0]["list_amount_vnd"] == LIST_VND
+    assert body["lines"][0]["net_amount_vnd"] == LIST_VND - LIVE_DISCOUNT_VND
+    assert body["adjustments"] == [
+        {
+            "kind": "PROMOTION",
+            "direction": "CREDIT",
+            "amount_min_vnd": LIVE_DISCOUNT_VND,
+            "amount_max_vnd": LIVE_DISCOUNT_VND,
+            "reason_code": "PROMO_WET30_DRY40_20260717_20260831",
+        }
+    ]
+    assert body["display_total_min_vnd"] == body["display_total_max_vnd"] == 84_000
+
+
+def test_a_revision_with_nothing_applied_reads_no_adjustment_and_an_undiscounted_line(
+    connection: Any, service: OperationsService
+) -> None:
+    """With no programme published the list amount is the net amount and there is no row to print
+    -- an empty list, never a zero-dong promotion line."""
+
+    _publish_pricebook(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    priced = _quote(service, store_id=store_id, staff=staff)
+
+    view = service.read_quote(store_id=store_id, quote_id=priced.quote_id, principal=staff)
+    (line,) = view.lines
+    assert line.list_amount_vnd == line.net_amount_vnd == LIST_VND
+    assert view.adjustments == ()

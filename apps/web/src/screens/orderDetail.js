@@ -84,6 +84,8 @@ import { setIncidentOrderPrefill } from "./incidents.js";
 // The same helpers the list uses, so a row and this page cannot word the ticket or the amount
 // differently.
 import { amountDue, orderName, ticketLabel } from "./orders.js";
+// RECEIPT-PRINT-001: the receipt's route, and the one-shot "just created" hand-off from ＋ Nhận đồ.
+import { receiptPath, takeReceiptOffer } from "./receipt.js";
 
 /**
  * The server's fixed audit page size. `ShadowConsoleRepository.audit_timeline` defaults to 100 and
@@ -259,12 +261,29 @@ export function render_(context) {
   const incidentVerdict = can(me, "INCIDENTS_WRITE");
   // The credit and incident reads use the remedy surface's gate: an operations role with MFA.
   const readIncidentsVerdict = can(me, "INCIDENTS_READ");
+  // The receipt prints the bound quote's lines, which the operations gate serves.
+  const receiptVerdict = can(me, "QUOTES_READ");
   const wellFormed = UUID.test(orderId);
+  // Arrived straight from ＋ Nhận đồ: the customer is still at the counter, so the receipt is one
+  // tap away at the top of the page (read once; a reload does not offer it again).
+  const justCreated = wellFormed && takeReceiptOffer(orderId);
   // Every route below is written out in full: the contract test reads path literals, and a path
   // assembled from a variable is one it cannot see.
   const id = encodeURIComponent(orderId);
 
   const headHost = h("div", null, page({ back: { href: "#/orders", label: "Đơn hàng" }, title: "Chi tiết đơn" }));
+  const createdHost = h(
+    "div",
+    { id: "order-created" },
+    justCreated
+      ? inlineAlert({
+          state: "ok",
+          title: "Đã tạo đơn.",
+          // Secondary: the page's one primary is still the server's next step.
+          actions: receiptControl("In phiếu cho khách"),
+        })
+      : null,
+  );
   const summaryHost = h("div", { class: "stack" }, skeletonRows(2));
   const infoHost = h("div");
   const legsHost = h("div");
@@ -538,12 +557,15 @@ export function render_(context) {
     if (!steps.length) {
       render(
         actionHost,
-        h(
-          "p",
-          { class: "muted order__closed" },
-          ["COMPLETED", "CANCELLED"].includes(order.commercial)
-            ? "Đơn đã đóng — không còn bước nào."
-            : "Chưa có bước nào làm được lúc này.",
+        actionBar(
+          h(
+            "p",
+            { class: "hint order__closed" },
+            ["COMPLETED", "CANCELLED"].includes(order.commercial)
+              ? "Đơn đã đóng — không còn bước nào."
+              : "Chưa có bước nào làm được lúc này.",
+          ),
+          receiptControl("In phiếu"),
         ),
       );
       return;
@@ -561,10 +583,35 @@ export function render_(context) {
       actionBar(
         actionAlert,
         stepControl(primary, { primary: true }),
-        others.length
-          ? moreButton(others)
-          : null,
+        // With nothing else to offer, the receipt takes the secondary place; otherwise it is the
+        // first thing under "Khác" that is not a step.
+        others.length ? moreButton(others) : receiptControl("In phiếu"),
       ),
+    );
+  }
+
+  /**
+   * "In phiếu": opens the receipt (a read, never a write). Shut with its reason for a role that
+   * cannot read the quote the receipt prints.
+   *
+   * @param {string} label
+   * @param {"primary"|"secondary"|"quiet"} [variant]
+   * @returns {HTMLElement}
+   */
+  function receiptControl(label, variant = "secondary") {
+    return gated(
+      button({
+        label,
+        icon: "printer",
+        variant,
+        block: variant !== "quiet",
+        data: { receipt: "true" },
+        onClick: () => {
+          closeMore();
+          navigate(receiptPath(orderId));
+        },
+      }),
+      receiptVerdict,
     );
   }
 
@@ -764,7 +811,15 @@ export function render_(context) {
       body: h(
         "div",
         { class: "btn-stack" },
-        others.map((entry) => stepControl(entry, { inMore: true })),
+        // The steps that stop or end work stay last (see `drawActions`); the receipt sits above
+        // them, beside the ordinary steps.
+        others
+          .filter((entry) => !DESTRUCTIVE.has(String(entry.step)))
+          .map((entry) => stepControl(entry, { inMore: true })),
+        receiptControl("In phiếu"),
+        others
+          .filter((entry) => DESTRUCTIVE.has(String(entry.step)))
+          .map((entry) => stepControl(entry, { inMore: true })),
       ),
     });
   }
@@ -1445,6 +1500,7 @@ export function render_(context) {
     "section",
     { class: "screen order" },
     headHost,
+    createdHost,
     summaryHost,
     infoHost,
     legsHost,

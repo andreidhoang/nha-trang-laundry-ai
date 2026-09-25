@@ -3104,3 +3104,128 @@ a.row-link {
   color: var(--warn-fg);
   font-size: var(--text-sm);
 }
+
+/* --- RECEIPT-PRINT-001 — Phiếu cho khách ------------------------------------------------------ */
+/* The paper as it looks on screen: a narrow white slip, centred, the same on a phone and a desk.
+ * Its print form (80 mm / 58 mm rolls, A5) is in print.css. */
+
+.receipt-paper {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+  display: grid;
+  font-variant-numeric: tabular-nums;
+  gap: var(--space-3);
+  justify-self: center;
+  max-width: 24rem;
+  padding: var(--space-5) var(--space-4);
+  width: 100%;
+}
+
+.receipt-paper__head {
+  display: grid;
+  gap: var(--space-1);
+  text-align: center;
+}
+
+.receipt-paper__head > p,
+.receipt-paper__closing,
+.receipt-paper__note {
+  margin: 0;
+}
+
+.receipt-paper__store {
+  font-weight: var(--weight-bold);
+}
+
+.receipt-paper__ticket {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-heavy);
+  line-height: var(--leading-tight);
+}
+
+.receipt-paper__day,
+.receipt-paper__qty,
+.receipt-paper__meta {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.receipt-paper__lines {
+  border-top: 1px dashed var(--border-strong);
+  display: grid;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3) 0 0;
+}
+
+.receipt-paper__line,
+.receipt-paper__row,
+.receipt-paper__total {
+  align-items: baseline;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.receipt-paper__item {
+  display: grid;
+  min-width: 0;
+}
+
+/* A service the catalog does not name prints as its code, which has no spaces to break at. */
+.receipt-paper__name {
+  overflow-wrap: anywhere;
+}
+
+.receipt-paper__value,
+.receipt-paper__total-amount {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.receipt-paper__adjustments,
+.receipt-paper__meta {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.receipt-paper__total {
+  border-top: 1px solid var(--border-strong);
+  font-weight: var(--weight-bold);
+  padding-top: var(--space-3);
+}
+
+.receipt-paper__total-amount {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-heavy);
+}
+
+.receipt-paper__closing {
+  border-top: 1px dashed var(--border-strong);
+  font-weight: var(--weight-medium);
+  padding-top: var(--space-3);
+  text-align: center;
+}
+
+.receipt-screen__status .hint {
+  margin: 0;
+  text-align: center;
+}
+
+.receipt-screen__status:empty {
+  display: none;
+}
+
+/* On a desk the two buttons sit under the slip, as wide as it, not across the whole column. */
+@media (min-width: 64rem) {
+  .receipt-screen .action-bar--v2 {
+    grid-auto-columns: minmax(0, 1fr);
+    justify-self: center;
+    max-width: 24rem;
+    width: 100%;
+  }
+}

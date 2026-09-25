@@ -1055,6 +1055,24 @@ class QuoteLineResponse(BaseModel):
     net_amount_vnd: int | None
     band_minimum_vnd: int | None
     band_maximum_vnd: int | None
+    #: `RECEIPT-PRINT-001`: the line before any promotion or credit was allocated to it. Null on a
+    #: RANGE line. `net_amount_vnd` is this minus what the adjustments below took off the line.
+    list_amount_vnd: int | None = None
+
+
+class QuoteAdjustmentResponse(BaseModel):
+    """One money row the stored revision applies on top of its lines (`RECEIPT-PRINT-001`).
+
+    `kind` is `PROMOTION`, `MANUAL_DISCOUNT`, `REMEDY_CREDIT`, `DELIVERY` or `SURCHARGE`;
+    `direction` is `CREDIT` (takes money off) or `DEBIT` (adds it). Read off the immutable snapshot
+    verbatim -- the route adds nothing up.
+    """
+
+    kind: str
+    direction: str
+    amount_min_vnd: int
+    amount_max_vnd: int
+    reason_code: str
 
 
 class QuoteRevisionDetailResponse(BaseModel):
@@ -1078,6 +1096,9 @@ class QuoteRevisionDetailResponse(BaseModel):
     order_request_id: UUID | None = None
     contact_binding_id: UUID | None = None
     fulfillment_mode: FulfillmentMode | None = None
+    #: `RECEIPT-PRINT-001`: the promotion, credit, delivery-fee and surcharge rows of the revision,
+    #: so a receipt can say what was taken off and added without a client computing it.
+    adjustments: list[QuoteAdjustmentResponse] = Field(default_factory=list)
 
 
 class QuoteSummaryResponse(BaseModel):
@@ -2857,6 +2878,7 @@ def read_quote(
                 net_amount_vnd=line.net_amount_vnd,
                 band_minimum_vnd=line.band_minimum_vnd,
                 band_maximum_vnd=line.band_maximum_vnd,
+                list_amount_vnd=line.list_amount_vnd,
             )
             for line in view.lines
         ],
@@ -2866,6 +2888,16 @@ def read_quote(
         fulfillment_mode=(
             None if view.fulfillment_mode is None else FulfillmentMode(view.fulfillment_mode)
         ),
+        adjustments=[
+            QuoteAdjustmentResponse(
+                kind=item.kind,
+                direction=item.direction,
+                amount_min_vnd=item.amount_min_vnd,
+                amount_max_vnd=item.amount_max_vnd,
+                reason_code=item.reason_code,
+            )
+            for item in view.adjustments
+        ],
     )
 
 

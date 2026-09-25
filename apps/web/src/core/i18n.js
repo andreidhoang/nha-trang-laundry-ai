@@ -752,6 +752,21 @@ export const ACQUISITION_SOURCE_VI = {
 };
 
 /**
+ * `QuoteAdjustmentKind` — the money rows a stored revision applies on top of its lines — in the
+ * words a customer reads on their receipt (`RECEIPT-PRINT-001`). Scoped, for the reason
+ * `ACQUISITION_SOURCE_VI` gives: `PROMOTION` and `DELIVERY` are plain words that another enum can
+ * reuse with another meaning, and `ENUM_GLOSS` is one flat map. A kind not listed here is printed
+ * as its raw token, never dropped.
+ */
+export const QUOTE_ADJUSTMENT_VI = {
+  PROMOTION: "Khuyến mãi",
+  MANUAL_DISCOUNT: "Giảm giá",
+  REMEDY_CREDIT: "Khoản giảm trừ",
+  DELIVERY: "Phí giao",
+  SURCHARGE: "Phụ phí",
+};
+
+/**
  * The Vietnamese name of a server enum, capitalized for standalone display.
  *
  * Vietnamese is the reading language of this console; the raw token remains available wherever

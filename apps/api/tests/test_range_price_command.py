@@ -232,18 +232,22 @@ def _propose(
 def _approve(
     service: OperationsService, *, proposal: RangePriceProposalResult, owner: StaffPrincipal
 ) -> None:
-    decided = service.decide_approval(
-        approval_id=proposal.approval.approval_request_id,
-        decision=ApprovalDecision.APPROVED,
-        resource_version=proposal.resource_version,
-        snapshot_hash=proposal.snapshot_hash,
-        rendered_hash=proposal.rendered_hash,
-        reason_code="RANGE_PRICE_IN_PUBLISHED_BAND",
-        note=None,
-        idempotency_key=f"decide-{uuid4().hex}",
-        principal=owner,
+    """Changed 2026-09-25 under `DEC-029` (option B), and not weakened by it.
+
+    This helper used to have the owner decide the envelope before it could be applied. Under the
+    ruling the staff member's own proposal *is* the approval -- a counter attestation written in
+    the same transaction -- so there is nothing for the owner to decide first, and a decision here
+    would be refused as not pending. Every test that calls it still proves what it proved: the
+    binding (invariant 8), the band, the programme rules. What the owner keeps is review, so the
+    helper asserts the envelope arrived attested and that the owner can read back what it binds.
+    """
+
+    assert proposal.approval.status == "APPROVED"
+    record = service.read_range_price_proposal(
+        approval_id=proposal.approval.approval_request_id, principal=owner
     )
-    assert decided.status == "APPROVED"
+    assert record is not None
+    assert record.rendered_hash == proposal.rendered_hash
 
 
 def _apply(
@@ -361,8 +365,11 @@ def test_an_ao_dai_is_banded_priced_approved_accepted_ordered_and_settled(
 
     proposal = _propose(service, store_id=store_id, staff=staff, quote=banded)
     assert isinstance(proposal, RangePriceProposalResult)
-    assert proposal.approval.status == "REQUESTED"
-    assert proposal.approval.required_role.value == "OWNER_ADMIN"
+    # `DEC-029` (2026-09-25): these read REQUESTED and OWNER_ADMIN while the band needed the owner.
+    # The staff member's proposal is now their own counter attestation, approved in the same
+    # command under the `DEC-021` policy.
+    assert proposal.approval.status == "APPROVED"
+    assert proposal.approval.required_role.value == "OPERATOR"
     _approve(service, proposal=proposal, owner=owner)
 
     closed = _apply(service, store_id=store_id, staff=staff, quote=banded, proposal=proposal)
@@ -529,15 +536,69 @@ def test_a_range_service_is_still_refused_when_no_band_was_asked_for(
 def test_an_unapproved_proposal_cannot_be_applied(
     connection: Any, service: OperationsService
 ) -> None:
-    """A raised envelope is a request, not a permission. Nothing is written until a
-    second person decides it."""
+    """A raised envelope is a request, not a permission. Nothing is written until it is decided.
+
+    Changed 2026-09-25 under `DEC-029`: the counter command now attests its own envelope in the
+    same transaction that raises it, so it cannot produce an undecided one. The property still
+    holds for any envelope that *is* undecided -- one raised before the ruling, or after a reversal
+    of it -- so the envelope here is raised directly, for exactly these amounts and this revision,
+    and left pending. Only its missing decision stands between it and a price.
+    """
+
+    from nha_trang_laundry_db.approvals import ApprovalRepository, ApprovalRequestCommand
+    from nha_trang_laundry_domain.approvals import APPROVAL_RESOURCE_TYPES
+    from nha_trang_laundry_domain.range_prices import (
+        RangePriceAttestation,
+        range_price_rendered_document,
+    )
 
     _publish(connection)
     store_id = uuid4()
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     banded = _band_quote(service, store_id=store_id, staff=staff, bound_order_request_id=uuid4())
-    proposal = _propose(service, store_id=store_id, staff=staff, quote=banded)
-    assert isinstance(proposal, RangePriceProposalResult)
+    view = service.read_quote(store_id=store_id, quote_id=banded.quote_id, principal=staff)
+    assert view.lines[0].band_minimum_vnd == BAND_MINIMUM
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT snapshot -> 'configuration_snapshots' FROM quote_revisions "
+            "WHERE quote_id = %s AND revision = %s",
+            (banded.quote_id, banded.revision),
+        )
+        pricebook = next(
+            item for item in cursor.fetchone()[0] if item["config_type"] == "PRICEBOOK"
+        )
+    rendered = range_price_rendered_document(
+        RangePriceAttestation(
+            quote_id=banded.quote_id,
+            revision=banded.revision,
+            pricebook_version_id=UUID(str(pricebook["version_id"])),
+            pricebook_version=int(pricebook["version"]),
+            choices=(RangePriceChoice(AO_DAI, CHOSEN),),
+        )
+    ).snapshot_hash
+    pending = ApprovalRepository().request(
+        connection,
+        ApprovalRequestCommand(
+            ApprovalAction.SET_RANGE_PRICE,
+            APPROVAL_RESOURCE_TYPES[ApprovalAction.SET_RANGE_PRICE],
+            banded.quote_id,
+            banded.revision,
+            banded.snapshot_hash,
+            rendered,
+            "range-price-published-band-v1",
+            staff.staff_user_id,
+            f"pending-{uuid4().hex}",
+            uuid4(),
+            store_id=store_id,
+        ),
+    )
+    assert pending.status == "REQUESTED"
+    proposal = RangePriceProposalResult(
+        approval=pending,
+        resource_version=banded.revision,
+        snapshot_hash=banded.snapshot_hash,
+        rendered_hash=rendered,
+    )
     with pytest.raises(QuoteStateError):
         _apply(service, store_id=store_id, staff=staff, quote=banded, proposal=proposal)
     assert _revision_count(connection, banded.quote_id) == 1
@@ -642,8 +703,15 @@ def test_an_approval_cannot_close_the_same_band_twice(
 def test_the_staff_member_who_proposed_a_price_cannot_approve_it(
     connection: Any, service: OperationsService
 ) -> None:
-    """`SET_RANGE_PRICE` maps to `_OWNER_FINANCIAL`, whose obligations include SEPARATION_OF_DUTY.
-    This item did not retune that table and this test is what proves it did not."""
+    """Changed 2026-09-25 under `DEC-029`.
+
+    This said `SET_RANGE_PRICE` maps to `_OWNER_FINANCIAL`, whose obligations include
+    SEPARATION_OF_DUTY, and proved the proposer could not approve their own price. The owner then
+    ruled (option B) that the proposer's own attestation *is* the approval. What must still hold is
+    narrower and is asserted here: the proposer's name is the one on the decision, and the
+    two-party decision route -- the maker-checker door every owner-financial action goes through --
+    still refuses the requester. The attestation is a separate door, not that one propped open.
+    """
 
     _publish(connection)
     store_id = uuid4()
@@ -651,25 +719,77 @@ def test_the_staff_member_who_proposed_a_price_cannot_approve_it(
     banded = _band_quote(service, store_id=store_id, staff=staff, bound_order_request_id=uuid4())
     proposal = _propose(service, store_id=store_id, staff=staff, quote=banded)
     assert isinstance(proposal, RangePriceProposalResult)
+    assert proposal.approval.status == "APPROVED"
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT decided_by FROM approval_decisions WHERE approval_request_id = %s",
+            (proposal.approval.approval_request_id,),
+        )
+        assert cursor.fetchall() == [(staff.staff_user_id,)]
     with pytest.raises(PermissionError):
-        _approve(service, proposal=proposal, owner=staff)
+        service.decide_approval(
+            approval_id=proposal.approval.approval_request_id,
+            decision=ApprovalDecision.APPROVED,
+            resource_version=proposal.resource_version,
+            snapshot_hash=proposal.snapshot_hash,
+            rendered_hash=proposal.rendered_hash,
+            reason_code="RANGE_PRICE_IN_PUBLISHED_BAND",
+            note=None,
+            idempotency_key=f"decide-{uuid4().hex}",
+            principal=staff,
+        )
 
 
 def test_an_operator_cannot_approve_a_financial_action(
     connection: Any, service: OperationsService
 ) -> None:
-    """Who may approve a financial action is owner policy, raised for decision in
-    `docs/DECISION_REQUEST_RANGE_PRICE_AUTHORITY_2026-09.md` and not decided here."""
+    """Who may approve a financial action is owner policy.
+
+    Changed 2026-09-25 under `DEC-029`. The question this deferred was answered for exactly one
+    action: choosing inside a published band is now the chooser's own counter attestation, so it
+    is no longer an operator *approving* anything and a colleague has nothing left to decide on it.
+    Every other financial action keeps `_OWNER_FINANCIAL`, and this test now measures the rule on
+    one of them -- a promotion envelope on this same quote revision -- so a later change that let
+    an operator decide owner-financial envelopes in general still fails here.
+    """
+
+    from nha_trang_laundry_db.approvals import ApprovalRepository, ApprovalRequestCommand
+    from nha_trang_laundry_domain.approvals import APPROVAL_RESOURCE_TYPES
 
     _publish(connection)
     store_id = uuid4()
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     other = _extra_staff(connection, store_id, StaffRole.OPERATOR)
     banded = _band_quote(service, store_id=store_id, staff=staff, bound_order_request_id=uuid4())
-    proposal = _propose(service, store_id=store_id, staff=staff, quote=banded)
-    assert isinstance(proposal, RangePriceProposalResult)
+    promotion = ApprovalRepository().request(
+        connection,
+        ApprovalRequestCommand(
+            ApprovalAction.APPLY_PROMOTION,
+            APPROVAL_RESOURCE_TYPES[ApprovalAction.APPLY_PROMOTION],
+            banded.quote_id,
+            banded.revision,
+            banded.snapshot_hash,
+            "JCS-SHA256-V1:" + "0" * 64,
+            "promotion-policy-v1",
+            staff.staff_user_id,
+            f"promotion-{uuid4().hex}",
+            uuid4(),
+            store_id=store_id,
+        ),
+    )
+    assert promotion.required_role.value == "OWNER_ADMIN"
     with pytest.raises(PermissionError):
-        _approve(service, proposal=proposal, owner=other)
+        service.decide_approval(
+            approval_id=promotion.approval_request_id,
+            decision=ApprovalDecision.APPROVED,
+            resource_version=banded.revision,
+            snapshot_hash=banded.snapshot_hash,
+            rendered_hash="JCS-SHA256-V1:" + "0" * 64,
+            reason_code="OPERATOR_APPROVAL_ATTEMPT",
+            note=None,
+            idempotency_key=f"decide-{uuid4().hex}",
+            principal=other,
+        )
 
 
 def test_another_stores_member_can_neither_propose_nor_read(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -14,6 +14,8 @@ import psycopg
 from nha_trang_laundry_contracts import AgentDeploymentStage
 from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
 from nha_trang_laundry_db.approvals import (
+    COUNTER_ATTESTED_CAPABILITY,
+    ApprovalAttestationCommand,
     ApprovalBinding,
     ApprovalDecision,
     ApprovalDecisionCommand,
@@ -112,7 +114,7 @@ from nha_trang_laundry_db.store_access import (
     member_store_ids,
     require_store_membership,
 )
-from nha_trang_laundry_domain.approvals import APPROVAL_RESOURCE_TYPES
+from nha_trang_laundry_domain.approvals import APPROVAL_POLICIES, APPROVAL_RESOURCE_TYPES
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
     ActorRole,
@@ -158,6 +160,10 @@ from nha_trang_laundry_api.auth import AuthSettings
 # The rule an acceptance is stamped with. `DEC-021` is the policy; the version moves when the
 # rule changes, so an attestation always names the rule in force when it was signed.
 QUOTE_ACCEPTANCE_POLICY_VERSION = "quote-acceptance-dec-021-v1"
+# The reason code on the `approval_decisions` row a staff member's own range-price attestation
+# writes (`DEC-029`). Distinct from any reason an owner would give, so the owner reviewing the
+# record can tell at a glance which prices were chosen at the counter without a second person.
+RANGE_PRICE_COUNTER_ATTESTED = "RANGE_PRICE_COUNTER_ATTESTED"
 # "Nhân viên đang trực quầy được chốt giá" -- the owner's words. OWNER_ADMIN is included because
 # a supervisor is never locked out of what their staff may do.
 QUOTE_ACCEPTANCE_ROLES = frozenset(
@@ -1378,8 +1384,11 @@ class OperationsService:
     #
     #   1. `create_quote(present_range_as_band=True)` stores the band the customer was shown.
     #   2. `propose_range_prices` validates the staff member's amounts against *that stored
-    #      revision* and raises a `SET_RANGE_PRICE` envelope bound to its digest.
-    #   3. the existing `/internal/v1/approvals/{id}/decisions` route: a second person approves.
+    #      revision* and raises a `SET_RANGE_PRICE` envelope bound to its digest -- and, since
+    #      `DEC-029` (2026-09-25), records the chooser's own counter attestation of it in the same
+    #      transaction, so nobody else has to be at the counter.
+    #   3. (Before `DEC-029`, and again if it is reversed: a second person decides the envelope on
+    #      the existing `/internal/v1/approvals/{id}/decisions` route.)
     #   4. `apply_range_prices` writes the amounts into a new revision.
     #
     # The band revision has to exist first because an approval must bind something real. The
@@ -1494,6 +1503,36 @@ class OperationsService:
                         ),
                     ),
                 )
+                # `DEC-029` (2026-09-25): choosing inside the band is the chooser's own counter
+                # attestation, recorded in this same transaction as the envelope and the amounts --
+                # so there is never an envelope for these amounts that nobody has attested, and
+                # never an attestation with no amounts behind it (invariant 5). Keyed on the policy
+                # table rather than assumed, so the one-line reversal the ruling names puts the
+                # envelope back in front of the owner and this block simply stops running.
+                if (
+                    APPROVAL_POLICIES[ApprovalAction.SET_RANGE_PRICE].execution_capability
+                    == COUNTER_ATTESTED_CAPABILITY
+                ):
+                    approval = self._approvals.attest(
+                        connection,
+                        ApprovalAttestationCommand(
+                            approval_request_id=approval.approval_request_id,
+                            observed_resource_version=priced.data.revision,
+                            observed_snapshot_hash=priced.document.snapshot_hash,
+                            observed_rendered_hash=rendered_hash,
+                            reason_code=RANGE_PRICE_COUNTER_ATTESTED,
+                            principal=principal,
+                            correlation_id=uuid4(),
+                        ),
+                    )
+            else:
+                # A replay answers with the envelope's state now, not the state stored when it was
+                # first raised: the stored request reply says REQUESTED, and on the counter path
+                # that stopped being true in the same transaction that wrote it.
+                with connection.cursor() as cursor:
+                    current = read_approval_binding(cursor, approval.approval_request_id)
+                if current is not None:
+                    approval = replace(approval, status=current.status)
             return RangePriceProposalResult(
                 approval=approval,
                 resource_version=priced.data.revision,
@@ -1538,7 +1577,8 @@ class OperationsService:
         The amounts are supplied again rather than read from the envelope, because the envelope
         stores a digest and not the content -- `approvals.py` says so plainly and calls comparing an
         unstored rendering "theatre". Re-deriving the digest from the amounts in hand and demanding
-        it equal the one the owner approved is the check that is not theatre: it proves the caller
+        it equal the one that was attested (by the chooser since `DEC-029`) is the check that is
+        not theatre: it proves the caller
         holds the same content, and invariant 8 asks for nothing weaker and nothing more.
 
         Editing a line invalidates the approval by construction rather than by a rule written here.
@@ -2764,11 +2804,12 @@ def _require_range_price_approval(
     `_require_resolvable_resource` gives: separate strings would tell a member of any store whether
     a UUID is a real approval in somebody else's shop.
 
-    Expiry is enforced here as well as at the decision, which is a real operational cost:
-    `_OWNER_FINANCIAL` allows ten minutes, so an owner\'s approval and the staff member\'s
-    application have to happen inside one window. That cost is raised for the owner in
-    `docs/DECISION_REQUEST_RANGE_PRICE_AUTHORITY_2026-09.md` rather than softened here, because a
-    money envelope that outlives its own TTL is exactly what a TTL is for.
+    Expiry is enforced here as well as at the decision, because a money envelope that outlives its
+    own TTL is exactly what a TTL is for. Under `_OWNER_FINANCIAL` that meant the owner's approval
+    and the staff member's application had to land inside one ten-minute window, which is the cost
+    `docs/DECISION_REQUEST_RANGE_PRICE_AUTHORITY_2026-09.md` put to the owner. `DEC-029` answered
+    it: the envelope is the counter attestation's thirty minutes, attested and applied by the same
+    person seconds apart. The check itself is unchanged and still refuses a late application.
     """
 
     if (

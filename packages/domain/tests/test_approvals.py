@@ -49,8 +49,10 @@ def test_server_derives_role_ttl_reasons_and_obligations() -> None:
 
 
 def test_financial_and_policy_actions_require_owner_and_short_ttl() -> None:
+    # `SET_RANGE_PRICE` left this list on 2026-09-25 under `DEC-029` (option B): choosing inside a
+    # band the owner published is the counter attestation `DEC-021` uses, pinned by the test below.
+    # Every action still listed here keeps the owner, MFA and the ten-minute window.
     for action in (
-        ApprovalAction.SET_RANGE_PRICE,
         ApprovalAction.APPLY_PROMOTION,
         ApprovalAction.CANCEL_ACTIVE_ORDER,
         ApprovalAction.PUBLISH_POLICY,
@@ -58,6 +60,33 @@ def test_financial_and_policy_actions_require_owner_and_short_ttl() -> None:
         result = envelope(action)
         assert result.data.required_role is ActorRole.OWNER_ADMIN
         assert result.data.expires_at == NOW + timedelta(minutes=10)
+        assert "SEPARATION_OF_DUTY" in result.data.obligations
+
+
+def test_a_price_inside_a_published_band_is_a_counter_attestation() -> None:
+    """`DEC-029`, option B: the staff member on duty chooses, under `DEC-021`'s attestation.
+
+    Same policy as finalising a quote -- `OPERATOR`, thirty minutes, no separation of duty and no
+    step-up MFA -- because the band the owner published is the authorisation and choosing inside it
+    is using it. Reversal is the one line in `APPROVAL_POLICIES`, and this test is what fails then.
+    """
+
+    result = envelope(ApprovalAction.SET_RANGE_PRICE)
+    finalize = envelope(ApprovalAction.FINALIZE_QUOTE)
+    assert result.data.required_role is ActorRole.OPERATOR
+    assert result.data.expires_at == NOW + timedelta(minutes=30)
+    assert result.data.execution_capability == "STAFF_ATTESTED_ACTION"
+    assert "SEPARATION_OF_DUTY" not in result.data.obligations
+    assert "MFA_REQUIRED" not in result.data.obligations
+    assert (
+        result.data.required_role,
+        result.data.obligations,
+        result.data.execution_capability,
+    ) == (
+        finalize.data.required_role,
+        finalize.data.obligations,
+        finalize.data.execution_capability,
+    )
 
 
 def test_any_bound_hash_or_version_edit_changes_approval_hash() -> None:

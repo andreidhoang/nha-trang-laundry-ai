@@ -728,6 +728,11 @@ class RangePriceProposalContentResponse(BaseModel):
     #: digest it is about to hand back are the same content. It is not a substitute for the
     #: server's own checks, and no client-side comparison of it authorises anything.
     rendered_hash: str
+    #: Who chose these amounts. `DEC-029` made that staff member's own attestation the authority for
+    #: a price inside the band, and `DEC-021`'s third control is the owner reviewing it afterwards;
+    #: a review read that returned the number without the name would review nothing. Read from the
+    #: immutable `range_price_proposals.proposed_by`, never from the request.
+    proposed_by: UUID
     proposed_at: datetime
     lines: list[ProposedRangePriceLineResponse]
 
@@ -1676,6 +1681,7 @@ def read_range_price_proposal(
         revision=record.revision,
         pricebook_version=record.pricebook_version,
         rendered_hash=record.rendered_hash,
+        proposed_by=record.proposed_by,
         proposed_at=record.proposed_at,
         lines=[
             ProposedRangePriceLineResponse(

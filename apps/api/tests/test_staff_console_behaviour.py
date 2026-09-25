@@ -562,8 +562,12 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         # before -- if the words on the page and the words on the screen drift apart, they will
         # fall back to the paper ticket the guide used to tell them to keep.
         "Lập bản khoảng giá",
-        "Gửi giá cho chủ duyệt",
-        "Áp dụng giá đã duyệt",
+        # `DEC-029` (2026-09-25): these two were "Gửi giá cho chủ duyệt" and "Áp dụng giá đã
+        # duyệt" while every band needed the owner. The staff member on duty now chooses and
+        # attests in one press; the second label is what the counter meets if writing the price
+        # has to be retried.
+        "Chốt giá này",
+        "Ghi giá vào báo giá",
         "Khách đã chốt giá",
         "Tạo đơn",
         # ORDER-LOOKUP-001. Pickup, the step that could not be done on this software: find the

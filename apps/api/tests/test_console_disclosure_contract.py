@@ -593,7 +593,15 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # on record under "Chi tiết kỹ thuật", which verify_workflow_conformance.py caught. Three
     # arrived with CANCEL-REFUND-001 (a paid order whose resolution does not say the money went
     # back; an unsupported balance shape; a resolution not yet chosen).
-    assert sum(counts.values()) == _registry()["total"] == 381
+    #
+    # 382 after RANGE-COUNTER-ATTEST-001 (`DEC-029`): +1, and four sentences re-keyed in
+    # `screens/quotes.js`. The staff member on duty now chooses inside a published band without the
+    # owner, so every sentence telling the counter "chủ tiệm duyệt" was reworded -- the band notice,
+    # the refusal on a band revision, the band-mode offer and the screen lede. The one addition is
+    # the hint under the band notice saying the chooser's name is recorded with the number, cannot
+    # be altered, and is reviewed by the owner. It replaces the "mười phút ... gọi chủ tiệm" hint,
+    # which was a template literal the scanner does not register, so removing it moved nothing.
+    assert sum(counts.values()) == _registry()["total"] == 382
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

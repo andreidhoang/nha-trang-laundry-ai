@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 354
+  DESCRIPTIVE: 355
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 5
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 381
+total: 382
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -2474,11 +2474,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:c764c99b73d8
+- slot_id: screens/quotes.js#notice:75dd3c92f663
   module: screens/quotes.js
   key: notice
   text: 'Đọc khoảng giá cho khách được, nhưng chưa chốt được: chưa có con số nào để khách đồng ý. Chốt
-    một giá trong khoảng ở ô bên dưới, chủ tiệm duyệt, rồi mới bấm “Khách đã chốt giá”.'
+    một giá trong khoảng ở ô bên dưới, rồi mới bấm “Khách đã chốt giá”.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2570,11 +2570,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:0d5c513c872b
+- slot_id: screens/quotes.js#notice:ef2a59c38b7e
   module: screens/quotes.js
   key: notice
-  text: 'Khoảng giá là chủ tiệm đã cho phép trước: mọi số trong khoảng đều là giá hợp lệ, và bảng vận
-    hành không tự chọn giúp một số nào. Bạn chọn, chủ tiệm duyệt, rồi máy chủ mới ghi thành giá.'
+  text: 'Khoảng giá là chủ tiệm đã cho phép trước: mọi số trong khoảng đều hợp lệ, và bảng vận hành không
+    tự chọn giúp số nào. Bạn chọn số khách đồng ý rồi bấm chốt — không cần chờ chủ tiệm.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#hint:9ca00d7dd719
+  module: screens/quotes.js
+  key: hint
+  text: Tên bạn được ghi cùng con số, không sửa được, và chủ tiệm xem lại được. Số ngoài khoảng thì máy
+    chủ từ chối.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2699,21 +2708,21 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:05a7f56abb03
+- slot_id: screens/quotes.js#notice:9143ff9eb7ed
   module: screens/quotes.js
   key: notice
   text: Bảng giá công bố một khoảng cho món này chứ không công bố một đơn giá, nên bộ tính giá không tự
-    chọn một số — đó là việc của người, và của chủ tiệm duyệt.
+    chọn một số — đó là việc của nhân viên đang trực quầy.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#screen__lede:38d05d509d5e
+- slot_id: screens/quotes.js#screen__lede:29b40670d8b6
   module: screens/quotes.js
   key: screen__lede
   text: Chọn yêu cầu, chọn dịch vụ, nhập khối lượng — máy chủ tính theo bảng giá đã chốt. Món niêm yết
-    theo khoảng giá thì nhân viên chốt một số trong khoảng và chủ tiệm duyệt. Màn hình này không tự cộng
-    tiền, không làm tròn, và không tự chọn số nào trong khoảng.
+    theo khoảng giá thì nhân viên trực quầy chốt một số trong khoảng, có ghi tên. Màn hình này không tự
+    cộng tiền, không làm tròn, và không tự chọn số nào trong khoảng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

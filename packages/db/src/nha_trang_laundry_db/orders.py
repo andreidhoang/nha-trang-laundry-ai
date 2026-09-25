@@ -22,6 +22,7 @@ from nha_trang_laundry_domain.order_steps import (
     COMPOSITE_STEPS,
     NextStep,
     OrderStep,
+    PlannedTransition,
     QuoteReadinessFacts,
     StepFacts,
     StepRequiresHuman,
@@ -37,10 +38,19 @@ from nha_trang_laundry_domain.orders import (
     transition_intake,
     transition_production,
 )
+from nha_trang_laundry_domain.promise import PromiseChoice
 from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
 
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.promise_policy import (
+    PROMISE_REQUIRED,
+    PlannedPromise,
+    PromiseRefusedError,
+    PromiseRequiredError,
+    plan_receive_promise,
+    write_receive_promise,
+)
 from nha_trang_laundry_db.quotes import PRICED_FULFILLMENT_MODE_SQL
 from nha_trang_laundry_db.remedies import RemedyStateError, spend_reserved_remedy_credits
 from nha_trang_laundry_db.store_access import require_store_membership
@@ -66,6 +76,14 @@ class OrderStepRequiresHuman(OrderStateError):
     def __init__(self, message: str, reason_codes: tuple[str, ...]) -> None:
         super().__init__(message)
         self.reason_codes = reason_codes
+
+
+class OrderPromiseRefused(OrderStateError):
+    """`PROMISE-001`: a promise the turnaround rules refuse, by one code. Nothing was written."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class OrderNotVisibleError(LookupError):
@@ -151,6 +169,10 @@ class OrderStepCommand:
     occurred_at: datetime | None = None
     rewash_reason: RewashReason | None = None
     rejection_reason: IntakeRejectionReason | None = None
+    #: `PROMISE-001`, `RECEIVE` only: the staff member's promise choice (`H24`/`H48`/`EXPRESS_2H`/
+    #: `CUSTOM`) and, for `CUSTOM`, the time they set. Absent is the published rule.
+    promise_choice: PromiseChoice | None = None
+    custom_promise_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -251,6 +273,15 @@ class OrderView:
     #: `ORDER-STEPS-001`. The legal next steps, computed by `order_steps.next_steps` from the stored
     #: facts this row was read with -- the one computed field, and computed only by the domain.
     next_steps: tuple[NextStep, ...] = ()
+    #: `PROMISE-001`. The first promise (immutable), what the customer was last told, when the
+    #: laundry was reported ready, and which rule produced the first promise. All null for an order
+    #: taken while no turnaround policy was published. Where the order stands against its promise
+    #: is decided at read time by the route (`promise.promise_state`), never stored.
+    promised_ready_at: datetime | None = None
+    current_promise_at: datetime | None = None
+    production_ready_at: datetime | None = None
+    promise_basis: str | None = None
+    promise_rule_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +324,15 @@ _QUOTE_READINESS_COLUMNS: Final = """
     ) AS customer_agreed
 """
 
+#: `PROMISE-001`: the order's promise, appended after the readiness columns (27 onward) so every
+#: earlier position is unchanged. `production_ready_at` is read so the server can say, at read time,
+#: whether the promise was met.
+_PROMISE_VIEW_COLUMNS: Final = """,
+    o.promised_ready_at, o.current_promise_at, o.production_ready_at, o.promise_basis,
+    o.promise_rule_id
+"""
+_VIEW_PROMISED_READY_AT: Final = 27
+
 #: The read model, shared by the board and the read by id so the two cannot disagree about a field.
 #: `CASE` rather than `display_total_min_vnd` alone: a range has no single amount owed, and the
 #: settlement refuses it (`TOTAL_IS_A_RANGE`), so reporting its lower bound would put a number on
@@ -332,6 +372,7 @@ _ORDER_VIEW_SELECT: Final = (
            ) AS delivery_legs,
     """
     + _QUOTE_READINESS_COLUMNS
+    + _PROMISE_VIEW_COLUMNS
     + """
     FROM orders o
     JOIN quote_revisions r
@@ -1187,7 +1228,13 @@ class OrderRepository:
                 if command.rejection_reason is None
                 else {"rejection_reason": command.rejection_reason.value}
             ),
+            # PROMISE-001: present only when given, for the same reason as the two above.
+            **_promise_payload(command),
         }
+        if command.step is not OrderStep.RECEIVE and (
+            command.promise_choice is not None or command.custom_promise_at is not None
+        ):
+            raise OrderStateError("VALIDATION_ERROR: a promise choice is taken only by RECEIVE")
 
         def step_once() -> dict[str, object]:
             with connection.cursor() as cursor:
@@ -1218,6 +1265,12 @@ class OrderRepository:
                 raise OrderStepRequiresHuman(str(error), error.reason_codes) from error
             except OrderTransitionError as error:
                 raise OrderStateError(str(error)) from error
+            # PROMISE-001: decided before anything is written, so a refusal writes nothing.
+            planned_promise = (
+                _plan_step_promise(connection, command, plan, facts_row, occurred_at)
+                if command.step is OrderStep.RECEIVE
+                else None
+            )
 
             version = command.expected_row_version
             for index, planned in enumerate(plan):
@@ -1251,6 +1304,16 @@ class OrderRepository:
                     moment,
                 )
                 version = int(str(written["row_version"]))
+            if planned_promise is not None:
+                version = write_receive_promise(
+                    connection,
+                    order_id=command.order_id,
+                    expected_row_version=version,
+                    planned=planned_promise,
+                    principal=command.principal,
+                    correlation_id=command.correlation_id,
+                    occurred_at=occurred_at + timedelta(microseconds=len(plan)),
+                )
             return _order_view_document(
                 _order_view_row(_read_view_row(connection, command.order_id))
             )
@@ -1510,6 +1573,11 @@ def _order_view_row(row: tuple[object, ...]) -> OrderView:
         required_delivery_legs_succeeded=bool(row[16]),
         settlement_shape=None if row[21] is None else str(row[21]),
         next_steps=next_steps(_step_facts(row)),
+        promised_ready_at=_optional_datetime(row[27]),
+        current_promise_at=_optional_datetime(row[28]),
+        production_ready_at=_optional_datetime(row[29]),
+        promise_basis=None if row[30] is None else str(row[30]),
+        promise_rule_id=None if row[31] is None else str(row[31]),
     )
 
 
@@ -1573,6 +1641,63 @@ def _optional_int(value: object) -> int | None:
     return None if value is None else int(str(value))
 
 
+# --- PROMISE-001: the promise RECEIVE writes -------------------------------------------------
+
+
+def _promise_payload(command: OrderStepCommand) -> dict[str, object]:
+    """The promise part of a step's idempotency identity, present only when given."""
+
+    payload: dict[str, object] = {}
+    if command.promise_choice is not None:
+        payload["promise_choice"] = command.promise_choice.value
+    if command.custom_promise_at is not None:
+        payload["custom_promise_at"] = command.custom_promise_at.isoformat()
+    return payload
+
+
+def _plan_step_promise(
+    connection: Any,
+    command: OrderStepCommand,
+    plan: tuple[PlannedTransition, ...],
+    facts_row: tuple[object, ...],
+    occurred_at: datetime,
+) -> PlannedPromise | None:
+    """The promise a `RECEIVE` will store, computed at the instant production accepts the goods.
+
+    That instant is the accepting transition's own stamp (`execute_step` stamps each transition one
+    microsecond after the last), or the stored acceptance when the per-axis intake route already
+    accepted the goods. An order that already carries a promise keeps it.
+    """
+
+    if facts_row[_VIEW_PROMISED_READY_AT] is not None:
+        return None
+    accepting = [
+        index for index, item in enumerate(plan) if item.intake_target is IntakeStatus.ACCEPTED
+    ]
+    accepted_at = (
+        occurred_at + timedelta(microseconds=accepting[0])
+        if accepting
+        else _optional_datetime(facts_row[18])
+    )
+    if accepted_at is None:  # pragma: no cover - RECEIVE always ends with accepted goods
+        return None
+    try:
+        with connection.cursor() as cursor:
+            return plan_receive_promise(
+                cursor,
+                order_id=command.order_id,
+                accepted_at=accepted_at,
+                choice=command.promise_choice,
+                custom_at=command.custom_promise_at,
+            )
+    except PromiseRequiredError as error:
+        raise OrderStepRequiresHuman(
+            f"HUMAN_APPROVAL_REQUIRED: {error}", (PROMISE_REQUIRED, *error.reason_codes)
+        ) from error
+    except PromiseRefusedError as error:
+        raise OrderPromiseRefused(error.code, str(error)) from error
+
+
 def _order_view_document(view: OrderView) -> dict[str, object]:
     """An order view as JSON primitives, for the idempotency ledger to store as a step's result."""
 
@@ -1616,7 +1741,24 @@ def _order_view_document(view: OrderView) -> dict[str, object]:
             }
             for item in view.next_steps
         ],
+        # PROMISE-001.
+        "promised_ready_at": _iso_or_none(view.promised_ready_at),
+        "current_promise_at": _iso_or_none(view.current_promise_at),
+        "production_ready_at": _iso_or_none(view.production_ready_at),
+        "promise_basis": view.promise_basis,
+        "promise_rule_id": view.promise_rule_id,
     }
+
+
+def _iso_or_none(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat()
+
+
+def _document_datetime(document: dict[str, object], key: str) -> datetime | None:
+    """A stored instant, or None -- also for a result stored before `PROMISE-001` had the key."""
+
+    value = document.get(key)
+    return None if value is None else _datetime(datetime.fromisoformat(str(value)))
 
 
 def _order_view_from_document(document: dict[str, object]) -> OrderView:
@@ -1667,6 +1809,13 @@ def _order_view_from_document(document: dict[str, object]) -> OrderView:
                 ),
             )
             for item in steps
+        ),
+        promised_ready_at=_document_datetime(document, "promised_ready_at"),
+        current_promise_at=_document_datetime(document, "current_promise_at"),
+        production_ready_at=_document_datetime(document, "production_ready_at"),
+        promise_basis=None if document.get("promise_basis") is None else text("promise_basis"),
+        promise_rule_id=(
+            None if document.get("promise_rule_id") is None else text("promise_rule_id")
         ),
     )
 

@@ -62,6 +62,8 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0052", "remedy_garment_identity"),
         ("0053", "transactional_suppression"),
         ("0054", "export_range"),
+        # 0055 and 0056 are reserved for the other round-7 slices (the lead renumbers at merge).
+        ("0057", "order_promise"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

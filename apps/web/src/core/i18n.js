@@ -509,6 +509,31 @@ export const REASON_NOTE = {
     "Khách chưa đồng ý bản giá mà đơn này gắn vào. Đọc lại giá cho khách và chốt, rồi mới nhận đồ.",
   CUSTODY_NOT_RECORDED:
     "Chưa ghi nhận tiệm đã cầm đồ của khách. Chỉ nhận đồ khi túi đồ đã ở trên quầy.",
+  // PROMISE-001 (DEC-037): the promised-ready time ("hẹn trả"). Why Nhận đồ or Hẹn lại was refused.
+  PROMISE_REQUIRED:
+    "Đơn này cần bạn chọn giờ hẹn trả trước khi nhận đồ. Chọn ngày giờ ở ô “Hẹn trả” rồi bấm lại.",
+  TET_DATES_UNPUBLISHED:
+    "Giờ hẹn sẽ rơi vào dịp Tết mà chủ tiệm chưa nhập ngày nghỉ Tết năm đó, nên máy không tự hẹn. " +
+    "Bạn tự chọn ngày giờ trả.",
+  SERVICE_NOT_IN_POLICY:
+    "Có món chưa nằm trong quy tắc hẹn trả chủ tiệm đã công bố. Bạn tự chọn ngày giờ trả.",
+  NO_LINES: "Báo giá không có món nào để hẹn giờ trả.",
+  TURNAROUND_POLICY_UNPUBLISHED:
+    "Chủ tiệm chưa công bố quy tắc hẹn trả, nên chưa ghi được giờ hẹn nào. Không có gì được ghi.",
+  PROMISE_CHOICE_NOT_APPLICABLE:
+    "Lựa chọn này không áp cho các món trong đơn (24/48 giờ chỉ cho giày, rèm, chăn; 2 giờ chỉ cho " +
+    "đồ giặt sấy thường). Tải lại đơn và chọn lại.",
+  PROMISE_CUSTOM_AT_REQUIRED: "Chưa chọn ngày giờ hẹn trả.",
+  PROMISE_CUSTOM_AT_NOT_TAKEN: "Ngày giờ tự chọn chỉ đi kèm lựa chọn “Tự chọn giờ”.",
+  PROMISE_NOT_AFTER_ACCEPTANCE: "Giờ hẹn phải sau lúc này. Chọn một giờ muộn hơn.",
+  PROMISE_OUTSIDE_OPENING_HOURS: "Giờ hẹn phải trong giờ mở cửa, 08:00–20:00.",
+  PROMISE_ON_CLOSED_DAY: "Ngày đó tiệm nghỉ. Chọn một ngày tiệm mở cửa.",
+  PROMISE_UNCHANGED: "Giờ mới trùng giờ đang hẹn — không có gì để đổi.",
+  PROMISE_NOTE_REQUIRED: "Lý do “Khác” cần vài chữ ghi rõ vì sao hẹn lại.",
+  PROMISE_NOTE_TOO_LONG: "Ghi chú tối đa 120 ký tự.",
+  PROMISE_NOT_SET:
+    "Đơn này không có giờ hẹn (nhận trước khi chủ tiệm công bố quy tắc), nên không có gì để hẹn lại.",
+  PROMISE_ORDER_DONE: "Đồ đã giặt xong hoặc đơn đã đóng — không cần hẹn lại nữa.",
 };
 
 /**
@@ -724,6 +749,9 @@ export const ENUM_GLOSS = {
   ORDER_STATE_TRANSITION: "chuyển trạng thái đơn",
   ORDER_SETTLEMENT_RECORD: "ghi nhận tất toán",
   ORDER_COLLECTION_RECORD: "ghi nhận khách nhận đồ",
+  // PROMISE-001: the first promise at Nhận đồ, and a Hẹn lại.
+  ORDER_PROMISE_SET: "hẹn giờ trả đồ",
+  ORDER_PROMISE_CHANGE: "hẹn lại giờ trả đồ",
   // `ApprovalAction` — what an approval envelope asks a person to authorise. `#/approvals` titles
   // each card with this gloss (spec V2 §5.5) and keeps the token in the card's technical record.
   PRESENT_QUOTE: "cho gửi báo giá tới khách",

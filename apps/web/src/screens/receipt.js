@@ -9,10 +9,12 @@
  *     business day, each priced line with its quantity, the promotion or remedy credit applied, the
  *     total, when the order was taken, and a short reference. A store minted before the registry
  *     has no name, and then the receipt has no name line — it never invents one.
- *   - **No promised-ready time.** Which rule sets a per-order ready time is undecided, and a receipt
- *     that printed one would be a promise the software made on the shop's behalf. The receipt says
- *     "Tiệm sẽ báo khi đồ sẵn sàng" instead (R4) — and says something else once that sentence would
- *     be false: the laundry is already done, the order is closed, or it was cancelled.
+ *   - **The promised-ready time, when the order has one** (`PROMISE-001`, `DEC-037`, replacing
+ *     R4's line): "Hẹn trả: 13:00 thứ Sáu 26/9" — the time the server stored at Nhận đồ under the
+ *     owner's published turnaround rules, or the later one a Hẹn lại set. An order taken before the
+ *     owner published those rules has none, and the receipt says "Tiệm sẽ báo khi đồ sẵn sàng"
+ *     (R4) — and something else once either sentence would be false: the laundry is already done,
+ *     the order is closed, or it was cancelled.
  *   - **Every figure is a server integer through `money()`.** The lines print at their list amount
  *     and the adjustments (promotion, credit, delivery fee) under them, all read off the stored
  *     revision (`GET …/quotes/{id}?revision=`); the total is the order's own `payable_total_vnd`.
@@ -36,6 +38,7 @@ import {
   dateTime,
   money,
   moneyRange,
+  promiseTime,
   quantity as quantityText,
 } from "../core/format.js";
 import { QUOTE_ADJUSTMENT_VI } from "../core/i18n.js";
@@ -46,7 +49,7 @@ import { actionBar, button, infoButton, page, skeletonRows } from "../ui/kit.js"
 // The same helper the order list and page use, so the paper cannot word the ticket differently.
 import { orderName } from "./orders.js";
 
-/** R4, verbatim: what the receipt says instead of a ready time. */
+/** R4, verbatim: what the receipt says for an order without a promised-ready time. */
 export const READY_NOTICE = "Tiệm sẽ báo khi đồ sẵn sàng.";
 
 // --- the hand-off from ＋ Nhận đồ -------------------------------------------------------------
@@ -98,8 +101,9 @@ function shortReference(orderId) {
 }
 
 /**
- * The closing line. R4's sentence while it is true; a plain fact once it no longer is. Wording
- * only — nothing here decides what may happen to the order.
+ * The closing line. The promise while the laundry is not finished (`PROMISE-001`), R4's sentence
+ * for an order without one; a plain fact once either is no longer true. Wording only — the time is
+ * the server's and nothing here decides what may happen to the order.
  *
  * @param {any} order
  * @returns {string}
@@ -110,6 +114,7 @@ function closingLine(order) {
   if (order.production === "READY_AT_STORE" || order.production === "RELEASED") {
     return "Đồ đã giặt xong.";
   }
+  if (order.current_promise_at) return `Hẹn trả: ${promiseTime(order.current_promise_at)}`;
   return READY_NOTICE;
 }
 
@@ -311,8 +316,8 @@ export function render_(context) {
     h(
       "p",
       { class: "hint" },
-      "Phiếu không ghi giờ hẹn trả đồ: tiệm chưa quyết định quy tắc hẹn giờ cho từng đơn, nên " +
-        "phiếu ghi “Tiệm sẽ báo khi đồ sẵn sàng”.",
+      "Giờ hẹn trả in trên phiếu là giờ máy chủ đã ghi lúc nhận đồ (hoặc giờ hẹn lại sau đó). Đơn " +
+        "nhận trước khi chủ tiệm công bố quy tắc hẹn trả thì phiếu ghi “Tiệm sẽ báo khi đồ sẵn sàng”.",
     ),
     h(
       "p",

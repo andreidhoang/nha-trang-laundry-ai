@@ -58,6 +58,8 @@ import {
   show,
   statusPill,
 } from "../ui/kit.js";
+// PROMISE-001: "Hẹn 13:00 thứ Sáu 26/9" and the LATE pill on a row.
+import { promiseMeta } from "../ui/promise.js";
 
 const LIST_LIMIT = 100;
 
@@ -197,6 +199,8 @@ export function orderRow(item) {
       prepaidWaiting(item)
         ? h("span", { class: "hint" }, "Khách đã trả trước, chưa nhận đồ.")
         : null,
+      // PROMISE-001: the time the customer was told, and a pill when it is late or due soon.
+      promiseMeta(item),
     ],
     trailing: due ? h("span", { class: due.known ? "money" : "muted" }, due.text) : null,
     trailingMeta: due ? due.label : null,

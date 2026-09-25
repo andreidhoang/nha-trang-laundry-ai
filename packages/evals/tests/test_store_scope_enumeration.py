@@ -95,6 +95,19 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/orders/{order_id}/settlement"): store_scoped(
         "settlement", "SettlementRepository.record"
     ),
+    # PROMISE-001. Hẹn lại is keyed by `order_id`: membership of the row's store before the
+    # idempotency lookup and again on the cursor holding the row lock, inside the repository.
+    ("POST", "/internal/v1/orders/{order_id}/promise"): store_scoped(
+        "order_promises", "OrderPromiseRepository.change"
+    ),
+    ("GET", "/internal/v1/orders/{order_id}/promise"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "keyed by order_id. OrderPromiseRepository.read reads the store off the order row and "
+        "answers OrderNotVisibleError (404) unless the caller is a member of it -- the order "
+        "read's rule, so a non-member cannot tell a stranger's order from a missing one; asserted "
+        "behaviourally in apps/api/tests/test_order_promise_http.py",
+    ),
     # PREPAID-DROPOFF-001 (`DEC-032`). Keyed by order_id, like the settlement it completes, so a
     # URL-shape enumeration would miss it: the store is read from the locked order row and
     # membership required on that cursor, inside the repository.

@@ -655,6 +655,16 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         # moved or the approval lapsed.
         "Khoá phong bì cho người gửi tay",
         "Xin duyệt lại",
+        # PROMISE-001 (DEC-037): the promise said at Nhận đồ, the choice a special item needs, the
+        # late pill, and moving a promise with a reason.
+        "Hẹn trả: ",
+        "24 giờ",
+        "48 giờ",
+        "Bạn chọn ngày giờ trả cho đơn này",
+        "Trễ hẹn",
+        "Sắp tới hẹn",
+        "Hẹn lại",
+        "Lưu giờ hẹn mới",
     ]
 
     absent_from_guide = [phrase for phrase in quoted if phrase not in guide]

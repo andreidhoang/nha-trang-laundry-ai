@@ -605,10 +605,14 @@ def test_on_time_is_the_boards_rule_at_exactly_the_mark_and_one_microsecond_past
 
 
 def test_the_report_version_is_pinned_and_moves_with_the_boards_rule() -> None:
-    """Invariant 18. Editing either statement, the day boundary, or the board's rule fails this."""
+    """Invariant 18. Editing either statement, the day boundary, or the board's rule fails this.
+
+    `v2` (`PROMISE-001`): the on-time statement reads the first promise and a promised order is
+    judged against it, and the board's version it hashes moved to `sla-risk-board-v2`.
+    """
     version = report_query_version(STANDARD_WASH_SLA)
-    assert version.identifier == "report-v1"
-    assert version.digest == "2e30b2c5fdd366f2"
+    assert version.identifier == "report-v2"
+    assert version.digest == "b6e45d5c0fb41609"
     stricter = ProductionSlaPolicy(
         policy_id="SLA_STANDARD_CLOTHES",
         policy_type=SlaPolicyType.COMMITMENT,

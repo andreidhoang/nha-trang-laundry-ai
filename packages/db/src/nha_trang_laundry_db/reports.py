@@ -29,8 +29,13 @@ is shown at all, is the console formatting this fraction -- never a figure this 
   population is the orders whose recorded completion (`production_ready_at`, the clock stop `0037`
   added and the rewash correction in `OrderRepository.transition` keeps honest) falls in the
   window. Nothing here restates the eight hours: the version below hashes the board's version, so
-  the day the board's rule moves, this identifier moves with it. The per-order SLA rule is an
-  undecided business question, so this figure is published `RULE_ASSUMED`, never `COMPLETE`.
+  the day the board's rule moves, this identifier moves with it.
+  **`PROMISE-001` (`DEC-037`)**: an order with a promise is on time when it was ready at or before
+  its **first** promise (`orders.promised_ready_at`, immutable), whatever it was re-promised to --
+  so re-promising cannot improve the figure (`promise.met_first_promise`). Only an order taken
+  before the owner published a turnaround policy is still judged by the stated rule, and the figure
+  is `COMPLETE` when none of its orders were, `RULE_ASSUMED` otherwise; `rule_assumed` says how many
+  of the denominator the stated rule judged.
 * Complaints: `customer_incidents.opened_at`, every category.
 * Money: `order_settlements` in, `order_refunds` out, each on its own local day -- the two ledgers
   and the two predicates of `collected-today-v2`, widened from one day to a range. Summed by
@@ -60,6 +65,7 @@ from zoneinfo import ZoneInfo
 
 from nha_trang_laundry_domain.catalog import SlaOutcome
 from nha_trang_laundry_domain.orders import PRODUCTION_SEQUENCE
+from nha_trang_laundry_domain.promise import met_first_promise
 from nha_trang_laundry_domain.sla import ProductionSlaPolicy, evaluate_production_sla
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
@@ -78,8 +84,9 @@ REPORT_READ_ROLES: Final = frozenset(
 #: The longest window a report answers, in shop-local calendar days (a quarter).
 REPORT_MAX_DAYS: Final = 92
 
-#: The published identifier. `report-v1:<digest>` travels with every figure (invariant 18).
-REPORT_QUERY_IDENTIFIER: Final = "report-v1"
+#: The published identifier. `report-v2:<digest>` travels with every figure (invariant 18).
+#: `v2` (`PROMISE-001`): the on-time figure counts a promised order against its first promise.
+REPORT_QUERY_IDENTIFIER: Final = "report-v2"
 
 #: The production sequence the rewash rule compares positions in, as the SQL receives it.
 _SEQUENCE: Final = tuple(status.value for status in PRODUCTION_SEQUENCE)
@@ -239,7 +246,7 @@ _REPORT_SQL = """
 #: second copy of it that the board's version could not see move.
 _ON_TIME_SQL = """
     SELECT id, production_accepted_at, production_ready_at,
-           (production_ready_at AT TIME ZONE %(zone)s)::date AS day
+           (production_ready_at AT TIME ZONE %(zone)s)::date AS day, promised_ready_at
     FROM orders
     WHERE store_id = %(store)s
       AND production_ready_at >= (%(from_date)s::date)::timestamp AT TIME ZONE %(zone)s
@@ -317,6 +324,9 @@ class ReportFigure:
     entries: int | None = None
     #: `REMEDIES_EXECUTED`: the total credit value the executed remedies carried.
     amount_vnd: int | None = None
+    #: `ON_TIME_INTERNAL` only (`PROMISE-001`): how many of the denominator had no promise and were
+    #: judged by the stated rule. Zero is what makes the figure `COMPLETE`.
+    rule_assumed: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,22 +432,33 @@ class ReportRepository:
         cursor.execute(_ON_TIME_SQL, parameters)
         population = cursor.fetchall()
 
-        on_time_by_day: dict[date, tuple[int, int]] = {}
-        on_time_window = (0, 0)
+        on_time_by_day: dict[date, tuple[int, int, int]] = {}
+        on_time_window = (0, 0, 0)
         for row in population:
-            accepted_at, ready_at, day = row[1], row[2], row[3]
-            result = evaluate_production_sla(
-                policy,
-                # The completion instant, not the wall clock: for an order whose clock has stopped
-                # the outcome is fixed there, and a report must not depend on when it was read.
-                evaluated_at=ready_at,
-                production_accepted_at=accepted_at,
-                ready_at_store=ready_at,
+            accepted_at, ready_at, day, first_promise = row[1], row[2], row[3], row[4]
+            if first_promise is not None:
+                # PROMISE-001: against the order's FIRST promise, never a later one.
+                met = 1 if met_first_promise(first_promise, ready_at) else 0
+                assumed = 0
+            else:
+                result = evaluate_production_sla(
+                    policy,
+                    # The completion instant, not the wall clock: for an order whose clock has
+                    # stopped the outcome is fixed there, and a report must not depend on when it
+                    # was read.
+                    evaluated_at=ready_at,
+                    production_accepted_at=accepted_at,
+                    ready_at_store=ready_at,
+                )
+                met = 1 if result.outcome is SlaOutcome.MET else 0
+                assumed = 1
+            day_met, day_total, day_assumed = on_time_by_day.get(day, (0, 0, 0))
+            on_time_by_day[day] = (day_met + met, day_total + 1, day_assumed + assumed)
+            on_time_window = (
+                on_time_window[0] + met,
+                on_time_window[1] + 1,
+                on_time_window[2] + assumed,
             )
-            met = 1 if result.outcome is SlaOutcome.MET else 0
-            day_met, day_total = on_time_by_day.get(day, (0, 0))
-            on_time_by_day[day] = (day_met + met, day_total + 1)
-            on_time_window = (on_time_window[0] + met, on_time_window[1] + 1)
 
         summary: ReportPeriod | None = None
         daily: list[ReportPeriod] = []
@@ -446,7 +467,7 @@ class ReportRepository:
                 summary = _period(row, window.from_date, window.to_date, on_time_window)
             else:
                 day = row[0]
-                daily.append(_period(row, day, day, on_time_by_day.get(day, (0, 0))))
+                daily.append(_period(row, day, day, on_time_by_day.get(day, (0, 0, 0))))
         if summary is None:  # pragma: no cover - GROUPING SETS always yields the () row
             raise RuntimeError("the report statement returned no window row")
         return StoreReport(
@@ -462,7 +483,9 @@ class ReportRepository:
         )
 
 
-def _period(row: Any, from_date: date, to_date: date, on_time: tuple[int, int]) -> ReportPeriod:
+def _period(
+    row: Any, from_date: date, to_date: date, on_time: tuple[int, int, int]
+) -> ReportPeriod:
     """One row of the statement as figures. Copies integers; adds, divides and rounds nothing."""
     created, completed, cancelled = int(row[2]), int(row[3]), int(row[4])
     reached_quality_check, rewashed, incidents = int(row[5]), int(row[6]), int(row[7])
@@ -499,7 +522,8 @@ def _period(row: Any, from_date: date, to_date: date, on_time: tuple[int, int]) 
             on_time[1],
             None,
             "ORDERS",
-            DataQuality.RULE_ASSUMED,
+            DataQuality.RULE_ASSUMED if on_time[2] else DataQuality.COMPLETE,
+            rule_assumed=on_time[2],
         ),
         ReportFigure(
             ReportKey.REWASH, rewashed, reached_quality_check, None, "ORDERS", DataQuality.COMPLETE

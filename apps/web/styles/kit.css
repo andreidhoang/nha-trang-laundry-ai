@@ -3461,3 +3461,84 @@ a.row-link {
     padding-inline: var(--space-1);
   }
 }
+
+/* --------------------------------------------------------------------------------------------- */
+/* PROMISE-001 — hẹn trả: the promise in the Nhận đồ sheet, on the order page and on a list row.  */
+/* --------------------------------------------------------------------------------------------- */
+
+.promise-pick {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.promise-pick__line {
+  font-size: var(--text-lg);
+  margin: 0;
+}
+
+.promise-pick__label {
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+/* Two or three short chips share a row at 390 px instead of stacking. */
+.promise-pick .choice-chips {
+  grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+}
+
+.promise-field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.promise-field__label {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.order__promise {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.order__promise-first {
+  flex-basis: 100%;
+}
+
+.promise-meta {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+/* The promise choices read as one segmented row: the chip's own state shows the choice, so the
+ * radio dot is visually hidden (still focusable and announced). */
+.promise-pick .choice-chip {
+  justify-content: center;
+  padding-inline: var(--space-2);
+  position: relative;
+  white-space: nowrap;
+}
+
+.promise-pick .choice-chip input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+
+/* Hẹn lại's six reasons in two columns rather than six full-width rows. */
+.promise-reasons .choice-chips {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.order__promise {
+  justify-content: flex-end;
+}
+
+.order__promise-first {
+  text-align: right;
+}

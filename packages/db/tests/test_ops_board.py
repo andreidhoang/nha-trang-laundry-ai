@@ -230,13 +230,17 @@ def test_the_board_query_version_is_pinned_to_the_rule_it_names() -> None:
     what "the rule" means. The old value hashed `_SLA_BOARD_SQL` alone, so the SLA policy and the
     domain engine -- which decide where the clock stops, where the mark falls and which reason
     codes travel with a row -- could both change while `v1:4740bd…` stayed printed beside figures
-    they had already moved. The identifier stays `v1`: no board figure changed on the day this
-    pinned value did, and republishing as `v2` would say one had.
+    they had already moved. The identifier stayed `v1` then: no board figure changed on the day
+    that pinned value did.
+
+    `PROMISE-001` published `v2` (`cb135da94bb2a0a8`): the board ranks by when each order is due --
+    its own promise, or the stated rule's mark -- and measures a promised order against its promise
+    (`promise.promise_figures`, hashed beside the engine). Figures changed, so the name did.
     """
     version = sla_board_query_version(STANDARD_WASH_SLA)
-    assert version.identifier == "sla-risk-board-v1"
-    assert version.digest == "e56e50ea7beb4021"
-    assert version.label == "sla-risk-board-v1:e56e50ea7beb4021"
+    assert version.identifier == "sla-risk-board-v2"
+    assert version.digest == "cb135da94bb2a0a8"
+    assert version.label == "sla-risk-board-v2:cb135da94bb2a0a8"
 
 
 def test_the_board_version_moves_when_the_policy_behind_the_figure_moves() -> None:
@@ -266,7 +270,7 @@ def test_the_board_version_moves_when_the_policy_behind_the_figure_moves() -> No
     assert widened.digest != standard.digest
     # Still the same published identifier -- what moved is the digest under it, which is the half
     # that says "this is no longer the rule you read last time".
-    assert widened.identifier == standard.identifier == "sla-risk-board-v1"
+    assert widened.identifier == standard.identifier == "sla-risk-board-v2"
 
 
 def test_the_board_version_moves_when_the_engine_behind_the_figure_moves() -> None:
@@ -480,10 +484,16 @@ def test_an_order_crossing_its_mark_between_two_reads_shows_breached_on_the_seco
     assert row_version() == before_version
 
 
-def test_the_board_orders_by_acceptance_and_says_so_rather_than_claiming_urgency(
+def test_without_promises_the_board_ranks_by_the_stated_mark_which_is_acceptance_order(
     connection: psycopg.Connection[Any],
 ) -> None:
-    """The order the screen renders, and the exact population in which it is not urgency order.
+    """The order the screen renders for orders taken before a turnaround policy was published.
+
+    `PROMISE-001` ranks the board by when each order is due. None of these orders has a promise,
+    so each is due at the stated rule's mark, acceptance + 8 h -- one fixed offset -- and the
+    ranking is acceptance order, as it always was; promised orders are ranked in
+    `test_order_promise_repository.py`. What follows is the reason this population is the one that
+    matters: a finished order ranks by when it was due, not by the time it froze with.
 
     The first version of this test seeded three orders whose clocks were all still running, and on
     that population oldest-accepted-first and least-time-remaining-first are the same list. It
@@ -494,9 +504,8 @@ def test_the_board_orders_by_acceptance_and_says_so_rather_than_claiming_urgency
 
     So the fourth order here is finished. It was accepted eleven hours ago -- earlier than every
     other row, which puts it at the top of the page -- and it was reported ready one hour later, so
-    seven of its eight hours are still unspent. It outranks an order with two hours left and an
-    order already two hours past the mark. That is the board's real behaviour, and the docstrings,
-    the route summary and the screen's lede all say "oldest accepted first" because of it.
+    seven of its eight hours are still unspent. It was due first, so it ranks first, above an
+    order with two hours left and an order already two hours past the mark.
 
     What makes the page still workable is on the rows rather than in their order: every one carries
     its own `sla_outcome`, `remaining_microseconds` and `breach_microseconds`, so a shift ranks by
@@ -575,7 +584,9 @@ def test_the_board_pages_by_keyset_without_repeating_or_losing_an_order(
         if not page:
             break
         paged.extend(row.order_id for row in page)
-        after = (page[-1].production_accepted_at, page[-1].order_id)
+        # PROMISE-001: the keyset is the ranking, `(due_at, id)`.
+        assert page[-1].due_at is not None
+        after = (page[-1].due_at, page[-1].order_id)
 
     assert len(whole) == 5
     assert paged == [row.order_id for row in whole]
@@ -717,7 +728,13 @@ def test_a_year_of_orders_does_not_degrade_the_board(
     with connection.cursor() as cursor:
         cursor.execute(
             "EXPLAIN (FORMAT JSON) " + _board_sql(),
-            {"store": store_id, "after_accepted": None, "after_id": None, "limit": 50},
+            {
+                "store": store_id,
+                "fallback_hours": 8,
+                "after_due": None,
+                "after_id": None,
+                "limit": 50,
+            },
         )
         found = cursor.fetchone()
         assert found is not None
@@ -726,6 +743,10 @@ def test_a_year_of_orders_does_not_degrade_the_board(
     assert "orders_sla_board_idx" in plan, (
         "the board's page is no longer served by its own index; the partial predicate in migration "
         f"0044 has drifted from the query. Plan was: {plan}"
+    )
+    # PROMISE-001: the promised arm is served by 0057's index, with the same population predicate.
+    assert "orders_sla_promise_board_idx" in plan, (
+        f"the promised orders are no longer read through their own index. Plan was: {plan}"
     )
     assert "Seq Scan" not in plan, f"the board fell back to a sequential scan. Plan was: {plan}"
 

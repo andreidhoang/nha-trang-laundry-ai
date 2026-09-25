@@ -653,7 +653,22 @@ def test_the_sla_board_reports_exactly_what_the_domain_engine_computed() -> None
             self._rows = (
                 [(1,)]
                 if "staff_store_assignments" in statement
-                else [(order_id, store_id, accepted_at, None, "ACTIVE", "IN_PROCESS")]
+                # Nine since PROMISE-001: the order's promise (none here), the rule behind it,
+                # and the instant it is ranked by -- the stated rule's mark for an order without
+                # a promise.
+                else [
+                    (
+                        order_id,
+                        store_id,
+                        accepted_at,
+                        None,
+                        "ACTIVE",
+                        "IN_PROCESS",
+                        None,
+                        None,
+                        accepted_at + timedelta(hours=8),
+                    )
+                ]
             )
 
         def fetchone(self) -> tuple[Any, ...] | None:
@@ -902,7 +917,19 @@ def test_the_sla_board_stops_the_clock_when_the_laundry_was_finished() -> None:
             self._rows = (
                 [(1,)]
                 if "staff_store_assignments" in statement
-                else [(order_id, store_id, accepted_at, ready_at, "ACTIVE", "READY_AT_STORE")]
+                else [
+                    (
+                        order_id,
+                        store_id,
+                        accepted_at,
+                        ready_at,
+                        "ACTIVE",
+                        "READY_AT_STORE",
+                        None,
+                        None,
+                        accepted_at + timedelta(hours=8),
+                    )
+                ]
             )
 
         def fetchone(self) -> tuple[Any, ...] | None:

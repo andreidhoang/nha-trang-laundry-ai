@@ -177,10 +177,11 @@ const GROUPS = [
     // REPORT-DASHBOARD-001 built the versioned report read model this lede said did not exist, so
     // the lede now says what is still missing: the figures that need a measurement nobody has
     // taken yet, or a decision nobody has made.
+    // PROMISE-001: the on-time figure now counts against each order's first promise.
     lede:
-      "Màn Báo cáo có số của chủ: đơn, đúng hẹn theo mốc nội bộ, giặt lại, khiếu nại, tiền đã thu " +
-      "và bồi hoàn — mỗi số kèm tử số, mẫu số, khoảng ngày và phiên bản truy vấn. Các mục dưới đây " +
-      "vẫn thiếu vì cần số đo thật hoặc một quyết định chưa ai đưa ra.",
+      "Màn Báo cáo có số của chủ: đơn, đúng hẹn theo giờ hẹn đầu tiên với khách, giặt lại, khiếu " +
+      "nại, tiền đã thu và bồi hoàn — mỗi số kèm tử số, mẫu số, khoảng ngày và phiên bản truy vấn. " +
+      "Các mục dưới đây vẫn thiếu vì cần số đo thật hoặc một quyết định chưa ai đưa ra.",
     entries: [
       // "Xem lại nguồn khách đã ghi trên một đơn" (ACQUISITION-ATTRIBUTION-001) was here until
       // READ-PATHS-001 put `acquisition_source` on the order read model, and is deleted rather than
@@ -251,24 +252,24 @@ const GROUPS = [
           "chứng. Các chỉ số của cùng khoảng ngày xem ở màn hình Báo cáo.",
       },
       {
-        // OPS-BOARD-001 phơi read model ra thành màn hình Bảng trễ hạn, nên nửa đầu của câu cũ
-        // không còn đúng. Nửa sau vẫn đúng nguyên: quy tắc SLA của từng đơn vẫn chưa ai chốt, và
-        // bảng đang dùng đúng một quy tắc đã nêu cho mọi đơn.
-        ref: "FR-RPT-006",
-        title: "Quy tắc SLA riêng cho từng đơn",
+        // PROMISE-001 (DEC-037) built the per-order promise this entry was about: every order
+        // taken after the owner publishes the turnaround rules gets a promised-ready time at Nhận
+        // đồ, the SLA board ranks by it, and the report's on-time figure counts against the first
+        // one. What DEC-037 deliberately left for later is the owner's late-delivery credit, so the
+        // entry now names that, and nothing else.
+        ref: "FR-RPT-006 · DEC-037",
+        title: "Bù 10% khi giao trễ hẹn",
         what:
-          "Mỗi đơn có mốc riêng theo loại dịch vụ và theo điều đã hẹn với khách, thay vì một mốc " +
-          "chung cho tất cả.",
-        // REPORT-DASHBOARD-001: the report's on-time tile measures against the same one rule, and
-        // says so on the tile (`RULE_ASSUMED`), so the sentence names both surfaces.
+          "Giao tận nơi trễ hơn 2 giờ so với giờ đã hẹn thì khách được giảm 10% đơn sau (lời chủ " +
+          "tiệm).",
         missing:
-          "Chưa có nguồn cấu hình nào gán ProductionSlaPolicy cho từng đơn. Bảng trễ hạn và ô Đúng " +
-          "hẹn của màn Báo cáo vì vậy đang áp đúng một quy tắc đã nêu cho mọi đơn, và nói rõ điều " +
-          "đó ngay trên màn hình.",
-        blockedBy: "Chọn chính sách SLA cho từng đơn (chưa có nguồn cấu hình)",
+          "Mỗi đơn đã có giờ hẹn trả tại tiệm, nhưng chưa có giờ hẹn giao tận nơi, và khoản giảm " +
+          "10% không được tạo tự động.",
+        blockedBy:
+          "DEC-037 đã chốt: đợt này chỉ hẹn và đo, chưa tự bù; nối vào Bồi hoàn là bước sau",
         today:
-          "Xem danh sách đơn đang sản xuất ở màn hình Bảng trễ hạn. Mốc ở đó là mốc rủi ro nội bộ " +
-          "của tiệm, không phải giờ đã hẹn với khách.",
+          "Đơn trễ hẹn hiện nhãn “Trễ hẹn” ở Đơn hàng và Bảng trễ hạn. Muốn bù cho khách thì tạo " +
+          "khoản bù ở màn Bồi hoàn như trước.",
       },
     ],
   },

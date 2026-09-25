@@ -94,9 +94,9 @@ def sla_policy_notice_vi(policy: ProductionSlaPolicy) -> str:
     own staff.
     """
     return (
-        f"Mốc này tính theo quy tắc {policy.policy_id} — {policy.target_max_hours} giờ kể từ "
-        "khi nhận sản xuất; quy tắc SLA riêng của từng đơn là quyết định kinh doanh chưa được "
-        "chốt, nên con số này dùng đúng một quy tắc đã nêu."
+        "Đơn có giờ hẹn trả được tính theo giờ hẹn của chính đơn đó. Đơn nhận trước khi chủ tiệm "
+        f"công bố quy tắc hẹn trả thì tính theo quy tắc {policy.policy_id} — "
+        f"{policy.target_max_hours} giờ kể từ khi nhận sản xuất."
     )
 
 

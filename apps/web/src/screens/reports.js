@@ -11,9 +11,11 @@
  *     screen never divides, never totals the days, and never compares two figures.
  *   - **No money is added here.** "Tiền đã thu" is the server's net of the two ledgers, with the
  *     drawer's direction as a word; the amounts in and out are shown as the server summed them.
- *   - **The on-time tile says what it is.** Per-order SLA rules are an undecided business
- *     question, so the figure is measured against the one stated internal mark the SLA board uses,
- *     its data quality is `RULE_ASSUMED`, and its ⓘ carries the board's own sentence verbatim.
+ *   - **The on-time tile says what it is.** Since `PROMISE-001` an order is on time when it was
+ *     ready by its FIRST promise (a Hẹn lại never improves the figure); an order taken before the
+ *     owner published the turnaround rules is still measured against the SLA board's internal
+ *     mark. The server says which: `COMPLETE` when every order had a promise, `RULE_ASSUMED` with
+ *     `rule_assumed` counting the rest, and the ⓘ carries the board's own sentence verbatim.
  *   - **Margin is shown as not computed**, with the reason, rather than left out: cost is not
  *     captured anywhere (`SHOP-INSTRUMENT-001`), and a margin without cost would be the rest of the
  *     price called profit, which `FR-RPT-002` forbids.
@@ -84,11 +86,12 @@ const KPI = {
       "trong cùng khoảng.",
   },
   ON_TIME_INTERNAL: {
-    label: "Đúng hẹn (nội bộ)",
+    label: "Đúng hẹn",
     definition:
-      "Tử số: đơn giặt xong trong khoảng ngày và xong trước mốc nội bộ. Mẫu số: mọi đơn giặt " +
-      "xong trong khoảng ngày. Giặt xong là lúc sản xuất báo đồ sẵn sàng tại cửa hàng lần cuối; " +
-      "đơn bị giặt lại được tính theo lần xong sau cùng.",
+      "Tử số: đơn giặt xong trong khoảng ngày và xong trước giờ hẹn đầu tiên với khách — hẹn lại " +
+      "không làm con số đẹp hơn. Đơn nhận trước khi chủ tiệm công bố quy tắc hẹn trả thì tính " +
+      "theo mốc nội bộ. Mẫu số: mọi đơn giặt xong trong khoảng ngày. Giặt xong là lúc sản xuất " +
+      "báo đồ sẵn sàng tại cửa hàng lần cuối; đơn bị giặt lại được tính theo lần xong sau cùng.",
   },
   REWASH: {
     label: "Giặt lại",
@@ -320,8 +323,19 @@ function tiles(summary) {
       ratioTile(
         onTime,
         "đơn giặt xong",
-        // Tier 1: the one fact that changes how this number is read.
-        statusPill({ text: "Theo mốc nội bộ", state: "warn", token: String(onTime.data_quality) }),
+        // Tier 1: the one fact that changes how this number is read -- whether every order in
+        // it had a promise (PROMISE-001), or how many were measured by the internal mark.
+        !onTime.denominator
+          ? null
+          : onTime.data_quality === "COMPLETE"
+          ? statusPill({ text: "Theo giờ hẹn", state: "ok", token: "COMPLETE" })
+          : statusPill({
+              text: Number.isInteger(onTime.rule_assumed)
+                ? `${integer(onTime.rule_assumed)} đơn theo mốc nội bộ`
+                : "Theo mốc nội bộ",
+              state: "warn",
+              token: String(onTime.data_quality),
+            }),
         [h("p", { class: "notice", dataState: "info" }, summary.sla_rule.notice_vi)],
       ),
       ratioTile(kpis.REWASH, "đơn vào kiểm tra"),

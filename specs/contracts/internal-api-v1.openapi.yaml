@@ -232,6 +232,39 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}/promise:
+    get:
+      operationId: read_order_promise
+      summary: The order's promise, its state now, and what Nhận đồ would promise (`PROMISE-001`).
+      x-authorization-dependencies:
+      - current_principal
+      - get_promise_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: change_order_promise
+      summary: 'Hẹn lại: move what the customer was told, with a reason (`PROMISE-001`, `DEC-037`).'
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_promise_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/orders/{order_id}/settlement:
     post:
       operationId: record_settlement
@@ -1305,7 +1338,7 @@ paths:
   /internal/v1/stores/{store_id}/sla-board:
     get:
       operationId: sla_board
-      summary: In-production orders against the one stated internal mark, oldest accepted first.
+      summary: In-production orders, the soonest due first (`PROMISE-001`).
       x-authorization-dependencies:
       - current_principal
       - get_ops_board_service

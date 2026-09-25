@@ -31,8 +31,8 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 4 | Bấm **Tính giá**, đọc **Tổng khách trả** cho khách | Nhận đồ |
 | 5 | Bấm **Tiếp tục**, hỏi khách biết tiệm qua đâu (chưa hỏi thì để *Chưa biết*) | Nhận đồ |
 | 6 | Khách đồng ý → bấm **Khách đồng ý — tạo đơn**. Máy ghi lời đồng ý, tạo đơn, rồi mở luôn trang đơn | Nhận đồ |
-| 6a | Khách cần phiếu → bấm **In phiếu cho khách** ngay đầu trang đơn, rồi **In phiếu** (máy in nhiệt 80 mm, 58 mm hoặc giấy A5). Máy có nút **Chia sẻ** thì gửi được phiếu qua điện thoại. Phiếu không ghi giờ hẹn trả đồ — chỉ ghi *Tiệm sẽ báo khi đồ sẵn sàng* | Phiếu cho khách |
-| 7 | Nhận túi đồ từ khách → bấm **Nhận đồ**, tích **Tiệm làm kịp đơn này**, bấm **Nhận đồ** lần nữa | Chi tiết đơn |
+| 7 | Nhận túi đồ từ khách → bấm **Nhận đồ**. Màn hình hiện giờ hẹn, ví dụ *Hẹn trả: 13:00 thứ Sáu 26/9* — đọc cho khách. Có giày, rèm, chăn: chọn **24 giờ** hoặc **48 giờ** (máy chọn sẵn 48 giờ). Có gấu bông, túi, đồ da, gối, topper…: máy ghi *Bạn chọn ngày giờ trả cho đơn này* — chọn ngày giờ trong ô *Ngày giờ trả*. Tích **Tiệm làm kịp đơn này**, bấm **Nhận đồ** lần nữa | Chi tiết đơn |
+| 7a | Khách cần phiếu → bấm **In phiếu cho khách** ngay đầu trang đơn, rồi **In phiếu** (máy in nhiệt 80 mm, 58 mm hoặc giấy A5). Máy có nút **Chia sẻ** thì gửi được phiếu qua điện thoại. In **sau** khi bấm Nhận đồ thì phiếu ghi *Hẹn trả: …*; đơn chưa có giờ hẹn (chủ tiệm chưa công bố quy tắc hẹn trả) thì phiếu ghi *Tiệm sẽ báo khi đồ sẵn sàng* | Phiếu cho khách |
 | 8 | Bỏ đồ vào máy → bấm **Bắt đầu giặt** | Chi tiết đơn |
 | 9 | Giặt xong → **Giặt xong, kiểm tra đồ**; kiểm xong → **Báo đồ đã sẵn sàng** | Chi tiết đơn |
 | 10 | Khách tới lấy → ở **Đơn hàng** gõ số vào ô **Số phiếu…** rồi bấm **Tìm** (phiếu ngày khác thì bấm **Hôm nay** để chọn ngày), mở đơn | Đơn hàng |
@@ -50,11 +50,14 @@ nằm ở nút **Khác**.
 | Kiểm tra thấy đồ **chưa sạch** (hoặc máy lỗi), đồ **chưa rời tiệm** | **Khác** → **Giặt lại**, chọn lý do (*Chưa sạch*, *Máy lỗi*, *Lý do khác*), bấm **Giặt lại**. Đồ quay lại bước giặt; giặt xong thì **Giặt xong, kiểm tra đồ** như thường | Chi tiết đơn |
 | Đơn đã ghi **tiệm đang giữ đồ nhưng chưa nhận làm** (trạng thái *đã nhận, chờ kiểm* hoặc *chờ duyệt…*) và tiệm **không nhận** (tiệm không giặt loại này, đồ hỏng sẵn…) | **Khác** → **Không nhận đồ**, chọn lý do, bấm **Không nhận đồ** hai lần. Trả túi đồ cho khách; đơn bị huỷ, không có tiền nào chuyển | Chi tiết đơn |
 | Chưa bấm **Nhận đồ** mà khách lấy lại túi đồ | **Khác** → **Huỷ đơn**: đơn chưa ghi tiệm giữ đồ, nên huỷ ngay | Chi tiết đơn |
+| Không kịp giờ đã hẹn, hoặc khách xin đổi giờ lấy | Ở dòng **Hẹn trả** trên trang đơn, bấm **Hẹn lại**, chọn giờ trả mới và lý do (chọn *Khác* thì ghi vài chữ), bấm **Lưu giờ hẹn mới**, rồi báo khách giờ mới. Giờ hẹn đầu vẫn được giữ: ô Đúng hẹn của chủ tiệm luôn tính theo giờ hẹn đầu | Chi tiết đơn |
 
 - Giặt lại **không tính thêm tiền**: giá của đơn giữ nguyên.
 - Khách đã lấy đồ về rồi mới quay lại vì đồ chưa sạch thì **không** bấm Giặt lại — đó là
   **khiếu nại** (xem mục khiếu nại bên dưới).
 - Lịch sử của đơn ghi rõ bước và lý do, ví dụ **Giặt lại · Chưa sạch**, kèm tên bạn.
+- Đơn quá giờ hẹn mà chưa xong có nhãn đỏ **Trễ hẹn** ở **Đơn hàng** và trên trang đơn; sắp tới giờ
+  hẹn (còn 2 tiếng) thì nhãn vàng *Sắp tới hẹn*. **Bảng trễ hạn** xếp đơn đến hạn sớm nhất lên đầu.
 
 - **Khách đã nhắn tin cho tiệm qua kênh chính thức:** từ cuộc trò chuyện của khách — thẻ tin
   nhắn ở **Duyệt**, **Bản nháp AI** hoặc **Gửi tay** — bấm **Tạo đơn cho khách này**: máy mở lượt
@@ -125,8 +128,9 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 3. Để máy **bật qua đêm** (chỉ tắt màn hình). Bản sao lưu chạy lúc 2 giờ 30 sáng.
 4. Chủ tiệm (và người duyệt, kế toán, kiểm toán) xem số của ngày, tuần, tháng ở **Báo cáo** — bấm
    **Báo cáo** cạnh ô tiền trên **Hôm nay**, hoặc vào **Thêm → Báo cáo**. Mỗi ô ghi cả hai số
-   (ví dụ **3 / 5 đơn tạo**); **Đúng hẹn (nội bộ)** đo theo mốc nội bộ 8 giờ của Bảng trễ hạn, không
-   phải giờ hẹn với khách. Nhân viên quầy thấy mục này bị khoá, có ghi lý do.
+   (ví dụ **3 / 5 đơn tạo**); **Đúng hẹn** đo theo giờ hẹn **đầu tiên** với khách (hẹn lại không
+   làm số đẹp hơn); đơn nhận trước khi chủ tiệm công bố quy tắc hẹn trả thì đo theo mốc nội bộ 8
+   giờ, và ô ghi rõ có bao nhiêu đơn như vậy. Nhân viên quầy thấy mục này bị khoá, có ghi lý do.
 
 ---
 

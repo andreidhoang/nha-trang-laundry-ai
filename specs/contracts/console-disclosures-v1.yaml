@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 445
+  DESCRIPTIVE: 460
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 7
   SERVER_GATE: 15
-total: 475
+total: 490
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1352,6 +1352,120 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMISE_REQUIRED:af41b4e980fd
+  module: core/i18n.js
+  key: REASON_NOTE.PROMISE_REQUIRED
+  text: Đơn này cần bạn chọn giờ hẹn trả trước khi nhận đồ. Chọn ngày giờ ở ô “Hẹn trả” rồi bấm lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.TET_DATES_UNPUBLISHED:73708b62eea9
+  module: core/i18n.js
+  key: REASON_NOTE.TET_DATES_UNPUBLISHED
+  text: Giờ hẹn sẽ rơi vào dịp Tết mà chủ tiệm chưa nhập ngày nghỉ Tết năm đó, nên máy không tự hẹn. Bạn
+    tự chọn ngày giờ trả.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.SERVICE_NOT_IN_POLICY:792138001b6e
+  module: core/i18n.js
+  key: REASON_NOTE.SERVICE_NOT_IN_POLICY
+  text: Có món chưa nằm trong quy tắc hẹn trả chủ tiệm đã công bố. Bạn tự chọn ngày giờ trả.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.NO_LINES:1d317c819e95
+  module: core/i18n.js
+  key: REASON_NOTE.NO_LINES
+  text: Báo giá không có món nào để hẹn giờ trả.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.TURNAROUND_POLICY_UNPUBLISHED:1e36a86ac27f
+  module: core/i18n.js
+  key: REASON_NOTE.TURNAROUND_POLICY_UNPUBLISHED
+  text: Chủ tiệm chưa công bố quy tắc hẹn trả, nên chưa ghi được giờ hẹn nào. Không có gì được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMISE_CHOICE_NOT_APPLICABLE:a43f2e55e5d4
+  module: core/i18n.js
+  key: REASON_NOTE.PROMISE_CHOICE_NOT_APPLICABLE
+  text: Lựa chọn này không áp cho các món trong đơn (24/48 giờ chỉ cho giày, rèm, chăn; 2 giờ chỉ cho
+    đồ giặt sấy thường). Tải lại đơn và chọn lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMISE_CUSTOM_AT_NOT_TAKEN:45fff3d38b04
+  module: core/i18n.js
+  key: REASON_NOTE.PROMISE_CUSTOM_AT_NOT_TAKEN
+  text: Ngày giờ tự chọn chỉ đi kèm lựa chọn “Tự chọn giờ”.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMISE_NOT_AFTER_ACCEPTANCE:8bafb15d371e
+  module: core/i18n.js
+  key: REASON_NOTE.PROMISE_NOT_AFTER_ACCEPTANCE
+  text: Giờ hẹn phải sau lúc này. Chọn một giờ muộn hơn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMISE_OUTSIDE_OPENING_HOURS:ec6283650895
+  module: core/i18n.js
+  key: REASON_NOTE.PROMISE_OUTSIDE_OPENING_HOURS
+  text: Giờ hẹn phải trong giờ mở cửa, 08:00–20:00.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMISE_ON_CLOSED_DAY:4ebc7f1e3d99
+  module: core/i18n.js
+  key: REASON_NOTE.PROMISE_ON_CLOSED_DAY
+  text: Ngày đó tiệm nghỉ. Chọn một ngày tiệm mở cửa.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMISE_UNCHANGED:04d58f3731eb
+  module: core/i18n.js
+  key: REASON_NOTE.PROMISE_UNCHANGED
+  text: Giờ mới trùng giờ đang hẹn — không có gì để đổi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMISE_NOTE_REQUIRED:3818f59ceb0a
+  module: core/i18n.js
+  key: REASON_NOTE.PROMISE_NOTE_REQUIRED
+  text: Lý do “Khác” cần vài chữ ghi rõ vì sao hẹn lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMISE_NOT_SET:6ffe641bea0d
+  module: core/i18n.js
+  key: REASON_NOTE.PROMISE_NOT_SET
+  text: Đơn này không có giờ hẹn (nhận trước khi chủ tiệm công bố quy tắc), nên không có gì để hẹn lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PROMISE_ORDER_DONE:8b7d7a499672
+  module: core/i18n.js
+  key: REASON_NOTE.PROMISE_ORDER_DONE
+  text: Đồ đã giặt xong hoặc đơn đã đóng — không cần hẹn lại nữa.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: core/rbac.js#why:f1857f4fe905
   module: core/rbac.js
   key: why
@@ -2305,12 +2419,12 @@ disclosures:
     - custody_events
     - batches
     why: 'Same shape: the custody context is measured empty and the disclosure says so.'
-- slot_id: screens/gaps.js#lede:021d5a31f8ca
+- slot_id: screens/gaps.js#lede:7b732888ca4a
   module: screens/gaps.js
   key: lede
-  text: 'Màn Báo cáo có số của chủ: đơn, đúng hẹn theo mốc nội bộ, giặt lại, khiếu nại, tiền đã thu và
-    bồi hoàn — mỗi số kèm tử số, mẫu số, khoảng ngày và phiên bản truy vấn. Các mục dưới đây vẫn thiếu
-    vì cần số đo thật hoặc một quyết định chưa ai đưa ra.'
+  text: 'Màn Báo cáo có số của chủ: đơn, đúng hẹn theo giờ hẹn đầu tiên với khách, giặt lại, khiếu nại,
+    tiền đã thu và bồi hoàn — mỗi số kèm tử số, mẫu số, khoảng ngày và phiên bản truy vấn. Các mục dưới
+    đây vẫn thiếu vì cần số đo thật hoặc một quyết định chưa ai đưa ra.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2384,28 +2498,28 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:4787b1e7decc
+- slot_id: screens/gaps.js#missing:d2b85cf90130
   module: screens/gaps.js
   key: missing
-  text: Chưa có nguồn cấu hình nào gán ProductionSlaPolicy cho từng đơn. Bảng trễ hạn và ô Đúng hẹn của
-    màn Báo cáo vì vậy đang áp đúng một quy tắc đã nêu cho mọi đơn, và nói rõ điều đó ngay trên màn hình.
+  text: Mỗi đơn đã có giờ hẹn trả tại tiệm, nhưng chưa có giờ hẹn giao tận nơi, và khoản giảm 10% không
+    được tạo tự động.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:229eedf0b507
+- slot_id: screens/gaps.js#blockedBy:a96ed7b67835
   module: screens/gaps.js
   key: blockedBy
-  text: Chọn chính sách SLA cho từng đơn (chưa có nguồn cấu hình)
+  text: 'DEC-037 đã chốt: đợt này chỉ hẹn và đo, chưa tự bù; nối vào Bồi hoàn là bước sau'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:720a2d030408
+- slot_id: screens/gaps.js#today:09a1596aaac5
   module: screens/gaps.js
   key: today
-  text: Xem danh sách đơn đang sản xuất ở màn hình Bảng trễ hạn. Mốc ở đó là mốc rủi ro nội bộ của tiệm,
-    không phải giờ đã hẹn với khách.
+  text: Đơn trễ hẹn hiện nhãn “Trễ hẹn” ở Đơn hàng và Bảng trễ hạn. Muốn bù cho khách thì tạo khoản bù
+    ở màn Bồi hoàn như trước.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3192,11 +3306,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/receipt.js#hint:22f3e7267279
+- slot_id: screens/receipt.js#hint:696d837e2581
   module: screens/receipt.js
   key: hint
-  text: 'Phiếu không ghi giờ hẹn trả đồ: tiệm chưa quyết định quy tắc hẹn giờ cho từng đơn, nên phiếu
-    ghi “Tiệm sẽ báo khi đồ sẵn sàng”.'
+  text: Giờ hẹn trả in trên phiếu là giờ máy chủ đã ghi lúc nhận đồ (hoặc giờ hẹn lại sau đó). Đơn nhận
+    trước khi chủ tiệm công bố quy tắc hẹn trả thì phiếu ghi “Tiệm sẽ báo khi đồ sẵn sàng”.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3696,11 +3810,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/slaBoard.js#guardrail:19ac6a74b8e3
+- slot_id: screens/slaBoard.js#guardrail:a6682553db04
   module: screens/slaBoard.js
   key: guardrail
-  text: Bảng này chỉ đọc. Không có nút nào ở đây thay đổi trạng thái đơn, và mốc hiển thị là mốc nội bộ
-    của tiệm chứ không phải giờ đã hẹn với khách.
+  text: Bảng này chỉ đọc. Không có nút nào ở đây thay đổi trạng thái đơn. Dòng ghi “Hẹn” đo theo giờ đã
+    hẹn với khách; dòng ghi “Mốc nội bộ” đo theo mốc 8 giờ của tiệm, vì đơn đó nhận trước khi chủ tiệm
+    công bố quy tắc hẹn trả.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3713,10 +3828,10 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/slaBoard.js#notice__title:9603120ee896
+- slot_id: screens/slaBoard.js#notice__title:74c27bff307d
   module: screens/slaBoard.js
   key: notice__title
-  text: Mốc này là mốc nội bộ của tiệm, không phải hẹn với khách
+  text: Mỗi dòng tính theo giờ hẹn của đơn, hoặc mốc nội bộ
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3746,20 +3861,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/slaBoard.js#screen__lede:4044cc4382bc
+- slot_id: screens/slaBoard.js#screen__lede:4a5d2686e415
   module: screens/slaBoard.js
   key: screen__lede
-  text: 'Đơn đang trong sản xuất, xếp theo thời gian nhận vào sản xuất — đơn nhận sớm nhất nằm trên cùng.
-    Đây không phải thứ tự gấp: đơn đã giặt xong đã dừng đồng hồ, nên hãy đọc mốc ghi trên từng dòng. Thứ
-    tự là của máy chủ, màn hình này không tự sắp lại.'
+  text: Đơn đang trong sản xuất, xếp theo lúc đến hạn — giờ hẹn trả của đơn, hoặc mốc nội bộ 8 giờ với
+    đơn nhận trước khi chủ tiệm công bố quy tắc hẹn trả. Đơn đến hạn sớm nhất nằm trên cùng. Thứ tự là
+    của máy chủ, màn hình này không tự sắp lại.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/slaBoard.js#hint:5aff82af7121
+- slot_id: screens/slaBoard.js#hint:f3c70b13a393
   module: screens/slaBoard.js
   key: hint
-  text: Xếp theo lúc nhận vào giặt, không theo độ gấp — hãy xem giờ trên từng dòng.
+  text: Xếp theo lúc đến hạn. “Hẹn” là giờ đã hẹn với khách; “Mốc nội bộ” là mốc 8 giờ của tiệm.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -4123,6 +4238,15 @@ disclosures:
   module: ui/handoff.js
   key: hint
   text: Tin này của cửa hàng khác cửa hàng đang chọn — đổi cửa hàng để tạo đơn cho khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/promise.js#hint:b5663878f609
+  module: ui/promise.js
+  key: hint
+  text: 'Chưa đọc được giờ hẹn trả. Nhận đồ vẫn ghi được: máy chủ tự tính giờ hẹn, hoặc báo nếu đơn cần
+    bạn chọn giờ.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

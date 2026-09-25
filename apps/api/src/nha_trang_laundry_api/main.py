@@ -2,7 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from pathlib import Path
 from secrets import token_urlsafe
@@ -55,6 +55,7 @@ from nha_trang_laundry_db.message_drafts import SEND_MESSAGE_POLICY_VERSION
 from nha_trang_laundry_db.orders import (
     OrderAuthorizationError,
     OrderNotVisibleError,
+    OrderPromiseRefused,
     OrderStateError,
     OrderStepRequiresHuman,
     OrderView,
@@ -113,6 +114,12 @@ from nha_trang_laundry_domain.catalog import (
     Unit,
 )
 from nha_trang_laundry_domain.order_steps import COMPOSITE_STEPS, OrderStep
+from nha_trang_laundry_domain.promise import (
+    PromiseChangeReason,
+    PromiseChoice,
+    PromiseRequirement,
+    promise_state,
+)
 from nha_trang_laundry_domain.quote_composition import RequestedLine
 from nha_trang_laundry_domain.range_prices import RangePriceChoice
 from nha_trang_laundry_domain.remedies import RemedyKind
@@ -164,6 +171,7 @@ from nha_trang_laundry_api.operations import (
     UnresolvedQuoteResult,
 )
 from nha_trang_laundry_api.ops_board import OpsBoardService, OpsBoardUnavailable
+from nha_trang_laundry_api.promises import PromiseService, PromiseServiceUnavailable
 from nha_trang_laundry_api.readiness import readyz
 from nha_trang_laundry_api.security import BrowserSecurityMiddleware, RequestSizeLimitMiddleware
 
@@ -365,6 +373,11 @@ class OrderStepRequest(StrictRequest):
     rewash_reason: RewashReason | None = None
     #: `REJECT_INTAKE` only, and required by it (founder ruling R2): why the shop refused the goods.
     rejection_reason: IntakeRejectionReason | None = None
+    #: `PROMISE-001`, `RECEIVE` only: the staff member's promise choice -- `H24` / `H48` for shoes,
+    #: curtains and blankets (48 when absent), `EXPRESS_2H` for standard clothing after a capacity
+    #: check, `CUSTOM` with `custom_at` for a time they set. Absent is the published rule.
+    promise_choice: PromiseChoice | None = None
+    custom_at: datetime | None = None
 
     @field_validator("step")
     @classmethod
@@ -395,6 +408,15 @@ class OrderStepRequest(StrictRequest):
             raise ValueError("rejection_reason is taken only by REJECT_INTAKE")
         if (rewash or reject) and self.custody_resolution is not None:
             raise ValueError(f"custody_resolution is not taken by {self.step.value}")
+        # PROMISE-001: a promise belongs to RECEIVE, and a custom time to a CUSTOM choice.
+        if self.step is not OrderStep.RECEIVE and (
+            self.promise_choice is not None or self.custom_at is not None
+        ):
+            raise ValueError("promise_choice and custom_at are taken only by RECEIVE")
+        if (self.promise_choice is PromiseChoice.CUSTOM) != (self.custom_at is not None):
+            raise ValueError("custom_at is required by, and only by, promise_choice CUSTOM")
+        if self.custom_at is not None and self.custom_at.tzinfo is None:
+            raise ValueError("custom_at must carry its timezone")
         return self
 
 
@@ -735,6 +757,17 @@ class OrderViewResponse(OrderResponse):
     #: and settlement rules against the order's stored facts. The console holds no transition
     #: table of its own; this list is the only source of which action to offer.
     next_steps: list[NextStepResponse]
+    #: `PROMISE-001`: the first promise (set at Nhận đồ, immutable; the on-time figure counts
+    #: against it), what the customer was last told, and where the order stands against that --
+    #: `ON_TRACK`, `DUE_SOON`, `LATE`, `MET`, `MISSED` -- decided by the server when this was read.
+    #: All null for an order taken while no turnaround policy was published.
+    promised_ready_at: datetime | None = None
+    current_promise_at: datetime | None = None
+    promise_state: str | None = None
+    #: Which rule produced the first promise (`SLA_STANDARD_CLOTHES`, `SLA_BLANKETS_SHEETS`,
+    #: `STAFF_SET`, `EXPRESS_2H`, ...) and the basis (`RULE`, `H24`, `H48`, `EXPRESS_2H`, `CUSTOM`).
+    promise_rule_id: str | None = None
+    promise_basis: str | None = None
 
 
 class ApprovalResponse(BaseModel):
@@ -2219,11 +2252,220 @@ def execute_order_step(
             custody_resolution=request.custody_resolution,
             rewash_reason=request.rewash_reason,
             rejection_reason=request.rejection_reason,
+            promise_choice=request.promise_choice,
+            custom_promise_at=request.custom_at,
         )
     except OrderStepRequiresHuman as error:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"outcome": "REQUIRE_HUMAN", "reason_codes": list(error.reason_codes)},
+        ) from error
+    except OrderPromiseRefused as error:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"reason_code": error.code, "decision": "DEC-037"},
+        ) from error
+    except (OrderStateError, OrderAuthorizationError, IdempotencyConflictError) as error:
+        _raise_operations_error(error)
+    return _order_view_response(result.view, replayed=result.replayed)
+
+
+# --- PROMISE-001: the order's promised-ready time (DEC-037) ------------------------------------
+#
+# The first promise is written by RECEIVE above, in the step's own transaction. These two routes
+# read it (with what Nhận đồ would promise, before the goods are accepted) and move what the
+# customer was told (Hẹn lại), with a reason. Every time and every state is the domain's.
+
+
+class PromiseChoiceOptionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    choice: PromiseChoice
+    #: What pressing Nhận đồ now with this choice would promise; null for `CUSTOM`.
+    promised_at: datetime | None
+
+
+class PromiseOptionsResponse(BaseModel):
+    """What Nhận đồ would promise if pressed now, and what the staff member may choose."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: `NONE` (the rule computes it), `RANGE_CHOICE` (24/48 h, 48 when silent) or `CUSTOM` (a person
+    #: must pick the day and hour).
+    requirement: PromiseRequirement
+    default_promised_at: datetime | None
+    default_choice: PromiseChoice | None
+    choices: list[PromiseChoiceOptionResponse]
+    #: Why a person must set it: `HUMAN_ETA_REQUIRED`, `TET_DATES_UNPUBLISHED`,
+    #: `SERVICE_NOT_IN_POLICY`, `NO_LINES`.
+    reason_codes: list[str]
+    #: The service codes of the lines that need a person.
+    human_service_codes: list[str]
+
+
+class PromiseChangeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    previous_promise_at: datetime
+    new_promise_at: datetime
+    reason_code: PromiseChangeReason
+    note: str | None
+    changed_by_staff_id: UUID
+    changed_at: datetime
+
+
+class OrderPromiseResponse(BaseModel):
+    """An order's promise as the counter reads it (`PROMISE-001`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    #: False until the owner runs `scripts/publish_turnaround_policy.py` (or after a withdrawal):
+    #: orders then carry no promise and nothing refuses.
+    policy_published: bool
+    policy_version: int | None
+    #: The shop's opening hours, "HH:MM", for the date-time picker's bounds.
+    opens_at: str | None
+    closes_at: str | None
+    promised_ready_at: datetime | None
+    current_promise_at: datetime | None
+    promise_state: str | None
+    promise_basis: str | None
+    promise_rule_id: str | None
+    #: Hẹn lại history, oldest first, the latest `CHANGE_HISTORY_LIMIT`; `change_count` is all.
+    changes: list[PromiseChangeResponse]
+    change_count: int
+    truncated: bool
+    #: Present only while Nhận đồ can still promise: policy in force, no promise, goods not in.
+    options: PromiseOptionsResponse | None
+    evaluated_at: datetime
+
+
+class PromiseChangeRequest(StrictRequest):
+    """Hẹn lại: the new time the customer is told, and why."""
+
+    promise_at: datetime
+    reason: PromiseChangeReason
+    #: A few words, required for `OTHER`; kept in the change row only, never in an event or audit.
+    note: str | None = Field(default=None, max_length=120)
+
+    @field_validator("promise_at")
+    @classmethod
+    def _aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("promise_at must carry its timezone")
+        return value
+
+
+def get_promise_service() -> PromiseService:
+    try:
+        return PromiseService(AuthSettings())
+    except PromiseServiceUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable"
+        ) from error
+
+
+@app.get("/internal/v1/orders/{order_id}/promise", response_model=OrderPromiseResponse)
+def read_order_promise(
+    order_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    service: Annotated[PromiseService | None, Depends(get_promise_service)] = None,
+) -> OrderPromiseResponse:
+    """The order's promise, its state now, and what Nhận đồ would promise (`PROMISE-001`).
+
+    Also the Hẹn lại history, and -- before Nhận đồ -- each choice with the time it would give.
+
+    Membership of the order's own store, as on the order read: a missing order and another
+    store's order are the same 404.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        found = service.read(order_id=order_id, principal=principal)
+    except OrderNotVisibleError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order unavailable") from error
+    except OrderAuthorizationError as error:
+        _raise_operations_error(error)
+    options = found.options
+    return OrderPromiseResponse(
+        order_id=found.order_id,
+        policy_published=found.policy_published,
+        policy_version=found.policy_version,
+        opens_at=None if found.opens_at is None else found.opens_at.strftime("%H:%M"),
+        closes_at=None if found.closes_at is None else found.closes_at.strftime("%H:%M"),
+        promised_ready_at=found.promised_ready_at,
+        current_promise_at=found.current_promise_at,
+        promise_state=_state_value(found.state),
+        promise_basis=found.promise_basis,
+        promise_rule_id=found.promise_rule_id,
+        changes=[
+            PromiseChangeResponse(
+                previous_promise_at=item.previous_promise_at,
+                new_promise_at=item.new_promise_at,
+                reason_code=PromiseChangeReason(item.reason_code),
+                note=item.note,
+                changed_by_staff_id=item.changed_by_staff_id,
+                changed_at=item.changed_at,
+            )
+            for item in found.changes
+        ],
+        change_count=found.change_count,
+        truncated=found.change_count > len(found.changes),
+        options=None
+        if options is None
+        else PromiseOptionsResponse(
+            requirement=options.requirement,
+            default_promised_at=options.default_promised_at,
+            default_choice=options.default_choice,
+            choices=[
+                PromiseChoiceOptionResponse(choice=item.choice, promised_at=item.promised_at)
+                for item in options.choices
+            ],
+            reason_codes=[code.value for code in options.reason_codes],
+            human_service_codes=list(options.human_service_codes),
+        ),
+        evaluated_at=found.evaluated_at,
+    )
+
+
+@app.post("/internal/v1/orders/{order_id}/promise", response_model=OrderViewResponse)
+def change_order_promise(
+    order_id: UUID,
+    request: PromiseChangeRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[PromiseService | None, Depends(get_promise_service)] = None,
+) -> OrderViewResponse:
+    """Hẹn lại: move what the customer was told, with a reason (`PROMISE-001`, `DEC-037`).
+
+    `If-Match` is the order's row version (428 absent, 400 malformed, 409 `STALE_VERSION`);
+    `Idempotency-Key` replays the first answer. The first promise never moves, so the on-time figure
+    cannot be improved by re-promising. Refusals: 422 `{"reason_code": ..., "decision": "DEC-037"}`
+    with one of
+    `TURNAROUND_POLICY_UNPUBLISHED`, `PROMISE_NOT_SET`, `PROMISE_ORDER_DONE`,
+    `PROMISE_NOT_AFTER_ACCEPTANCE` (not later than now), `PROMISE_OUTSIDE_OPENING_HOURS`,
+    `PROMISE_ON_CLOSED_DAY`, `PROMISE_UNCHANGED`, `PROMISE_NOTE_REQUIRED` or
+    `PROMISE_NOTE_TOO_LONG`. The reply is the order view after the change.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    expected = _parse_if_match(if_match)
+    try:
+        result = service.change(
+            order_id=order_id,
+            expected_row_version=expected,
+            idempotency_key=idempotency_key,
+            principal=principal,
+            new_promise_at=request.promise_at,
+            reason=request.reason,
+            note=request.note,
+        )
+    except OrderPromiseRefused as error:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"reason_code": error.code, "decision": "DEC-037"},
         ) from error
     except (OrderStateError, OrderAuthorizationError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
@@ -4561,7 +4803,27 @@ def _order_view_response(view: OrderView, *, replayed: bool = False) -> OrderVie
             )
             for item in view.next_steps
         ],
+        promised_ready_at=view.promised_ready_at,
+        current_promise_at=view.current_promise_at,
+        # Decided now, at read time, by the domain: a stored state would be wrong a minute later.
+        promise_state=(
+            None
+            if view.commercial is CommercialOrderStatus.CANCELLED
+            else _state_value(
+                promise_state(
+                    view.current_promise_at,
+                    ready_at=view.production_ready_at,
+                    now=datetime.now(UTC),
+                )
+            )
+        ),
+        promise_rule_id=view.promise_rule_id,
+        promise_basis=view.promise_basis,
     )
+
+
+def _state_value(state: object) -> str | None:
+    return None if state is None else str(getattr(state, "value", state))
 
 
 def _approval_response(stored: StoredApproval) -> ApprovalResponse:
@@ -5139,6 +5401,12 @@ class SlaRiskResponse(BaseModel):
     #: `READ-ENRICH-001`: the order's walk-in ticket ("Phiếu 17"); null for a channel customer.
     ticket_number: int | None = None
     ticket_issued_on: date | None = None
+    #: `PROMISE-001`: what this row was measured and ranked by -- `ORDER_PROMISE` (the order's own
+    #: promised-ready time) or `STATED_RULE` (the page's policy, for an order taken before the owner
+    #: published a turnaround policy) -- the rule behind that promise, and the instant it is due.
+    rule_source: Literal["ORDER_PROMISE", "STATED_RULE"] = "STATED_RULE"
+    promise_rule_id: str | None = None
+    due_at: datetime | None = None
 
 
 class SlaBoardResponse(BaseModel):
@@ -5154,7 +5422,8 @@ class SlaBoardResponse(BaseModel):
     #: decision -- so a board cannot be read as the shop having promised a customer anything.
     policy_notice_vi: str
     evaluated_at: datetime
-    next_accepted_at: datetime | None
+    #: `PROMISE-001`: the keyset is `(due_at, order_id)`, the order the board is ranked in.
+    next_due_at: datetime | None
     next_order_id: UUID | None
 
 
@@ -5290,21 +5559,23 @@ def sla_board(
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
     service: Annotated[OpsBoardService | None, Depends(get_ops_board_service)] = None,
     limit: int = SLA_BOARD_DEFAULT_LIMIT,
-    after_accepted_at: datetime | None = None,
+    after_due_at: datetime | None = None,
     after_order_id: UUID | None = None,
 ) -> SlaBoardResponse:
-    """In-production orders against the one stated internal mark, oldest accepted first.
+    """In-production orders, the soonest due first (`PROMISE-001`).
+
+    Each order is due at its own promised-ready time when it has one (`rule_source`
+    `ORDER_PROMISE`), and otherwise at the stated rule's mark (`STATED_RULE`: an order taken before
+    the owner published a turnaround policy). Every row says which.
 
     The route gate is the session alone and the real gate is the repository, exactly as on the two
     Shadow list routes: `SHADOW_READ_ROLES` plus an explicit `staff_store_assignments` row. Writing
     a second role set here would be a second opinion about who may read a store, and the one in the
     repository is the one that cannot be forgotten.
 
-    Ordering is the query's, not this layer's, and it is acceptance order rather than urgency
-    order: an order whose clock stopped at `production_ready_at` has frozen time remaining and can
-    sort above one about to breach, so `sla_risk_board` declines to claim a ranking its index can
-    serve. Each row carries its own outcome and its own remaining and breach figures for that
-    reason. Re-sorting the page here would rank one page against itself and break the keyset.
+    Ordering is the query's, not this layer's: by due instant, then order id, which is also the
+    keyset (`after_due_at` + `after_order_id`). Re-sorting the page here would rank one page
+    against itself and break the keyset.
     """
     if service is None:
         raise HTTPException(
@@ -5316,7 +5587,7 @@ def sla_board(
             principal=principal,
             policy=SLA_POLICY,
             limit=limit,
-            after_accepted_at=after_accepted_at,
+            after_due_at=after_due_at,
             after_order_id=after_order_id,
         )
     except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
@@ -5338,6 +5609,11 @@ def sla_board(
                 breach_microseconds=item.breach_microseconds,
                 ticket_number=item.ticket_number,
                 ticket_issued_on=item.ticket_issued_on,
+                rule_source="ORDER_PROMISE"
+                if item.rule_source == "ORDER_PROMISE"
+                else "STATED_RULE",
+                promise_rule_id=item.promise_rule_id,
+                due_at=item.due_at,
             )
             for item in page.items
         ],
@@ -5347,7 +5623,7 @@ def sla_board(
         policy_target_max_hours=page.policy_target_max_hours,
         policy_notice_vi=sla_policy_notice_vi(SLA_POLICY),
         evaluated_at=page.evaluated_at,
-        next_accepted_at=page.next_accepted_at,
+        next_due_at=page.next_due_at,
         next_order_id=page.next_order_id,
     )
 
@@ -5436,6 +5712,9 @@ class ReportFigureResponse(BaseModel):
     entries: int | None = Field(default=None, ge=0)
     amount_vnd: int | None = Field(default=None, ge=0)
     by_kind: list[ReportRemedyKindResponse] | None = None
+    #: `ON_TIME_INTERNAL` only (`PROMISE-001`): how many of the denominator had no promise and were
+    #: judged by the stated rule. Zero makes the figure `COMPLETE`; more makes it `RULE_ASSUMED`.
+    rule_assumed: int | None = Field(default=None, ge=0)
 
 
 class ReportSlaRuleResponse(BaseModel):
@@ -5506,6 +5785,7 @@ def _report_figures(period: ReportPeriod, query_version: str) -> list[ReportFigu
                 "direction": figure.direction,
                 "entries": figure.entries,
                 "amount_vnd": figure.amount_vnd,
+                "rule_assumed": figure.rule_assumed,
                 "by_kind": (
                     None
                     if figure.by_kind is None

@@ -1,0 +1,11 @@
+{
+  "policy_version": "account-terms-v1",
+  "decision_ref": "DEC-035",
+  "statement_period": "CALENDAR_MONTH",
+  "due_day_of_next_month": 15,
+  "timezone": "Asia/Ho_Chi_Minh",
+  "overdue_blocks_unpaid_handover": true,
+  "recommended_starting_limit_vnd": 3000000,
+  "title_vi": "Điều khoản công nợ cho khách doanh nghiệp",
+  "text_vi": "Chỉ khách doanh nghiệp được chủ tiệm mở công nợ, với hạn mức do chủ tiệm đặt (gợi ý khởi đầu 3.000.000 ₫, không bắt buộc). Khách được nhận đồ chưa trả tiền khi số đang nợ cộng đơn này không vượt hạn mức. Sao kê theo tháng dương lịch; hạn thanh toán là ngày 15 của tháng sau. Khi một kỳ quá hạn mà chưa trả đủ, đơn mới phải trả tiền tại quầy cho tới khi trả xong, trừ khi chủ tiệm tạm mở chặn — mỗi lần mở đều được ghi lại. Tiền trả được trừ vào các đơn nợ cũ nhất trước."
+}

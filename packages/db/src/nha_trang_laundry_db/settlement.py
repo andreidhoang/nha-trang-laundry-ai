@@ -173,6 +173,9 @@ _COLLECTED_BY: dict[SettlementShape, str] = {
     SettlementShape.EXACT_PAYMENT_SELF_COLLECTION: "CUSTOMER",
     SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY: "PENDING_DELIVERY",
     SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION: "PENDING_COLLECTION",
+    # `PAYMENT-002` (`0059`): the goods left on the account before this money came; the account
+    # charge row records that leaving, and this says so rather than naming a collector again.
+    SettlementShape.EXACT_PAYMENT_ON_ACCOUNT: "ACCOUNT_HANDOVER",
 }
 
 

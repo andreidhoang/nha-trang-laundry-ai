@@ -244,6 +244,37 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "predicate and the proposals selected WHERE store_id = %s AND incident_id = %s, so "
         "another store's incident is indistinguishable from one that does not exist.",
     ),
+    # --- PAYMENT-002 (DEC-035, B2B half): account customers --------------------------------------
+    # Role and MFA, then membership of the named store (or of the order's own store, read from the
+    # order row), before anything is read or written; the account is then selected WHERE
+    # customer_id AND store_id, so another store's account is indistinguishable from none.
+    ("GET", "/internal/v1/stores/{store_id}/customers/{customer_id}/account"): store_scoped(
+        "accounts", "AccountRepository.read"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/customers/{customer_id}/account"): store_scoped(
+        "accounts", "AccountRepository.open"
+    ),
+    ("PATCH", "/internal/v1/stores/{store_id}/customers/{customer_id}/account"): store_scoped(
+        "accounts", "AccountRepository.update"
+    ),
+    (
+        "POST",
+        "/internal/v1/stores/{store_id}/customers/{customer_id}/account/block-lift",
+    ): store_scoped("accounts", "AccountRepository.lift_block"),
+    (
+        "POST",
+        "/internal/v1/stores/{store_id}/customers/{customer_id}/account/payments",
+    ): store_scoped("accounts", "AccountRepository.record_payment"),
+    (
+        "GET",
+        "/internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}",
+    ): store_scoped("accounts", "AccountRepository.statement"),
+    ("GET", "/internal/v1/orders/{order_id}/account-handover"): store_scoped(
+        "accounts", "AccountRepository.order_handover"
+    ),
+    ("POST", "/internal/v1/orders/{order_id}/account-charge"): store_scoped(
+        "accounts", "AccountRepository.charge"
+    ),
     # --- CUSTOMER-001 (DEC-034) -----------------------------------------------------------------
     # Role and MFA, then membership of the named store, before anything is read or written; every
     # row is then selected WHERE store_id = the path's store, so another store's customer is

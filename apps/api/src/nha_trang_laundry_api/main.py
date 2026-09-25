@@ -18,6 +18,17 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
+from nha_trang_laundry_db.accounts import (
+    ACCOUNT_OWNER_ROLES,
+    AccountCustomerNotFoundError,
+    AccountNotFoundError,
+    AccountOrderNotFoundError,
+    AccountPaymentRefused,
+    AccountPaymentView,
+    AccountRead,
+    AccountStateError,
+    StatementFigures,
+)
 from nha_trang_laundry_db.approvals import (
     ApprovalAuthorizationError,
     ApprovalDecision,
@@ -126,6 +137,13 @@ from nha_trang_laundry_db.transactional_consent import (
     TransactionalConsentNotFoundError,
     TransactionalConsentStateError,
 )
+from nha_trang_laundry_domain.accounts import (
+    ACCOUNT_DECISION,
+    AccountRefusal,
+    AccountRuleError,
+    AccountStatus,
+)
+from nha_trang_laundry_domain.accounts import month_label as account_month_label
 from nha_trang_laundry_domain.approvals import ApprovalEnvelopeError
 from nha_trang_laundry_domain.canonical import MAX_CANONICAL_INT
 from nha_trang_laundry_domain.catalog import (
@@ -191,6 +209,7 @@ from pydantic import (
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse, StreamingResponse
 
+from nha_trang_laundry_api.accounts import AccountService, AccountsUnavailable
 from nha_trang_laundry_api.assistant import (
     SLA_POLICY,
     AssistantService,
@@ -4600,6 +4619,697 @@ def link_customer(
         _raise_customer_error(error)
     return CustomerLinkCommandResponse(
         link_id=result.link_id, customer_id=result.customer_id, replayed=result.replayed
+    )
+
+
+# --- PAYMENT-002 (DEC-035, B2B half): account customers (công nợ) ------------------------------
+#
+# The owner opens an account for a BUSINESS customer and types its limit (none enforced until
+# typed: `ACCOUNT_LIMIT_UNSET`); the counter puts a finished order on it (*Giao đồ — ghi công nợ*)
+# while outstanding plus the order stays within the limit and no statement is overdue, and takes
+# payments against it (*Thu công nợ*), allocated oldest first into the ordinary payment ledger. The
+# month's statement is read live and frozen by the owner's month close. Every rule is the domain's;
+# every figure PostgreSQL's. Refused `ACCOUNT_TERMS_UNPUBLISHED` until the owner publishes the terms
+# with `scripts/publish_account_terms.py`.
+
+
+def get_account_service() -> AccountService:
+    try:
+        return AccountService(AuthSettings())
+    except AccountsUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="accounts unavailable"
+        ) from error
+
+
+def require_account_owner(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """`DEC-035`: the owner opens an account, types its limit, stops it and lifts its block. MFA."""
+    if not principal.roles & ACCOUNT_OWNER_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("ACCOUNT_OWNER_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+_ACCOUNT_ERRORS = (
+    StoreAccessError,
+    AccountNotFoundError,
+    AccountCustomerNotFoundError,
+    AccountOrderNotFoundError,
+    AccountRuleError,
+    AccountPaymentRefused,
+    AccountStateError,
+    IdempotencyConflictError,
+)
+
+
+def _raise_account_error(error: Exception) -> NoReturn:
+    """403 opaque; 404 for a customer, account or order outside the caller's stores; 409 for a
+    stale version, a reused key or an account already open; 422 `{outcome, reason_code, decision}`
+    for everything the account rules refuse -- each by name, nothing written."""
+    if isinstance(error, StoreAccessError):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    if isinstance(error, AccountNotFoundError):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="account not found") from error
+    if isinstance(error, AccountCustomerNotFoundError):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found") from error
+    if isinstance(error, AccountOrderNotFoundError):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found") from error
+    if isinstance(error, IdempotencyConflictError):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
+    if isinstance(error, AccountStateError):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
+    if isinstance(error, AccountRuleError):
+        if error.code is AccountRefusal.ACCOUNT_ALREADY_OPEN:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={"reason_code": error.code.value, "decision": ACCOUNT_DECISION},
+            ) from error
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "outcome": "NOT_SUPPORTED",
+                "reason_code": error.code.value,
+                "decision": ACCOUNT_DECISION,
+            },
+        ) from error
+    if isinstance(error, AccountPaymentRefused):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "outcome": "NOT_SUPPORTED",
+                "reason_code": error.code,
+                "decision": ACCOUNT_DECISION,
+            },
+        ) from error
+    raise error
+
+
+class AccountOpenRequest(StrictRequest):
+    #: The owner's limit in whole đồng, or null to open the account with no limit typed yet -- in
+    #: which case nothing leaves on it (`ACCOUNT_LIMIT_UNSET`). No default is ever assumed.
+    credit_limit_vnd: StrictInt | None = Field(default=None, ge=1, le=MAX_CANONICAL_INT)
+
+
+class AccountUpdateRequest(StrictRequest):
+    """The owner's change; only the fields present apply."""
+
+    credit_limit_vnd: StrictInt | None = Field(default=None, ge=1, le=MAX_CANONICAL_INT)
+    status: AccountStatus | None = None
+
+
+class AccountLiftRequest(StrictRequest):
+    #: Why the owner lets new orders leave while a statement is overdue: 3 to 200 characters.
+    reason: str = Field(min_length=1, max_length=400)
+    #: The last local day the block stays lifted: today up to 31 days ahead.
+    until: date
+
+
+class AccountPaymentRequest(StrictRequest):
+    """One payment against the account (*Thu công nợ*), with the counter's payment rules."""
+
+    amount_vnd: StrictInt = Field(ge=0, le=MAX_CANONICAL_INT)
+    method: Literal["TIEN_MAT", "CHUYEN_KHOAN"]
+    transfer_seen: StrictBool = False
+    bank_ref_last: str | None = Field(default=None, max_length=40)
+
+
+class AccountChargeRequest(StrictRequest):
+    #: The staff member's word that the customer takes the bag at the counter now. True for an
+    #: order the customer collects (the charge is the handover); false for a delivery order.
+    collected_by_customer: StrictBool
+
+
+class AccountStatementFiguresResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: `YYYY-MM`, the calendar month in the shop's time zone.
+    month: str
+    opening_vnd: int
+    charges_vnd: int
+    charge_count: int
+    payments_vnd: int
+    payment_count: int
+    closing_vnd: int
+    #: `DEC-035`: the 15th of the following month.
+    due_on: date
+
+
+class AccountOpenChargeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    charge_id: UUID
+    order_id: UUID
+    charged_at: datetime
+    amount_vnd: int
+    remaining_vnd: int
+    ticket_number: int | None
+    ticket_issued_on: date | None
+
+
+class AccountPaymentLineResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    payment_id: UUID
+    amount_vnd: int
+    method: str
+    bank_ref_last: str | None
+    recorded_at: datetime
+    #: How many orders the payment reached (oldest first).
+    order_count: int
+
+
+class AccountViewResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    account_id: UUID
+    status: AccountStatus
+    #: Null until the owner types one: nothing leaves on the account (`ACCOUNT_LIMIT_UNSET`).
+    credit_limit_vnd: int | None
+    outstanding_vnd: int
+    available_vnd: int | None
+    overdue_vnd: int
+    overdue_month: str | None
+    overdue_due_on: date | None
+    overdue_block_lifted_until: datetime | None
+    block_lifted: bool
+    #: What a new order meets now before its own amount: `ACCOUNT_SUSPENDED`,
+    #: `ACCOUNT_LIMIT_UNSET`, `ACCOUNT_OVERDUE`, or null.
+    handover_refusal: str | None
+    current_statement: AccountStatementFiguresResponse
+    open_charges: list[AccountOpenChargeResponse]
+    open_charges_truncated: bool
+    recent_payments: list[AccountPaymentLineResponse]
+    recent_payments_truncated: bool
+    opened_at: datetime
+    row_version: int
+    query_version: str
+
+
+class AccountReadResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer_id: UUID
+    customer_kind: CustomerKind
+    terms_published: bool
+    #: `DEC-035`'s recommended starting limit, a hint beside the owner's field. Never enforced.
+    recommended_limit_vnd: int
+    #: Why *Mở công nợ* would be refused now, or null.
+    open_refusal: str | None
+    account: AccountViewResponse | None
+    replayed: bool = False
+
+
+class AccountFrozenResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    opening_vnd: int
+    charges_vnd: int
+    payments_vnd: int
+    closing_vnd: int
+    frozen_at: datetime
+    query_version: str
+
+
+class AccountStatementChargeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    charged_at: datetime
+    amount_vnd: int
+    owed_vnd: int
+    ticket_number: int | None
+    ticket_issued_on: date | None
+
+
+class AccountStatementResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    account_id: UUID
+    customer_id: UUID
+    customer_name: str | None
+    statement: AccountStatementFiguresResponse
+    month_ended: bool
+    #: The owner's month-close copy, when the month was frozen.
+    frozen: AccountFrozenResponse | None
+    charges: list[AccountStatementChargeResponse]
+    charges_truncated: bool
+    payments: list[AccountPaymentLineResponse]
+    payments_truncated: bool
+    query_version: str
+
+
+class OrderAccountHandoverDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer_id: UUID
+    account_id: UUID
+    #: True exactly when *Giao đồ — ghi công nợ* would be accepted now.
+    offered: bool
+    #: Why not, by name, when not offered.
+    refusal: str | None
+    #: What the charge must say: true for an order the customer collects at the counter.
+    collected_by_customer: bool
+    order_remaining_vnd: int | None
+    outstanding_vnd: int
+    credit_limit_vnd: int | None
+    outstanding_after_vnd: int | None
+    row_version: int
+
+
+class OrderAccountHandoverResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    #: Null when the order's customer has no account (or the order has no customer record).
+    handover: OrderAccountHandoverDetail | None
+
+
+class AccountChargeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    charge_id: UUID
+    order_id: UUID
+    account_id: UUID
+    amount_vnd: int
+    outstanding_after_vnd: int
+    balance_status: str
+    self_collection_recorded: bool
+    row_version: int
+    replayed: bool
+
+
+class AccountAllocationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    amount_vnd: int
+    #: Whether this share paid the order off.
+    settled: bool
+    position: int
+
+
+class AccountPaymentResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    payment_id: UUID
+    account_id: UUID
+    amount_vnd: int
+    method: str
+    bank_ref_last: str | None
+    recorded_at: datetime
+    #: Oldest order first.
+    allocations: list[AccountAllocationResponse]
+    outstanding_after_vnd: int
+    row_version: int
+    replayed: bool
+
+
+def _figures_response(figures: StatementFigures) -> AccountStatementFiguresResponse:
+    return AccountStatementFiguresResponse(
+        month=account_month_label(figures.month),
+        opening_vnd=figures.opening_vnd,
+        charges_vnd=figures.charges_vnd,
+        charge_count=figures.charge_count,
+        payments_vnd=figures.payments_vnd,
+        payment_count=figures.payment_count,
+        closing_vnd=figures.closing_vnd,
+        due_on=figures.due_on,
+    )
+
+
+def _account_payment_line(item: AccountPaymentView) -> AccountPaymentLineResponse:
+    return AccountPaymentLineResponse(
+        payment_id=item.payment_id,
+        amount_vnd=item.amount_vnd,
+        method=item.method,
+        bank_ref_last=item.bank_ref_last,
+        recorded_at=item.recorded_at,
+        order_count=item.order_count,
+    )
+
+
+def _account_read_response(read: AccountRead, *, replayed: bool = False) -> AccountReadResponse:
+    view = read.account
+    return AccountReadResponse(
+        customer_id=read.customer_id,
+        customer_kind=read.customer_kind,
+        terms_published=read.terms_published,
+        recommended_limit_vnd=read.recommended_limit_vnd,
+        open_refusal=None if read.open_refusal is None else read.open_refusal.value,
+        account=None
+        if view is None
+        else AccountViewResponse(
+            account_id=view.account_id,
+            status=view.status,
+            credit_limit_vnd=view.credit_limit_vnd,
+            outstanding_vnd=view.outstanding_vnd,
+            available_vnd=view.available_vnd,
+            overdue_vnd=view.overdue_vnd,
+            overdue_month=None
+            if view.overdue_month is None
+            else account_month_label(view.overdue_month),
+            overdue_due_on=view.overdue_due_on,
+            overdue_block_lifted_until=view.overdue_block_lifted_until,
+            block_lifted=view.block_lifted,
+            handover_refusal=None if view.handover_refusal is None else view.handover_refusal.value,
+            current_statement=_figures_response(view.current_statement),
+            open_charges=[
+                AccountOpenChargeResponse(
+                    charge_id=item.charge_id,
+                    order_id=item.order_id,
+                    charged_at=item.charged_at,
+                    amount_vnd=item.amount_vnd,
+                    remaining_vnd=item.remaining_vnd,
+                    ticket_number=item.ticket_number,
+                    ticket_issued_on=item.ticket_issued_on,
+                )
+                for item in view.open_charges
+            ],
+            open_charges_truncated=view.open_charges_truncated,
+            recent_payments=[_account_payment_line(item) for item in view.recent_payments],
+            recent_payments_truncated=view.recent_payments_truncated,
+            opened_at=view.opened_at,
+            row_version=view.row_version,
+            query_version=view.query_version,
+        ),
+        replayed=replayed,
+    )
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}/account",
+    response_model=AccountReadResponse,
+)
+def read_customer_account(
+    store_id: UUID,
+    customer_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_customer_reader)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+) -> AccountReadResponse:
+    """The customer's account (công nợ): limit, outstanding, this month's statement, overdue."""
+    try:
+        read = service.read(store_id=store_id, customer_id=customer_id, principal=principal)
+    except _ACCOUNT_ERRORS as error:
+        _raise_account_error(error)
+    return _account_read_response(read)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}/account",
+    response_model=AccountReadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def open_customer_account(
+    store_id: UUID,
+    customer_id: UUID,
+    request: AccountOpenRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_account_owner)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+) -> AccountReadResponse:
+    """The owner opens an account for a BUSINESS customer, with a limit or none yet (`DEC-035`).
+
+    Refusals: `ACCOUNT_TERMS_UNPUBLISHED`, `ACCOUNT_REQUIRES_BUSINESS`, `CUSTOMER_ERASED`,
+    `ACCOUNT_LIMIT_INVALID` (422) and `ACCOUNT_ALREADY_OPEN` (409).
+    """
+    try:
+        result = service.open(
+            store_id=store_id,
+            customer_id=customer_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            credit_limit_vnd=request.credit_limit_vnd,
+        )
+        read = service.read(store_id=store_id, customer_id=customer_id, principal=principal)
+    except _ACCOUNT_ERRORS as error:
+        _raise_account_error(error)
+    return _account_read_response(read, replayed=result.replayed)
+
+
+@app.patch(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}/account",
+    response_model=AccountReadResponse,
+)
+def update_customer_account(
+    store_id: UUID,
+    customer_id: UUID,
+    request: AccountUpdateRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_account_owner)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> AccountReadResponse:
+    """The owner types or changes the limit, or stops or restarts the account, under `If-Match`."""
+    expected = _parse_if_match(if_match)
+    try:
+        result = service.update(
+            store_id=store_id,
+            customer_id=customer_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            expected_row_version=expected,
+            provided=frozenset(request.model_fields_set),
+            credit_limit_vnd=request.credit_limit_vnd,
+            status=request.status,
+        )
+        read = service.read(store_id=store_id, customer_id=customer_id, principal=principal)
+    except _ACCOUNT_ERRORS as error:
+        _raise_account_error(error)
+    return _account_read_response(read, replayed=result.replayed)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}/account/block-lift",
+    response_model=AccountReadResponse,
+)
+def lift_customer_account_block(
+    store_id: UUID,
+    customer_id: UUID,
+    request: AccountLiftRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_account_owner)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> AccountReadResponse:
+    """The owner lets new orders leave on the account through a day while a statement is overdue.
+
+    With a reason (`LIFT_REASON_REQUIRED`) and an end today to 31 days ahead
+    (`LIFT_EXPIRY_INVALID`). Every lift is recorded; the reason stays on its own row.
+    """
+    expected = _parse_if_match(if_match)
+    try:
+        result = service.lift_block(
+            store_id=store_id,
+            customer_id=customer_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            expected_row_version=expected,
+            reason=request.reason,
+            until=request.until,
+        )
+        read = service.read(store_id=store_id, customer_id=customer_id, principal=principal)
+    except _ACCOUNT_ERRORS as error:
+        _raise_account_error(error)
+    return _account_read_response(read, replayed=result.replayed)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}/account/payments",
+    response_model=AccountPaymentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_customer_account_payment(
+    store_id: UUID,
+    customer_id: UUID,
+    request: AccountPaymentRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> AccountPaymentResponse:
+    """*Thu công nợ*: a payment against the account, allocated to the oldest unpaid orders first.
+
+    The counter's rules over the account's outstanding total: 1 đồng up to it
+    (`OVERPAYMENT_REFUSED` above it), a transfer only once seen. Each order reached gets one
+    ordinary payment row; an order paid off is settled and reads `PAID`. `If-Match` is the account
+    version the counter read.
+    """
+    expected = _parse_if_match(if_match)
+    try:
+        stored = service.record_payment(
+            store_id=store_id,
+            customer_id=customer_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            expected_row_version=expected,
+            amount_vnd=request.amount_vnd,
+            method=PaymentMethod(request.method),
+            transfer_seen=request.transfer_seen,
+            bank_ref_last=request.bank_ref_last,
+        )
+    except _ACCOUNT_ERRORS as error:
+        _raise_account_error(error)
+    return AccountPaymentResponse(
+        payment_id=stored.payment_id,
+        account_id=stored.account_id,
+        amount_vnd=stored.amount_vnd,
+        method=stored.method,
+        bank_ref_last=stored.bank_ref_last,
+        recorded_at=stored.recorded_at,
+        allocations=[
+            AccountAllocationResponse(
+                order_id=item.order_id,
+                amount_vnd=item.amount_vnd,
+                settled=item.settled,
+                position=item.position,
+            )
+            for item in stored.allocations
+        ],
+        outstanding_after_vnd=stored.outstanding_after_vnd,
+        row_version=stored.row_version,
+        replayed=stored.replayed,
+    )
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}",
+    response_model=AccountStatementResponse,
+)
+def read_customer_account_statement(
+    store_id: UUID,
+    customer_id: UUID,
+    month: str,
+    principal: Annotated[StaffPrincipal, Depends(require_customer_reader)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+) -> AccountStatementResponse:
+    """One month's statement: opening, charges, payments, closing, due the 15th of the next month.
+
+    Live from the ledgers, with the owner's frozen copy when the month was closed. Lines bounded at
+    200 each, `truncated` disclosed; the totals are over every row.
+    """
+    try:
+        statement = service.statement(
+            store_id=store_id, customer_id=customer_id, month=month, principal=principal
+        )
+    except _ACCOUNT_ERRORS as error:
+        _raise_account_error(error)
+    frozen = statement.frozen
+    return AccountStatementResponse(
+        account_id=statement.account_id,
+        customer_id=statement.customer_id,
+        customer_name=statement.customer_name,
+        statement=_figures_response(statement.figures),
+        month_ended=statement.month_ended,
+        frozen=None
+        if frozen is None
+        else AccountFrozenResponse(
+            opening_vnd=frozen.opening_vnd,
+            charges_vnd=frozen.charges_vnd,
+            payments_vnd=frozen.payments_vnd,
+            closing_vnd=frozen.closing_vnd,
+            frozen_at=frozen.frozen_at,
+            query_version=frozen.query_version,
+        ),
+        charges=[
+            AccountStatementChargeResponse(
+                order_id=item.order_id,
+                charged_at=item.charged_at,
+                amount_vnd=item.amount_vnd,
+                owed_vnd=item.owed_vnd,
+                ticket_number=item.ticket_number,
+                ticket_issued_on=item.ticket_issued_on,
+            )
+            for item in statement.charges
+        ],
+        charges_truncated=statement.charges_truncated,
+        payments=[_account_payment_line(item) for item in statement.payments],
+        payments_truncated=statement.payments_truncated,
+        query_version=statement.query_version,
+    )
+
+
+@app.get(
+    "/internal/v1/orders/{order_id}/account-handover",
+    response_model=OrderAccountHandoverResponse,
+)
+def read_order_account_handover(
+    order_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_customer_reader)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+) -> OrderAccountHandoverResponse:
+    """For the order page: may this order leave on its customer's account now, and if not, why.
+
+    `handover` is null when the order's customer has no account. The charge decides again under
+    its locks; this is the same decision asked without them.
+    """
+    try:
+        offer = service.order_handover(order_id=order_id, principal=principal)
+    except _ACCOUNT_ERRORS as error:
+        _raise_account_error(error)
+    return OrderAccountHandoverResponse(
+        order_id=order_id,
+        handover=None
+        if offer is None
+        else OrderAccountHandoverDetail(
+            customer_id=offer.customer_id,
+            account_id=offer.account_id,
+            offered=offer.offered,
+            refusal=None if offer.refusal is None else offer.refusal.value,
+            collected_by_customer=offer.collected_by_customer,
+            order_remaining_vnd=offer.order_remaining_vnd,
+            outstanding_vnd=offer.outstanding_vnd,
+            credit_limit_vnd=offer.credit_limit_vnd,
+            outstanding_after_vnd=offer.outstanding_after_vnd,
+            row_version=offer.order_row_version,
+        ),
+    )
+
+
+@app.post(
+    "/internal/v1/orders/{order_id}/account-charge",
+    response_model=AccountChargeResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def charge_order_to_account(
+    order_id: UUID,
+    request: AccountChargeRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> AccountChargeResponse:
+    """*Giao đồ — ghi công nợ*: the finished goods leave, what the order owes goes on the account.
+
+    Decided under the account's and the order's row locks: the order's balance becomes
+    `ON_ACCOUNT` (money owed, not money collected), and for a customer collecting at the counter
+    the handover is recorded in the same press. Refusals by name, 422: `ACCOUNT_LIMIT_UNSET`,
+    `ACCOUNT_LIMIT_EXCEEDED`, `ACCOUNT_OVERDUE`, `ACCOUNT_SUSPENDED`, `NOT_AN_ACCOUNT_CUSTOMER`,
+    `ACCOUNT_TERMS_UNPUBLISHED`, `GOODS_NOT_READY_FOR_HANDOVER`, `NOTHING_OWED`, and the rest of
+    `AccountRefusal`. `If-Match` is the order version the counter read.
+    """
+    expected = _parse_if_match(if_match)
+    try:
+        stored = service.charge(
+            order_id=order_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            expected_row_version=expected,
+            collected_by_customer=request.collected_by_customer,
+        )
+    except _ACCOUNT_ERRORS as error:
+        _raise_account_error(error)
+    return AccountChargeResponse(
+        charge_id=stored.charge_id,
+        order_id=stored.order_id,
+        account_id=stored.account_id,
+        amount_vnd=stored.amount_vnd,
+        outstanding_after_vnd=stored.outstanding_after_vnd,
+        balance_status=stored.balance_status,
+        self_collection_recorded=stored.self_collection_recorded,
+        row_version=stored.row_version,
+        replayed=stored.replayed,
     )
 
 

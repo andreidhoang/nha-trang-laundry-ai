@@ -3104,3 +3104,43 @@ a.row-link {
   color: var(--warn-fg);
   font-size: var(--text-sm);
 }
+
+/* --- EXPORT-RANGE-001 ------------------------------------------------------------------------ */
+
+/* `#/exports`: the range picker. The chosen window is data, so it reads as data -- one line, large
+ * enough to check at a glance -- and the two custom date fields share a row even on a phone. */
+.export-range__chosen {
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  margin: 0;
+}
+
+.export-range__chosen:empty {
+  display: none;
+}
+
+.export-range__custom {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* base.css styles every text-like input but not `type="date"`, which then rendered as a small
+ * native box below the tap minimum. Scoped here rather than in base.css: this block is the slice's
+ * own, and the lead can promote it at merge. */
+.export-range__custom input[type="date"] {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  min-height: var(--tap-min);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  width: 100%;
+}
+
+.export-range__custom input[type="date"]:focus {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 18%, transparent);
+  outline: none;
+}

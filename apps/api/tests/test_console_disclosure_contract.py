@@ -855,7 +855,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # fill from the server, MANUAL-SEND-RESUME) and NOT_SUPPORTED's "Mã lý do bên dưới" (the notes
     # are visible, the codes are in the drawer). None removed.
     # 457 after merging the concurrent slices above (lead, at integration).
-    assert sum(counts.values()) == _registry()["total"] == 457
+    # 462 with EXPORT-RANGE-001 (+6 -1): the range picker's tier-1 boundary line and a tier-2
+    # "no default window / both ends approved" paragraph in exports.js, the window-shaped "Bấm
+    # Duyệt là…" line on the approvals export card, and REASON_NOTE for EXPORT_WINDOW_TOO_LONG /
+    # EXPORT_WINDOW_REVERSED. Removed: the single date field's hint ("Không có ngày mặc định…"),
+    # the field no longer exists and its fact moved into the tier-2 paragraph. Re-keyed (reworded
+    # to the window): the exports info paragraph and gaps.js's FR-RPT-003 missing/blockedBy/today.
+    assert sum(counts.values()) == _registry()["total"] == 462
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

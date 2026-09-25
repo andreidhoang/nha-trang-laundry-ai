@@ -470,6 +470,11 @@ export const REASON_NOTE = {
     "cùng lúc — không có nửa lệnh nào nằm lại.",
   DATABASE_UNAVAILABLE:
     "Máy chủ không mở được kết nối tới cơ sở dữ liệu, nên lệnh chưa chạy tới bước nào.",
+  // EXPORT-RANGE-001: the two ways a chosen window is refused before anything is written.
+  EXPORT_WINDOW_TOO_LONG:
+    "Một lần xuất tối đa 92 ngày. Chọn khoảng ngắn hơn, hoặc chia thành nhiều lần xuất.",
+  EXPORT_WINDOW_REVERSED:
+    "Ngày bắt đầu đang sau ngày kết thúc. Đổi lại hai ngày rồi tạo yêu cầu lại.",
   EXPORT_ALREADY_PRODUCED:
     "Yêu cầu này đã xuất một lần rồi. Một lần duyệt cho đúng một bản; cần bản nữa thì tạo yêu cầu mới.",
   EXPORT_REQUEST_NOT_FOUND:

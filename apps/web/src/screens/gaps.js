@@ -230,19 +230,26 @@ const GROUPS = [
         // The CSV note went the same way, and for the better reason: it became code.
         // `SanitizedExportRepository._cell` refuses a cell beginning with =, +, - or @, so the
         // warning is enforced rather than remembered.
+        //
+        // EXPORT-RANGE-001 closed the range half: #/exports picks a window of up to 92 days and
+        // the owner approves both ends. What is left is the KPI half -- the file is still the
+        // orders' raw records, one row per order, and carries no metric. The entry stays for
+        // that half only, and says so; it is not retired for something the file does not do.
         ref: "FR-RPT-003 · FR-RPT-004",
-        title: "Xuất báo cáo theo khoảng thời gian",
+        title: "Chỉ số vận hành trong tệp xuất",
         what:
           "Xuất số liệu vận hành cho một khoảng thời gian tự chọn, kèm các chỉ số của bảng điều " +
           "hành, để gửi cho kế toán.",
         missing:
-          "Chỉ xuất được đúng hồ sơ thô của một ngày làm việc, ở màn hình Xuất dữ liệu: mã đơn, " +
-          "trạng thái, mốc thời gian và tiền đã thu. Không chọn được khoảng ngày, và không có chỉ " +
-          "số nào — vì chưa có read model nào tính chúng.",
-        blockedBy: "Chưa có read model báo cáo có phiên bản (mục Bảng điều hành hằng ngày)",
+          "Khoảng ngày thì đã chọn được (tối đa 92 ngày), nhưng tệp chỉ mang hồ sơ thô của từng " +
+          "đơn: mã đơn, trạng thái, mốc thời gian, tiền đã thu và đã hoàn. Tệp không kèm chỉ số " +
+          "nào — không đơn mới, không tỉ lệ đúng hẹn, không giặt lại.",
+        blockedBy:
+          "Chưa làm: tệp xuất chỉ có một bộ dữ liệu (hồ sơ đơn); bộ mang chỉ số chưa được xây",
         today:
-          "Xuất một ngày thì được, và mỗi lần xuất đều cần chủ tiệm duyệt rồi mới có tệp. Tệp đó " +
-          "không kèm lời khách phàn nàn và không kèm mô tả bằng chứng.",
+          "Xuất hồ sơ đơn của một ngày hoặc một khoảng tới 92 ngày; mỗi lần xuất cần chủ tiệm " +
+          "duyệt đúng khoảng đó rồi mới có tệp. Tệp không kèm lời khách phàn nàn và mô tả bằng " +
+          "chứng.",
       },
       {
         // OPS-BOARD-001 phơi read model ra thành màn hình Bảng trễ hạn, nên nửa đầu của câu cũ

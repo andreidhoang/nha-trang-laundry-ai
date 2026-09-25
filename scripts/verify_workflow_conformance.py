@@ -1482,6 +1482,9 @@ def scenario_band(console: Console) -> None:
     head("9b", "CHỦ XEM LẠI — the owner sees who chose which price, inside which band")
     console.sign_in("demo-owner")
     console.open("#/approvals", settle=2200)
+    # CONSOLE-REDESIGN-003: today's range prices are the second side of the Duyệt switch.
+    console.page.locator(".segmented__option", has_text="Giá trong khoảng").first.click()
+    console.page.wait_for_timeout(400)
     review = console.text()
     ok(
         "the owner's review lists the price the counter chose today",

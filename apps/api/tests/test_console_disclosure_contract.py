@@ -766,7 +766,14 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # are in the role/store/disable ⓘ), and the wrong-role notice title (now an inline alert).
     # One staff sentence corrected, not only moved: a taken OIDC subject is a 409 refusal now,
     # not the "lỗi máy chủ" the V1 field hint claimed.
-    assert sum(counts.values()) == _registry()["total"] == 437
+    # 418 after CONSOLE-REDESIGN-003 (Hôm nay, Duyệt, Bảng trễ hạn on the V2 kit): -2 +1.
+    #   * -1 `approvals.js#screen__lede`: its fact (a type the console cannot show keeps Duyệt shut
+    #     and the card names the type) is stated on every such card and in the ⓘ "Tại sao nút
+    #     Duyệt đang tắt?"; -1 `today.js#screen__lede`, a lede with no fact the screen lost.
+    #   * +1 `slaBoard.js#hint`: the visible one-line "position is not urgency" note; the V1 lede
+    #     it summarises moved verbatim into the ⓘ and keeps its slot.
+    # 436 after merging the concurrent slices above (lead, at integration).
+    assert sum(counts.values()) == _registry()["total"] == 436
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

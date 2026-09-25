@@ -610,6 +610,12 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Khách trả trước khi gửi đồ",
         "Khách đã nhận đồ",
         "Đã thu tại quầy",
+        # CONSOLE-REDESIGN-003: the morning screen's list of waiting work, its all-clear line, the
+        # pickup shortcut, and the owner's range-price review on Duyệt.
+        "Cần làm",
+        "Không có gì chờ bạn",
+        "Khách tới lấy đồ",
+        "Giá trong khoảng",
         "Đang ngoại tuyến",
         "Chưa biết lệnh có tới máy chủ hay không",
         "Đơn này vừa được người khác đổi",

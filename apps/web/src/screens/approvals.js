@@ -1,6 +1,14 @@
 /**
  * Approvals: the envelopes waiting for a human, and an honest account of what may be decided here.
  *
+ * `CONSOLE-REDESIGN-003` (spec V2 §5.5) changed where things sit, not what is decided or how: the
+ * queue is the first thing under the title, behind a two-way switch (Chờ duyệt · Giá trong
+ * khoảng); each envelope is one card titled with what it asks ("Duyệt bồi hoàn · Phiếu 17"), its
+ * countdown, who may decide, the bound content exactly as below, then Từ chối / Duyệt; identifiers
+ * and digests are in the card's technical drawer; the V1 limits panel is the ⓘ on the title,
+ * verbatim. A recorded decision is a toast, the queue re-read, and the tab bar's badge refreshed.
+ * Every binding rule below is unchanged.
+ *
  * Until 2026-09-17 this screen showed a queue and then refused to let anyone work it. The refusal
  * was real rather than an oversight — `ApprovalDecisionRequest` demands `resource_version`,
  * `snapshot_hash` and `rendered_hash`, and `GET /internal/v1/approvals` returned none of the three,
@@ -78,30 +86,39 @@ import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import {
   UNKNOWN,
+  count,
   countdown,
+  dateOnly,
   dateTime,
   money,
   moneyRange,
-  shortHash,
   shortId,
 } from "../core/format.js";
 import { enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
-import { ticketLabel } from "./orders.js";
 import { KIND_LABEL as REMEDY_KIND_LABEL, ownerReasonText } from "./remedies.js";
 import {
-  badge,
-  dimensionBadge,
   errorNotice,
   explain,
   facts,
   gated,
   listView,
-  panel,
+  markUpdated,
   resultLine,
   setResult,
+  toolbar,
 } from "../ui/components.js";
+import {
+  button,
+  emptyState,
+  infoButton,
+  page,
+  segmented,
+  statusPill,
+  techDetails,
+  toast,
+} from "../ui/kit.js";
 
 const LIST_LIMIT = 100;
 
@@ -112,24 +129,51 @@ const TICK_MS = 1000;
 const BLOCK_ID = "approval-decision-blocked";
 
 /**
- * The remaining-time badge for one envelope.
+ * The remaining-time pill for one envelope.
  *
  * Rebuilt whole on every tick rather than having its text patched, because the warn → danger flip
  * is carried by `data-state` and not by the words. A tick that updated only the text would leave an
- * expired envelope wearing the colour of a live one.
+ * expired envelope wearing the colour of a live one. What the time means is in the pill's `title`
+ * and in the ⓘ on the page header ("Thời hạn quyết định").
  *
  * @param {string|null|undefined} expiresAt
  * @returns {HTMLElement}
  */
-function countdownBadge(expiresAt) {
+function countdownPill(expiresAt) {
   const left = countdown(expiresAt);
-  return badge({
-    token: left.text,
-    gloss: left.expired
-      ? "đã hết hạn — không tự gia hạn, phải tạo yêu cầu mới"
-      : "thời gian còn lại trước khi hết hạn",
+  const pill = statusPill({
     state: left.expired ? "danger" : "warn",
+    text: left.expired ? "Đã hết hạn" : left.text,
   });
+  pill.title = left.expired
+    ? "đã hết hạn — không tự gia hạn, phải tạo yêu cầu mới"
+    : "thời gian còn lại trước khi hết hạn";
+  return pill;
+}
+
+/**
+ * "Phiếu 17 · 25/09/2026" — the paper ticket an order was issued, or null for an order without one.
+ * The same words `#/orders` uses, kept here so this screen does not import another screen.
+ *
+ * @param {any} read
+ * @returns {string|null}
+ */
+function ticketText(read) {
+  if (read?.ticket_number === null || read?.ticket_number === undefined) return null;
+  return `Phiếu ${read.ticket_number} · ${dateOnly(read.ticket_issued_on)}`;
+}
+
+/**
+ * "24/09/2026" from the server's `business_date` ("2026-09-24"), without a time-zone round trip: a
+ * business date is already a day in the shop's zone and must not be shifted by parsing it as an
+ * instant.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function businessDay(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : String(value ?? UNKNOWN);
 }
 
 /**
@@ -311,30 +355,42 @@ function decisionControls(item, onDecided, verdict, contentBlock = null, options
     options.refuseOnly === true;
   const host = resultLine();
 
+  /**
+   * A shut control: visible, disabled, and pointing at the explanation of why (V1 invariant 5).
+   *
+   * @param {string} label
+   * @param {"primary"|"secondary"} variant
+   */
+  const shut = (label, variant) => {
+    const control = button({ label, variant, block: true, disabled: true });
+    control.setAttribute("aria-disabled", "true");
+    control.setAttribute("aria-describedby", BLOCK_ID);
+    return control;
+  };
+
   if (!decidable && !refusable) {
-    const control = (label) =>
-      h(
-        "button",
-        { type: "button", disabled: true, "aria-disabled": "true", "aria-describedby": BLOCK_ID },
-        label,
-      );
     return h(
       "div",
-      { class: "stack stack--tight" },
-      h("div", { class: "form__actions" }, control("Duyệt"), control("Từ chối")),
+      { class: "approval__decide" },
       h(
         "p",
-        { class: "hint" },
+        { class: "hint approval__why" },
         !viewer
           ? `Không bấm được: bảng vận hành chưa mở được nội dung loại ${item.resource_type} để ` +
-            "bạn xem trước khi quyết. Duyệt một nội dung chưa xem là duyệt mù. Xem “Tại sao nút " +
-            "Duyệt đang tắt?” bên dưới."
+              "bạn xem trước khi quyết. Duyệt một nội dung chưa xem là duyệt mù. Xem “Tại sao nút " +
+              "Duyệt đang tắt?” ở nút ⓘ đầu trang."
           : // The content block is checked before the binding, because it is the more specific
             // answer: a `SET_RANGE_PRICE` card whose amounts have not arrived is blocked for that
             // reason and not for a missing hash it does in fact have.
             contentBlock ||
-            "Không bấm được: phiếu này thiếu phiên bản hoặc mã niêm phong, nên không dựng được " +
-              "một quyết định hợp lệ. Tải lại hàng chờ.",
+              "Không bấm được: phiếu này thiếu phiên bản hoặc mã niêm phong, nên không dựng được " +
+                "một quyết định hợp lệ. Tải lại hàng chờ.",
+      ),
+      h(
+        "div",
+        { class: "approval__buttons" },
+        shut("Từ chối", "secondary"),
+        shut("Duyệt", "primary"),
       ),
       host,
     );
@@ -375,15 +431,14 @@ function decisionControls(item, onDecided, verdict, contentBlock = null, options
       );
       submission.reset();
       button.removeAttribute("aria-busy");
-      // Reported to the screen, not to this card. `onDecided()` reloads the queue and a decided
-      // envelope is no longer `REQUESTED`, so the card this line lives in is removed a moment
-      // later -- the operator would watch the row vanish with no statement that their decision
-      // was recorded, which is the one thing they need to know.
       setResult(host, "ok", decision === "APPROVED" ? "Đã phê duyệt." : "Đã từ chối.");
+      // Reported to the screen as a toast, not only to this card: `onDecided()` reloads the queue
+      // and a decided envelope is no longer `REQUESTED`, so the card this line lives in is removed
+      // a moment later. The toast is the statement that the decision was recorded.
       await onDecided(
         decision === "APPROVED"
-          ? `Đã phê duyệt phiếu ${shortId(item.approval_request_id)}. Phiếu rời khỏi hàng chờ.`
-          : `Đã từ chối phiếu ${shortId(item.approval_request_id)}. Phiếu rời khỏi hàng chờ.`,
+          ? `Đã duyệt: ${cardTitle(item)}. Phiếu rời khỏi hàng chờ.`
+          : `Đã từ chối: ${cardTitle(item)}. Phiếu rời khỏi hàng chờ.`,
       );
     } catch (error) {
       button.removeAttribute("aria-busy");
@@ -425,28 +480,24 @@ function decisionControls(item, onDecided, verdict, contentBlock = null, options
   };
 
   const approve = decidable
-    ? h("button", { type: "button", dataRequiresNetwork: "true" }, "Duyệt")
-    : h(
-        "button",
-        { type: "button", disabled: true, "aria-disabled": "true", "aria-describedby": BLOCK_ID },
-        "Duyệt",
-      );
-  const reject = h("button", { type: "button", dataRequiresNetwork: "true" }, "Từ chối");
+    ? button({ label: "Duyệt", variant: "primary", block: true, network: true })
+    : shut("Duyệt", "primary");
+  const reject = button({ label: "Từ chối", block: true, network: true });
   if (decidable) approve.addEventListener("click", () => void send("APPROVED", approve, reject));
   reject.addEventListener("click", () => void send("REJECTED", reject, approve));
 
   if (!decidable) {
     return h(
       "div",
-      { class: "stack stack--tight" },
-      h("div", { class: "form__actions" }, approve, gated(reject, verdict)),
-      h("p", { class: "hint" }, contentBlock),
+      { class: "approval__decide" },
+      h("p", { class: "hint approval__why" }, contentBlock),
       h(
         "p",
         { class: "hint" },
         "Từ chối vẫn bấm được: từ chối không cho phép gửi gì, và là cách gỡ một phiếu đã cũ " +
           "khỏi hàng chờ thay vì chờ nó hết hạn.",
       ),
+      h("div", { class: "approval__buttons" }, gated(reject, verdict), approve),
       host,
       failureHost,
     );
@@ -454,23 +505,18 @@ function decisionControls(item, onDecided, verdict, contentBlock = null, options
 
   // `null` is a legitimate answer here and means "the content is already on this card", which is
   // the shape an `EXPORT_REQUEST` takes: there is no screen that renders a stored export request,
-  // so a link would send the approver somewhere that is not the document they are signing. The
-  // sentence about the server re-checking still belongs on every card, so only the anchor is
-  // conditional.
+  // so a link would send the approver somewhere that is not the document they are signing. That
+  // the server re-checks the version and both digests at the press is said once, in the ⓘ on the
+  // page header, rather than under every card.
   const href = viewer(String(item.resource_id), item.resource_version);
 
   return h(
     "div",
-    { class: "stack stack--tight" },
-    h(
-      "p",
-      { class: "hint" },
-      typeof href === "string"
-        ? h("a", { href }, "Mở nội dung này trước khi quyết")
-        : "Nội dung cần duyệt đã in ngay trên thẻ này",
-      " — máy chủ kiểm lại phiên bản và cả hai mã niêm phong khi bạn bấm.",
-    ),
-    h("div", { class: "form__actions" }, gated(approve, verdict), gated(reject, verdict)),
+    { class: "approval__decide" },
+    typeof href === "string"
+      ? h("a", { class: "approval__open", href }, "Mở nội dung này trước khi quyết")
+      : null,
+    h("div", { class: "approval__buttons" }, gated(reject, verdict), gated(approve, verdict)),
     h(
       "p",
       { class: "hint" },
@@ -618,9 +664,10 @@ function exportContents(record) {
  * @param {HTMLElement} controlsHost
  * @param {(message: string) => Promise<void>} onDecided
  * @param {{allowed: boolean, reason: string}} verdict
+ * @param {(detail: string) => void} [retitle] names the day on the card's title once it is read
  * @returns {Promise<void>}
  */
-async function loadExportRequest(item, contentHost, controlsHost, onDecided, verdict) {
+async function loadExportRequest(item, contentHost, controlsHost, onDecided, verdict, retitle) {
   /** @param {string} reason @param {HTMLElement} explanation */
   const block = (reason, explanation) => {
     render(contentHost, explanation);
@@ -671,6 +718,7 @@ async function loadExportRequest(item, contentHost, controlsHost, onDecided, ver
       return;
     }
     render(contentHost, exportContents(record));
+    retitle?.(`ngày ${businessDay(record.business_date)}`);
     if (record.requested_by_you === true) {
       render(
         controlsHost,
@@ -743,10 +791,7 @@ function messageContents(read) {
     ),
     facts([
       ["Số ký tự", String(raw.length)],
-      [
-        "Phiên bản bản nháp",
-        h("span", { class: "mono" }, `v${String(read.resource_version)}`),
-      ],
+      ["Phiên bản bản nháp", h("span", { class: "mono" }, `v${String(read.resource_version)}`)],
       [
         "Người nhận (mã ràng buộc)",
         h(
@@ -911,7 +956,7 @@ async function loadMessageDraft(item, contentHost, controlsHost, onDecided, verd
  */
 function remedyContents(read) {
   const reasons = Array.isArray(read.owner_reasons) ? read.owner_reasons : null;
-  const ticket = ticketLabel(read);
+  const ticket = ticketText(read);
   const service = read.service_code
     ? read.service_name
       ? `${read.service_name} (${read.service_code})`
@@ -933,10 +978,7 @@ function remedyContents(read) {
         { span: true },
       ],
       ["Số tiền đề nghị", h("span", { dataField: "remedy-amount" }, money(read.amount_vnd))],
-      [
-        "Trần máy chủ đã kiểm",
-        h("span", { dataField: "remedy-ceiling" }, money(read.ceiling_vnd)),
-      ],
+      ["Trần máy chủ đã kiểm", h("span", { dataField: "remedy-ceiling" }, money(read.ceiling_vnd))],
       [
         "Mức nhân viên được tự duyệt",
         h("span", { dataField: "remedy-staff-limit" }, money(read.staff_approval_ceiling_vnd)),
@@ -1023,9 +1065,10 @@ function remedyContents(read) {
  * @param {HTMLElement} controlsHost
  * @param {(message: string) => Promise<void>} onDecided
  * @param {{allowed: boolean, reason: string}} verdict
+ * @param {(detail: string) => void} [retitle] names the ticket on the card's title once matched
  * @returns {Promise<void>}
  */
-async function loadRemedyProposal(item, contentHost, controlsHost, onDecided, verdict) {
+async function loadRemedyProposal(item, contentHost, controlsHost, onDecided, verdict, retitle) {
   /** @param {string} reason @param {HTMLElement} explanation @param {boolean} [refuseOnly] */
   const block = (reason, explanation, refuseOnly = false) => {
     render(contentHost, explanation);
@@ -1077,6 +1120,7 @@ async function loadRemedyProposal(item, contentHost, controlsHost, onDecided, ve
       return;
     }
     render(contentHost, remedyContents(read));
+    retitle?.(read.ticket_number == null ? "" : `Phiếu ${read.ticket_number}`);
     render(controlsHost, decisionControls(item, onDecided, verdict));
   } catch (error) {
     if (error && error.kind === "MISSING") {
@@ -1120,7 +1164,21 @@ async function loadRemedyProposal(item, contentHost, controlsHost, onDecided, ve
 }
 
 /**
- * One pending envelope.
+ * What one envelope asks, in the approver's words: the action's gloss ("Duyệt bồi hoàn",
+ * "Cho gửi tin nhắn"), or the raw action token when the console has no gloss for it — an
+ * unfamiliar word is a prompt to add one, a plausible guess would hide the gap.
+ *
+ * @param {any} item
+ * @returns {string}
+ */
+function cardTitle(item) {
+  return item.action ? enumVi(item.action) : enumVi(item.resource_type);
+}
+
+/**
+ * One pending envelope, as a card: what is asked, how long is left, who may decide, the bound
+ * content exactly as it will be signed, then Từ chối / Duyệt. Identifiers, versions and digests are
+ * in the technical drawer at the bottom (tier 3).
  *
  * @param {any} item
  * @param {(host: HTMLElement, expiresAt: string) => void} registerClock
@@ -1129,14 +1187,20 @@ async function loadRemedyProposal(item, contentHost, controlsHost, onDecided, ve
  * @returns {HTMLElement}
  */
 function approvalCard(item, registerClock, onDecided, verdict) {
-  const clockHost = h("span", { class: "row" }, countdownBadge(item.expires_at));
+  const clockHost = h("span", { class: "approval__clock" }, countdownPill(item.expires_at));
   registerClock(clockHost, item.expires_at);
+
+  // The title gains a detail ("· Phiếu 17", "· ngày 24/09/2026") only from content that was read
+  // and matched the envelope; a withheld card keeps the bare action.
+  const detailHost = h("span", { class: "approval__detail" });
+  /** @param {string} detail */
+  const retitle = (detail) => render(detailHost, detail ? ` · ${detail}` : null);
 
   // Two hosts rather than one card built in one pass, because the amounts arrive after the card
   // does. The controls start blocked and are replaced only by the success branch below, so every
   // path that is not "the amounts are on screen" leaves the approve control shut — including a
   // request that never comes back.
-  const contentHost = h("div", { class: "stack stack--tight" });
+  const contentHost = h("div", { class: "approval__content stack stack--tight" });
   const controlsHost = h("div", { class: "stack stack--tight" });
   if (String(item.action) === SET_RANGE_PRICE) {
     render(
@@ -1164,7 +1228,7 @@ function approvalCard(item, registerClock, onDecided, verdict) {
       ),
     );
     render(contentHost, h("p", { class: "hint" }, "Đang tải nội dung bản xuất…"));
-    void loadExportRequest(item, contentHost, controlsHost, onDecided, verdict);
+    void loadExportRequest(item, contentHost, controlsHost, onDecided, verdict, retitle);
   } else if (String(item.resource_type) === MESSAGE_DRAFT) {
     // Keyed on the resource type, like the export branch: `SEND_MESSAGE` is the only action that
     // maps to it, and the type is what says there is a stored draft to read.
@@ -1192,45 +1256,33 @@ function approvalCard(item, registerClock, onDecided, verdict) {
       ),
     );
     render(contentHost, h("p", { class: "hint" }, "Đang tải khoản bồi hoàn cần duyệt…"));
-    void loadRemedyProposal(item, contentHost, controlsHost, onDecided, verdict);
+    void loadRemedyProposal(item, contentHost, controlsHost, onDecided, verdict, retitle);
   } else {
     render(controlsHost, decisionControls(item, onDecided, verdict));
   }
 
   return h(
     "article",
-    { class: "card stack" },
+    { class: "card approval", dataApprovalId: String(item.approval_request_id || "") },
     h(
       "div",
-      { class: "spread" },
+      { class: "approval__head" },
       h(
-        "strong",
-        { class: "mono", title: item.approval_request_id },
-        shortId(item.approval_request_id),
+        "h2",
+        { class: "approval__title", title: String(item.action || "") },
+        cardTitle(item),
+        detailHost,
       ),
       clockHost,
     ),
-    facts([
-      ["Trạng thái", enumVi(item.status)],
-      ["Ai được quyết", enumVi(item.required_role), { span: true }],
-      // What is actually being approved. Absent until the decision binding was projected, which is
-      // why the queue read as a list of opaque envelope hashes rather than a list of decisions.
-      // The action is beside the resource type rather than instead of it: four actions share
-      // `QUOTE_REVISION`, so the type alone does not say what is being authorised.
-      ["Việc cần duyệt", item.action || "—", { mono: true }],
-      ["Loại nội dung", item.resource_type || "—", { mono: true }],
-      [
-        "Phiên bản",
-        item.resource_version == null ? "—" : `v${item.resource_version}`,
-        { mono: true },
-      ],
-      ["Hết hạn lúc", dateTime(item.expires_at)],
-      [
-        "Mã niêm phong",
-        h("span", { title: item.envelope_hash || "" }, shortHash(item.envelope_hash)),
-        { mono: true, span: true },
-      ],
-    ]),
+    h(
+      "p",
+      { class: "approval__meta" },
+      // The queue names the role that may decide, not the person who asked: no read returns the
+      // requester for every type. Where the content read has a name (a remedy's proposer, a
+      // range price's reviewer), it is in the content below.
+      `Người quyết: ${enumVi(item.required_role)} · hết hạn ${dateTime(item.expires_at)}`,
+    ),
     item.replayed
       ? h(
           "div",
@@ -1243,6 +1295,28 @@ function approvalCard(item, registerClock, onDecided, verdict) {
     // thing that guarantees that.
     contentHost,
     controlsHost,
+    techDetails([
+      ["Mã phiếu duyệt", shortId(item.approval_request_id), { copy: item.approval_request_id }],
+      // What is actually being approved, as the server names it. The action is beside the resource
+      // type rather than instead of it: four actions share `QUOTE_REVISION`.
+      ["Việc cần duyệt", item.action || UNKNOWN],
+      ["Loại nội dung", item.resource_type || UNKNOWN],
+      item.resource_id
+        ? ["Mã nội dung", shortId(item.resource_id), { copy: item.resource_id }]
+        : null,
+      ["Phiên bản", item.resource_version == null ? UNKNOWN : `v${item.resource_version}`],
+      ["Trạng thái", `${enumVi(item.status)} (${String(item.status || UNKNOWN)})`],
+      ["Vai trò được quyết", String(item.required_role || UNKNOWN)],
+      item.store_id ? ["Cửa hàng", shortId(item.store_id), { copy: item.store_id }] : null,
+      ["Hết hạn lúc", dateTime(item.expires_at)],
+      item.envelope_hash
+        ? ["Mã niêm phong", item.envelope_hash, { copy: item.envelope_hash }]
+        : null,
+      item.snapshot_hash ? ["Mã ảnh chụp", item.snapshot_hash, { copy: item.snapshot_hash }] : null,
+      item.rendered_hash
+        ? ["Mã nội dung hiển thị", item.rendered_hash, { copy: item.rendered_hash }]
+        : null,
+    ]),
   );
 }
 
@@ -1339,27 +1413,36 @@ async function loadProposedAmounts(item, contentHost, controlsHost, onDecided, v
 }
 
 /**
- * Everything this screen deliberately does not offer, folded behind the questions it answers.
+ * Everything this screen deliberately does not offer, folded behind the questions it answers —
+ * one ⓘ on the page header (spec V2 §5.5), so the queue is the first thing under the title.
  *
- * The queue renders above this panel — the day's most time-critical list is the data, and the
- * education about the data comes after it (UX refactor spec WS2). Nothing here is deleted: each
- * standing notice keeps its exact text, moved into an `explain()` whose summary names what it
- * explains. The read-only guardrail stays visible because it states what the whole screen cannot
- * do, and the refusal reason for the disabled decision buttons stays visible under them.
+ * Nothing here is deleted: the V1 "Giới hạn của màn hình này" panel moved whole into the sheet,
+ * its guardrail sentence first and each standing notice with its exact text inside the `explain()`
+ * that names what it explains. What stays visible on every card is what changes the press itself:
+ * the refusal reason beside a shut control, the "Từ chối vẫn bấm được" line on a stale card, the
+ * maker-checker line under live buttons, and each content block's "Bấm Duyệt là …" sentence.
+ *
+ * The notice with `id=approval-decision-blocked` is in this sheet: the disabled buttons point
+ * their `aria-describedby` at it, and a closed `<dialog>` is still in the document, so a screen
+ * reader hears the full reason with the control.
  *
  * @returns {HTMLElement}
  */
-function limitsPanel() {
-  return panel({
-    eyebrow: "Giới hạn",
-    title: "Giới hạn của màn hình này",
+function limitsInfo() {
+  // A keyed property on purpose: the sentence is the V1 panel's `guardrail`, and keeping the key
+  // keeps its slot in the disclosure registry (`specs/contracts/console-disclosures-v1.yaml`).
+  const limits = {
     guardrail:
       "Quyết định ở đây ghi thẳng vào máy chủ và không hoàn tác được. Trước khi ghi, máy chủ " +
       "kiểm lại phiên bản, cả hai mã niêm phong, quyền của bạn, và quy tắc người tạo yêu cầu " +
       "không được tự duyệt.",
-    children: h(
+  };
+  return infoButton(
+    "Giới hạn của màn hình này",
+    h(
       "div",
       { class: "stack" },
+      h("p", { class: "approval__limits-lead" }, limits.guardrail),
       explain(
         "Danh sách này có phải toàn bộ hàng chờ không?",
         h(
@@ -1461,11 +1544,7 @@ function limitsPanel() {
               "khung giờ hay phí giao đề xuất. Bấm duyệt một nội dung chưa ai đọc được chính là " +
               "duyệt mù, có đủ ba mã cũng không làm điều đó thành an toàn.",
           ),
-          h(
-            "p",
-            null,
-            h("a", { href: "#/gaps" }, "Xem danh mục việc chưa hỗ trợ"),
-          ),
+          h("p", null, h("a", { href: "#/gaps" }, "Xem danh mục việc chưa hỗ trợ")),
         ),
       ),
       explain(
@@ -1534,12 +1613,9 @@ function limitsPanel() {
         ),
       ),
     ),
-  });
+  );
 }
 
-/**
- * @returns {HTMLElement}
- */
 /**
  * One price a staff member chose inside a published band, as the owner reviews it (`DEC-029`).
  *
@@ -1555,8 +1631,8 @@ function limitsPanel() {
 function rangeReviewCard(item) {
   if (item.withheld) {
     return h(
-      "li",
-      { class: "card" },
+      "div",
+      { class: "review" },
       h(
         "div",
         { class: "notice", dataState: "danger" },
@@ -1573,45 +1649,67 @@ function rangeReviewCard(item) {
     );
   }
   return h(
-    "li",
-    { class: "card" },
+    "div",
+    { class: "review" },
     h(
-      "p",
-      { class: "card__title" },
-      h("strong", null, String(item.proposed_by_name)),
-      " · ",
-      dateTime(item.proposed_at),
-      " · ",
-      dimensionBadge(item.approval_status),
+      "div",
+      { class: "review__head" },
+      h(
+        "p",
+        { class: "review__who" },
+        h("strong", null, String(item.proposed_by_name)),
+        h("span", { class: "review__when" }, dateTime(item.proposed_at)),
+      ),
+      statusPill({
+        state: item.approval_status === "APPROVED" ? "ok" : "neutral",
+        text: enumVi(item.approval_status),
+        token: String(item.approval_status || ""),
+      }),
     ),
     h(
-      "dl",
-      { class: "fields" },
-      ...item.lines.flatMap((/** @type {any} */ line) => [
-        h("dt", { class: "mono" }, String(line.service_code)),
+      "ul",
+      { class: "review__lines" },
+      item.lines.map((/** @type {any} */ line) =>
         h(
-          "dd",
-          null,
-          h("strong", { class: "money" }, money(line.proposed_amount_vnd)),
-          " trong khoảng ",
-          moneyRange(line.band_minimum_vnd, line.band_maximum_vnd).text,
+          "li",
+          { class: "review__line" },
+          h(
+            "span",
+            { class: "review__service", title: String(line.service_code) },
+            String(line.service_code),
+          ),
+          h(
+            "span",
+            { class: "review__amount" },
+            h("strong", { class: "money" }, money(line.proposed_amount_vnd)),
+            h(
+              "span",
+              { class: "review__band" },
+              " trong khoảng ",
+              moneyRange(line.band_minimum_vnd, line.band_maximum_vnd).text,
+            ),
+          ),
         ),
-      ]),
+      ),
     ),
   );
 }
 
 /**
- * Today's prices chosen inside a band, for the owner's review (`DEC-029`).
+ * Today's prices chosen inside a band, for the owner's review (`DEC-029`) — the second tab.
  *
  * The ruling moved the choice to the counter on the strength of this review; before this panel
  * the only read was keyed by approval id and nothing could discover one, so the review the ruling
  * relies on could not actually be done. Today only, in the shop's time zone, as the server defines
  * it; the server refuses anyone who is not an approver with MFA, and says so.
  *
+ * The one store-scoped read on this exempt screen (`STORE_GATE_EXEMPT`): it is built only with a
+ * selected store, and without one the tab says so instead of calling.
+ *
+ * @param {(text: string) => void} onCount
  * @returns {HTMLElement}
  */
-function reviewPanel() {
+function reviewPane(onCount) {
   const store = storeId();
   const reviews = listView({
     limit: LIST_LIMIT,
@@ -1627,34 +1725,47 @@ function reviewPanel() {
       "Hôm nay chưa có món nào được chốt giá trong khoảng ở cửa hàng này. Danh sách này chỉ " +
       "gồm các lần nhân viên tự chốt giá theo DEC-029.",
     clearMetaOnError: true,
+    onLoaded: (items) => onCount(count(items, LIST_LIMIT)),
+    onError: () => onCount(UNKNOWN),
   });
   if (store) void reviews.reload();
-  return panel({
-    eyebrow: "Xem lại sau",
-    title: "Giá trong khoảng nhân viên đã chốt hôm nay",
-    count: reviews.count,
-    children: h(
+  return h(
+    "div",
+    { class: "stack" },
+    h(
       "div",
-      { class: "stack" },
-      h(
-        "p",
-        { class: "hint" },
-        "Theo DEC-029, nhân viên trực quầy tự chốt giá trong khoảng chủ tiệm đã niêm yết. Đây là " +
-          "chỗ chủ tiệm xem lại: ai chốt, món gì, bao nhiêu, trong khoảng nào.",
+      { class: "approvals__pane-head" },
+      h("h2", { class: "group__title" }, "Nhân viên tự chốt hôm nay"),
+      infoButton(
+        "Danh sách này là gì?",
+        h(
+          "p",
+          { class: "hint" },
+          "Theo DEC-029, nhân viên trực quầy tự chốt giá trong khoảng chủ tiệm đã niêm yết. Đây là " +
+            "chỗ chủ tiệm xem lại: ai chốt, món gì, bao nhiêu, trong khoảng nào.",
+        ),
       ),
-      store
-        ? h("div", { class: "stack" }, reviews.bar.node, reviews.truncation, reviews.host)
-        : h("p", { class: "hint" }, "Chưa chọn cửa hàng nên chưa có gì để xem lại."),
     ),
-  });
+    store
+      ? h("div", { class: "stack" }, reviews.bar.node, reviews.truncation, reviews.host)
+      : h("p", { class: "hint" }, "Chưa chọn cửa hàng nên chưa có gì để xem lại."),
+  );
+}
+
+/**
+ * A little event the shell listens for, so the Duyệt badge in the tab bar follows a decision now
+ * rather than at the next minute's poll. It carries nothing; the shell re-reads the queue itself.
+ */
+function announceQueueChanged() {
+  window.dispatchEvent(new CustomEvent("console:approvals-changed"));
 }
 
 export function render_() {
   /**
-   * The live countdown badges, rebuilt every time the list reloads.
+   * The live countdown pills, rebuilt every time the list reloads.
    *
    * Held as a list rather than read out of the DOM so that one interval — started once, in this
-   * function — drives every badge no matter how many times the list is refreshed. The registry is
+   * function — drives every pill no matter how many times the list is refreshed. The registry is
    * cleared around each reload (the queue's hooks below) and refilled as the new cards are built.
    *
    * @type {Array<{host: HTMLElement, expiresAt: string}>}
@@ -1665,8 +1776,8 @@ export function render_() {
   // screen without the router replacing it, and `can()` is not free enough to run per row.
   const decideVerdict = can(principal(), "APPROVALS_DECIDE");
 
-  // Lives above the queue, so a decision's confirmation outlives the card that carried the button.
-  const decisionStatus = resultLine();
+  /** The rows of the last successful read, so an empty queue can be drawn as an empty state. */
+  let lastItems = /** @type {any[]} */ ([]);
 
   /**
    * The queue. One `listView` owns the fetch–truncate–skeleton cycle; what stays here is the clock
@@ -1682,62 +1793,99 @@ export function render_() {
         (host, expiresAt) => clocks.push({ host, expiresAt }),
         async (message) => {
           // Empty when a card asks only for a re-read after a failed decision -- nothing was
-          // recorded that this line could truthfully announce.
-          if (message) setResult(decisionStatus, "ok", message);
-          await queue.reload();
+          // recorded that a toast could truthfully announce.
+          if (message) toast(message);
+          await reloadQueue();
+          announceQueueChanged();
         },
         decideVerdict,
       ),
-    // "gắn với đơn hàng" was true before migration 0034, when the queue joined through `orders` and
-    // could only ever show order-linked approvals. Since 0034 the server joins on the approval's
-    // own `store_id`, so every resource type in the caller's stores appears -- and the limits panel
-    // on this same screen already said so, which made the two halves contradict each other.
-    emptyText:
-      "Không có việc nào đang chờ bạn quyết định trong các cửa hàng bạn được gán. Đây không " +
-      "phải bằng chứng là hàng chờ trống — xem bảng giới hạn bên dưới.",
+    // Replaced by the empty state below once a read succeeds; kept as the list's own fallback.
+    emptyText: "Không có việc nào đang chờ bạn quyết định trong các cửa hàng bạn được gán.",
     clearMetaOnError: true,
+    skeletonRows: 2,
     onLoadStart: () => {
       clocks.length = 0;
     },
-    onLoaded: () => {
+    onLoaded: (items) => {
       clocks.length = 0;
+      markUpdated(bar.stamp);
+      lastItems = Array.isArray(items) ? items : [];
+      tabs.setCount("queue", count(lastItems, LIST_LIMIT));
     },
     onError: () => {
       clocks.length = 0;
+      tabs.setCount("queue", UNKNOWN);
     },
   });
 
+  // The screen's own reload bar rather than the list's, so "Tải lại" also redraws the empty state.
+  const bar = toolbar({ onReload: () => reloadQueue() });
+
+  /** Reload, and draw an empty queue as a calm empty state rather than a bare line. */
+  async function reloadQueue() {
+    const ok = await queue.reload();
+    if (ok && lastItems.length === 0) {
+      render(
+        queue.host,
+        emptyState({
+          icon: "check",
+          title: "Không có việc nào chờ duyệt",
+          // "gắn với đơn hàng" was true before migration 0034, when the queue joined through
+          // `orders`. Since 0034 the server joins on the approval's own `store_id`, so every
+          // resource type in the caller's stores appears; what the list leaves out (decided and
+          // expired envelopes) is in the ⓘ on the title.
+          body: "Trong mọi cửa hàng bạn được gán. Phiếu đã quyết hoặc đã hết hạn không hiện ở đây.",
+        }),
+      );
+    }
+  }
+
+  const panes = {
+    queue: h(
+      "div",
+      { class: "stack approvals__pane", dataPane: "queue" },
+      bar.node,
+      queue.truncation,
+      queue.host,
+    ),
+    reviews: h(
+      "div",
+      { class: "approvals__pane", dataPane: "reviews", hidden: true },
+      reviewPane((text) => tabs.setCount("reviews", text)),
+    ),
+  };
+
+  const tabs = (() => {
+    const control = segmented({
+      label: "Chọn danh sách",
+      value: "queue",
+      options: [
+        { value: "queue", label: "Chờ duyệt", count: "…" },
+        { value: "reviews", label: "Giá trong khoảng", count: "…" },
+      ],
+      onChange: (value) => {
+        panes.queue.hidden = value !== "queue";
+        panes.reviews.hidden = value !== "reviews";
+      },
+    });
+    return {
+      node: control,
+      /** @param {string} value @param {string} text */
+      setCount(value, text) {
+        const option = control.querySelector(`[data-value="${value}"] .segmented__count`);
+        if (option) option.textContent = text;
+      },
+    };
+  })();
+
   const root = h(
     "section",
-    { class: "screen" },
-    h(
-      "div",
-      { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "Cần bạn quyết"),
-      h("h1", null, "Duyệt"),
-      h(
-        "p",
-        { class: "screen__lede" },
-        "Việc đang chờ duyệt và còn bao lâu nữa hết hạn. Quyết được ngay tại đây với loại nội " +
-          "dung bảng vận hành mở ra xem được; loại nào chưa xem được thì nút vẫn khoá và phiếu " +
-          "nói rõ đó là loại nào.",
-      ),
-    ),
-    panel({
-      eyebrow: "Đang chờ",
-      title: "Việc chờ bạn quyết",
-      count: queue.count,
-      children: h(
-        "div",
-        { class: "stack" },
-        queue.bar.node,
-        decisionStatus,
-        queue.truncation,
-        queue.host,
-      ),
-    }),
-    reviewPanel(),
-    limitsPanel(),
+    { class: "screen approvals" },
+    page({ title: "Duyệt", info: limitsInfo() }),
+    tabs.node,
+    panes.queue,
+    panes.reviews,
   );
 
   // One interval for the whole screen. It checks that the screen is still in the document before
@@ -1748,10 +1896,10 @@ export function render_() {
       clearInterval(timer);
       return;
     }
-    for (const clock of clocks) render(clock.host, countdownBadge(clock.expiresAt));
+    for (const clock of clocks) render(clock.host, countdownPill(clock.expiresAt));
   }, TICK_MS);
 
-  void queue.reload();
+  void reloadQueue();
 
   return root;
 }

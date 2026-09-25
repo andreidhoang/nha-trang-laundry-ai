@@ -1,7 +1,11 @@
 """Post-approval edit preflight using the real PostgreSQL approval gate.
 
-The fixture has hashes only.  This path creates and approves a synthetic envelope, then attempts
-to claim it with the edited revision.  It never invokes an outbox provider.
+This path seeds a synthetic draft, approves its first revision, records a reviewer's edit, then
+attempts to claim the approval with the edited revision.  It never invokes an outbox provider.
+
+Since `API-INTEGRITY-002` the digests are the server's, derived from the stored draft; the fixture's
+declared digests are placeholders a real draft cannot have. Its revisions -- 1 approved, 2 after the
+edit -- are checked against the derived ones, and its demand that the rendering change is kept.
 """
 
 from __future__ import annotations
@@ -21,10 +25,14 @@ from nha_trang_laundry_db.approvals import (
     ApprovalStateError,
 )
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_domain.catalog import ActorRole, ApprovalAction
 
 from .fixtures import SyntheticFixtureBundle
-from .synthetic_store import seed_store_membership
+from .synthetic_store import current_message_binding, seed_message_draft, seed_store_membership
+
+#: The reviewer's replacement text: the edit that must invalidate the approval of revision 1.
+EDITED_TEXT = "Dạ, đồ đã xong, tiệm mở cửa đến 21 giờ ạ."
 
 
 class SyntheticApprovalError(ValueError):
@@ -66,7 +74,18 @@ def execute_post_approval_edit_preflight(
     store_id = seed_store_membership(
         connection, principals=(requester, owner), occurred_at=occurred_at
     )
-    resource_id = uuid4()
+    resource_id, derived = seed_message_draft(
+        connection,
+        store_id=store_id,
+        conversation_binding_id=uuid4(),
+        contact_binding_id=uuid4(),
+        occurred_at=occurred_at,
+    )
+    if derived.resource_version != approved.resource_version:
+        raise SyntheticApprovalError("fixture approved revision is not the draft's revision")
+    approved = _MessageBinding(
+        derived.resource_version, derived.snapshot_hash, derived.rendered_hash
+    )
     request = ApprovalRequestCommand(
         ApprovalAction.SEND_MESSAGE,
         "MESSAGE_DRAFT",
@@ -96,6 +115,25 @@ def execute_post_approval_edit_preflight(
             occurred_at + timedelta(seconds=1),
         ),
     )
+
+    # The edit itself, by a reviewer, which is what moves a draft to its next revision.
+    ShadowConsoleRepository().decide_draft(
+        connection,
+        agent_run_id=resource_id,
+        decision="EDIT",
+        principal=owner,
+        correlation_id=uuid4(),
+        edited_text=EDITED_TEXT,
+        now=occurred_at + timedelta(seconds=1, milliseconds=500),
+    )
+    edited_derived = current_message_binding(connection, resource_id)
+    if edited_derived.resource_version != edited.resource_version:
+        raise SyntheticApprovalError("fixture edited revision is not the draft's revision")
+    edited = _MessageBinding(
+        edited_derived.resource_version, edited_derived.snapshot_hash, edited_derived.rendered_hash
+    )
+    if edited.rendered_hash == approved.rendered_hash:
+        raise SyntheticApprovalError("the edit did not change the rendered hash")
 
     mismatch_detected = False
     try:

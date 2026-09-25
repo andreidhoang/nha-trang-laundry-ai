@@ -108,7 +108,8 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/approvals",
         "/internal/v1/queue-recovery",
         "/internal/v1/stores/{}/shadow/drafts",
-        "/internal/v1/shadow/unknown-sends",
+        # API-INTEGRITY-002: the unknown-send queue is the selected store's.
+        "/internal/v1/stores/{}/shadow/unknown-sends",
         "/internal/v1/stores/{}/assistant/turns",
         # The counter's day, end to end. These three are one requirement, not three: an order
         # cannot reach ACTIVE while intake is not ACCEPTED, and every later step hangs off ACTIVE.

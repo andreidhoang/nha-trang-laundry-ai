@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from message_draft_test_data import current_binding, seed_message_draft
 from nha_trang_laundry_db.approvals import (
     ApprovalAuthorizationError,
     ApprovalDecision,
@@ -248,14 +249,20 @@ def test_approval_is_server_derived_hash_bound_authorized_and_one_time(
     store_id = uuid4()
     _assign_store(postgres_connection, requester, store_id)
     _assign_store(postgres_connection, owner, store_id)
-    resource_id = uuid4()
+    # API-INTEGRITY-002: `MESSAGE_DRAFT` is resolvable, so the envelope names a real draft at the
+    # revision and digests the server computes for it -- it was `uuid4()` at revision 3 with the
+    # literal "a"/"b" digests, which is now refused at request time as content that does not exist.
+    draft = seed_message_draft(postgres_connection, store_id)
+    binding = current_binding(postgres_connection, draft.agent_run_id)
+    snapshot, rendered = binding.snapshot_hash, binding.rendered_hash
+    resource_id = draft.agent_run_id
     request = ApprovalRequestCommand(
         ApprovalAction.SEND_MESSAGE,
         "MESSAGE_DRAFT",
         resource_id,
-        3,
-        HASH_A,
-        HASH_B,
+        binding.resource_version,
+        snapshot,
+        rendered,
         "approval-policy-v1",
         requester.staff_user_id,
         f"approval-{uuid4().hex}",
@@ -272,9 +279,9 @@ def test_approval_is_server_derived_hash_bound_authorized_and_one_time(
     decision = ApprovalDecisionCommand(
         created.approval_request_id,
         ApprovalDecision.APPROVED,
-        3,
-        HASH_A,
-        HASH_B,
+        binding.resource_version,
+        snapshot,
+        rendered,
         "HUMAN_REVIEW_COMPLETE",
         owner,
         uuid4(),
@@ -297,7 +304,7 @@ def test_approval_is_server_derived_hash_bound_authorized_and_one_time(
     with pytest.raises(ApprovalStateError, match="hash is stale"):
         repository.decide(
             postgres_connection,
-            replace(decision, observed_rendered_hash=HASH_A, correlation_id=uuid4()),
+            replace(decision, observed_rendered_hash=snapshot, correlation_id=uuid4()),
         )
     with pytest.raises(ApprovalStateError, match="reason code"):
         repository.decide(
@@ -333,9 +340,9 @@ def test_approval_is_server_derived_hash_bound_authorized_and_one_time(
     execution = ApprovalExecutionCommand(
         created.approval_request_id,
         ActorRole.OUTBOX_WORKER,
-        3,
-        HASH_A,
-        HASH_B,
+        binding.resource_version,
+        snapshot,
+        rendered,
         "approval-policy-v1",
         uuid4(),
         NOW + timedelta(minutes=2),

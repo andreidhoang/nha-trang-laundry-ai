@@ -92,6 +92,11 @@ CAPABILITY_REPOSITORY_ROLES: dict[str, tuple[str, str]] = {
     # list routes do, because the role set that really decides it lives in the repository -- so
     # binding it to that gate would be the vacuous tautology this table exists to replace.
     "SLA_BOARD_READ": ("nha_trang_laundry_db.shadow_console", "SHADOW_READ_ROLES"),
+    # API-INTEGRITY-002. The unknown-send queue became store-scoped and MFA-gated inside
+    # `ShadowConsoleRepository.list_unknown_sends`; its route still depends on `current_principal`,
+    # so -- as for SHADOW_READ -- the set that really decides it is the repository's. The MFA half
+    # of the claim is asserted behaviourally in `test_unknown_send_store_scope.py`.
+    "UNKNOWN_SENDS_READ": ("nha_trang_laundry_db.shadow_console", "SHADOW_READ_ROLES"),
     # The export route does gate on `require_approval_staff`, and `EXPORT_ROLES` is the same pair
     # checked again inside the repository. Bound to the repository set because that is the check a
     # route rewrite cannot drop, and because equality is stronger than the subset a gate allows.

@@ -203,8 +203,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # and `EXPORT_DATA` are REPOSITORY_ROLES, so 3 + 2 = 5 -- the board route depends on
     # `current_principal` and the set that decides it is `SHADOW_READ_ROLES`, and the export's
     # `EXPORT_ROLES` is re-checked inside the repository where a route rewrite cannot drop it.
+    #
+    # 6 REPOSITORY_ROLES since API-INTEGRITY-002: `UNKNOWN_SENDS_READ` is the unknown-send queue,
+    # now store-scoped and MFA-gated inside `list_unknown_sends`. Its route depends on
+    # `current_principal`, so it binds to `SHADOW_READ_ROLES` for the same reason SHADOW_READ does.
     assert counts.get("SERVER_GATE") == 13
-    assert counts.get("REPOSITORY_ROLES") == 5
+    assert counts.get("REPOSITORY_ROLES") == 6
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
     # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
@@ -593,18 +597,25 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # on record under "Chi tiết kỹ thuật", which verify_workflow_conformance.py caught. Three
     # arrived with CANCEL-REFUND-001 (a paid order whose resolution does not say the money went
     # back; an unsupported balance shape; a resolution not yet chosen).
-    assert sum(counts.values()) == _registry()["total"] == 381
+    #
+    # 383 after API-INTEGRITY-002: +1 the `UNKNOWN_SENDS_READ` capability's `why`, +1 the
+    # manual-send hint saying there is no recipient field and why. Two sentences were re-keyed
+    # without changing the count, both because they had become false: the exceptions notice that
+    # said the queue showed every store's receipts, and SHADOW_READ's `why`, which no longer covers
+    # the exceptions queue now that it asks for MFA. 381 + 2.
+    assert sum(counts.values()) == _registry()["total"] == 383
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
     # that admits everyone.
     #
     # 19 after OPS-BOARD-001: 16 + 3, one per new capability.
+    # 20 after API-INTEGRITY-002: + `UNKNOWN_SENDS_READ`.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 19
+        == 20
     )
 
 

@@ -22,8 +22,10 @@ from nha_trang_laundry_contracts.channel_envelope import (
     SendAuthorization,
     SendAuthorizationSource,
 )
+from nha_trang_laundry_db.approvals import ApprovalRepository, ApprovalRequestCommand
 from nha_trang_laundry_db.channel import ChannelSendReceiptRepository
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.message_drafts import read_message_draft_binding
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.shadow_console import (
     ShadowAuthorizationError,
@@ -31,6 +33,7 @@ from nha_trang_laundry_db.shadow_console import (
     ShadowStateError,
 )
 from nha_trang_laundry_db.stores import StoreRepository
+from nha_trang_laundry_domain.catalog import ApprovalAction
 from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA, evaluate_production_sla
 
 NOW = datetime.now(UTC)
@@ -413,7 +416,34 @@ def test_only_an_owner_may_grant_store_access(
 # --- unknown-outcome reconciliation ------------------------------------------------------------
 
 
-def _unknown_receipt(connection: psycopg.Connection[Any]) -> ChannelOutboundReceipt:
+def _unknown_receipt(connection: psycopg.Connection[Any], store_id: UUID) -> ChannelOutboundReceipt:
+    """An unknown-outcome send of `store_id`, authorised by a real approval of that store.
+
+    API-INTEGRITY-002 gave a receipt its store and requires a `HUMAN_APPROVAL` receipt's approval
+    to exist in that same store, so the `approval_ref=uuid4()` this fixture used to carry -- an
+    approval of no shop at all -- is now refused at record time.
+    """
+    requester = _member(connection, store_id, roles=frozenset({StaffRole.OPERATOR}))
+    agent_run_id = _draft(connection, store_id)
+    with connection.cursor() as cursor:
+        binding = read_message_draft_binding(cursor, agent_run_id)
+    assert binding is not None
+    approval = ApprovalRepository().request(
+        connection,
+        ApprovalRequestCommand(
+            ApprovalAction.SEND_MESSAGE,
+            "MESSAGE_DRAFT",
+            agent_run_id,
+            binding.resource_version,
+            binding.snapshot_hash,
+            binding.rendered_hash,
+            "manual-send-policy-v1",
+            requester.staff_user_id,
+            f"receipt-approval-{uuid4().hex}",
+            uuid4(),
+            store_id=store_id,
+        ),
+    )
     receipt = ChannelOutboundReceipt(
         receipt_id=uuid4(),
         outbox_id=uuid4(),
@@ -421,21 +451,25 @@ def _unknown_receipt(connection: psycopg.Connection[Any]) -> ChannelOutboundRece
         provider=ChannelProvider.TELEGRAM_SANDBOX,
         message_kind=ChannelMessageKind.LIST_PRICE_INFO,
         authorization=SendAuthorization(
-            source=SendAuthorizationSource.HUMAN_APPROVAL, approval_ref=uuid4()
+            source=SendAuthorizationSource.HUMAN_APPROVAL,
+            approval_ref=approval.approval_request_id,
         ),
         attempt=SendAttempt(attempt_number=1, started_at=NOW, outcome=SendAttemptOutcome.TIMEOUT),
         delivery_status=ChannelDeliveryStatus.FAILED,
         reconciliation_state=ReconciliationState.UNKNOWN_REQUIRES_HUMAN,
     )
-    ChannelSendReceiptRepository().record_attempt(connection, receipt, correlation_id=uuid4())
+    ChannelSendReceiptRepository().record_attempt(
+        connection, receipt, store_id=store_id, correlation_id=uuid4()
+    )
     return receipt
 
 
 def test_a_human_resolves_an_unknown_send_and_the_resolution_is_attributed(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    principal = _staff(postgres_connection, roles=frozenset({StaffRole.OPS_APPROVER}))
-    receipt = _unknown_receipt(postgres_connection)
+    store_id = uuid4()
+    principal = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPS_APPROVER}))
+    receipt = _unknown_receipt(postgres_connection, store_id)
 
     ShadowConsoleRepository().resolve_unknown_send(
         postgres_connection,
@@ -463,8 +497,9 @@ def test_a_human_resolves_an_unknown_send_and_the_resolution_is_attributed(
 def test_an_unknown_send_cannot_be_resolved_to_a_non_terminal_state(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    principal = _staff(postgres_connection, roles=frozenset({StaffRole.OPS_APPROVER}))
-    receipt = _unknown_receipt(postgres_connection)
+    store_id = uuid4()
+    principal = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPS_APPROVER}))
+    receipt = _unknown_receipt(postgres_connection, store_id)
 
     with pytest.raises(ShadowStateError, match="CONFIRMED_SENT or CONFIRMED_NOT_SENT"):
         ShadowConsoleRepository().resolve_unknown_send(
@@ -479,8 +514,9 @@ def test_an_unknown_send_cannot_be_resolved_to_a_non_terminal_state(
 def test_a_role_without_decide_rights_cannot_resolve_an_unknown_send(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    auditor = _staff(postgres_connection, roles=frozenset({StaffRole.AUDITOR}))
-    receipt = _unknown_receipt(postgres_connection)
+    store_id = uuid4()
+    auditor = _member(postgres_connection, store_id, roles=frozenset({StaffRole.AUDITOR}))
+    receipt = _unknown_receipt(postgres_connection, store_id)
 
     with pytest.raises(ShadowAuthorizationError):
         ShadowConsoleRepository().resolve_unknown_send(
@@ -495,8 +531,9 @@ def test_a_role_without_decide_rights_cannot_resolve_an_unknown_send(
 def test_an_already_resolved_send_cannot_be_resolved_again(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    principal = _staff(postgres_connection, roles=frozenset({StaffRole.OPS_APPROVER}))
-    receipt = _unknown_receipt(postgres_connection)
+    store_id = uuid4()
+    principal = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPS_APPROVER}))
+    receipt = _unknown_receipt(postgres_connection, store_id)
     repository = ShadowConsoleRepository()
     repository.resolve_unknown_send(
         postgres_connection,
@@ -520,11 +557,15 @@ def test_the_exception_queue_lists_only_unresolved_unknown_sends(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
     """An unresolved receipt appears; a resolved one does not."""
-    principal = _staff(postgres_connection, roles=frozenset({StaffRole.OPS_APPROVER}))
+    store_id = uuid4()
+    principal = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPS_APPROVER}))
     repository = ShadowConsoleRepository()
-    assert repository.list_unknown_sends(postgres_connection, principal=principal) == ()
+    assert (
+        repository.list_unknown_sends(postgres_connection, store_id=store_id, principal=principal)
+        == ()
+    )
 
-    resolved = _unknown_receipt(postgres_connection)
+    resolved = _unknown_receipt(postgres_connection, store_id)
     repository.resolve_unknown_send(
         postgres_connection,
         receipt_id=resolved.receipt_id,
@@ -534,11 +575,13 @@ def test_the_exception_queue_lists_only_unresolved_unknown_sends(
         note="Dọn hàng chờ trước ca.",
     )
 
-    receipt = _unknown_receipt(postgres_connection)
+    receipt = _unknown_receipt(postgres_connection, store_id)
 
     assert [
         item.receipt_id
-        for item in repository.list_unknown_sends(postgres_connection, principal=principal)
+        for item in repository.list_unknown_sends(
+            postgres_connection, store_id=store_id, principal=principal
+        )
     ] == [receipt.receipt_id]
 
     repository.resolve_unknown_send(
@@ -549,7 +592,10 @@ def test_the_exception_queue_lists_only_unresolved_unknown_sends(
         correlation_id=uuid4(),
     )
 
-    assert repository.list_unknown_sends(postgres_connection, principal=principal) == ()
+    assert (
+        repository.list_unknown_sends(postgres_connection, store_id=store_id, principal=principal)
+        == ()
+    )
 
 
 # --- deterministic read models -------------------------------------------------------------

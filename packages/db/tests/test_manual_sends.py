@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from message_draft_test_data import current_binding, seed_message_draft
 from nha_trang_laundry_contracts import AgentDeploymentStage
 from nha_trang_laundry_db.approvals import (
     ApprovalDecision,
@@ -31,8 +32,6 @@ from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import ActorRole, ApprovalAction
 
 NOW = datetime(2026, 8, 1, 3, tzinfo=UTC)
-HASH_A = "JCS-SHA256-V1:" + "a" * 64
-HASH_B = "JCS-SHA256-V1:" + "b" * 64
 
 
 @pytest.fixture
@@ -112,20 +111,32 @@ def _no_mfa_member(connection: psycopg.Connection[Any], store_id: UUID) -> Staff
     return principal
 
 
-def _approved_message(connection: psycopg.Connection[Any]) -> tuple[UUID, UUID, UUID]:
+def _approved_message(
+    connection: psycopg.Connection[Any],
+) -> tuple[UUID, UUID, UUID, str, str]:
+    """An approved SEND_MESSAGE over a real draft.
+
+    Returns the approval, the draft's recipient, the store, and the draft's snapshot and rendered
+    digests. The digests were the literals "a" * 64 and "b" * 64 until API-INTEGRITY-002 made
+    `MESSAGE_DRAFT` resolvable, at which point an envelope over digests of no content became the
+    refusal it always should have been; they are now the server's own for a seeded draft.
+    """
     approvals = ApprovalRepository()
     requester = _principal(StaffRole.OPS_APPROVER)
     owner = _principal(StaffRole.OWNER_ADMIN)
     store_id = _member_store(connection, requester, owner)
+    draft = seed_message_draft(connection, store_id)
+    binding = current_binding(connection, draft.agent_run_id)
+    hash_a, hash_b = binding.snapshot_hash, binding.rendered_hash
     created = approvals.request(
         connection,
         ApprovalRequestCommand(
             ApprovalAction.SEND_MESSAGE,
             "MESSAGE_DRAFT",
-            uuid4(),
+            draft.agent_run_id,
             1,
-            HASH_A,
-            HASH_B,
+            hash_a,
+            hash_b,
             "manual-send-policy-v1",
             requester.staff_user_id,
             f"manual-send-approval-{uuid4().hex}",
@@ -140,21 +151,21 @@ def _approved_message(connection: psycopg.Connection[Any]) -> tuple[UUID, UUID, 
             created.approval_request_id,
             ApprovalDecision.APPROVED,
             1,
-            HASH_A,
-            HASH_B,
+            hash_a,
+            hash_b,
             "HUMAN_REVIEW_COMPLETE",
             owner,
             uuid4(),
             NOW + timedelta(seconds=1),
         ),
     )
-    return created.approval_request_id, uuid4(), store_id
+    return created.approval_request_id, draft.contact_binding_id, store_id, hash_a, hash_b
 
 
 def test_manual_attestation_consumes_exact_approval_and_blocks_worker_execution(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    approval_id, recipient_id, store_id = _approved_message(postgres_connection)
+    approval_id, recipient_id, store_id, hash_a, hash_b = _approved_message(postgres_connection)
     manual = ManualSendRepository()
     sender = _principal(StaffRole.OPERATOR)
     # The sender spends the approval, so they must belong to the shop that holds it.
@@ -164,9 +175,8 @@ def test_manual_attestation_consumes_exact_approval_and_blocks_worker_execution(
         ManualSendPrepareCommand(
             approval_id,
             1,
-            HASH_A,
-            HASH_B,
-            recipient_id,
+            hash_a,
+            hash_b,
             "INTERNAL_TEST",
             "TRANSACTIONAL",
             AgentDeploymentStage.SHADOW,
@@ -181,7 +191,7 @@ def test_manual_attestation_consumes_exact_approval_and_blocks_worker_execution(
             ManualSendAttestationCommand(
                 prepared.manual_send_envelope_id,
                 1,
-                HASH_B,
+                hash_b,
                 sender,
                 uuid4(),
                 NOW + timedelta(seconds=3),
@@ -194,7 +204,7 @@ def test_manual_attestation_consumes_exact_approval_and_blocks_worker_execution(
         ManualSendAttestationCommand(
             prepared.manual_send_envelope_id,
             1,
-            HASH_B,
+            hash_b,
             sender,
             uuid4(),
             NOW + timedelta(seconds=3),
@@ -203,6 +213,8 @@ def test_manual_attestation_consumes_exact_approval_and_blocks_worker_execution(
     )
 
     assert recorded.status == "MANUAL_SEND_RECORDED"
+    # The recipient recorded is the approved draft's, which the caller never named.
+    assert prepared.recipient_binding_id == recipient_id == recorded.recipient_binding_id
     with pytest.raises(ApprovalStateError, match="reserved for manual send"):
         ApprovalRepository().claim_execution(
             postgres_connection,
@@ -210,8 +222,8 @@ def test_manual_attestation_consumes_exact_approval_and_blocks_worker_execution(
                 approval_id,
                 ActorRole.OUTBOX_WORKER,
                 1,
-                HASH_A,
-                HASH_B,
+                hash_a,
+                hash_b,
                 "manual-send-policy-v1",
                 uuid4(),
                 NOW + timedelta(seconds=5),
@@ -241,17 +253,17 @@ def test_manual_attestation_consumes_exact_approval_and_blocks_worker_execution(
 def test_manual_send_fails_closed_for_marketing_stale_content_and_missing_mfa(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
-    approval_id, recipient_id, store_id = _approved_message(postgres_connection)
+    approval_id, recipient_id, store_id, hash_a, hash_b = _approved_message(postgres_connection)
     manual = ManualSendRepository()
     sender = _principal(StaffRole.OPERATOR)
     # The sender spends the approval, so they must belong to the shop that holds it.
     _member_store(postgres_connection, sender, store_id=store_id)
+    del recipient_id  # Not an input any more; see test_message_draft_approval.py.
     base = ManualSendPrepareCommand(
         approval_id,
         1,
-        HASH_A,
-        HASH_B,
-        recipient_id,
+        hash_a,
+        hash_b,
         "INTERNAL_TEST",
         "TRANSACTIONAL",
         AgentDeploymentStage.SHADOW,
@@ -264,7 +276,7 @@ def test_manual_send_fails_closed_for_marketing_stale_content_and_missing_mfa(
     with pytest.raises(ManualSendStateError, match="binding is stale"):
         manual.prepare(
             postgres_connection,
-            replace(base, observed_rendered_hash=HASH_A),
+            replace(base, observed_rendered_hash=hash_a),
         )
     with pytest.raises(ManualSendAuthorizationError, match="MFA"):
         manual.prepare(

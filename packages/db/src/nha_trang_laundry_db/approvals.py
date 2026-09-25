@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -655,10 +656,9 @@ def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
     return tuple(row)
 
 
-#: Which resource types this system can actually locate, and where. The other ten in
-#: `APPROVAL_RESOURCE_TYPES` name content that lives in the envelope itself (`MESSAGE_DRAFT`) or
-#: capabilities that are not built (`SLOT_PROPOSAL`, `B2B_TERMS`, ...). For those the store binding
-#: above is the whole of the check, and that is stated rather than implied.
+#: Which resource types this system can actually locate, and where. Those absent here and from
+#: `_COMPUTED_RESOURCES` below name capabilities that are not built (`SLOT_PROPOSAL`, `B2B_TERMS`,
+#: ...), and for them the store binding above is the whole of the check -- stated, not implied.
 _RESOLVABLE_RESOURCES: dict[str, str] = {
     "ORDER": """
         SELECT o.store_id, o.row_version, o.current_quote_snapshot_hash
@@ -682,6 +682,48 @@ _RESOLVABLE_RESOURCES: dict[str, str] = {
 #: later, at decision and execution time, by `_require_exact_binding`.
 
 
+def _message_draft_content(cursor: Any, resource_id: UUID) -> Any:
+    # Imported here rather than at the top so this resolver stays one self-contained hunk.
+    from nha_trang_laundry_db.message_drafts import read_message_draft_binding
+
+    return read_message_draft_binding(cursor, resource_id)
+
+
+#: Resource types whose digests are not stored but **computed by the server from stored content**,
+#: so an envelope's `resource_version`, `snapshot_hash` *and* `rendered_hash` can all be verified.
+#:
+#: `API-INTEGRITY-002` moved `MESSAGE_DRAFT` here. It used to be described as content "that lives in
+#: the envelope itself", which meant nothing checked it: staff could raise a `SEND_MESSAGE`
+#: envelope over any UUID with digests they typed, have it approved, and spend it on a manual send.
+#: The draft in fact lives in `agent_drafts` / `agent_draft_reviews`, both append-only, and
+#: `message_drafts.py` derives its binding. A draft that does not exist, belongs to another store,
+#: or was rejected by a reviewer resolves to `None`, and is refused with the same sentence as a
+#: missing row above.
+#:
+#: Each resolver answers an object with `store_id`, `resource_version`, `snapshot_hash` and
+#: `rendered_hash`, or `None`.
+_COMPUTED_RESOURCES: dict[str, Callable[[Any, UUID], Any]] = {
+    "MESSAGE_DRAFT": _message_draft_content,
+}
+
+
+def _require_computed_resource(cursor: Any, command: ApprovalRequestCommand) -> bool:
+    """Verify an envelope against content the server derives. False when the type is not one."""
+    resolver = _COMPUTED_RESOURCES.get(command.resource_type)
+    if resolver is None:
+        return False
+    content = resolver(cursor, command.resource_id)
+    if content is None or _uuid(content.store_id) != command.store_id:
+        raise ApprovalStateError("the approval names a resource this store does not have")
+    if (
+        int(content.resource_version) != command.resource_version
+        or not hmac.compare_digest(str(content.snapshot_hash), command.snapshot_hash)
+        or not hmac.compare_digest(str(content.rendered_hash), command.rendered_hash)
+    ):
+        raise ApprovalStateError("the approval names a content digest this resource does not have")
+    return True
+
+
 def _require_resolvable_resource(cursor: Any, command: ApprovalRequestCommand) -> None:
     """For the two resource types that exist as rows, prove the envelope describes a real one.
 
@@ -695,8 +737,11 @@ def _require_resolvable_resource(cursor: Any, command: ApprovalRequestCommand) -
     names, and its stored digest is the one being approved. `rendered_hash` is deliberately not
     verified -- it is a digest of a rendering this system does not store, so comparing it against
     anything would be theatre. That limit is real and is recorded in the item's evidence rather
-    than papered over.
+    than papered over. Where the rendering *is* derivable from stored content -- `MESSAGE_DRAFT` --
+    `_require_computed_resource` verifies it too.
     """
+    if _require_computed_resource(cursor, command):
+        return
     query = _RESOLVABLE_RESOURCES.get(command.resource_type)
     if query is None:
         return

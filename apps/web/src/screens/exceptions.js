@@ -10,9 +10,10 @@
  *     how a customer receives the same message twice. There is no retry control on the unknown
  *     queue and `api.js` would refuse to build one; the only exit from `UNKNOWN` is a named human
  *     recording what they saw on the provider side.
- *   - **The unknown queue is not store-scoped.** `GET /internal/v1/shadow/unknown-sends` reads
- *     `channel_send_receipts` with no store predicate, so it returns receipts from every store the
- *     deployment has. The screen says so instead of implying the current store filter applies.
+ *   - **The unknown queue is the selected store's.** Until API-INTEGRITY-002 the route read
+ *     `channel_send_receipts` with no store predicate and returned every store's receipts. It is
+ *     now `GET /internal/v1/stores/{store_id}/shadow/unknown-sends`, requires membership of that
+ *     store and MFA, and a reconcile is refused for a receipt of any other store.
  *   - **Hashes are pasted, never typed.** The manual-send routes compare `rendered_hash` and
  *     `snapshot_hash` with `hmac.compare_digest`. An approximate hash is a refusal, not a warning,
  *     so the fields are validated against the exact `JCS-SHA256-V1:` shape before a round trip and
@@ -31,7 +32,7 @@ import { h, render } from "../core/dom.js";
 import { UNKNOWN, dateTime, integer, shortId } from "../core/format.js";
 import { ENUM_GLOSS, enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
-import { principal } from "../core/session.js";
+import { principal, storeId } from "../core/session.js";
 import {
   badge,
   errorNotice,
@@ -120,6 +121,8 @@ function unknownSendCard(spec) {
 
     try {
       // 204 with no body. `api.js` returns null for it and nothing here tries to parse a result.
+      // The key is required by the route and replays: a resend after a dropped response answers
+      // 204 again instead of 409, and the receipt is not touched twice.
       await request(
         `/internal/v1/shadow/unknown-sends/${encodeURIComponent(item.receipt_id)}/reconcile`,
         { method: "POST", body, idempotencyKey: submission.key() },
@@ -233,6 +236,8 @@ function unknownSendCard(spec) {
  */
 export function render_() {
   const who = principal();
+  const store = storeId();
+  const readVerdict = can(who, "UNKNOWN_SENDS_READ");
   const decideVerdict = can(who, "SHADOW_DECIDE");
   const sendVerdict = can(who, "MANUAL_SEND");
 
@@ -265,7 +270,10 @@ export function render_() {
   // fetched so a stale list is seen as stale rather than trusted.
   const unknown = listView({
     limit: () => limit,
-    fetch: () => request(`/internal/v1/shadow/unknown-sends?limit=${limit}`),
+    fetch: () =>
+      request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/shadow/unknown-sends?limit=${limit}`,
+      ),
     renderItem: (item) =>
       unknownSendCard({
         item,
@@ -321,7 +329,7 @@ export function render_() {
   });
 
   const unknownPanel = panel({
-    eyebrow: "Toàn hệ thống · Không bao giờ gửi lại",
+    eyebrow: "Cửa hàng này · Không bao giờ gửi lại",
     title: "Gửi chưa rõ kết quả",
     count: unknown.count,
     guardrail:
@@ -336,15 +344,22 @@ export function render_() {
       h(
         "div",
         { class: "notice", dataState: "info" },
-        h("p", { class: "notice__title" }, "Hàng chờ này không theo cửa hàng"),
+        h("p", { class: "notice__title" }, "Chỉ biên nhận của cửa hàng đang chọn"),
         h(
           "p",
           null,
-          "Route trả biên nhận của mọi cửa hàng trong hệ thống, không lọc theo cửa hàng bạn đang " +
-            "chọn ở thanh trên. Một biên nhận ở đây có thể thuộc cửa hàng khác, và người bên đó có " +
-            "thể đang xử lý nó cùng lúc với bạn — nên hãy đọc lại danh sách trước khi quyết định.",
+          "Hàng chờ này lọc theo cửa hàng bạn đang chọn ở thanh trên. Người của cửa hàng khác " +
+            "không thấy và không đối soát được các biên nhận này, và bạn cũng không thấy của họ.",
         ),
       ),
+      readVerdict.allowed
+        ? null
+        : h(
+            "div",
+            { class: "notice", dataState: "warn" },
+            h("p", { class: "notice__title" }, "Bạn không đọc được hàng chờ này"),
+            h("p", null, readVerdict.reason),
+          ),
       decideVerdict.allowed
         ? null
         : h(
@@ -359,7 +374,9 @@ export function render_() {
     ),
   });
 
-  void unknown.reload();
+  // Not fetched when the server would refuse it: a 403 in place of the queue says less than the
+  // notice above, which names the reason.
+  if (readVerdict.allowed) void unknown.reload();
 
   return h(
     "section",
@@ -388,5 +405,6 @@ export const screen = {
   path: "/exceptions",
   title: "Ngoại lệ",
   capability: "SHADOW_READ",
+  needsStore: true,
   render: render_,
 };

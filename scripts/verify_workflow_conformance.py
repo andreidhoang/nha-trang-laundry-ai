@@ -319,6 +319,8 @@ class Console:
         mode: str = "SELF_DROP_SELF_COLLECT",
         stop: str,
         lines: list[dict[str, str]] | None = None,
+        distance_m: int | None = None,
+        manual_fee_vnd: int | None = None,
     ) -> dict:
         """Put an order into the state a scenario starts from, through the real routes.
 
@@ -338,6 +340,15 @@ class Console:
             {
                 "bound_order_request_id": request["body"]["order_request_id"],
                 "fulfillment_mode": mode,
+                **({"verified_distance_m": distance_m} if distance_m is not None else {}),
+                **(
+                    {
+                        "approved_manual_fee_vnd": manual_fee_vnd,
+                        "customer_acknowledged_manual_fee": True,
+                    }
+                    if manual_fee_vnd is not None
+                    else {}
+                ),
                 "lines": lines
                 or [
                     {
@@ -349,6 +360,8 @@ class Console:
                 ],
             },
         )
+        if quote["status"] >= 300:
+            raise AssertionError(f"could not price the order: {quote['status']} {quote['text']}")
         priced = quote["body"]
         acceptance = self.call(
             "POST",
@@ -358,6 +371,11 @@ class Console:
                 "expected_snapshot_hash": priced["snapshot_hash"],
             },
         )
+        if acceptance["status"] >= 300:
+            raise AssertionError(
+                f"could not accept the quote: {acceptance['status']} {acceptance['text']} "
+                f"(quote: {json.dumps(priced)[:400]})"
+            )
         order = self.call(
             "POST",
             f"/internal/v1/stores/{STORE}/orders",
@@ -1442,14 +1460,32 @@ def scenario_prepaid(console: Console) -> None:
     """`DEC-032`: a walk-in pays the exact total at drop-off; pickup is its own, named step."""
 
     head("10", "TRẢ TRƯỚC — a walk-in pays when leaving the laundry (DEC-032)")
-    console.sign_in("demo-operations")
-    order = console.build_order(kg="7", stop="active")
-    order_id = order["order_id"]
-    total = order["quote"]["net_service_subtotal_vnd"]
-    grouped = f"{total:,}".replace(",", ".")
-    note(f"order {order_id[:8]}… is accepted and not yet washed; the total is {grouped} ₫")
+    _prepay_then_collect(console, mode="SELF_DROP_SELF_COLLECT", second="10b")
 
+
+def scenario_pickup_only(console: Console) -> None:
+    """The `DEC-032` addendum: the courier fetched it; the customer pays at the counter only."""
+
+    head("10c", "CHỈ LẤY — the courier fetched the bag; the customer pays at the counter, early")
+    # No one-way fee is published, so the server refuses to guess one (REQUIRE_HUMAN) and the
+    # counter enters the fee agreed with the customer -- the path `DEC-003` gives a delivery fee
+    # nobody published.
+    _prepay_then_collect(console, mode="PICKUP_ONLY", second="10d", manual_fee_vnd=15_000)
+
+
+def _prepay_then_collect(
+    console: Console, *, mode: str, second: str, manual_fee_vnd: int | None = None
+) -> None:
+    console.sign_in("demo-operations")
+    order = console.build_order(kg="7", stop="active", mode=mode, manual_fee_vnd=manual_fee_vnd)
+    order_id = order["order_id"]
     console.open(f"#/orders/{order_id}")
+    # The amount a person at the counter reads out is the one the screen shows as "Phải thu" --
+    # the washing and any delivery fee together. Typing the quote's service subtotal instead is
+    # the mistake a script makes and staff do not, and the server rightly refuses it.
+    due = console.page.locator("strong.money").first.inner_text().replace("₫", "").strip()
+    grouped = due.replace("\xa0", "").strip()
+    note(f"order {order_id[:8]}… is accepted and not yet washed; the screen says Phải thu {due} ₫")
     console.type_into("#settlement-amount", grouped)
     box = console.page.locator("#settlement-collected")
     if box.is_checked():
@@ -1480,7 +1516,7 @@ def scenario_prepaid(console: Console) -> None:
         "",
     )
     pickup = console.page.locator("button", has_text="Khách đã nhận đồ")
-    ok("the pickup button is offered for a prepaid walk-in", pickup.count() > 0)
+    ok("the pickup button is offered to a customer who paid in advance", pickup.count() > 0)
     if pickup.count():
         pickup.first.click()
         console.page.wait_for_timeout(1800)
@@ -1519,7 +1555,7 @@ def scenario_prepaid(console: Console) -> None:
             return
     note("washed, checked and released from production")
 
-    head("10b", "KHÁCH TỚI LẤY — the handover, recorded under the staff member's name")
+    head(second, "KHÁCH TỚI LẤY — the handover, recorded under the staff member's name")
     console.open(f"#/orders/{order_id}", settle=1600)
     pickup = console.page.locator("button", has_text="Khách đã nhận đồ")
     if pickup.count():
@@ -1835,6 +1871,7 @@ SCENARIOS = {
     "ai": scenario_ai_refuses,
     "band": scenario_band,
     "prepaid": scenario_prepaid,
+    "pickup_only": scenario_pickup_only,
     "busy": scenario_busy,
     "remedy": scenario_remedy,
 }

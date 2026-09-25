@@ -58,6 +58,13 @@ Each ruling classifies facts. None moves money beyond ratified figures or assert
   "doanh thu" or "lợi nhuận" (the takings rule since `OPS-BOARD-001`). The on-time rate is computed
   against the one stated internal rule the SLA board already uses, and says so on the tile.
 
+- **R6 — Who reads the owner's numbers.** `OWNER_ADMIN`, `OPS_APPROVER`, `ACCOUNTANT` and
+  `AUDITOR`; not `OPERATOR`. This is a management report under its own gate, not a second door to
+  the counter's till: `DEC-014` (the counter staff see the day's takings they took) is unchanged.
+  The accountant keeps the books and the auditor audits them, so both need the money figures; an
+  operator already sees today's takings on Hôm nay and has no need of a month's trend. Reversal:
+  one role set, `REPORT_READ_ROLES`.
+
 ## 3. Items
 
 Each item lists its server change, its console change, and what proves it. Every write keeps

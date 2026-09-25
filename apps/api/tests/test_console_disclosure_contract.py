@@ -214,7 +214,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 15 since SESSION-LIST-001: `SESSIONS_REVOKE_OTHER` (signing out a device other than this one)
     # binds to `require_owner`, the half of `revoke_session`'s inline rule it describes. 14 + 1.
     assert counts.get("SERVER_GATE") == 15
-    assert counts.get("REPOSITORY_ROLES") == 6
+    # 7 since REPORT-DASHBOARD-001: `REPORTS_READ` binds to `REPORT_READ_ROLES`, re-checked inside
+    # `ReportRepository.store_report` behind the route's own `require_report_reader`.
+    assert counts.get("REPOSITORY_ROLES") == 7
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
     # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
@@ -889,7 +891,14 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # customer list's two-paragraph ⓘ, the hand-off's "Đang mở lượt tiếp nhận…" line, and
     # ui/handoff.js's other-store reason. Seven reworded (the "no route" claims made true).
     # 473 with all five merged: 469 + 4 = 473.
-    assert sum(counts.values()) == _registry()["total"] == 473
+    # 459 after REPORT-DASHBOARD-001 (round 6 slice D): -8 +10. Retired with the facts they stated:
+    #   the "Bảng điều hành hằng ngày" missing/blockedBy/today, the measurement lede that said no
+    #   KPI exists, the AI-summary missing/blockedBy that waited on versioned metrics, the channels
+    #   lede's "chưa có gì để AI tóm tắt", and the per-order SLA missing (now names both surfaces).
+    #   Added: their true replacements (margin entry missing/today, both ledes, AI summary on
+    #   DEC-006, per-order SLA), the REPORTS_READ `why`, and two reports.js lines.
+    # 475 with all six round-6 slices merged: 473 + 10 - 8 = 475.
+    assert sum(counts.values()) == _registry()["total"] == 475
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -899,11 +908,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 20 after API-INTEGRITY-002: + `UNKNOWN_SENDS_READ`.
     # 21 after CONSENT-TRANSACTIONAL-001: + `SERVICE_MESSAGING_RELEASE`, on its route's gate.
     # 22 after SESSION-LIST-001: + `SESSIONS_REVOKE_OTHER`, on `require_owner`.
+    # 23 with REPORT-DASHBOARD-001 merged on top: + `REPORTS_READ`.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 22
+        == 23
     )
 
 

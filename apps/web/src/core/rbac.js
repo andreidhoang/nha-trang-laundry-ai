@@ -151,6 +151,15 @@ export const CAPABILITIES = {
     mfa: true,
     why: "Số đơn trong ngày dùng cổng vận hành, giống báo giá và sự cố.",
   },
+  // REPORT-DASHBOARD-001. `REPORT_READ_ROLES`, re-checked inside `ReportRepository.store_report`
+  // with MFA and store membership; the route gate `require_report_reader` is the same set.
+  REPORTS_READ: {
+    roles: [OWNER, APPROVER, "ACCOUNTANT", AUDITOR],
+    mfa: true,
+    why:
+      "Báo cáo theo khoảng ngày dành cho chủ tiệm, người duyệt, kế toán và kiểm toán đã xác thực " +
+      "hai bước. Nhân viên quầy xem tiền và đơn của hôm nay ở màn Hôm nay.",
+  },
   EXPORT_DATA: {
     roles: [OWNER, APPROVER],
     mfa: true,

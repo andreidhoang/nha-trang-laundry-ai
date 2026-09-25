@@ -767,6 +767,99 @@ SLA_BOARD_POLICY_NOTICE = (
     "riêng của từng đơn là quyết định kinh doanh chưa được chốt, nên con số này dùng đúng một quy "
     "tắc đã nêu."
 )
+#: REPORT-DASHBOARD-001. The report's figures, in the `FR-RPT-005` shape. Awkward on purpose: a
+#: fraction that does not round to a whole percent, a denominator of zero (no order reached quality
+#: check), and a window whose refunds exceeded its takings, so the drawer went OUT. The screen must
+#: print every one as the server sent it and compute none of them.
+REPORT_VERSION = "report-v1:2e30b2c5fdd366f2"
+
+
+def report_kpis(start: str, end: str) -> list[dict[str, object]]:
+    def kpi(key, numerator, denominator=None, unit="ORDERS", quality="COMPLETE", **extra):
+        return {
+            "key": key,
+            "numerator": numerator,
+            "denominator": denominator,
+            "denominator_key": None,
+            "unit": unit,
+            "window": {"from_date": start, "to_date": end},
+            "data_quality": quality,
+            "query_version": REPORT_VERSION,
+            "direction": extra.get("direction"),
+            "entries": extra.get("entries"),
+            "amount_vnd": extra.get("amount_vnd"),
+            "by_kind": extra.get("by_kind"),
+        }
+
+    return [
+        kpi("ORDERS_CREATED", 12),
+        kpi("ORDERS_COMPLETED", 7, 12),
+        kpi("ORDERS_CANCELLED", 1, 12),
+        kpi("ON_TIME_INTERNAL", 5, 6, quality="RULE_ASSUMED"),
+        kpi("REWASH", 0, 0),
+        kpi("COMPLAINTS", 2, 7, unit="INCIDENTS"),
+        kpi("MONEY_COLLECTED", 90_000, unit="VND", entries=1),
+        kpi("MONEY_REFUNDED", 240_000, unit="VND", entries=2),
+        kpi("MONEY_NET", 150_000, unit="VND", direction="OUT"),
+        kpi(
+            "REMEDIES_EXECUTED",
+            2,
+            unit="REMEDIES",
+            amount_vnd=80_000,
+            by_kind=[
+                {"kind": "FREE_REWASH", "count": 1, "amount_vnd": None},
+                {"kind": "DAMAGE_COMPENSATION", "count": 1, "amount_vnd": 80_000},
+                {"kind": "LATE_DELIVERY_CREDIT", "count": 0, "amount_vnd": 0},
+                {"kind": "LOST_ITEM", "count": 0, "amount_vnd": 0},
+            ],
+        ),
+    ]
+
+
+def report_body(url: str, *, daily: bool) -> dict[str, object]:
+    from urllib.parse import parse_qs, urlsplit
+
+    query = parse_qs(urlsplit(url).query)
+    start, end = query["from"][0], query["to"][0]
+    window = {
+        "from_date": start,
+        "to_date": end,
+        "days": 2 if start != end else 1,
+        "business_timezone": "Asia/Ho_Chi_Minh",
+        "ends_today": True,
+    }
+    rule = {
+        "policy_id": "SLA_STANDARD_CLOTHES",
+        "policy_type": "COMMITMENT",
+        "target_max_hours": 8,
+        "notice_vi": SLA_BOARD_POLICY_NOTICE,
+    }
+    base = {
+        "store_id": STORE,
+        "window": window,
+        "query_version": REPORT_VERSION,
+        "evaluated_at": "2026-09-25T10:00:00+00:00",
+        "sla_rule": rule,
+    }
+    if daily:
+        return {
+            **base,
+            "days": [
+                {"date": start, "kpis": report_kpis(start, start)},
+                {"date": end, "kpis": report_kpis(end, end)},
+            ],
+        }
+    return {
+        **base,
+        "kpis": report_kpis(start, end),
+        "margin": {
+            "shown": False,
+            "reason_code": "COST_NOT_CAPTURED",
+            "blocked_by": "SHOP-INSTRUMENT-001",
+        },
+    }
+
+
 SLA_BOARD_FIRST_PAGE = {
     "items": [
         {
@@ -2077,6 +2170,11 @@ with sync_playwright() as playwright:
             # rows to both would certify a "Tải thêm" control that appends what is already on
             # screen, which is the defect the paging shape exists to avoid.
             body = SLA_BOARD_SECOND_PAGE if "after_order_id=" in url else SLA_BOARD_FIRST_PAGE
+        elif "/reports/summary" in url or "/reports/daily" in url:
+            # REPORT-DASHBOARD-001: every read is recorded, so section 19 can prove a refused
+            # window and a refused role never reached the server.
+            state.setdefault("report_reads", []).append(url)
+            body = report_body(url, daily="/reports/daily" in url)
         elif "/pricebook/services" in url:
             # The quote form refuses to build without this, so an empty stub would leave every
             # assertion below looking at a refusal notice rather than a form.
@@ -6410,6 +6508,121 @@ with sync_playwright() as playwright:
     )
     state["order_envelope_storeless"] = False
     state["order_listed"] = False
+
+    print()
+    print("=" * 74)
+    print("19. BÁO CÁO — the owner's numbers, printed as the server sent them")
+    print("=" * 74)
+
+    state["report_reads"] = []
+    # A fresh load, so the console reads the owner's session again rather than the last section's.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/reports", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    reads = list(state["report_reads"])
+    check(
+        "the report reads the summary and the days for the default seven-day window",
+        any("/reports/summary?from=" in url for url in reads)
+        and any("/reports/daily?from=" in url for url in reads),
+        repr(reads),
+    )
+
+    def tile(key: str) -> str:
+        node = page.locator(f"[data-kpi={key}]")
+        return node.first.inner_text() if node.count() else ""
+
+    check(
+        "a fraction is shown beside the percentage the console formats from it",
+        "58%" in tile("ORDERS_COMPLETED") and "7 / 12 đơn tạo" in tile("ORDERS_COMPLETED"),
+        tile("ORDERS_COMPLETED")[:80],
+    )
+    check(
+        "no denominator is not zero percent: nothing reached quality check reads as unknown",
+        "—" in tile("REWASH") and "0%" not in tile("REWASH") and "0 / 0" in tile("REWASH"),
+        tile("REWASH")[:80],
+    )
+    check(
+        "the on-time tile says it is measured against the internal mark",
+        "Theo mốc nội bộ" in tile("ON_TIME_INTERNAL") and "5 / 6" in tile("ON_TIME_INTERNAL"),
+        tile("ON_TIME_INTERNAL")[:80],
+    )
+    money_tile = tile("MONEY_NET")
+    check(
+        "a drawer that went down is said in words with the server's amount, never a minus sign",
+        "Két giảm" in money_tile
+        and "150.000" in money_tile
+        and "-150" not in money_tile
+        and "\u2212" not in money_tile,
+        money_tile[:120],
+    )
+    check(
+        "what came in and what went back are the server's own sums",
+        "90.000" in money_tile and "240.000" in money_tile,
+        money_tile[:120],
+    )
+    check(
+        "margin is shown as not computed, with the reason, rather than left out",
+        "Chưa tính được" in tile("MARGIN"),
+        tile("MARGIN")[:80],
+    )
+    check(
+        "the remedies tile names the kinds that happened, in the counter's words",
+        "Giặt lại miễn phí: 1" in tile("REMEDIES_EXECUTED")
+        and "80.000" in tile("REMEDIES_EXECUTED"),
+        tile("REMEDIES_EXECUTED")[:120],
+    )
+    check(
+        "the versioned query behind the figures is in the technical drawer",
+        REPORT_VERSION in str(page.evaluate("document.body.textContent")),
+    )
+    page.locator("[data-kpi=ON_TIME_INTERNAL] .info-btn").first.click()
+    page.wait_for_timeout(300)
+    sheet_text = page.locator("dialog.sheet[open]").first.inner_text().replace("\n", " ")
+    check(
+        "the on-time ⓘ carries the board's rule verbatim and the data quality token",
+        SLA_BOARD_POLICY_NOTICE in sheet_text and "RULE_ASSUMED" in sheet_text,
+        sheet_text[:160],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(200)
+    check(
+        "one row per day, newest first",
+        page.locator("[data-report-day]").count() == 2,
+        str(page.locator("[data-report-day]").count()),
+    )
+
+    # A window the server would refuse is refused here first, and never sent.
+    page.locator("[aria-label='Khoảng ngày'] [data-value='custom']").click()
+    page.wait_for_timeout(200)
+    before = len(state["report_reads"])
+    page.fill("#report-from", "2020-01-01")
+    page.locator("[data-report-apply]").click()
+    page.wait_for_timeout(400)
+    check(
+        "a window longer than 92 days is refused in words, without a request",
+        "Tối đa 92 ngày" in rendered_text() and len(state["report_reads"]) == before,
+        str(len(state["report_reads"]) - before),
+    )
+
+    # An operator: the entry stays in Thêm, shut, with who may open it; the screen asks nothing.
+    SESSION_OK["roles"] = ["OPERATOR"]
+    state["report_reads"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/more", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    denied = page.locator("[data-nav-denied='/reports']")
+    check(
+        "an operator still sees Báo cáo under Thêm, disabled, naming who may open it",
+        denied.count() == 1 and "Chỉ" in denied.first.inner_text(),
+    )
+    page.goto(f"http://localhost:{PORT}/#/reports", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    check(
+        "and opening it anyway shows the rule and makes no report request",
+        "Kế toán" in rendered_text() and not state["report_reads"],
+        repr(state["report_reads"]),
+    )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

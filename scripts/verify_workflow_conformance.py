@@ -199,6 +199,12 @@ DECLARED_CONTROLS = (
     "shadow.new-order",
     "manualSend.new-order",
     "approvals.new-order",
+    # REPORT-DASHBOARD-001: the owner's numbers, reached from Hôm nay and from the navigation.
+    "shell.nav.reports",
+    "today.reports-link",
+    "reports.preset",
+    "reports.info",
+    "reports.custom-apply",
 )
 
 PASS: list[str] = []
@@ -3611,6 +3617,249 @@ def scenario_contact_pick(console: Console) -> None:
     )
 
 
+def scenario_report(console: Console) -> None:
+    """REPORT-DASHBOARD-001: the owner's numbers move by exactly what the counter just did.
+
+    The day's figures are read before and after a known set of actions -- a customer's order
+    washed, found stained at quality check, washed again, finished, paid and closed; a complaint
+    about it; a second order cancelled before anything was handed over -- and every figure must
+    move by exactly that much and nothing else. Then the screen must print the server's figures
+    verbatim, the on-time tile must say which rule it assumed, and a counter operator must be
+    refused by the server and shown the refusal by the console.
+    """
+
+    head("R", "BÁO CÁO — the owner's numbers after known actions")
+    console.sign_in("demo-owner")
+    today = console.page.evaluate(
+        "() => new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', "
+        "month: '2-digit', day: '2-digit'}).format(new Date())"
+    )
+    path = f"/internal/v1/stores/{STORE}/reports/summary?from={today}&to={today}"
+
+    def figures() -> dict[str, dict[str, Any]]:
+        read = console.call("GET", path)
+        if read["status"] != 200:
+            raise AssertionError(f"the report did not answer: {read['status']} {read['text']}")
+        return {kpi["key"]: kpi for kpi in read["body"]["kpis"]}
+
+    def pair(kpis: dict[str, dict[str, Any]], key: str) -> tuple[int, int]:
+        return int(kpis[key]["numerator"]), int(kpis[key]["denominator"] or 0)
+
+    before = figures()
+
+    # The known actions. One order goes the whole way with a per-axis rewash in the middle.
+    washed = console.build_order(kg="7", stop="checking")
+    for target in ("EXCEPTION", "IN_PROCESS", "QUALITY_CHECK", "READY_AT_STORE", "RELEASED"):
+        moved = console.call(
+            "POST",
+            f"/internal/v1/orders/{washed['order_id']}/production-transition",
+            {"target": target},
+            if_match=console.current_version(washed["order_id"], washed["row_version"]),
+        )
+        if moved["status"] >= 300:
+            raise AssertionError(f"could not move to {target}: {moved['text']}")
+    console.pay(washed["order_id"], "SETTLE")
+    console.step(washed["order_id"], "COMPLETE")
+    total = int(washed["quote"]["net_service_subtotal_vnd"])
+    complaint = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/incidents",
+        {"order_id": washed["order_id"], "evidence_summary": "Khách báo áo còn vết ố sau khi giặt"},
+    )
+    ok("the complaint is recorded", complaint["status"] == 201, complaint["text"][:120])
+    # A second customer changes their mind before handing anything over.
+    dropped = console.build_order(stop="created")
+    console.step(dropped["order_id"], "CANCEL")
+
+    after = figures()
+
+    def delta(key: str) -> tuple[int, int]:
+        (n1, d1), (n0, d0) = pair(after, key), pair(before, key)
+        return n1 - n0, d1 - d0
+
+    ok("two orders more were created", delta("ORDERS_CREATED")[0] == 2, delta("ORDERS_CREATED"))
+    ok(
+        "one more completed, over two more created",
+        delta("ORDERS_COMPLETED") == (1, 2),
+        delta("ORDERS_COMPLETED"),
+    )
+    ok(
+        "one more cancelled, over the same two",
+        delta("ORDERS_CANCELLED") == (1, 2),
+        delta("ORDERS_CANCELLED"),
+    )
+    ok(
+        "the stained order is one more rewash, over one more order that reached quality check",
+        delta("REWASH") == (1, 1),
+        delta("REWASH"),
+    )
+    ok(
+        "finished within the board's mark: one more on time, over one more finished",
+        delta("ON_TIME_INTERNAL") == (1, 1),
+        delta("ON_TIME_INTERNAL"),
+    )
+    ok(
+        "one more complaint, over one more completed order",
+        delta("COMPLAINTS") == (1, 1),
+        delta("COMPLAINTS"),
+    )
+    if READS_DATABASE:
+        # What the settlement row holds, not what the quote said: a promotion may apply.
+        settled = sql(
+            f"select paid_amount_vnd from order_settlements where order_id='{washed['order_id']}'"
+        )
+        total = int(settled) if settled.isdigit() else total
+    ok(
+        "the money collected moved by exactly the order's total, and nothing was refunded",
+        delta("MONEY_COLLECTED")[0] == total and delta("MONEY_REFUNDED")[0] == 0,
+        f"{delta('MONEY_COLLECTED')[0]} vs {total}",
+    )
+    ok(
+        "every figure carries the rule's version, and the on-time figure says it is assumed",
+        len({kpi["query_version"] for kpi in after.values()}) == 1
+        and next(iter(after.values()))["query_version"].startswith("report-v1:")
+        and after["ON_TIME_INTERNAL"]["data_quality"] == "RULE_ASSUMED"
+        and all(
+            kpi["data_quality"] == "COMPLETE"
+            for key, kpi in after.items()
+            if key != "ON_TIME_INTERNAL"
+        ),
+        after["ON_TIME_INTERNAL"]["query_version"],
+    )
+
+    head("R2", "BÁO CÁO — the screen prints the server's figures, and computes none")
+    console.open("#/")
+    link = console.page.locator("a[data-report-link]")
+    ok("the owner's Hôm nay links to the report", link.count() == 1)
+    if link.count():
+        link.first.click()
+        console.page.wait_for_timeout(1500)
+        touched("today.reports-link")
+    ok("and the link opens it", console.page.url.endswith("#/reports"), console.page.url)
+    # And from the navigation, the way every destination is reached.
+    console.open("#/orders")
+    nav = console.page.locator("nav a", has_text="Báo cáo").first
+    if not (nav.count() and nav.is_visible()):
+        console.page.locator("nav a", has_text="Thêm").first.click()
+        console.page.wait_for_timeout(700)
+        nav = console.page.locator("main a[data-nav='/reports']").first
+    if nav.count():
+        nav.click()
+        console.page.wait_for_timeout(1500)
+        touched("shell.nav.reports")
+    ok("the navigation reaches Báo cáo", console.page.url.endswith("#/reports"), console.page.url)
+
+    console.page.locator("[aria-label='Khoảng ngày'] [data-value='today']").click()
+    console.page.wait_for_timeout(1500)
+    touched("reports.preset")
+
+    def tile_value(key: str) -> str:
+        node = console.page.locator(f"[data-kpi={key}] .kpi__value")
+        return node.first.inner_text().strip() if node.count() else ""
+
+    def fraction(key: str) -> str:
+        node = console.page.locator(f"[data-kpi={key}] [data-fraction]")
+        return str(node.first.get_attribute("data-fraction")) if node.count() else ""
+
+    ok(
+        "Đơn mới shows the server's count",
+        tile_value("ORDERS_CREATED") == str(after["ORDERS_CREATED"]["numerator"]),
+        tile_value("ORDERS_CREATED"),
+    )
+    for key in ("ORDERS_COMPLETED", "ORDERS_CANCELLED", "ON_TIME_INTERNAL", "REWASH", "COMPLAINTS"):
+        wanted = f"{after[key]['numerator']}/{after[key]['denominator']}"
+        ok(
+            f"{key} shows the server's fraction beside its percentage",
+            fraction(key) == wanted,
+            f"{fraction(key)} vs {wanted}",
+        )
+    net = console.page.locator("[data-kpi=MONEY_NET] .money-hero__amount")
+    shown = "".join(ch for ch in (net.first.inner_text() if net.count() else "") if ch.isdigit())
+    ok(
+        "Tiền đã thu is the server's net, grouped, never added up on the screen",
+        shown == str(after["MONEY_NET"]["numerator"]),
+        f"{shown} vs {after['MONEY_NET']['numerator']}",
+    )
+    margin = console.page.locator("[data-kpi=MARGIN]")
+    ok(
+        "margin is shown as not computed, with the reason",
+        margin.count() == 1 and "chưa ghi chi phí" in margin.first.inner_text(),
+        margin.first.inner_text()[:80] if margin.count() else "absent",
+    )
+    info = console.page.locator("[data-kpi=ON_TIME_INTERNAL] .info-btn")
+    if info.count():
+        info.first.click()
+        console.page.wait_for_timeout(500)
+        touched("reports.info")
+    sheet = console.dialog_text()
+    ok(
+        "the on-time ⓘ names the rule it assumed and its data quality, verbatim",
+        "SLA_STANDARD_CLOTHES" in sheet and "RULE_ASSUMED" in sheet,
+        sheet[:140],
+    )
+    console.page.keyboard.press("Escape")
+    ok(
+        "the owner's numbers are never called revenue or profit",
+        "doanh thu" not in console.text().lower().replace("không phải doanh thu", ""),
+    )
+
+    head("R3", "BÁO CÁO — a window the report does not answer, and a custom one it does")
+    console.page.locator("[aria-label='Khoảng ngày'] [data-value='custom']").click()
+    console.page.wait_for_timeout(300)
+    start = console.page.evaluate(
+        "(d) => new Date(Date.parse(d + 'T00:00:00Z') - 100 * 86400000).toISOString().slice(0, 10)",
+        today,
+    )
+    console.page.fill("#report-from", start)
+    console.page.fill("#report-to", today)
+    console.page.locator("[data-report-apply]").click()
+    console.page.wait_for_timeout(600)
+    touched("reports.custom-apply")
+    ok(
+        "a window longer than 92 days is refused before a round trip, in words",
+        "Tối đa 92 ngày" in console.notices(),
+        console.notices()[:120],
+    )
+    refused = console.call(
+        "GET", f"/internal/v1/stores/{STORE}/reports/summary?from={start}&to={today}"
+    )
+    ok(
+        "and the server refuses the same window with its reason",
+        refused["status"] == 422 and "REPORT_WINDOW_TOO_LONG" in refused["text"],
+        f"HTTP {refused['status']}",
+    )
+    console.page.fill("#report-from", today)
+    console.page.locator("[data-report-apply]").click()
+    console.page.wait_for_timeout(1500)
+    ok(
+        "a custom window the report answers shows the same figures",
+        tile_value("ORDERS_CREATED") == str(after["ORDERS_CREATED"]["numerator"]),
+        tile_value("ORDERS_CREATED"),
+    )
+
+    head("R4", "BÁO CÁO — the counter is refused, and the console says so")
+    console.sign_in("demo-operations")
+    refused = console.call("GET", path)
+    ok(
+        "the server refuses an operator the report, with no figure in the answer",
+        refused["status"] == 403 and "numerator" not in refused["text"],
+        f"HTTP {refused['status']}",
+    )
+    console.open("#/more")
+    denied = console.page.locator("[data-nav-denied='/reports']")
+    ok(
+        "and Thêm still lists Báo cáo, disabled, naming who may open it",
+        denied.count() == 1 and "Chỉ" in denied.first.inner_text(),
+        denied.first.inner_text()[:100] if denied.count() else "absent",
+    )
+    console.open("#/")
+    ok(
+        "an operator's Hôm nay offers no report link",
+        console.page.locator("a[data-report-link]").count() == 0,
+    )
+    console.sign_in("demo-owner")
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -3631,6 +3880,7 @@ SCENARIOS = {
     "order_envelope": scenario_order_envelope,
     "credit_pick": scenario_credit_pick,
     "contact_pick": scenario_contact_pick,
+    "report": scenario_report,
 }
 
 

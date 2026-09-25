@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 432
+  DESCRIPTIVE: 433
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 14
-total: 461
+total: 462
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -3128,6 +3128,15 @@ disclosures:
   key: hint
   text: 'Phiếu không ghi giờ hẹn trả đồ: tiệm chưa quyết định quy tắc hẹn giờ cho từng đơn, nên phiếu
     ghi “Tiệm sẽ báo khi đồ sẵn sàng”.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/receipt.js#hint:35968a6b9ca8
+  module: screens/receipt.js
+  key: hint
+  text: Nút “Chia sẻ” chỉ có trên máy có mục chia sẻ (thường là điện thoại). Máy không có thì in phiếu,
+    hoặc cho khách xem màn hình này.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

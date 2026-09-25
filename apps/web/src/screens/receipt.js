@@ -314,6 +314,12 @@ export function render_(context) {
       "Phiếu không ghi giờ hẹn trả đồ: tiệm chưa quyết định quy tắc hẹn giờ cho từng đơn, nên " +
         "phiếu ghi “Tiệm sẽ báo khi đồ sẵn sàng”.",
     ),
+    h(
+      "p",
+      { class: "hint" },
+      "Nút “Chia sẻ” chỉ có trên máy có mục chia sẻ (thường là điện thoại). Máy không có thì in " +
+        "phiếu, hoặc cho khách xem màn hình này.",
+    ),
   );
   const headHost = h("div", { class: "receipt-screen__head" }, page({ back: back("Đơn"), title: "Phiếu cho khách", info }));
   const paperNode = h("article", { class: "receipt-paper", id: "receipt-paper", "aria-label": "Phiếu cho khách" }, skeletonRows(4));

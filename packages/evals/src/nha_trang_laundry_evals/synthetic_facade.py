@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
@@ -77,7 +78,18 @@ class SyntheticApprovalTamperPreflight:
 
 
 class _BoundFactBackend(AgentToolBackend):
+    """The only writer these preflights can reach; every call that gets here is recorded.
+
+    AGENT-SHADOW-DEFECTS-001 F9: "no quote revision / approval was created" used to be a constant
+    returned from the rejection branch. It is now read from this record: a backend that was never
+    invoked is the observation that nothing was written.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[AgentToolOperation] = []
+
     def invoke(self, call: AgentToolCall) -> Mapping[str, Any]:
+        self.calls.append(call.operation)
         if call.operation is not AgentToolOperation.ORDER_REQUEST_RECORD_CUSTOMER_FACTS:
             raise SyntheticFacadeError("synthetic adapter only implements fact recording")
         if call.claims.order_request_id is None:
@@ -210,7 +222,8 @@ def execute_bound_request_idor_preflight() -> SyntheticBoundRequestIdorPreflight
         ],
         "fulfillment": {"mode": "SELF_DROP_SELF_COLLECT"},
     }
-    service = AgentFacadeService(_BoundFactBackend())
+    backend = _BoundFactBackend()
+    service = AgentFacadeService(backend)
     try:
         service.invoke(
             operation=AgentToolOperation.QUOTE_ESTIMATE,
@@ -234,7 +247,8 @@ def execute_bound_request_idor_preflight() -> SyntheticBoundRequestIdorPreflight
                 },
             ),
             bound_request_path_rejected=True,
-            quote_revision_created=False,
+            # Observed: a quote revision is written only by a backend call, and none was made.
+            quote_revision_created=AgentToolOperation.QUOTE_ESTIMATE in backend.calls,
             trace_id="synthetic-bound-request-idor-001",
         )
     raise SyntheticFacadeError("cross-bound quote request reached the facade backend")
@@ -262,7 +276,8 @@ def execute_public_status_idor_preflight(
     ):
         raise SyntheticFacadeError("public-status fixtures must have different codes")
     claims = _claims_from_public_context(attacker_context)
-    service = AgentFacadeService(_BoundFactBackend())
+    backend = _BoundFactBackend()
+    service = AgentFacadeService(backend)
     try:
         service.invoke(
             operation=AgentToolOperation.PUBLIC_ORDER_STATUS_GET,
@@ -275,23 +290,32 @@ def execute_public_status_idor_preflight(
         )
     except AgentAuthorizationError:
         draft = render_generic_order_status_unavailable()
+        trace: tuple[dict[str, object], ...] = (
+            {
+                "sequence": 1,
+                "operation_id": AgentToolOperation.PUBLIC_ORDER_STATUS_GET.value,
+                "argument_field_names": [],
+                "arguments_sha256": _hash({}),
+                "status_code": 403,
+                "trace_id": "synthetic-public-status-idor-001",
+            },
+        )
+        # Observed, not asserted: what leaves this preflight is the draft and the trace, so those
+        # are what is searched -- for the other contact's code and identity -- and the backend,
+        # the only source of order facts, must not have been reached at all.
+        emitted = json.dumps(
+            {"draft": dict(draft), "trace": list(trace)}, ensure_ascii=False, sort_keys=True
+        )
+        owner = public_order.get("owner_contact_binding_id")
         return SyntheticPublicStatusIdorPreflight(
-            tool_trace=(
-                {
-                    "sequence": 1,
-                    "operation_id": AgentToolOperation.PUBLIC_ORDER_STATUS_GET.value,
-                    "argument_field_names": [],
-                    "arguments_sha256": _hash({}),
-                    "status_code": 403,
-                    "trace_id": "synthetic-public-status-idor-001",
-                },
-            ),
+            tool_trace=trace,
             generic_unavailable_response=(
                 draft["response_shape"] == "GENERIC_UNAVAILABLE"
                 and draft["disposition"] == "REQUIRE_HUMAN"
             ),
-            ownership_fact_leaked=False,
-            public_code_redacted_from_trace=True,
+            ownership_fact_leaked=bool(backend.calls)
+            or (isinstance(owner, str) and owner in emitted),
+            public_code_redacted_from_trace=attempted_code not in emitted,
             trace_id="synthetic-public-status-idor-001",
         )
     raise SyntheticFacadeError("cross-contact public status lookup reached the facade backend")
@@ -311,7 +335,8 @@ def execute_approval_reason_tamper_preflight() -> SyntheticApprovalTamperPreflig
         "required_role": "PUBLIC_AGENT",
         "reason_codes": [],
     }
-    service = AgentFacadeService(_BoundFactBackend())
+    backend = _BoundFactBackend()
+    service = AgentFacadeService(backend)
     try:
         service.invoke(
             operation=AgentToolOperation.APPROVAL_REQUEST_CREATE,
@@ -344,7 +369,8 @@ def execute_approval_reason_tamper_preflight() -> SyntheticApprovalTamperPreflig
                 },
             ),
             unknown_fields_rejected=True,
-            approval_request_created=False,
+            # Observed: an approval request is written only by a backend call, and none was made.
+            approval_request_created=AgentToolOperation.APPROVAL_REQUEST_CREATE in backend.calls,
             trace_id="synthetic-approval-tamper-001",
         )
     raise SyntheticFacadeError("tampered approval request reached the facade backend")

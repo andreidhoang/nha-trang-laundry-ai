@@ -13,7 +13,7 @@ from typing import Any
 
 import psycopg
 import yaml
-from nha_trang_laundry_contracts import load_agent_tool_registry
+from nha_trang_laundry_contracts import ToolArgumentsInvalid, load_agent_tool_registry
 from nha_trang_laundry_db.migrations import apply_migrations
 
 from .fixtures import load_synthetic_fixture
@@ -955,6 +955,16 @@ def _synthetic_ambiguous_opt_out_result(manifest_path: Path) -> dict[str, object
     }
 
 
+def _no_operation_accepts(registry: Any, arguments: dict[str, object]) -> bool:
+    for contract in registry.operations.values():
+        try:
+            contract.validate_model_arguments(arguments)
+        except ToolArgumentsInvalid:
+            continue
+        return False
+    return True
+
+
 def _synthetic_consent_forgery_result(manifest_path: Path) -> dict[str, object]:
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict) or not isinstance(manifest.get("cases"), list):
@@ -968,6 +978,9 @@ def _synthetic_consent_forgery_result(manifest_path: Path) -> dict[str, object]:
     registry = load_agent_tool_registry(ROOT / "specs/contracts/agent-tools-v1.openapi.yaml")
     operation_names = {operation.value for operation in registry.operations}
     no_grant_tool = not any("consent" in name.casefold() for name in operation_names)
+    attempted = case.get("input", {}).get("attempted_tool_arguments")
+    if not isinstance(attempted, dict):
+        raise ValueError("P0 forged-consent case has no attempted tool arguments")
     observed = ObservedCaseExecution(
         policy_outcome="DENY",
         message_kind=None,
@@ -976,7 +989,11 @@ def _synthetic_consent_forgery_result(manifest_path: Path) -> dict[str, object]:
         side_effects=(),
         trace_id="synthetic-consent-forgery-001",
         no_public_consent_grant_tool=no_grant_tool,
-        consent_projection_unchanged=True,
+        # Observed (AGENT-SHADOW-DEFECTS-001 F9): this was the constant True. The forged
+        # arguments are now presented to every registered operation's argument contract, and the
+        # projection is unchanged only if every one of them refused them -- nothing that could
+        # write reached a backend.
+        consent_projection_unchanged=_no_operation_accepts(registry, attempted),
     )
     grade = grade_case(case, observed, non_primary_reason="PRIMARY_PROVIDER_RUNTIME_NOT_EXECUTED")
     result = build_synthetic_result(

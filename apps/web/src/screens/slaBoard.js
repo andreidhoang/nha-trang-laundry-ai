@@ -9,22 +9,15 @@
  * Four choices, and each has a reason that outlives the person who made it:
  *
  *   - **Nothing here computes risk, and nothing here computes the order.** The list is rendered in
- *     the order the server returned it, which is acceptance order — oldest accepted first — and
- *     the screen says exactly that rather than promising urgency order. It is nearly the same thing
- *     and deliberately not called the same thing: an order already washed and waiting on the shelf
- *     stopped its clock at `production_ready_at`, so its remaining time is frozen and it can sit
- *     above an order that is about to pass the mark. What each row needs is on the row — the
- *     outcome pill, the time left, the time past — so a shift ranks by the figure rather than by
- *     the position. Sorting again in the browser would rank one page against itself and would
- *     break the server's keyset paging.
+ *     the order the server returned it: soonest due first (`PROMISE-001`) — each order's own
+ *     promised-ready time, or the shop's internal mark for an order taken before the owner
+ *     published the turnaround rules. Sorting again in the browser would rank one page against
+ *     itself and would break the server's keyset paging (`after_due_at` + `after_order_id`).
+ *   - **Every row says which rule measured it** (`rule_source`). "Hẹn …" is the time the customer
+ *     was told (`ORDER_PROMISE`) and "Mốc nội bộ …" the shop's own eight-hour line
+ *     (`STATED_RULE`); a red row reads "Trễ hẹn" only when a promise to a customer was missed.
  *   - **The rule that produced the numbers is on the screen, in the server's own words.** The
- *     sentence comes down in `policy_notice_vi` and is rendered verbatim behind the ⓘ. Per-order
- *     SLA policy is an unresolved business decision: one stated rule is applied to every order
- *     because there is no other rule to apply, and the board says so rather than letting a red row
- *     imply the shop broke a promise it never made.
- *   - **"Trễ mốc" is an internal mark, never a promise to a customer.** The mark is the shop's own
- *     eight-hour risk line, and the page's subtitle says so in one line (tier 1). `GUIDANCE_DOES_
- *     NOT_CREATE_BREACH` exists in the domain for exactly this reason.
+ *     sentence comes down in `policy_notice_vi` and is rendered verbatim behind the ⓘ.
  *   - **Durations are the server's integers.** `remaining_microseconds` and `breach_microseconds`
  *     are produced by `evaluate_production_sla`, which knows where the clock stopped — an order
  *     washed and waiting overnight for its owner is not still accruing time, and a browser
@@ -39,7 +32,15 @@
 
 import { request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { TIMEZONE, UNKNOWN, dateTime, duration, parseInstant, shortId } from "../core/format.js";
+import {
+  TIMEZONE,
+  UNKNOWN,
+  dateTime,
+  duration,
+  parseInstant,
+  promiseTime,
+  shortId,
+} from "../core/format.js";
 import { enumLabel, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -67,8 +68,9 @@ const PAGE_LIMIT = 50;
  */
 const BOARD_LIMITS = {
   guardrail:
-    "Bảng này chỉ đọc. Không có nút nào ở đây thay đổi trạng thái đơn, và mốc hiển thị là mốc " +
-    "nội bộ của tiệm chứ không phải giờ đã hẹn với khách.",
+    "Bảng này chỉ đọc. Không có nút nào ở đây thay đổi trạng thái đơn. Dòng ghi “Hẹn” đo theo giờ " +
+    "đã hẹn với khách; dòng ghi “Mốc nội bộ” đo theo mốc 8 giờ của tiệm, vì đơn đó nhận trước khi " +
+    "chủ tiệm công bố quy tắc hẹn trả.",
 };
 
 /**
@@ -87,12 +89,28 @@ const OUTCOME_PILL = {
   MET: { text: "Xong trước mốc", state: "ok" },
 };
 
+/** PROMISE-001: the same outcomes, measured against the time the customer was told. */
+const PROMISE_OUTCOME_PILL = {
+  BREACHED: { text: "Trễ hẹn", state: "danger" },
+  PENDING: { text: "Chưa tới hẹn", state: "info" },
+  MET: { text: "Xong đúng hẹn", state: "ok" },
+};
+
+/**
+ * @param {any} item
+ * @returns {boolean} whether the server measured this row against the order's own promise
+ */
+function byPromise(item) {
+  return item.rule_source === "ORDER_PROMISE";
+}
+
 /**
  * @param {string} outcome
+ * @param {boolean} [promised]
  * @returns {HTMLElement}
  */
-function outcomePill(outcome) {
-  const known = OUTCOME_PILL[outcome];
+function outcomePill(outcome, promised = false) {
+  const known = (promised ? PROMISE_OUTCOME_PILL : OUTCOME_PILL)[outcome];
   return statusPill({
     text: known ? known.text : String(outcome || UNKNOWN),
     state: known ? known.state : "warn",
@@ -116,7 +134,7 @@ function outcomePill(outcome) {
 function timeFigure(item) {
   if (item.breach_microseconds > 0) {
     return {
-      text: `quá mốc ${duration(item.breach_microseconds)}`,
+      text: `${byPromise(item) ? "trễ hẹn" : "quá mốc"} ${duration(item.breach_microseconds)}`,
       state: "danger",
       noMark: false,
     };
@@ -174,8 +192,13 @@ function markTime(value) {
 function riskRow(item) {
   const figure = timeFigure(item);
   const meta = [
-    // The mark, and what production is doing: the two facts a shift acts on.
-    item.internal_risk_due_at ? `Mốc ${markTime(item.internal_risk_due_at)}` : null,
+    // The mark -- the customer's promise or the shop's internal line, and which -- and what
+    // production is doing: the facts a shift acts on.
+    item.internal_risk_due_at
+      ? byPromise(item)
+        ? `Hẹn ${promiseTime(item.internal_risk_due_at, { short: true })}`
+        : `Mốc nội bộ ${markTime(item.internal_risk_due_at)}`
+      : null,
     enumVi(item.production_status),
   ]
     .filter(Boolean)
@@ -183,7 +206,10 @@ function riskRow(item) {
   return [
     listRow({
       href: `#/orders/${item.order_id}`,
-      title: [h("span", { title: item.order_id }, orderLabel(item)), outcomePill(item.sla_outcome)],
+      title: [
+        h("span", { title: item.order_id }, orderLabel(item)),
+        outcomePill(item.sla_outcome, byPromise(item)),
+      ],
       meta: figure.noMark
         ? [
             meta,
@@ -195,14 +221,23 @@ function riskRow(item) {
           ]
         : meta,
       trailing: h("span", { class: "sla__time", dataState: figure.state }, figure.text),
-      data: { slaOutcome: String(item.sla_outcome), orderId: String(item.order_id) },
+      data: {
+        slaOutcome: String(item.sla_outcome),
+        orderId: String(item.order_id),
+        ruleSource: String(item.rule_source || ""),
+      },
     }),
     h(
       "div",
       { class: "sla__more" },
       techDetails(
         [
-          ["Mốc rủi ro nội bộ", dateTime(item.internal_risk_due_at), { mono: false }],
+          [
+            byPromise(item) ? "Giờ hẹn với khách" : "Mốc rủi ro nội bộ",
+            dateTime(item.internal_risk_due_at),
+            { mono: false },
+          ],
+          ["Tính theo", `${item.rule_source || UNKNOWN} ${item.promise_rule_id || ""}`.trim()],
           ["Nhận vào sản xuất", dateTime(item.production_accepted_at), { mono: false }],
           // Named "báo xong" rather than "xong": this is the moment production reported the work
           // finished, which is when the clock stops. It is not when the customer took the bag.
@@ -237,7 +272,7 @@ function ruleNotice(page) {
   return h(
     "div",
     { class: "notice", dataState: "info" },
-    h("p", { class: "notice__title" }, "Mốc này là mốc nội bộ của tiệm, không phải hẹn với khách"),
+    h("p", { class: "notice__title" }, "Mỗi dòng tính theo giờ hẹn của đơn, hoặc mốc nội bộ"),
     h("p", null, page.policy_notice_vi),
     h(
       "p",
@@ -321,7 +356,7 @@ export function render_() {
    * row it follows rather than by a row number: the board's population changes while a shift reads
    * it, and an offset would silently skip an order the moment one was released.
    *
-   * @param {{accepted_at: string, order_id: string}|null} after
+   * @param {{due_at: string, order_id: string}|null} after
    * @returns {Promise<void>}
    */
   async function load(after) {
@@ -329,7 +364,7 @@ export function render_() {
     render(moreHost);
     const query = new URLSearchParams({ limit: String(PAGE_LIMIT) });
     if (after) {
-      query.set("after_accepted_at", after.accepted_at);
+      query.set("after_due_at", after.due_at);
       query.set("after_order_id", after.order_id);
     }
     try {
@@ -371,7 +406,7 @@ export function render_() {
       }
       paint();
       markUpdated(bar.stamp);
-      if (page.next_accepted_at && page.next_order_id) {
+      if (page.next_due_at && page.next_order_id) {
         render(
           moreHost,
           button({
@@ -380,7 +415,7 @@ export function render_() {
             block: true,
             onClick: () =>
               void load({
-                accepted_at: page.next_accepted_at,
+                due_at: page.next_due_at,
                 order_id: page.next_order_id,
               }),
           }),
@@ -419,16 +454,16 @@ export function render_() {
     { class: "screen sla" },
     page({
       title: "Bảng trễ hạn",
-      subtitle: "Mốc nội bộ của tiệm, không phải hẹn với khách.",
+      subtitle: "Đơn đến hạn sớm nhất ở trên.",
       info: infoButton(
         "Mốc này là gì, và bảng xếp theo thứ tự nào?",
         ruleHost,
         h(
           "p",
           { class: "screen__lede" },
-          "Đơn đang trong sản xuất, xếp theo thời gian nhận vào sản xuất — đơn nhận sớm nhất nằm " +
-            "trên cùng. Đây không phải thứ tự gấp: đơn đã giặt xong đã dừng đồng hồ, nên hãy đọc " +
-            "mốc ghi trên từng dòng. Thứ tự là của máy chủ, màn hình này không tự sắp lại.",
+          "Đơn đang trong sản xuất, xếp theo lúc đến hạn — giờ hẹn trả của đơn, hoặc mốc nội bộ 8 " +
+            "giờ với đơn nhận trước khi chủ tiệm công bố quy tắc hẹn trả. Đơn đến hạn sớm nhất nằm " +
+            "trên cùng. Thứ tự là của máy chủ, màn hình này không tự sắp lại.",
         ),
         h("p", { class: "hint" }, BOARD_LIMITS.guardrail),
       ),
@@ -441,11 +476,11 @@ export function render_() {
         "div",
         { class: "stack stack--tight" },
         bar.node,
-        // Tier 1: the one fact that changes how the list is read. Position is not urgency.
+        // Tier 1: the one fact that changes how the list is read.
         h(
           "p",
           { class: "hint sla__order" },
-          "Xếp theo lúc nhận vào giặt, không theo độ gấp — hãy xem giờ trên từng dòng.",
+          "Xếp theo lúc đến hạn. “Hẹn” là giờ đã hẹn với khách; “Mốc nội bộ” là mốc 8 giờ của tiệm.",
         ),
         host,
         moreHost,

@@ -16,6 +16,10 @@
  *   - **`RECEIVE` needs the operator's word on capacity.** The server derives five of the six
  *     readiness facts itself; `slot_approved` is the one it cannot know. The confirmation sheet asks
  *     for it as an explicit tick — the button alone never asserts it.
+ *   - **Hẹn trả is the server's** (`PROMISE-001`, `DEC-037`). The Nhận đồ sheet shows the time the
+ *     server says pressing now would promise ("Hẹn trả: 13:00 thứ Sáu 26/9"), with the choices it
+ *     offers (24/48 giờ, gấp 2 giờ, tự chọn giờ) or a date-time picker when a person must set it;
+ *     the page shows the promise and its state, and "Hẹn lại" moves it with a reason.
  *   - **Giặt lại and Không nhận đồ need a person's reason** (ORDER-STEPS-002). The server never
  *     makes either primary and lists the reasons it will take; the sheet offers exactly those, and
  *     the history reads the step and its reason back ("Giặt lại · Chưa sạch"). When they are the only
@@ -41,7 +45,16 @@
 
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UNKNOWN, UUID, count, dateTime, money, parseDong } from "../core/format.js";
+import {
+  UNKNOWN,
+  UUID,
+  count,
+  dateTime,
+  money,
+  parseDong,
+  promiseTime,
+  shopInstantFromInput,
+} from "../core/format.js";
 import {
   ACQUISITION_SOURCE_VI,
   ORDER_STEP_DONE_VI,
@@ -91,6 +104,13 @@ import { setIncidentOrderPrefill } from "./incidents.js";
 import { amountDue, orderName, ticketLabel } from "./orders.js";
 // RECEIPT-PRINT-001: the receipt's route, and the one-shot "just created" hand-off from ＋ Nhận đồ.
 import { receiptPath, takeReceiptOffer } from "./receipt.js";
+// PROMISE-001: the promised-ready time.
+import {
+  PROMISE_REASON_VI,
+  currentPromiseInput,
+  promisePill,
+  receivePromise,
+} from "../ui/promise.js";
 
 /**
  * The server's fixed audit page size. `ShadowConsoleRepository.audit_timeline` defaults to 100 and
@@ -466,12 +486,52 @@ export function render_(context) {
     );
   }
 
+  /**
+   * PROMISE-001: "Hẹn trả" — the time the customer was last told, its state now (the server's),
+   * the first promise when it was moved, and "Hẹn lại" while the laundry is not finished.
+   *
+   * @param {any} order
+   */
+  function promiseRow(order) {
+    if (!order.current_promise_at) return null;
+    const moved = order.promised_ready_at && order.promised_ready_at !== order.current_promise_at;
+    // Offered only in the states the server calls unfinished; a finished or closed order reads
+    // MET / MISSED / null, and the server refuses a Hẹn lại there anyway.
+    const open = ["ON_TRACK", "DUE_SOON", "LATE"].includes(String(order.promise_state || ""));
+    return [
+      "Hẹn trả",
+      h(
+        "span",
+        { class: "order__promise", dataField: "promise" },
+        h("strong", { dataPromiseAt: String(order.current_promise_at) }, promiseTime(order.current_promise_at)),
+        " ",
+        promisePill(order.promise_state),
+        moved
+          ? h("span", { class: "hint order__promise-first" }, `Hẹn đầu: ${promiseTime(order.promised_ready_at)}`)
+          : null,
+        open
+          ? gated(
+              button({
+                label: "Hẹn lại",
+                variant: "quiet",
+                icon: "clock",
+                id: "promise-change",
+                onClick: () => openPromiseChange(),
+              }),
+              writeVerdict,
+            )
+          : null,
+      ),
+    ];
+  }
+
   /** @param {any} order */
   function infoSection(order) {
     const ticket = ticketLabel(order);
     return section({
       title: "Thông tin",
       children: keyValues([
+        promiseRow(order),
         // The ticket with its business day (numbers restart every morning); the header says
         // "Phiếu 17" only.
         ["Phiếu", ticket || "Không có — khách nhắn tin, không phát phiếu"],
@@ -906,9 +966,13 @@ export function render_(context) {
     if (actions) actions.remove();
   }
 
-  /** Nhận đồ: the one fact only the operator can give, asked for explicitly. */
+  /**
+   * Nhận đồ: the one fact only the operator can give, asked for explicitly -- and, since
+   * PROMISE-001, the promised-ready time the server will store, shown before the press.
+   */
   function openReceive(entry) {
     const alertHost = h("div");
+    const promise = receivePromise({ orderId, onChange: () => sync() });
     const confirm = button({
       label: stepVi("RECEIVE"),
       variant: "primary",
@@ -917,7 +981,12 @@ export function render_(context) {
       disabled: true,
       id: "receive-submit",
       onClick: async () => {
-        const done = await runComposite(entry, { slot_approved: tick.checked }, alertHost, confirm);
+        const done = await runComposite(
+          entry,
+          { slot_approved: tick.checked, ...promise.extra() },
+          alertHost,
+          confirm,
+        );
         if (done) made.close();
       },
     });
@@ -925,18 +994,21 @@ export function render_(context) {
       h("input", {
         type: "checkbox",
         id: "receive-slot",
-        onChange: () => {
-          // A denied role's button stays shut whatever is ticked (`gated` owns that).
-          if (writeVerdict.allowed) confirm.disabled = !tick.checked;
-        },
+        onChange: () => sync(),
       })
     );
+    function sync() {
+      // A denied role's button stays shut whatever is ticked (`gated` owns that).
+      if (writeVerdict.allowed) confirm.disabled = !tick.checked || !promise.ready();
+    }
+    void promise.load();
     const made = openFresh({
       id: "order-receive",
       title: "Nhận đồ",
       body: h(
         "div",
         { class: "stack" },
+        promise.node,
         h(
           "label",
           { class: "check-line", for: "receive-slot" },
@@ -951,6 +1023,122 @@ export function render_(context) {
         alertHost,
       ),
       actions: gated(confirm, writeVerdict),
+    });
+  }
+
+  /**
+   * Hẹn lại (PROMISE-001): a new day and hour the customer is told, with a reason. The first
+   * promise never moves -- the owner's on-time figure counts against it -- so this changes only
+   * "what the customer was last told". The server checks the time (later than now, open day,
+   * opening hours) and refuses by name.
+   */
+  function openPromiseChange() {
+    const order = current;
+    if (!order) return;
+    const alertHost = h("div");
+    let reason = "";
+    const picker = /** @type {HTMLInputElement} */ (
+      h("input", {
+        type: "datetime-local",
+        id: "promise-change-at",
+        step: "900",
+        value: currentPromiseInput(order),
+        onInput: () => sync(),
+      })
+    );
+    const note = /** @type {HTMLInputElement} */ (
+      h("input", {
+        type: "text",
+        id: "promise-change-note",
+        maxLength: 120,
+        placeholder: "Vài chữ, ví dụ: khách đi công tác",
+        onInput: () => sync(),
+      })
+    );
+    const noteRow = h(
+      "label",
+      { class: "promise-field", for: "promise-change-note" },
+      h("span", { class: "promise-field__label" }, "Ghi chú (bắt buộc khi chọn Khác)"),
+      note,
+    );
+    const save = button({
+      label: "Lưu giờ hẹn mới",
+      variant: "primary",
+      block: true,
+      network: true,
+      disabled: true,
+      id: "promise-change-submit",
+      onClick: async () => {
+        const body = {
+          promise_at: shopInstantFromInput(picker.value),
+          reason,
+          ...(note.value.trim() ? { note: note.value.trim() } : {}),
+        };
+        render(alertHost);
+        await pressing(save, async () => {
+          try {
+            await request(`/internal/v1/orders/${id}/promise`, {
+              method: "POST",
+              body,
+              idempotencyKey: keyFor(`PROMISE|${order.row_version}|${JSON.stringify(body)}`),
+              ifMatch: order.row_version,
+            });
+            releaseKey();
+            toast(`Đã hẹn lại · ${promiseTime(body.promise_at)}`);
+            made.close();
+            await reread();
+          } catch (error) {
+            show(alertHost, refusal(error));
+          }
+        });
+      },
+    });
+    function sync() {
+      const ready =
+        Boolean(shopInstantFromInput(picker.value)) &&
+        Boolean(reason) &&
+        (reason !== "OTHER" || Boolean(note.value.trim()));
+      if (writeVerdict.allowed) save.disabled = !ready;
+    }
+    const made = openFresh({
+      id: "order-promise-change",
+      title: "Hẹn lại",
+      body: h(
+        "div",
+        { class: "stack" },
+        h(
+          "p",
+          { class: "hint" },
+          `Đang hẹn: ${promiseTime(order.current_promise_at)}. Hẹn đầu vẫn được giữ để tính đúng hẹn.`,
+        ),
+        h(
+          "label",
+          { class: "promise-field", for: "promise-change-at" },
+          h("span", { class: "promise-field__label" }, "Giờ trả mới (08:00–20:00)"),
+          picker,
+        ),
+        h(
+          "div",
+          { class: "promise-field promise-reasons" },
+          h("span", { class: "promise-field__label" }, "Lý do"),
+          choiceChips({
+            label: "Vì sao hẹn lại",
+            name: "promise-change-reason",
+            options: Object.entries(PROMISE_REASON_VI).map(([value, label]) => ({
+              value,
+              label,
+              title: value,
+            })),
+            onChange: (value) => {
+              reason = value;
+              sync();
+            },
+          }),
+        ),
+        noteRow,
+        alertHost,
+      ),
+      actions: gated(save, writeVerdict),
     });
   }
 

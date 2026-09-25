@@ -158,6 +158,7 @@ from nha_trang_laundry_domain.catalog import (
 from nha_trang_laundry_domain.order_steps import OrderStep
 from nha_trang_laundry_domain.orders import IntakeReadiness
 from nha_trang_laundry_domain.pricebook_import import PricebookImportError, published_price_rules
+from nha_trang_laundry_domain.promise import PromiseChoice
 from nha_trang_laundry_domain.quote_composition import (
     PricebookProvenance,
     RequestedLine,
@@ -723,6 +724,8 @@ class OperationsService:
         custody_resolution: CustodyResolution | None = None,
         rewash_reason: RewashReason | None = None,
         rejection_reason: IntakeRejectionReason | None = None,
+        promise_choice: PromiseChoice | None = None,
+        custom_promise_at: datetime | None = None,
     ) -> OrderStepResult:
         """`ORDER-STEPS-001`: one named business step, as its domain transitions, all or nothing.
 
@@ -745,6 +748,8 @@ class OperationsService:
                     custody_resolution=custody_resolution,
                     rewash_reason=rewash_reason,
                     rejection_reason=rejection_reason,
+                    promise_choice=promise_choice,
+                    custom_promise_at=custom_promise_at,
                 ),
             )
 

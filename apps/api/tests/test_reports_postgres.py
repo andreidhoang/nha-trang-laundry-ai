@@ -48,6 +48,8 @@ KPI_FIELDS = {
     "entries",
     "amount_vnd",
     "by_kind",
+    # PROMISE-001: how many of the on-time denominator the stated rule judged (null elsewhere).
+    "rule_assumed",
 }
 
 
@@ -122,6 +124,9 @@ def test_the_summary_serves_the_seeded_figures_in_the_fr_rpt_005_shape(
         "REMEDIES_EXECUTED": (2, None),
     }
     assert kpis["ON_TIME_INTERNAL"]["data_quality"] == "RULE_ASSUMED"
+    # No order in the seeded shop has a promise, so the stated rule judged every one of them.
+    on_time = kpis["ON_TIME_INTERNAL"]
+    assert on_time["rule_assumed"] == on_time["denominator"] and on_time["rule_assumed"] > 0
     assert kpis["MONEY_NET"]["direction"] == "IN"
     assert kpis["REMEDIES_EXECUTED"]["by_kind"][0] == {
         "kind": "FREE_REWASH",

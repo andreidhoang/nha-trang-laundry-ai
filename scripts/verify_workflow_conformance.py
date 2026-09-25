@@ -205,6 +205,12 @@ DECLARED_CONTROLS = (
     "reports.preset",
     "reports.info",
     "reports.custom-apply",
+    # PROMISE-001: the promise chosen at Nhận đồ and moved with a reason on the order page.
+    "orderDetail.receive-promise-choice",
+    "orderDetail.promise-change",
+    "orderDetail.promise-change-at",
+    "orderDetail.promise-change-reason",
+    "orderDetail.promise-change-submit",
 )
 
 PASS: list[str] = []
@@ -3679,12 +3685,12 @@ def scenario_report(console: Console) -> None:
 
     ok("two orders more were created", delta("ORDERS_CREATED")[0] == 2, delta("ORDERS_CREATED"))
     ok(
-        "one more completed, a count with no denominator (report-v2)",
+        "one more completed, a count with no denominator (report-v3)",
         delta("ORDERS_COMPLETED") == (1, 0) and after["ORDERS_COMPLETED"]["denominator"] is None,
         delta("ORDERS_COMPLETED"),
     )
     ok(
-        "one more cancelled, a count with no denominator (report-v2)",
+        "one more cancelled, a count with no denominator (report-v3)",
         delta("ORDERS_CANCELLED") == (1, 0) and after["ORDERS_CANCELLED"]["denominator"] is None,
         delta("ORDERS_CANCELLED"),
     )
@@ -3714,11 +3720,17 @@ def scenario_report(console: Console) -> None:
         delta("MONEY_COLLECTED")[0] == total and delta("MONEY_REFUNDED")[0] == 0,
         f"{delta('MONEY_COLLECTED')[0]} vs {total}",
     )
+    # PROMISE-001: the on-time figure is COMPLETE only when every order in it had a promise, and
+    # says how many the stated rule judged otherwise -- whether or not this stack published the
+    # turnaround policy before this scenario ran.
+    on_time = after["ON_TIME_INTERNAL"]
+    assumed = on_time.get("rule_assumed")
     ok(
-        "every figure carries the rule's version, and the on-time figure says it is assumed",
+        "every figure carries the rule's version, and the on-time figure says what it assumed",
         len({kpi["query_version"] for kpi in after.values()}) == 1
-        and next(iter(after.values()))["query_version"].startswith("report-v2:")
-        and after["ON_TIME_INTERNAL"]["data_quality"] == "RULE_ASSUMED"
+        and next(iter(after.values()))["query_version"].startswith("report-v3:")
+        and isinstance(assumed, int)
+        and on_time["data_quality"] == ("RULE_ASSUMED" if assumed else "COMPLETE")
         and all(
             kpi["data_quality"] == "COMPLETE"
             for key, kpi in after.items()
@@ -3793,8 +3805,8 @@ def scenario_report(console: Console) -> None:
         touched("reports.info")
     sheet = console.dialog_text()
     ok(
-        "the on-time ⓘ names the rule it assumed and its data quality, verbatim",
-        "SLA_STANDARD_CLOTHES" in sheet and "RULE_ASSUMED" in sheet,
+        "the on-time ⓘ names the stated rule and the figure's data quality, verbatim",
+        "SLA_STANDARD_CLOTHES" in sheet and str(on_time["data_quality"]) in sheet,
         sheet[:140],
     )
     console.page.keyboard.press("Escape")
@@ -3860,6 +3872,396 @@ def scenario_report(console: Console) -> None:
     console.sign_in("demo-owner")
 
 
+# --- PROMISE-001: the promised-ready time ("hẹn trả", DEC-037) -------------------------------
+
+#: The shop's weekday names, as `format.promiseTime` writes them.
+_WEEKDAY_VI = ("thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy", "Chủ nhật")
+#: The six Tết days this walk publishes for the stack. The real dates are the owner's to enter each
+#: year; these are a fixture for the upcoming Tết (2027) so no promise this week needs a person.
+_TET_FIXTURE = "2027-02-05,2027-02-06,2027-02-07,2027-02-08,2027-02-09,2027-02-10"
+
+
+def _promise_text(value: str) -> str:
+    """ "13:00 thứ Sáu 26/9" -- the instant in Asia/Ho_Chi_Minh (UTC+7 all year)."""
+
+    from datetime import datetime, timedelta, timezone
+
+    moment = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+        timezone(timedelta(hours=7))
+    )
+    return f"{moment:%H:%M} {_WEEKDAY_VI[moment.weekday()]} {moment.day}/{moment.month}"
+
+
+def _publish_turnaround(*extra: str) -> subprocess.CompletedProcess[str]:
+    """Run the owner's publication script against the stack's database, as the owner would."""
+
+    owner = sql("select id from staff_users where oidc_subject='demo-owner'")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return subprocess.run(
+        [
+            sys.executable,
+            os.path.join(root, "scripts", "publish_turnaround_policy.py"),
+            "--database-url",
+            arguments.database_url,
+            "--actor-id",
+            owner,
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+
+
+def _open_receive(console: Console, order_id: str) -> str:
+    """Open the order and its Nhận đồ sheet; return what the sheet says before any press."""
+
+    console.open_order(order_id)
+    control = console.step_control("RECEIVE")
+    if control is None:
+        return ""
+    control.click()
+    console.page.wait_for_timeout(1200)
+    return console.dialog_text()
+
+
+def _press_receive(console: Console) -> dict[str, Any]:
+    console.page.check("#receive-slot")
+    touched("orderDetail.receive-slot")
+    (answer,) = console.press_capturing(console.page.locator("#receive-submit"), "/steps")
+    touched("orderDetail.receive-submit")
+    console.page.wait_for_timeout(1200)
+    return answer
+
+
+def scenario_promise(console: Console) -> None:
+    """PROMISE-001: before the owner publishes, no promise and nothing refuses; after, every order
+    gets one at Nhận đồ, shown before the press, printed on the receipt, 24/48 h chosen for a
+    blanket, and moved with a reason."""
+
+    head("P", "HẸN TRẢ — the promised-ready time, before and after the owner publishes (DEC-037)")
+    if not READS_DATABASE or not arguments.database_url:
+        note(
+            "--database-url is required: the turnaround policy is published with the owner's own "
+            "script against the database, so this scenario is skipped rather than passed"
+        )
+        FAIL.append("promise scenario needs --database-url")
+        return
+    from nha_trang_laundry_domain.promise import compute_promise, parse_turnaround_policy
+
+    # Before publication. A stack that already published is returned to that state with the
+    # owner's own reversal, so the "before" is proved on every stack rather than assumed.
+    published_rows = sql(
+        "select count(*) from configuration_versions where config_type='TURNAROUND_POLICY'"
+    )
+    if published_rows not in ("", "0"):
+        withdrawn = _publish_turnaround("--withdraw")
+        ok(
+            "the owner's withdrawal returns the shop to no promise",
+            withdrawn.returncode == 0,
+            (withdrawn.stdout + withdrawn.stderr)[-200:],
+        )
+    console.sign_in("demo-operations")
+    before = console.build_order(kg="4", stop="created")
+    read = console.call("GET", f"/internal/v1/orders/{before['order_id']}/promise")
+    ok(
+        "before publication the order's promise read says the owner has not published",
+        read["status"] == 200 and read["body"]["policy_published"] is False,
+        read["text"][:160],
+    )
+    sheet = _open_receive(console, before["order_id"])
+    ok(
+        "and Nhận đồ says there is no promise yet, in one line",
+        "chủ tiệm chưa công bố quy tắc hẹn trả" in sheet,
+        sheet[:200],
+    )
+    answer = _press_receive(console)
+    ok(
+        "and nothing refuses: Nhận đồ is recorded as it always was",
+        answer["status"] == 200 and answer["body"]["commercial"] == "ACTIVE",
+        answer["text"][:200],
+    )
+    ok(
+        "and the order carries no promise",
+        answer["status"] == 200
+        and answer["body"]["promised_ready_at"] is None
+        and stored(before["order_id"], "promised_ready_at") == "",
+        answer["text"][:200],
+    )
+    moved = console.call(
+        "POST",
+        f"/internal/v1/orders/{before['order_id']}/promise",
+        {"promise_at": "2026-12-01T10:00:00+07:00", "reason": "WORKLOAD"},
+        if_match=answer["body"]["row_version"] if answer["status"] == 200 else 1,
+    )
+    ok(
+        "and a Hẹn lại is refused by name until the owner publishes",
+        moved["status"] == 422
+        and (moved["body"] or {}).get("detail", {}).get("reason_code")
+        == "TURNAROUND_POLICY_UNPUBLISHED",
+        moved["text"][:200],
+    )
+
+    # The owner publishes, with the script, from the two owner-confirmed sheets and this year's
+    # Tết days.
+    published = _publish_turnaround("--tet-dates", _TET_FIXTURE)
+    ok(
+        "the owner publishes the turnaround policy with the script",
+        published.returncode == 0 and "turnaround policy published" in published.stdout,
+        (published.stdout + published.stderr)[-200:],
+    )
+    refused = subprocess.run(
+        [
+            sys.executable,
+            os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "scripts",
+                "publish_turnaround_policy.py",
+            ),
+            "--database-url",
+            arguments.database_url,
+            "--actor-id",
+            sql("select id from staff_users where oidc_subject='demo-operations'"),
+            "--tet-dates",
+            _TET_FIXTURE,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    ok(
+        "and nobody but the owner can publish it",
+        refused.returncode == 3 and "OWNER_ADMIN" in refused.stderr,
+        (refused.stdout + refused.stderr)[-200:],
+    )
+    payload = sql(
+        "select payload::text from configuration_versions where config_type='TURNAROUND_POLICY' "
+        "and lifecycle='PUBLISHED' order by version desc limit 1"
+    )
+    policy = parse_turnaround_policy(json.loads(payload))
+
+    # A walk-in: the promise is on screen before the press, stored by the press, printed on the
+    # receipt -- and it is exactly the domain's answer for the instant production accepted it.
+    walk_in = console.build_order(kg="7", stop="created")
+    order_id = walk_in["order_id"]
+    sheet = _open_receive(console, order_id)
+    line = (
+        console.page.locator("#receive-promise-line").inner_text()
+        if console.page.locator("#receive-promise-line").count()
+        else ""
+    )
+    ok(
+        "a walk-in's Nhận đồ shows 'Hẹn trả: …' before the press",
+        line.startswith("Hẹn trả:") and "—" not in line,
+        line or sheet[:200],
+    )
+    answer = _press_receive(console)
+    body = answer["body"] if answer["status"] == 200 else {}
+    promised = str(body.get("promised_ready_at") or "")
+    ok(
+        "Nhận đồ stores the promise, and the time shown before the press is the one stored",
+        bool(promised)
+        and body.get("current_promise_at") == promised
+        and (body.get("promise_basis"), body.get("promise_rule_id"))
+        == ("RULE", "SLA_STANDARD_CLOTHES")
+        and _promise_text(promised) in line,
+        f"{line} vs {promised} {answer['text'][:160]}",
+    )
+    accepted = stored(
+        order_id,
+        "to_char(production_accepted_at at time zone 'UTC', "
+        '\'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"\')',
+    )
+    if accepted and promised:
+        from datetime import datetime
+
+        expected = compute_promise(
+            policy,
+            accepted_at=datetime.fromisoformat(accepted),
+            service_codes=["STANDARD_WASH_DRY"],
+        )
+        ok(
+            "the stored promise is the domain's answer: 8 opening hours from acceptance",
+            getattr(expected, "promised_at", None)
+            == datetime.fromisoformat(promised.replace("Z", "+00:00")),
+            f"accepted {accepted} promised {promised} domain {expected}",
+        )
+    ok(
+        "the promise, its event and its audit row are written together",
+        sql(
+            f"select count(*) from domain_events where aggregate_id='{order_id}' "
+            "and event_type='ORDER_PROMISE_SET'"
+        )
+        == "1"
+        and sql(
+            f"select count(*) from audit_events where aggregate_id='{order_id}' "
+            "and action='ORDER_PROMISE_SET'"
+        )
+        == "1"
+        and sql(
+            f"select count(*) from outbox_events where aggregate_id='{order_id}' "
+            "and event_type='order.promise_set.v1'"
+        )
+        == "1",
+    )
+    console.open_order(order_id)
+    row = console.page.locator("[data-field=promise]")
+    ok(
+        "the order page shows the promise",
+        row.count() == 1 and _promise_text(promised) in row.first.inner_text(),
+        row.first.inner_text()[:120] if row.count() else "absent",
+    )
+    console.open(f"#/orders/{order_id}/receipt", settle=2200)
+    closing = console.page.locator("#receipt-paper [data-field=closing]")
+    ok(
+        "the receipt prints 'Hẹn trả: …' in place of 'Tiệm sẽ báo khi đồ sẵn sàng'",
+        closing.count() == 1
+        and closing.first.inner_text().strip() == f"Hẹn trả: {_promise_text(promised)}",
+        closing.first.inner_text() if closing.count() else "absent",
+    )
+
+    # A blanket: 24 or 48 hours, the staff member's choice, 48 already chosen.
+    blanket = console.build_order(
+        stop="created",
+        lines=[
+            {
+                "service_code": "BED_BLANKET",
+                "quantity": "3",
+                "unit": "KG",
+                "quantity_basis": "STAFF_MEASUREMENT",
+            }
+        ],
+    )
+    _open_receive(console, blanket["order_id"])
+    checked = console.page.locator("dialog[open] input[name=receive-promise-choice]:checked")
+    before_line = console.page.locator("#receive-promise-line").inner_text()
+    ok(
+        "a blanket's Nhận đồ offers 24 giờ and 48 giờ, with 48 giờ chosen",
+        checked.count() == 1
+        and checked.first.get_attribute("value") == "H48"
+        and console.page.locator("dialog[open] .choice-chip[title=H24]").count() == 1,
+        before_line,
+    )
+    console.page.locator("dialog[open] .choice-chip[title=H24]").click()
+    touched("orderDetail.receive-promise-choice")
+    console.page.wait_for_timeout(300)
+    after_line = console.page.locator("#receive-promise-line").inner_text()
+    ok(
+        "choosing 24 giờ shows the earlier time the server computed for it",
+        after_line != before_line and after_line.startswith("Hẹn trả:"),
+        f"{before_line} -> {after_line}",
+    )
+    answer = _press_receive(console)
+    body = answer["body"] if answer["status"] == 200 else {}
+    ok(
+        "the blanket is promised under its own rule, by the staff member's choice",
+        (body.get("promise_basis"), body.get("promise_rule_id")) == ("H24", "SLA_BLANKETS_SHEETS")
+        and _promise_text(str(body.get("promised_ready_at") or "")) in after_line,
+        answer["text"][:200],
+    )
+    # Founder ruling on DEC-037: 24 h is a calendar day, rolled into opening hours -- the stored
+    # promise is the domain's answer for the stored acceptance, and never earlier than 24 clock
+    # hours after it.
+    blanket_accepted = stored(
+        blanket["order_id"],
+        "to_char(production_accepted_at at time zone 'UTC', "
+        '\'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"\')',
+    )
+    blanket_promised = str(body.get("promised_ready_at") or "")
+    if blanket_accepted and blanket_promised:
+        from datetime import datetime, timedelta
+
+        from nha_trang_laundry_domain.promise import PromiseChoice
+
+        accepted_at = datetime.fromisoformat(blanket_accepted)
+        expected = compute_promise(
+            policy,
+            accepted_at=accepted_at,
+            service_codes=["BED_BLANKET"],
+            choice=PromiseChoice.H24,
+        )
+        stored_at = datetime.fromisoformat(blanket_promised.replace("Z", "+00:00"))
+        ok(
+            "the blanket's 24 giờ is one calendar day, rolled into opening hours (founder ruling)",
+            getattr(expected, "promised_at", None) == stored_at
+            and stored_at >= (accepted_at + timedelta(hours=24)).replace(second=0, microsecond=0)
+            and all(line.counting == "CALENDAR_HOURS" for line in getattr(expected, "lines", ())),
+            f"accepted {blanket_accepted} promised {blanket_promised} domain {expected}",
+        )
+
+    # Hẹn lại: a new time and a reason; the first promise stays.
+    console.open_order(order_id)
+    change = console.page.locator("#promise-change")
+    ok("the order page offers Hẹn lại while the laundry is not finished", change.count() == 1)
+    if change.count():
+        change.click()
+        touched("orderDetail.promise-change")
+        console.page.wait_for_timeout(500)
+        from datetime import datetime, timedelta, timezone
+
+        new_day = datetime.fromisoformat(promised.replace("Z", "+00:00")).astimezone(
+            timezone(timedelta(hours=7))
+        ) + timedelta(days=1)
+        while policy.is_closed(new_day.date()):
+            new_day += timedelta(days=1)
+        picked = f"{new_day:%Y-%m-%d}T15:00"
+        console.page.locator("#promise-change-at").fill(picked)
+        touched("orderDetail.promise-change-at")
+        console.page.locator("dialog[open] .choice-chip[title=OTHER]").click()
+        touched("orderDetail.promise-change-reason")
+        console.page.wait_for_timeout(200)
+        ok(
+            "Khác needs a few words before Hẹn lại can be saved",
+            console.page.locator("#promise-change-submit").is_disabled(),
+        )
+        console.page.locator("dialog[open] .choice-chip[title=WORKLOAD]").click()
+        console.page.wait_for_timeout(200)
+        (saved,) = console.press_capturing(
+            console.page.locator("#promise-change-submit"), "/promise"
+        )
+        touched("orderDetail.promise-change-submit")
+        console.page.wait_for_timeout(1200)
+        body = saved["body"] if saved["status"] == 200 else {}
+        ok(
+            "Hẹn lại moves what the customer was told and keeps the first promise",
+            body.get("promised_ready_at") == promised
+            and _promise_text(str(body.get("current_promise_at") or "")).startswith("15:00"),
+            saved["text"][:200],
+        )
+        ok(
+            "the change is in its ledger with its reason, and in the audit trail by code only",
+            sql(f"select reason_code from order_promise_changes where order_id='{order_id}'")
+            == "WORKLOAD"
+            and sql(
+                f"select details->>'reason_code' from audit_events where aggregate_id='{order_id}' "
+                "and action='ORDER_PROMISE_CHANGE'"
+            )
+            == "WORKLOAD",
+        )
+        row = console.page.locator("[data-field=promise]")
+        ok(
+            "the order page says the new time and the first one",
+            row.count() == 1
+            and "15:00" in row.first.inner_text()
+            and f"Hẹn đầu: {_promise_text(promised)}" in row.first.inner_text(),
+            row.first.inner_text()[:160] if row.count() else "absent",
+        )
+    console.open("#/orders", settle=1800)
+    listed = console.page.locator(f"[data-order-id='{order_id}']")
+    ok(
+        "the order list shows the promise on the row",
+        listed.count() >= 1 and "Hẹn 15:00" in listed.first.inner_text(),
+        listed.first.inner_text()[:160] if listed.count() else "absent",
+    )
+    board = console.call("GET", f"/internal/v1/stores/{STORE}/sla-board?limit=200")
+    rows = {row["order_id"]: row for row in (board["body"] or {}).get("items", [])}
+    ok(
+        "the SLA board ranks the promised order by its promise and says so",
+        rows.get(order_id, {}).get("rule_source") == "ORDER_PROMISE"
+        and rows.get(before["order_id"], {}).get("rule_source") == "STATED_RULE",
+        {key: rows.get(key, {}).get("rule_source") for key in (order_id, before["order_id"])},
+    )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -3881,6 +4283,9 @@ SCENARIOS = {
     "credit_pick": scenario_credit_pick,
     "contact_pick": scenario_contact_pick,
     "report": scenario_report,
+    # PROMISE-001. Last: it publishes the turnaround policy, and every scenario above proves its
+    # own workflow on a shop that has not (the receipt's R4 line, the report's assumed rule).
+    "promise": scenario_promise,
 }
 
 

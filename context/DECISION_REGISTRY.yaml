@@ -1223,8 +1223,10 @@ decisions:
       owner publishes it.
     resolution: >-
       Computed at RECEIVE from the order's service categories in opening hours (08:00-20:00,
-      published closed days skipped): standard clothing 8 opening hours; shoes, curtains, bedding 24
-      or 48 h by staff choice (default 48); special items and express 2 h only by staff choice; the
+      published closed days skipped): standard clothing 8 opening hours; shoes, curtains and
+      blankets 24 or 48 h by staff choice (default 48), counted as calendar days and rolled into
+      opening hours (founder ruling 2026-09-26; toppers and pillows are special items, as
+      service-sla.csv says); special items and express 2 h only by staff choice; the
       latest line wins; a year without published Tet dates makes staff set the time. Changes need a
       reason; on-time counts against the first promise. The owner's late-delivery 10% credit is
       reported, not issued, this round. Runs after scripts/publish_turnaround_policy.py.

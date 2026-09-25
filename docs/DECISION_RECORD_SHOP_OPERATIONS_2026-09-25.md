@@ -168,6 +168,13 @@ It was never undecided. It was never wired.
   hours. Laundry accepted at 17:00 is promised at 13:00 the next open day, not 01:00. Closed days
   in the published calendar are skipped. A year whose Tết days are not yet entered makes the
   counter ask the staff member to set the time, rather than promising through Tết.
+  **24 h / 48 h are calendar days, rolled into opening hours** (founder ruling, 2026-09-25):
+  "24 giờ / 48 giờ" is one or two days as a Vietnamese customer hears it, not 24/48 opening hours.
+  Only the 8 h and the express 2 h are opening hours, because they are machine and staff work inside
+  the working day. A 24/48 h promise is accepted-at plus that clock time; landing before 08:00
+  moves it to 08:00 that day, after 20:00 to 08:00 the next day, and on a published closed day to
+  08:00 of the next open day (Friday 17:00 + 48 h → Sunday 17:00; a landing on 30/4 → 08:00 on
+  2/5). The Tết-unknown rule applies to that calendar span too.
 - **24–48 h items:** the counter offers *24 giờ* or *48 giờ* (default 48: promise late, deliver
   early). **Special items:** the staff member must pick the day and hour. **Express (2 h):** only
   when the staff member chooses it after checking the machines; there is no express surcharge,

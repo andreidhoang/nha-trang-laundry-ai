@@ -27,10 +27,11 @@ thu*. The takings figure keeps its own route and its own `DEC-014` gate, untouch
 re-served here, because a second route to the same money under a second gate is how a role gate
 gets quietly widened.
 
-**Honesty carried forward, not re-invented.** `SLA_POLICY` is one stated rule and `#/assistant`
-already says so in Vietnamese. Per-order SLA policy is an unresolved business decision, so the board
-states the rule it used in those same words and never implies the shop promised a customer anything.
-The sentence lives in `assistant.sla_policy_notice_vi` and is imported by both surfaces rather than
+**Honesty carried forward, not re-invented.** Since `PROMISE-001` (`DEC-037`) an order carries its
+own promised-ready time once the owner publishes the turnaround policy; `SLA_POLICY` is the one
+stated rule for an order taken before that, and every row says which it was measured by. The board
+states this in the same words `#/assistant` uses. The sentence lives in
+`assistant.sla_policy_notice_vi` and is imported by both surfaces rather than
 copied, so the two cannot drift into telling staff two different things about what the shop owes.
 """
 
@@ -90,7 +91,9 @@ class SlaBoardPage:
     #: that two figures on one screen were read from the same moment.
     evaluated_at: datetime
     #: The keyset to ask for the next page with, or `None` when this page is the end of the board.
-    next_accepted_at: datetime | None
+    #: `PROMISE-001`: the board is ranked by when each order is due -- its own promise, or the
+    #: stated rule's mark -- so the cursor is that instant and the order id.
+    next_due_at: datetime | None
     next_order_id: UUID | None
 
 
@@ -125,7 +128,7 @@ class OpsBoardService:
         principal: StaffPrincipal,
         policy: ProductionSlaPolicy,
         limit: int = SLA_BOARD_DEFAULT_LIMIT,
-        after_accepted_at: datetime | None = None,
+        after_due_at: datetime | None = None,
         after_order_id: UUID | None = None,
         now: datetime | None = None,
     ) -> SlaBoardPage:
@@ -139,14 +142,14 @@ class OpsBoardService:
         and handing out a cursor for it would make a console render a "more" control that fetches
         nothing.
         """
-        if (after_accepted_at is None) != (after_order_id is None):
+        if (after_due_at is None) != (after_order_id is None):
             raise ValueError("paging the SLA board needs both the timestamp and the order id")
         if not 1 <= limit <= SLA_BOARD_MAX_LIMIT:
             raise ValueError(f"the SLA board limit must be between 1 and {SLA_BOARD_MAX_LIMIT}")
         after = (
             None
-            if after_accepted_at is None or after_order_id is None
-            else (after_accepted_at, after_order_id)
+            if after_due_at is None or after_order_id is None
+            else (after_due_at, after_order_id)
         )
         with self._connection_factory(self._database_url) as connection:
             items = self._console.sla_risk_board(
@@ -173,7 +176,7 @@ class OpsBoardService:
             # letting a console fill in its own clock would put a browser's idea of "now" beside a
             # server's figures.
             evaluated_at=items[0].evaluated_at if items else (now or datetime.now(UTC)),
-            next_accepted_at=items[-1].production_accepted_at if full_page else None,
+            next_due_at=items[-1].due_at if full_page else None,
             next_order_id=items[-1].order_id if full_page else None,
         )
 

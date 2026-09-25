@@ -81,22 +81,22 @@ SLA_POLICY = STANDARD_WASH_SLA
 
 
 def sla_policy_notice_vi(policy: ProductionSlaPolicy) -> str:
-    """The sentence that names which rule produced a risk figure, and what is still undecided.
+    """The sentence that names which rule produced a risk figure.
 
     Extracted verbatim from the `SLA_RISK` answer by `OPS-BOARD-001` so the board can say it too.
     Copying it would have been one edit away from two surfaces disagreeing about what the shop owes
-    a customer, and this sentence is the one that says the shop has promised nothing: per-order SLA
-    policy is an unresolved business decision, and the number beside it is one stated rule applied
-    to every order because there is no other rule to apply.
+    a customer. Since `PROMISE-001` (`DEC-037`) an order accepted after the owner published the
+    turnaround policy is measured against its own promised-ready time, and only an order taken
+    before that against the one stated rule -- which this sentence names, with its hours.
 
     `SlaPolicyType.GUIDANCE_RANGE` carries `GUIDANCE_DOES_NOT_CREATE_BREACH` for the same reason.
     Guidance is not a promise, and a surface that renders guidance as a broken promise lies to its
     own staff.
     """
     return (
-        f"Mốc này tính theo quy tắc {policy.policy_id} — {policy.target_max_hours} giờ kể từ "
-        "khi nhận sản xuất; quy tắc SLA riêng của từng đơn là quyết định kinh doanh chưa được "
-        "chốt, nên con số này dùng đúng một quy tắc đã nêu."
+        "Đơn có giờ hẹn trả được tính theo giờ hẹn của chính đơn đó. Đơn nhận trước khi chủ tiệm "
+        f"công bố quy tắc hẹn trả thì tính theo quy tắc {policy.policy_id} — "
+        f"{policy.target_max_hours} giờ kể từ khi nhận sản xuất."
     )
 
 

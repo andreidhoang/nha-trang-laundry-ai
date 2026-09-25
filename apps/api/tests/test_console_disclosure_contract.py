@@ -898,7 +898,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   Added: their true replacements (margin entry missing/today, both ledes, AI summary on
     #   DEC-006, per-order SLA), the REPORTS_READ `why`, and two reports.js lines.
     # 475 with all six round-6 slices merged: 473 + 10 - 8 = 475.
-    assert sum(counts.values()) == _registry()["total"] == 475
+    # PROMISE-001 (round 7): 475 + 15 = 490 -- 14 refusal notes for the promise codes in
+    # REASON_NOTE and 1 hint in ui/promise.js; 9 slots reworded in place to the new facts.
+    assert sum(counts.values()) == _registry()["total"] == 490
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

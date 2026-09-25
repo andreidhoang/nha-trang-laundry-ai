@@ -553,3 +553,88 @@ export function calendarDay(day, options = {}) {
   if (options.weekday === false) return `${date}/${month}`;
   return CALENDAR_DAY.format(new Date(Date.UTC(Number(year), Number(month) - 1, Number(date))));
 }
+
+// --- PROMISE-001: the promised-ready time, as the counter says it ----------------------------
+
+const SHOP_PARTS = new Intl.DateTimeFormat("en-US", {
+  timeZone: TIMEZONE,
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  weekday: "short",
+  hourCycle: "h23",
+});
+
+/** Vietnamese weekday names, Sunday first, the way the counter says them ("thứ Sáu"). */
+const WEEKDAY_VI = ["Chủ nhật", "thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy"];
+const WEEKDAY_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * An instant's shop-local parts (Asia/Ho_Chi_Minh), whatever the device's own zone.
+ *
+ * @param {Date} moment
+ * @returns {{year: string, month: string, day: string, hour: string, minute: string, weekday: number}}
+ */
+function shopParts(moment) {
+  /** @type {Record<string, string>} */
+  const parts = {};
+  for (const part of SHOP_PARTS.formatToParts(moment)) parts[part.type] = part.value;
+  return {
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: parts.hour,
+    minute: parts.minute,
+    weekday: WEEKDAY_EN.indexOf(parts.weekday),
+  };
+}
+
+/**
+ * A promised-ready time as it is said and printed: "13:00 thứ Sáu 26/9" (`DEC-037`). The server
+ * decided the instant; this only writes it in the shop's zone.
+ *
+ * `short` drops the weekday ("13:00 26/9") for a list row, where the full form wraps at 390 px.
+ *
+ * @param {string|null|undefined} value
+ * @param {{short?: boolean}} [options]
+ * @returns {string}
+ */
+export function promiseTime(value, options = {}) {
+  const parsed = parseInstant(value);
+  if (!parsed) return UNKNOWN;
+  const p = shopParts(parsed);
+  return [`${p.hour}:${p.minute}`, options.short ? "" : WEEKDAY_VI[p.weekday], `${p.day}/${p.month}`]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * An instant as the value of an `<input type="datetime-local">` in the shop's zone
+ * ("2026-09-26T13:00"), so a picker opens on the shop's clock and not the device's.
+ *
+ * @param {string|null|undefined} value
+ * @returns {string}
+ */
+export function shopLocalInput(value) {
+  const parsed = parseInstant(value);
+  if (!parsed) return "";
+  const p = shopParts(parsed);
+  const pad = (/** @type {string} */ text) => text.padStart(2, "0");
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}`;
+}
+
+/**
+ * What a person picked in a `datetime-local` input, read as shop time and sent with its offset
+ * ("2026-09-26T13:00:00+07:00"). Asia/Ho_Chi_Minh keeps one offset all year. Empty when the input
+ * is empty or malformed, so nothing half-typed is ever sent.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+export function shopInstantFromInput(value) {
+  const text = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) return "";
+  return `${text}:00+07:00`;
+}

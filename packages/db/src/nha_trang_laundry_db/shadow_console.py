@@ -25,7 +25,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
-from nha_trang_laundry_domain import sla
+from nha_trang_laundry_domain import promise, sla
+from nha_trang_laundry_domain.promise import promise_figures
 from nha_trang_laundry_domain.sla import (
     ProductionSlaPolicy,
     ProductionSlaResult,
@@ -55,19 +56,64 @@ DRAFT_DECISIONS = frozenset({"APPROVE", "EDIT", "REJECT"})
 #: is not work. The keyset arm is written as a row comparison so PostgreSQL can satisfy the whole
 #: WHERE and the whole ORDER BY from one index; `%(after_accepted)s::timestamptz IS NULL` ahead of
 #: it is the first page, and the cast is required because a bare NULL parameter has no type.
+#:
+#: `PROMISE-001` (`DEC-037`) changed the order, and only the order. The board now ranks by when each
+#: order is due: its own promise (`current_promise_at`, what the customer was last told) when it has
+#: one, and otherwise the stated rule's mark (`production_accepted_at + fallback_hours`, the same
+#: offset the engine applies). Every row says which of the two it was ranked by. The key does not
+#: depend on the instant of evaluation, so it is a stable keyset -- `(due_at, id)` -- and a finished
+#: order sorts by when it was due rather than by how much time it froze with.
+#:
+#: Two index-ordered arms, each cut at the page size, merged and cut again: promised orders by
+#: `0057`'s `orders_sla_promise_board_idx`, the rest by `0044`'s `orders_sla_board_idx`. The second
+#: arm's keyset is written on `production_accepted_at` itself -- `accepted + h > after` is
+#: `accepted > after - h` for a whole number of hours -- so that index still serves both its WHERE
+#: and its ORDER BY. A single `coalesce(...)` sort key would read every in-production row to sort
+#: them, which is what `0044` exists to prevent.
 _SLA_BOARD_SQL = """
     SELECT id, store_id, production_accepted_at, production_ready_at,
-           commercial_status, production_status
-    FROM orders
-    WHERE store_id = %(store)s
-      AND production_accepted_at IS NOT NULL
-      AND production_status <> 'RELEASED'
-      AND commercial_status <> 'CANCELLED'
-      AND (
-          %(after_accepted)s::timestamptz IS NULL
-          OR (production_accepted_at, id) > (%(after_accepted)s::timestamptz, %(after_id)s::uuid)
-      )
-    ORDER BY production_accepted_at, id
+           commercial_status, production_status, current_promise_at, promise_rule_id, due_at
+    FROM (
+        (
+            SELECT id, store_id, production_accepted_at, production_ready_at, commercial_status,
+                   production_status, current_promise_at, promise_rule_id,
+                   current_promise_at AS due_at
+            FROM orders
+            WHERE store_id = %(store)s
+              AND production_accepted_at IS NOT NULL
+              AND production_status <> 'RELEASED'
+              AND commercial_status <> 'CANCELLED'
+              AND current_promise_at IS NOT NULL
+              AND (
+                  %(after_due)s::timestamptz IS NULL
+                  OR (current_promise_at, id) > (%(after_due)s::timestamptz, %(after_id)s::uuid)
+              )
+            ORDER BY current_promise_at, id
+            LIMIT %(limit)s
+        )
+        UNION ALL
+        (
+            SELECT id, store_id, production_accepted_at, production_ready_at, commercial_status,
+                   production_status, current_promise_at, promise_rule_id,
+                   production_accepted_at + make_interval(hours => %(fallback_hours)s) AS due_at
+            FROM orders
+            WHERE store_id = %(store)s
+              AND production_accepted_at IS NOT NULL
+              AND production_status <> 'RELEASED'
+              AND commercial_status <> 'CANCELLED'
+              AND current_promise_at IS NULL
+              AND (
+                  %(after_due)s::timestamptz IS NULL
+                  OR (production_accepted_at, id) > (
+                      %(after_due)s::timestamptz - make_interval(hours => %(fallback_hours)s),
+                      %(after_id)s::uuid
+                  )
+              )
+            ORDER BY production_accepted_at, id
+            LIMIT %(limit)s
+        )
+    ) board
+    ORDER BY due_at, id
     LIMIT %(limit)s
 """
 
@@ -85,7 +131,11 @@ _SLA_BOARD_TICKETS_SQL = """
 #: predates it. What the identifier promises from here on is that a change to the rule cannot reach
 #: a printout without a new name, which `packages/db/tests/test_ops_board.py` enforces by pinning
 #: the digest.
-SLA_BOARD_QUERY_IDENTIFIER = "sla-risk-board-v1"
+#:
+#: `v2` (`PROMISE-001`): the board now ranks by when each order is due and measures an order with
+#: a promise against that promise, so the figures beside the identifier changed meaning -- which is
+#: exactly when a new name is owed.
+SLA_BOARD_QUERY_IDENTIFIER = "sla-risk-board-v2"
 
 #: The domain SLA engine, as a structural digest of its own module rather than a hand-kept string.
 #:
@@ -100,6 +150,9 @@ SLA_BOARD_QUERY_IDENTIFIER = "sla-risk-board-v1"
 #: module is read, not just the entry point, because the answer is produced with `_validate_policy`,
 #: `_lifecycle` and the published policy constants as much as with the function that calls them.
 _SLA_ENGINE_RULE = rule_source(sla)
+#: `PROMISE-001`: an order with a promise is measured against it by `promise.promise_figures`, so
+#: that module decides board figures too and its behaviour is hashed beside the engine's.
+_PROMISE_RULE = rule_source(promise)
 
 #: One screen of the board. Matches the historical default so the assistant's counts do not move.
 SLA_BOARD_DEFAULT_LIMIT = 50
@@ -138,7 +191,11 @@ def sla_board_query_version(policy: ProductionSlaPolicy) -> QueryVersion:
     already moved.
     """
     return query_version(
-        SLA_BOARD_QUERY_IDENTIFIER, _SLA_BOARD_SQL, _SLA_ENGINE_RULE, _policy_identity(policy)
+        SLA_BOARD_QUERY_IDENTIFIER,
+        _SLA_BOARD_SQL,
+        _SLA_ENGINE_RULE,
+        _PROMISE_RULE,
+        _policy_identity(policy),
     )
 
 
@@ -250,9 +307,23 @@ class SlaRisk:
     #: customer is a channel binding. Read by a second statement keyed on this page's order ids
     #: (`_SLA_BOARD_TICKETS_SQL`), deliberately not joined into `_SLA_BOARD_SQL`: the ticket is a
     #: label, not part of the rule behind a board figure, and the published query version
-    #: `sla-risk-board-v1` hashes that statement.
+    #: `sla-risk-board-v2` hashes that statement.
     ticket_number: int | None = None
     ticket_issued_on: date | None = None
+    #: `PROMISE-001`. What the row was measured and ranked by: `ORDER_PROMISE` (the order's own
+    #: promise, `current_promise_at`) or `STATED_RULE` (the policy the board was asked for, because
+    #: the order was taken before the owner published a turnaround policy).
+    rule_source: str = "STATED_RULE"
+    #: The rule behind the order's first promise (`SLA_STANDARD_CLOTHES`, `SLA_BLANKETS_SHEETS`,
+    #: `STAFF_SET`, `EXPRESS_2H`, ...); null under the stated rule.
+    promise_rule_id: str | None = None
+    #: The keyset's first half: the promise, or the stated rule's mark.
+    due_at: datetime | None = None
+
+
+#: `SlaRisk.rule_source` values.
+RULE_SOURCE_ORDER_PROMISE = "ORDER_PROMISE"
+RULE_SOURCE_STATED_RULE = "STATED_RULE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -962,9 +1033,11 @@ class ShadowConsoleRepository:
     ) -> tuple[SlaRisk, ...]:
         """Rank in-production orders by the domain SLA engine, never by a model or a heuristic.
 
-        The policy is a required argument rather than a default, because choosing one per order is a
-        business decision. There is no stored promised-at column: the promise is computed, and this
-        surface reports exactly what `evaluate_production_sla` returns, including its reason codes.
+        The policy is a required argument: it is the stated rule an order is measured against when
+        it has no promise of its own. Since `PROMISE-001` (`DEC-037`) an order accepted after the
+        owner published the turnaround policy carries a promised-ready time, and its row is measured
+        against that promise by `promise.promise_figures` (`rule_source` `ORDER_PROMISE`); every
+        other row is exactly what `evaluate_production_sla` returns (`STATED_RULE`).
 
         **This is the only SLA read in the system, and `OPS-BOARD-001` extended it in place rather
         than adding a second.** `#/assistant` counts what this returns and the board screen lists
@@ -972,31 +1045,14 @@ class ShadowConsoleRepository:
         risk would also be a second place to re-introduce the `0037` clock bug, which this project
         has already found and paid for once.
 
-        `after` pages forward by `(production_accepted_at, id)` — a keyset, not an offset, because
-        an offset over a board whose population changes while a shift reads it silently skips rows.
-        The pair is exactly the ORDER BY, so paging cannot repeat or lose an order.
-
-        **The board is ordered by production acceptance, oldest first — and that is all it is.**
-        It is tempting to call that least-time-remaining-first, and under a `COMMITMENT` policy it
-        nearly is: the mark is `production_accepted_at + target_max_hours`, one fixed offset, so
-        between two orders *whose clocks are both still running* the older acceptance really does
-        mean the less time left. It stops being true for the exact population migration `0037`
-        exists to serve. A `READY_AT_STORE` order's clock stopped at `production_ready_at`, so its
-        remaining time froze at whatever was left when the washing finished while the order
-        accepted beside it keeps spending. Two orders accepted in the same minute — one finished an
-        hour ago, one still running — share a sort key and have different time remaining, and the
-        finished one can sit above an order about to breach. Under `GUIDANCE_RANGE` or
-        `HUMAN_ETA_REQUIRED` there is no mark at all, so there is no remaining time to rank by.
-
-        Ordering by remaining time itself would mean `coalesce(production_ready_at, <now>) -
-        production_accepted_at` in the ORDER BY: a second copy of the clock-stop rule written in
-        SQL, and one that no index can serve, because the key depends on the instant of evaluation.
-        `orders_sla_board_idx` would stop covering both the sort and the keyset and a page would
-        become a sort of the store's whole board. So this method does not claim a ranking it cannot
-        produce. It orders by acceptance, the surfaces above it say so in those words, and every row
-        carries `sla_outcome`, `remaining_microseconds` and `breach_microseconds` so a reader ranks
-        by the figure rather than by the position. Re-sorting a page in Python would rank one page
-        against itself and break the keyset, so that is not done either.
+        **The board is ranked by when each order is due, soonest first** -- the order's own
+        promise, or the stated rule's mark (`production_accepted_at + target_max_hours`) for an
+        order without one. The key does not depend on the instant of evaluation, so it is served by
+        indexes (`_SLA_BOARD_SQL`) and is a stable keyset: `after` pages forward by `(due_at, id)`,
+        exactly the ORDER BY, so paging cannot repeat or lose an order. A finished order sorts by
+        when it was due, not by the time it froze with. A policy with no mark ranks its unpromised
+        orders by acceptance (`fallback_hours` 0). Re-sorting a page in Python would rank one page
+        against itself and break the keyset, so that is not done.
         """
 
         if not 1 <= limit <= SLA_BOARD_MAX_LIMIT:
@@ -1012,7 +1068,8 @@ class ShadowConsoleRepository:
                 _SLA_BOARD_SQL,
                 {
                     "store": store_id,
-                    "after_accepted": None if after is None else after[0],
+                    "fallback_hours": policy.target_max_hours or 0,
+                    "after_due": None if after is None else after[0],
                     "after_id": None if after is None else after[1],
                     "limit": limit,
                 },
@@ -1035,6 +1092,9 @@ class ShadowConsoleRepository:
             # so a washed order waiting overnight for its owner accrued elapsed time until it read
             # SLA_BREACHED, and SLA_MET was unreachable from this surface entirely.
             ready_at = row[3]
+            if row[6] is not None:
+                board.append(_promise_row(row, tickets, timestamp))
+                continue
             result = evaluate_production_sla(
                 policy,
                 evaluated_at=timestamp,
@@ -1063,6 +1123,8 @@ class ShadowConsoleRepository:
                     ticket_issued_on=(
                         tickets[_uuid(row[0])][1] if _uuid(row[0]) in tickets else None
                     ),
+                    rule_source=RULE_SOURCE_STATED_RULE,
+                    due_at=row[8],
                 )
             )
         return tuple(board)
@@ -1166,6 +1228,39 @@ class ShadowConsoleRepository:
                 )
                 for row in cursor.fetchall()
             )
+
+
+def _promise_row(row: Any, tickets: dict[UUID, tuple[int, date]], timestamp: datetime) -> SlaRisk:
+    """`PROMISE-001`: an order with a promise, measured against that promise by the domain."""
+
+    order_id = _uuid(row[0])
+    promised_at = row[6]
+    figures = promise_figures(promised_at, accepted_at=row[2], ready_at=row[3], now=timestamp)
+    breached = figures.outcome == "BREACHED"
+    reason = {"MET": "SLA_MET", "PENDING": "SLA_PENDING"}.get(figures.outcome, "SLA_BREACHED")
+    return SlaRisk(
+        order_id=order_id,
+        store_id=_uuid(row[1]),
+        production_accepted_at=row[2],
+        internal_risk_due_at=promised_at,
+        overall_outcome="REQUIRE_HUMAN" if breached else "ALLOW",
+        reason_codes=("PRODUCTION_SLA_EXCLUDES_DELIVERY", RULE_SOURCE_ORDER_PROMISE, reason),
+        commercial_status=str(row[4]),
+        production_status=str(row[5]),
+        production_ready_at=row[3],
+        sla_outcome=figures.outcome,
+        policy_id=RULE_SOURCE_ORDER_PROMISE,
+        policy_type="COMMITMENT",
+        elapsed_microseconds=figures.elapsed_microseconds,
+        remaining_microseconds=figures.remaining_microseconds,
+        breach_microseconds=figures.breach_microseconds,
+        evaluated_at=timestamp,
+        ticket_number=tickets[order_id][0] if order_id in tickets else None,
+        ticket_issued_on=tickets[order_id][1] if order_id in tickets else None,
+        rule_source=RULE_SOURCE_ORDER_PROMISE,
+        promise_rule_id=None if row[7] is None else str(row[7]),
+        due_at=row[8],
+    )
 
 
 def _remaining_microseconds(result: ProductionSlaResult, accepted_at: datetime) -> int | None:

@@ -690,6 +690,48 @@ def step(name: str, primary: bool = False, **extra: object) -> dict[str, object]
     }
 
 
+def promise_read(*, published: bool, options: dict[str, object] | None = None) -> dict[str, object]:
+    """`GET /internal/v1/orders/{id}/promise` (PROMISE-001), before Nhận đồ."""
+
+    return {
+        "order_id": PICKUP_ORDER_ID,
+        "policy_published": published,
+        "policy_version": 1 if published else None,
+        "opens_at": "08:00" if published else None,
+        "closes_at": "20:00" if published else None,
+        "promised_ready_at": None,
+        "current_promise_at": None,
+        "promise_state": None,
+        "promise_basis": None,
+        "promise_rule_id": None,
+        "changes": [],
+        "change_count": 0,
+        "truncated": False,
+        "options": options,
+        "evaluated_at": "2026-09-25T10:00:00+00:00",
+    }
+
+
+def promise_options(
+    requirement: str,
+    default_at: str | None,
+    choices: list[tuple[str, str | None]],
+    *,
+    reasons: list[str] | None = None,
+    human: list[str] | None = None,
+) -> dict[str, object]:
+    """The `options` of a promise read: what pressing Nhận đồ now would promise, per choice."""
+
+    return {
+        "requirement": requirement,
+        "default_promised_at": default_at,
+        "default_choice": "H48" if requirement == "RANGE_CHOICE" else None,
+        "choices": [{"choice": choice, "promised_at": at} for choice, at in choices],
+        "reason_codes": reasons or [],
+        "human_service_codes": human or [],
+    }
+
+
 def order_view(
     mode: str, *, balance: str, collected: bool, steps: list[dict[str, object]] | None = None
 ) -> dict[str, object]:
@@ -763,15 +805,14 @@ DAY_SUMMARY = {
 #: The page carries `next_accepted_at`/`next_order_id`, so the keyset "Tải thêm" control is
 #: exercised against a real second page rather than described.
 SLA_BOARD_POLICY_NOTICE = (
-    "Mốc này tính theo quy tắc SLA_STANDARD_CLOTHES — 8 giờ kể từ khi nhận sản xuất; quy tắc SLA "
-    "riêng của từng đơn là quyết định kinh doanh chưa được chốt, nên con số này dùng đúng một quy "
-    "tắc đã nêu."
+    "Đơn có giờ hẹn trả được tính theo giờ hẹn của chính đơn đó. Đơn nhận trước khi chủ tiệm công "
+    "bố quy tắc hẹn trả thì tính theo quy tắc SLA_STANDARD_CLOTHES — 8 giờ kể từ khi nhận sản xuất."
 )
 #: REPORT-DASHBOARD-001. The report's figures, in the `FR-RPT-005` shape. Awkward on purpose: a
 #: fraction that does not round to a whole percent, a denominator of zero (no order reached quality
 #: check), and a window whose refunds exceeded its takings, so the drawer went OUT. The screen must
 #: print every one as the server sent it and compute none of them.
-REPORT_VERSION = "report-v2:2e30b2c5fdd366f2"
+REPORT_VERSION = "report-v3:b09f715c3a0cb3e2"
 
 
 def report_kpis(start: str, end: str) -> list[dict[str, object]]:
@@ -789,13 +830,15 @@ def report_kpis(start: str, end: str) -> list[dict[str, object]]:
             "entries": extra.get("entries"),
             "amount_vnd": extra.get("amount_vnd"),
             "by_kind": extra.get("by_kind"),
+            "rule_assumed": extra.get("rule_assumed"),
         }
 
     return [
         kpi("ORDERS_CREATED", 12),
         kpi("ORDERS_COMPLETED", 7),
         kpi("ORDERS_CANCELLED", 1),
-        kpi("ON_TIME_INTERNAL", 5, 6, quality="RULE_ASSUMED"),
+        # PROMISE-001: two of the six were taken before the owner published the turnaround rules.
+        kpi("ON_TIME_INTERNAL", 5, 6, quality="RULE_ASSUMED", rule_assumed=2),
         kpi("REWASH", 0, 0),
         kpi("COMPLAINTS", 2, 7, unit="INCIDENTS"),
         kpi("MONEY_COLLECTED", 90_000, unit="VND", entries=1),
@@ -871,18 +914,15 @@ SLA_BOARD_FIRST_PAGE = {
             "internal_risk_due_at": "2026-09-09T08:00:00+00:00",
             "sla_outcome": "BREACHED",
             "overall_outcome": "REQUIRE_HUMAN",
-            "reason_codes": [
-                "PRODUCTION_SLA_EXCLUDES_DELIVERY",
-                "HUMAN_PROMISE_REQUIRED",
-                "ELAPSED_EIGHT_HOUR_INTERNAL_RISK",
-                "EXACT_CLOSURE_CUTOFF_UNPUBLISHED",
-                "SLA_BREACHED",
-                "BREACH_REMEDY_REQUIRES_HUMAN",
-            ],
+            # PROMISE-001: this order has a promise, and the board measured it against that.
+            "reason_codes": ["PRODUCTION_SLA_EXCLUDES_DELIVERY", "ORDER_PROMISE", "SLA_BREACHED"],
             "elapsed_microseconds": 39_600_000_000,
             "remaining_microseconds": 0,
-            # Three hours past the mark.
+            # Three hours past the promise.
             "breach_microseconds": 10_800_000_000,
+            "rule_source": "ORDER_PROMISE",
+            "promise_rule_id": "SLA_STANDARD_CLOTHES",
+            "due_at": "2026-09-09T08:00:00+00:00",
         },
         {
             "order_id": "aaaaaaa2-0000-4000-8000-000000000002",
@@ -898,15 +938,19 @@ SLA_BOARD_FIRST_PAGE = {
             # One hour left.
             "remaining_microseconds": 3_600_000_000,
             "breach_microseconds": 0,
+            # Taken before the owner published the turnaround rules: the stated rule's mark.
+            "rule_source": "STATED_RULE",
+            "promise_rule_id": None,
+            "due_at": "2026-09-09T12:00:00+00:00",
         },
     ],
-    "query_version": "sla-risk-board-v1:e56e50ea7beb4021",
+    "query_version": "sla-risk-board-v2:1f8c822c3e51aee1",
     "policy_id": "SLA_STANDARD_CLOTHES",
     "policy_type": "COMMITMENT",
     "policy_target_max_hours": 8,
     "policy_notice_vi": SLA_BOARD_POLICY_NOTICE,
     "evaluated_at": "2026-09-09T11:00:00+00:00",
-    "next_accepted_at": "2026-09-09T04:00:00+00:00",
+    "next_due_at": "2026-09-09T12:00:00+00:00",
     "next_order_id": "aaaaaaa2-0000-4000-8000-000000000002",
 }
 SLA_BOARD_SECOND_PAGE = {
@@ -925,10 +969,13 @@ SLA_BOARD_SECOND_PAGE = {
             "elapsed_microseconds": 3_600_000_000,
             "remaining_microseconds": 25_200_000_000,
             "breach_microseconds": 0,
+            "rule_source": "STATED_RULE",
+            "promise_rule_id": None,
+            "due_at": "2026-09-09T14:00:00+00:00",
         }
     ],
     "evaluated_at": "2026-09-09T11:00:30+00:00",
-    "next_accepted_at": None,
+    "next_due_at": None,
     "next_order_id": None,
 }
 
@@ -2170,6 +2217,9 @@ with sync_playwright() as playwright:
             # rows to both would certify a "Tải thêm" control that appends what is already on
             # screen, which is the defect the paging shape exists to avoid.
             body = SLA_BOARD_SECOND_PAGE if "after_order_id=" in url else SLA_BOARD_FIRST_PAGE
+            if "after_order_id=" in url:
+                # PROMISE-001: the keyset is the due instant, handed back as the server gave it.
+                state["sla_after_due"] = "after_due_at=" in url
         elif "/reports/summary" in url or "/reports/daily" in url:
             # REPORT-DASHBOARD-001: every read is recorded, so section 19 can prove a refused
             # window and a refused role never reached the server.
@@ -2353,6 +2403,11 @@ with sync_playwright() as playwright:
                 status=201, content_type="application/json", body=json.dumps(BAND_REVISION)
             )
             return
+        elif route.request.method == "GET" and url.split("?")[0].endswith("/promise"):
+            # PROMISE-001: the order's promise read, as the server answers it -- unpublished by
+            # default, the published shapes set by section 15's promise checks.
+            state.setdefault("promise_reads", []).append(url)
+            body = state.get("promise_read") or promise_read(published=False)
         elif (
             state.get("order_view") is not None
             and route.request.method == "GET"
@@ -4055,12 +4110,10 @@ with sync_playwright() as playwright:
     # Rows, since CONSOLE-REDESIGN-003: each order is a list row that links to it.
     cards = page.locator("[data-sla-outcome]")
     check("the board lists the orders the server returned", cards.count() == 2, str(cards.count()))
-    # The server answers in acceptance order, oldest first, and the screen renders that order
-    # unchanged. Asserted as the sequence rather than as "the breached one is on top": the board
-    # does not rank by urgency and must not look as though it does, because an order whose clock
-    # stopped at `production_ready_at` carries frozen time remaining and can outrank a running one.
+    # The server answers soonest due first (PROMISE-001) and the screen renders that order
+    # unchanged. Asserted as the sequence the server sent, not as a property the browser derives.
     check(
-        "the rows are in the server's acceptance order, not one the browser chose",
+        "the rows are in the server's order (soonest due), not one the browser chose",
         [cards.nth(index).get_attribute("data-order-id") for index in range(cards.count())]
         == [item["order_id"] for item in SLA_BOARD_FIRST_PAGE["items"]],
         repr([cards.nth(index).get_attribute("data-order-id") for index in range(cards.count())]),
@@ -4073,8 +4126,26 @@ with sync_playwright() as playwright:
 
     body_text = page.inner_text("body")
     check(
-        "time past the mark reads as a duration, never as a negative number",
-        "quá mốc 3 giờ" in body_text and "-3" not in body_text,
+        "time past the promise reads as a duration, never as a negative number",
+        "trễ hẹn 3 giờ" in body_text and "-3" not in body_text,
+    )
+    # PROMISE-001: each row says which rule measured it -- the customer's promise or the shop's own
+    # internal mark -- in words, and the token rides on the row.
+    promised_row = page.locator("[data-rule-source='ORDER_PROMISE']")
+    stated_row = page.locator("[data-rule-source='STATED_RULE']")
+    check(
+        "a row measured against the customer's promise says Hẹn and Trễ hẹn",
+        promised_row.count() == 1
+        and "Hẹn " in promised_row.first.inner_text()
+        and "Trễ hẹn" in promised_row.first.inner_text(),
+        promised_row.first.inner_text()[:120] if promised_row.count() else "no promised row",
+    )
+    check(
+        "a row taken before the owner published the rules says Mốc nội bộ, not Hẹn",
+        stated_row.count() == 1
+        and "Mốc nội bộ" in stated_row.first.inner_text()
+        and "Trễ hẹn" not in stated_row.first.inner_text(),
+        stated_row.first.inner_text()[:120] if stated_row.count() else "no stated-rule row",
     )
     check(
         "time still left reads the same way, in whole Vietnamese units",
@@ -4085,8 +4156,8 @@ with sync_playwright() as playwright:
         "10800000000" not in body_text and "3600000000" not in body_text,
     )
     check(
-        "and says plainly, on the screen itself, that this is the shop's own mark, not a promise",
-        "không phải hẹn với khách" in body_text,
+        "and says plainly, on the screen itself, which mark is a promise and which is internal",
+        "“Hẹn” là giờ đã hẹn với khách" in body_text and "Mốc nội bộ" in body_text,
     )
     # The rule is one tap away (tier 2): open the ⓘ on the title, as a person would, and read it.
     page.locator(".page-head .info-btn").first.click()
@@ -4098,15 +4169,15 @@ with sync_playwright() as playwright:
         "the shared policy sentence is missing or reworded",
     )
     check(
-        "and why the order is not urgency order, in the same sheet",
-        "Đây không phải thứ tự gấp" in sheet_text,
+        "and in which order the rows come, in the same sheet",
+        "Đơn đến hạn sớm nhất nằm trên cùng" in sheet_text,
     )
     page.keyboard.press("Escape")
     page.wait_for_timeout(200)
     check(
         "the versioned query behind the figures is on the screen (technical drawer), not only in "
         "the response",
-        "sla-risk-board-v1:e56e50ea7beb4021" in str(page.evaluate("document.body.textContent")),
+        "sla-risk-board-v2:1f8c822c3e51aee1" in str(page.evaluate("document.body.textContent")),
     )
     check(
         "each row links to the order it is about, so the list is something to act on",
@@ -4122,6 +4193,11 @@ with sync_playwright() as playwright:
         "Tải thêm appends the next keyset page rather than replacing or repeating the first",
         page.locator("[data-sla-outcome]").count() == 3,
         str(page.locator("[data-sla-outcome]").count()),
+    )
+    check(
+        "and asks for it by the due instant the server handed back (PROMISE-001's keyset)",
+        state.get("sla_after_due") is True,
+        repr(state.get("sla_after_due")),
     )
     body_text = page.inner_text("body")
     check(
@@ -4626,9 +4702,215 @@ with sync_playwright() as playwright:
         and "khách tự ước" in open_dialog_text(),
         open_dialog_text()[:160],
     )
+    check(
+        "before the owner publishes the turnaround rules, Nhận đồ says there is no promise yet",
+        "chủ tiệm chưa công bố quy tắc hẹn trả" in open_dialog_text(),
+        open_dialog_text()[:200],
+    )
     state["order_write_reply"] = None
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
+
+    # PROMISE-001 (DEC-037). Hẹn trả before the press: the server's time for each choice, the
+    # 24/48 chips with 48 already chosen for a blanket, a picker a person must fill for a special
+    # item, and the choice sent as the step's own fields. Nothing here computes a time.
+    receive_view = order_view(
+        "SELF_DROP_SELF_COLLECT",
+        balance="UNPAID",
+        collected=False,
+        steps=[step("RECEIVE", True, requires=["slot_approved"])],
+    )
+
+    def press_receive(read: dict[str, object]) -> None:
+        state["promise_read"] = read
+        state["order_writes"] = []
+        open_order(receive_view)
+        page.locator(".action-bar--v2 button[data-step=RECEIVE]").click()
+        page.wait_for_timeout(600)
+
+    press_receive(
+        promise_read(
+            published=True,
+            options=promise_options(
+                "RANGE_CHOICE",
+                "2026-09-27T10:00:00+00:00",
+                [
+                    ("H24", "2026-09-26T10:00:00+00:00"),
+                    ("H48", "2026-09-27T10:00:00+00:00"),
+                    ("CUSTOM", None),
+                ],
+            ),
+        )
+    )
+    line = (
+        page.locator("#receive-promise-line").inner_text()
+        if page.locator("#receive-promise-line").count()
+        else ""
+    )
+    chosen = page.locator("dialog[open] input[name=receive-promise-choice]:checked")
+    check(
+        "a blanket's Nhận đồ shows the promise before the press, with 48 giờ already chosen",
+        "Hẹn trả:" in line
+        and "17:00 Chủ nhật 27/9" in line
+        and chosen.count() == 1
+        and chosen.first.get_attribute("value") == "H48",
+        line,
+    )
+    page.locator("dialog[open] .choice-chip", has_text="24 giờ").click()
+    page.wait_for_timeout(200)
+    line = page.locator("#receive-promise-line").inner_text()
+    check(
+        "choosing 24 giờ shows the server's time for it, not a time the browser worked out",
+        "17:00 thứ Bảy 26/9" in line,
+        line,
+    )
+    page.locator("#receive-slot").check()
+    page.locator("#receive-submit").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "the choice travels as the step's own field",
+        len(writes) == 1
+        and json.loads(writes[0]["body"] or "{}")
+        == {"step": "RECEIVE", "slot_approved": True, "promise_choice": "H24"},
+        repr(writes),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    press_receive(
+        promise_read(
+            published=True,
+            options=promise_options(
+                "CUSTOM",
+                None,
+                [("CUSTOM", None)],
+                reasons=["HUMAN_ETA_REQUIRED"],
+                human=["OTHER_PLUSH"],
+            ),
+        )
+    )
+    page.locator("#receive-slot").check()
+    page.wait_for_timeout(150)
+    shut_without_time = page.locator("#receive-submit").is_disabled()
+    check(
+        "a special item asks the person for the day and hour, and Nhận đồ waits for it",
+        shut_without_time
+        and page.locator("#receive-promise-at").is_visible()
+        and "Bạn chọn ngày giờ trả" in open_dialog_text(),
+        open_dialog_text()[:200],
+    )
+    page.locator("#receive-promise-at").fill("2026-09-28T10:00")
+    page.wait_for_timeout(150)
+    page.locator("#receive-submit").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "the time the person picked is sent as shop time, with its offset",
+        len(writes) == 1
+        and json.loads(writes[0]["body"] or "{}")
+        == {
+            "step": "RECEIVE",
+            "slot_approved": True,
+            "promise_choice": "CUSTOM",
+            "custom_at": "2026-09-28T10:00:00+07:00",
+        },
+        repr(writes),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    press_receive(
+        promise_read(
+            published=True,
+            options=promise_options(
+                "NONE",
+                "2026-09-26T06:00:00+00:00",
+                [("EXPRESS_2H", "2026-09-25T12:00:00+00:00"), ("CUSTOM", None)],
+            ),
+        )
+    )
+    line = page.locator("#receive-promise-line").inner_text()
+    page.locator("#receive-slot").check()
+    page.locator("#receive-submit").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "ordinary laundry shows the rule's time and, left alone, sends no choice at all",
+        "13:00 thứ Bảy 26/9" in line
+        and len(writes) == 1
+        and json.loads(writes[0]["body"] or "{}") == {"step": "RECEIVE", "slot_approved": True},
+        f"{line} {writes!r}",
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    state["promise_read"] = None
+
+    # The promise on the order page, its state, and Hẹn lại with a reason.
+    late_view = {
+        **order_view(
+            "SELF_DROP_SELF_COLLECT",
+            balance="UNPAID",
+            collected=False,
+            steps=[step("START_WASH", True)],
+        ),
+        "production": "NOT_STARTED",
+        "promised_ready_at": "2026-09-26T06:00:00+00:00",
+        "current_promise_at": "2026-09-26T08:00:00+00:00",
+        "promise_state": "LATE",
+        "promise_rule_id": "SLA_STANDARD_CLOTHES",
+        "promise_basis": "RULE",
+    }
+    state["order_writes"] = []
+    open_order(late_view)
+    promise_row = page.locator("[data-field=promise]")
+    promise_text = promise_row.inner_text() if promise_row.count() else ""
+    check(
+        "the order page shows the promise the customer was told, a LATE pill and the first promise",
+        "15:00 thứ Bảy 26/9" in promise_text
+        and "Trễ hẹn" in promise_text
+        and "Hẹn đầu: 13:00 thứ Bảy 26/9" in promise_text,
+        promise_text,
+    )
+    page.locator("#promise-change").click()
+    page.wait_for_timeout(300)
+    save_shut = page.locator("#promise-change-submit").is_disabled()
+    page.locator("#promise-change-at").fill("2026-09-27T10:00")
+    page.locator("dialog[open] .choice-chip[title=OTHER]").click()
+    page.wait_for_timeout(150)
+    still_shut = page.locator("#promise-change-submit").is_disabled()
+    page.locator("#promise-change-note").fill("Khách đi công tác")
+    page.wait_for_timeout(150)
+    page.locator("#promise-change-submit").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "Hẹn lại needs a time and a reason (a note for Khác), then posts with If-Match and a key",
+        save_shut
+        and still_shut
+        and len(writes) == 1
+        and writes[0]["path"] == f"{PICKUP_ORDER_ID}/promise"
+        and json.loads(writes[0]["body"] or "{}")
+        == {
+            "promise_at": "2026-09-27T10:00:00+07:00",
+            "reason": "OTHER",
+            "note": "Khách đi công tác",
+        }
+        and writes[0]["if_match"] == '"14"'
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(900)
+    listed = page.locator(f"[data-order-id='{PICKUP_ORDER_ID}']")
+    listed_text = listed.first.inner_text() if listed.count() else ""
+    check(
+        "the order list shows the promise and the LATE pill on the row",
+        "Hẹn 15:00 26/9" in listed_text and "Trễ hẹn" in listed_text,
+        listed_text[:160],
+    )
 
     # ORDER-STEPS-002. Giặt lại and Không nhận đồ: never the big button, each a sheet offering
     # exactly the reasons the server listed, shut until one is picked, and the reason sent as the
@@ -6225,6 +6507,20 @@ with sync_playwright() as playwright:
         "a completed order's receipt no longer says the shop will call",
         paper.locator("[data-field=closing]").inner_text().strip() == "Đơn đã hoàn tất.",
     )
+    # PROMISE-001: an order with a promise prints the time the customer was told (R4 replaced).
+    state["receipt_order"] = {
+        **RECEIPT_ORDER,
+        "promised_ready_at": "2026-09-26T06:00:00+00:00",
+        "current_promise_at": "2026-09-26T06:00:00+00:00",
+        "promise_state": "ON_TRACK",
+    }
+    page.reload()
+    page.wait_for_timeout(1500)
+    check(
+        "an order with a promise prints 'Hẹn trả: 13:00 thứ Bảy 26/9' in place of R4's sentence",
+        paper.locator("[data-field=closing]").inner_text().strip() == "Hẹn trả: 13:00 thứ Bảy 26/9",
+        paper.locator("[data-field=closing]").inner_text(),
+    )
     state["receipt_order"] = None
 
     # The ways in: a closed order offers it beside the closed line; an AUDITOR sees it shut.
@@ -6533,7 +6829,7 @@ with sync_playwright() as playwright:
 
     check(
         "a fraction is shown beside the percentage the console formats from it, and a count "
-        "(report-v2: completed) is a count with no rate beside it",
+        "(report-v3: completed) is a count with no rate beside it",
         "5 / 6" in tile("ON_TIME_INTERNAL")
         and "7" in tile("ORDERS_COMPLETED")
         and "%" not in tile("ORDERS_COMPLETED")
@@ -6546,8 +6842,8 @@ with sync_playwright() as playwright:
         tile("REWASH")[:80],
     )
     check(
-        "the on-time tile says it is measured against the internal mark",
-        "Theo mốc nội bộ" in tile("ON_TIME_INTERNAL") and "5 / 6" in tile("ON_TIME_INTERNAL"),
+        "the on-time tile says how many of its orders were measured by the internal mark",
+        "2 đơn theo mốc nội bộ" in tile("ON_TIME_INTERNAL") and "5 / 6" in tile("ON_TIME_INTERNAL"),
         tile("ON_TIME_INTERNAL")[:80],
     )
     money_tile = tile("MONEY_NET")

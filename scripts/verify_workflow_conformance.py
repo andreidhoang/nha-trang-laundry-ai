@@ -1529,6 +1529,68 @@ def scenario_prepaid(console: Console) -> None:
     )
 
 
+def scenario_busy(console: Console) -> None:
+    """`API-INTEGRITY-003`: a database that is busy says so, and the retry is safe."""
+
+    head("11", "HỆ THỐNG BẬN — a row held by someone else, then the same press again")
+    if not arguments.database_url:
+        note("needs --database-url to hold a row lock from a second connection; skipped")
+        return
+    console.sign_in("demo-operations")
+    order = console.build_order(kg="7", stop="released")
+    order_id = order["order_id"]
+    total = order["quote"]["net_service_subtotal_vnd"]
+    grouped = f"{total:,}".replace(",", ".")
+    # A second connection takes this order's row for twelve seconds -- longer than the API's
+    # five-second lock_timeout -- the way a slow report or a stuck session would.
+    holder = subprocess.Popen(
+        [
+            "psql",
+            arguments.database_url,
+            "-q",
+            "-c",
+            f"BEGIN; SELECT 1 FROM orders WHERE id='{order_id}' FOR UPDATE; "
+            "SELECT pg_sleep(12); COMMIT;",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(1.0)
+    console.open(f"#/orders/{order_id}")
+    console.type_into("#settlement-amount", grouped)
+    box = console.page.locator("#settlement-collected")
+    if not box.is_checked():
+        box.click()
+    submit = console.page.locator("button[type=submit]", has_text="Ghi nhận tất toán").first
+    submit.click()
+    try:
+        console.page.wait_for_selector("text=Hệ thống đang bận", timeout=12000)
+    except Exception:
+        console.page.wait_for_timeout(1000)
+    said = console.said()
+    ok(
+        "a payment that cannot get its row in time is told 'busy, try again', not a server fault",
+        "Hệ thống đang bận" in said and "Đừng thử lại" not in said,
+        said[:200],
+    )
+    ok(
+        "and nothing was written for it",
+        sql(f"select count(*) from order_settlements where order_id='{order_id}'") == "0",
+        "",
+    )
+    holder.wait(timeout=30)
+    note("the other connection let go of the row")
+    if console.page.locator("#settlement-amount").count():
+        submit.click()
+        console.page.wait_for_timeout(2500)
+    ok(
+        "pressing again records the payment exactly once",
+        sql(f"select count(*) from order_settlements where order_id='{order_id}'") == "1"
+        and stored(order_id, "balance_status") == "PAID",
+        console.said()[:160],
+    )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -1539,6 +1601,7 @@ SCENARIOS = {
     "ai": scenario_ai_refuses,
     "band": scenario_band,
     "prepaid": scenario_prepaid,
+    "busy": scenario_busy,
 }
 
 

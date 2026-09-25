@@ -539,7 +539,7 @@ def test_a_stain_at_quality_check_is_washed_again_and_the_order_still_completes(
     assert _primary(order) == "QUALITY_CHECK"
     for step in ("QUALITY_CHECK", "MARK_READY"):
         order = counter.step(order, step)
-    order = counter.settle(order, collected=True)
+    order = counter.pay(order, collected=True)
     order = counter.step(order, "HAND_OVER")
     assert (order["commercial"], order["balance"]) == ("COMPLETED", "PAID")
 

@@ -69,7 +69,7 @@ The commonest workflow in the shop, and the one every other workflow is a variat
 | 9 | Confirm the sale | same | dimension **thương mại** → `STORE_CONFIRMATION_PENDING` → `CONFIRMED` → `ACTIVE` | `POST /orders/{id}/transition` | `ACTIVE` is refused unless intake is `ACCEPTED` |
 | 10 | Wash it | same | dimension **sản xuất** → `QUEUED` → `IN_PROCESS` → `QUALITY_CHECK` → `READY_AT_STORE` | `POST /orders/{id}/production-transition` | `READY_AT_STORE` stamps `production_ready_at`: **the SLA clock stops here** |
 | 11 | Hand it back | same | → `RELEASED` | same | Production is now terminal |
-| 12 | Take the money | `#/orders/{id}` | **Số tiền khách đã trả**, **Khách đã tự lấy đồ**, **Ghi nhận tất toán** | `POST /orders/{id}/settlement` | balance `PAID`, self-collection recorded |
+| 12 | Take the money | `#/orders/{id}` | **Thu tiền** → the remaining amount prefilled, **Tiền mặt** / **Chuyển khoản**, **Khách lấy đồ luôn**, **Ghi nhận đã thu** (`PAYMENT-001`, §4) | `POST /orders/{id}/payments` | balance `PAID`, the settlement row written, self-collection recorded |
 | 13 | Close it | `#/orders` | dimension **thương mại** → `COMPLETED` | `POST /orders/{id}/transition` | Refused unless production is `RELEASED`, fulfilment is complete **and** the balance is settled |
 
 **Every step carries `Idempotency-Key`; every step that changes an order carries `If-Match` with the
@@ -140,27 +140,61 @@ The same spine with three differences:
 
 ## 4. When the shop takes the money
 
-One shape is supported, and it is the same money twice over: **the exact quoted total, in full, in
-one settlement.** Anything else is refused by name, with the open decision that owns it:
+`DEC-035` (2026-09-25, the counter half, `PAYMENT-001`) superseded the `DEC-010` deferral. The
+counter takes **cash (`TIEN_MAT`) or a bank transfer to the shop's account (`CHUYEN_KHOAN`)**, in one
+payment or several: a deposit (đặt cọc) at drop-off, the rest at pickup, any amount from 1 ₫ up to
+what is still owed. Every payment is an append-only row of `order_payments` (`0056`) with its
+method, the optional last characters of the bank reference, the staff member and the moment.
 
-| What the customer does | Reason code | Owner's decision |
+| What happens at the counter | What the server does | Reason code if refused |
 |---|---|---|
-| Pays less than the total | `AMOUNT_IS_NOT_THE_EXACT_TOTAL` | `DEC-010` |
-| Pays more than the total | `AMOUNT_IS_NOT_THE_EXACT_TOTAL` | `DEC-010` |
-| Quote has no single total (unresolved fee) | `NO_PRESENTABLE_TOTAL` | `DEC-003` |
-| Quote is a range | `TOTAL_IS_A_RANGE` | `DEC-001` |
-| The goods did not go back to the customer at the counter | `COLLECTION_WAS_NOT_BY_THE_CUSTOMER` | `DEC-003` |
+| A deposit or part payment (1 ₫ ≤ amount < what remains) | balance `PARTIALLY_PAID`; *Tổng · Đã trả · Còn lại* on the order page | — |
+| The rest, or the whole total at once | balance `PAID`; writes the settlement row (the same shapes as before: paid at pickup, prepaid for the counter, prepaid for delivery) | — |
+| The customer hands over more than remains | refused — the counter gives change; no store credit is created | `OVERPAYMENT_REFUSED` |
+| A transfer nobody has seen arrive | refused; the sheet asks "Đã thấy tiền vào tài khoản" | `TRANSFER_NOT_SEEN` |
+| "The customer takes the goods now" with money still owed | refused: goods leave only when paid | `HANDOVER_REQUIRES_FULL_PAYMENT` |
+| Pickup, `RELEASE` for a self-collect order, or `HAND_OVER` while partly paid | refused (`settlement.goods_may_leave`, the seam where `PAYMENT-002`'s account customers will be admitted) | `COLLECTION_REQUIRES_PAYMENT` / `INVALID_STATE_TRANSITION` |
+| Quote has no single total (unresolved fee) | no payment can be measured against it | `NO_PRESENTABLE_TOTAL` (`DEC-003`) |
+| Quote is a range | same | `NO_PRESENTABLE_TOTAL` / `TOTAL_IS_A_RANGE` (`DEC-001`) |
+| A delivery order paid in full "and collected at the counter" | the tick and the mode disagree | `COLLECTION_WAS_NOT_BY_THE_CUSTOMER` (`DEC-003`) |
 
-The counter sees each of these in Vietnamese, with the reason code verbatim and the decision named,
-because a staff member told only "no" goes and finds a workaround.
+**The next step is still the server's.** `next_steps` offers one `TAKE_PAYMENT` while money is owed
+(it replaced `SETTLE` and `PREPAY`). For a walk-in it is the big button once the laundry is ready, and
+otherwise sits on the money card (a deposit at drop-off is one tap); for a delivery it comes before
+**Đưa đồ đi giao** (`DEC-023`: no courier carries cash). The sheet prefills the server's
+`remaining_vnd`; "Khách trả một phần (đặt cọc)" opens a field. When the laundry is finished and the
+customer collects, **Khách lấy đồ luôn** is offered, ticked, so paying the rest and handing the bag
+over is one press followed by **Giao đồ & đóng đơn**, as it was.
 
-**Typing money.** The amount is typed as the screen prints it: `170.000` is a hundred and seventy
-thousand đồng. A comma is refused (it is the decimal separator in Vietnamese and đồng have no minor
-unit) and so is a decimal point that is not a thousands separator — `170000.5` is a mistake to
-report, not 1.700.005 ₫ to charge.
+**What is owed is a list of charges.** Today `charges` holds the quoted total alone; `owed_vnd`,
+`paid_vnd` and `remaining_vnd` are computed by the domain from it and the ledger's SQL sum. The
+storage fee (`UNCLAIMED-001`, `DEC-036`) is added to the same list without changing a rule.
 
-**A settlement is written once.** The row is immutable; the balance and the collection flag move in
-the same transaction.
+**The day's money.** *Đã thu tại quầy* on Hôm nay (`collected-today-v3`) and the report's money
+figure (`report-v2`) sum the payment ledger, split into **Tiền mặt** (reconcile with the drawer) and
+**Chuyển khoản** (reconcile with the bank app), each on the day it was taken — a deposit counts on
+the day of the deposit. Every settlement written before `0056` became its one payment, counted as
+cash and marked `legacy`, so no past day's figure moved.
+
+**Refunds.** A cancellation after a deposit refunds exactly what was paid, through the `DEC-024`
+refund path; the refund names no settlement because the order never had one.
+
+**The exact-total route stays.** `POST /orders/{id}/settlement` still accepts the exact total only
+(`AMOUNT_IS_NOT_THE_EXACT_TOTAL`, `DEC-010`) and now also records it as one `legacy` payment; an
+order that already has a deposit is refused there (`ORDER_PARTLY_PAID`). The console no longer calls
+it.
+
+**Typing money.** A deposit is typed as the screen prints it: `50.000` is fifty thousand đồng. A
+comma is refused (it is the decimal separator in Vietnamese and đồng have no minor unit) and so is a
+decimal point that is not a thousands separator — `170000.5` is a mistake to report, not 1.700.005 ₫
+to charge.
+
+**A payment is written once.** The row is immutable; the balance, the settlement and the collection
+flag move in the same transaction, and `0056` refuses at commit a balance the ledger does not
+support.
+
+**Not yet:** account customers (công nợ: limit, monthly statement, allocation across orders) are
+`PAYMENT-002`, after `CUSTOMER-001`.
 
 ---
 
@@ -291,7 +325,7 @@ Recorded so the gap is visible rather than discovered at the counter. Each is in
 | Promotions | The engine exists and is not wired into the quote path. Every revision discounts 0 |
 | ~~Deciding an approval from the console~~ | **Built.** `list_pending` projects `resource_version`, `snapshot_hash` and `rendered_hash`, so a decision can bind exactly what it approved. `ORDER` is decidable with a link to the resource; `QUOTE_REVISION` and `MESSAGE_DRAFT` stay disabled by name, because approving what the console cannot show you is blind approval in a politer font. **Since superseded for both:** `RANGE-PRICE-001` made a quote revision readable, and `MESSAGE-DRAFT-BINDING-001` (2026-09-25) added `GET /internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding`, so a `SEND_MESSAGE` card prints the exact stored words above its buttons, refuses to approve a draft edited or rejected after the envelope was raised (the server refuses too), and `#/exceptions` raises the envelope from that read. The send itself is still a named person's manual send; nothing sends automatically. **`ORDER` since `SESSION-LIST-001`:** the card reads the order's current `row_version` and says "Đơn chưa thay đổi kể từ khi gửi duyệt", or "Đơn đã thay đổi sau khi gửi duyệt — mở đơn để xem lại" with **Duyệt** shut and only **Từ chối** live; the server refuses a moved order's approval regardless |
 | ~~An SLA board~~ | **Built, 2026-09-22.** The read model was never the missing half: `ShadowConsoleRepository.sla_risk_board` already existed with migration `0037`'s clock fix, and building a second one would have re-introduced a bug already paid for once. What was missing was a surface — `GET /internal/v1/stores/{store_id}/sla-board` and `#/sla-board`, ordered by the server, each row carrying the query version and the one stated rule that produced it. Per-order `ProductionSlaPolicy` is still undecided and the board says so in the assistant's own words. `OPS-BOARD-001` |
-| Payment methods, part payments, deposits, credit | One shape only (§4) |
+| Account customers (công nợ): limits, statements, allocation | `PAYMENT-002` (§4); methods, deposits and part payments are built (`PAYMENT-001`) |
 | Batches, chain of custody, machine cycles, delivery cost capture | Blocked on `SHOP-INSTRUMENT-001` |
 | ~~A daily operations dashboard and CSV export~~ | **Built, 2026-09-22 and 2026-09-25.** The export exists and is versioned: `#/exports` raises an `EXPORT_SANITIZED_DATA` envelope, an owner who is not the staff member that defined it approves it, and the file is released once with its query version and a digest recorded in `data_exports`. It carries no incident free text, no evidence summary and no contact key. One day, or since `EXPORT-RANGE-001` a window of up to 92 shop-local days whose two ends are inside the digest the owner approves (an approval of one window cannot release another), cut on `orders.created_at` — which is **not** the boundary the takings figure uses, and both surfaces now say so. The file carries no KPI. The dashboard is built (`REPORT-DASHBOARD-001`): `#/reports` serves every `FR-RPT-005` figure as a numerator, a denominator, a window, a data-quality status and the `report-v1` version; margin is still not computed. `OPS-BOARD-001`, `EXPORT-FIX-001`, `EXPORT-RANGE-001`, `REPORT-DASHBOARD-001` |
 

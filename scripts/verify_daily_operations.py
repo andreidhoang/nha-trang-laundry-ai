@@ -483,6 +483,10 @@ with sync_playwright() as pw:
         bar = page.locator(f".action-bar--v2 button[data-step={step}]")
         if bar.count():
             return bar.first
+        # PAYMENT-001: "Thu tiền" that is not the big button sits on the money card.
+        card = page.locator(f".order__money button[data-step={step}]")
+        if card.count():
+            return card.first
         more = page.locator("button[data-more-steps]")
         if more.count():
             more.first.click()
@@ -529,29 +533,27 @@ with sync_playwright() as pw:
         ok(label, good, "" if good else f"HTTP {call[1]} {call[3][:110]}" if call else "no call")
         return good
 
-    def pay(step, label):
-        """Thu tiền / Khách trả trước: read the amount off the sheet, type it, record it."""
-        control = step_control(step)
+    def pay(label):
+        """Thu tiền (PAYMENT-001, DEC-035): the sheet prefills what remains; record it in cash."""
+        control = step_control("TAKE_PAYMENT")
         if control is None:
-            ok(label, False, f"the page offers no {step}; the primary step is {primary_step()}")
+            ok(label, False, f"the page offers no TAKE_PAYMENT; the primary is {primary_step()}")
             return ""
         control.click()
         page.wait_for_timeout(600)
         due = page.locator("dialog[open] .money-hero__amount").first.inner_text()
-        typed = due.replace("₫", "").replace("\u00a0", "").strip()
         ok(
-            "the amount field is empty -- the figure is read to the customer and typed",
-            page.locator("#settlement-amount").input_value() == "",
+            "the sheet shows what remains, prefilled, with a deposit one tap away",
+            "₫" in due and page.locator("#payment-edit").count() == 1,
+            due,
         )
-        page.locator("#settlement-amount").fill(typed)
-        page.wait_for_timeout(200)
-        page.locator("#settlement-submit").click()
+        page.locator("#payment-submit").click()
         page.wait_for_timeout(2000)
-        call = last_post("/settlement")
+        call = last_post("/payments")
         ok(
             label,
             call is not None and 200 <= call[1] < 300,
-            f"HTTP {call[1]} {call[3][:120]}" if call else "no settlement call was made",
+            f"HTTP {call[1]} {call[3][:120]}" if call else "no payment call was made",
         )
         return (
             page.locator("dialog[open]").first.inner_text()
@@ -591,14 +593,14 @@ with sync_playwright() as pw:
     head(11, "TẤT TOÁN — the money")
     ok(
         "a ready walk-in's next step is to take the money",
-        primary_step() == "SETTLE",
+        primary_step() == "TAKE_PAYMENT",
         primary_step(),
     )
-    said = pay("SETTLE", "the payment is recorded")
+    said = pay("the payment is recorded")
     shot(page, "16-settled.png")
     ok(
-        "the sheet says the exact total was recorded and offers the handover straight away",
-        "đúng bằng tổng đã báo" in said
+        "the sheet says the order is paid in full and offers the handover straight away",
+        "Đã trả đủ" in said
         and page.locator("dialog[open] button[data-step=HAND_OVER]").count() == 1,
         said[:140],
     )
@@ -1089,10 +1091,10 @@ with sync_playwright() as pw:
     head(20, "TIỀN TRƯỚC KHI ĐỒ RỜI TIỆM — DEC-023, then the trip that closes the order")
     ok(
         "a ready delivery's next step is the prepayment, before the laundry leaves",
-        primary_step() == "PREPAY",
+        primary_step() == "TAKE_PAYMENT",
         primary_step(),
     )
-    said = pay("PREPAY", "the delivered total is settled at the counter")
+    said = pay("the delivered total is settled at the counter")
     ok(
         "and the sheet says the order closes only on a successful delivery, not a pickup",
         "chuyến giao thành công" in said,
@@ -1103,7 +1105,7 @@ with sync_playwright() as pw:
     ok(
         "the page now says it is paid, and no payment is offered a second time",
         "Đã thu đủ tiền" in main_text
-        and page.locator("button[data-step=SETTLE], button[data-step=PREPAY]").count() == 0,
+        and page.locator("button[data-step=TAKE_PAYMENT]").count() == 0,
     )
     shot(page, "21-delivery-settled.png")
     press_step("RELEASE", "delivery: handed to the courier")

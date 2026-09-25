@@ -115,6 +115,9 @@ const AUDIT_COMPACT = 5;
 /** The page size asked of the order's incident list. */
 const INCIDENT_LIMIT = 50;
 
+/** `SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY`: paid in full before the courier leaves. */
+const PREPAID_DELIVERY = "EXACT_PAYMENT_PREPAID_DELIVERY";
+
 /**
  * The modes whose customer collects at the counter: every mode outside the server's
  * `MODES_EXPECTING_RETURN`. Used only for wording ("Khách chưa nhận đồ"); which button is offered
@@ -478,7 +481,8 @@ export function render_(context) {
             keyValues([
               ["Tổng", money(order.owed_vnd)],
               ["Đã trả", money(order.paid_vnd)],
-              ["Còn lại", money(order.remaining_vnd)],
+              // Partly paid, the large figure above already is "Còn lại"; said once.
+              partly ? null : ["Còn lại", money(order.remaining_vnd)],
             ]),
           )
         : null;
@@ -487,7 +491,17 @@ export function render_(context) {
           "div",
           { class: "order__payments", dataPayments: String(payments.length) },
           h("p", { class: "field-label" }, "Các lần thu"),
-          keyValues(payments.map((item) => [paymentLine(item), money(item.amount_vnd)])),
+          list(
+            payments.map((item) =>
+              listRow({
+                title: paymentMethod(item),
+                meta: paymentMeta(item),
+                trailing: money(item.amount_vnd),
+                data: { payment: String(item.payment_id) },
+              }),
+            ),
+            { label: "Các lần thu" },
+          ),
           order.payments_truncated
             ? h(
                 "p",
@@ -511,17 +525,26 @@ export function render_(context) {
   }
 
   /**
-   * One payment as the counter reads it: when, how, and who took it. The reference tail and the
-   * staff name are the server's; nothing here is computed.
+   * How one payment came (a row's title). A payment recorded before the method was asked for says
+   * so rather than claiming cash was seen.
    *
    * @param {any} item a `PaymentViewResponse`
    * @returns {string}
    */
-  function paymentLine(item) {
+  function paymentMethod(item) {
     const how = PAYMENT_METHOD_VI[item.method] || String(item.method);
+    return item.legacy ? `${how} (không ghi cách trả)` : how;
+  }
+
+  /**
+   * When, the reference tail and who took it (a row's second line) -- all the server's.
+   *
+   * @param {any} item a `PaymentViewResponse`
+   * @returns {string}
+   */
+  function paymentMeta(item) {
     return [
       dateTime(item.recorded_at),
-      item.legacy ? `${how} (không ghi cách trả)` : how,
       item.bank_ref_last ? `…${item.bank_ref_last}` : null,
       item.recorded_by_name || null,
     ]
@@ -1136,7 +1159,7 @@ export function render_(context) {
         autocomplete: "off",
         autocapitalize: "characters",
         maxlength: "40",
-        placeholder: "Vài số cuối mã giao dịch (không bắt buộc)",
+        placeholder: "Mã giao dịch (tuỳ chọn)",
         "aria-label": "Mã giao dịch, vài số cuối, không bắt buộc",
         value: reference,
         onInput: (event) => {
@@ -1205,10 +1228,13 @@ export function render_(context) {
             `Đã ghi nhận ${money(recorded.amount_vnd)} · ${
               PAYMENT_METHOD_VI[recorded.method] || recorded.method
             }.`,
+            // Read from the response, not asserted: who has the goods is the settlement's shape.
             recorded.balance_status === "PAID"
               ? recorded.self_collection_recorded
                 ? "Đã trả đủ. Đã ghi khách nhận đồ."
-                : "Đã trả đủ."
+                : recorded.settlement_shape === PREPAID_DELIVERY
+                  ? "Đã trả đủ. Đơn đóng khi có một chuyến giao thành công."
+                  : "Đã trả đủ. Khi đưa đồ cho khách, bấm “Khách đã nhận đồ”."
               : `Còn lại ${money(recorded.remaining_vnd)}.`,
             view,
           );

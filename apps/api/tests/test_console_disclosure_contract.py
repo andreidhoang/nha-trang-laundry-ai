@@ -903,8 +903,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # TRANSFER_NOT_SEEN, BANK_REF_INVALID, HANDOVER_REQUIRES_FULL_PAYMENT, ORDER_PARTLY_PAID), and
     # `REFUSAL.OVERPAYMENT_REFUSED` in `core/errors.js`. Re-keyed, none retired: the settlement
     # guardrail (POLICY_BOUND, now DEC-035), the payments gap's `missing` (ABSENT_TABLE, now the
-    # account tables) and `blockedBy`, the payment sheet's hint, and three REASON_NOTE entries whose
-    # advice named buttons that no longer exist ("Khách trả trước") or a refusal that no longer holds.
+    # account tables) and `blockedBy`, the payment sheet's hint, and three REASON_NOTE entries
+    # whose advice named a button that no longer exists ("Khách trả trước") or a refusal that no
+    # longer holds.
     assert sum(counts.values()) == _registry()["total"] == 483
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002

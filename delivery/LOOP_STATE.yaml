@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-24T12:05:56.266537+00:00'
+last_updated: '2026-09-25T06:45:51.177709+00:00'
 current_work_item: null
 last_result: COMPLETE
 blocker: null
@@ -316,6 +316,24 @@ evidence_records:
 - work_item: CONSOLE-DEADENDS-001
   path: evidence/delivery-loop/CONSOLE-DEADENDS-001.yaml
   recorded_at: '2026-09-24T12:05:56.266537+00:00'
+- work_item: AGENT-SHADOW-DEFECTS-001
+  path: evidence/delivery-loop/AGENT-SHADOW-DEFECTS-001.yaml
+  recorded_at: '2026-09-25T06:45:20.491692+00:00'
+- work_item: OPS-HARDENING-002
+  path: evidence/delivery-loop/OPS-HARDENING-002.yaml
+  recorded_at: '2026-09-25T06:45:26.845019+00:00'
+- work_item: API-INTEGRITY-002
+  path: evidence/delivery-loop/API-INTEGRITY-002.yaml
+  recorded_at: '2026-09-25T06:45:32.844508+00:00'
+- work_item: REMEDY-ITEM-FEE-001
+  path: evidence/delivery-loop/REMEDY-ITEM-FEE-001.yaml
+  recorded_at: '2026-09-25T06:45:38.973989+00:00'
+- work_item: RANGE-COUNTER-ATTEST-001
+  path: evidence/delivery-loop/RANGE-COUNTER-ATTEST-001.yaml
+  recorded_at: '2026-09-25T06:45:44.965643+00:00'
+- work_item: PREPAID-DROPOFF-001
+  path: evidence/delivery-loop/PREPAID-DROPOFF-001.yaml
+  recorded_at: '2026-09-25T06:45:51.177709+00:00'
 blocked_records:
 - work_item: AGENT-001
   reason: Local fixture/assertion registry is complete and 289 tests pass, but PRIMARY/fallback
@@ -509,6 +527,13 @@ blocked_records:
     and SHOP-RECOVERY-001; what is left here belongs with the second host, at G2,
     alongside the ingress it exists to isolate.'
   recorded_at: '2026-09-06T06:01:29.465629+00:00'
+- work_item: SHOP-ALERT-DELIVERY-001
+  reason: 'Built and proven only against a local stand-in for the Telegram API (relay_shop_alert.py:
+    forced failure delivers exactly one message, a pass sends none, 500/unreachable
+    exit 3 with a log line). Completion requires what this item declares: a forced
+    failure seen arriving on the owner''s phone, which is the owner''s first-install
+    step in shop-till-mac.md section 5c. Nothing here can perform it.'
+  recorded_at: '2026-09-25T06:45:02.642279+00:00'
 unblocked_records:
 - work_item: OPENCLAW-REPACK-001
   reason: The exact-commit hosted GitHub workflow was authorized and executed; reevaluating

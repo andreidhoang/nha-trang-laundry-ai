@@ -1,0 +1,61 @@
+schema_version: 1
+work_item: API-INTEGRITY-002
+recorded_at: '2026-09-25T15:00:00+07:00'
+requirement_contract: A manual send's recipient is the approved draft's contact, never the operator's;
+  a SEND_MESSAGE envelope binds a server-computed hash of a real draft; the unknown-send queue belongs
+  to a store and its reconcile is idempotent.
+rollback_impact: 0049 adds channel_send_receipts.store_id with NOT VALID constraints for new rows; receipts
+  whose store cannot be derived stay NULL and appear in no queue. Migrations 0048-0051 are forward-only
+  and additive; rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+  section 8 takes before every upgrade.
+unresolved_assumptions: Nothing yet lets a caller read a draft's binding, so staff cannot raise a valid
+  SEND_MESSAGE envelope from the console; approvals.js still gives an outdated reason for MESSAGE_DRAFT.
+  Listing now requires MFA.
+evidence:
+  the_recipient_is_bound_to_the_approved_draft: recipient_binding_id removed from the request (StrictRequest
+    refuses it with 422); the recipient is derived from agent_drafts; an edit after approval blocks prepare
+    and attest; composite FK ties an envelope's recipient to its draft's contact. 33 new tests red on
+    d10fd64, green after; 10/10 mutants killed.
+  unknown_send_receipts_are_store_scoped: GET /stores/{store_id}/shadow/unknown-sends with membership
+    and MFA; another store's or an unassigned receipt is refused identically to a missing one; reconcile
+    requires Idempotency-Key and a replay applies once.
+  rollback_assessment: 0049 adds channel_send_receipts.store_id with NOT VALID constraints for new rows;
+    receipts whose store cannot be derived stay NULL and appear in no queue. Migrations 0048-0051 are
+    forward-only and additive; rolling data back is docs/runbooks/restore-drill.md from the base backup
+    shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 609 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 290 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2105 passed, 4 skipped in 516.96s (0:08:36)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 61 served
+    internal API operations against their contract. Validated 396 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 140 source references, 32 decisions, 4 gates, 9 phases, 146 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_daily_operations.py against the real API and identity provider
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-25 on the fully merged tree, database created empty and migrated 0001-0051, remedy and
+    promotion policies published as shop-till-mac.md section 4 now requires.
+- command: verify_workflow_conformance.py against the real API
+  status: PASSED
+  result: '86 ok, 1 failed (coverage line only: 40/49 controls, unchanged from main)'
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 171 passed, 0 failed
+  note: Includes the fixers' edits to the stub for the one-press range price and the loss form, which
+    none of them could execute.

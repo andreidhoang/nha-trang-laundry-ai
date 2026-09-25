@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-24'
+last_updated: '2026-09-25'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -4346,7 +4346,7 @@ items:
 - id: SHOP-ALERT-DELIVERY-001
   phase: PRODUCTION_HARDENING
   title: Backup and disk alerts reach a person
-  status: PENDING
+  status: BLOCKED
   priority: 293
   depends_on:
   - STAGING-REVIEW-001
@@ -4369,10 +4369,16 @@ items:
   - the_database_network_stays_internal
   - rollback_assessment
   blocked_by_decisions: []
+  blocking_condition: 'Built and proven only against a local stand-in for the Telegram
+    API (relay_shop_alert.py: forced failure delivers exactly one message, a pass
+    sends none, 500/unreachable exit 3 with a log line). Completion requires what
+    this item declares: a forced failure seen arriving on the owner''s phone, which
+    is the owner''s first-install step in shop-till-mac.md section 5c. Nothing here
+    can perform it.'
 - id: AGENT-SHADOW-DEFECTS-001
   phase: PRODUCTION_HARDENING
   title: Agent-runtime defects that block internal Shadow, found in the staging review
-  status: PENDING
+  status: COMPLETE
   priority: 294
   depends_on:
   - AGENT-PIPELINE-001
@@ -4404,7 +4410,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: Readiness that touches the database, query timeouts, log rotation, image
     pins
-  status: PENDING
+  status: COMPLETE
   priority: 295
   depends_on:
   - STAGING-REVIEW-001
@@ -4431,7 +4437,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: A manual send goes to the approved recipient; unknown sends respect store
     boundaries
-  status: PENDING
+  status: COMPLETE
   priority: 296
   depends_on: []
   context_domains:
@@ -4456,8 +4462,9 @@ items:
   blocked_by_decisions: []
 - id: REMEDY-ITEM-FEE-001
   phase: PRODUCTION_HARDENING
-  title: "DEC-031: the item fee per piece, loss to the owner, compensation on a refunded order"
-  status: PENDING
+  title: 'DEC-031: the item fee per piece, loss to the owner, compensation on a refunded
+    order'
+  status: COMPLETE
   priority: 297
   depends_on:
   - REMEDY-CUMULATIVE-001
@@ -4487,8 +4494,8 @@ items:
   blocked_by_decisions: []
 - id: RANGE-COUNTER-ATTEST-001
   phase: PRODUCTION_HARDENING
-  title: "DEC-029: the staff member on duty chooses inside a published band"
-  status: PENDING
+  title: 'DEC-029: the staff member on duty chooses inside a published band'
+  status: COMPLETE
   priority: 298
   depends_on:
   - RANGE-APPROVAL-VISIBILITY-001
@@ -4516,8 +4523,9 @@ items:
   blocked_by_decisions: []
 - id: PREPAID-DROPOFF-001
   phase: PRODUCTION_HARDENING
-  title: "DEC-032: a counter customer pays the exact total at drop-off; pickup is recorded separately"
-  status: PENDING
+  title: 'DEC-032: a counter customer pays the exact total at drop-off; pickup is
+    recorded separately'
+  status: COMPLETE
   priority: 299
   depends_on:
   - CANCEL-REFUND-001

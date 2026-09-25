@@ -1,0 +1,66 @@
+schema_version: 1
+work_item: AGENT-SHADOW-DEFECTS-001
+recorded_at: '2026-09-25T15:00:00+07:00'
+requirement_contract: Nine agent-runtime defects that block internal Shadow. No capability, manifest or
+  release status may change and no provider call may be made.
+rollback_impact: 0050 adds a classification trigger and a call ledger; a code revert leaves both harmlessly
+  in place. The local evidence bundle moves to v4 by the documented capture script; v1-v3 are untouched.
+  Migrations 0048-0051 are forward-only and additive; rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: Decision-time approval checks still compare against the hash the client echoes;
+  expected_policy_version has no independent source; an abandoned runtime thread cannot be killed, only
+  contained. Telegram sandbox contacts are classified as real customers and refused a model call -- a
+  founder call, recorded in the merge commit.
+evidence:
+  a_deterministic_handoff_is_filed_as_require_human: 'The reviewer''s repro printed ''filed as: DRAFT''
+    before; after, the row is REQUIRE_HUMAN / PROVIDER_TIMEOUT; 3/3 mutants killed.'
+  a_timed_out_run_records_its_own_failure: The job deadline ends 5 s before the lease; a stale claim returns
+    CLAIM_LOST instead of escaping run_once; completion and draft filing share one claim-checked transaction;
+    12/12 mutants killed including another worker recovering the run mid-flight in PostgreSQL.
+  the_pinned_prompt_and_registry_are_the_ones_that_execute: Pins travel from claim to job and a mismatch
+    fails RUNTIME_PIN_MISMATCH with 0 provider requests; 7/7 mutants killed.
+  an_agent_approval_binds_server_rendered_content: render_quote_presentation renders from the stored,
+    hash-checked revision; the model's rendered_hash is never read; 5/5 mutants killed.
+  the_real_customer_lock_is_not_a_self_declared_label: Migration 0050 derives data_classification on insert
+    and overwrites any supplied value; PolicyDecisionPoint.evaluate_agent_run is called after claim, before
+    the runner; 8/8 mutants killed. All 13 capabilities remain NOT_AUTHORIZED (report_delivery_status.py).
+  rollback_assessment: 0050 adds a classification trigger and a call ledger; a code revert leaves both
+    harmlessly in place. The local evidence bundle moves to v4 by the documented capture script; v1-v3
+    are untouched. Migrations 0048-0051 are forward-only and additive; rolling data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 609 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 290 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2105 passed, 4 skipped in 516.96s (0:08:36)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 61 served
+    internal API operations against their contract. Validated 396 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 140 source references, 32 decisions, 4 gates, 9 phases, 146 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_daily_operations.py against the real API and identity provider
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-25 on the fully merged tree, database created empty and migrated 0001-0051, remedy and
+    promotion policies published as shop-till-mac.md section 4 now requires.
+- command: verify_workflow_conformance.py against the real API
+  status: PASSED
+  result: '86 ok, 1 failed (coverage line only: 40/49 controls, unchanged from main)'
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 171 passed, 0 failed
+  note: Includes the fixers' edits to the stub for the one-press range price and the loss form, which
+    none of them could execute.

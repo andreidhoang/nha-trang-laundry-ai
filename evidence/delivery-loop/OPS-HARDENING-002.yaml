@@ -1,0 +1,61 @@
+schema_version: 1
+work_item: OPS-HARDENING-002
+recorded_at: '2026-09-25T15:00:00+07:00'
+requirement_contract: Readiness that touches the database; bounded statement, lock and connect timeouts;
+  migrations that cannot queue the request pool; log rotation; no superuser port on any interface; a WAL
+  staging area a worst-case segment fits; no superuser DSN in ps.
+rollback_impact: No migration. Compose, script and connection-factory changes revert as code. Migrations
+  0048-0051 are forward-only and additive; rolling data back is docs/runbooks/restore-drill.md from the
+  base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: A timed-out statement returns a generic 500 rather than 503. apk -rN pins were
+  assessed and left, with a recovery step in shop-till-mac.md section 8. launchd loading and docker stdin
+  into the uid-70 container are reasoned, not executed here.
+evidence:
+  readiness_is_red_while_the_database_is_down: 'Live: with PostgreSQL running, /readyz 200 {status: ready};
+    with the cluster stopped, /readyz 503 {status: unavailable, dependency: database} answered in 0.02
+    s while /healthz stayed 200; after restart, /readyz 200 again with no API restart.'
+  a_migration_lock_cannot_queue_the_request_pool: apply_migrations sets SET LOCAL lock_timeout (default
+    5 s) inside each migration; tested against PostgreSQL 16 including a success-path test that SET LOCAL
+    does not leak (the mutant SET instead of SET LOCAL first survived and was killed after that test).
+  no_superuser_port_published_in_any_overlay: 'compose.yaml binds 127.0.0.1:5432; production and r1 overlays
+    use ports: !reset []; docker compose config checked across 11 file/profile combinations; reproduced
+    0.0.0.0 publication before the fix.'
+  rollback_assessment: No migration. Compose, script and connection-factory changes revert as code. Migrations
+    0048-0051 are forward-only and additive; rolling data back is docs/runbooks/restore-drill.md from
+    the base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 609 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 290 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2105 passed, 4 skipped in 516.96s (0:08:36)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 61 served
+    internal API operations against their contract. Validated 396 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 140 source references, 32 decisions, 4 gates, 9 phases, 146 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_daily_operations.py against the real API and identity provider
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-25 on the fully merged tree, database created empty and migrated 0001-0051, remedy and
+    promotion policies published as shop-till-mac.md section 4 now requires.
+- command: verify_workflow_conformance.py against the real API
+  status: PASSED
+  result: '86 ok, 1 failed (coverage line only: 40/49 controls, unchanged from main)'
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 171 passed, 0 failed
+  note: Includes the fixers' edits to the stub for the one-press range price and the loss form, which
+    none of them could execute.

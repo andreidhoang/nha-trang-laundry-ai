@@ -1,0 +1,67 @@
+schema_version: 1
+work_item: RANGE-COUNTER-ATTEST-001
+recorded_at: '2026-09-25T15:00:00+07:00'
+requirement_contract: 'DEC-029 option B (docs/DECISION_RECORD_FOUNDER_2026-09-25.md): the staff member
+  on duty chooses inside a published band under the counter attestation; the server refuses anything outside;
+  the chooser is on the immutable record; the owner reviews afterwards.'
+rollback_impact: 'One policy line reverses the ruling: SET_RANGE_PRICE back to _OWNER_FINANCIAL. The attest
+  path reads the stored capability, so it is inert once reverted. Migrations 0048-0051 are forward-only
+  and additive; rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+  section 8 takes before every upgrade.'
+unresolved_assumptions: Attest admits OPERATOR, OPS_APPROVER and OWNER_ADMIN, the roles that may finalise
+  a quote. Envelopes raised before this change keep needing the owner. The owner review list is the lead's
+  addition (6b60998), required because the ruling rests on review and the single read was undiscoverable.
+evidence:
+  a_price_inside_the_band_needs_no_owner: 'Live walk-through against the running API on 2026-09-25, as
+    the real roles (demo-operations, demo-owner, demo-auditor): an áo dài quoted 80.000-240.000 d, one
+    operator chose 160.000 d: HTTP 201, envelope APPROVED, required_role OPERATOR, no owner involved.
+    test_range_counter_attestation.py 13 tests; 7/7 mutants killed including ''the policy line alone,
+    without the attestation path'' (6 failed).'
+  a_price_outside_the_band_is_still_refused: 'Live walk-through against the running API on 2026-09-25,
+    as the real roles (demo-operations, demo-owner, demo-auditor): 250.000 d on the same quote: HTTP 422
+    REQUIRE_HUMAN RANGE_PRICE_OUT_OF_BAND.'
+  the_choosing_staff_member_is_on_the_immutable_record: 'Live walk-through against the running API on
+    2026-09-25, as the real roles (demo-operations, demo-owner, demo-auditor): GET range-price-reviews
+    as the owner lists ''Demo Nhân viên vận hành'', APPROVED, 160.000 d in 80.000-240.000 d; the operator,
+    the auditor and an unknown store id each get 403. test_range_price_review.py 7 tests, 5/5 mutants
+    killed (approver check, membership, day filter, withheld raised, withheld dropped).'
+  rollback_assessment: 'One policy line reverses the ruling: SET_RANGE_PRICE back to _OWNER_FINANCIAL.
+    The attest path reads the stored capability, so it is inert once reverted. Migrations 0048-0051 are
+    forward-only and additive; rolling data back is docs/runbooks/restore-drill.md from the base backup
+    shop-till-mac.md section 8 takes before every upgrade.'
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 609 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 290 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2105 passed, 4 skipped in 516.96s (0:08:36)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 61 served
+    internal API operations against their contract. Validated 396 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 140 source references, 32 decisions, 4 gates, 9 phases, 146 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_daily_operations.py against the real API and identity provider
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-25 on the fully merged tree, database created empty and migrated 0001-0051, remedy and
+    promotion policies published as shop-till-mac.md section 4 now requires.
+- command: verify_workflow_conformance.py against the real API
+  status: PASSED
+  result: '86 ok, 1 failed (coverage line only: 40/49 controls, unchanged from main)'
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 171 passed, 0 failed
+  note: Includes the fixers' edits to the stub for the one-press range price and the loss form, which
+    none of them could execute.

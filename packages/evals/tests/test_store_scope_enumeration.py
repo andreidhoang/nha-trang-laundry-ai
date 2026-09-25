@@ -86,6 +86,12 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/orders/{order_id}/production-transition"): store_scoped(
         "orders", "OrderRepository.transition"
     ),
+    # ORDER-STEPS-001. A composite business step is a sequence of the transitions above, keyed by
+    # `order_id` the same way: membership of the row's store before the idempotency lookup and
+    # again on the cursor holding the row lock, inside the repository.
+    ("POST", "/internal/v1/orders/{order_id}/steps"): store_scoped(
+        "orders", "OrderRepository.execute_step"
+    ),
     ("POST", "/internal/v1/orders/{order_id}/settlement"): store_scoped(
         "settlement", "SettlementRepository.record"
     ),
@@ -158,6 +164,14 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ),
     ("GET", "/internal/v1/stores/{store_id}/incidents"): store_scoped(
         "incidents", "IncidentRepository.list_for_store"
+    ),
+    # READ-ENRICH-001. Membership of the named store, then the store in the predicate, so another
+    # store's order or incident id reads as nothing -- the same answer as an id that does not exist.
+    ("GET", "/internal/v1/stores/{store_id}/orders/{order_id}/incidents"): store_scoped(
+        "incidents", "IncidentRepository.list_for_order"
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/incidents/{incident_id}"): store_scoped(
+        "incidents", "IncidentRepository.read_for_store"
     ),
     # --- REMEDY-001 --------------------------------------------------------------------------
     ("GET", "/internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-options"): (

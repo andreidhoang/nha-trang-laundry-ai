@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -69,6 +69,31 @@ class OrderRequestSummary:
     status: str
     row_version: int
     created_at: datetime
+    #: `READ-ENRICH-001`. The walk-in ticket the request's customer reference names, when it is a
+    #: counter ticket of this store (`DEC-013`); null for a channel binding.
+    ticket_number: int | None = None
+    ticket_issued_on: date | None = None
+    #: The order this request became, once its quote was converted; null until then. A request has
+    #: one quote and a quote converts into at most one order, so there is at most one.
+    order_id: UUID | None = None
+
+
+#: The summary columns, one statement for the list and the read by id. The ticket is joined through
+#: its own store-scoped key, never a bare id, and the order is reached through the request's quote.
+_SUMMARY_SELECT = """
+    SELECT req.id, req.store_id, req.contact_binding_id, req.status, req.row_version,
+           req.created_at, ticket.ticket_number, ticket.issued_on,
+           (
+               SELECT o.id FROM orders o
+               JOIN quotes q ON q.id = o.current_quote_id
+               WHERE q.bound_order_request_id = req.id AND o.store_id = req.store_id
+               ORDER BY o.created_at, o.id
+               LIMIT 1
+           ) AS order_id
+    FROM order_requests req
+    LEFT JOIN counter_tickets ticket
+      ON ticket.id = req.contact_binding_id AND ticket.store_id = req.store_id
+"""
 
 
 class OrderRequestBindingError(ValueError):
@@ -169,11 +194,10 @@ class OrderRequestRepository:
         if not 1 <= limit <= 100:
             raise ValueError("order request list limit must be between 1 and 100")
         cursor.execute(
-            """
-            SELECT id, store_id, contact_binding_id, status, row_version, created_at
-            FROM order_requests
-            WHERE store_id = %s
-            ORDER BY created_at DESC, id DESC
+            _SUMMARY_SELECT
+            + """
+            WHERE req.store_id = %s
+            ORDER BY req.created_at DESC, req.id DESC
             LIMIT %s
             """,
             (store_id, limit),
@@ -192,11 +216,7 @@ class OrderRequestRepository:
             error=StoreAccessError,
         )
         cursor.execute(
-            """
-            SELECT id, store_id, contact_binding_id, status, row_version, created_at
-            FROM order_requests
-            WHERE id = %s AND store_id = %s
-            """,
+            _SUMMARY_SELECT + " WHERE req.id = %s AND req.store_id = %s",
             (order_request_id, store_id),
         )
         row = cursor.fetchone()
@@ -299,6 +319,11 @@ def _summary(row: Any) -> OrderRequestSummary:
         str(row[3]),
         int(row[4]),
         created_at,
+        ticket_number=None if row[6] is None else int(row[6]),
+        ticket_issued_on=row[7] if isinstance(row[7], date) else None,
+        order_id=None
+        if row[8] is None
+        else (row[8] if isinstance(row[8], UUID) else UUID(str(row[8]))),
     )
 
 

@@ -249,6 +249,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}/steps:
+    post:
+      operationId: execute_order_step
+      summary: Execute one named business step as its order state transitions, in one transaction.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/orders/{order_id}/transition:
     post:
       operationId: transition_order
@@ -670,6 +687,28 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/incidents/{incident_id}:
+    get:
+      operationId: read_incident
+      summary: One incident of this store, for the incident detail page. Another store's id is a 404.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: incident_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-options:
     get:
       operationId: remedy_options
@@ -840,6 +879,28 @@ paths:
         '201':
           description: Success response.
       parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/orders/{order_id}/incidents:
+    get:
+      operationId: list_order_incidents
+      summary: One order's incidents, newest first, for the order page's "Khiếu nại" section.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
       - name: store_id
         in: path
         required: true

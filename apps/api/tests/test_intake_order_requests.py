@@ -306,6 +306,10 @@ def test_the_list_route_returns_newest_first_typed_items(client: TestClient) -> 
         "status": "DRAFT",
         "row_version": 1,
         "created_at": item["created_at"],
+        # READ-ENRICH-001, additive: the stubbed summary names no ticket and no order.
+        "ticket_number": None,
+        "ticket_issued_on": None,
+        "order_id": None,
     }
     datetime.fromisoformat(item["created_at"])
 

@@ -21,6 +21,7 @@ STORE_ID = UUID("00000000-0000-0000-0000-000000000211")
 REQUEST_ID = UUID("00000000-0000-0000-0000-000000000212")
 ACTOR_ID = UUID("00000000-0000-0000-0000-000000000213")
 CORRELATION_ID = UUID("00000000-0000-0000-0000-000000000214")
+CONTACT_ID = UUID("00000000-0000-0000-0000-000000000215")
 
 
 class FakeCursor:
@@ -140,6 +141,10 @@ def test_quote_board_returns_only_server_scoped_current_revisions() -> None:
                 100_000,
                 100_000,
                 valid_until,
+                # READ-ENRICH-001: the bound request, its customer, and the priced mode.
+                REQUEST_ID,
+                CONTACT_ID,
+                "SELF_DROP_SELF_COLLECT",
             )
         ]
     )
@@ -163,6 +168,9 @@ def test_quote_board_returns_only_server_scoped_current_revisions() -> None:
     assert listed[0].quote_id == QUOTE_ID
     assert listed[0].row_version == 3
     assert listed[0].valid_until == valid_until
+    assert listed[0].order_request_id == REQUEST_ID
+    assert listed[0].contact_binding_id == CONTACT_ID
+    assert listed[0].fulfillment_mode == "SELF_DROP_SELF_COLLECT"
     assert any("WHERE quote.store_id = %s" in statement for statement in cursor.executed)
     # Membership is checked before anything is read, not alongside it.
     assert "staff_store_assignments" in cursor.executed[0]

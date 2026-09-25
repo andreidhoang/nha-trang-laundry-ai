@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
@@ -99,6 +99,26 @@ class IncidentSummary:
     #: summary, and for one whose evidence has been purged under `INCIDENT_EVIDENCE` at 365 days.
     #: The two are distinguishable from `retention_disposal_records`, not from this field.
     evidence_summary: str | None = None
+    #: `READ-ENRICH-001`. The walk-in ticket of the incident's order ("Phiếu 17"), read through
+    #: the order's customer reference within the order's own store. Null when the incident names no
+    #: order or the order's customer is a channel binding.
+    ticket_number: int | None = None
+    ticket_issued_on: date | None = None
+
+
+#: The incident read model, shared by the store list, the per-order list and the read by id so the
+#: three cannot disagree about a field. LEFT JOINs throughout: an agent-opened incident has no
+#: summary and a purged one no longer has its summary, and neither may disappear from a list -- an
+#: incident whose text is gone still has to be visible, which is the whole difference between a
+#: disposal and a deletion. The order and its ticket are joined within the incident's own store.
+_INCIDENT_SUMMARY_SELECT = """
+    SELECT i.id, i.store_id, i.order_id, i.category, i.status, i.fault_decided,
+           i.remedy_decided, i.opened_at, e.summary, t.ticket_number, t.issued_on
+    FROM customer_incidents i
+    LEFT JOIN customer_incident_evidence e ON e.incident_id = i.id
+    LEFT JOIN orders o ON o.id = i.order_id AND o.store_id = i.store_id
+    LEFT JOIN counter_tickets t ON t.id = o.bound_contact_id AND t.store_id = o.store_id
+"""
 
 
 def contact_scope_digest(bound_contact_id: UUID) -> str:
@@ -278,35 +298,65 @@ class IncidentRepository:
         )
         if not 1 <= limit <= 200:
             raise ValueError("incident list limit must be between 1 and 200")
-        # LEFT JOIN, not JOIN: an agent-opened incident has no summary and a purged one no longer
-        # has its summary, and neither may disappear from the list. An incident whose text is gone
-        # still has to be visible -- that is the whole difference between a disposal and a deletion.
         cursor.execute(
-            """
-            SELECT i.id, i.store_id, i.order_id, i.category, i.status, i.fault_decided,
-                   i.remedy_decided, i.opened_at, e.summary
-            FROM customer_incidents i
-            LEFT JOIN customer_incident_evidence e ON e.incident_id = i.id
+            _INCIDENT_SUMMARY_SELECT
+            + """
             WHERE i.store_id = %s
             ORDER BY i.opened_at DESC, i.id DESC
             LIMIT %s
             """,
             (store_id, limit),
         )
-        return tuple(
-            IncidentSummary(
-                _uuid(row[0]),
-                _uuid(row[1]),
-                None if row[2] is None else _uuid(row[2]),
-                str(row[3]),
-                str(row[4]),
-                bool(row[5]),
-                bool(row[6]),
-                _datetime(row[7]),
-                None if row[8] is None else str(row[8]),
-            )
-            for row in cursor.fetchall()
+        return tuple(_incident_summary(row) for row in cursor.fetchall())
+
+    @staticmethod
+    def list_for_order(
+        cursor: Any, *, store_id: UUID, order_id: UUID, principal: StaffPrincipal, limit: int = 100
+    ) -> tuple[IncidentSummary, ...]:
+        """One order's incidents, newest first. `READ-ENRICH-001`.
+
+        Membership of the named store first, then both the store and the order in the predicate:
+        another store's order id reads as an empty list, exactly what an id that does not exist
+        reads as, so the route teaches nobody which orders exist elsewhere.
+        """
+
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=StoreAccessError,
         )
+        if not 1 <= limit <= 200:
+            raise ValueError("incident list limit must be between 1 and 200")
+        cursor.execute(
+            _INCIDENT_SUMMARY_SELECT
+            + """
+            WHERE i.store_id = %s AND i.order_id = %s
+            ORDER BY i.opened_at DESC, i.id DESC
+            LIMIT %s
+            """,
+            (store_id, order_id, limit),
+        )
+        return tuple(_incident_summary(row) for row in cursor.fetchall())
+
+    @staticmethod
+    def read_for_store(
+        cursor: Any, *, store_id: UUID, incident_id: UUID, principal: StaffPrincipal
+    ) -> IncidentSummary | None:
+        """One incident of this store, or `None` -- another store's and a missing one alike."""
+
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=StoreAccessError,
+        )
+        cursor.execute(
+            _INCIDENT_SUMMARY_SELECT + " WHERE i.id = %s AND i.store_id = %s",
+            (incident_id, store_id),
+        )
+        row = cursor.fetchone()
+        return None if row is None else _incident_summary(row)
 
     def open_correction(self, connection: Any, command: CorrectionOpenCommand) -> StoredIncident:
         if not command.affected_policy_version.strip() or not command.affected_capability.strip():
@@ -447,6 +497,22 @@ __all__ = [
     "contact_scope_digest",
     "evidence_summary_digest",
 ]
+
+
+def _incident_summary(row: Any) -> IncidentSummary:
+    return IncidentSummary(
+        _uuid(row[0]),
+        _uuid(row[1]),
+        None if row[2] is None else _uuid(row[2]),
+        str(row[3]),
+        str(row[4]),
+        bool(row[5]),
+        bool(row[6]),
+        _datetime(row[7]),
+        None if row[8] is None else str(row[8]),
+        ticket_number=None if row[9] is None else int(row[9]),
+        ticket_issued_on=row[10] if isinstance(row[10], date) else None,
+    )
 
 
 def _datetime(value: object) -> datetime:

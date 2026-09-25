@@ -899,13 +899,37 @@ class RemedyProposalRepository:
                 )
             # The incident reaches an outcome, which is the whole point of the item. `0014`'s two
             # flags have existed since the table did and nothing ever set them.
+            #
+            # `REMEDY-INCIDENT-OUTCOME-001` (2026-09-25): it reaches one when *every* claim on it
+            # has, not when the first is carried out. One complaint about two suits is the normal
+            # case since `DEC-031` made the garment the unit -- and the filmed walk found that
+            # paying the first suit closed the complaint, so the lost second suit could not be
+            # proposed on it, and a claim still waiting for the owner sat under a complaint that
+            # read CLOSED. A claim is still open while it is authorised and not carried out, or
+            # waits for an owner envelope that is still alive; a dead envelope (refused, expired,
+            # cancelled) can never pay, so it does not hold the complaint open.
             cursor.execute(
                 """
                 UPDATE customer_incidents
                 SET status = 'CLOSED', remedy_decided = TRUE
                 WHERE id = %s AND status <> 'CLOSED'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM remedy_proposals other
+                      LEFT JOIN approval_request_states st
+                        ON st.approval_request_id = other.approval_id
+                      WHERE other.incident_id = %s
+                        AND other.id <> %s
+                        AND (
+                            other.status = 'STAFF_AUTHORIZED'
+                            OR (
+                                other.status = 'OWNER_APPROVAL_REQUIRED'
+                                AND NOT coalesce(st.status, 'REQUESTED') = ANY(%s)
+                            )
+                        )
+                  )
                 """,
-                (incident_id,),
+                (incident_id, incident_id, command.proposal_id, list(_DEAD_ENVELOPE_STATUSES)),
             )
 
         commit_material_change(

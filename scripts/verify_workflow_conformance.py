@@ -313,7 +313,12 @@ class Console:
 
     # -- building the situation a scenario is about ------------------------------------
     def build_order(
-        self, *, kg: str = "7", mode: str = "SELF_DROP_SELF_COLLECT", stop: str
+        self,
+        *,
+        kg: str = "7",
+        mode: str = "SELF_DROP_SELF_COLLECT",
+        stop: str,
+        lines: list[dict[str, str]] | None = None,
     ) -> dict:
         """Put an order into the state a scenario starts from, through the real routes.
 
@@ -333,7 +338,8 @@ class Console:
             {
                 "bound_order_request_id": request["body"]["order_request_id"],
                 "fulfillment_mode": mode,
-                "lines": [
+                "lines": lines
+                or [
                     {
                         "service_code": "STANDARD_WASH_DRY",
                         "quantity": kg,
@@ -1591,6 +1597,185 @@ def scenario_busy(console: Console) -> None:
     )
 
 
+def _collected_suits(console: Console) -> dict:
+    """Three suits ironed at 30.000 ₫ each, paid for and handed back -- the complaint's order."""
+
+    order = console.build_order(
+        stop="released",
+        lines=[
+            {
+                "service_code": "IRON_SUIT",
+                "quantity": "3",
+                "unit": "ITEM",
+                "quantity_basis": "STAFF_MEASUREMENT",
+            }
+        ],
+    )
+    order_id = order["order_id"]
+    total = order["quote"]["net_service_subtotal_vnd"]
+    paid = console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/settlement",
+        {"paid_amount_vnd": total, "collected_by_customer": True},
+    )
+    if paid["status"] >= 300:
+        raise AssertionError(f"could not settle the suits: {paid['status']} {paid['text']}")
+    version = console.current_version(order_id, order["row_version"])
+    closed = console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/transition",
+        {"target": "COMPLETED"},
+        if_match=version,
+    )
+    if closed["status"] >= 300:
+        raise AssertionError(f"could not close the suits: {closed['status']} {closed['text']}")
+    return order
+
+
+def _propose_remedy(
+    console: Console, *, kind: str, amount: str, garment: str = "", fault: bool = True
+) -> str:
+    """Fill the Bồi hoàn form as staff do, after the incident's caps have been read."""
+
+    console.choose("#remedy-kind", kind)
+    console.page.wait_for_timeout(400)
+    line = console.page.locator("#remedy-line option")
+    if line.count() > 1:
+        console.page.select_option("#remedy-line", index=1)
+        console.page.wait_for_timeout(400)
+    if garment and console.page.locator("#remedy-garment").count():
+        console.choose("#remedy-garment", garment)
+    if console.page.locator("#remedy-amount").count():
+        console.type_into("#remedy-amount", amount)
+    box = console.page.locator("#remedy-fault")
+    if fault and box.count() and box.get_attribute("type") == "checkbox" and not box.is_checked():
+        box.click()
+    console.page.locator("button", has_text="Gửi đề nghị bồi hoàn").first.click()
+    console.page.wait_for_timeout(2200)
+    return console.said()
+
+
+def scenario_remedy(console: Console) -> None:
+    """`DEC-004` as `DEC-031` reads it: per garment, and the owner decides every loss."""
+
+    head("12", "SỰ CỐ — three suits came back, the customer complains about two of them")
+    console.sign_in("demo-operations")
+    order = _collected_suits(console)
+    order_id = order["order_id"]
+    note(f"order {order_id[:8]}…: 3 x áo vest at 30.000 ₫, paid, handed back, closed")
+    console.open("#/incidents")
+    console.type_into("#incident-order", order_id)
+    console.type_into("#incident-summary", "Áo vest thứ hai bị bạc màu cổ áo; áo thứ nhất bị mất")
+    console.page.locator("button[type=submit]", has_text="Ghi sự cố").first.click()
+    console.page.wait_for_timeout(2200)
+    incident = sql(
+        f"select id from customer_incidents where order_id='{order_id}' "
+        "order by opened_at desc limit 1"
+    )
+    ok("the complaint is recorded against the order", len(incident) == 36, console.said()[:160])
+    offer = console.page.locator("button", has_text="Đề xuất bồi hoàn")
+    if offer.count():
+        offer.first.click()
+        console.page.wait_for_timeout(1500)
+    else:
+        console.open(f"#/remedies?incident={incident}")
+        console.type_into("#remedy-incident", incident)
+    read = console.page.locator("button", has_text="Đọc mức trần và thời hạn")
+    if read.count():
+        read.first.click()
+        console.page.wait_for_timeout(2200)
+    console.choose("#remedy-kind", "DAMAGE_COMPENSATION")
+    console.page.wait_for_timeout(400)
+    if console.page.locator("#remedy-line option").count() > 1:
+        console.page.select_option("#remedy-line", index=1)
+        console.page.wait_for_timeout(400)
+    garments = console.page.locator("#remedy-garment option").all_inner_texts()
+    ok(
+        "a line of three suits asks which one -- 'Món thứ mấy' offers suit 1, 2 and 3",
+        len([g for g in garments if g.strip() and "chọn" not in g]) == 3,
+        garments,
+    )
+    console.choose("#remedy-garment", "2")
+    console.page.wait_for_timeout(500)
+    caps = console.text()
+    ok(
+        "and the server shows that suit's ceiling before anyone types a figure: 5 x 30.000 ₫ = "
+        "150.000 ₫",
+        "150.000" in caps,
+        [line for line in caps.splitlines() if "150.000" in line][:2],
+    )
+
+    head("12b", "MẤT ĐỒ — the lost suit goes to the owner, whatever the amount (DEC-031)")
+    said = _propose_remedy(console, kind="LOST_ITEM", amount="50000", garment="1")
+    rows = sql(
+        "select kind, garment_index, amount_vnd, approval_id is not null from remedy_proposals "
+        f"where incident_id='{incident}' and kind='LOST_ITEM'"
+    )
+    ok(
+        "a 50.000 ₫ loss, under the staff limit, still waits for the owner",
+        rows == "LOST_ITEM|1|50000|t",
+        f"{rows} :: {said[:160]}",
+    )
+
+    head("12c", "MÓN THỨ MẤY — each suit has its own 100.000 ₫ staff limit (DEC-031 addendum)")
+    said = _propose_remedy(console, kind="DAMAGE_COMPENSATION", amount="60000", garment="2")
+    rows = sql(
+        "select amount_vnd, approval_id is null from remedy_proposals "
+        f"where incident_id='{incident}' and garment_index = 2"
+    )
+    ok(
+        "60.000 ₫ for the faded second suit is within the staff limit: recorded, no owner needed",
+        rows == "60000|t",
+        f"{rows} :: {said[:120]}",
+    )
+    carry_out = console.page.locator("button", has_text="Thực hiện bồi hoàn")
+    if carry_out.count():
+        carry_out.first.click()
+        console.page.wait_for_timeout(2200)
+    paid_out = sql(
+        "select count(*) from remedy_proposals p join remedy_credits c "
+        "on c.remedy_proposal_id = p.id "
+        f"where p.incident_id='{incident}' and p.garment_index = 2 and p.executed_at is not null"
+    )
+    ok(
+        "carried out at the counter, it becomes a 60.000 ₫ credit with a code the customer keeps",
+        paid_out == "1",
+        f"{paid_out} :: {console.said()[:140]}",
+    )
+    ok(
+        "and the complaint stays open, because the lost suit still waits for the owner",
+        sql(f"select status from customer_incidents where id='{incident}'") == "UNDER_REVIEW",
+        sql(f"select status from customer_incidents where id='{incident}'"),
+    )
+    said = _propose_remedy(console, kind="DAMAGE_COMPENSATION", amount="60000", garment="3")
+    rows = sql(
+        "select amount_vnd, approval_id is null from remedy_proposals "
+        f"where incident_id='{incident}' and garment_index = 3"
+    )
+    ok(
+        "the third suit has its own limit: another 60.000 ₫ on the same complaint is staff's too",
+        rows == "60000|t",
+        f"{rows} :: {said[:120]}",
+    )
+    said = _propose_remedy(console, kind="DAMAGE_COMPENSATION", amount="50000", garment="2")
+    rows = sql(
+        "select amount_vnd, approval_id is not null from remedy_proposals "
+        f"where incident_id='{incident}' and garment_index = 2 order by proposed_at"
+    )
+    ok(
+        "a second claim on the same suit adds up: 60.000 + 50.000 ₫ passes 100.000 ₫ and goes "
+        "to the owner",
+        rows.endswith("50000|t"),
+        rows.replace("\n", " ; "),
+    )
+    said = _propose_remedy(console, kind="DAMAGE_COMPENSATION", amount="160000", garment="3")
+    ok(
+        "and nothing is paid past the ceiling: 160.000 ₫ on one suit is refused, not trimmed",
+        "vượt trần" in said,
+        said[:200],
+    )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -1602,6 +1787,7 @@ SCENARIOS = {
     "band": scenario_band,
     "prepaid": scenario_prepaid,
     "busy": scenario_busy,
+    "remedy": scenario_remedy,
 }
 
 

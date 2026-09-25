@@ -101,10 +101,18 @@ Two follow-ups, ruled under the same delegation and recorded as delegated by the
    proposal digest (invariant 8), so a longer window cannot approve changed content. Every other
    action keeps its short window. No closing-day calendar is published, so every calendar day is a
    business day: the shorter reading.
+3. **One complaint, several garments** (`REMEDY-INCIDENT-OUTCOME-001`, found by the filmed walk).
+   A complaint reaches its outcome when **every** claim on it has one — not when the first is
+   carried out. Paying the faded suit used to close the complaint while the lost suit still waited
+   for the owner, and no further garment could be added to it. A claim still authorised and not
+   carried out, or waiting on a live owner envelope, keeps the complaint open; a refused, expired or
+   cancelled envelope does not. A complaint whose every claim is done is closed, and a new
+   complaint is opened for anything the customer raises after that.
 
 **Reverse:** (1) drop the garment from the staff-limit total in `evaluate_remedy` (the column stays;
 migrations are forward-only). (2) Map `ApprovalAction.APPROVE_REMEDY` back to `_OWNER_FINANCIAL` in
-`packages/domain/.../approvals.py`.
+`packages/domain/.../approvals.py`. (3) Drop the `NOT EXISTS` clause from the incident update in
+`RemedyProposalRepository.execute`.
 
 ## DEC-032 — may a counter customer pay at drop-off? **Yes, the exact total, nothing else**
 

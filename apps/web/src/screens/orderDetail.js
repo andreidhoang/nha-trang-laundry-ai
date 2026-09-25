@@ -472,6 +472,21 @@ export function render_(context) {
     return section({
       title: "Thông tin",
       children: keyValues([
+        // CUSTOMER-001: the customer record the order was taken for, read live -- an erased
+        // record keeps its link and loses its name.
+        order.customer_id
+          ? [
+              "Khách",
+              h(
+                "a",
+                {
+                  href: `#/customers/${encodeURIComponent(String(order.customer_id))}`,
+                  dataField: "customer",
+                },
+                order.customer_name || (order.customer_has_phone ? "Khách quen" : "Đã xoá thông tin"),
+              ),
+            ]
+          : null,
         // The ticket with its business day (numbers restart every morning); the header says
         // "Phiếu 17" only.
         ["Phiếu", ticket || "Không có — khách nhắn tin, không phát phiếu"],

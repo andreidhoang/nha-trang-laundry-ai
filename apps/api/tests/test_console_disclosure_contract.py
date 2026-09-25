@@ -216,7 +216,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     assert counts.get("SERVER_GATE") == 15
     # 7 since REPORT-DASHBOARD-001: `REPORTS_READ` binds to `REPORT_READ_ROLES`, re-checked inside
     # `ReportRepository.store_report` behind the route's own `require_report_reader`.
-    assert counts.get("REPOSITORY_ROLES") == 7
+    # 10 since CUSTOMER-001: `CUSTOMERS_READ`, `CUSTOMERS_WRITE` and `CUSTOMERS_ERASE` bind to the
+    # exact sets `CustomerRepository` re-checks with MFA and store membership. 7 + 3 = 10.
+    assert counts.get("REPOSITORY_ROLES") == 10
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
     # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
@@ -898,7 +900,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   Added: their true replacements (margin entry missing/today, both ledes, AI summary on
     #   DEC-006, per-order SLA), the REPORTS_READ `why`, and two reports.js lines.
     # 475 with all six round-6 slices merged: 473 + 10 - 8 = 475.
-    assert sum(counts.values()) == _registry()["total"] == 475
+    # 484 after CUSTOMER-001 (round 7, DEC-034): 475 + 17 - 8. Retired with the facts they stated
+    #   (no name/phone is stored, DEC-015): the gaps entry's missing/blockedBy/today, Nhận đồ's two
+    #   "không tìm theo tên" lines and the recent-list ⓘ, the Đơn hàng ⓘ, and the receipt's R4 ⓘ.
+    #   Added: their true replacements (7), three REPOSITORY_ROLES `why` (CUSTOMERS_READ/WRITE/
+    #   ERASE), five customers.js lines, one ui/customers.js line, and Nhận đồ's new ⓘ.
+    assert sum(counts.values()) == _registry()["total"] == 484
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

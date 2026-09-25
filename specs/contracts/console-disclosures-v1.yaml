@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 445
+  DESCRIPTIVE: 451
   MODEL_SEAM: 2
   POLICY_BOUND: 1
-  REPOSITORY_ROLES: 7
+  REPOSITORY_ROLES: 10
   SERVER_GATE: 15
-total: 475
+total: 484
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1592,6 +1592,43 @@ disclosures:
     why: The route gate for this capability admits every role, so binding to it could never fail. The
       claim is really enforced by an exact role set in the repository layer, and the test asserts the
       console's list equals it.
+- slot_id: core/rbac.js#why:8af9b1f78b10
+  module: core/rbac.js
+  key: why
+  text: Danh sách khách dành cho người làm ở cửa hàng đã xác thực hai bước; kiểm toán chỉ thấy 4 số cuối
+    của số điện thoại.
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: CUSTOMERS_READ
+    module: nha_trang_laundry_db.customers
+    symbol: CUSTOMER_READ_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
+- slot_id: core/rbac.js#why:e7d109d3721b
+  module: core/rbac.js
+  key: why
+  text: Thêm và sửa khách cần vai trò vận hành đã xác thực hai bước.
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: CUSTOMERS_WRITE
+    module: nha_trang_laundry_db.customers
+    symbol: CUSTOMER_WRITE_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
+- slot_id: core/rbac.js#why:5bb2856d33e4
+  module: core/rbac.js
+  key: why
+  text: Chỉ chủ tiệm hoặc người duyệt xoá thông tin khách khi khách yêu cầu.
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: CUSTOMERS_ERASE
+    module: nha_trang_laundry_db.customers
+    symbol: CUSTOMER_ERASE_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
 - slot_id: core/rbac.js#why:c2476af7e68f
   module: core/rbac.js
   key: why
@@ -2063,6 +2100,51 @@ disclosures:
       to the deterministic brain. Passing a provider-backed brain to AssistantService(brain=...) is a
       one-line change at a seam that exists so the swap can happen, and it makes the sentence false with
       nothing else in the repository noticing. The test asserts the default.
+- slot_id: screens/customers.js#hint:8e37c78386d4
+  module: screens/customers.js
+  key: hint
+  text: Khách đồng ý thì tiệm lưu số điện thoại, tên gọi, địa chỉ giao đồ và một ghi chú cách giặt, để
+    lần sau nhận ra khách, báo khi đồ xong và giao đồ (DEC-034). Tin ưu đãi là một đồng ý riêng, mặc định
+    là không.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/customers.js#hint:aea5732e803d
+  module: screens/customers.js
+  key: hint
+  text: Tìm bằng số điện thoại đầy đủ, 4 số cuối, hoặc tên (không cần dấu). Khách yêu cầu xoá thì chủ
+    tiệm hoặc người duyệt xoá ở trang của khách; đơn hàng vẫn giữ. Không có đơn nào trong 24 tháng thì
+    tiệm xoá theo lịch.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/customers.js#hint:7be6714df00b
+  module: screens/customers.js
+  key: hint
+  text: Vai trò của bạn không xem được số điện thoại đầy đủ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/customers.js#hint:8bef42c2fc42
+  module: screens/customers.js
+  key: hint
+  text: Ở bước “Đồ & giá” của Nhận đồ, bấm “Dùng khoản giảm trừ” và chọn khoản này. Khoản giảm trừ được
+    trừ vào đơn mới, không đổi ra tiền mặt.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/customers.js#hint:8303f15b7624
+  module: screens/customers.js
+  key: hint
+  text: Xoá tên, số điện thoại, địa chỉ và ghi chú. Đơn hàng và tiền vẫn giữ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/exceptions.js#hint:fd068299349d
   module: screens/exceptions.js
   key: hint
@@ -2215,34 +2297,35 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:e87c11974df5
+- slot_id: screens/gaps.js#missing:e00143a62418
   module: screens/gaps.js
   key: missing
-  text: 'Không tồn tại aggregate parties, contact_points hay addresses nào: hệ thống không lưu tên, số
-    điện thoại hay địa chỉ của khách. Khách vãng lai được nhận diện bằng số phiếu do quầy phát (DEC-013,
-    26/08), và số phiếu đó là bound_contact_id của đơn — nên đơn tạo được, còn hồ sơ khách thì chưa có.'
+  text: 'Hồ sơ khách đã có (bảng customers, DEC-034): một số điện thoại, tên gọi, một địa chỉ và ghi chú.
+    Chưa có aggregate parties, contact_points hay addresses như đặc tả — một khách chỉ có một số và một
+    địa chỉ — và chưa có nút gắn một phiếu cũ hay một kênh chat vào hồ sơ: máy chủ làm được, màn hình
+    chưa có.'
   binding:
     kind: ABSENT_TABLE
     tables:
     - parties
     - contact_points
     - addresses
-    why: The party/CRM aggregates. This is the disclosure DEC-015 is about, and it must change the day
-      a customer record exists.
-- slot_id: screens/gaps.js#blockedBy:0eabdcd2eaf9
+    why: The spec's party/CRM aggregates. DEC-034 built a one-number customer record instead; the day
+      several numbers or addresses per customer exist, this sentence is false.
+- slot_id: screens/gaps.js#blockedBy:d24ecd9e207f
   module: screens/gaps.js
   key: blockedBy
-  text: DEC-015 (đã chốt 26/08) — chủ tiệm quyết chưa xây lớp hồ sơ khách hàng; mở lại khi có kênh liên
-    lạc chính thức
+  text: DEC-034 (đã chốt 25/09) chọn một hồ sơ cho mỗi số điện thoại; nhiều số hay nhiều địa chỉ cho một
+    khách chưa có quyết định
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:d1457d40cfc4
+- slot_id: screens/gaps.js#today:179cb0d5a457
   module: screens/gaps.js
   key: today
-  text: 'Khách vãng lai nhận số phiếu. Khách nhắn tin: bấm “Tạo đơn cho khách này” từ cuộc trò chuyện,
-    hoặc chọn ở “Khách nhắn tin gần đây”. Không tìm theo tên hay số điện thoại.'
+  text: 'Tìm khách ở ô “SĐT hoặc tên khách” của Nhận đồ hoặc ở màn Khách hàng. Khách mới: “Thêm khách
+    mới” (sau khi chủ tiệm công bố thông báo bảo mật). Khách vãng lai vẫn nhận số phiếu.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2754,12 +2837,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/newOrder.js#hint:c0201c26ed00
+- slot_id: screens/newOrder.js#hint:4ad14c737fed
   module: screens/newOrder.js
   key: hint
-  text: 'Là những khách đã nhắn tiệm qua kênh chat và đã có lượt tiếp nhận hoặc đơn ở cửa hàng này, mới
-    nhất lên trên. Không có tên hay số điện thoại: tiệm không lưu những thứ đó (DEC-015), nên nhận ra
-    khách qua đơn gần nhất và lúc gần nhất.'
+  text: Là những khách đã nhắn tiệm qua kênh chat và đã có lượt tiếp nhận hoặc đơn ở cửa hàng này, mới
+    nhất lên trên. Kênh chat không cho biết tên hay số điện thoại, nên nhận ra khách qua đơn gần nhất
+    và lúc gần nhất. Khách đã có hồ sơ thì tìm ở ô trên cùng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2773,20 +2856,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/newOrder.js#hint:41258bf1756c
+- slot_id: screens/newOrder.js#hint:34636c6db9be
   module: screens/newOrder.js
   key: hint
-  text: Chưa tìm được khách theo tên hay số điện thoại.
+  text: Chỉ dùng khi có mã khách đọc được ở nơi khác.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/newOrder.js#hint:3441bad46838
+- slot_id: screens/newOrder.js#hint:da121471f74e
   module: screens/newOrder.js
   key: hint
-  text: Tiệm không lưu tên, số điện thoại hay đoạn chat của khách (DEC-015), nên không có gì để tìm. Khách
-    đã nhắn qua kênh chính thức thì bấm từ cuộc trò chuyện của khách, hoặc chọn ở danh sách trên; ô này
-    chỉ dành cho mã đọc được ở nơi khác.
+  text: Là mã máy chủ gán cho một người nhắn tiệm qua kênh chat. Khách có hồ sơ thì tìm bằng số điện thoại
+    hoặc tên ở ô trên cùng; khách nhắn tin thì bấm từ cuộc trò chuyện của khách, hoặc chọn ở danh sách
+    trên. Ô này chỉ dành cho mã đọc được ở nơi khác.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3098,11 +3181,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#hint:715b1734989f
+- slot_id: screens/orders.js#hint:b5e28926f016
   module: screens/orders.js
   key: hint
-  text: 'Chủ tiệm đã chốt: khách vãng lai chỉ được ghi bằng số phiếu, tiệm không lưu tên, số điện thoại
-    hay địa chỉ (DEC-013). Tìm đơn bằng số phiếu ở ô “Số phiếu…”.'
+  text: 'Khách vãng lai chỉ có số phiếu, tiệm không lưu gì khác (DEC-013): tìm đơn bằng số phiếu ở ô “Số
+    phiếu…”. Khách quen có hồ sơ (DEC-034): bấm “Tìm theo khách”, tìm bằng số điện thoại, 4 số cuối hoặc
+    tên, rồi mở đơn từ trang của khách.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3192,11 +3276,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/receipt.js#hint:22f3e7267279
+- slot_id: screens/receipt.js#hint:4d28d89aa831
   module: screens/receipt.js
   key: hint
   text: 'Phiếu không ghi giờ hẹn trả đồ: tiệm chưa quyết định quy tắc hẹn giờ cho từng đơn, nên phiếu
-    ghi “Tiệm sẽ báo khi đồ sẵn sàng”.'
+    ghi “Tiệm sẽ báo khi đồ sẵn sàng” khi tiệm có số điện thoại hoặc kênh chat của khách, và “Giữ phiếu
+    này để nhận đồ” khi khách chỉ có số phiếu.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -4115,6 +4200,14 @@ disclosures:
   key: notice
   text: Không có API phía sau. Hiển thị một biểu mẫu ở đây sẽ tạo cảm giác dữ liệu đã được lưu trong khi
     không có gì được lưu cả.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/customers.js#hint:d4086961dcdf
+  module: ui/customers.js
+  key: hint
+  text: Chỉ ghi cách giặt. Không ghi sức khoẻ, tôn giáo hay chuyện riêng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

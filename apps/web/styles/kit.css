@@ -3461,3 +3461,92 @@ a.row-link {
     padding-inline: var(--space-1);
   }
 }
+
+/* ============================================================================================
+ * CUSTOMER-001 — the customer list (DEC-034): the one search field, the consent sheet, the
+ * customer's page, and the name on the ticket hero and the receipt.
+ * ============================================================================================ */
+
+.customer-search__results:empty,
+.customer-search__status:empty {
+  display: none;
+}
+
+.customer-search__status .hint {
+  margin: 0;
+}
+
+.customer-search__add {
+  display: flex;
+}
+
+/* The sentence the staff member reads aloud: set apart, readable at arm's length. */
+.customer-consent__lead {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  margin: 0;
+}
+
+.customer-consent__sentence {
+  background: var(--brand-050);
+  border-left: 4px solid var(--brand-600);
+  border-radius: var(--radius-md);
+  color: var(--brand-900);
+  font-size: var(--text-lg);
+  line-height: var(--leading-normal);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.customer-new__optional {
+  font-weight: var(--weight-normal);
+}
+
+.customer__subtitle {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.customer__phone {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-bold);
+}
+
+/* Gọi and Zalo: two equal thumb-sized buttons, side by side even at 390 px. */
+.customer__contact {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: 1fr 1fr;
+}
+
+.customer__contact .btn {
+  justify-content: center;
+}
+
+.customer__actions {
+  align-items: stretch;
+}
+
+.ticket-hero__customer {
+  color: var(--brand-900);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  margin: var(--space-1) 0 0;
+}
+
+.receipt-paper__customer {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
+/* On a desk the two contact buttons and the record's actions keep a phone's width, rather than
+ * stretching a "Gọi" across the whole content column. */
+@media (min-width: 48rem) {
+  .customer__contact,
+  .customer__actions {
+    max-width: 28rem;
+  }
+}

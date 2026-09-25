@@ -84,3 +84,69 @@ def test_the_client_registers_no_background_sync() -> None:
         assert "sync.register" not in text, source
         assert "SyncManager" not in text, source
         assert "periodicSync" not in text, source
+
+
+# --- CUSTOMER-001 (DEC-034): the customer list on a shared counter phone --------------------------
+
+CUSTOMER_MODULES = (
+    WEB / "src" / "core" / "customers.js",
+    WEB / "src" / "ui" / "customers.js",
+    WEB / "src" / "screens" / "customers.js",
+)
+
+
+def test_the_customer_modules_exist() -> None:
+    for module in CUSTOMER_MODULES:
+        assert module.is_file(), module
+
+
+def test_a_customer_screen_writes_nothing_to_the_device() -> None:
+    """The number and the name live in the page that asked for them, never in storage or history.
+
+    A search typed at the counter must not survive the customer walking away: not in storage, not
+    in the address bar (a hash query is kept in history and shown to the next person who presses
+    Back), and not in the browser console of a shared phone.
+    """
+
+    for module in CUSTOMER_MODULES:
+        source = module.read_text(encoding="utf-8")
+        for sink in (
+            "localStorage",
+            "sessionStorage",
+            "indexedDB",
+            "document.cookie",
+            "caches.",
+            "history.pushState",
+            "history.replaceState",
+            "console.",
+        ):
+            assert sink not in source, f"{module.name} reaches {sink}"
+        # Navigation carries a customer's opaque id, never what was typed.
+        for match in re.finditer(r"location\.hash\s*=\s*([^;]+);", source):
+            assert "customers/" in match.group(1) and "q=" not in match.group(1), match.group(0)
+
+
+def test_a_customer_search_is_never_an_address_the_console_navigates_to() -> None:
+    """The query goes to the API in a read, not into a `#/…?q=` route another screen could log."""
+
+    for source in (WEB / "src").rglob("*.js"):
+        text = source.read_text(encoding="utf-8")
+        assert not re.search(r"#/customers\?", text), source
+
+
+def test_the_customer_list_is_in_no_export() -> None:
+    """`DEC-034`: the list leaves the system only through an owner-approved envelope, and no export
+    the repository builds today selects a customer's personal column."""
+
+    exports = (ROOT / "packages/db/src/nha_trang_laundry_db/exports.py").read_text(encoding="utf-8")
+    for column in (
+        "customers",
+        "phone_ciphertext",
+        "phone_last4",
+        "display_name",
+        "delivery_address",
+    ):
+        assert column not in exports, column
+    for source in (WEB / "src" / "screens").glob("exports.js"):
+        text = source.read_text(encoding="utf-8")
+        assert "/customers" not in text

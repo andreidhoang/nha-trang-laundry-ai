@@ -41,6 +41,14 @@ export const NAV_ITEMS = [
     hint: "Tìm phiếu, đơn đang làm, khách lấy đồ",
   },
   {
+    path: "/customers",
+    label: NAV.customers,
+    capability: "CUSTOMERS_READ",
+    icon: "user",
+    group: "Vận hành",
+    hint: "Khách quen: SĐT, 4 số cuối hoặc tên",
+  },
+  {
     path: "/order-requests",
     label: NAV.orderRequests,
     capability: "QUOTES_READ",

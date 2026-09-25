@@ -226,7 +226,11 @@ export function warningPills(codes) {
  */
 export function customerLabel(item) {
   if (!item) return "";
-  return Number.isInteger(item.ticket_number) ? `Phiếu ${item.ticket_number}` : "Khách nhắn qua kênh";
+  const reference = Number.isInteger(item.ticket_number)
+    ? `Phiếu ${item.ticket_number}`
+    : "Khách nhắn qua kênh";
+  // CUSTOMER-001: an intake opened for a customer record carries the name they gave, read live.
+  return item.customer_name ? `${item.customer_name} · ${reference}` : reference;
 }
 
 /**

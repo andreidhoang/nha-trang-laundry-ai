@@ -14,6 +14,7 @@
  */
 
 import { screen as approvals } from "./approvals.js";
+import { detailScreen as customerDetail, screen as customers } from "./customers.js";
 import { screen as assistant } from "./assistant.js";
 import { screen as exceptions } from "./exceptions.js";
 import { screen as exports_ } from "./exports.js";
@@ -43,6 +44,8 @@ export const ROUTES = [
   orders,
   orderDetail,
   receipt,
+  customers,
+  customerDetail,
   slaBoard,
   approvals,
   assistant,

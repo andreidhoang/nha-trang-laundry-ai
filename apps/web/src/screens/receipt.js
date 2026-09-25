@@ -48,6 +48,11 @@ import { orderName } from "./orders.js";
 
 /** R4, verbatim: what the receipt says instead of a ready time. */
 export const READY_NOTICE = "Tiệm sẽ báo khi đồ sẵn sàng.";
+/**
+ * CUSTOMER-001: R4 promises a call, and a walk-in with only a ticket left no number to call. The
+ * paper says what is true for them instead: the slip is how they get their laundry back.
+ */
+export const KEEP_TICKET_NOTICE = "Giữ phiếu này để nhận đồ.";
 
 // --- the hand-off from ＋ Nhận đồ -------------------------------------------------------------
 
@@ -110,7 +115,13 @@ function closingLine(order) {
   if (order.production === "READY_AT_STORE" || order.production === "RELEASED") {
     return "Đồ đã giặt xong.";
   }
-  return READY_NOTICE;
+  // CUSTOMER-001: "Tiệm sẽ báo" only where the shop can reach the customer -- a phone on their
+  // record, or the chat channel the order came from. A ticket alone reaches nobody.
+  const reachable =
+    order.customer_has_phone === true ||
+    order.ticket_number === null ||
+    order.ticket_number === undefined;
+  return reachable ? READY_NOTICE : KEEP_TICKET_NOTICE;
 }
 
 /**
@@ -146,6 +157,7 @@ function lineAmount(line) {
  *
  * @typedef {object} ReceiptModel
  * @property {string|null} store
+ * @property {string|null} customer the name the customer gave, when the order has a record
  * @property {string} ticket
  * @property {string|null} day
  * @property {string} taken
@@ -165,6 +177,7 @@ function receiptModel(order, detail, catalog) {
   const numbered = order.ticket_number !== null && order.ticket_number !== undefined;
   return {
     store: state.storeNames?.[String(order.store_id)] || null,
+    customer: order.customer_name ? String(order.customer_name) : null,
     ticket: orderName(order),
     // Numbers restart every morning, so the paper carries the ticket's business day beside it.
     day: numbered ? dateOnly(order.ticket_issued_on) : null,
@@ -199,6 +212,7 @@ function receiptModel(order, detail, catalog) {
 export function receiptText(model) {
   return [
     model.store,
+    model.customer,
     [model.ticket, model.day].filter(Boolean).join(" · "),
     ...(model.lines || []).map((line) => `${line.name} — ${line.quantity}: ${line.amount}`),
     ...model.adjustments.map((item) => `${item.label}: ${item.amount}`),
@@ -243,6 +257,9 @@ function paper(model, linesFallback) {
       "header",
       { class: "receipt-paper__head" },
       model.store ? h("p", { class: "receipt-paper__store", dataField: "store" }, model.store) : null,
+      model.customer
+        ? h("p", { class: "receipt-paper__customer", dataField: "customer" }, model.customer)
+        : null,
       h("p", { class: "receipt-paper__ticket", dataField: "ticket" }, model.ticket),
       model.day ? h("p", { class: "receipt-paper__day" }, model.day) : null,
     ),
@@ -305,14 +322,16 @@ export function render_(context) {
     h(
       "p",
       null,
-      "Phiếu in đúng những gì máy chủ đã lưu: tên cửa hàng, số phiếu, từng món với số lượng và " +
-        "giá, khuyến mãi hoặc khoản giảm trừ đã áp, tổng khách trả, lúc nhận đơn và mã đơn.",
+      "Phiếu in đúng những gì máy chủ đã lưu: tên cửa hàng, tên khách (nếu khách có hồ sơ), số " +
+        "phiếu, từng món với số lượng và giá, khuyến mãi hoặc khoản giảm trừ đã áp, tổng khách " +
+        "trả, lúc nhận đơn và mã đơn.",
     ),
     h(
       "p",
       { class: "hint" },
       "Phiếu không ghi giờ hẹn trả đồ: tiệm chưa quyết định quy tắc hẹn giờ cho từng đơn, nên " +
-        "phiếu ghi “Tiệm sẽ báo khi đồ sẵn sàng”.",
+        "phiếu ghi “Tiệm sẽ báo khi đồ sẵn sàng” khi tiệm có số điện thoại hoặc kênh chat của " +
+        "khách, và “Giữ phiếu này để nhận đồ” khi khách chỉ có số phiếu.",
     ),
     h(
       "p",

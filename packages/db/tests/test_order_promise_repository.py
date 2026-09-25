@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
+from nha_trang_laundry_db.customers import CustomerRepository
 from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
@@ -34,6 +35,8 @@ from nha_trang_laundry_db.orders import (
     OrderStepRequiresHuman,
     OrderView,
 )
+from nha_trang_laundry_db.payments import PaymentCommand, PaymentRepository
+from nha_trang_laundry_db.privacy_notice import publish_privacy_notice
 from nha_trang_laundry_db.promise_policy import (
     TurnaroundPolicyAuthorizationError,
     publish_turnaround_policy,
@@ -43,12 +46,15 @@ from nha_trang_laundry_db.promise_policy import (
 from nha_trang_laundry_db.reports import ReportKey, ReportRepository
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_domain.catalog import AcquisitionSource, FulfillmentMode, Unit
+from nha_trang_laundry_domain.customers import CustomerKind
 from nha_trang_laundry_domain.order_steps import OrderStep
+from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.pricebook_import import import_pricebook_csv
 from nha_trang_laundry_domain.promise import PromiseChangeReason, PromiseChoice
 from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA
 from nha_trang_laundry_domain.turnaround_source import build_turnaround_policy
 from quote_test_data import FixtureLine, accepted_quote, ensure_store
+from test_customer_notice import notice_payload
 
 VN = ZoneInfo("Asia/Ho_Chi_Minh")
 TEMPLATES = Path(__file__).resolve().parents[3] / "templates"
@@ -800,3 +806,93 @@ def test_on_time_counts_against_the_first_promise_and_is_complete_when_every_ord
     figure = on_time_figure()
     assert (figure.numerator, figure.denominator) == (2, 3)
     assert figure.data_quality.value == "RULE_ASSUMED" and figure.rule_assumed == 1
+
+
+# --- round 7 merge: one order read, three slices' columns -------------------------------------
+
+
+def test_one_order_read_carries_its_promise_its_customer_and_its_payments_together(
+    connection: psycopg.Connection[Any], shop: tuple[UUID, StaffPrincipal, StaffPrincipal]
+) -> None:
+    """The order view appends `PROMISE-001`'s five columns (27-31), `CUSTOMER-001`'s three
+    (32-34) and `PAYMENT-001`'s two (35-36), each slice written on its own branch against the same
+    base positions. One order that has all three must read each field from its own column."""
+
+    store_id, owner, operator = shop
+    publish_turnaround_policy(connection, actor_id=owner.staff_user_id, payload=_document())
+    publish_privacy_notice(connection, actor_id=owner.staff_user_id, payload=notice_payload())
+    customer_id = CustomerRepository().create(
+        connection,
+        store_id=store_id,
+        principal=operator,
+        phone="09" + str(uuid4().int)[:8],
+        display_name="chị Lan",
+        delivery_address=None,
+        note=None,
+        kind=CustomerKind.RETAIL,
+        service_consent=True,
+        marketing_consent=False,
+        at=datetime.now(UTC),
+        correlation_id=uuid4(),
+    )
+    quote_id, revision, quote, contact_id = accepted_quote(
+        connection,
+        store_id=store_id,
+        principal=operator,
+        lines=(STANDARD,),
+        customer_id=customer_id,
+    )
+    order_id = (
+        OrderRepository()
+        .create(
+            connection,
+            CreateOrderCommand(
+                store_id,
+                contact_id,
+                quote_id,
+                revision,
+                quote.document.snapshot_hash,
+                FulfillmentMode.SELF_DROP_SELF_COLLECT,
+                operator,
+                f"order-{uuid4().hex}",
+                uuid4(),
+                datetime.now(UTC),
+                AcquisitionSource.WALK_IN,
+            ),
+        )
+        .order_id
+    )
+    received = _receive(connection, order_id, operator)
+    PaymentRepository().record(
+        connection,
+        PaymentCommand(
+            order_id=order_id,
+            expected_row_version=received.row_version,
+            amount_vnd=50_000,
+            method=PaymentMethod.CHUYEN_KHOAN,
+            transfer_seen=True,
+            bank_ref_last=None,
+            collected_by_customer=False,
+            principal=operator,
+            correlation_id=uuid4(),
+        ),
+    )
+    connection.commit()
+
+    view = _view(connection, order_id, operator)
+    # PROMISE-001: DEC-037's example, 17:00 on a Friday promises 13:00 the next open day.
+    assert view.promised_ready_at == at(2026, 9, 26, 13)
+    assert view.current_promise_at == view.promised_ready_at
+    assert (view.promise_basis, view.promise_rule_id) == ("RULE", "SLA_STANDARD_CLOTHES")
+    assert view.production_ready_at is None
+    # CUSTOMER-001: read live from the record.
+    assert (view.customer_id, view.customer_name, view.customer_has_phone) == (
+        customer_id,
+        "chị Lan",
+        True,
+    )
+    # PAYMENT-001: the ledger's sum and rows; what is owed is the order's own total.
+    assert view.owed_vnd == view.payable_total_vnd and view.owed_vnd is not None
+    assert (view.paid_vnd, view.remaining_vnd) == (50_000, view.owed_vnd - 50_000)
+    assert [(item.amount_vnd, item.method) for item in view.payments] == [(50_000, "CHUYEN_KHOAN")]
+    assert view.balance.value == "PARTIALLY_PAID"

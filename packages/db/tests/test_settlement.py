@@ -653,18 +653,30 @@ def test_a_pickup_only_order_is_settled_and_closed_at_the_counter(
 def test_a_pickup_only_order_cannot_be_prepaid_like_a_delivery(
     connection: psycopg.Connection[Any],
 ) -> None:
-    """Taking the money without a handover is what stranded these orders, so it is refused.
+    """Taking the money as a delivery is what stranded these orders, so it never is.
 
     There is no `RETURN` leg for this mode, so `required_delivery_legs_succeeded` can never become
-    true. A prepaid settlement would mark the order PAID with no reachable path to `COMPLETED`.
+    true. A prepaid *delivery* settlement would mark the order PAID with no reachable path to
+    `COMPLETED`.
+
+    Changed 2026-09-25 by the `DEC-032` addendum, from "refused". A `PICKUP_ONLY` customer at the
+    counter may pay in advance, as the walk-in's prepayment: the settlement row says nobody has
+    collected yet, the order's flag stays down, and the pickup command -- which a delivery can
+    never use -- is the reachable path that closes it (`test_prepaid_dropoff.py`).
     """
     store_id = uuid4()
     staff = _staff(connection, store_id, StaffRole.OWNER_ADMIN)
     order_id, _ = _ready_active_order(connection, store_id, staff, FulfillmentMode.PICKUP_ONLY)
 
-    with pytest.raises(SettlementStateError, match="settlement shape is not supported"):
-        _settle(connection, order_id, staff, collected=False)
+    stored = _settle(connection, order_id, staff, collected=False)
 
+    assert stored.settlement_shape == "EXACT_PAYMENT_PREPAID_SELF_COLLECTION"
+    assert stored.self_collection_recorded is False
     _, balance, collected, _ = _order_row(connection, order_id)
-    assert balance == "UNPAID"
+    assert balance == "PAID"
     assert not collected
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT collected_by FROM order_settlements WHERE order_id = %s", (order_id,)
+        )
+        assert cursor.fetchall() == [("PENDING_COLLECTION",)]

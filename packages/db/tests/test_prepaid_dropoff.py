@@ -177,6 +177,13 @@ class _Order:
             self.move(production_target=step)
         return self
 
+    def wash_to_from(self, current: ProductionStatus, target: ProductionStatus) -> _Order:
+        """Carry on washing from where the order already is."""
+
+        for step in WASHING[WASHING.index(current) + 1 : WASHING.index(target) + 1]:
+            self.move(production_target=step)
+        return self
+
     def pay(self, *, collected: bool, amount: int = QUOTED_TOTAL, at: datetime = NOW) -> Any:
         stored = SettlementRepository().record(
             self.connection,
@@ -610,17 +617,86 @@ def test_delivery_prepay_is_unchanged(connection: psycopg.Connection[Any]) -> No
         assert cursor.fetchall() == [("PENDING_DELIVERY",)]
 
 
-def test_a_pickup_only_order_still_cannot_be_prepaid(connection: psycopg.Connection[Any]) -> None:
-    """`DEC-032` speaks of a customer dropping laundry off; a `PICKUP_ONLY` customer does not. The
-    shop's courier collects it and no driver carries money (`DEC-023`), so there is no drop-off
-    moment to pay at. Unchanged, and fail-closed until somebody decides otherwise."""
+def test_a_pickup_only_customer_prepays_at_the_counter_and_collects_later(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The `DEC-032` addendum (2026-09-25). Was `test_a_pickup_only_order_still_cannot_be_prepaid`.
+
+    The shop's courier fetched the laundry; the customer comes by the counter while it is being
+    washed and pays the exact total. Nothing about the courier changes -- no driver carries money
+    (`DEC-023`) -- and everything about the prepayment is the walk-in's: the same shape, the same
+    guards, the same pickup record, and completion only when paid, released and collected.
+    """
+
+    store_id = _shop(connection)
+    morning = _staff(connection, store_id, StaffRole.OPERATOR)
+    evening = _staff(connection, store_id, StaffRole.OPERATOR)
+    order = _Order(connection, store_id, morning, FulfillmentMode.PICKUP_ONLY).to_active()
+    order.wash_to(ProductionStatus.IN_PROCESS)
+
+    paid = order.pay(collected=False)
+
+    assert paid.settlement_shape == "EXACT_PAYMENT_PREPAID_SELF_COLLECTION"
+    assert paid.expected_total_vnd == paid.paid_amount_vnd == QUOTED_TOTAL
+    assert paid.self_collection_recorded is False
+    assert order.row() == ("ACTIVE", "IN_PROCESS", "PAID", False, order.version)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT collected_by FROM order_settlements WHERE order_id = %s", (order.order_id,)
+        )
+        assert cursor.fetchall() == [("PENDING_COLLECTION",)]
+
+    # Nothing to hand over while the laundry is in the machine.
+    _assert_refused_and_nothing_written(order, "GOODS_NOT_READY_FOR_HANDOVER")
+    order.wash_to_from(ProductionStatus.IN_PROCESS, ProductionStatus.RELEASED)
+    # Paid and released, not collected: the prepayment alone does not close it.
+    with pytest.raises(OrderStateError, match="fulfillment is incomplete"):
+        order.move(commercial_target=CommercialOrderStatus.COMPLETED)
+
+    collected = order.collect(evening)
+    assert collected.collected_by_staff_id == evening.staff_user_id
+    assert collected.settlement_id == paid.settlement_id
+    assert order.row()[2:4] == ("PAID", True)
+    assert order.count("order_collections") == 1
+
+    completed = order.move(commercial_target=CommercialOrderStatus.COMPLETED)
+    assert completed.commercial is CommercialOrderStatus.COMPLETED
+
+
+def test_a_pickup_only_customer_who_paid_at_pickup_has_no_second_pickup(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The one-step path is untouched: paying and taking the bag are recorded together."""
 
     store_id = _shop(connection)
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     order = _Order(connection, store_id, staff, FulfillmentMode.PICKUP_ONLY).to_active()
+    order.wash_to(ProductionStatus.RELEASED)
+
+    paid = order.pay(collected=True)
+
+    assert paid.settlement_shape == "EXACT_PAYMENT_SELF_COLLECTION"
+    assert paid.self_collection_recorded is True
+    _assert_refused_and_nothing_written(order, "ALREADY_COLLECTED")
+
+
+@pytest.mark.parametrize("amount", [QUOTED_TOTAL - 1, QUOTED_TOTAL + 1, 0, QUOTED_TOTAL // 2])
+def test_a_pickup_only_deposit_is_refused_and_writes_nothing(
+    connection: psycopg.Connection[Any], amount: int
+) -> None:
+    """`DEC-010` untouched for this mode too: anything but the exact total is refused whole."""
+
+    store_id = _shop(connection)
+    staff = _staff(connection, store_id, StaffRole.OPERATOR)
+    order = _Order(connection, store_id, staff, FulfillmentMode.PICKUP_ONLY).to_active()
+    before = order.row()
+
     with pytest.raises(SettlementStateError) as refused:
-        order.pay(collected=False)
-    assert refused.value.reason_code == "COLLECTION_WAS_NOT_BY_THE_CUSTOMER"
+        order.pay(collected=False, amount=amount)
+
+    assert _refused(refused) == ("AMOUNT_IS_NOT_THE_EXACT_TOTAL", "DEC-010")
+    assert order.row() == before
+    assert order.count("order_settlements") == 0
 
 
 # --- the schema says the same things, for the code path nobody has written yet -------------------

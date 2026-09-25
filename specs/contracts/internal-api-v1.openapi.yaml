@@ -167,7 +167,7 @@ paths:
   /internal/v1/orders/{order_id}/collection:
     post:
       operationId: record_collection
-      summary: Record that a walk-in customer who paid at drop-off has taken their laundry. `DEC-032`.
+      summary: Record that a customer who paid in advance at the counter has taken their laundry.
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service

@@ -662,6 +662,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 396 with all founder-ruling items landed: disjoint sentences, so 392 + 4
     # (REMEDY-ITEM-FEE-001's
     # -3 retired / +7 added). Predicted before regenerating; the registry came out at 396.
+    #
+    # Still 396 after PICKUP-ONLY-SETTLE-001 (the `DEC-032` addendum): 0 added, 0 retired, 1
+    # re-keyed -- the settlement guardrail on `screens/orderDetail.js`, which now names paying at
+    # the counter before the laundry is finished and says no courier takes money. Its `DEC-010`
+    # binding moved with it. The two pickup hints that changed are conditional expressions, which
+    # the enumerator does not register as slots.
     assert sum(counts.values()) == _registry()["total"] == 396
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002

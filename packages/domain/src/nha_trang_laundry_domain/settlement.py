@@ -54,9 +54,11 @@ class SettlementShape(StrEnum):
     #: (2026-08-26): the shop is never owed money by somebody holding its laundry, and no driver
     #: carries cash. Arrival is attested by a delivery leg, not by this settlement.
     EXACT_PAYMENT_PREPAID_DELIVERY = "EXACT_PAYMENT_PREPAID_DELIVERY"
-    #: Paid at the counter when a walk-in customer dropped the laundry off, to be collected by them
-    #: later. `DEC-032` (2026-09-25, delegated): as `DEC-023` allows for delivery, and for the same
-    #: reason -- the alternative was ticking "collected" for shirts still in the machine. Pickup is
+    #: Paid at the counter before the laundry is finished, to be collected at the counter later.
+    #: `DEC-032` (2026-09-25, delegated): a walk-in paying at drop-off, as `DEC-023` allows for
+    #: delivery, and for the same reason -- the alternative was ticking "collected" for shirts still
+    #: in the machine. Its addendum the same day extends it to `PICKUP_ONLY`: the courier fetched
+    #: the laundry, and the customer comes by the counter and pays before it is ready. Pickup is
     #: attested separately, by the staff member who hands the goods over (`evaluate_collection`).
     EXACT_PAYMENT_PREPAID_SELF_COLLECTION = "EXACT_PAYMENT_PREPAID_SELF_COLLECTION"
 
@@ -71,8 +73,10 @@ class SettlementRefusal(StrEnum):
     #: Anything other than the exact total in one settlement: part payment, deposit, overpayment,
     #: instalments, or credit terms. All of it is DEC-010.
     AMOUNT_IS_NOT_THE_EXACT_TOTAL = "AMOUNT_IS_NOT_THE_EXACT_TOTAL"
-    #: The goods did not go back to the customer at the counter, so a delivery leg decided it
-    #: (DEC-003), and delivery is not built.
+    #: "Collected at the counter" on an order whose mode says the laundry travels back to the
+    #: customer. Since `DEC-023` a delivery reaches its customer by a leg (DEC-003), so the tick and
+    #: the mode disagree and one of them is wrong. Every self-collect mode, `PICKUP_ONLY` included
+    #: since the `DEC-032` addendum, may now pay either with the tick or before it.
     COLLECTION_WAS_NOT_BY_THE_CUSTOMER = "COLLECTION_WAS_NOT_BY_THE_CUSTOMER"
 
 
@@ -158,20 +162,21 @@ def evaluate_settlement(
             # the two is wrong and this module will not guess which.
             return _refuse(SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER)
         return SettlementAccepted(SettlementShape.EXACT_PAYMENT_SELF_COLLECTION, quoted.minimum_vnd)
-    if fulfillment_mode is FulfillmentMode.SELF_DROP_SELF_COLLECT:
-        # `DEC-032`: a walk-in paying at drop-off. The money is the attested fact; the handover is
-        # recorded later, at pickup, and `transition_commercial` refuses to complete the order
-        # until it is -- `self_collection_recorded` does not move for this shape.
+    if fulfillment_mode not in MODES_EXPECTING_RETURN:
+        # The customer collects at the counter, and has paid before doing so. `DEC-032`: a walk-in
+        # paying at drop-off. Its addendum (2026-09-25): a `PICKUP_ONLY` customer -- the shop's
+        # courier fetched the laundry -- paying at the counter before it is finished. Same money,
+        # same moment of handover still to come, so the same shape. The courier took nothing
+        # (`DEC-023`): this is money handed over the counter, never on the doorstep.
+        #
+        # The handover is recorded later, at pickup, by the staff member who makes it, and
+        # `transition_commercial` refuses to complete the order until it is --
+        # `self_collection_recorded` does not move for this shape. That record is what once did
+        # not exist: before `DEC-032` a `PICKUP_ONLY` order paid here had no permitted action
+        # left that could close it, which is why this branch was refused until now.
         return SettlementAccepted(
             SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION, quoted.minimum_vnd
         )
-    if fulfillment_mode not in MODES_EXPECTING_RETURN:
-        # `PICKUP_ONLY`. `DEC-032` speaks of a customer who drops laundry off, and this one did
-        # not: the shop's courier fetched it, and no driver carries money (`DEC-023`). There is no
-        # drop-off moment to pay at, so this stays refused until somebody decides otherwise.
-        # Before `DEC-032` the reason was also that no record could ever close it: taking the money
-        # here is what once stranded `PICKUP_ONLY`, paid in full with no leg permitted to finish it.
-        return _refuse(SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER)
     # `DEC-023`: paid in full at the counter, laundry still to travel. Arrival is a delivery leg's
     # fact, not this one's, and `transition_commercial` still refuses to complete the order until a
     # leg says the customer has their laundry.
@@ -201,7 +206,7 @@ def handover_refusal(production: ProductionStatus) -> str | None:
 
 
 class CollectionRefusal(StrEnum):
-    """Why the counter may not yet record that a prepaid walk-in customer took their laundry.
+    """Why the counter may not yet record that a customer who paid in advance took their laundry.
 
     States, not open decisions: each says what has to happen first, and none is a policy question
     somebody has yet to answer -- which is why, unlike `SettlementRefusal`, none names a `DEC-`.
@@ -214,7 +219,8 @@ class CollectionRefusal(StrEnum):
     ALREADY_COLLECTED = "ALREADY_COLLECTED"
     #: Not paid. A customer who pays at pickup is recorded by the settlement, in one step.
     COLLECTION_REQUIRES_PAYMENT = "COLLECTION_REQUIRES_PAYMENT"
-    #: Paid, but not by a walk-in at drop-off: a delivery reaches its customer by a leg (`DEC-023`).
+    #: Paid, but not in advance for collection at the counter: a delivery reaches its customer by a
+    #: leg (`DEC-023`), and a customer who paid at pickup was recorded by that settlement.
     NOT_A_PREPAID_SELF_COLLECTION = "NOT_A_PREPAID_SELF_COLLECTION"
     #: The laundry is not finished, so there is nothing to hand over yet.
     GOODS_NOT_READY_FOR_HANDOVER = GOODS_NOT_READY_FOR_HANDOVER

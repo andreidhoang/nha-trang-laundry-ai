@@ -26,7 +26,8 @@
  */
 
 import { h } from "../core/dom.js";
-import { facts, panel } from "../ui/components.js";
+import { facts } from "../ui/components.js";
+import { infoButton, page, section } from "../ui/kit.js";
 
 /**
  * One gap.
@@ -345,30 +346,41 @@ const GROUPS = [
 ];
 
 /**
- * One gap, at catalogue size.
+ * One gap, as an accordion row: the title and one line saying what blocks it; the full entry on
+ * expand (spec V2 §5.8).
  *
  * The four field labels are lifted verbatim from `unsupported()` so that a full-screen refusal and
- * a card here say the same four things under the same four names. A `note` is rendered as a hint
- * under the fields rather than as a fifth field, because it is a constraint on the future build and
- * not a fact about today.
+ * an entry here say the same four things under the same four names. A `note` is rendered under the
+ * fields rather than as a fifth field, because it is a constraint on the future build and not a
+ * fact about today. The collapsed line is the `blockedBy` text itself, cut by CSS rather than by
+ * code, so nothing in it is paraphrased; print expands every row.
  *
  * @param {Gap} gap
  * @returns {HTMLElement}
  */
-function gapCard(gap) {
+function gapRow(gap) {
   return h(
-    "article",
-    { class: "card stack stack--tight" },
-    h("p", { class: "eyebrow" }, gap.ref),
-    h("h3", null, gap.title),
-    facts([
-      ["Đặc tả yêu cầu", gap.what, { span: true }],
-      ["Thiếu", gap.missing, { span: true }],
-      ["Bị chặn bởi", gap.blockedBy, { mono: true, span: true }],
-      gap.today ? ["Hiện tại làm thế nào", gap.today, { span: true }] : null,
-    ]),
-    gap.note ? h("p", { class: "hint" }, gap.note) : null,
-    gap.link ? h("p", null, h("a", { href: gap.link.href }, gap.link.label)) : null,
+    "details",
+    { class: "accordion", dataRef: gap.ref },
+    h(
+      "summary",
+      { class: "accordion__summary" },
+      h("span", { class: "accordion__title" }, gap.title),
+      h("span", { class: "accordion__meta" }, gap.blockedBy),
+    ),
+    h(
+      "div",
+      { class: "accordion__body stack stack--tight" },
+      facts([
+        ["Đặc tả yêu cầu", gap.what, { span: true }],
+        ["Thiếu", gap.missing, { span: true }],
+        ["Bị chặn bởi", gap.blockedBy, { span: true }],
+        gap.today ? ["Hiện tại làm thế nào", gap.today, { span: true }] : null,
+      ]),
+      gap.note ? h("p", { class: "hint" }, gap.note) : null,
+      gap.link ? h("p", null, h("a", { href: gap.link.href }, gap.link.label)) : null,
+      h("p", { class: "accordion__ref" }, `Tham chiếu: ${gap.ref}`),
+    ),
   );
 }
 
@@ -377,16 +389,10 @@ function gapCard(gap) {
  * @returns {HTMLElement}
  */
 function gapGroup(group) {
-  return panel({
-    eyebrow: "Nhóm",
-    title: group.heading,
-    count: String(group.entries.length),
-    children: h(
-      "div",
-      { class: "stack" },
-      h("p", { class: "screen__lede" }, group.lede),
-      group.entries.map(gapCard),
-    ),
+  return section({
+    title: `${group.heading} · ${group.entries.length}`,
+    info: infoButton(`Nhóm “${group.heading}” thiếu gì?`, h("p", null, group.lede)),
+    children: h("div", { class: "accordion-list" }, group.entries.map(gapRow)),
   });
 }
 
@@ -399,36 +405,35 @@ export function render_() {
   return h(
     "section",
     { class: "screen" },
+    page({
+      title: "Việc chưa hỗ trợ",
+      subtitle: `Chưa hỗ trợ: ${total} việc đặc tả yêu cầu mà bảng vận hành chưa làm được, mỗi việc một lý do cụ thể.`,
+      info: infoButton(
+        "Cách đọc trang này",
+        h(
+          "div",
+          { class: "notice", dataState: "info" },
+          h("p", { class: "notice__title" }, "Cách đọc trang này"),
+          h(
+            "p",
+            null,
+            "Mỗi mục nêu đúng thứ đang thiếu: một aggregate, một route, một quyết định hoặc một hạng " +
+              "mục công việc. Không mục nào hẹn ngày — một lời hẹn ở đây sẽ cũ đi và làm mất tin vào " +
+              "phần còn lại.",
+          ),
+          h(
+            "p",
+            null,
+            "Nếu một việc cần làm hôm nay và không có trong danh sách này, đừng suy ra là bảng vận " +
+              "hành làm được. Hãy hỏi trước khi ghi tay.",
+          ),
+        ),
+      ),
+    }),
     h(
-      "div",
-      { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "Chưa hỗ trợ · Danh sách đầy đủ"),
-      h("h1", null, "Chưa hỗ trợ"),
-      h(
-        "p",
-        { class: "screen__lede" },
-        `${total} năng lực mà đặc tả yêu cầu và bảng vận hành này chưa làm được, cùng lý do cụ ` +
-          "thể cho từng cái. Danh sách được viết ra để không ai phải đoán bảng vận hành có làm " +
-          "được một việc hay không.",
-      ),
-    ),
-    h(
-      "div",
-      { class: "notice", dataState: "info" },
-      h("p", { class: "notice__title" }, "Cách đọc trang này"),
-      h(
-        "p",
-        null,
-        "Mỗi mục nêu đúng thứ đang thiếu: một aggregate, một route, một quyết định hoặc một hạng " +
-          "mục công việc. Không mục nào hẹn ngày — một lời hẹn ở đây sẽ cũ đi và làm mất tin vào " +
-          "phần còn lại.",
-      ),
-      h(
-        "p",
-        null,
-        "Nếu một việc cần làm hôm nay và không có trong danh sách này, đừng suy ra là bảng vận " +
-          "hành làm được. Hãy hỏi trước khi ghi tay.",
-      ),
+      "p",
+      { class: "hint" },
+      "Việc không có trong danh sách chưa chắc đã làm được — hỏi trước khi ghi tay. Bấm một dòng để xem đủ.",
     ),
     GROUPS.map(gapGroup),
   );

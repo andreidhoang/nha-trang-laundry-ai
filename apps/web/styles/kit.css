@@ -965,3 +965,277 @@ details.tech[open] > summary::after {
     display: none !important;
   }
 }
+
+/* ================================================================================================
+ * CONSOLE-REDESIGN-006 — generic pieces the admin screens (Nhân sự, Hệ thống, Xuất dữ liệu, Việc
+ * chưa hỗ trợ) needed. Kept generic so the lead can fold them into the kit proper.
+ * ============================================================================================== */
+
+/* A tier-1 line with its ⓘ beside it. */
+.fact-line {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.fact-line > .hint {
+  flex: 1 1 auto;
+  margin: 0;
+  padding-top: 0.7rem;
+}
+
+.hint[data-state="danger"] {
+  color: var(--danger-fg);
+  font-weight: var(--weight-medium);
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* Who a sheet is about: avatar + status + one line. */
+.who {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+}
+
+.who > .avatar {
+  font-size: var(--text-lg);
+  height: 3rem;
+  width: 3rem;
+}
+
+.who__main {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: start;
+  min-width: 0;
+}
+
+.who__meta {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+/* Buttons stacked full width (two long labels never wrap side by side on a phone). */
+.btn-stack {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* Kit fix found here: an armed confirmButton under the pointer fell back to the danger hover
+ * (pale background) while keeping the armed white text, so the "press again" face was unreadable. */
+.btn[data-armed="true"]:hover:not(:disabled) {
+  background: var(--danger-fg);
+  filter: brightness(0.92);
+}
+
+/* "Nhập mã thủ công": a paste field that exists only for a value no route supplies (spec §2.2). */
+details.manual-entry > summary {
+  align-items: center;
+  color: var(--brand-700);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  min-height: var(--tap-min);
+}
+
+details.manual-entry[open] > summary {
+  margin-bottom: var(--space-2);
+}
+
+/* Status cards with big numbers. */
+.queue-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+@media (min-width: 64rem) {
+  .queue-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.queue-card {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.queue-card__head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.queue-card__title {
+  align-items: center;
+  display: inline-flex;
+  font-size: var(--text-lg);
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.queue-card__token {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  margin: 0;
+}
+
+.stat-grid {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.stat {
+  align-content: start;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 2px;
+  padding: var(--space-3);
+}
+
+.stat__value {
+  font-size: var(--text-2xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-heavy);
+  line-height: 1.1;
+}
+
+.stat__label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+}
+
+.stat__token {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.stat__sub {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  margin-top: var(--space-1);
+}
+
+.stat[data-state="danger"] {
+  background: var(--danger-bg);
+}
+
+.stat[data-state="danger"] .stat__value,
+.stat__sub[data-state="danger"] {
+  color: var(--danger-fg);
+}
+
+.stat__sub[data-state="warn"] {
+  color: var(--warn-fg);
+  font-weight: var(--weight-bold);
+}
+
+/* Accordion rows: a title and one line; the whole entry on expand. */
+.accordion-list {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.group__body.surface:has(> .accordion-list:only-child) {
+  padding: 0;
+}
+
+.group__body.surface > .accordion-list {
+  border: none;
+  border-radius: inherit;
+  box-shadow: none;
+}
+
+details.accordion + details.accordion {
+  border-top: 1px solid var(--border);
+}
+
+.accordion__summary {
+  cursor: pointer;
+  display: grid;
+  gap: 2px var(--space-2);
+  grid-template-columns: minmax(0, 1fr) auto;
+  list-style: none;
+  min-height: var(--row-min);
+  padding: var(--space-3) var(--space-4);
+}
+
+.accordion__summary::-webkit-details-marker {
+  display: none;
+}
+
+.accordion__summary::after {
+  align-self: center;
+  color: var(--text-muted);
+  content: "›";
+  font-size: 1.3em;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  transition: transform var(--motion-fast) var(--easing);
+}
+
+details.accordion[open] > .accordion__summary::after {
+  transform: rotate(90deg);
+}
+
+.accordion__summary:hover {
+  background: var(--surface-sunken);
+}
+
+.accordion__title {
+  font-weight: var(--weight-bold);
+  grid-column: 1;
+}
+
+.accordion__meta {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  grid-column: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+details.accordion[open] .accordion__meta {
+  white-space: normal;
+}
+
+.accordion__body {
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.accordion__ref {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  margin: 0;
+}
+
+@media print {
+  /* Same mechanism as `details.explain` in print.css: the register prints whole. */
+  details.accordion::details-content {
+    content-visibility: visible !important;
+  }
+
+  details.accordion > .accordion__body {
+    display: grid !important;
+  }
+
+  .accordion__meta {
+    white-space: normal;
+  }
+}

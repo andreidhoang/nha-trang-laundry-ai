@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 391
+  DESCRIPTIVE: 398
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 419
+total: 426
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1873,15 +1873,6 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/exports.js#hint:d2eb95289c4c
-  module: screens/exports.js
-  key: hint
-  text: Hệ thống không giữ lại nội dung tệp — chỉ giữ vân tay, số dòng và phong bì duyệt. Tệp đã tải về
-    nằm ngoài mọi lịch xoá dữ liệu của hệ thống; giữ nó ở đâu là trách nhiệm của người đã tải.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/exports.js#notice:22c352206d23
   module: screens/exports.js
   key: notice
@@ -1900,9 +1891,26 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/exports.js#screen__lede:168b80092bec
+- slot_id: screens/exports.js#hint:017f05f8a386
   module: screens/exports.js
-  key: screen__lede
+  key: hint
+  text: Người tạo yêu cầu không tự duyệt được — cần một chủ tiệm khác bấm Duyệt.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/exports.js#hint:d2eb95289c4c
+  module: screens/exports.js
+  key: hint
+  text: Hệ thống không giữ lại nội dung tệp — chỉ giữ vân tay, số dòng và phong bì duyệt. Tệp đã tải về
+    nằm ngoài mọi lịch xoá dữ liệu của hệ thống; giữ nó ở đâu là trách nhiệm của người đã tải.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/exports.js#hint:168b80092bec
+  module: screens/exports.js
+  key: hint
   text: 'Lấy bản sao hồ sơ của chính cửa hàng cho một ngày: mã đơn, trạng thái, mốc thời gian và số tiền
     đã thu của những đơn mở trong ngày đó. Ngày cắt theo lúc mở đơn, nên tổng tiền trong tệp không bằng
     ô “tiền đã thu hôm nay” ở màn hình Hôm nay — ô đó cộng theo lúc thu. Mỗi lần xuất đều cần chủ tiệm
@@ -1911,9 +1919,9 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/exports.js#guardrail:238f5b663333
+- slot_id: screens/exports.js#hint:238f5b663333
   module: screens/exports.js
-  key: guardrail
+  key: hint
   text: Người tạo yêu cầu xuất không được tự duyệt yêu cầu của mình — kể cả khi phong bì duyệt do người
     khác mở. Quy tắc tính theo người đã chọn dữ liệu nào rời khỏi hệ thống, và máy chủ từ chối; đó là
     tách trách nhiệm chứ không phải lỗi. Một lần duyệt cho đúng một tệp.
@@ -2282,6 +2290,15 @@ disclosures:
   key: notice
   text: 'Mỗi mục nêu đúng thứ đang thiếu: một aggregate, một route, một quyết định hoặc một hạng mục công
     việc. Không mục nào hẹn ngày — một lời hẹn ở đây sẽ cũ đi và làm mất tin vào phần còn lại.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#hint:739d7e9fcb36
+  module: screens/gaps.js
+  key: hint
+  text: Việc không có trong danh sách chưa chắc đã làm được — hỏi trước khi ghi tay. Bấm một dòng để xem
+    đủ.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3476,84 +3493,91 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#guardrail:5a17bb3bc1fc
-  module: screens/staff.js
-  key: guardrail
-  text: Tạo xong là có danh tính, chưa có vai trò và chưa có cửa hàng. Người này chưa làm được gì cho
-    tới khi được gán vai trò và được gán cửa hàng — cả hai việc đó làm ngay trên màn hình này, ở các bảng
-    Gán vai trò và Gán cửa hàng bên dưới, và chỉ chủ mới thực hiện được.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#hint:456a70690bb5
+- slot_id: screens/staff.js#hint:6cb64d3e628c
   module: screens/staff.js
   key: hint
-  text: Chép lại mã này. Người mới chưa thuộc cửa hàng nào nên chưa có trong danh sách nhân sự của cửa
-    hàng nào; nếu mất mã trước khi gán cửa hàng thì không tra lại được.
+  text: Danh sách nhân sự đọc theo từng cửa hàng. Chọn cửa hàng ở thanh trên cùng để xem ai đang làm ở
+    đó; thêm nhân sự và gán cửa hàng vẫn làm được khi chưa chọn.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#notice:38e263dbd399
+- slot_id: screens/staff.js#hint:e04d8ed78c5f
   module: screens/staff.js
-  key: notice
-  text: Danh sách nhân sự ở đầu màn hình vừa được đọc lại. Nếu người này thuộc cửa hàng đang chọn, vai
-    trò hiện tại của họ hiện ở đó; nếu không, màn hình này chỉ biết lệnh vừa rồi đã được nhận.
+  key: hint
+  text: Tạo xong, người này chưa làm được gì cho tới khi có vai trò và cửa hàng — thêm ngay ở thẻ của
+    họ, mở ra sau khi tạo.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#guardrail:ffe6334f23f8
+- slot_id: screens/staff.js#hint:f433cd9fc734
   module: screens/staff.js
-  key: guardrail
-  text: 'Gán vai trò là cộng thêm, không phải thay thế: lệnh này không gỡ vai trò nào đang có. Vai trò
-    hiện có xem ở danh sách nhân sự phía trên; máy chủ chưa có cách thu hồi vai trò, nên hãy chắc chắn
-    trước khi gửi.'
+  key: hint
+  text: Tạo xong là có danh tính, chưa có vai trò và chưa có cửa hàng. Người này chưa làm được gì cho
+    tới khi được gán vai trò và được gán cửa hàng — cả hai việc đó làm ngay trong thẻ của người đó, và
+    chỉ chủ mới thực hiện được.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#notice:fbe05be31e9a
+- slot_id: screens/staff.js#hint:12b8bb72ad21
   module: screens/staff.js
-  key: notice
-  text: Máy chủ chưa có cách bật lại một nhân viên đã vô hiệu hoá. Nếu cần người này làm việc lại, phải
-    xử lý trực tiếp ở cơ sở dữ liệu.
+  key: hint
+  text: Định danh OIDC là định danh của người này ở nhà cung cấp đăng nhập, và phải là duy nhất trong
+    toàn hệ thống. Nếu định danh đã thuộc về một người, máy chủ từ chối và không tạo bản ghi thứ hai.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#notice:aeb3d72b4c8d
+- slot_id: screens/staff.js#hint:7176fe8af060
   module: screens/staff.js
-  key: notice
-  text: Người này sẽ bị chuyển sang DISABLED và mọi phiên đang mở của họ bị thu hồi ngay lập tức, kể cả
-    khi đang đứng ở quầy. Máy chủ từ chối nếu đây là chủ đang hoạt động cuối cùng.
+  key: hint
+  text: Máy chủ không kiểm tra định dạng email và không gửi gì tới địa chỉ này. Nó chỉ được lưu lại nguyên
+    văn, nên gõ sai sẽ không có ai báo.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#guardrail:7fd8cda5fa06
+- slot_id: screens/staff.js#hint:f1ad3b298172
   module: screens/staff.js
-  key: guardrail
-  text: Lệnh này cũng thu hồi toàn bộ phiên đăng nhập của người đó trong cùng một giao dịch. Không có
-    đường quay lại từ bảng vận hành.
+  key: hint
+  text: 'Gán vai trò là cộng thêm, không phải thay thế: lệnh này không gỡ vai trò nào đang có. Máy chủ
+    chưa có cách thu hồi vai trò, nên hãy chắc chắn trước khi thêm.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#notice:67452d3fe0d6
+- slot_id: screens/staff.js#hint:bcfbd46d9ed1
   module: screens/staff.js
-  key: notice
-  text: Danh sách nhân sự phía trên chỉ nói về cửa hàng đang chọn và vừa được đọc lại. Máy chủ chưa có
-    cách đọc danh sách cửa hàng của một người, nên với cửa hàng khác thì người đó đăng nhập rồi xem thanh
-    trên cùng là cách kiểm tra chắc chắn.
+  key: hint
+  text: Vai trò quyết định máy chủ cho phép những gì, và là của người đó ở mọi cửa hàng, không riêng cửa
+    hàng này. Nhân viên vận hành và tài xế không được bảo đảm đã xác thực hai bước, nên hai vai trò này
+    vẫn bị từ chối ở các thao tác đòi xác thực hai bước.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#guardrail:964c82c63c46
+- slot_id: screens/staff.js#hint:92d4a43942be
   module: screens/staff.js
-  key: guardrail
+  key: hint
+  text: Thêm lại một vai trò người này đã có là an toàn — máy chủ ghi đè dòng cũ, và việc đó cũng khôi
+    phục một vai trò từng bị thu hồi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#hint:404f638243f1
+  module: screens/staff.js
+  key: hint
+  text: Thêm là cộng dồn và chưa gỡ lại được — chọn cho đúng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#hint:964c82c63c46
+  module: screens/staff.js
+  key: hint
   text: Không có dòng gán thì mọi màn hình theo cửa hàng đều từ chối người đó, kể cả khi vai trò đã đúng.
     Thu hồi có hiệu lực ngay ở yêu cầu kế tiếp; dòng gán vẫn được giữ lại để biết ai đã cấp và ai đã thu
     hồi.
@@ -3561,19 +3585,66 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#notice:9b3463098914
+- slot_id: screens/staff.js#hint:6ebff91cc5aa
   module: screens/staff.js
-  key: notice
-  text: Danh sách nhân sự đọc theo từng cửa hàng. Chọn cửa hàng ở thanh trên cùng để xem ai đang làm ở
-    đó; các lệnh bên dưới vẫn dùng được khi chưa chọn.
+  key: hint
+  text: Danh sách ở màn hình này chỉ nói về cửa hàng đang chọn. Máy chủ chưa có cách đọc danh sách cửa
+    hàng của một người, nên với cửa hàng khác thì người đó đăng nhập rồi xem thanh trên cùng là cách kiểm
+    tra chắc chắn.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#notice__title:ac1d7ba2b9f7
+- slot_id: screens/staff.js#hint:45085f4ef37f
   module: screens/staff.js
-  key: notice__title
-  text: Vai trò này không đọc được danh sách nhân sự
+  key: hint
+  text: Chỉ các cửa hàng của chính bạn có sẵn để chọn. Chủ không cần thuộc một cửa hàng mới gán được người
+    khác vào đó — nhưng khi đó phải nhập mã cửa hàng, và mã không tồn tại sẽ bị từ chối.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#hint:aeb3d72b4c8d
+  module: screens/staff.js
+  key: hint
+  text: Người này sẽ bị chuyển sang DISABLED và mọi phiên đang mở của họ bị thu hồi ngay lập tức, kể cả
+    khi đang đứng ở quầy. Máy chủ từ chối nếu đây là chủ đang hoạt động cuối cùng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#hint:9e1de12d9cb1
+  module: screens/staff.js
+  key: hint
+  text: 'Lệnh này thu hồi toàn bộ phiên đăng nhập của người đó trong cùng một giao dịch. Không có đường
+    quay lại từ bảng vận hành: máy chủ chưa có cách bật lại một nhân viên đã vô hiệu hoá. Nếu cần người
+    này làm việc lại, phải xử lý trực tiếp ở cơ sở dữ liệu.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#hint:9390cec076f9
+  module: screens/staff.js
+  key: hint
+  text: Mọi phiên đang mở của người này bị thu hồi ngay, kể cả khi đang ở quầy. Chưa có cách bật lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#hint:dcbc51f5d395
+  module: screens/staff.js
+  key: hint
+  text: 1) Thêm nhân sự — 2) Thêm vai trò — 3) Gán cửa hàng. Thẻ của người mới tự mở sau bước một; một
+    tài khoản mới bị máy chủ từ chối ở mọi thao tác theo cửa hàng cho tới khi bước ba xong.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#hint:ad1ded8c4c00
+  module: screens/staff.js
+  key: hint
+  text: Danh sách đọc từ máy chủ và được đọc lại sau mỗi lệnh được nhận, nên điều nó hiện là trạng thái
+    máy chủ đang giữ chứ không phải điều màn hình này đoán.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3583,24 +3654,6 @@ disclosures:
   key: hint
   text: Vai trò là của người đó ở mọi cửa hàng, không riêng cửa hàng này. Người bị thu hồi khỏi cửa hàng
     vẫn hiện thêm 30 ngày, có ghi rõ lúc thu hồi.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#eyebrow:6f5cd357434b
-  module: screens/staff.js
-  key: eyebrow
-  text: Chỉ chủ · danh sách theo cửa hàng đang chọn
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#screen__lede:f11976f4f576
-  module: screens/staff.js
-  key: screen__lede
-  text: Ai đang làm ở cửa hàng đang chọn, cùng vai trò và trạng thái, đọc từ máy chủ; bên dưới là các
-    lệnh danh tính. Sau mỗi lệnh được nhận, danh sách được đọc lại, nên điều nó hiện là trạng thái máy
-    chủ đang giữ chứ không phải điều màn hình này đoán.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3619,6 +3672,15 @@ disclosures:
   key: hint
   text: Lượt chạy của agent. Một lượt chạy chỉ soạn bản nháp; nó không gửi cho khách và không quyết định
     tiền, nên tồn đọng ở đây làm chậm việc, không làm sai tiền.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/system.js#hint:f3257e638ddc
+  module: screens/system.js
+  key: hint
+  text: Số quá hạn khóa tạm nằm bên trong số PROCESSING, không phải một nhóm riêng. Đừng cộng bốn dòng
+    lại với nhau — màn hình này cố ý không hiển thị tổng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3658,29 +3720,28 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/system.js#hint:f3257e638ddc
+- slot_id: screens/system.js#hint:ebbafd8b5bac
   module: screens/system.js
   key: hint
-  text: Số quá hạn khóa tạm nằm bên trong số PROCESSING, không phải một nhóm riêng. Đừng cộng bốn dòng
-    lại với nhau — màn hình này cố ý không hiển thị tổng.
+  text: Nút “Thoát” chỉ kết thúc phiên này; phiên trên máy khác không đóng được từ đây.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/system.js#screen__lede:c7d1d984335f
+- slot_id: screens/system.js#hint:c7d1d984335f
   module: screens/system.js
-  key: screen__lede
+  key: hint
   text: Độ sâu của hai hàng đợi chạy phía sau bảng vận hành, đọc trực tiếp từ cơ sở dữ liệu tại thời điểm
     bạn tải màn hình.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/system.js#guardrail:cb8f55ac1fcf
+- slot_id: screens/system.js#hint:efb0c526ee8c
   module: screens/system.js
-  key: guardrail
-  text: Màn hình này chỉ để nhìn. Không phát lại, không thử lại, không xếp lại — và các con số đếm trên
-    mọi cửa hàng của hệ thống, không theo cửa hàng đang chọn.
+  key: hint
+  text: 'Chỉ để nhìn: không phát lại, không thử lại, không xếp lại. Số đếm trên mọi cửa hàng, không theo
+    cửa hàng đang chọn.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

@@ -425,21 +425,21 @@ export function render_(context) {
   /**
    * Read the summary and the days for one window, both at once.
    *
-   * @param {{from: string, to: string}} window
+   * @param {{from: string, to: string}} span
    * @returns {Promise<void>}
    */
-  async function load(window) {
+  async function load(span) {
     const mine = ++generation;
     subtitle.textContent =
-      window.from === window.to
-        ? calendarDay(window.from)
-        : `${calendarDay(window.from, { weekday: false })} – ${calendarDay(window.to, { weekday: false })}`;
+      span.from === span.to
+        ? calendarDay(span.from)
+        : `${calendarDay(span.from, { weekday: false })} – ${calendarDay(span.to, { weekday: false })}`;
     render(tier1);
     render(tilesHost, skeletonRows(4));
     render(daysHost);
     daysSection.hidden = true;
     render(techHost);
-    const query = new URLSearchParams({ from: window.from, to: window.to }).toString();
+    const query = new URLSearchParams({ from: span.from, to: span.to }).toString();
     try {
       const [summary, daily] = await Promise.all([
         request(`/internal/v1/stores/${encodeURIComponent(store)}/reports/summary?${query}`),
@@ -499,13 +499,13 @@ export function render_(context) {
       );
     } catch (error) {
       if (mine !== generation) return;
-      render(tilesHost, errorNotice(error, { onRetry: () => void load(window) }));
+      render(tilesHost, errorNotice(error, { onRetry: () => void load(span) }));
     }
   }
 
   /** The person's own window: checked here for the obvious refusals, then asked. */
   function applyCustom() {
-    const problem = windowProblem(fromInput.value, toInput.value, today);
+    const problem = windowProblem(fromInput.value, toInput.value, businessDate());
     render(
       customProblem,
       problem ? inlineAlert({ state: "warn", title: "Chưa xem được", body: problem }) : null,
@@ -521,8 +521,8 @@ export function render_(context) {
       preset = value;
       customHost.hidden = value !== "custom";
       render(customProblem);
-      const window = presetWindow(value, today);
-      if (window) void load(window);
+      const span = presetWindow(value, businessDate());
+      if (span) void load(span);
     },
   });
 
@@ -534,8 +534,8 @@ export function render_(context) {
   } else if (preset === "custom") {
     applyCustom();
   } else {
-    const window = presetWindow(preset, today);
-    if (window) void load(window);
+    const span = presetWindow(preset, today);
+    if (span) void load(span);
   }
 
   return h(
@@ -563,12 +563,10 @@ export function render_(context) {
           icon: "refresh",
           variant: "quiet",
           onClick: () => {
-            const window =
-              preset === "custom"
-                ? { from: fromInput.value, to: toInput.value }
-                : presetWindow(preset, today);
+            // "Hôm nay" is re-read at the press, so a screen left open past midnight moves on.
+            const span = presetWindow(preset, businessDate());
             if (preset === "custom") applyCustom();
-            else if (window) void load(window);
+            else if (span) void load(span);
           },
         }),
       ),

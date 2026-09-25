@@ -2350,13 +2350,13 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#guardrail:b2daddbe89d3
+- slot_id: screens/orderDetail.js#guardrail:0341c82d18a7
   module: screens/orderDetail.js
   key: guardrail
   text: 'Mọi trường hợp là cùng một khoản tiền: khách trả đúng tổng đã báo, đủ một lần, tại quầy — lúc
-    lấy đồ, lúc gửi đồ (quyết định DEC-032), hoặc trước khi tiệm giao tận nơi. Trả thiếu, trả thừa, đặt
-    cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định — không làm tròn và không ghi nhận một phần.
-    Bản ghi tất toán không sửa được.'
+    lấy đồ, lúc gửi đồ hoặc ghé quầy trả trước khi đồ xong (quyết định DEC-032), hoặc trước khi tiệm giao
+    tận nơi. Người giao không thu tiền. Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối
+    kèm mã quyết định — không làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.'
   binding:
     kind: POLICY_BOUND
     decision: DEC-010

@@ -193,7 +193,11 @@ POLICY_BOUND: dict[str, str] = {
     # total may be paid, the third being `DEC-032` (at drop-off). The claim this binding guards is
     # still the refusal of everything else, which is `DEC-010`; the drop-off clause cites DEC-032
     # by id in the sentence itself, so a reader can check both against the register.
-    "screens/orderDetail.js#guardrail:b2daddbe89d3": "DEC-010",
+    #
+    # Re-keyed 2026-09-25 by PICKUP-ONLY-SETTLE-001: the `DEC-032` addendum adds paying at the
+    # counter before the laundry is finished (a `PICKUP_ONLY` customer) and the sentence now says no
+    # courier takes money (`DEC-023`). Still a refusal of every other amount, still `DEC-010`.
+    "screens/orderDetail.js#guardrail:0341c82d18a7": "DEC-010",
 }
 
 

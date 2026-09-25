@@ -219,6 +219,34 @@ ORDER_CREATED = {
     "replayed": False,
 }
 
+#: Section 15's order: fetched by the shop's courier, collected by the customer at the counter.
+PICKUP_ORDER_ID = "77777777-8888-4333-8444-999999999999"
+
+
+def order_view(mode: str, *, balance: str, collected: bool) -> dict[str, object]:
+    """One `OrderViewResponse`, as `GET /internal/v1/orders/{id}` sends it, at the counter's
+    pickup moment: running, washed and released, the total known."""
+
+    return {
+        "order_id": PICKUP_ORDER_ID,
+        "store_id": STORE,
+        "commercial": "ACTIVE",
+        "intake": "ACCEPTED",
+        "production": "RELEASED",
+        "balance": balance,
+        "row_version": 14,
+        "replayed": False,
+        "fulfillment_mode": mode,
+        "created_at": "2026-09-25T02:00:00+00:00",
+        "quote_id": "88888888-9999-4333-8444-aaaaaaaaaaaa",
+        "quote_revision": 2,
+        "payable_total_vnd": 110_000,
+        "ticket_number": 12,
+        "ticket_issued_on": "2026-09-25",
+        "self_collection_recorded": collected,
+    }
+
+
 #: What `GET /internal/v1/stores/{id}/settlements/today` returns. A non-round figure so a screen
 #: that quietly rounded or reformatted it would be visible in the assertion.
 SETTLEMENTS_TODAY = {
@@ -687,6 +715,9 @@ state = {
     # the queue while it is being checked and this one is alone while it is.
     "export_listed": False,
     "export_unreadable": False,
+    # Section 15 only: the one order `GET /internal/v1/orders/{id}` and the store's order list
+    # answer with. `None` leaves both on the catch-all, as every earlier section expects.
+    "order_view": None,
 }
 held_ticket_routes: list[Route] = []
 
@@ -967,6 +998,18 @@ with sync_playwright() as playwright:
                 status=201, content_type="application/json", body=json.dumps(BAND_REVISION)
             )
             return
+        elif (
+            state.get("order_view") is not None
+            and route.request.method == "GET"
+            and url.split("?")[0].endswith(f"/internal/v1/orders/{PICKUP_ORDER_ID}")
+        ):
+            body = state["order_view"]
+        elif (
+            state.get("order_view") is not None
+            and route.request.method == "GET"
+            and url.split("?")[0].endswith(f"/stores/{STORE}/orders")
+        ):
+            body = [state["order_view"]]
         else:
             body = []
         route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
@@ -2457,6 +2500,69 @@ with sync_playwright() as playwright:
     )
     EXPORT_REQUEST_CONTENT["rendered_hash"] = EXPORT_RENDERED
     state["export_listed"] = False
+
+    print()
+    print("=" * 74)
+    print("15. KHÁCH TỚI LẤY ĐỒ — the pickup press for every customer who collects at the counter")
+    print("=" * 74)
+
+    # `PICKUP-ONLY-SETTLE-001`, the `DEC-032` addendum. The shop's courier fetched the laundry; the
+    # customer came by the counter and paid the exact total before it was finished. The server
+    # records that as the walk-in's prepayment and closes the order only once the handover is
+    # recorded -- so if the console offers "Khách đã nhận đồ" to walk-ins alone, this customer's
+    # order is paid, released and impossible to close from the screen. Only a browser can see
+    # which button a real order view produces; the server tests cannot.
+
+    def pickup_button() -> int:
+        return page.get_by_role("button", name="Khách đã nhận đồ").count()
+
+    def open_order(view: dict[str, object]) -> None:
+        state["order_view"] = view
+        page.evaluate("location.hash = '#/orders'")
+        page.wait_for_timeout(600)
+        page.evaluate(f"location.hash = '#/orders/{PICKUP_ORDER_ID}'")
+        page.wait_for_timeout(900)
+
+    open_order(order_view("PICKUP_ONLY", balance="PAID", collected=False))
+    check(
+        "a courier-fetched order paid in advance offers the pickup press",
+        pickup_button() == 1,
+        f"{pickup_button()} buttons",
+    )
+    check(
+        "and says the customer has paid and is still to be handed the bag",
+        "Khách đã trả trước. Khi đưa đồ cho khách" in rendered_text(),
+    )
+    check(
+        "the settlement guardrail says no courier takes money",
+        "Người giao không thu tiền" in rendered_text(),
+    )
+
+    open_order(order_view("SELF_DROP_SELF_COLLECT", balance="PAID", collected=False))
+    check("a walk-in paid at drop-off still offers it", pickup_button() == 1)
+
+    # The refusal direction. A delivery reaches its customer by a leg (`DEC-023`), a customer who
+    # paid at pickup was recorded by that settlement, and an unpaid customer pays first.
+    for mode, balance, collected, why in (
+        ("PICKUP_AND_RETURN", "PAID", False, "a prepaid delivery"),
+        ("RETURN_ONLY", "PAID", False, "a prepaid return-only delivery"),
+        ("PICKUP_ONLY", "PAID", True, "a courier-fetched order already collected"),
+        ("PICKUP_ONLY", "UNPAID", False, "a courier-fetched order not yet paid"),
+    ):
+        open_order(order_view(mode, balance=balance, collected=collected))
+        check(f"{why} offers no pickup press", pickup_button() == 0, f"{pickup_button()} buttons")
+
+    # The list the counter searches at pickup says the same thing on the card.
+    state["order_view"] = order_view("PICKUP_ONLY", balance="PAID", collected=False)
+    page.evaluate("location.hash = '#/'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(1200)
+    check(
+        "the order list marks a courier-fetched order as paid and waiting for the customer",
+        "Khách đã trả trước, chưa nhận đồ" in rendered_text(),
+    )
+    state["order_view"] = None
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

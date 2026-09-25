@@ -542,9 +542,10 @@ class OrderViewResponse(OrderResponse):
     payable_total_vnd: int | None
     ticket_number: int | None
     ticket_issued_on: date | None
-    #: `DEC-032`: whether the customer is recorded as having taken the goods. A walk-in who paid at
-    #: drop-off reads `balance` PAID with this false until the pickup is recorded, and the counter
-    #: needs the difference to know which of the two actions to offer.
+    #: `DEC-032`: whether the customer is recorded as having taken the goods. A customer who paid in
+    #: advance at the counter -- a walk-in at drop-off, or a `PICKUP_ONLY` customer before the
+    #: laundry was finished -- reads `balance` PAID with this false until the pickup is recorded,
+    #: and the counter needs the difference to know which of the two actions to offer.
     self_collection_recorded: bool
 
 
@@ -1575,8 +1576,10 @@ def record_settlement(
     immutable quote revision the order is bound to. Nothing here computes or adjusts money.
 
     Every supported shape is the exact total in one payment: paid and collected at pickup, paid
-    before a delivery (`DEC-023`), or paid by a walk-in at drop-off with the pickup recorded later
-    on `/collection` (`DEC-032`). Ticking "collected" for laundry that is not finished is refused.
+    before a delivery (`DEC-023`), or paid in advance by a customer who will collect at the counter
+    -- a walk-in at drop-off, or a `PICKUP_ONLY` customer who comes by before the laundry is
+    finished -- with the pickup recorded later on `/collection` (`DEC-032` and its addendum). No
+    courier takes money. Ticking "collected" for laundry that is not finished is refused.
     Anything else — a part payment, a deposit, an overpayment, credit terms — is refused with the
     reason and the decision that owns it, because `DEC-010` holds them.
     """
@@ -1636,12 +1639,15 @@ def record_collection(
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> CollectionResponse:
-    """Record that a walk-in customer who paid at drop-off has taken their laundry. `DEC-032`.
+    """Record that a customer who paid in advance at the counter has taken their laundry.
+
+    `DEC-032`: a walk-in who paid at drop-off, and, by its addendum, a `PICKUP_ONLY` customer who
+    paid at the counter before the laundry was finished.
 
     No body. The staff member handing the goods over is the session's, the store is the order
     row's, and `If-Match` is the order version the counter read before handing the bag over. The
-    order must be paid at drop-off, running, and its laundry finished; each refusal comes back with
-    its reason code and writes nothing. No money moves here -- it moved at drop-off.
+    order must be paid in advance, running, and its laundry finished; each refusal comes back with
+    its reason code and writes nothing. No money moves here -- it moved at the counter earlier.
     """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")

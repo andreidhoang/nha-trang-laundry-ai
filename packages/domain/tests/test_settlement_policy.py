@@ -89,10 +89,11 @@ def test_a_range_quote_cannot_be_settled() -> None:
 
 def test_goods_not_collected_by_the_customer_are_refused() -> None:
     # Changed 2026-09-25 under `DEC-032`: this used the default mode, a walk-in, where "nobody
-    # collected" is now a customer paying at drop-off. The refusal still stands for the one
-    # self-collect mode `DEC-032` does not reach -- the shop's courier fetched the laundry, so there
-    # was no drop-off to pay at -- and that is where it is measured now.
-    outcome = evaluate(collected=False, mode=FulfillmentMode.PICKUP_ONLY)
+    # collected" is now a customer paying at drop-off. It then measured `PICKUP_ONLY`, until the
+    # `DEC-032` addendum the same day let that customer pay at the counter in advance too. What is
+    # left of the refusal is its other half, and it is measured there: a counter handover recorded
+    # on an order whose laundry travels back by courier. The code and its decision are unchanged.
+    outcome = evaluate(collected=True, mode=FulfillmentMode.RETURN_ONLY)
     assert isinstance(outcome, SettlementNotSupported)
     assert outcome.refusal is SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER
     assert outcome.decision == "DEC-003"
@@ -196,7 +197,14 @@ MODE_TRUTH_TABLE = (
         SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION,
     ),
     (FulfillmentMode.PICKUP_ONLY, True, SettlementShape.EXACT_PAYMENT_SELF_COLLECTION),
-    (FulfillmentMode.PICKUP_ONLY, False, SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER),
+    # The `DEC-032` addendum (2026-09-25): was COLLECTION_WAS_NOT_BY_THE_CUSTOMER. Paid at the
+    # counter before the laundry is finished, handed over later -- the walk-in's shape, never the
+    # delivery's, because no leg of this mode brings anything back.
+    (
+        FulfillmentMode.PICKUP_ONLY,
+        False,
+        SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION,
+    ),
     (FulfillmentMode.PICKUP_AND_RETURN, True, SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER),
     (FulfillmentMode.PICKUP_AND_RETURN, False, SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY),
     (FulfillmentMode.RETURN_ONLY, True, SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER),
@@ -210,9 +218,9 @@ def test_every_mode_and_collection_pair_has_one_settled_answer(
 ) -> None:
     """Eight cases, no gaps.
 
-    Until `DEC-032` every mode was accepted for exactly one side of the counter. A walk-in is now
-    accepted on both, as two different shapes: paid and taken at pickup, or paid at drop-off with
-    the handover still to be recorded. No mode is accepted twice as the same shape.
+    Until `DEC-032` every mode was accepted for exactly one side of the counter. Both self-collect
+    modes are now accepted on both, as two different shapes: paid and taken at pickup, or paid in
+    advance with the handover still to be recorded. No mode is accepted twice as the same shape.
     """
 
     outcome = evaluate(collected=collected, mode=mode)
@@ -247,15 +255,57 @@ def test_a_pickup_only_order_is_closed_by_the_customer_at_the_counter() -> None:
 def test_a_pickup_only_order_cannot_be_prepaid_for_a_delivery_that_never_comes() -> None:
     """The other half, and the one that was actually taking money.
 
-    Accepting this was worse than refusing the handover: it set `balance_status='PAID'` on an order
-    whose completion needs `required_delivery_legs_succeeded`, which needs a succeeded `RETURN` leg,
-    which `delivery_legs` refuses for this mode. Paid in full, permanently `ACTIVE`.
+    Accepting this as a delivery was worse than refusing the handover: it set
+    `balance_status='PAID'` on an order whose completion needs `required_delivery_legs_succeeded`,
+    which needs a succeeded `RETURN` leg, which `delivery_legs` refuses for this mode. Paid in full,
+    permanently `ACTIVE`.
+
+    Changed 2026-09-25 by the `DEC-032` addendum, from "refused". The customer may now pay at the
+    counter in advance -- but as the walk-in's prepayment, whose handover the pickup command
+    records, and never as a delivery. The shape is what decides whether the order can be closed,
+    so the shape is what this pins.
     """
 
     outcome = evaluate(collected=False, mode=FulfillmentMode.PICKUP_ONLY)
 
+    assert isinstance(outcome, SettlementAccepted)
+    assert outcome.shape is not SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY
+    assert outcome.shape is SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION
+    assert outcome.expected_total_vnd == TOTAL
+
+
+@pytest.mark.parametrize("paid", [TOTAL - 1, TOTAL + 1, 0, TOTAL // 2, TOTAL * 2])
+def test_a_pickup_only_prepayment_is_the_exact_total_or_nothing(paid: int) -> None:
+    """The `DEC-032` addendum moves *when* a `PICKUP_ONLY` customer may pay, not *what*.
+
+    A deposit handed over at the counter while the laundry is still being washed is the shape
+    `DEC-010` deferred, and it is refused with that decision's name exactly as a walk-in's is.
+    """
+
+    outcome = evaluate(paid=paid, collected=False, mode=FulfillmentMode.PICKUP_ONLY)
     assert isinstance(outcome, SettlementNotSupported)
-    assert outcome.refusal is SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER
+    assert outcome.refusal is SettlementRefusal.AMOUNT_IS_NOT_THE_EXACT_TOTAL
+    assert outcome.decision == "DEC-010"
+
+
+@pytest.mark.parametrize(
+    ("minimum", "maximum", "refusal"),
+    [
+        (None, None, SettlementRefusal.NO_PRESENTABLE_TOTAL),
+        (TOTAL, TOTAL + 20_000, SettlementRefusal.TOTAL_IS_A_RANGE),
+    ],
+)
+def test_a_pickup_only_prepayment_still_needs_a_single_quoted_total(
+    minimum: int | None, maximum: int | None, refusal: SettlementRefusal
+) -> None:
+    """A `PICKUP_ONLY` quote's courier fee is always negotiated (`DEC-003`); until it is, there is
+    no total, and a customer paying in advance cannot be taken for a number nobody quoted."""
+
+    outcome = evaluate(
+        minimum=minimum, maximum=maximum, collected=False, mode=FulfillmentMode.PICKUP_ONLY
+    )
+    assert isinstance(outcome, SettlementNotSupported)
+    assert outcome.refusal is refusal
 
 
 def test_a_delivery_order_still_cannot_be_part_paid() -> None:

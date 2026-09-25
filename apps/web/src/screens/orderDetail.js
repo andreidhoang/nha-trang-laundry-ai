@@ -65,8 +65,20 @@ import { amountDue, ticketLabel } from "./orders.js";
  */
 const AUDIT_LIMIT = 100;
 
-/** `SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION`: a walk-in who paid at drop-off. */
+/**
+ * `SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION`: paid in advance at the counter, to be
+ * collected there later -- a walk-in at drop-off (`DEC-032`), or a `PICKUP_ONLY` customer who came
+ * by before the laundry was finished (its addendum).
+ */
 const PREPAID_SELF_COLLECTION = "EXACT_PAYMENT_PREPAID_SELF_COLLECTION";
+
+/**
+ * The fulfilment modes whose customer collects at the counter: every mode outside the server's
+ * `MODES_EXPECTING_RETURN` (packages/domain/.../catalog.py). `PICKUP_ONLY` is one -- the courier
+ * fetched the laundry, and the customer comes in for it. The server decides; this only chooses
+ * which button to offer, and it offered none to a `PICKUP_ONLY` customer who had paid in advance.
+ */
+const SELF_COLLECT_MODES = new Set(["SELF_DROP_SELF_COLLECT", "PICKUP_ONLY"]);
 
 /**
  * One audit row.
@@ -252,7 +264,8 @@ function settlementPanel(spec) {
     title: "Tất toán",
     guardrail:
       "Mọi trường hợp là cùng một khoản tiền: khách trả đúng tổng đã báo, đủ một lần, tại quầy — " +
-      "lúc lấy đồ, lúc gửi đồ (quyết định DEC-032), hoặc trước khi tiệm giao tận nơi. " +
+      "lúc lấy đồ, lúc gửi đồ hoặc ghé quầy trả trước khi đồ xong (quyết định DEC-032), hoặc " +
+      "trước khi tiệm giao tận nơi. Người giao không thu tiền. " +
       "Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định — không " +
       "làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.",
     children: h(
@@ -271,8 +284,9 @@ function settlementPanel(spec) {
         id: "settlement-collected",
         label: "Khách đã tự lấy đồ về",
         hint:
-          "Chỉ tích khi khách trả tiền lúc lấy đồ và đồ đã giặt xong. Khách trả lúc gửi đồ thì " +
-          "bấm “Khách trả trước khi gửi đồ”. Đơn giao tận nơi thì để trống.",
+          "Chỉ tích khi khách trả tiền lúc lấy đồ và đồ đã giặt xong. Khách trả lúc gửi đồ — " +
+          "hoặc khách của đơn tiệm tới lấy đồ ghé quầy trả trước khi đồ xong — thì bấm “Khách " +
+          "trả trước khi gửi đồ”. Đơn giao tận nơi thì để trống. Không nhận tiền qua người giao.",
         control: collectedInput,
       }),
       h(
@@ -309,12 +323,13 @@ function settlementPanel(spec) {
 }
 
 /**
- * Khách đã nhận đồ — the pickup of a walk-in order paid at drop-off. `DEC-032`.
+ * Khách đã nhận đồ — the pickup of an order paid in advance at the counter. `DEC-032`.
  *
  * `POST /internal/v1/orders/{id}/collection` takes no body: the name is the session's, and the
  * precondition is the row version this screen last read (`If-Match`). The button is offered only
- * for the one case it exists for -- paid, not yet collected, a walk-in -- because every other
- * order reaches the customer another way: a customer paying at pickup is recorded by the
+ * for the one case it exists for -- paid, not yet collected, collected at the counter (a walk-in,
+ * or `PICKUP_ONLY` since the `DEC-032` addendum) -- because every other order reaches the customer
+ * another way: a customer paying at pickup is recorded by the
  * settlement itself, and a delivery by its legs. The server re-checks all of it, including that
  * the laundry is finished, and its refusal is shown as it came.
  *
@@ -367,7 +382,7 @@ function collectionPanel(spec) {
     const waiting =
       order.balance === "PAID" &&
       order.self_collection_recorded === false &&
-      order.fulfillment_mode === "SELF_DROP_SELF_COLLECT";
+      SELF_COLLECT_MODES.has(order.fulfillment_mode);
     if (!waiting) {
       render(
         host,
@@ -376,7 +391,7 @@ function collectionPanel(spec) {
           { class: "hint" },
           order.self_collection_recorded
             ? "Đã ghi nhận khách nhận đồ."
-            : "Chỉ dùng khi khách đã trả trước lúc gửi đồ.",
+            : "Chỉ dùng khi khách đã trả trước tại quầy và tới quầy lấy đồ.",
         ),
       );
       return;

@@ -77,6 +77,13 @@ const FULFILLMENT_MODES = [
 ];
 
 /**
+ * The modes whose customer collects at the counter -- every mode outside the server's
+ * `MODES_EXPECTING_RETURN`. `PICKUP_ONLY` is one: the courier fetched the laundry, the customer
+ * comes in for it, and since the `DEC-032` addendum may have paid at the counter in advance.
+ */
+const SELF_COLLECT_MODES = new Set(["SELF_DROP_SELF_COLLECT", "PICKUP_ONLY"]);
+
+/**
  * `AcquisitionSource`. Where the customer says they found the shop.
  *
  * The order matters and is not alphabetical: the four the counter actually hears most sit first, so
@@ -312,11 +319,11 @@ function orderCard(item, options = {}) {
       ["Công nợ", dimensionBadge(item.balance)],
       ["Bản ghi", `v${item.row_version}`, { mono: true }],
     ]),
-    // `DEC-032`: paid at drop-off, not collected yet. Said on the card because this is the list
+    // `DEC-032`: paid in advance, not collected yet. Said on the card because this is the list
     // the counter searches at pickup, and "Đã thu" alone reads as "nothing left to do".
     item.balance === "PAID" &&
     item.self_collection_recorded === false &&
-    item.fulfillment_mode === "SELF_DROP_SELF_COLLECT"
+    SELF_COLLECT_MODES.has(item.fulfillment_mode)
       ? h(
           "p",
           { class: "hint" },

@@ -50,6 +50,9 @@ vẫn bị từ chối.
 - Tiền tính vào **Đã thu tại quầy** của **ngày khách trả**, không phải ngày lấy đồ.
 - Đồ chưa giặt xong thì máy không cho bấm đã nhận đồ — và cũng không cho tích ô “Khách đã tự lấy
   đồ” khi khách trả lúc lấy.
+- **Đơn tiệm tới lấy đồ** (giao nhận *chỉ lấy*): khách chỉ trả **tại quầy**, đúng tổng đã báo — hoặc
+  lúc tới lấy (bước 12, như khách tự mang tới), hoặc ghé quầy trả trước khi đồ giặt xong (bước 9a
+  rồi 11a). **Người giao không nhận và không đưa tiền.**
 
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
 

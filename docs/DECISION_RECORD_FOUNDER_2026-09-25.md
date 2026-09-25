@@ -93,6 +93,38 @@ at a different moment. `DEC-023` made the same distinction for delivery.
 
 **Reverse:** refuse `collected_by_customer: false` on a self-collect order again.
 
+### Addendum — PICKUP_ONLY (2026-09-25)
+
+**The gap.** The ruling above spoke of a customer who *drops laundry off*. A `PICKUP_ONLY` customer
+does not: the shop's courier fetches the laundry and the customer comes to the counter for it. The
+code read the ruling literally and kept refusing that customer's advance payment
+(`COLLECTION_WAS_NOT_BY_THE_CUSTOMER`). Paying when collecting already worked end to end; paying
+at the counter before the laundry was finished did not, so the counter had to turn the money away.
+
+**Ruling.** A `PICKUP_ONLY` customer pays **at the shop counter only**, the **exact quoted total**
+(`DEC-010` unchanged), at one of two moments:
+
+- **when collecting**, in one step, exactly as a walk-in does (`EXACT_PAYMENT_SELF_COLLECTION`); or
+- **in advance**, when present at the counter before the laundry is finished. The payment is the
+  walk-in's prepayment (`EXACT_PAYMENT_PREPAID_SELF_COLLECTION`), and the handover is recorded later
+  on the `DEC-032` collection command by the named staff member who makes it. The same guards
+  apply: no handover until the laundry is `READY_AT_STORE` or `RELEASED`, no completion without the
+  collection record, part payments and deposits refused.
+
+**No payment by or to the courier, ever** (`DEC-023`). The order completes only when paid, released
+**and** collected. There is still no `RETURN` leg for this mode, and the courier's `PICKUP` leg
+closes nothing.
+
+**Why, as founder.** It is the same money at the same counter as a walk-in's prepayment; the only
+difference is who carried the bag in. Refusing it gave the customer standing at the counter with
+the money no honest option, which is the situation `DEC-032` was ruled to end. The earlier reason for
+the refusal, that a paid `PICKUP_ONLY` order had no permitted action left to close it, stopped being
+true when `DEC-032` built the collection record.
+
+**Reverse:** in `evaluate_settlement`, refuse `collected_by_customer: false` for `PICKUP_ONLY` again
+(`packages/domain/.../settlement.py`), and offer the console's "Khách đã nhận đồ" to walk-ins only.
+No migration is involved either way.
+
 ---
 
 ## What is not decided here

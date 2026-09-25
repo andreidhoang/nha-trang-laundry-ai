@@ -1061,4 +1061,8 @@ decisions:
       Yes, the exact quoted total and nothing else, as DEC-023 already allows for delivery.
       Collection is recorded separately at pickup by the named staff member who hands the goods
       over; an order completes only when paid, released and collected. DEC-010 is not reopened:
-      partial payment, deposits, instalments and account credit stay NOT_SUPPORTED.
+      partial payment, deposits, instalments and account credit stay NOT_SUPPORTED. Addendum
+      (2026-09-25, same authority): a PICKUP_ONLY customer pays at the shop counter only, the exact
+      total, either when collecting or in advance at the counter before the laundry is finished,
+      with the handover then recorded by the collection command; no payment by or to the courier
+      (DEC-023).

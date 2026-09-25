@@ -5,7 +5,8 @@ answer is cheapest to see. Three of them are the ones that matter:
 
 * the refusal registry is complete against its enum, so a refusal added later cannot ship without an
   invariant or decision owning it;
-* loss carries no figure anywhere on it, because `DEC-004` declined to give one;
+* loss carries the damage figures and always needs the owner -- `DEC-031` read `DEC-004`'s
+  "loss/damage" where its words stop, and every loss claim goes to the owner whatever the amount;
 * the allocator that spreads a credit across lines is the promotion allocator, so "who gets the
   spare dong" has one answer in this system rather than two.
 """
@@ -17,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from nha_trang_laundry_domain.catalog import AdjustmentDirection, PolicyOutcome, PromotionResolution
+from nha_trang_laundry_domain.catalog import AdjustmentDirection, PromotionResolution, Unit
 from nha_trang_laundry_domain.promotion import CURRENT_PROMOTION as _PROMOTION
 from nha_trang_laundry_domain.promotion import (
     LARGEST_REMAINDER_RULE,
@@ -28,16 +29,17 @@ from nha_trang_laundry_domain.promotion import (
 from nha_trang_laundry_domain.remedies import (
     NO_PRIOR_COMMITMENTS,
     REMEDY_REFUSAL_AUTHORITIES,
+    OwnerReason,
     RemedyAuthorized,
     RemedyCommitments,
     RemedyKind,
+    RemedyLineFacts,
     RemedyOrderFacts,
     RemedyPolicy,
     RemedyPolicyError,
     RemedyRefusal,
     RemedyRefused,
     RemedyRequest,
-    RemedyUnresolved,
     allocate_remedy_credit,
     evaluate_remedy,
     parse_remedy_policy,
@@ -60,13 +62,36 @@ POLICY_PAYLOAD = {
 POLICY = parse_remedy_policy(POLICY_PAYLOAD)
 
 
+def piece(amount: int) -> RemedyLineFacts:
+    """One garment on its own line, charged `amount`: the line's fee *is* the item's fee.
+
+    `DEC-031` made the item fee depend on how a line is priced. Every test in this file was written
+    about "a line charged X", and one piece priced at X is the line shape for which that sentence
+    and the ruling agree exactly, so the figures below keep their meaning. The shapes where the two
+    part company -- several pieces, a bag by weight, a price with no recorded unit -- are pinned in
+    `test_remedy_item_fee.py`.
+    """
+
+    return RemedyLineFacts(
+        service_code="DC_SHIRT",
+        unit=Unit.ITEM,
+        quantity="1",
+        unit_price_vnd=amount,
+        net_amount_vnd=amount,
+    )
+
+
 def facts(**overrides: object) -> RemedyOrderFacts:
+    line_amounts: dict[str, int] = overrides.pop(  # type: ignore[assignment]
+        "line_amounts_vnd", {"line-1": 100_000, "line-2": 40_000}
+    )
     base: dict[str, object] = {
         "goods_returned_at": RETURNED,
         "settled_total_vnd": 110_000,
-        "line_amounts_vnd": {"line-1": 100_000, "line-2": 40_000},
+        "lines": {line_id: piece(amount) for line_id, amount in line_amounts.items()},
         "expects_return_leg": False,
         "return_leg_succeeded": False,
+        "refunded": False,
     }
     base.update(overrides)
     return RemedyOrderFacts(**base)  # type: ignore[arg-type]
@@ -138,35 +163,116 @@ def test_a_policy_that_is_not_dec_004_is_refused(override: dict[str, object]) ->
 
 
 # --- loss -----------------------------------------------------------------------------------------
+#
+# Rewritten for `DEC-031`, which replaced the rule these tests used to pin. Until 2026-09-25 a loss
+# was recorded and refused (`LOSS_POLICY_UNRESOLVED`) and the tests here asserted the absence of
+# every figure, because `DEC-004` "still defaults [loss] to case-by-case negotiation" and nobody had
+# said more. `DEC-031` said more: the ratified 5x ceiling already reads "loss/damage", and what
+# "case-by-case" adds is that every loss claim needs the owner, whatever the amount. Each assertion
+# below is at least as strict as the one it replaced: a loss is still never staff-authorised, and it
+# is now also bounded by a ceiling and a window it did not have.
 
 
-def test_loss_is_recorded_and_carries_no_figure_of_any_kind() -> None:
-    """`DEC-004`'s own words: loss is not covered by the damage figures and must not inherit them.
-
-    Deliberately asserts the *absence* of every number. There is no ceiling to assert, and a test
-    that asserted one would ratify a figure the owner declined to give.
-    """
-
-    outcome = decide(RemedyRequest(kind=RemedyKind.LOST_ITEM, store_fault_attested=True))
-    assert isinstance(outcome, RemedyUnresolved)
-    assert outcome.outcome is PolicyOutcome.REQUIRE_HUMAN
-    assert outcome.reason_code == RemedyRefusal.LOSS_POLICY_UNRESOLVED.value
-    assert outcome.authority == "DEC-004"
-    assert not hasattr(outcome, "ceiling_vnd")
-    assert not hasattr(outcome, "amount_vnd")
+def _loss(amount: int, *, returned: datetime | None = RETURNED) -> object:
+    return decide(
+        RemedyRequest(
+            kind=RemedyKind.LOST_ITEM,
+            store_fault_attested=True,
+            order_line_id="line-2",
+            amount_vnd=amount,
+        ),
+        goods_returned_at=returned,
+    )
 
 
-def test_loss_refuses_before_any_window_or_fault_check() -> None:
-    """The ordering is the point: every later branch reads a figure that does not apply to loss."""
+@pytest.mark.parametrize("amount", [1, 40_000, 100_000, 200_000])
+def test_every_loss_claim_needs_the_owner_whatever_the_amount(amount: int) -> None:
+    """One dong or the whole ceiling: staff record and propose, only the owner releases money."""
 
-    for at, fault in ((NOW + timedelta(days=400), False), (NOW, False), (NOW, True)):
-        outcome = decide(
-            RemedyRequest(kind=RemedyKind.LOST_ITEM, store_fault_attested=fault),
-            at=at,
-            goods_returned_at=None,
+    outcome = _loss(amount)
+    assert isinstance(outcome, RemedyAuthorized)
+    assert outcome.requires_owner_approval is True
+    assert OwnerReason.LOSS_CLAIM in outcome.owner_reasons
+    assert outcome.direction is AdjustmentDirection.CREDIT
+    assert outcome.amount_vnd == amount
+
+
+def test_a_loss_is_capped_at_five_times_the_item_fee_like_damage() -> None:
+    """The ratified ceiling says "loss/damage". `line-2` was charged 40.000 d, so 200.000 d."""
+
+    at = _loss(200_000)
+    assert isinstance(at, RemedyAuthorized) and at.ceiling_vnd == 200_000
+    over = _loss(200_001)
+    assert isinstance(over, RemedyRefused)
+    assert over.refusal is RemedyRefusal.REMEDY_CEILING_EXCEEDED
+    assert over.ceiling_vnd == 200_000
+
+
+def test_a_loss_is_reported_within_the_same_24_hours_as_a_visible_defect() -> None:
+    at_edge = decide(
+        RemedyRequest(
+            kind=RemedyKind.LOST_ITEM,
+            store_fault_attested=True,
+            order_line_id="line-2",
+            amount_vnd=10_000,
+        ),
+        at=RETURNED + timedelta(hours=24),
+    )
+    assert isinstance(at_edge, RemedyAuthorized)
+    assert at_edge.window_closes_at == RETURNED + timedelta(hours=24)
+    late = decide(
+        RemedyRequest(
+            kind=RemedyKind.LOST_ITEM,
+            store_fault_attested=True,
+            order_line_id="line-2",
+            amount_vnd=10_000,
+        ),
+        at=RETURNED + timedelta(hours=24, microseconds=1),
+    )
+    assert isinstance(late, RemedyRefused)
+    assert late.refusal is RemedyRefusal.REMEDY_WINDOW_CLOSED
+    missing = _loss(10_000, returned=None)
+    assert isinstance(missing, RemedyRefused)
+    assert missing.refusal is RemedyRefusal.REMEDY_WINDOW_EVIDENCE_MISSING
+
+
+def test_a_loss_names_an_item_and_an_amount_and_rests_on_store_fault() -> None:
+    """The same shape as damage: the ceiling belongs to an item, so the item must be named."""
+
+    for request_ in (
+        RemedyRequest(kind=RemedyKind.LOST_ITEM, store_fault_attested=True),
+        RemedyRequest(kind=RemedyKind.LOST_ITEM, store_fault_attested=True, amount_vnd=1_000),
+        RemedyRequest(kind=RemedyKind.LOST_ITEM, store_fault_attested=True, order_line_id="line-1"),
+    ):
+        outcome = decide(request_)
+        assert isinstance(outcome, RemedyRefused)
+        assert outcome.refusal is RemedyRefusal.REMEDY_AMOUNT_NOT_APPLICABLE
+    unattested = decide(
+        RemedyRequest(
+            kind=RemedyKind.LOST_ITEM,
+            store_fault_attested=False,
+            order_line_id="line-1",
+            amount_vnd=1_000,
         )
-        assert isinstance(outcome, RemedyUnresolved)
-        assert outcome.reason_code == RemedyRefusal.LOSS_POLICY_UNRESOLVED.value
+    )
+    assert isinstance(unattested, RemedyRefused)
+    assert unattested.refusal is RemedyRefusal.REMEDY_STORE_FAULT_NOT_ATTESTED
+
+
+def test_loss_and_damage_on_one_item_share_its_ceiling() -> None:
+    """Cumulative per item, as `REMEDY-CUMULATIVE-001` built: loss adds to what damage committed."""
+
+    over = decide(
+        RemedyRequest(
+            kind=RemedyKind.LOST_ITEM,
+            store_fault_attested=True,
+            order_line_id="line-2",
+            amount_vnd=50_001,
+        ),
+        committed=RemedyCommitments(line_committed_vnd=150_000, late_delivery_credits=0),
+    )
+    assert isinstance(over, RemedyRefused)
+    assert (over.ceiling_vnd, over.committed_vnd) == (200_000, 150_000)
 
 
 # --- ceilings and escalation ----------------------------------------------------------------------

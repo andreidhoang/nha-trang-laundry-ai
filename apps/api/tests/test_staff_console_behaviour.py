@@ -587,7 +587,9 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Áp dụng khoản giảm trừ",
         "Chép mã giảm trừ này lại ngay",
         "Chờ chủ tiệm duyệt",
-        "Mất đồ — chưa có chính sách để áp dụng",
+        # `DEC-031` retired "Mất đồ — chưa có chính sách để áp dụng": loss is proposable now and
+        # always waits for the owner, and this is the sentence the screen shows for it.
+        "Mất đồ — luôn chờ chủ tiệm duyệt",
         "Đã duyệt lịch",
         "Ghi nhận tất toán",
         "Khách đã tự lấy đồ",
@@ -635,9 +637,40 @@ REMEDY_OPTIONS = {
     # `line-small` was charged 18.000 ₫, so 5x is 90.000 ₫ — inside what staff may approve.
     # `line-large` was charged 120.000 ₫, so 5x is 600.000 ₫ — an amount on it may need the owner.
     "damage_line_ceilings_vnd": {"line-large": 600_000, "line-small": 90_000},
+    # `DEC-031`: the same two lines as the server now sends them, with the fee basis, what each
+    # already carries and what sends it to the owner. The console reads these and not the map
+    # above, which carries no committed total and so cannot predict the owner the way the server
+    # decides it.
+    "damage_lines": [
+        {
+            "line_id": "line-large",
+            "service_code": "DC_EVENING_DRESS",
+            "service_name": "Váy dạ hội",
+            "unit": "ITEM",
+            "quantity": "1",
+            "item_fee_basis": "UNIT",
+            "item_fee_vnd": 120_000,
+            "ceiling_vnd": 600_000,
+            "committed_vnd": 0,
+            "owner_always": [],
+        },
+        {
+            "line_id": "line-small",
+            "service_code": "IRON_KNIT",
+            "service_name": "Áo, quần thun",
+            "unit": "ITEM",
+            "quantity": "1",
+            "item_fee_basis": "UNIT",
+            "item_fee_vnd": 18_000,
+            "ceiling_vnd": 90_000,
+            "committed_vnd": 0,
+            "owner_always": [],
+        },
+    ],
     "late_delivery_credit_vnd": 17_000,
     "late_delivery_threshold_minutes": 120,
-    "loss_reason_code": "LOSS_POLICY_UNRESOLVED",
+    "loss_requires_owner": True,
+    "order_refunded": False,
 }
 
 
@@ -888,24 +921,42 @@ def test_an_amount_above_the_line_ceiling_is_refused_with_the_ceiling_and_never_
     ), "a refused plan must produce no request body at all"
 
 
-def test_a_loss_carries_no_ceiling_no_window_and_no_owner_threshold() -> None:
-    """The inverse assertion the packet asks for: no test may assert a loss ceiling.
+def test_a_loss_always_needs_the_owner_and_is_capped_like_damage() -> None:
+    """`DEC-031` rule 2, on the module that decides what the form says.
 
-    So this asserts the absence of every figure instead. `DEC-004` carries loss forward as
-    undecided and forbids reaching the damage numbers by analogy, and the most likely way this item
-    goes wrong is a helpful console filling one of these in.
+    Rewritten from the pre-`DEC-031` test, which asserted that a loss plan carried no ceiling, no
+    window and no owner threshold because `DEC-004` had left loss undecided. What that test guarded
+    -- that the counter never tells a customer staff can settle a loss -- is kept and made stronger:
+    a loss says "owner" before a line is chosen, and still says it at 1 ₫.
     """
 
-    plan = _plan({"kind": "LOST_ITEM", "storeFaultAttested": True, "typedAmount": "500000"})
+    unchosen = _plan({"kind": "LOST_ITEM", "storeFaultAttested": True})
+    assert unchosen["state"] == "LINE_NOT_CHOSEN"
+    assert unchosen["requiresOwner"] is True and unchosen["ownerReasons"] == ["LOSS_CLAIM"]
+    # The same 24 hours from the handover as a visible defect.
+    assert unchosen["windowClosesAt"] == REMEDY_OPTIONS["defect_window_closes_at"]
 
-    assert plan["state"] == "LOSS_UNRESOLVED"
-    assert plan["ceilingVnd"] is None and plan["hasCeiling"] is False
-    assert plan["windowClosesAt"] is None and plan["windowOpen"] is None
-    assert plan["ownerThresholdVnd"] is None and plan["ownerPossible"] is False
-    assert plan["requiresOwner"] is None
-    # Even with an amount typed into the box before the kind was changed, none of it survives onto
-    # a loss: there is nothing on this plan a caller could read a figure out of.
-    assert plan["amountVnd"] is None
+    small = _plan(
+        {
+            "kind": "LOST_ITEM",
+            "storeFaultAttested": True,
+            "lineId": "line-small",
+            "typedAmount": "1",
+        }
+    )
+    assert small["state"] == "READY"
+    assert small["requiresOwner"] is True and small["ownerReasons"] == ["LOSS_CLAIM"]
+    assert small["ceilingVnd"] == 90_000
+
+    over = _plan(
+        {
+            "kind": "LOST_ITEM",
+            "storeFaultAttested": True,
+            "lineId": "line-small",
+            "typedAmount": "90001",
+        }
+    )
+    assert over["state"] == "ABOVE_CEILING" and over["ceilingVnd"] == 90_000
 
 
 def test_an_unpublished_policy_fails_every_kind_closed_including_the_free_one() -> None:
@@ -920,9 +971,9 @@ def test_an_unpublished_policy_fails_every_kind_closed_including_the_free_one() 
         "incident_id": REMEDY_OPTIONS["incident_id"],
         "order_id": REMEDY_OPTIONS["order_id"],
         "policy_published": False,
-        "loss_reason_code": "LOSS_POLICY_UNRESOLVED",
+        "loss_requires_owner": True,
     }
-    for kind in ("FREE_REWASH", "DAMAGE_COMPENSATION", "LATE_DELIVERY_CREDIT"):
+    for kind in ("FREE_REWASH", "DAMAGE_COMPENSATION", "LATE_DELIVERY_CREDIT", "LOST_ITEM"):
         plan = _plan({"kind": kind, "storeFaultAttested": True}, options=unpublished)
         assert plan["state"] == "POLICY_UNPUBLISHED", kind
         assert plan["ceilingVnd"] is None, kind
@@ -939,7 +990,7 @@ def test_no_recorded_handover_stops_the_window_rather_than_starting_one_now() ->
     """
 
     blind = {**REMEDY_OPTIONS, "goods_returned_at": None}
-    for kind in ("FREE_REWASH", "DAMAGE_COMPENSATION"):
+    for kind in ("FREE_REWASH", "DAMAGE_COMPENSATION", "LOST_ITEM"):
         plan = _plan(
             {"kind": kind, "storeFaultAttested": True, "lineId": "line-small"}, options=blind
         )
@@ -988,7 +1039,9 @@ def test_each_kind_sends_exactly_the_keys_its_own_shape_owns() -> None:
         "lineId: 'line-small', typedAmount: '50.000'}),\n"
         "  late: make({kind: 'LATE_DELIVERY_CREDIT', storeFaultAttested: true, "
         "typedLateness: '180'}),\n"
-        "  loss: make({kind: 'LOST_ITEM', storeFaultAttested: true}),\n"
+        "  loss: make({kind: 'LOST_ITEM', storeFaultAttested: true, "
+        "lineId: 'line-small', typedAmount: '20.000'}),\n"
+        "  lossUnchosen: make({kind: 'LOST_ITEM', storeFaultAttested: true}),\n"
         "}));\n"
     )
 
@@ -1006,9 +1059,106 @@ def test_each_kind_sends_exactly_the_keys_its_own_shape_owns() -> None:
         "store_fault_attested": True,
         "attested_late_by_minutes": 180,
     }
-    # And loss produces nothing to send. The console records the complaint on `#/incidents` and
-    # stops; it does not raise a proposal nothing could show back.
-    assert bodies["loss"] is None
+    # `DEC-031`: a loss now has damage's shape -- one item, one amount -- and goes to the owner on
+    # the server. This used to assert that loss produced no body at all, when the console could
+    # only record the complaint on `#/incidents` and stop. With no item named, it still sends
+    # nothing.
+    assert bodies["loss"] == {
+        "kind": "LOST_ITEM",
+        "store_fault_attested": True,
+        "order_line_id": "line-small",
+        "amount_vnd": 20_000,
+    }
+    assert bodies["lossUnchosen"] is None
+
+
+#: A refunded order, a line whose unit price was never recorded, and an item already carrying 30.000
+#: ₫ -- the three shapes where the typed amount alone says "staff" and the server says "owner".
+DEC_031_OPTIONS = {
+    **REMEDY_OPTIONS,
+    "damage_lines": [
+        {
+            "line_id": "line-0",
+            "service_code": "DC_SHIRT",
+            "service_name": "Áo sơ mi",
+            "unit": "ITEM",
+            "quantity": "3",
+            "item_fee_basis": "UNIT",
+            "item_fee_vnd": 50_000,
+            "ceiling_vnd": 250_000,
+            "committed_vnd": 30_000,
+            "owner_always": [],
+        },
+        {
+            "line_id": "line-1",
+            "service_code": "BED_PILLOW",
+            "service_name": None,
+            "unit": "ITEM",
+            "quantity": "2",
+            "item_fee_basis": "NOT_RECORDED",
+            "item_fee_vnd": 140_000,
+            "ceiling_vnd": 700_000,
+            "committed_vnd": 0,
+            "owner_always": ["ITEM_FEE_NOT_RECORDED"],
+        },
+    ],
+}
+
+
+def test_the_form_predicts_the_owner_from_what_the_item_already_carries() -> None:
+    """The staging-review defect: 80.000 ₫ typed on an item already holding 30.000 ₫.
+
+    The server compares the item's running total, 110.000 ₫, against the 100.000 ₫ staff limit and
+    answers "owner". The form used to compare the 80.000 ₫ alone and say "staff". It now makes the
+    same sum, at the one đồng that decides it.
+    """
+
+    base = {"kind": "DAMAGE_COMPENSATION", "storeFaultAttested": True, "lineId": "line-0"}
+    at = _plan({**base, "typedAmount": "70000"}, options=DEC_031_OPTIONS)
+    over = _plan({**base, "typedAmount": "70001"}, options=DEC_031_OPTIONS)
+    assert at["state"] == "READY" and at["requiresOwner"] is False
+    assert at["committedVnd"] == 30_000
+    assert over["state"] == "READY" and over["requiresOwner"] is True
+    assert over["ownerReasons"] == ["ABOVE_STAFF_LIMIT"]
+    # And the ceiling is the item's too: 30.000 already on it leaves 220.000 under 250.000.
+    ceiling = _plan({**base, "typedAmount": "220001"}, options=DEC_031_OPTIONS)
+    assert ceiling["state"] == "ABOVE_CEILING" and ceiling["ceilingVnd"] == 250_000
+
+
+def test_an_item_whose_fee_was_never_recorded_needs_the_owner_before_an_amount_is_typed() -> None:
+    base = {"kind": "DAMAGE_COMPENSATION", "storeFaultAttested": True, "lineId": "line-1"}
+    before = _plan(base, options=DEC_031_OPTIONS)
+    assert before["state"] == "AMOUNT_MISSING"
+    assert before["requiresOwner"] is True and before["ownerPossible"] is True
+    assert before["itemFeeBasis"] == "NOT_RECORDED"
+    small = _plan({**base, "typedAmount": "10000"}, options=DEC_031_OPTIONS)
+    assert small["requiresOwner"] is True
+    assert small["ownerReasons"] == ["ITEM_FEE_NOT_RECORDED"]
+
+
+def test_the_damage_picker_names_the_service_and_not_the_line_identifier() -> None:
+    lines = _run(
+        "import { damageLines } from './src/core/remedies.js';\n"
+        f"console.log(JSON.stringify(damageLines({json.dumps(DEC_031_OPTIONS)})));\n"
+    )
+    assert [(line["lineId"], line["label"]) for line in lines] == [
+        ("line-0", "Áo sơ mi"),
+        # No name in the pricebook the order was priced under: the code, never "line-1".
+        ("line-1", "BED_PILLOW"),
+    ]
+    assert lines[0]["committed"] == 30_000 and lines[0]["basis"] == "UNIT"
+
+
+def test_a_response_without_per_line_terms_offers_no_line_to_guess_from() -> None:
+    """The ceilings map alone cannot say what an item already carries, so it is not read."""
+
+    legacy = {key: value for key, value in REMEDY_OPTIONS.items() if key != "damage_lines"}
+    plan = _plan(
+        {"kind": "DAMAGE_COMPENSATION", "storeFaultAttested": True, "lineId": "line-small"},
+        options=legacy,
+    )
+    assert plan["state"] == "LINE_NOT_CHOSEN"
+    assert plan["needsAmount"] is False
 
 
 def test_nobody_attesting_store_fault_blocks_every_kind() -> None:

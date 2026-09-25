@@ -327,9 +327,10 @@ class StoredIncidentResult:
 class StoredRemedyProposalResult:
     """A recorded remedy proposal and what the server decided about it. `REMEDY-001`.
 
-    `outcome` is `REQUIRE_HUMAN` for exactly one case -- a loss, which `DEC-004` carries forward as
-    undecided -- and `reason_code` then says `LOSS_POLICY_UNRESOLVED`. Both are on the success
-    response rather than an error, because the complaint *was* recorded: the record is the outcome.
+    Before `DEC-031` a loss came back `REQUIRE_HUMAN` with `reason_code = LOSS_POLICY_UNRESOLVED`.
+    A loss is now a proposal like damage that always waits for the owner, so `outcome` is `ALLOW`,
+    `status` is `OWNER_APPROVAL_REQUIRED`, and `owner_reasons` says why (`LOSS_CLAIM`).
+    `reason_code` stays on the contract and is `None`.
     """
 
     proposal_id: UUID
@@ -347,6 +348,9 @@ class StoredRemedyProposalResult:
     approval_id: UUID | None
     reason_code: str | None
     replayed: bool
+    #: `OwnerReason` values; empty when staff may authorise. A replay of a proposal recorded before
+    #: this field existed reads as empty, which is only ever shown, never decided on.
+    owner_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -2509,6 +2513,7 @@ def _remedy_proposal_mapping(value: Any) -> dict[str, object]:
         "window_closes_at": _isoformat(value.window_closes_at),
         "approval_id": None if value.approval_id is None else str(value.approval_id),
         "reason_code": value.reason_code,
+        "owner_reasons": list(value.owner_reasons),
     }
 
 
@@ -2531,7 +2536,16 @@ def _stored_remedy_proposal_result(
         approval_id=(None if value["approval_id"] is None else UUID(str(value["approval_id"]))),
         reason_code=_optional_text(value["reason_code"]),
         replayed=replayed,
+        owner_reasons=_text_tuple(value.get("owner_reasons")),
     )
+
+
+def _text_tuple(value: object) -> tuple[str, ...]:
+    """A stored list of codes, or nothing for a record written before the list existed."""
+
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(item) for item in value)
 
 
 def _remedy_execution_mapping(value: Any) -> dict[str, object]:

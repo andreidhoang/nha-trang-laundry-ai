@@ -593,7 +593,26 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # on record under "Chi tiết kỹ thuật", which verify_workflow_conformance.py caught. Three
     # arrived with CANCEL-REFUND-001 (a paid order whose resolution does not say the money went
     # back; an unsupported balance shape; a resolution not yet chosen).
-    assert sum(counts.values()) == _registry()["total"] == 381
+    #
+    # 385 after REMEDY-ITEM-FEE-001 (DEC-031, and DEC-030's copy): -3 retired, +7 added, 17
+    # re-keyed. 381 - 3 + 7 = 385.
+    #   * -3 in `screens/remedies.js`: the loss wall's `missing`, `blockedBy` and `today`. They
+    #     said the owner had not decided loss and that the screen has no form for it; DEC-031
+    #     decided it on 2026-09-25 and the form exists, so the `unsupported` block went and its
+    #     three slots with it -- the exit REMEDY-001 and ORDER-LOOKUP-001 took for false claims.
+    #   * +4 `OWNER_REASON_NOTE`, newly in `CLAIM_TABLES`: the sentence for each `OwnerReason` the
+    #     server can send (loss, refunded order, item fee not recorded, above the staff limit).
+    #   * +3 in `screens/remedies.js`: the loss notice's body ("chỉ chủ tiệm duyệt mới được trả,
+    #     kể cả số nhỏ"), and the refunded-order notice's title and body.
+    #   * 17 re-keyed, none added or removed: six `REASON_NOTE` glosses (the two DEC-030 ones now
+    #     state the rule -- the promotion applies, the credit waits unspent -- and
+    #     `PROMOTION_STACKING_REQUIRES_HUMAN` says this bill is the one case the system does not
+    #     follow it; `LOSS_POLICY_UNRESOLVED` now describes only pre-DEC-031 records;
+    #     `REMEDY_CEILING_EXCEEDED`, `REMEDY_AMOUNT_NOT_APPLICABLE` and `REMEDY_APPROVAL_REQUIRED`
+    #     name loss and the per-piece fee), the `#/gaps` entry's `missing` and `today` (no loss
+    #     queue waits on a policy any more), and nine on the remedies screen whose claims about
+    #     the 5x basis, loss and the owner notice changed with the ruling.
+    assert sum(counts.values()) == _registry()["total"] == 385
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

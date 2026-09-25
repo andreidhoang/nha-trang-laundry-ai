@@ -31,7 +31,12 @@ from nha_trang_laundry_api.operations import (
     StoredRemedyProposalResult,
 )
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
-from nha_trang_laundry_db.remedies import RemedyAuthorizationError, RemedyOptions, RemedyStateError
+from nha_trang_laundry_db.remedies import (
+    RemedyAuthorizationError,
+    RemedyLineOption,
+    RemedyOptions,
+    RemedyStateError,
+)
 from nha_trang_laundry_db.store_access import StoreAccessError
 
 STAFF_ID = UUID("00000000-0000-0000-0000-0000000004a1")
@@ -153,33 +158,35 @@ def test_a_proposal_above_the_staff_ceiling_names_the_envelope_the_owner_must_de
     assert response.json()["approval_id"] == str(APPROVAL_ID)
 
 
-def test_a_loss_is_a_recorded_outcome_and_not_an_error(
+def test_a_loss_is_a_proposal_that_always_names_the_owner(
     client: TestClient, stub: StubService
 ) -> None:
-    """`DEC-004` carries loss forward as undecided, and the record *is* the outcome for one.
+    """`DEC-031`: a loss carries a figure and always waits for the owner, and the body says why.
 
-    201 rather than 4xx, because the complaint was written down -- which is the whole point of the
-    item. Every figure is null: there is no loss ceiling, and a body that carried one would be this
-    surface ratifying a number the owner declined to give.
+    Rewritten from the pre-`DEC-031` test, which pinned a loss as a figureless `REQUIRE_HUMAN`
+    record (`LOSS_POLICY_UNRESOLVED`). What it guarded -- that no loss is ever paid on staff
+    authority -- is kept: a 20.000 d loss, far under the staff limit, still comes back
+    `OWNER_APPROVAL_REQUIRED` with an envelope, and `owner_reasons` tells the counter it is because
+    it is a loss, not because of the amount.
     """
 
     stub.outcome = _proposal(
         kind="LOST_ITEM",
-        status="POLICY_UNRESOLVED",
-        outcome="REQUIRE_HUMAN",
-        amount_vnd=None,
-        ceiling_vnd=None,
-        window_opened_at=None,
-        window_closes_at=None,
-        reason_code="LOSS_POLICY_UNRESOLVED",
+        status="OWNER_APPROVAL_REQUIRED",
+        amount_vnd=20_000,
+        ceiling_vnd=250_000,
+        approval_id=APPROVAL_ID,
+        owner_reasons=("LOSS_CLAIM",),
     )
-    response = _propose(client, kind="LOST_ITEM")
+    response = _propose(client, kind="LOST_ITEM", order_line_id="line-0", amount_vnd=20_000)
 
     assert response.status_code == 201
     body = response.json()
-    assert body["outcome"] == "REQUIRE_HUMAN"
-    assert body["reason_code"] == "LOSS_POLICY_UNRESOLVED"
-    assert (body["amount_vnd"], body["ceiling_vnd"], body["window_closes_at"]) == (None, None, None)
+    assert body["status"] == "OWNER_APPROVAL_REQUIRED"
+    assert body["approval_id"] == str(APPROVAL_ID)
+    assert body["owner_reasons"] == ["LOSS_CLAIM"]
+    assert (body["amount_vnd"], body["ceiling_vnd"]) == (20_000, 250_000)
+    assert body["reason_code"] is None
 
 
 def test_the_options_read_carries_everything_the_form_needs_before_anybody_types(
@@ -209,7 +216,91 @@ def test_the_options_read_carries_everything_the_form_needs_before_anybody_types
     # Null, not zero. There is no late-delivery credit to offer on an order nobody delivered, and
     # the console's house style renders an absent total as "—" rather than as 0 đ.
     assert body["late_delivery_credit_vnd"] is None
-    assert body["loss_reason_code"] == "LOSS_POLICY_UNRESOLVED"
+    # `DEC-031`: was `loss_reason_code == "LOSS_POLICY_UNRESOLVED"`, the cue to render loss as
+    # unsupported. Loss is now proposable, and the read states the rule the form must show.
+    assert "loss_reason_code" not in body
+    assert body["loss_requires_owner"] is True
+    assert body["order_refunded"] is False
+
+
+def test_the_options_read_names_each_item_and_what_it_already_carries(
+    client: TestClient, stub: StubService
+) -> None:
+    """`DEC-031` and the staging review: the picker shows a service, not "line-0", and the form can
+    predict the owner the way the server decides -- fee basis, ceiling, committed, owner-always."""
+
+    stub.outcome = RemedyOptions(
+        incident_id=INCIDENT_ID,
+        order_id=ORDER_ID,
+        policy_published=True,
+        staff_approval_ceiling_vnd=100_000,
+        goods_returned_at=RETURNED_AT,
+        rewash_window_closes_at=RETURNED_AT + timedelta(days=7),
+        rewash_window_open=True,
+        defect_window_closes_at=RETURNED_AT + timedelta(hours=24),
+        defect_window_open=True,
+        damage_line_ceilings_vnd={"line-0": 250_000, "line-1": 700_000},
+        damage_lines=(
+            RemedyLineOption(
+                line_id="line-0",
+                service_code="DC_SHIRT",
+                service_name="Áo sơ mi",
+                unit="ITEM",
+                quantity="3",
+                item_fee_basis="UNIT",
+                item_fee_vnd=50_000,
+                ceiling_vnd=250_000,
+                committed_vnd=30_000,
+                owner_always=(),
+            ),
+            RemedyLineOption(
+                line_id="line-1",
+                service_code="BED_PILLOW",
+                service_name=None,
+                unit="ITEM",
+                quantity="2",
+                item_fee_basis="NOT_RECORDED",
+                item_fee_vnd=140_000,
+                ceiling_vnd=700_000,
+                committed_vnd=0,
+                owner_always=("ORDER_REFUNDED", "ITEM_FEE_NOT_RECORDED"),
+            ),
+        ),
+        late_delivery_credit_vnd=None,
+        late_delivery_threshold_minutes=120,
+        order_refunded=True,
+    )
+    response = client.get(f"/internal/v1/stores/{STORE_ID}/incidents/{INCIDENT_ID}/remedy-options")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["order_refunded"] is True
+    assert body["damage_lines"] == [
+        {
+            "line_id": "line-0",
+            "service_code": "DC_SHIRT",
+            "service_name": "Áo sơ mi",
+            "unit": "ITEM",
+            "quantity": "3",
+            "item_fee_basis": "UNIT",
+            "item_fee_vnd": 50_000,
+            "ceiling_vnd": 250_000,
+            "committed_vnd": 30_000,
+            "owner_always": [],
+        },
+        {
+            "line_id": "line-1",
+            "service_code": "BED_PILLOW",
+            "service_name": None,
+            "unit": "ITEM",
+            "quantity": "2",
+            "item_fee_basis": "NOT_RECORDED",
+            "item_fee_vnd": 140_000,
+            "ceiling_vnd": 700_000,
+            "committed_vnd": 0,
+            "owner_always": ["ORDER_REFUNDED", "ITEM_FEE_NOT_RECORDED"],
+        },
+    ]
 
 
 def test_an_unpublished_policy_is_reported_as_unpublished_rather_than_as_zeroes(
@@ -225,6 +316,7 @@ def test_an_unpublished_policy_is_reported_as_unpublished_rather_than_as_zeroes(
     assert body["policy_published"] is False
     assert body["staff_approval_ceiling_vnd"] is None
     assert body["damage_line_ceilings_vnd"] is None
+    assert body["damage_lines"] is None
 
 
 def test_an_execution_reports_the_event_it_produced(client: TestClient, stub: StubService) -> None:

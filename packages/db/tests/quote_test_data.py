@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -68,9 +68,33 @@ def ensure_store(connection: Any, store_id: UUID, *, at: datetime | None = None)
     )
 
 
+@dataclass(frozen=True)
+class FixtureLine:
+    """One exactly priced line for a multi-line fixture, as the snapshot will record it.
+
+    `DEC-031` made the unit and the recorded unit price matter to a remedy ceiling, so a test about
+    three shirts or a bag by weight has to be able to say so. The amounts are stated, not computed:
+    `unit_price_vnd` may be `None`, as it is on a band closed at the counter.
+    """
+
+    line_id: str
+    service_code: str
+    unit: Unit
+    quantity: str
+    unit_price_vnd: int | None
+    amount_vnd: int
+
+
 def make_quote_snapshot(
-    quote_id: UUID, revision: int, amount_vnd: int = 100_000
+    quote_id: UUID,
+    revision: int,
+    amount_vnd: int = 100_000,
+    *,
+    lines: tuple[FixtureLine, ...] | None = None,
+    pricebook: ConfigurationSnapshotReference | None = None,
 ) -> ImmutableQuoteSnapshot:
+    if lines is not None:
+        return _multi_line_snapshot(quote_id, revision, lines, pricebook)
     trace = capture_calculation_trace(
         "PRICING", "pricing-v1", {"list_amount_vnd": amount_vnd, "rounding": "NONE"}
     )
@@ -121,6 +145,85 @@ def make_quote_snapshot(
             amount_vnd + 10_000,
         ),
         (trace,),
+        "quote-engine-v1",
+        canonical_document({"engine": "quote-engine-v1"}).snapshot_hash,
+        None,
+        None,
+        ("TAX_TREATMENT_UNVERIFIED",),
+        ("TAX_TREATMENT_UNVERIFIED", "SLOT_CONFIRMATION"),
+        None,
+    )
+    return build_quote_snapshot(data)
+
+
+def _multi_line_snapshot(
+    quote_id: UUID,
+    revision: int,
+    lines: tuple[FixtureLine, ...],
+    pricebook: ConfigurationSnapshotReference | None,
+) -> ImmutableQuoteSnapshot:
+    """The same estimate as above with several stated lines, each with its own pricing trace."""
+
+    traces = tuple(
+        capture_calculation_trace(
+            f"PRICING_{index}",
+            "pricing-v1",
+            {"line_id": item.line_id, "list_amount_vnd": item.amount_vnd, "rounding": "NONE"},
+        )
+        for index, item in enumerate(lines)
+    )
+    snapshot_lines = tuple(
+        QuoteLineSnapshot(
+            item.line_id,
+            item.service_code,
+            SERVICE_VERSION_ID,
+            QuantityBasis.CUSTOMER_ESTIMATE,
+            item.quantity,
+            item.unit,
+            ExactLineAmounts("EXACT", item.unit_price_vnd, item.amount_vnd, 0, item.amount_vnd),
+            trace.trace.snapshot_hash,
+        )
+        for item, trace in zip(lines, traces, strict=True)
+    )
+    subtotal = sum(item.amount_vnd for item in lines)
+    delivery = QuoteAdjustmentSnapshot(
+        "delivery",
+        QuoteAdjustmentKind.DELIVERY,
+        AdjustmentDirection.DEBIT,
+        10_000,
+        10_000,
+        "DELIVERY_ZONE_MID",
+    )
+    data = QuoteRevisionData(
+        1,
+        quote_id,
+        revision,
+        QuoteFinality.ESTIMATE,
+        QuoteRevisionStatus.REVIEW_REQUIRED,
+        PRICED_AT,
+        PRICED_AT + timedelta(days=1),
+        "VND",
+        (
+            pricebook
+            or ConfigurationSnapshotReference(
+                "PRICEBOOK", PRICEBOOK_ID, 1, "JCS-SHA256-V1:" + "a" * 64
+            ),
+        ),
+        snapshot_lines,
+        (delivery,),
+        QuoteTotalsSnapshot(
+            subtotal,
+            subtotal,
+            0,
+            0,
+            subtotal,
+            subtotal,
+            10_000,
+            0,
+            subtotal + 10_000,
+            subtotal + 10_000,
+        ),
+        traces,
         "quote-engine-v1",
         canonical_document({"engine": "quote-engine-v1"}).snapshot_hash,
         None,
@@ -208,6 +311,8 @@ def accepted_quote(
     quote_id: UUID | None = None,
     fulfillment_mode: FulfillmentMode = FulfillmentMode.SELF_DROP_SELF_COLLECT,
     ticket_issued_at: datetime | None = None,
+    lines: tuple[FixtureLine, ...] | None = None,
+    pricebook: ConfigurationSnapshotReference | None = None,
 ) -> tuple[UUID, int, ImmutableQuoteSnapshot, UUID]:
     """Price a revision and accept it the way production does, returning the orderable revision.
 
@@ -238,7 +343,7 @@ def accepted_quote(
             """,
             (request_id, store_id, contact_id, uuid4(), PRICED_AT),
         )
-    estimate = make_quote_snapshot(identifier, 1)
+    estimate = make_quote_snapshot(identifier, 1, lines=lines, pricebook=pricebook)
     priced = build_quote_snapshot(
         replace(
             estimate.data,

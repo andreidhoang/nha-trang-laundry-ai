@@ -55,6 +55,9 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         # No 0045: it was reserved for the remedy fixes, which turned out to need no schema change.
         ("0046", "order_refunds"),
         ("0047", "order_lookup"),
+        # No 0048-0050 on this branch: those numbers were allotted to other work items and land
+        # with them. 0051 is REMEDY-ITEM-FEE-001's (DEC-031: a loss carries a figure and the owner).
+        ("0051", "remedy_loss_to_owner"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

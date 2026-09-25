@@ -85,7 +85,8 @@ CLAIM_CLASSES = ("notice__title", "screen__lede", "hint", "eyebrow", "notice")
 #: a lookup rather than a literal. `PLAN_NOTE` holds the sentence shown for each state the form can
 #: be in before anything is sent -- "the shop has no record of when this customer collected", "this
 #: is above the cap and the server refuses rather than reducing it" -- and `KIND_NOTE` holds the
-#: one that says loss has no form because the owner has not decided it. Every one of them is
+#: one-line rule for each kind (until DEC-031, the one saying loss had no form because the owner
+#: had not decided it; since, the one saying every loss waits for the owner). Every one of them is
 #: rendered as `hint: KIND_NOTE[draft.kind]` or through `planNotice`, so the literal-scanning
 #: passes above see a variable and register nothing. Ten refusal sentences and the loss claim would
 #: have been the console's least-covered honesty chrome while sitting in its newest screen.
@@ -94,12 +95,18 @@ CLAIM_CLASSES = ("notice__title", "screen__lede", "hint", "eyebrow", "notice")
 #: notice titles. Each entry is the Vietnamese sentence a counter reads *instead* of that prose --
 #: "Không có gì được ghi", "đơn chưa thu tiền" -- so each is a claim about what the server did, and
 #: it would otherwise sit behind the same variable-lookup blind spot described above.
+#:
+#: `OWNER_REASON_NOTE` joined with `DEC-031`. It is the sentence a counter reads for *why* a
+#: proposal waits for the owner -- "mất đồ luôn do chủ tiệm duyệt, dù số tiền nhỏ" -- one per
+#: `OwnerReason` the server can send, and it is rendered through `ownerReasonText`, the same
+#: lookup blind spot. It states the ruling, so rewording it must be a fresh reading.
 CLAIM_TABLES = (
     ("core/errors.js", "MESSAGES"),
     ("core/errors.js", "REFUSAL"),
     ("core/i18n.js", "REASON_NOTE"),
     ("screens/remedies.js", "PLAN_NOTE"),
     ("screens/remedies.js", "KIND_NOTE"),
+    ("screens/remedies.js", "OWNER_REASON_NOTE"),
 )
 
 #: Below this length a string is a label, not a disclosure. Measured: the shortest genuine

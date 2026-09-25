@@ -156,21 +156,21 @@ const GROUPS = [
       },
       {
         ref: "M3",
-        title: "Danh sách đề nghị bồi hoàn và hàng chờ vụ mất đồ",
+        title: "Danh sách đề nghị bồi hoàn của một sự cố",
         what:
-          "Xem các đề nghị bồi hoàn đã ghi cho một sự cố, và xem hàng chờ những vụ mất đồ đang " +
-          "đợi chủ tiệm quyết chính sách.",
+          "Xem lại các đề nghị bồi hoàn đã ghi cho một sự cố, kể cả các vụ mất đồ ghi trước " +
+          "DEC-031 (POLICY_UNRESOLVED, không có số tiền).",
         missing:
-          "Không có đường nào đọc lại các đề nghị của một sự cố, và không có đường nào liệt kê " +
-          "các bản ghi POLICY_UNRESOLVED. Màn hình Bồi hoàn vì vậy chỉ hiện đúng đề nghị bạn vừa " +
-          "gửi trong phiên này, và cố ý không dựng một danh sách trong trình duyệt — danh sách " +
-          "đó sẽ đọc như “đây là tất cả”, điều mà bảng vận hành không có cơ sở để nói.",
+          "Không có đường nào đọc lại các đề nghị của một sự cố. Màn hình Bồi hoàn vì vậy chỉ hiện " +
+          "đúng đề nghị bạn vừa gửi trong phiên này, và cố ý không dựng một danh sách trong trình " +
+          "duyệt — danh sách đó sẽ đọc như “đây là tất cả”, điều mà bảng vận hành không có cơ sở " +
+          "để nói. Đề nghị đang chờ chủ tiệm (kể cả mọi vụ mất đồ) thì có trên màn hình Duyệt.",
         blockedBy:
           "REMEDY-001 dựng đường ghi trước, đường đọc sau. Chưa có mục nào trong hàng đợi cho " +
           "phần đọc này.",
         today:
-          "Chép mã đề nghị lúc gửi. Vụ mất đồ thì báo chủ tiệm trong ngày bằng lời và ghi số " +
-          "phiếu ra sổ — máy có ghi sự cố, nhưng không có màn hình nào gom chúng lại.",
+          "Chép mã đề nghị lúc gửi. Vụ mất đồ nào ghi trước DEC-031 thì lập đề nghị mất đồ mới " +
+          "cho đúng món để chủ tiệm duyệt.",
       },
     ],
   },

@@ -279,7 +279,11 @@ def test_context_drift_check_passes() -> None:
     # each with the reason in the packet: SHOP-ALERT-DELIVERY-001 (nothing here can watch an alert
     # arrive), AGENT-SHADOW-DEFECTS-001 (blocks G1, not staging), OPS-HARDENING-002 and
     # API-INTEGRITY-002.
-    assert "143 work items" in result.stdout
+    #
+    # 146 after the founder rulings of 2026-09-25 (docs/DECISION_RECORD_FOUNDER_2026-09-25.md): +3,
+    # one per ruling that needs code -- REMEDY-ITEM-FEE-001 (DEC-031), RANGE-COUNTER-ATTEST-001
+    # (DEC-029), PREPAID-DROPOFF-001 (DEC-032). DEC-030 needs none.
+    assert "146 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

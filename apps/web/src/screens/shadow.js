@@ -1,9 +1,11 @@
 /**
- * Shadow: the human review surface for everything the agent proposes.
+ * Bản nháp AI: the human review surface for everything the agent proposes.
  *
  * Nothing on this screen sends anything. The queue is the set of drafts the agent produced and that
  * no person has ruled on yet, and the only thing a decision writes is one attributed review row.
- * Several choices here look defensive and are:
+ * Rebuilt on the V2 kit (`CONSOLE-REDESIGN-005`, spec V2 §5.7): each draft is a card with the words
+ * as a chat bubble and three plain actions — "Duyệt", "Sửa rồi duyệt" (the edit box opens in
+ * place), "Từ chối" (a reason picker opens in place). Several choices here look defensive and are:
  *
  *   - **The screen validates what the API does not.** `DraftDecisionRequest` bounds the two optional
  *     strings by length and nothing else, but `agent_draft_reviews` carries four CHECK constraints:
@@ -21,11 +23,15 @@
  *     undecided drafts, so a draft that disappears was decided and one that survives a full reload
  *     was not.
  *   - **The draft body is untrusted content.** A customer or a model wrote it. It is rendered as
- *     text in its own block so that it never reads as something the console is telling the operator.
+ *     text nodes in its own bubble, marked "Văn bản không tin cậy", so that it never reads as
+ *     something the console is telling the operator.
+ *   - **The three actions are of equal weight.** Making "Duyệt" the big coloured one would put a
+ *     thumb on the scale of a review whose whole point is that a person chose.
  *
  * The decision vocabulary is `APPROVE` / `EDIT` / `REJECT`. The approvals queue uses `APPROVED` /
- * `REJECTED` for a different aggregate entirely; the two are never mixed, which is why the tokens
- * are printed on the buttons rather than translated into Vietnamese verbs.
+ * `REJECTED` for a different aggregate entirely; the two are never mixed. The buttons say the
+ * business verb; the token each one writes is kept in its `title`, in the result, and in the
+ * technical details of the history.
  *
  * @module screens/shadow
  */
@@ -37,20 +43,30 @@ import { enumLabel, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
-  badge,
-  empty,
   errorNotice,
-  facts,
   gated,
   labelled,
   listView,
-  panel,
   resultLine,
   revealError,
   setResult,
   skeleton,
-  warningBadges,
 } from "../ui/components.js";
+import {
+  button,
+  emptyState,
+  infoButton,
+  inlineAlert,
+  linkButton,
+  list,
+  messageBubble,
+  page,
+  section,
+  segmented,
+  statusPill,
+  techDetails,
+  toast,
+} from "../ui/kit.js";
 
 /** The server bounds this list at 1..200 and answers anything else with a 409. 50 is its default. */
 const QUEUE_LIMIT = 50;
@@ -69,10 +85,22 @@ const MAX_REASON = 64;
  */
 const REASON_CODE = /^[A-Z][A-Z0-9_]{2,63}$/;
 
-/** The three values `decision` may take, verbatim. */
-const DECISIONS = ["APPROVE", "EDIT", "REJECT"];
+/**
+ * The reasons a reviewer reaches for most, offered as one tap each. These are not a server enum —
+ * `reason_code` is free text under the pattern above and no route publishes a vocabulary — so the
+ * list is this screen's suggestion, and "Mã khác" keeps the free code for anything else. Each
+ * chip writes exactly the code shown beside its words.
+ */
+const REASON_CHIPS = [
+  { code: "TONE_OFF_POLICY", label: "Giọng không hợp" },
+  { code: "WRONG_FACTS", label: "Sai thông tin" },
+  { code: "NOT_NEEDED", label: "Không cần gửi" },
+];
 
-/** What each button does, in the reviewer's language, with the token kept in view. */
+/** The chip value that opens the free code field. */
+const OTHER_REASON = "__OTHER__";
+
+/** What each decision writes, in the reviewer's language. Kept in the buttons' `title`. */
 const DECISION_HINT = {
   APPROVE: "ghi rằng nội dung này dùng được như đang có",
   EDIT: "ghi một bản nháp mới do bạn viết, kèm tên bạn",
@@ -102,6 +130,8 @@ const REFUSED_BEFORE_WRITE = new Set([
  * for a customer message is customer data, and this application keeps none of that on the device.
  *
  * @typedef {object} Review
+ * @property {"idle"|"edit"|"reject"} mode which of the three actions is open on the card
+ * @property {string} reasonChip the chip picked, or `OTHER_REASON`, or ""
  * @property {string} reasonCode
  * @property {string} editedText
  * @property {boolean} busy the card has submitted a decision and must not submit a second one
@@ -110,116 +140,46 @@ const REFUSED_BEFORE_WRITE = new Set([
  * @property {Submission} submission
  * @property {HTMLElement|null} line the card's result line, while the card is on screen
  * @property {HTMLElement|null} failureHost where that card renders its failure, while on screen
+ * @property {HTMLElement|null} actionsHost where the card's actions render, while on screen
  * @property {HTMLElement[]} controls everything that must be disabled while the card is busy
  */
 
 /**
- * The draft body, in its own block.
+ * A draft's words as a received-message bubble, with the untrusted marker kept small but visible.
  *
- * Line breaks are preserved by splitting into paragraphs rather than by styling whitespace, so a
- * multi-line message reads the way it was written. The character count is shown because channel
- * limits are real and a reviewer editing a long draft needs to know what they started from.
- *
- * @param {string} text
+ * @param {unknown} text
+ * @param {string} meta
  * @returns {HTMLElement}
  */
-function draftBody(text) {
-  const raw = typeof text === "string" ? text : "";
-  const lines = raw.split(/\r?\n/).filter((line) => line.trim() !== "");
-  return h(
-    "div",
-    { class: "notice" },
-    h("p", { class: "eyebrow" }, "Nội dung bản nháp · Văn bản không tin cậy"),
-    h(
-      "div",
-      { class: "stack stack--tight" },
-      lines.length
-        ? lines.map((line) => h("p", null, line))
-        : h("p", { class: "hint" }, `${UNKNOWN} bản nháp không có chữ nào`),
-    ),
-    h("p", { class: "hint" }, `${raw.length} ký tự, do agent sinh ra và chưa ai duyệt.`),
-  );
+function draftBubble(text, meta) {
+  return messageBubble({
+    text,
+    marker: h("p", { class: "eyebrow" }, "Nội dung bản nháp · Văn bản không tin cậy"),
+    meta,
+    emptyText: `${UNKNOWN} bản nháp không có chữ nào`,
+  });
 }
 
 /**
  * Where a draft came from. `FR-APR-006` requires a draft to be traceable to its agent run, so both
- * identifiers are shown in full in a title attribute and shortened only for reading.
+ * identifiers are kept in full — in the technical drawer, with a copy button.
  *
  * @param {any} item
  * @returns {HTMLElement}
  */
 function provenance(item) {
-  return facts([
-    ["Kết quả lượt chạy", enumLabel(item.terminal_outcome), { mono: true }],
-    ["Mã kết quả", enumLabel(item.terminal_code), { mono: true }],
-    ["Số lần gọi công cụ", integer(item.tool_call_count)],
-    ["Agent ghi lúc", dateTime(item.produced_at)],
-    [
-      "Lượt chạy agent",
-      h("span", { title: item.agent_run_id || "" }, shortId(item.agent_run_id)),
-      { mono: true, span: true },
-    ],
+  return techDetails([
+    ["Kết quả lượt chạy", enumLabel(item.terminal_outcome)],
+    ["Mã kết quả", enumLabel(item.terminal_code)],
+    ["Số lần gọi công cụ", integer(item.tool_call_count), { mono: false }],
+    ["Agent ghi lúc", dateTime(item.produced_at), { mono: false }],
+    ["Lượt chạy agent", shortId(item.agent_run_id), { copy: String(item.agent_run_id || "") }],
     [
       "Ràng buộc hội thoại",
-      h(
-        "span",
-        { title: item.conversation_binding_id || "" },
-        shortId(item.conversation_binding_id),
-      ),
-      { mono: true, span: true },
+      shortId(item.conversation_binding_id),
+      { copy: String(item.conversation_binding_id || "") },
     ],
   ]);
-}
-
-/**
- * The one confirmation a committed decision gets.
- *
- * It lives outside the queue because the card it belongs to is gone by the time it is read: the
- * queue lists undecided drafts only, so a decided draft leaves the list on the very next load.
- *
- * @param {any} decided
- * @param {HTMLElement} line the screen-level result line
- * @returns {HTMLElement}
- */
-function decisionPanel(decided, line) {
-  return panel({
-    eyebrow: "Đã ghi",
-    title: "Quyết định gần nhất của bạn",
-    children: h(
-      "div",
-      { class: "stack" },
-      line,
-      facts([
-        [
-          "Bản ghi duyệt",
-          h("span", { title: decided.review_id || "" }, shortId(decided.review_id)),
-          { mono: true },
-        ],
-        ["Quyết định", enumLabel(decided.decision), { mono: true }],
-        [
-          "Lượt chạy agent",
-          h("span", { title: decided.agent_run_id || "" }, shortId(decided.agent_run_id)),
-          { mono: true, span: true },
-        ],
-        [
-          "Người quyết định",
-          h(
-            "span",
-            { title: decided.decided_by_staff_id || "" },
-            shortId(decided.decided_by_staff_id),
-          ),
-          { mono: true },
-        ],
-        ["Lúc", dateTime(decided.decided_at)],
-      ]),
-      h(
-        "p",
-        { class: "hint" },
-        "Bản gốc của agent vẫn nằm nguyên trong sổ. Dòng này là quyết định của bạn, không phải một " +
-          "tin nhắn đã gửi đi.",
-      ),
-    ),
-  });
 }
 
 /**
@@ -253,33 +213,53 @@ function failureBlock(entry) {
   ];
 }
 
-/** The standing rules of this screen, stated once above the queue. */
+/**
+ * The standing rules of this screen, one tap away behind the title (tier 2). The first bullet is
+ * the registered one and stays word for word.
+ *
+ * @returns {HTMLElement}
+ */
 function houseRules() {
-  return h(
-    "div",
-    { class: "notice", dataState: "info" },
-    h("p", { class: "notice__title" }, "Ba điều luôn đúng ở màn hình này"),
+  return infoButton(
+    "Ba điều luôn đúng ở màn hình này",
     h(
-      "ul",
-      null,
+      "p",
+      { class: "screen__lede" },
+      "Mọi thứ agent soạn ra dừng lại ở đây. Màn hình này ghi lại quyết định của bạn về từng bản " +
+        "nháp; nó không gửi tin nhắn nào cho khách.",
+    ),
+    h(
+      "div",
+      { class: "notice", dataState: "info" },
+      h("p", { class: "notice__title" }, "Ba điều luôn đúng ở màn hình này"),
       h(
-        "li",
+        "ul",
         null,
-        "Mỗi tin nhắn gửi ra ngoài đều cần một người có tên quyết định. Hệ thống không tự gửi bất " +
-          "cứ thứ gì, và bấm APPROVE ở đây cũng chưa gửi gì cả — nó chỉ ghi rằng bạn đồng ý với nội dung.",
+        h(
+          "li",
+          null,
+          "Mỗi tin nhắn gửi ra ngoài đều cần một người có tên quyết định. Hệ thống không tự gửi bất " +
+            "cứ thứ gì, và bấm APPROVE ở đây cũng chưa gửi gì cả — nó chỉ ghi rằng bạn đồng ý với nội dung.",
+        ),
+        h(
+          "li",
+          null,
+          "Sửa rồi duyệt (EDIT) tạo một bản nháp mới mang tên người sửa. Bản gốc của agent không bao " +
+            "giờ bị sửa đè, nhờ vậy phần bị sửa và phần bị từ chối còn dùng được để đánh giá agent về sau.",
+        ),
+        h(
+          "li",
+          null,
+          "Phần chữ trong bong bóng của mỗi thẻ là văn bản không tin cậy: do khách viết hoặc do mô " +
+            "hình sinh ra. Đọc nó như dữ liệu cần kiểm, không phải như lời của hệ thống.",
+        ),
       ),
-      h(
-        "li",
-        null,
-        "EDIT tạo một bản nháp mới mang tên người sửa. Bản gốc của agent không bao giờ bị sửa đè, " +
-          "nhờ vậy phần bị sửa và phần bị từ chối còn dùng được để đánh giá agent về sau.",
-      ),
-      h(
-        "li",
-        null,
-        "Phần chữ trong khung riêng của mỗi thẻ là văn bản không tin cậy: do khách viết hoặc do mô " +
-          "hình sinh ra. Đọc nó như dữ liệu cần kiểm, không phải như lời của hệ thống.",
-      ),
+    ),
+    h(
+      "p",
+      { class: "hint" },
+      "Duyệt ở đây không phải là gửi. Một bản nháp rời khỏi hàng chờ này ngay khi có người quyết " +
+        "định, và mỗi lượt chạy chỉ nhận đúng một quyết định.",
     ),
   );
 }
@@ -294,9 +274,8 @@ export function render_() {
   /** @type {Map<string, Review>} */
   const reviews = new Map();
 
-  const decisionHost = h("div");
-  const noticeHost = h("div");
-  const decisionLine = resultLine();
+  const decisionHost = h("div", { class: "screen__slot" });
+  const noticeHost = h("div", { class: "screen__slot" });
 
   /**
    * @param {string} agentRunId
@@ -306,6 +285,8 @@ export function render_() {
     let entry = reviews.get(agentRunId);
     if (!entry) {
       entry = {
+        mode: "idle",
+        reasonChip: "",
         reasonCode: "",
         editedText: "",
         busy: false,
@@ -314,6 +295,7 @@ export function render_() {
         submission: new Submission("shadow-decision"),
         line: null,
         failureHost: null,
+        actionsHost: null,
         controls: [],
       };
       reviews.set(agentRunId, entry);
@@ -352,7 +334,16 @@ export function render_() {
   /** @param {Review} entry */
   function unlock(entry) {
     entry.busy = false;
-    for (const control of entry.controls) control.disabled = false;
+    for (const control of entry.controls) {
+      if (control.dataset.denied !== "true") control.disabled = false;
+    }
+  }
+
+  /** Any change of what the reviewer means is a new intent: a new key, and the old words go. */
+  function edited(entry) {
+    entry.submission.reset();
+    say(entry, null, "");
+    if (!entry.busy && entry.failure) showFailure(entry, null);
   }
 
   /**
@@ -365,31 +356,26 @@ export function render_() {
    */
   function validate(decision, entry, original) {
     const reason = entry.reasonCode.trim();
-    const edited = entry.editedText;
+    const editedText = decision === "EDIT" ? entry.editedText : "";
 
     if (decision === "EDIT") {
-      if (!edited.trim()) {
-        return "EDIT phải kèm nội dung thay thế. Hãy viết bản nháp mới vào ô sửa, hoặc chọn APPROVE.";
+      if (!editedText.trim()) {
+        return "Sửa rồi duyệt phải kèm nội dung thay thế. Hãy viết lại vào ô sửa, hoặc bấm Duyệt.";
       }
-      if (edited.length > MAX_EDITED) {
-        return `Nội dung sửa dài ${edited.length} ký tự, quá mức ${MAX_EDITED} máy chủ nhận.`;
+      if (editedText.length > MAX_EDITED) {
+        return `Nội dung sửa dài ${editedText.length} ký tự, quá mức ${MAX_EDITED} máy chủ nhận.`;
       }
-      if (edited.trim() === String(original || "").trim()) {
+      if (editedText.trim() === String(original || "").trim()) {
         return (
-          "Nội dung sửa đang giống hệt bản gốc. Một bản EDIT không thay đổi gì thì về sau không nói " +
-          "lên điều gì — hãy sửa nội dung, hoặc chọn APPROVE."
+          "Nội dung sửa đang giống hệt bản gốc. Một bản sửa không thay đổi gì thì về sau không nói " +
+          "lên điều gì — hãy sửa nội dung, hoặc bấm Duyệt."
         );
       }
-    } else if (edited.trim()) {
-      return (
-        `Ô sửa đang có nội dung nhưng ${decision} không mang nội dung sửa đi được. Bấm EDIT để ghi ` +
-        "bản sửa đó, hoặc xoá ô sửa rồi quyết định lại."
-      );
     }
 
     if (decision === "REJECT" && !reason) {
       return (
-        "REJECT phải kèm mã lý do. Một lần từ chối không có lý do là một dòng lịch sử không dùng " +
+        "Từ chối phải kèm lý do. Một lần từ chối không có lý do là một dòng lịch sử không dùng " +
         "được vào việc gì về sau."
       );
     }
@@ -404,7 +390,7 @@ export function render_() {
    * the first call starts, and only an outcome that provably did not write re-enables them.
    *
    * @param {any} item
-   * @param {string} decision
+   * @param {"APPROVE"|"EDIT"|"REJECT"} decision
    */
   async function decide(item, decision) {
     const entry = reviewFor(item.agent_run_id);
@@ -420,15 +406,14 @@ export function render_() {
     render(noticeHost);
     lock(entry);
     showFailure(entry, null);
-    say(entry, "warn", `Đang ghi quyết định ${decision}…`);
+    say(entry, "warn", `Đang ghi quyết định ${enumVi(decision)}…`);
 
-    const reason = entry.reasonCode.trim();
+    const reason = decision === "APPROVE" ? "" : entry.reasonCode.trim();
     const payload = {
       decision,
       reason_code: reason || null,
       // The table refuses replacement text on anything but an EDIT, so the field is null-by-rule
-      // rather than null-by-omission — and `validate` already refused an APPROVE or a REJECT that
-      // would silently throw away something the reviewer typed.
+      // rather than null-by-omission.
       edited_text: decision === "EDIT" ? entry.editedText : null,
     };
 
@@ -445,13 +430,10 @@ export function render_() {
       );
       entry.submission.reset();
       reviews.delete(item.agent_run_id);
-      setResult(
-        decisionLine,
-        "ok",
-        `Đã ghi quyết định ${decided.decision}. Không có tin nhắn nào được gửi đi.`,
-      );
-      render(decisionHost, decisionPanel(decided, decisionLine));
+      toast(`Đã ghi: ${enumVi(decided.decision)}`);
+      render(decisionHost, decisionAlert(decided));
       await queue.reload();
+      void loadReviews();
       return;
     } catch (error) {
       if (REFUSED_BEFORE_WRITE.has(error?.kind)) {
@@ -501,139 +483,304 @@ export function render_() {
   }
 
   /**
-   * One draft: where it came from, what it says, and the three things a reviewer may do with it.
+   * The one confirmation a committed decision gets. It lives outside the queue because the card it
+   * belongs to is gone by the time it is read.
+   *
+   * @param {any} decided
+   * @returns {HTMLElement}
+   */
+  function decisionAlert(decided) {
+    return inlineAlert({
+      state: "ok",
+      title: `Đã ghi quyết định: ${enumVi(decided.decision)}. Không có tin nhắn nào được gửi đi.`,
+      body: [
+        h(
+          "p",
+          { class: "hint" },
+          "Bản gốc của agent vẫn nằm nguyên trong sổ. Dòng này là quyết định của bạn, không phải một " +
+            "tin nhắn đã gửi đi.",
+        ),
+        techDetails([
+          ["Quyết định", enumLabel(decided.decision)],
+          ["Bản ghi duyệt", shortId(decided.review_id), { copy: String(decided.review_id || "") }],
+          [
+            "Lượt chạy agent",
+            shortId(decided.agent_run_id),
+            { copy: String(decided.agent_run_id || "") },
+          ],
+          ["Người quyết định", shortId(decided.decided_by_staff_id)],
+          ["Lúc", dateTime(decided.decided_at), { mono: false }],
+        ]),
+      ],
+    });
+  }
+
+  /**
+   * The reason picker: three chips for the usual reasons and "Mã khác" for a free code, which
+   * keeps the table's pattern and is upper-cased as it is typed.
+   *
+   * @param {Review} entry
+   * @param {boolean} required
+   * @param {string} prefix
+   * @returns {HTMLElement}
+   */
+  function reasonPicker(entry, required, prefix) {
+    const codeInput = /** @type {HTMLInputElement} */ (
+      h("input", {
+        type: "text",
+        value: entry.reasonChip === OTHER_REASON ? entry.reasonCode : "",
+        autocomplete: "off",
+        spellcheck: "false",
+        autocapitalize: "characters",
+        maxlength: String(MAX_REASON),
+        placeholder: "VD: KHACH_DA_DEN_LAY",
+        dataFormat: "id",
+        disabled: entry.busy || !verdict.allowed,
+        "aria-invalid": entry.reasonCode && !REASON_CODE.test(entry.reasonCode) ? "true" : null,
+        onInput: (event) => {
+          entry.reasonCode = event.target.value.trim().toUpperCase();
+          event.target.value = entry.reasonCode;
+          event.target.setAttribute(
+            "aria-invalid",
+            entry.reasonCode && !REASON_CODE.test(entry.reasonCode) ? "true" : "false",
+          );
+          edited(entry);
+        },
+      })
+    );
+    const otherField = labelled({
+      id: `${prefix}-reason`,
+      label: "Mã lý do khác",
+      hint: "Viết hoa, dạng A-Z 0-9 _, dài 3–64 ký tự.",
+      control: codeInput,
+    });
+    otherField.hidden = entry.reasonChip !== OTHER_REASON;
+    const chips = segmented({
+      label: required ? "Lý do từ chối" : "Lý do sửa (tuỳ chọn)",
+      wrap: true,
+      value: entry.reasonChip,
+      options: [
+        ...REASON_CHIPS.map((chip) => ({ value: chip.code, label: chip.label })),
+        { value: OTHER_REASON, label: "Mã khác…" },
+      ],
+      onChange: (value) => {
+        // A second tap on the chip already chosen clears it, which is how an optional reason is
+        // taken back off an edit.
+        const same = value === entry.reasonChip && value !== OTHER_REASON;
+        entry.reasonChip = same ? "" : value;
+        chips.setValue(entry.reasonChip);
+        entry.reasonCode = same ? "" : value === OTHER_REASON ? codeInput.value : value;
+        otherField.hidden = entry.reasonChip !== OTHER_REASON;
+        if (entry.reasonChip === OTHER_REASON) codeInput.focus();
+        edited(entry);
+      },
+    });
+    for (const chip of chips.querySelectorAll("button")) {
+      const code = chip.getAttribute("data-value");
+      if (code && code !== OTHER_REASON) chip.title = code;
+      chip.disabled = entry.busy || !verdict.allowed;
+      entry.controls.push(/** @type {HTMLElement} */ (chip));
+    }
+    entry.controls.push(codeInput);
+    return h(
+      "div",
+      { class: "stack stack--tight" },
+      h("p", { class: "label" }, required ? "Vì sao không dùng được?" : "Lý do sửa (tuỳ chọn)"),
+      chips,
+      otherField,
+    );
+  }
+
+  /**
+   * One of the card's action buttons, locked while busy and gated by the role.
+   *
+   * @param {object} spec
+   * @param {string} spec.label
+   * @param {string} [spec.decision] the token it writes, kept in `title` and a data attribute
+   * @param {"primary"|"secondary"|"quiet"|"danger"} [spec.variant]
+   * @param {() => void} spec.onClick
+   * @param {Review} entry
+   * @param {boolean} [spec.network]
+   * @returns {HTMLElement}
+   */
+  function action(spec, entry) {
+    const node = button({
+      label: spec.label,
+      variant: spec.variant,
+      network: spec.network !== false,
+      disabled: entry.busy,
+      block: true,
+      onClick: spec.onClick,
+      data: spec.decision ? { decision: spec.decision } : undefined,
+    });
+    if (spec.decision) node.title = `${spec.decision} — ${DECISION_HINT[spec.decision]}`;
+    entry.controls.push(node);
+    return gated(node, verdict);
+  }
+
+  /**
+   * Draw the card's action area for its current mode.
+   *
+   * @param {any} item
+   * @param {Review} entry
+   */
+  function drawActions(item, entry) {
+    if (!entry.actionsHost) return;
+    entry.controls = [];
+    const prefix = `shadow-${item.agent_run_id}`;
+    const setMode = (mode) => {
+      entry.mode = mode;
+      // Leaving a mode takes what it held with it: an edit abandoned is not carried into a
+      // "Duyệt", and a reason picked for a refusal is not carried into an edit.
+      if (mode !== "edit") entry.editedText = "";
+      if (mode === "idle" || mode === "edit") {
+        entry.reasonChip = "";
+        entry.reasonCode = "";
+      }
+      if (mode === "edit" && !entry.editedText) entry.editedText = String(item.draft_text || "");
+      edited(entry);
+      drawActions(item, entry);
+      const focus = entry.actionsHost?.querySelector("textarea, .segmented button");
+      if (focus instanceof HTMLElement) focus.focus();
+    };
+
+    if (entry.mode === "edit") {
+      const editedInput = h("textarea", {
+        rows: "5",
+        maxlength: String(MAX_EDITED),
+        spellcheck: "true",
+        placeholder: "Viết lại nội dung sẽ gửi cho khách…",
+        disabled: entry.busy || !verdict.allowed,
+        onInput: (event) => {
+          entry.editedText = event.target.value;
+          edited(entry);
+        },
+      });
+      editedInput.value = entry.editedText;
+      entry.controls.push(editedInput);
+      render(
+        entry.actionsHost,
+        h(
+          "div",
+          { class: "stack" },
+          labelled({
+            id: `${prefix}-edited`,
+            label: "Bản bạn viết lại",
+            hint:
+              `Tối đa ${MAX_EDITED} ký tự. Lưu thành bản nháp mới mang tên bạn; ` +
+              "bản gốc phía trên giữ nguyên.",
+            control: editedInput,
+          }),
+          reasonPicker(entry, false, prefix),
+          h(
+            "div",
+            { class: "draft__actions draft__actions--two" },
+            action(
+              { label: "Huỷ", variant: "quiet", network: false, onClick: () => setMode("idle") },
+              entry,
+            ),
+            action(
+              {
+                label: "Lưu và duyệt",
+                variant: "primary",
+                decision: "EDIT",
+                onClick: () => void decide(item, "EDIT"),
+              },
+              entry,
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (entry.mode === "reject") {
+      render(
+        entry.actionsHost,
+        h(
+          "div",
+          { class: "stack" },
+          reasonPicker(entry, true, prefix),
+          h(
+            "div",
+            { class: "draft__actions draft__actions--two" },
+            action(
+              { label: "Huỷ", variant: "quiet", network: false, onClick: () => setMode("idle") },
+              entry,
+            ),
+            action(
+              {
+                label: "Từ chối bản nháp",
+                variant: "danger",
+                decision: "REJECT",
+                onClick: () => void decide(item, "REJECT"),
+              },
+              entry,
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    render(
+      entry.actionsHost,
+      h(
+        "div",
+        { class: "draft__actions" },
+        action(
+          { label: "Duyệt", decision: "APPROVE", onClick: () => void decide(item, "APPROVE") },
+          entry,
+        ),
+        action(
+          { label: "Sửa rồi duyệt", network: false, onClick: () => setMode("edit") },
+          entry,
+        ),
+        action({ label: "Từ chối", network: false, onClick: () => setMode("reject") }, entry),
+      ),
+    );
+  }
+
+  /**
+   * One draft: what it says, the three things a reviewer may do with it, and where it came from.
    *
    * @param {any} item
    * @returns {HTMLElement}
    */
   function draftCard(item) {
     const entry = reviewFor(item.agent_run_id);
-    const prefix = `shadow-${item.agent_run_id}`;
     const line = resultLine();
     const failureHost = h("div", { class: "stack stack--tight" }, failureBlock(entry));
+    const actionsHost = h("div");
     entry.line = line;
     entry.failureHost = failureHost;
-    entry.controls = [];
+    entry.actionsHost = actionsHost;
 
     // A queue reload rebuilds every card, so what the card was saying is restored from state rather
     // than lost. A locked card in particular must keep saying why it is locked.
     if (entry.status) setResult(line, entry.status.state, entry.status.text);
+    drawActions(item, entry);
 
-    const locked = entry.busy || !verdict.allowed;
-
-    const reasonInput = h("input", {
-      type: "text",
-      value: entry.reasonCode,
-      autocomplete: "off",
-      spellcheck: "false",
-      maxlength: String(MAX_REASON),
-      placeholder: "TONE_OFF_POLICY",
-      dataFormat: "id",
-      disabled: locked,
-      "aria-invalid": entry.reasonCode && !REASON_CODE.test(entry.reasonCode) ? "true" : null,
-      onInput: (event) => {
-        entry.reasonCode = event.target.value.trim().toUpperCase();
-        event.target.value = entry.reasonCode;
-        event.target.setAttribute(
-          "aria-invalid",
-          entry.reasonCode && !REASON_CODE.test(entry.reasonCode) ? "true" : "false",
-        );
-        entry.submission.reset();
-        say(entry, null, "");
-        if (!entry.busy && entry.failure) showFailure(entry, null);
-      },
-    });
-
-    const editedInput = h("textarea", {
-      rows: "6",
-      maxlength: String(MAX_EDITED),
-      spellcheck: "true",
-      placeholder: "Viết lại nội dung sẽ gửi cho khách…",
-      disabled: locked,
-      onInput: (event) => {
-        entry.editedText = event.target.value;
-        entry.submission.reset();
-        say(entry, null, "");
-        if (!entry.busy && entry.failure) showFailure(entry, null);
-      },
-    });
-    editedInput.value = entry.editedText;
-
-    entry.controls.push(reasonInput, editedInput);
-
-    // Three plain buttons, deliberately of equal weight. Making APPROVE the big coloured one would
-    // put a thumb on the scale of a review whose whole point is that a person chose.
-    //
-    // Labelled `Gloss (TOKEN)`, like every other server enum on this console. They read `APPROVE`,
-    // `EDIT` and `REJECT` and nothing else, with the Vietnamese only in a `title` — so the three
-    // most consequential controls in the whole supervision loop were English words to a counter
-    // worker, explained by a tooltip that a touch device cannot reach. The token stays verbatim
-    // because these are audit values and because the approval-envelope vocabulary is a different
-    // one that must never be confused with this; the gloss is what makes them operable.
-    const buttons = DECISIONS.map((decision) => {
-      const button = h(
-        "button",
-        {
-          type: "button",
-          disabled: entry.busy,
-          title: DECISION_HINT[decision],
-          onClick: () => void decide(item, decision),
-        },
-        enumLabel(decision),
-      );
-      entry.controls.push(button);
-      return gated(button, verdict);
-    });
-
-    // And what each one writes, in words, next to the buttons rather than inside them. Which of
-    // the three a reviewer means is a point-of-action distinction on an outbound customer
-    // message, and `STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md` §4 keeps those uncollapsed and out of
-    // tooltips.
-    const decisionMeanings = h(
-      "p",
-      { class: "hint" },
-      DECISIONS.map((decision) => `${enumVi(decision)}: ${DECISION_HINT[decision]}`).join(" · "),
-    );
-
+    const raw = typeof item.draft_text === "string" ? item.draft_text : "";
     return h(
       "article",
-      { class: "card stack" },
+      { class: "draft surface", dataAgentRun: String(item.agent_run_id || "") },
       h(
         "div",
-        { class: "spread" },
-        h(
-          "strong",
-          { class: "mono", title: item.agent_run_id || "" },
-          shortId(item.agent_run_id),
-        ),
-        item.terminal_outcome === "REQUIRE_HUMAN"
-          ? warningBadges(["HUMAN_APPROVAL_REQUIRED"])
-          : null,
+        { class: "draft__head" },
+        statusPill({
+          state: "warn",
+          text: "Chờ bạn quyết",
+          token: String(item.terminal_outcome || ""),
+        }),
+        h("span", { class: "draft__time" }, `Agent soạn lúc ${dateTime(item.produced_at)}`),
       ),
+      draftBubble(item.draft_text, `${raw.length} ký tự, do agent sinh ra và chưa ai duyệt.`),
+      actionsHost,
+      h("p", { class: "hint draft__fact" }, "Duyệt chỉ ghi quyết định của bạn — chưa gửi gì cho khách."),
+      line,
+      failureHost,
       provenance(item),
-      draftBody(item.draft_text),
-      h(
-        "form",
-        { class: "form", onSubmit: (event) => event.preventDefault() },
-        labelled({
-          id: `${prefix}-reason`,
-          label: "Mã lý do",
-          hint: "Bắt buộc với REJECT, tuỳ chọn với APPROVE và EDIT. Viết hoa, dạng A-Z 0-9 _.",
-          control: reasonInput,
-        }),
-        labelled({
-          id: `${prefix}-edited`,
-          label: "Nội dung sửa",
-          hint:
-            `Chỉ đi kèm EDIT, tối đa ${MAX_EDITED} ký tự. Lưu thành bản nháp mới mang tên bạn; ` +
-            "bản gốc phía trên giữ nguyên.",
-          control: editedInput,
-        }),
-        h("div", { class: "form__actions" }, buttons),
-        decisionMeanings,
-        line,
-        failureHost,
-      ),
     );
   }
 
@@ -644,6 +791,19 @@ export function render_() {
       if (!live.has(key)) reviews.delete(key);
     }
   }
+
+  // The calm empty queue. `listView` renders a plain line for an empty list; this screen shows the
+  // kit's empty state instead, in its own host, and hides the list host while there is nothing.
+  const emptyHost = h(
+    "div",
+    null,
+    emptyState({
+      icon: "draft",
+      title: "Không có bản nháp nào đang chờ",
+      body: "Máy không tự gửi tin nào. Khi agent soạn một tin, nó sẽ nằm ở đây chờ bạn duyệt.",
+    }),
+  );
+  emptyHost.hidden = true;
 
   /**
    * The queue. A read, so retrying it is offered; nothing here re-issues a decision. `reload()`
@@ -665,25 +825,29 @@ export function render_() {
     truncationText: (limit) =>
       `Máy chủ trả tối đa ${limit} bản nháp và đã trả đủ; có thể còn nữa. API này không có phân trang.`,
     onLoadStart: () => {
+      emptyHost.hidden = true;
+      queueHost.hidden = false;
       // The cards about to be replaced no longer own the nodes their entries point at.
       for (const entry of reviews.values()) {
         entry.line = null;
         entry.failureHost = null;
+        entry.actionsHost = null;
       }
     },
-    onLoaded: prune,
+    onLoaded: (items) => {
+      prune(items);
+      emptyHost.hidden = items.length > 0;
+      queueHost.hidden = items.length === 0;
+    },
   });
+  const queueHost = queue.host;
 
   /* ---- the review log ---------------------------------------------------------------------
    *
-   * The queue above is undecided-only, so a draft leaves it the instant somebody rules on it and
-   * the confirmation panel is the last anyone sees of it. That is right for a queue and wrong for
-   * a record: approve, edit and reject are captured so the agent can be graded on them, and until
-   * this panel existed nothing in the console ever read them back.
-   *
-   * Placed here rather than on a screen of its own, because the question it answers — what has
-   * this thing been drafting, and what did we do about it — is asked in the same breath as the
-   * queue, by the same person, and a separate destination would need an identifier nobody carries.
+   * The queue above is undecided-only, so a draft leaves it the instant somebody rules on it. That
+   * is right for a queue and wrong for a record: approve, edit and reject are captured so the agent
+   * can be graded on them, and this compact history is where they are read back. An approved or
+   * rewritten draft is also where a person asks for it to be sent — one link, to `#/exceptions`.
    */
 
   const REVIEW_LIMIT = 50;
@@ -692,57 +856,81 @@ export function render_() {
   const reviewMoreHost = h("div");
 
   /**
-   * One decided draft: what the agent wrote, what a person did about it, and who.
+   * One decided draft, compact: what was decided and when, the words it ended on, and — for an
+   * approved or rewritten one — the one way to ask for it to be sent. The full words and the ids
+   * sit in the drawer underneath.
    *
    * @param {any} item
    * @returns {HTMLElement}
    */
-  function reviewedCard(item) {
+  function reviewedRow(item) {
     const decision = String(item.decision || "");
+    const sendable = decision === "APPROVE" || decision === "EDIT";
+    const words =
+      typeof item.edited_text === "string" && item.edited_text ? item.edited_text : item.draft_text;
     return h(
-      "article",
-      { class: "card stack" },
+      "div",
+      { class: "history", dataDecision: decision },
       h(
         "div",
-        { class: "spread" },
-        badge({
-          token: enumLabel(decision),
-          gloss: "",
-          state: decision === "REJECT" ? "warn" : "ok",
+        { class: "history__head" },
+        statusPill({
+          state: decision === "REJECT" ? "neutral" : "ok",
+          text: enumVi(decision),
+          token: decision,
         }),
-        h("span", { class: "hint mono" }, dateTime(item.decided_at)),
+        h("span", { class: "history__time" }, dateTime(item.decided_at)),
+        item.reason_code
+          ? h(
+              "span",
+              { class: "history__reason", title: String(item.reason_code) },
+              REASON_CHIPS.find((chip) => chip.code === item.reason_code)?.label ||
+                String(item.reason_code),
+            )
+          : null,
       ),
-      draftBody(item.draft_text),
-      item.edited_text
-        ? h(
-            "div",
-            { class: "stack stack--tight" },
-            h("p", { class: "eyebrow" }, "Người sửa đã viết lại"),
-            draftBody(item.edited_text),
-          )
-        : null,
-      facts([
-        ["Lượt chạy agent", h("span", { title: item.agent_run_id || "" }, shortId(item.agent_run_id)), { mono: true }],
-        ["Người quyết định", h("span", { title: item.decided_by_staff_id || "" }, shortId(item.decided_by_staff_id)), { mono: true }],
-        ...(item.reason_code ? [["Mã lý do", item.reason_code, { mono: true }]] : []),
-        ["Agent ghi lúc", dateTime(item.produced_at)],
-      ]),
+      h("p", { class: "history__snippet" }, typeof words === "string" && words ? words : UNKNOWN),
       // MESSAGE-DRAFT-BINDING-001. A draft somebody approved or rewrote is one a person may now
       // ask to send, and that request is raised on `#/exceptions` from the server's own binding —
       // this link only carries the draft id there. A rejected draft has nothing sendable, and the
       // server answers its binding with a 404, so no link is offered for it.
-      decision === "APPROVE" || decision === "EDIT"
-        ? h(
-            "p",
-            null,
-            h(
-              "a",
-              { href: `#/exceptions?draft=${encodeURIComponent(String(item.agent_run_id || ""))}` },
-              "Xin duyệt gửi tay tin này",
-            ),
-            " — mở phần Gửi thủ công với đúng chữ máy chủ đang lưu. Chưa có gì được gửi.",
-          )
+      sendable
+        ? linkButton({
+            href: `#/exceptions?draft=${encodeURIComponent(String(item.agent_run_id || ""))}`,
+            label: "Xin duyệt gửi tay",
+            variant: "quiet",
+            icon: "message",
+          })
         : null,
+      techDetails(
+        [
+          [
+            "Bản agent soạn",
+            draftBubble(item.draft_text, `Agent ghi lúc ${dateTime(item.produced_at)}`),
+            { mono: false },
+          ],
+          item.edited_text
+            ? [
+                "Người sửa đã viết lại",
+                messageBubble({
+                  text: item.edited_text,
+                  side: "out",
+                  emptyText: `${UNKNOWN} bản sửa không có chữ nào`,
+                }),
+                { mono: false },
+              ]
+            : null,
+          ["Quyết định", enumLabel(decision)],
+          item.reason_code ? ["Mã lý do", item.reason_code] : null,
+          [
+            "Lượt chạy agent",
+            shortId(item.agent_run_id),
+            { copy: String(item.agent_run_id || "") },
+          ],
+          ["Người quyết định", shortId(item.decided_by_staff_id)],
+        ],
+        { summary: "Toàn văn và chi tiết" },
+      ),
     );
   }
 
@@ -757,17 +945,21 @@ export function render_() {
     render(
       reviewMoreHost,
       h(
-        "button",
-        {
-          type: "button",
-          dataVariant: "quiet",
-          dataRequiresNetwork: "true",
-          onClick: (event) => void loadOlderReviews(event.currentTarget),
-        },
-        "Xem thêm quyết định cũ hơn",
+        "div",
+        { class: "stack stack--tight history__more" },
+        h("p", { class: "hint" }, "Đang hiện các quyết định gần nhất; còn quyết định cũ hơn."),
+        button({
+          label: "Xem thêm quyết định cũ hơn",
+          variant: "quiet",
+          network: true,
+          onClick: (event) => void loadOlderReviews(/** @type {any} */ (event.currentTarget)),
+        }),
       ),
     );
   }
+
+  /** @type {HTMLElement|null} */
+  let reviewList = null;
 
   /**
    * @param {HTMLElement|null} control
@@ -785,7 +977,9 @@ export function render_() {
         oldestReviewId = String(items[items.length - 1].review_id || "");
         // Appended, not re-rendered: this list grows downward and older entries belong below, so
         // nothing already on screen moves under the reader.
-        reviewLogHost.append(...items.map(reviewedCard));
+        reviewList?.append(
+          ...items.map((item) => h("li", { class: "rows__item" }, reviewedRow(item))),
+        );
       }
       renderReviewMore(isTruncated(items, REVIEW_LIMIT));
     } catch (error) {
@@ -804,11 +998,10 @@ export function render_() {
       );
       const items = Array.isArray(body) ? body : [];
       oldestReviewId = items.length > 0 ? String(items[items.length - 1].review_id || "") : null;
+      reviewList = items.length ? list(items.map(reviewedRow), { label: "Đã quyết" }) : null;
       render(
         reviewLogHost,
-        items.length === 0
-          ? empty("Chưa có quyết định nào được ghi cho cửa hàng này.")
-          : items.map(reviewedCard),
+        reviewList || h("p", { class: "empty-line" }, "Chưa có quyết định nào được ghi."),
       );
       renderReviewMore(isTruncated(items, REVIEW_LIMIT));
     } catch (error) {
@@ -822,42 +1015,37 @@ export function render_() {
   return h(
     "section",
     { class: "screen" },
-    h(
-      "div",
-      { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "Người quyết định · Máy không tự gửi"),
-      h("h1", null, "Bản nháp AI"),
-      h(
-        "p",
-        { class: "screen__lede" },
-        "Mọi thứ agent soạn ra dừng lại ở đây. Màn hình này ghi lại quyết định của bạn về từng bản " +
-          "nháp; nó không gửi tin nhắn nào cho khách.",
-      ),
-    ),
+    page({
+      title: "Bản nháp AI",
+      subtitle: "Máy không tự gửi — mỗi tin chờ bạn quyết.",
+      info: houseRules(),
+    }),
     decisionHost,
     noticeHost,
-    panel({
-      eyebrow: "Chờ người quyết định",
-      title: "Bản nháp chưa ai xử lý",
-      count: queue.count,
-      guardrail:
-        "Duyệt ở đây không phải là gửi. Một bản nháp rời khỏi hàng chờ này ngay khi có người quyết " +
-        "định, và mỗi lượt chạy chỉ nhận đúng một quyết định.",
+    section({
+      title: /** @type {any} */ (h("span", { class: "row" }, "Chờ bạn quyết", queue.count)),
+      card: false,
       children: h(
         "div",
         { class: "stack" },
         queue.bar.node,
-        houseRules(),
         queue.truncation,
-        queue.host,
+        emptyHost,
+        queueHost,
       ),
     }),
-    panel({
-      eyebrow: "Đã ghi",
-      title: "Quyết định đã ghi",
-      guardrail:
-        "Đây là những bản nháp đã có người quyết định. Bản gốc của agent nằm cạnh quyết định để " +
-        "sau này chấm được agent bằng việc thật. Không dòng nào ở đây là một tin nhắn đã gửi đi.",
+    section({
+      title: "Đã quyết",
+      card: false,
+      info: infoButton(
+        "Danh sách này là gì?",
+        h(
+          "p",
+          { class: "hint" },
+          "Đây là những bản nháp đã có người quyết định. Bản gốc của agent nằm cạnh quyết định để " +
+            "sau này chấm được agent bằng việc thật. Không dòng nào ở đây là một tin nhắn đã gửi đi.",
+        ),
+      ),
       children: h("div", { class: "stack" }, reviewLogHost, reviewMoreHost),
     }),
   );

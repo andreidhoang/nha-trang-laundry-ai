@@ -916,6 +916,14 @@ MESSAGE_TEXT = (
     '<img src=x onerror="window.__pwned = true"> Tiệm mở cửa đến 21 giờ.'
 )
 
+#: `CONSOLE-REDESIGN-005`. The envelope step 3 locks, and step 4 attests under If-Match.
+MANUAL_ENVELOPE_ID = "ffffffff-3333-4333-8444-000000000001"
+
+#: `CONSOLE-REDESIGN-005`, section 16. One undecided draft on `#/shadow`, hostile like the message
+#: above: a model's words must reach the reviewer as characters.
+SHADOW_DRAFT_ID = "abababab-cdcd-4333-8444-efefefefefef"
+SHADOW_DRAFT_TEXT = 'Dạ, đồ xong rồi ạ. <b onmouseover="window.__pwned = true">Ghé lấy nhé</b>'
+
 #: `CONSENT-TRANSACTIONAL-001` (`DEC-033`), section 19. The customer's own messages after the STOP,
 #: newest first, as `release_evidence` lists them. The release must send the one the operator picks
 #: from this list, value for value -- never an id the console composed or was typed.
@@ -1218,7 +1226,7 @@ with sync_playwright() as playwright:
                 )
                 return
             body = {
-                "manual_send_envelope_id": "ffffffff-3333-4333-8444-000000000001",
+                "manual_send_envelope_id": MANUAL_ENVELOPE_ID,
                 "approval_request_id": MESSAGE_APPROVAL,
                 "status": "APPROVED_FOR_MANUAL_SEND",
                 "recipient_binding_id": MESSAGE_RECIPIENT,
@@ -1299,6 +1307,70 @@ with sync_playwright() as playwright:
                     "snapshot_hash": "JCS-SHA256-V1:" + "4" * 64,
                     "envelope_matches": False,
                 }
+        elif url.split("?")[0].endswith("/attest") and route.request.method == "POST":
+            # Step 4 of the manual send. Captured with its headers: the property is that the
+            # attestation carries the envelope's row version as a strong-quoted If-Match and an
+            # idempotency key, and sends back exactly the values step 3 returned.
+            state.setdefault("attest_posts", []).append(
+                (
+                    route.request.post_data,
+                    route.request.headers.get("if-match"),
+                    route.request.headers.get("idempotency-key"),
+                    url,
+                )
+            )
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "manual_send_envelope_id": MANUAL_ENVELOPE_ID,
+                        "approval_request_id": MESSAGE_APPROVAL,
+                        "status": "MANUAL_SEND_RECORDED",
+                        "recipient_binding_id": MESSAGE_RECIPIENT,
+                        "rendered_hash": MESSAGE_RENDERED,
+                        "row_version": 2,
+                        "replayed": False,
+                    }
+                ),
+            )
+            return
+        elif (
+            "/shadow/drafts/" in url
+            and url.split("?")[0].endswith("/decision")
+            and route.request.method == "POST"
+        ):
+            # A reviewer's decision on one draft. Captured: the property is what the three
+            # actions send, and that the client-side checks stop an illegal payload before this.
+            state.setdefault("shadow_decisions", []).append(route.request.post_data)
+            sent = json.loads(route.request.post_data or "{}")
+            state["drafts_listed"] = False
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "review_id": "dddddddd-eeee-4333-8444-999999999999",
+                        "agent_run_id": SHADOW_DRAFT_ID,
+                        "decision": sent.get("decision"),
+                        "decided_by_staff_id": SESSION_OK["staff_user_id"],
+                        "decided_at": "2026-09-25T03:10:00+00:00",
+                    }
+                ),
+            )
+            return
+        elif "/shadow/drafts" in url and state.get("drafts_listed"):
+            body = [
+                {
+                    "agent_run_id": SHADOW_DRAFT_ID,
+                    "conversation_binding_id": "ffffffff-1111-4333-8444-222222222222",
+                    "terminal_outcome": "REQUIRE_HUMAN",
+                    "terminal_code": "DRAFT_REQUIRES_HUMAN",
+                    "tool_call_count": 2,
+                    "produced_at": "2026-09-25T03:05:00+00:00",
+                    "draft_text": SHADOW_DRAFT_TEXT,
+                }
+            ]
         elif "/shadow/reviews" in url and state.get("reviews_listed"):
             # Two decided drafts: one a person approved, which may now be asked to send, and one
             # they rejected, which has nothing sendable and must offer no such link.
@@ -3391,9 +3463,97 @@ with sync_playwright() as playwright:
     state["message_rejected"] = False
     state["message_listed"] = False
 
+    # `CONSOLE-REDESIGN-005`. The undecided queue on `#/shadow`: the draft is a bubble of text
+    # nodes, the three actions are "Duyệt" / "Sửa rồi duyệt" / "Từ chối", and the table's CHECK
+    # constraints are enforced before anything is sent -- an unchanged edit and a reasonless
+    # refusal never reach the server, and a refusal sends exactly the reason picked.
+    state["drafts_listed"] = True
+    state["shadow_decisions"] = []
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/shadow'")
+    page.wait_for_timeout(900)
+    card = page.locator(f"article[data-agent-run='{SHADOW_DRAFT_ID}']")
+    check(
+        "an undecided draft renders as a card with its words as characters, marked untrusted",
+        card.count() == 1
+        and SHADOW_DRAFT_TEXT in (card.text_content() or "")
+        and "Văn bản không tin cậy" in (card.text_content() or "")
+        and page.evaluate(
+            "() => document.querySelectorAll('article.draft b').length === 0"
+            " && window.__pwned !== true"
+        ),
+        repr((card.text_content() or "")[:160]),
+    )
+    labels = page.evaluate(
+        f"""() => [...document.querySelectorAll("article[data-agent-run='{SHADOW_DRAFT_ID}']"""
+        """ .draft__actions button")].map((b) => b.textContent.trim())"""
+    )
+    check(
+        "the card offers exactly Duyệt, Sửa rồi duyệt and Từ chối",
+        labels == ["Duyệt", "Sửa rồi duyệt", "Từ chối"],
+        repr(labels),
+    )
+    card.locator("button", has_text="Sửa rồi duyệt").click()
+    page.wait_for_timeout(200)
+    edit_box = card.locator("textarea")
+    check(
+        "Sửa rồi duyệt opens the edit box in place, holding the draft's words",
+        edit_box.count() == 1 and edit_box.input_value() == SHADOW_DRAFT_TEXT,
+    )
+    card.locator("button", has_text="Lưu và duyệt").click()
+    page.wait_for_timeout(300)
+    check(
+        "an edit that changes nothing is refused on screen and sends nothing",
+        state["shadow_decisions"] == [] and "giống hệt bản gốc" in (card.text_content() or ""),
+        repr(state["shadow_decisions"]),
+    )
+    card.locator("button", has_text="Huỷ").click()
+    page.wait_for_timeout(200)
+    card.locator("button", has_text="Từ chối").click()
+    page.wait_for_timeout(200)
+    card.locator("button", has_text="Từ chối bản nháp").click()
+    page.wait_for_timeout(300)
+    check(
+        "a refusal without a reason is refused on screen and sends nothing",
+        state["shadow_decisions"] == [] and "phải kèm lý do" in (card.text_content() or ""),
+        repr(state["shadow_decisions"]),
+    )
+    card.locator("button", has_text="Mã khác").click()
+    page.wait_for_timeout(150)
+    card.locator("input[type=text]").type("wr", delay=10)
+    card.locator("button", has_text="Từ chối bản nháp").click()
+    page.wait_for_timeout(300)
+    check(
+        "a free reason code is upper-cased as typed and still held to the table's pattern",
+        state["shadow_decisions"] == []
+        and card.locator("input[type=text]").input_value() == "WR"
+        and "Mã lý do phải viết hoa" in (card.text_content() or ""),
+        repr(card.locator("input[type=text]").input_value()),
+    )
+    card.locator("button", has_text="Sai thông tin").click()
+    page.wait_for_timeout(150)
+    card.locator("button", has_text="Từ chối bản nháp").click()
+    page.wait_for_timeout(900)
+    sent = [json.loads(p or "{}") for p in state["shadow_decisions"]]
+    check(
+        "the refusal sends the picked chip's code, and no edited text",
+        sent == [{"decision": "REJECT", "reason_code": "WRONG_FACTS", "edited_text": None}],
+        repr(sent),
+    )
+    check(
+        "the decision is confirmed as recorded and not sent, and the queue is calm and empty",
+        "Không có tin nhắn nào được gửi đi" in rendered_text()
+        and "Máy không tự gửi" in rendered_text()
+        and page.locator("article.draft").count() == 0,
+    )
+    state["drafts_listed"] = False
+
     # Where the operator starts: a decided draft on `#/shadow`. Only one a person approved or
     # rewrote offers the way to ask for a send.
     state["reviews_listed"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
     page.evaluate("location.hash = '#/shadow'")
     page.wait_for_timeout(900)
     links = page.evaluate(
@@ -3460,6 +3620,76 @@ with sync_playwright() as playwright:
     check(
         "and the page says a different person must approve and nothing was sent",
         "không phải bạn" in rendered_text() and "Chưa có gì được gửi" in rendered_text(),
+    )
+
+    # `CONSOLE-REDESIGN-005`: steps 3 and 4 carry every value forward, and the attestation -- the
+    # one CAS write on this screen -- goes out under the envelope's row version as a strong-quoted
+    # If-Match. That header was sent since the panel existed and asserted by nothing (PART B).
+    state["prepare_refusal"] = None
+    state["attest_posts"] = []
+    page.locator("button", has_text="Khoá phong bì cho người gửi tay").first.click()
+    page.wait_for_timeout(800)
+    carried = page.evaluate(
+        """() => ({
+          envelope: document.querySelector("#attest-envelope-id")?.value,
+          version: document.querySelector("#attest-resource-version")?.value,
+          rendered: document.querySelector("#attest-rendered-hash")?.value,
+          row: document.querySelector("#attest-row-version")?.value,
+        })"""
+    )
+    check(
+        "locking the envelope carries all four attestation values into step 4, nothing pasted",
+        "Phong bì đã khoá" in rendered_text()
+        and carried
+        == {
+            "envelope": MANUAL_ENVELOPE_ID,
+            "version": "1",
+            "rendered": MESSAGE_RENDERED,
+            "row": "1",
+        },
+        repr(carried),
+    )
+    attest_button = page.locator("button", has_text="Chứng thực rằng tôi đã gửi tin này").first
+    notice_before = page.evaluate(
+        """() => {
+          const button = [...document.querySelectorAll("button")]
+            .find((b) => b.textContent.includes("Chứng thực rằng tôi đã gửi tin này"));
+          const notice = [...document.querySelectorAll("[data-not-delivered]")]
+            .find((n) => n.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING);
+          return Boolean(notice && notice.offsetParent !== null
+            && notice.textContent.includes("không có nghĩa là khách đã nhận"));
+        }"""
+    )
+    check(
+        "the not-delivered fact is visible right above the attest button",
+        notice_before is True,
+    )
+    page.locator("button", has_text="Vừa gửi xong").first.click()
+    page.wait_for_timeout(150)
+    attest_button.click()
+    page.wait_for_timeout(900)
+    attests = state.get("attest_posts", [])
+    body = json.loads(attests[-1][0] or "{}") if attests else {}
+    check(
+        "the attestation sends If-Match with the envelope's row version, strong-quoted",
+        len(attests) == 1 and attests[0][1] == '"1"',
+        repr([(a[1], a[2]) for a in attests]),
+    )
+    check(
+        "under an idempotency key, to the locked envelope, with the carried version and digest",
+        len(attests) == 1
+        and bool(attests[0][2])
+        and attests[0][3].split("?")[0].endswith(f"/manual-sends/{MANUAL_ENVELOPE_ID}/attest")
+        and body.get("observed_resource_version") == 1
+        and body.get("exact_rendered_hash") == MESSAGE_RENDERED
+        and str(body.get("sent_at", "")).endswith("Z"),
+        repr(body),
+    )
+    outcome = page.locator("[data-outcome='MANUAL_SEND_RECORDED']")
+    check(
+        "the recorded result repeats that MANUAL_SEND_RECORDED is not delivery",
+        outcome.count() == 1
+        and "không có nghĩa là khách đã nhận" in (outcome.text_content() or ""),
     )
 
     print()
@@ -3919,6 +4149,21 @@ with sync_playwright() as playwright:
         "an owner is offered the release control",
         release_button.count() == 1 and release_button.is_enabled(),
     )
+    # `CONSOLE-REDESIGN-005`: the release is a sheet. The button opens it; the picker lists the
+    # customer's messages by the time they arrived, never by id.
+    opener = page.locator("button[data-service-release-open]")
+    check(
+        "the release opens from a button on the card, and the sheet names messages by time only",
+        opener.count() == 1
+        and opener.is_enabled()
+        and page.evaluate(
+            """() => [...document.querySelectorAll("#service-release-evidence option")]
+                     .every((o) => o.textContent.startsWith("Khách nhắn lúc ")
+                                   && !o.textContent.includes(o.value.slice(0, 8)))"""
+        ),
+    )
+    opener.click()
+    page.wait_for_timeout(300)
     page.locator("#service-release-evidence").select_option(SERVICE_EVIDENCE[1]["webhook_event_id"])
     press(release_button)
     page.wait_for_timeout(900)
@@ -3970,14 +4215,14 @@ with sync_playwright() as playwright:
         )
         check(
             f"and the {reason} refusal locks nothing and opens the contact's card again",
-            "Envelope đã khoá" not in panel_text
+            "Phong bì đã khoá" not in panel_text
             and len(state.get("service_reads", [])) > reads_before,
         )
     state["prepare_refusal"] = None
 
     # No message from the customer since the STOP: nothing to cite, so no release control at all.
     state["service_state"] = "SUPPRESSED_NO_EVIDENCE"
-    page.locator("button", has_text="Đọc tin nhắn sẽ gửi").first.click()
+    page.locator("button", has_text="Đọc lại tin nhắn").first.click()
     page.wait_for_timeout(900)
     check(
         "with no later message from the customer the card offers no release, and says why",

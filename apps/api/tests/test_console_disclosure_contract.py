@@ -756,7 +756,16 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     body (the server checks again at the lock and at the attestation), and the no-evidence
     #     notice's title and body (a release rests only on the customer's own later message).
     #   419 + 11 = 430, predicted from the registry diff before pinning.
-    assert sum(counts.values()) == _registry()["total"] == 430
+    # 436 after CONSOLE-REDESIGN-005 (shadow, assistant, exceptions, manual send): +6 added,
+    #   0 retired, 3 re-keyed, 4 reworded. Re-keyed (same words, `guardrail:` -> `notice`/`hint`
+    #   inside an ⓘ sheet): exceptions c542174e4775, shadow add42213ce89 and 4202f9908977.
+    #   Reworded because the stepper renumbered the steps (1-4, was 0-2) and the old numbers would
+    #   be false: manualSend 48b2712c7485, 85e4f0f7a3be, e715fa3e867b, 9b57c14c8b63. Added tier-1
+    #   lines at the action: exceptions "Không bao giờ gửi lại tự động…", manualSend "Chỉ khoá khi
+    #   chính bạn sẽ gửi…" and "Một người khác sẽ duyệt…", shadow "Duyệt chỉ ghi quyết định…" and
+    #   the review-log truncation line; and the release scope sentence ("Tin quảng cáo vẫn bị
+    #   chặn…"), which was a variable before and is now a literal the registry can see.
+    assert sum(counts.values()) == _registry()["total"] == 436
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

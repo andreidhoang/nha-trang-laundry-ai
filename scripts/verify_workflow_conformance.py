@@ -1283,6 +1283,30 @@ def scenario_ai_refuses(console: Console) -> None:
         console.call("GET", f"/internal/v1/stores/{STORE}/shadow/drafts")["body"] == [],
         "",
     )
+    # CONSOLE-REDESIGN-005: an empty queue is a calm empty state that says so, not a bare line.
+    ok(
+        "the empty queue says no draft is waiting",
+        "Không có bản nháp nào đang chờ" in drafts,
+        "",
+    )
+
+    # CONSOLE-REDESIGN-005: the manual send is a four-step stepper under "Gửi tay", and the only
+    # typing path is folded under "Nhập mã thủ công" -- nothing is pasted on the common path.
+    console.open("#/exceptions")
+    console.page.locator("button", has_text="Gửi tay").first.click()
+    console.page.wait_for_timeout(600)
+    steps = console.page.locator("section.step").count()
+    manual = console.text()
+    ok(
+        "Gửi tay is a four-step stepper that starts from reading the words",
+        steps == 4 and "Đọc tin sẽ gửi" in manual and "Ghi nhận đã gửi" in manual,
+        f"{steps} steps",
+    )
+    ok(
+        "and typing a code is only offered under Nhập mã thủ công, folded",
+        console.page.locator("details.manual-entry:not([open]) #manual-approval-id").count() == 1,
+        "",
+    )
 
     console.open("#/assistant")
     touched("shell.nav.assistant")

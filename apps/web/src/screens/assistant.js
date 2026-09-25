@@ -45,10 +45,11 @@
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UNKNOWN, dateTime, shortId } from "../core/format.js";
-import { NAV, enumLabel } from "../core/i18n.js";
+import { NAV, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
-import { badge, errorNotice, icon, reasonCodeList, skeleton } from "../ui/components.js";
+import { errorNotice, icon, reasonCodeList, skeleton } from "../ui/components.js";
+import { infoButton, linkButton, page, statusPill } from "../ui/kit.js";
 
 /** The server caps history at 100; ask for its default page. */
 const HISTORY_LIMIT = 50;
@@ -84,12 +85,11 @@ const DECLINED_INTENTS = new Set(["REVENUE_UNAVAILABLE", "UNSUPPORTED"]);
 /**
  * How the server read the question, labelled as a claim the operator can disagree with.
  *
- * Two changes from the bare badge this replaced. The token renders `Gloss (TOKEN)` through
- * `enumLabel`, the dual-language rule every other server enum on this console follows; the earlier
- * form passed the gloss as `token` with an empty `gloss`, which pushed the verbatim token into a
- * `title` tooltip — unreachable on touch, and this console is used on a phone at a counter. And
- * the chip is introduced by a word, because an unlabelled chip beside an answer reads as
- * decoration rather than as the machine stating how it understood the question.
+ * Spec V2 §4.1: an operator surface shows the gloss only, through the one `enumVi` map; the
+ * verbatim token rides on the pill (`title`, `data-token`) for whoever needs to quote it, and a
+ * token with no gloss still renders raw so a missing gloss stays visible. The chip is introduced
+ * by a word, because an unlabelled chip beside an answer reads as decoration rather than as the
+ * machine stating how it understood the question.
  *
  * @param {string} intent
  * @returns {HTMLElement}
@@ -97,11 +97,11 @@ const DECLINED_INTENTS = new Set(["REVENUE_UNAVAILABLE", "UNSUPPORTED"]);
 function intentRow(intent) {
   return h(
     "div",
-    { class: "row" },
-    h("span", { class: "hint" }, "Hiểu là"),
-    badge({
-      token: enumLabel(intent),
-      gloss: "",
+    { class: "chat__intent" },
+    h("span", null, "Hiểu là"),
+    statusPill({
+      text: enumVi(intent),
+      token: intent || undefined,
       state: DECLINED_INTENTS.has(intent) ? "warn" : "info",
     }),
   );
@@ -116,8 +116,12 @@ function intentRow(intent) {
 function provenance(item) {
   return h(
     "p",
-    { class: "hint mono" },
-    `lượt ${shortId(item.turn_id)} · ${dateTime(item.created_at)}`,
+    {
+      class: "chat__stamp",
+      title: `lượt ${String(item.turn_id || "")}`,
+      dataTurn: shortId(item.turn_id),
+    },
+    dateTime(item.created_at),
   );
 }
 
@@ -216,7 +220,7 @@ function questionBubble(question) {
   return h(
     "article",
     { class: "chat__user" },
-    h("p", { class: "eyebrow" }, "Bạn hỏi"),
+    h("p", { class: "sr-only" }, "Bạn hỏi"),
     ...questionBody(question),
   );
 }
@@ -232,10 +236,30 @@ function linkRow(item) {
   if (!links.length) return null;
   return h(
     "div",
-    { class: "form__actions" },
+    { class: "chat__links" },
     links.map((link) =>
-      h("a", { class: "button", href: String(link.href || "#/") }, String(link.label || "Mở")),
+      linkButton({
+        href: String(link.href || "#/"),
+        label: String(link.label || "Mở"),
+        variant: "quiet",
+        icon: "chevron-right",
+      }),
     ),
+  );
+}
+
+/**
+ * Who is speaking on an answer: the assistant's small mark and name. The word says "this is the
+ * machine"; the icon only helps scanning.
+ *
+ * @returns {HTMLElement}
+ */
+function assistantMark() {
+  return h(
+    "p",
+    { class: "chat__who" },
+    h("span", { class: "chat__avatar", "aria-hidden": "true" }, icon("sparkles")),
+    "Trợ lý AI",
   );
 }
 
@@ -249,12 +273,7 @@ function answerBlock(item) {
   return h(
     "article",
     { class: "chat__assistant" },
-    h(
-      "div",
-      { class: "spread" },
-      h("p", { class: "eyebrow" }, "Trợ lý AI"),
-      intentRow(String(item.intent || "")),
-    ),
+    h("div", { class: "chat__head" }, assistantMark(), intentRow(String(item.intent || ""))),
     h("div", { class: "chat__answer stack stack--tight" }, answerBody(item.answer)),
     reasonCodeList(Array.isArray(item.reason_codes) ? item.reason_codes : []),
     linkRow(item),
@@ -290,7 +309,7 @@ function liveAnswer(store, clearance) {
   const card = h(
     "article",
     { class: "chat__assistant" },
-    h("div", { class: "spread" }, h("p", { class: "eyebrow" }, "Trợ lý AI"), badgeHost),
+    h("div", { class: "chat__head" }, assistantMark(), badgeHost),
     body,
     footer,
   );
@@ -493,7 +512,7 @@ export function render_() {
     rows: "1",
     maxlength: String(MAX_QUESTION),
     spellcheck: "true",
-    placeholder: "Hỏi về tình hình hôm nay, đơn có nguy cơ trễ, hàng chờ duyệt…",
+    placeholder: "Hỏi trợ lý về cửa hàng…",
     dataRequiresNetwork: "true",
     "aria-label": "Câu hỏi cho trợ lý AI",
     onInput: () => {
@@ -790,22 +809,25 @@ export function render_() {
   return h(
     "section",
     { class: "screen" },
-    h(
-      "div",
-      { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "Giám sát AI"),
-      h("h1", null, NAV.assistant),
-      h(
-        "p",
-        { class: "screen__lede" },
-        "Hỏi về tình hình cửa hàng bằng tiếng Việt. Mọi câu trả lời chỉ đến từ dữ liệu vận hành " +
-          "hệ thống đang quản lý — điều gì nó không biết, nó nói là không biết, và không bao giờ " +
-          "đoán một con số.",
+    page({
+      title: NAV.assistant,
+      info: infoButton(
+        "Trợ lý trả lời từ đâu?",
+        h(
+          "p",
+          { class: "screen__lede" },
+          "Hỏi về tình hình cửa hàng bằng tiếng Việt. Mọi câu trả lời chỉ đến từ dữ liệu vận hành " +
+            "hệ thống đang quản lý — điều gì nó không biết, nó nói là không biết, và không bao giờ " +
+            "đoán một con số.",
+        ),
       ),
-    ),
+    }),
+    // MODEL_SEAM. This sentence is machine-bound in the disclosure registry and stays on screen on
+    // every visit: it is the claim about what the assistant is *not* that a person must be able to
+    // read without asking. Compact, never collapsed.
     h(
       "div",
-      { class: "notice", dataState: "info" },
+      { class: "notice chat__seam", dataState: "info" },
       h(
         "p",
         null,

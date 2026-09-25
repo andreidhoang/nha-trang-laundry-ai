@@ -1,0 +1,64 @@
+schema_version: 1
+work_item: READ-PATHS-001
+recorded_at: '2026-09-25T20:00:00+07:00'
+requirement_contract: 'Four store-scoped reads the console''s gap register admitted it lacked: the staff
+  directory (owner), an order''s remedy credits, an incident''s remedy proposals, the order''s recorded
+  acquisition source.'
+rollback_impact: Reads only, no migration; routes and panels revert as code. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: Roles are not stored per store, so the directory shows roles held everywhere and
+  says so. Credits have no expiry column.
+evidence:
+  the_owner_reads_the_shops_staff: 'Filmed real-API walk, 2026-09-25, database migrated from empty: the
+    new person is on the shop''s staff list, with their role  — Nhân viên mới / and one press fills their
+    id into the role form -- no UUID copied by hand'
+  an_order_shows_its_credits_with_an_unused_code: 'Filmed real-API walk, 2026-09-25, database migrated
+    from empty: the order shows its three unused credits (60.000, 50.000 and 60.000 ₫), so a customer
+    who lost a code keeps it  — 60.000 ₫'
+  an_incident_lists_every_recorded_proposal: 'Filmed real-API walk, 2026-09-25, database migrated from
+    empty: every claim recorded on the complaint is listed, not only this session''s -- the four recorded;
+    the refused one was never written  — 4 listed, 4 recorded'
+  an_order_shows_its_recorded_customer_source: 'Filmed real-API walk, 2026-09-25, database migrated from
+    empty: and says where the customer came from, as recorded when the order was made  — Đi ngang qua,
+    vào luôn (WALK_IN)'
+  every_read_is_store_scoped: 'test_read_paths_postgres.py: wrong role, another store''s member and an
+    unknown store all get the same 403; another store''s order or incident is 404 like a missing one.
+    ROUTE_SCOPE classifies all three.'
+  rollback_assessment: Reads only, no migration; routes and panels revert as code. Rolling data back is
+    docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before every
+    upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 625 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 304 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2274 passed, 4 skipped in 484.88s (0:08:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 66 served
+    internal API operations against their contract. Validated 419 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 140 source references, 32 decisions, 4 gates, 9 phases, 154 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_daily_operations.py against the real API (filmed)
+  status: PASSED
+  result: 72 ok, 0 failed
+  note: Database created empty and migrated 0001-0052, policies published; recorded with --video.
+- command: verify_workflow_conformance.py, whole run, against the real API
+  status: PASSED
+  result: 159 ok, 0 failed
+  note: --database-url given, so every check that reads what a write persisted ran, and the control-coverage
+    line is part of the result.
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 251 passed, 0 failed

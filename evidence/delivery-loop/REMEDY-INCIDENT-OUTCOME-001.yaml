@@ -1,0 +1,58 @@
+schema_version: 1
+work_item: REMEDY-INCIDENT-OUTCOME-001
+recorded_at: '2026-09-25T20:00:00+07:00'
+requirement_contract: Carrying out a claim closes its complaint only when no other claim on it is open
+  (authorised and not carried out, or waiting on a live owner envelope).
+rollback_impact: Drop the NOT EXISTS clause from the incident update in RemedyProposalRepository.execute.
+  No migration. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+  section 8 takes before every upgrade.
+unresolved_assumptions: A complaint whose every claim is done is closed; anything raised later is a new
+  complaint.
+evidence:
+  paying_one_claim_leaves_the_complaint_open_while_another_is_open: 'Found by the filmed walk: paying
+    the faded suit closed the complaint while the lost suit waited for the owner. test_remedy_incident_outcome.py:
+    3 of 5 fail on the old code. Filmed real-API walk, 2026-09-25, database migrated from empty: and the
+    complaint stays open, because the lost suit still waits for the owner  — UNDER_REVIEW'
+  a_dead_owner_envelope_does_not_hold_the_complaint_open: test_a_refused_owner_envelope_does_not_hold_the_complaint_open,
+    through the real ApprovalRepository.decide.
+  the_only_claim_paid_still_closes_it: 'test_the_only_claim_paid_still_closes_the_complaint. Filmed real-API
+    walk, 2026-09-25, database migrated from empty: and with every claim decided, the complaint closes  —
+    CLOSED'
+  rollback_assessment: Drop the NOT EXISTS clause from the incident update in RemedyProposalRepository.execute.
+    No migration. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+    section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 625 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 304 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2274 passed, 4 skipped in 484.88s (0:08:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 66 served
+    internal API operations against their contract. Validated 419 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 140 source references, 32 decisions, 4 gates, 9 phases, 154 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_daily_operations.py against the real API (filmed)
+  status: PASSED
+  result: 72 ok, 0 failed
+  note: Database created empty and migrated 0001-0052, policies published; recorded with --video.
+- command: verify_workflow_conformance.py, whole run, against the real API
+  status: PASSED
+  result: 159 ok, 0 failed
+  note: --database-url given, so every check that reads what a write persisted ran, and the control-coverage
+    line is part of the result.
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 251 passed, 0 failed

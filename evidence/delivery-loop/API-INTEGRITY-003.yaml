@@ -1,0 +1,65 @@
+schema_version: 1
+work_item: API-INTEGRITY-003
+recorded_at: '2026-09-25T20:00:00+07:00'
+requirement_contract: A statement or lock timeout, or an unopenable connection, answers 503 with Retry-After
+  and a reason code; the transaction rolls back whole and the same idempotency key retries once; decide/attest
+  re-resolve the bound resource under the approval lock and refuse RESOURCE_CHANGED_SINCE_REQUEST.
+rollback_impact: No migration. Handlers and the resolver table revert as code. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: Deadlocks stay 500. claim_execution still uses the echo check. Quote rendered_hash
+  is not recomputed at decision time (four actions share QUOTE_REVISION with different renderings); executors
+  still check it.
+evidence:
+  a_timed_out_statement_answers_503_with_retry_after: 'test_api_integrity_003_postgres.py and test_database_refusals.py;
+    3 fail with the handlers unregistered. Filmed real-API walk, 2026-09-25, database migrated from empty:
+    a payment that cannot get its row in time is told ''busy, try again'', not a server fault  — Hệ thống
+    đang bận nên chưa làm được lệnh này. Chờ vài giây rồi thử lại; bấm lại không bị ghi hai lần. || Mọi
+    trường hợp là cùng m'
+  a_timed_out_write_rolls_back_whole_and_retries_once: 'The stalled decision leaves 0 decision, event,
+    audit, outbox and idempotency rows; the same key then records exactly once. Filmed real-API walk,
+    2026-09-25, database migrated from empty: and nothing was written for it / pressing again records
+    the payment exactly once  —  || Đây là bản ghi kiểm toán theo định danh, không phải lịch sử đơn hàng
+    được biên tập. Thứ tự do máy chủ quyết định (occurred_at, id) — cũ nhất trước — và màn'
+  integrity_and_programming_errors_stay_500: 'Five cases stay 500 in test_database_refusals.py: unique,
+    check, undefined table, connection lost mid-transaction, deadlock.'
+  an_approval_is_refused_when_its_resource_changed_after_the_request: test_decision_time_resolution.py
+    12 tests; all 8 refusal tests fail with re-resolution disabled. The MESSAGE-DRAFT-BINDING-001 duplicate
+    check was folded into this one at merge.
+  rollback_assessment: No migration. Handlers and the resolver table revert as code. Rolling data back
+    is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before every
+    upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 625 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 304 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2274 passed, 4 skipped in 484.88s (0:08:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 66 served
+    internal API operations against their contract. Validated 419 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 140 source references, 32 decisions, 4 gates, 9 phases, 154 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_daily_operations.py against the real API (filmed)
+  status: PASSED
+  result: 72 ok, 0 failed
+  note: Database created empty and migrated 0001-0052, policies published; recorded with --video.
+- command: verify_workflow_conformance.py, whole run, against the real API
+  status: PASSED
+  result: 159 ok, 0 failed
+  note: --database-url given, so every check that reads what a write persisted ran, and the control-coverage
+    line is part of the result.
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 251 passed, 0 failed

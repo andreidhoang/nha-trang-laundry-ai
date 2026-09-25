@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import secrets
 import threading
 from collections import Counter
@@ -22,12 +23,14 @@ from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import jwt
+import yaml
 from nha_trang_laundry_contracts import (
     AgentDataClassification,
     AgentDeploymentStage,
     AgentRunnerClaims,
     AgentToolOperation,
     AgentToolSideEffect,
+    PublicRuntimeRegistry,
     ReleaseCapability,
     ToolArgumentsInvalid,
     VerifiedReleaseAuthorization,
@@ -89,6 +92,68 @@ INTENT_BUDGETS: Mapping[ReleaseCapability, AgentIntentBudget] = {
 }
 
 
+_SHA256_PIN = re.compile(r"^sha256:[0-9a-f]{64}$")
+_PIN_FIELDS = (
+    "runtime_registry_version",
+    "runtime_registry_hash",
+    "prompt_bundle_version",
+    "prompt_bundle_hash",
+    "tool_contract_hash",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionPins:
+    """The exact release a run was queued for, or the exact release a runtime executes.
+
+    `agent_runs` records these when a run is enqueued. Before AGENT-SHADOW-DEFECTS-001 nothing ever
+    compared them with what executed: `_job_from_claim` dropped them, so a run queued for prompt X
+    ran under prompt Y and its evidence said neither. The runner now refuses a job whose pins do not
+    equal its runtime's, before any model call.
+    """
+
+    runtime_registry_version: str
+    runtime_registry_hash: str
+    prompt_bundle_version: str
+    prompt_bundle_hash: str
+    tool_contract_hash: str
+
+    def __post_init__(self) -> None:
+        for name in ("runtime_registry_version", "prompt_bundle_version"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not 1 <= len(value) <= 120:
+                raise ValueError(f"{name} pin is invalid")
+        for name in ("runtime_registry_hash", "prompt_bundle_hash", "tool_contract_hash"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or _SHA256_PIN.fullmatch(value) is None:
+                raise ValueError(f"{name} pin is invalid")
+
+    def mismatched_fields(self, other: ExecutionPins) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name in _PIN_FIELDS
+            if not hmac.compare_digest(
+                str(getattr(self, name)).encode(), str(getattr(other, name)).encode()
+            )
+        )
+
+
+def registry_execution_pins(
+    registry_path: Path = ROOT / "runtime/model-registry-v1.yaml",
+) -> ExecutionPins:
+    """The pins the repository's runtime registry declares, with the registry's own content hash."""
+
+    raw = registry_path.read_bytes()
+    registry = PublicRuntimeRegistry.model_validate(yaml.safe_load(raw))
+    return ExecutionPins(
+        runtime_registry_version=registry.registry_version,
+        runtime_registry_hash=f"sha256:{sha256(raw).hexdigest()}",
+        prompt_bundle_version=registry.prompt.bundle_version,
+        prompt_bundle_hash=registry.prompt.bundle_sha256,
+        tool_contract_hash=registry.tool_contract_sha256,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AgentRunJob:
     """Contact-bound input constructed by the control plane, never by model arguments."""
@@ -109,6 +174,8 @@ class AgentRunJob:
     public_code: str | None = None
     row_version: int = 0
     binding_id: UUID = field(default_factory=uuid4)
+    #: What the run was queued for, read from its durable row. `None` is refused by the runner.
+    pins: ExecutionPins | None = None
 
     def __post_init__(self) -> None:
         if self.started_at.tzinfo is None or self.deadline_at.tzinfo is None:
@@ -606,6 +673,11 @@ class AgentRuntimeInvocation:
 class ConstrainedAgentRuntime(Protocol):
     provider_backed: bool
 
+    @property
+    def execution_pins(self) -> ExecutionPins:
+        """The release this runtime actually executes; compared with the job's before invoking."""
+        ...
+
     def invoke(
         self, invocation: AgentRuntimeInvocation, bridge: AgentToolBridgeSession
     ) -> AgentRuntimeOutput: ...
@@ -623,9 +695,22 @@ class SyntheticScriptedRuntime:
 
     provider_backed = False
 
-    def __init__(self, *, draft_text: str, tool_calls: Sequence[ScriptedToolCall] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        draft_text: str,
+        execution_pins: ExecutionPins,
+        tool_calls: Sequence[ScriptedToolCall] = (),
+    ) -> None:
         self._draft_text = draft_text
         self._tool_calls = tuple(tool_calls)
+        # Stated by the caller, never defaulted: a scripted runtime executes no prompt, so claiming
+        # the repository's pinned bundle on its behalf would put a false release in its evidence.
+        self._execution_pins = execution_pins
+
+    @property
+    def execution_pins(self) -> ExecutionPins:
+        return self._execution_pins
 
     def invoke(
         self, invocation: AgentRuntimeInvocation, bridge: AgentToolBridgeSession
@@ -657,6 +742,11 @@ class DisabledOpenClawProviderRuntime:
         self, runtime_registry_path: Path = ROOT / "runtime/model-registry-v1.yaml"
     ) -> None:
         self._registry = load_public_runtime_registry(runtime_registry_path)
+        self._execution_pins = registry_execution_pins(runtime_registry_path)
+
+    @property
+    def execution_pins(self) -> ExecutionPins:
+        return self._execution_pins
 
     def invoke(
         self, invocation: AgentRuntimeInvocation, bridge: AgentToolBridgeSession
@@ -813,6 +903,19 @@ class AgentRunner:
                 raise AgentRunRejected(
                     "POLICY_DENIED: signed release manifest authorization is missing or invalid"
                 )
+        self._validate_pins(job, runtime)
+
+    @staticmethod
+    def _validate_pins(job: AgentRunJob, runtime: ConstrainedAgentRuntime) -> None:
+        """Fail closed, before any model call, unless the runtime executes the queued release."""
+        if job.pins is None:
+            raise AgentRunRejected("RUNTIME_PIN_MISSING: the run carries no queued release pins")
+        executing = getattr(runtime, "execution_pins", None)
+        if not isinstance(executing, ExecutionPins):
+            raise AgentRunRejected("RUNTIME_PIN_MISSING: the runtime states no executed release")
+        mismatched = job.pins.mismatched_fields(executing)
+        if mismatched:
+            raise AgentRunRejected(f"RUNTIME_PIN_MISMATCH: {','.join(mismatched)}")
 
 
 __all__ = [
@@ -837,7 +940,9 @@ __all__ = [
     "AgentToolTransport",
     "ConstrainedAgentRuntime",
     "DisabledOpenClawProviderRuntime",
+    "ExecutionPins",
     "ProviderRuntimeBlocked",
     "ScriptedToolCall",
     "SyntheticScriptedRuntime",
+    "registry_execution_pins",
 ]

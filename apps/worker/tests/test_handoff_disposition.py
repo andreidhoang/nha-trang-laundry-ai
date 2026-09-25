@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -38,7 +37,11 @@ from nha_trang_laundry_worker.agent_runner import (
     AgentToolForwardRequest,
     AgentToolForwardResponse,
 )
-from nha_trang_laundry_worker.pipeline import CapturingEvidenceSink, RunScopedContextLoader
+from nha_trang_laundry_worker.pipeline import (
+    CapturingEvidenceSink,
+    RunScopedContextLoader,
+    load_pinned_prompt,
+)
 from nha_trang_laundry_worker.responses_runtime import (
     CURRENT_TOOL_CONTRACT_HASH,
     DETERMINISTIC_HANDOFF_TEXT,
@@ -51,9 +54,12 @@ from nha_trang_laundry_worker.responses_runtime import (
     ScriptedResponsesTransport,
 )
 
-INSTRUCTIONS = "Chỉ soạn bản nháp."
-REGISTRY_HASH = "sha256:" + "a" * 64
-PROMPT_HASH = "sha256:" + "b" * 64
+# AGENT-SHADOW-DEFECTS-001 F3: the pipeline only assembles the release the runtime registry pins,
+# so these tests run the real pinned prompt text and hashes rather than invented labels.
+PINNED = load_pinned_prompt()
+INSTRUCTIONS = PINNED.instructions
+REGISTRY_HASH = PINNED.pins.runtime_registry_hash
+PROMPT_HASH = PINNED.pins.prompt_bundle_hash
 
 
 def _config() -> ResponsesRuntimeConfig:
@@ -63,10 +69,11 @@ def _config() -> ResponsesRuntimeConfig:
         model_id="gpt-test",
         immutable_model_release="gpt-test-2026-08-01",
         reasoning_effort="low",
+        runtime_registry_version=PINNED.pins.runtime_registry_version,
         runtime_registry_hash=REGISTRY_HASH,
-        prompt_bundle_version="prompt-v1",
+        prompt_bundle_version=PINNED.pins.prompt_bundle_version,
         prompt_bundle_hash=PROMPT_HASH,
-        prompt_instructions_hash="sha256:" + sha256(INSTRUCTIONS.encode()).hexdigest(),
+        prompt_instructions_hash=PINNED.instructions_hash,
         tool_contract_hash=CURRENT_TOOL_CONTRACT_HASH,
         max_model_calls=3,
         max_input_tokens=8000,
@@ -145,6 +152,7 @@ def _execute(script: list[Any]) -> tuple[AgentRunResult, CapturingEvidenceSink, 
         data_classification=AgentDataClassification.SYNTHETIC,
         started_at=started,
         deadline_at=started + timedelta(seconds=15),
+        pins=runtime.execution_pins,
     )
     result = _runner().execute(job=job, runtime=runtime, transport=_NoToolTransport())
     return result, sink, job

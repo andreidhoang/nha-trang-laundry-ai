@@ -21,7 +21,6 @@ import threading
 import time
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
-from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -62,6 +61,7 @@ from nha_trang_laundry_worker.pipeline import (
     CapturingEvidenceSink,
     RunScopedContextLoader,
     build_agent_pipeline,
+    load_pinned_prompt,
 )
 from nha_trang_laundry_worker.responses_runtime import (
     CURRENT_TOOL_CONTRACT_HASH,
@@ -73,9 +73,12 @@ from nha_trang_laundry_worker.responses_runtime import (
     ScriptedResponsesTransport,
 )
 
-INSTRUCTIONS = "Chỉ soạn bản nháp."
-REGISTRY_HASH = "sha256:" + "a" * 64
-PROMPT_HASH = "sha256:" + "b" * 64
+# AGENT-SHADOW-DEFECTS-001 F3: the pipeline only assembles the release the runtime registry pins,
+# so these tests run the real pinned prompt text and hashes rather than invented labels.
+PINNED = load_pinned_prompt()
+INSTRUCTIONS = PINNED.instructions
+REGISTRY_HASH = PINNED.pins.runtime_registry_hash
+PROMPT_HASH = PINNED.pins.prompt_bundle_hash
 
 
 def _config() -> ResponsesRuntimeConfig:
@@ -85,10 +88,11 @@ def _config() -> ResponsesRuntimeConfig:
         model_id="gpt-test",
         immutable_model_release="gpt-test-2026-08-01",
         reasoning_effort="low",
+        runtime_registry_version=PINNED.pins.runtime_registry_version,
         runtime_registry_hash=REGISTRY_HASH,
-        prompt_bundle_version="prompt-v1",
+        prompt_bundle_version=PINNED.pins.prompt_bundle_version,
         prompt_bundle_hash=PROMPT_HASH,
-        prompt_instructions_hash="sha256:" + sha256(INSTRUCTIONS.encode()).hexdigest(),
+        prompt_instructions_hash=PINNED.instructions_hash,
         tool_contract_hash=CURRENT_TOOL_CONTRACT_HASH,
         max_model_calls=3,
         max_input_tokens=8000,
@@ -253,6 +257,7 @@ class _HangingRuntime:
     """A runtime that ignores every deadline; only the runner's own guard can stop it."""
 
     provider_backed = False
+    execution_pins = PINNED.pins
 
     def __init__(self) -> None:
         self.release = threading.Event()
@@ -292,6 +297,7 @@ def test_a_lost_claim_is_a_named_terminal_status_not_an_escaping_exception() -> 
 
     class _Refusing:
         provider_backed = False
+        execution_pins = PINNED.pins
 
         def invoke(self, invocation: Any, bridge: Any) -> Any:
             del invocation, bridge

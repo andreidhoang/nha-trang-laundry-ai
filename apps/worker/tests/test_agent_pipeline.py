@@ -56,6 +56,7 @@ from nha_trang_laundry_worker.pipeline import (
     PipelineConfigurationError,
     build_agent_cycle,
     build_agent_pipeline,
+    load_pinned_prompt,
 )
 from nha_trang_laundry_worker.responses_runtime import (
     CURRENT_TOOL_CONTRACT_HASH,
@@ -67,9 +68,12 @@ from nha_trang_laundry_worker.responses_runtime import (
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = datetime.now(UTC)
-INSTRUCTIONS = "Bạn chỉ soạn bản nháp. Không tính tiền, không gửi, không quyết định chính sách."
-REGISTRY_HASH = f"sha256:{'a' * 64}"
-PROMPT_HASH = f"sha256:{'b' * 64}"
+# AGENT-SHADOW-DEFECTS-001 F3: the pipeline only assembles the release the runtime registry pins,
+# so these tests run the real pinned prompt text and hashes rather than invented labels.
+PINNED = load_pinned_prompt()
+INSTRUCTIONS = PINNED.instructions
+REGISTRY_HASH = PINNED.pins.runtime_registry_hash
+PROMPT_HASH = PINNED.pins.prompt_bundle_hash
 
 
 @pytest.fixture
@@ -83,9 +87,7 @@ def postgres_connection() -> Generator[psycopg.Connection[Any], None, None]:
 
 
 def _instructions_hash() -> str:
-    from hashlib import sha256
-
-    return f"sha256:{sha256(INSTRUCTIONS.encode('utf-8')).hexdigest()}"
+    return PINNED.instructions_hash
 
 
 def config(**overrides: Any) -> ResponsesRuntimeConfig:
@@ -94,8 +96,9 @@ def config(**overrides: Any) -> ResponsesRuntimeConfig:
         "model_id": "gpt-test",
         "immutable_model_release": "gpt-test-2026-08-01",
         "reasoning_effort": "low",
+        "runtime_registry_version": PINNED.pins.runtime_registry_version,
         "runtime_registry_hash": REGISTRY_HASH,
-        "prompt_bundle_version": "prompt-v1",
+        "prompt_bundle_version": PINNED.pins.prompt_bundle_version,
         "prompt_bundle_hash": PROMPT_HASH,
         "prompt_instructions_hash": _instructions_hash(),
         "tool_contract_hash": CURRENT_TOOL_CONTRACT_HASH,
@@ -215,9 +218,9 @@ def enqueue(
         capability=ReleaseCapability.INTERNAL_SHADOW,
         deployment_stage=AgentDeploymentStage.SHADOW,
         data_classification=AgentDataClassification.SYNTHETIC,
-        runtime_registry_version="1.0.0-eval",
+        runtime_registry_version=PINNED.pins.runtime_registry_version,
         runtime_registry_hash=REGISTRY_HASH,
-        prompt_bundle_version="prompt-v1",
+        prompt_bundle_version=PINNED.pins.prompt_bundle_version,
         prompt_bundle_hash=PROMPT_HASH,
         tool_contract_hash=CURRENT_TOOL_CONTRACT_HASH,
         correlation_id=uuid4(),

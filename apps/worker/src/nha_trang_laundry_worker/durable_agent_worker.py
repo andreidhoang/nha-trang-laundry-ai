@@ -35,6 +35,7 @@ from .agent_runner import (
     AgentToolCallObserver,
     AgentToolTransport,
     ConstrainedAgentRuntime,
+    ExecutionPins,
 )
 
 #: Persists the agent's proposal for human review; see `ShadowConsoleRepository.record_draft`.
@@ -307,6 +308,15 @@ def _job_from_claim(
         order_request_id=claimed.order_request_id,
         public_code=claimed.public_code,
         row_version=claimed.bound_row_version,
+        # What the run was queued for. Dropped here before AGENT-SHADOW-DEFECTS-001, so nothing
+        # could compare it with what the runtime executes; the runner now refuses a mismatch.
+        pins=ExecutionPins(
+            runtime_registry_version=claimed.runtime_registry_version,
+            runtime_registry_hash=claimed.runtime_registry_hash,
+            prompt_bundle_version=claimed.prompt_bundle_version,
+            prompt_bundle_hash=claimed.prompt_bundle_hash,
+            tool_contract_hash=claimed.tool_contract_hash,
+        ),
     )
 
 

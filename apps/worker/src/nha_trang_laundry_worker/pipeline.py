@@ -22,24 +22,39 @@ this module makes no provider call and needs no credential. The real transport a
 
 from __future__ import annotations
 
+import hmac
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
+from pathlib import Path
 from threading import Lock
 from typing import Any
 from uuid import UUID, uuid4
 
+import yaml
+from nha_trang_laundry_contracts import load_public_runtime_registry
 from nha_trang_laundry_db.agent_runs import AgentRunRepository
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_observability import EventSeverity, SafeStructuredLogger
 
-from .agent_runner import AgentRunner, AgentRuntimeInvocation, AgentToolTransport
+from .agent_runner import (
+    ROOT as REPOSITORY_ROOT,
+)
+from .agent_runner import (
+    AgentRunner,
+    AgentRuntimeInvocation,
+    AgentToolTransport,
+    ExecutionPins,
+    registry_execution_pins,
+)
 from .durable_agent_worker import (
     DraftRecorder,
     DurableAgentRunWorker,
     DurableAgentRunWorkerResult,
 )
 from .responses_runtime import (
+    CURRENT_TOOL_CONTRACT_HASH,
     BoundedResponsesRuntime,
     ResponsesContextLoader,
     ResponsesProviderTransport,
@@ -195,6 +210,7 @@ def build_agent_pipeline(
             "AGENT-PIPELINE-001 assembles the deterministic path only; a provider-backed transport "
             "requires PROVIDER-TRANSPORT-001 and its release authorization"
         )
+    _require_pinned_release(config, instructions, load_pinned_prompt())
     sink = evidence_sink or CapturingEvidenceSink()
     loader = context_loader or RunScopedContextLoader(
         config=config,
@@ -253,6 +269,94 @@ def build_agent_cycle(
     return cycle
 
 
+@dataclass(frozen=True, slots=True)
+class PinnedPrompt:
+    """The release the repository's runtime registry pins, read and hash-verified from disk."""
+
+    pins: ExecutionPins
+    instructions: str
+    instructions_hash: str
+
+
+def load_pinned_prompt(
+    registry_path: Path = REPOSITORY_ROOT / "runtime/model-registry-v1.yaml",
+) -> PinnedPrompt:
+    """Follow the registry's pin chain to the exact instruction text, verifying every link.
+
+    registry -> prompt bundle manifest (bundle_sha256) -> prompt file (prompt.sha256), and the
+    bundle's tool contract pin against the registry's and against the contract actually loaded.
+    Any broken link refuses the pipeline: a configuration whose hashes are labels checked against
+    nothing is how a run queued for one prompt executed another (AGENT-SHADOW-DEFECTS-001 F3).
+    """
+
+    pins = registry_execution_pins(registry_path)
+    registry = load_public_runtime_registry(registry_path)
+    manifest_bytes = _repository_file(registry.prompt.bundle_path).read_bytes()
+    if not _digest_equal(_sha256_bytes(manifest_bytes), registry.prompt.bundle_sha256):
+        raise PipelineConfigurationError("PROMPT_BUNDLE_HASH_MISMATCH")
+    manifest = yaml.safe_load(manifest_bytes)
+    prompt = manifest.get("prompt") if isinstance(manifest, dict) else None
+    tools = manifest.get("tool_contract") if isinstance(manifest, dict) else None
+    if (
+        not isinstance(prompt, dict)
+        or not isinstance(tools, dict)
+        or manifest.get("bundle_version") != registry.prompt.bundle_version
+        or not isinstance(prompt.get("path"), str)
+        or not isinstance(prompt.get("sha256"), str)
+    ):
+        raise PipelineConfigurationError("PROMPT_BUNDLE_MANIFEST_INVALID")
+    prompt_bytes = _repository_file(prompt["path"]).read_bytes()
+    instructions_hash = _sha256_bytes(prompt_bytes)
+    if not _digest_equal(instructions_hash, prompt["sha256"]):
+        raise PipelineConfigurationError("PROMPT_FILE_HASH_MISMATCH")
+    if not _digest_equal(str(tools.get("sha256")), registry.tool_contract_sha256) or not (
+        _digest_equal(registry.tool_contract_sha256, CURRENT_TOOL_CONTRACT_HASH)
+    ):
+        raise PipelineConfigurationError("TOOL_CONTRACT_PIN_MISMATCH")
+    return PinnedPrompt(
+        pins=pins, instructions=prompt_bytes.decode("utf-8"), instructions_hash=instructions_hash
+    )
+
+
+def _require_pinned_release(
+    config: ResponsesRuntimeConfig, instructions: str, pinned: PinnedPrompt
+) -> None:
+    configured = (
+        ("runtime_registry_version", config.runtime_registry_version),
+        ("runtime_registry_hash", config.runtime_registry_hash),
+        ("prompt_bundle_version", config.prompt_bundle_version),
+        ("prompt_bundle_hash", config.prompt_bundle_hash),
+        ("tool_contract_hash", config.tool_contract_hash),
+    )
+    mismatched = [
+        name for name, value in configured if not _digest_equal(value, getattr(pinned.pins, name))
+    ]
+    if not _digest_equal(config.prompt_instructions_hash, pinned.instructions_hash):
+        mismatched.append("prompt_instructions_hash")
+    if not _digest_equal(_sha256_bytes(instructions.encode("utf-8")), pinned.instructions_hash):
+        mismatched.append("instructions")
+    if mismatched:
+        raise PipelineConfigurationError(
+            "runtime configuration does not match the registry-pinned release: "
+            + ",".join(mismatched)
+        )
+
+
+def _repository_file(relative: str) -> Path:
+    path = (REPOSITORY_ROOT / relative).resolve()
+    if REPOSITORY_ROOT not in path.parents:
+        raise PipelineConfigurationError("PINNED_ARTIFACT_PATH_ESCAPES_REPOSITORY")
+    return path
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return f"sha256:{sha256(value).hexdigest()}"
+
+
+def _digest_equal(left: str, right: str) -> bool:
+    return hmac.compare_digest(left.encode(), right.encode())
+
+
 def _safe_evidence(evidence: ResponsesRuntimeEvidence | None) -> Mapping[str, Any] | None:
     """Project terminal evidence onto the small set of fields safe to store in a run summary."""
 
@@ -265,13 +369,25 @@ def _safe_evidence(evidence: ResponsesRuntimeEvidence | None) -> Mapping[str, An
         "terminal_outcome",
         "terminal_code",
         "runtime_id",
+        "model_id",
         "immutable_model_release",
+        # What actually ran, not only what was queued: the exact registry, prompt bundle,
+        # instructions and price table (AGENT-SHADOW-DEFECTS-001 F3). All are digests or versions.
+        "runtime_registry_version",
+        "runtime_registry_hash",
+        "prompt_bundle_version",
+        "prompt_bundle_hash",
+        "prompt_instructions_hash",
+        "price_table_version",
+        "price_table_hash",
         "context_packet_hash",
         "tool_contract_hash",
         "model_attempt_count",
         "tool_call_count",
         "input_tokens",
+        "cached_input_tokens",
         "output_tokens",
+        "reservation_count",
         "reserved_cost_usd",
         "settled_cost_usd",
         "released_cost_usd",
@@ -344,9 +460,11 @@ __all__ = [
     "TURN_DEADLINE_SECONDS",
     "AgentPipeline",
     "CapturingEvidenceSink",
+    "PinnedPrompt",
     "PipelineConfigurationError",
     "RunScopedContextLoader",
     "build_agent_cycle",
     "build_agent_pipeline",
+    "load_pinned_prompt",
     "utc_now",
 ]

@@ -26,6 +26,7 @@ from nha_trang_laundry_worker.agent_runner import (
     AgentToolBridgeSession,
     AgentToolForwardRequest,
     AgentToolForwardResponse,
+    ExecutionPins,
 )
 
 from .fixtures import SyntheticFixtureBundle
@@ -51,8 +52,20 @@ class _NoToolTransport:
         raise SyntheticTimeoutError("a timeout preflight must not call any tool")
 
 
+#: A synthetic release stated by both the job and the runtime double. The runner compares them
+#: before invoking (AGENT-SHADOW-DEFECTS-001 F3); this preflight exercises the deadline, not pins.
+_SYNTHETIC_PINS = ExecutionPins(
+    runtime_registry_version="synthetic-timeout-v1",
+    runtime_registry_hash="sha256:" + "0" * 64,
+    prompt_bundle_version="synthetic-timeout-v1",
+    prompt_bundle_hash="sha256:" + "0" * 64,
+    tool_contract_hash="sha256:" + "0" * 64,
+)
+
+
 class _BlockingRuntime:
     provider_backed = False
+    execution_pins = _SYNTHETIC_PINS
 
     def __init__(self) -> None:
         self.release = Event()
@@ -108,6 +121,7 @@ def execute_model_timeout_preflight(fixture: SyntheticFixtureBundle) -> Syntheti
         data_classification=AgentDataClassification.SYNTHETIC,
         started_at=started_at,
         deadline_at=started_at + timedelta(milliseconds=100),
+        pins=_SYNTHETIC_PINS,
     )
     runtime = _BlockingRuntime()
     timed_out = False

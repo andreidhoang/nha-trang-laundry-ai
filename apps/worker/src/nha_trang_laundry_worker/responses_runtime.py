@@ -42,6 +42,7 @@ from .agent_runner import (
     AgentRuntimeOutput,
     AgentToolBridgeRejected,
     AgentToolBridgeSession,
+    ExecutionPins,
 )
 
 Sha256Pin = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
@@ -185,6 +186,7 @@ class ResponsesRuntimeConfig(BaseModel):
     model_id: BoundedIdentifier
     immutable_model_release: BoundedIdentifier
     reasoning_effort: Literal["low", "medium", "high"]
+    runtime_registry_version: BoundedIdentifier
     runtime_registry_hash: Sha256Pin
     prompt_bundle_version: BoundedIdentifier
     prompt_bundle_hash: Sha256Pin
@@ -524,6 +526,7 @@ class ResponsesRuntimeEvidence(BaseModel):
     runtime_id: BoundedIdentifier
     model_id: BoundedIdentifier
     immutable_model_release: BoundedIdentifier
+    runtime_registry_version: BoundedIdentifier
     runtime_registry_hash: Sha256Pin
     prompt_bundle_version: BoundedIdentifier
     prompt_bundle_hash: Sha256Pin
@@ -663,6 +666,18 @@ class BoundedResponsesRuntime:
         self._now = now or (lambda: datetime.now(UTC))
         self.provider_backed = transport.provider_backed
 
+    @property
+    def execution_pins(self) -> ExecutionPins:
+        """The release this runtime executes, as its configuration pins it."""
+
+        return ExecutionPins(
+            runtime_registry_version=self._config.runtime_registry_version,
+            runtime_registry_hash=self._config.runtime_registry_hash,
+            prompt_bundle_version=self._config.prompt_bundle_version,
+            prompt_bundle_hash=self._config.prompt_bundle_hash,
+            tool_contract_hash=self._config.tool_contract_hash,
+        )
+
     def invoke(
         self, invocation: AgentRuntimeInvocation, bridge: AgentToolBridgeSession
     ) -> AgentRuntimeOutput:
@@ -781,6 +796,7 @@ class BoundedResponsesRuntime:
                 runtime_id=self._config.runtime_id,
                 model_id=self._config.model_id,
                 immutable_model_release=self._config.immutable_model_release,
+                runtime_registry_version=self._config.runtime_registry_version,
                 runtime_registry_hash=self._config.runtime_registry_hash,
                 prompt_bundle_version=self._config.prompt_bundle_version,
                 prompt_bundle_hash=self._config.prompt_bundle_hash,

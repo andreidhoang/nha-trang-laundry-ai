@@ -26,6 +26,7 @@ from nha_trang_laundry_worker.agent_runner import (
     AgentToolForwardRequest,
     AgentToolForwardResponse,
     DisabledOpenClawProviderRuntime,
+    ExecutionPins,
     ScriptedToolCall,
     SyntheticScriptedRuntime,
 )
@@ -108,6 +109,15 @@ def runner() -> AgentRunner:
 
 STORE_ID = uuid4()
 
+#: The release `enqueue_command` records; a runtime double must state the same one (F3).
+QUEUED_PINS = ExecutionPins(
+    runtime_registry_version="1.0.0-eval",
+    runtime_registry_hash=f"sha256:{'a' * 64}",
+    prompt_bundle_version="1.0.0-eval",
+    prompt_bundle_hash=f"sha256:{'b' * 64}",
+    tool_contract_hash=f"sha256:{'c' * 64}",
+)
+
 
 def enqueue_command(*, created_at: datetime | None = None) -> AgentRunEnqueueCommand:
     return AgentRunEnqueueCommand(
@@ -146,6 +156,7 @@ def test_durable_worker_claims_runs_persists_safe_tool_ledger_and_requires_human
         postgres_connection,
         runtime=SyntheticScriptedRuntime(
             draft_text=draft_text,
+            execution_pins=QUEUED_PINS,
             tool_calls=(
                 ScriptedToolCall(
                     operation=AgentToolOperation.CATALOG_RESOLVE,
@@ -230,6 +241,7 @@ def test_durable_worker_preserves_timeout_run_for_human_recovery(
 ) -> None:
     class TimedOutRuntime:
         provider_backed = False
+        execution_pins = QUEUED_PINS
 
         def invoke(self, invocation: Any, bridge: Any) -> Any:
             del invocation, bridge

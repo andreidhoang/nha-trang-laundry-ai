@@ -736,6 +736,11 @@ export const ENUM_GLOSS = {
   APPROVE_B2B_TERMS: "duyệt điều khoản khách doanh nghiệp",
   PUBLISH_POLICY: "công bố chính sách",
   EXPORT_SANITIZED_DATA: "xuất dữ liệu",
+  // `ChannelProvider` — the channel a contact binding was recorded on (`CONTACT-PICK-001`: the
+  // title of a row in "Khách nhắn tin gần đây"). A product name, never a handle.
+  ZALO_OA: "Zalo",
+  TELEGRAM_SANDBOX: "Telegram (thử nghiệm)",
+  FACEBOOK_MESSENGER: "Messenger",
 };
 
 /**

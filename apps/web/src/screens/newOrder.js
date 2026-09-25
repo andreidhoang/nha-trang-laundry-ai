@@ -5,9 +5,12 @@
  * Three steps on one screen, state in memory, back without loss:
  *
  *   1. **Khách** — one press issues a counter ticket and opens the intake for it (`DEC-013`: nothing
- *      about the person is stored); a customer who wrote through a channel is bound by the code that
- *      conversation produced, typed under "Nhập mã thủ công" because no route searches contacts; a
- *      customer already waiting is resumed from the unconverted intakes.
+ *      about the person is stored); a channel customer this shop has served before is one tap in
+ *      "Khách nhắn tin gần đây" (`CONTACT-PICK-001`, `GET …/contacts/recent` — not a search: there
+ *      is no name or phone to search, `DEC-015`), and one who is new arrives from the conversation
+ *      itself as `#/new?contact=<binding>`, which opens the intake and lands on step 2. Typing the
+ *      binding survives only folded under "Nhập mã thủ công". A customer already waiting is
+ *      resumed from the unconverted intakes.
  *   2. **Đồ & giá** — mode, lines, "Tính giá". The server prices; the screen shows its receipt.
  *      Editing after a price makes the next press a new *revision* carrying the revision, row
  *      version and `If-Match` of the last response. A banded service is closed inline (`DEC-029`).
@@ -19,7 +22,8 @@
  *   - **It asks for no value the server already returned.** The ticket, the intake, the quote id,
  *     its revision and snapshot hash, the fulfilment mode it was priced under and the moment the
  *     customer accepted are all carried from the responses (and `READ-ENRICH-001` reads when
- *     resuming). The one paste field is a remedy-credit code, which no route can supply.
+ *     resuming). A remedy credit is picked from the store's unused credits
+ *     (`CREDIT-PICK-001`, `GET …/remedy-credits`); its code is typed only under "Nhập mã thủ công".
  *   - **It computes no money.** Every figure is a server integer rendered by `format.money`.
  *   - **It never retries a write.** Each step has its own idempotency key, kept across a failed
  *     press (so pressing again replays rather than duplicates) and replaced only when what the step
@@ -32,6 +36,8 @@ import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import {
   UUID,
+  ago,
+  dateOnly,
   matchesFilter,
   money,
   moneyRange,
@@ -40,6 +46,7 @@ import {
   quantity as quantityText,
 } from "../core/format.js";
 import { ACQUISITION_SOURCE_VI, enumVi, serviceCategoryVi } from "../core/i18n.js";
+import { orderStatus } from "../core/orderStatus.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
@@ -68,6 +75,7 @@ import {
   show,
   skeletonRows,
   stepperInput,
+  techDetails,
   toast,
 } from "../ui/kit.js";
 import {
@@ -105,6 +113,35 @@ const WAITING_LIMIT = 100;
 const WAITING_SHOWN = 5;
 /** The quote list the resume path searches for an intake's quote; the route caps at 100. */
 const QUOTE_SEARCH_LIMIT = 100;
+/** `CONTACT-PICK-001`: returning channel customers read (the route's default) and shown at once. */
+const RECENT_LIMIT = 20;
+const RECENT_SHOWN = 5;
+/** `CREDIT-PICK-001`: unused credits read per open of the sheet (the route's default). */
+const CREDIT_LIMIT = 50;
+/** More credits than this and the sheet offers the ticket-number filter (spec §3.2). */
+const CREDIT_FILTER_FROM = 5;
+
+/**
+ * What a credit was issued for, in the words the order page uses for the same credits.
+ *
+ * @type {Record<string, string>}
+ */
+const CREDIT_KIND = {
+  DAMAGE_COMPENSATION: "Bồi thường món bị hỏng",
+  LATE_DELIVERY_CREDIT: "Giảm trừ do giao trễ",
+  LOST_ITEM: "Mất đồ",
+};
+
+/**
+ * A walk-in ticket's day, from the `date` the server stores. Noon in the shop's zone, so no
+ * timezone can move it to the neighbouring day.
+ *
+ * @param {string|null|undefined} day
+ * @returns {string}
+ */
+function ticketDay(day) {
+  return day ? dateOnly(`${day}T12:00:00+07:00`) : "";
+}
 
 /**
  * @typedef {{serviceCode: string, unit: string, quantity: string, basis: string}} Line
@@ -126,6 +163,9 @@ export function render_(context) {
   const query = context?.query;
   const resumeRequest = String(query?.get("request") || "").trim();
   const resumeQuote = String(query?.get("quote") || "").trim();
+  // CONTACT-PICK-001: the hand-off from a conversation. The binding came from that screen's server
+  // read; the server still decides whether it is one it recorded.
+  const handOffContact = String(query?.get("contact") || "").trim();
   const revise = query?.get("revise") === "1";
 
   /**
@@ -271,18 +311,6 @@ export function render_(context) {
       id: "new-walk-in",
       onClick: () => void issueWalkIn(walkIn, alertHost),
     });
-    const channelHost = h("div");
-    const channelToggle = button({
-      label: "Khách đã nhắn qua kênh",
-      variant: "quiet",
-      block: true,
-      id: "new-channel-toggle",
-      onClick: () => {
-        channelToggle.hidden = true;
-        render(channelHost, channelEntry());
-        channelHost.querySelector("input")?.focus();
-      },
-    });
     return h(
       "div",
       { class: "stack" },
@@ -322,10 +350,9 @@ export function render_(context) {
             ),
           ),
           alertHost,
-          channelToggle,
-          channelHost,
         ),
       }),
+      recentSection(),
       waitingSection(),
     );
   }
@@ -407,7 +434,228 @@ export function render_(context) {
     }
   }
 
-  /** A customer who wrote through a channel: the code that conversation produced. */
+  // --- CONTACT-PICK-001: a channel customer, without pasting ------------------------------------
+
+  /** The binding the channel-intake key was minted for: another binding is another intent. */
+  let channelKeyFor = "";
+
+  /**
+   * Open the intake for a channel customer's binding and move on to the bag. The one write every
+   * channel path shares — a tap in the recent list, the hand-off from a conversation, and a code
+   * typed under "Nhập mã thủ công" — so all three are refused, replayed and reported alike.
+   *
+   * The key is kept across a failed press for the same binding (pressing again replays) and
+   * replaced for a different one. The server decides whether the binding is one it recorded
+   * (`REQUIRE_HUMAN` / `CONTACT_BINDING_UNKNOWN` otherwise); nothing here guesses.
+   *
+   * @param {string} binding
+   * @param {HTMLElement} alertHost
+   * @param {HTMLElement|null} control the pressed control, marked busy while the write is in flight
+   * @returns {Promise<boolean>} whether the intake exists now
+   */
+  async function bindChannel(binding, alertHost, control) {
+    if (flow.busy) return false;
+    if (channelKeyFor !== binding) {
+      channelRequestSub.reset();
+      channelKeyFor = binding;
+    }
+    flow.busy = true;
+    control?.setAttribute("aria-busy", "true");
+    render(alertHost, h("p", { class: "hint", role: "status" }, "Đang mở lượt tiếp nhận…"));
+    try {
+      const created = await request(`/internal/v1/stores/${encodeURIComponent(store)}/order-requests`, {
+        method: "POST",
+        body: { contact_binding_id: binding },
+        idempotencyKey: channelRequestSub.key(),
+      });
+      channelRequestSub.reset();
+      channelKeyFor = "";
+      flow.busy = false;
+      render(alertHost);
+      flow.request = { ...created, ticket_number: null, ticket_issued_on: null, order_id: null };
+      go(2);
+      return true;
+    } catch (error) {
+      flow.busy = false;
+      control?.removeAttribute("aria-busy");
+      show(
+        alertHost,
+        errorNotice(error, {
+          title:
+            /** @type {any} */ (error).kind === "REQUIRE_HUMAN"
+              ? "Máy chủ không nhận mã này. Không có yêu cầu nào được tạo — mã lạ bị từ chối chứ không được tự tạo."
+              : undefined,
+        }),
+      );
+      return false;
+    }
+  }
+
+  /**
+   * "Khách nhắn tin gần đây": the channel customers this store has started an intake or an order
+   * for, newest first. Not a search — nothing about a person exists to search by (`DEC-015`) — and
+   * a customer this store has never served is not on it: they arrive from their conversation, or
+   * under "Nhập mã thủ công". A row with an intake still waiting resumes that intake instead of
+   * opening a second one.
+   */
+  function recentSection() {
+    const host = h("div", null, skeletonRows(2));
+    const meta = h("div");
+    const alertHost = h("div");
+    const action = h("span");
+    /** @type {any[]} */
+    let contacts = [];
+    let expanded = false;
+
+    function drawRows() {
+      const shown = expanded ? contacts : contacts.slice(0, RECENT_SHOWN);
+      render(
+        action,
+        contacts.length > RECENT_SHOWN && !expanded
+          ? button({
+              label: `Xem tất cả (${contacts.length})`,
+              variant: "quiet",
+              id: "new-recent-more",
+              onClick: () => {
+                expanded = true;
+                drawRows();
+              },
+            })
+          : null,
+      );
+      render(
+        host,
+        contacts.length
+          ? list(
+              shown.map((item) => recentRow(item, alertHost)),
+              { label: "Khách nhắn tin gần đây", id: "new-recent-list" },
+            )
+          : h("p", { class: "muted" }, "Chưa có khách nhắn tin nào từng đặt ở tiệm này."),
+      );
+    }
+
+    async function load() {
+      render(host, skeletonRows(2));
+      try {
+        const body = await request(
+          `/internal/v1/stores/${encodeURIComponent(store)}/contacts/recent?limit=${RECENT_LIMIT}`,
+        );
+        contacts = Array.isArray(body?.contacts) ? body.contacts : [];
+        drawRows();
+        render(
+          meta,
+          body?.truncated
+            ? h(
+                "p",
+                { class: "hint" },
+                `Chỉ hiện ${RECENT_LIMIT} khách gần nhất. Khách cũ hơn: mở từ cuộc trò chuyện của họ.`,
+              )
+            : null,
+        );
+      } catch (error) {
+        render(host, errorNotice(error, { onRetry: () => void load() }));
+      }
+    }
+    void load();
+
+    return section({
+      title: "Khách nhắn tin gần đây",
+      id: "new-recent",
+      action,
+      card: false,
+      info: infoButton(
+        "Danh sách này lấy từ đâu?",
+        h(
+          "p",
+          { class: "hint" },
+          "Là những khách đã nhắn tiệm qua kênh chat và đã có lượt tiếp nhận hoặc đơn ở cửa hàng " +
+            "này, mới nhất lên trên. Không có tên hay số điện thoại: tiệm không lưu những thứ đó " +
+            "(DEC-015), nên nhận ra khách qua đơn gần nhất và lúc gần nhất.",
+        ),
+        h(
+          "p",
+          { class: "hint" },
+          "Khách mới nhắn lần đầu chưa có ở đây. Mở cuộc trò chuyện của khách (Duyệt, Bản nháp AI " +
+            "hoặc Gửi tay) rồi bấm “Tạo đơn cho khách này” — không phải chép mã.",
+        ),
+      ),
+      children: h("div", { class: "stack stack--tight" }, host, meta, alertHost, channelEntry()),
+    });
+  }
+
+  /**
+   * One returning channel customer. The title is the channel; the line under it is what this
+   * store knows: an intake still waiting, or the latest order's status and total as the server
+   * reported them.
+   *
+   * @param {any} item a `RecentContactResponse`
+   * @param {HTMLElement} alertHost
+   * @returns {HTMLElement}
+   */
+  function recentRow(item, alertHost) {
+    const channels = (Array.isArray(item.channels) ? item.channels : []).map((token) =>
+      enumVi(token),
+    );
+    const latest = item.latest_order;
+    const waiting = typeof item.waiting_order_request_id === "string";
+    const open = Number.isInteger(item.open_order_count) ? item.open_order_count : 0;
+    const status = latest ? orderStatus(latest) : null;
+    const facts = waiting
+      ? "Đang chờ báo giá"
+      : latest && status
+        ? [
+            `Đơn gần nhất: ${status.text}`,
+            Number.isInteger(latest.payable_total_vnd) ? money(latest.payable_total_vnd) : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")
+        : "Chưa có đơn";
+    // The time sits on the facts line rather than beside the title, so a long channel name
+    // ("Telegram (thử nghiệm)") keeps one line at 390 px.
+    const row = listRow({
+      onClick: () => void pickContact(item, row, alertHost),
+      leading: "message",
+      title: `Khách ${channels.join(", ") || "qua kênh chat"}`,
+      meta: `${facts} · ${ago(item.last_activity_at)}`,
+      trailing: open > 0 ? `${open} đơn mở` : undefined,
+      data: { contact: String(item.contact_binding_id || ""), requiresNetwork: "true" },
+    });
+    return row;
+  }
+
+  /**
+   * @param {any} item a `RecentContactResponse`
+   * @param {HTMLElement} row
+   * @param {HTMLElement} alertHost
+   */
+  async function pickContact(item, row, alertHost) {
+    if (flow.busy) return;
+    const waiting = String(item.waiting_order_request_id || "");
+    if (UUID.test(waiting)) {
+      // An intake is already open for this customer: resume it rather than open a second.
+      flow.busy = true;
+      row.setAttribute("aria-busy", "true");
+      try {
+        const intake = await request(
+          `/internal/v1/stores/${encodeURIComponent(store)}/order-requests/${encodeURIComponent(waiting)}`,
+        );
+        flow.busy = false;
+        render(alertHost);
+        await resumeFromRequest(intake);
+      } catch (error) {
+        flow.busy = false;
+        row.removeAttribute("aria-busy");
+        show(alertHost, errorNotice(error, { onRetry: () => void pickContact(item, row, alertHost) }));
+      }
+      return;
+    }
+    await bindChannel(String(item.contact_binding_id || ""), alertHost, row);
+  }
+
+  /**
+   * "Nhập mã thủ công", folded: the fallback for a binding read somewhere this console does not
+   * reach. The same write as a tap, after the shape check the server would make anyway.
+   */
   function channelEntry() {
     const draft = { code: "" };
     const alertHost = h("div");
@@ -425,8 +673,6 @@ export function render_(context) {
             "aria-invalid",
             draft.code && !UUID.test(draft.code) ? "true" : "false",
           );
-          // Different content, different intent.
-          channelRequestSub.reset();
         },
       })
     );
@@ -447,68 +693,99 @@ export function render_(context) {
           return;
         }
         submit.disabled = true;
-        render(alertHost, h("p", { class: "hint", role: "status" }, "Đang ghi nhận…"));
-        try {
-          const created = await request(
-            `/internal/v1/stores/${encodeURIComponent(store)}/order-requests`,
-            {
-              method: "POST",
-              body: { contact_binding_id: draft.code },
-              idempotencyKey: channelRequestSub.key(),
-            },
-          );
-          channelRequestSub.reset();
-          flow.request = { ...created, ticket_number: null, order_id: null };
-          go(2);
-        } catch (error) {
-          if (submit.getAttribute("data-denied") !== "true") submit.disabled = false;
-          show(
-            alertHost,
-            errorNotice(error, {
-              title:
-                /** @type {any} */ (error).kind === "REQUIRE_HUMAN"
-                  ? "Máy chủ không nhận mã này. Không có yêu cầu nào được tạo — mã lạ bị từ chối chứ không được tự tạo."
-                  : undefined,
-            }),
-          );
-        }
+        await bindChannel(draft.code, alertHost, submit);
+        if (submit.getAttribute("data-denied") !== "true") submit.disabled = false;
       },
     });
-    return gatedFields(
+    const fold = h(
+      "details",
+      {
+        class: "manual-entry",
+        onToggle: (event) => {
+          if (event.currentTarget.open) input.focus();
+        },
+      },
+      h("summary", { id: "new-channel-toggle" }, "Nhập mã thủ công"),
       h(
         "div",
-        { class: "stack stack--tight", id: "new-channel" },
+        { class: "stack stack--tight" },
         h(
           "div",
           { class: "fact-line" },
           h("p", { class: "hint" }, "Chưa tìm được khách theo tên hay số điện thoại."),
           infoButton(
-            "Vì sao phải nhập mã?",
+            "Vì sao không tìm theo tên?",
             h(
               "p",
               { class: "hint" },
-              "Máy chủ chưa có đường nào để tìm một liên hệ theo tên, số điện thoại hay đoạn chat, " +
-                "nên bảng vận hành không đoán giúp. Khách đã từng nhắn tin qua kênh chính thức thì " +
-                "dùng mã sinh ra từ lần nhắn đó.",
+              "Tiệm không lưu tên, số điện thoại hay đoạn chat của khách (DEC-015), nên không có gì " +
+                "để tìm. Khách đã nhắn qua kênh chính thức thì bấm từ cuộc trò chuyện của khách, " +
+                "hoặc chọn ở danh sách trên; ô này chỉ dành cho mã đọc được ở nơi khác.",
             ),
           ),
         ),
-        h(
-          "details",
-          { class: "manual-entry", open: true },
-          h("summary", null, "Nhập mã thủ công"),
-          h(
-            "div",
-            { class: "stack stack--tight" },
-            h("label", { for: "new-contact" }, "Mã khách"),
-            input,
-            gated(submit, quoteWrite),
-          ),
-        ),
-        alertHost,
+        h("label", { for: "new-contact" }, "Mã khách"),
+        input,
+        gated(submit, quoteWrite),
       ),
+    );
+    return gatedFields(
+      h("div", { class: "stack stack--tight", id: "new-channel" }, fold, alertHost),
       quoteWrite,
     );
+  }
+
+  /**
+   * `#/new?contact=<binding>` (`CONTACT-PICK-001`): straight to step 2 for the customer the
+   * conversation named. An intake already waiting for that binding is resumed, not duplicated;
+   * otherwise one is opened. Either way the address becomes `?request=<id>`, so reloading resumes
+   * that intake instead of opening another.
+   *
+   * @param {string} binding
+   */
+  async function handOff(binding) {
+    render(
+      resumeHost,
+      h(
+        "div",
+        { class: "stack stack--tight" },
+        h("p", { class: "hint", role: "status" }, "Đang mở lượt tiếp nhận cho khách từ cuộc trò chuyện…"),
+        skeleton(1),
+      ),
+    );
+    /** @type {any} */
+    let waiting = null;
+    try {
+      const items = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/order-requests?limit=${WAITING_LIMIT}`,
+      );
+      waiting =
+        (Array.isArray(items) ? items : []).find(
+          (item) =>
+            item.contact_binding_id === binding && !item.order_id && item.status !== "CANCELLED",
+        ) || null;
+    } catch (error) {
+      show(resumeHost, errorNotice(error, { onRetry: () => void handOff(binding) }));
+      return;
+    }
+    if (waiting) {
+      render(resumeHost);
+      await resumeFromRequest(waiting);
+      settleAddress(waiting.order_request_id);
+      return;
+    }
+    if (await bindChannel(binding, resumeHost, null)) settleAddress(flow.request?.order_request_id);
+  }
+
+  /**
+   * Replace `?contact=` with the intake it produced, without a navigation (no `hashchange`, so the
+   * screen is not rebuilt) and without a new history entry (Back returns to the conversation).
+   *
+   * @param {unknown} requestId
+   */
+  function settleAddress(requestId) {
+    if (typeof requestId !== "string" || !UUID.test(requestId)) return;
+    history.replaceState(history.state, "", `#/new?request=${encodeURIComponent(requestId)}`);
   }
 
   /** "Tiếp tục một khách đang chờ": intakes that have not become an order yet. */
@@ -707,6 +984,16 @@ export function render_(context) {
           ? `Đọc số này cho khách, ghi lên túi đồ · ${clock(item.created_at)}`
           : `Tiếp nhận lúc ${clock(item?.created_at)}`,
       ),
+      // CONTACT-PICK-001: the channel binding is tier 3 — for an engineer, never for the counter.
+      !numbered && item?.contact_binding_id
+        ? techDetails([
+            [
+              "Mã khách (kênh chat)",
+              String(item.contact_binding_id),
+              { copy: String(item.contact_binding_id) },
+            ],
+          ])
+        : null,
     );
   }
 
@@ -1460,7 +1747,7 @@ export function render_(context) {
               variant: "quiet",
               block: true,
               id: "new-credit-open",
-              onClick: () => creditSheet.open(),
+              onClick: () => openCredits(),
             }),
             creditWrite,
           )
@@ -1468,8 +1755,38 @@ export function render_(context) {
     );
   }
 
-  const creditDraft = { code: "" };
+  // CREDIT-PICK-001: the sheet lists the store's unused credits and a tap applies one; the code is
+  // typed only under "Nhập mã thủ công". Either way the write is the same redemption route, with
+  // the revision and digest of the receipt on screen.
+
+  /** The credit the redemption key was minted for: another credit is another intent. */
+  let creditKeyFor = "";
   const creditAlert = h("div");
+  const creditListHost = h("div", { class: "stack stack--tight" }, skeletonRows(2));
+  const creditMeta = h("div");
+  const creditFilterHost = h("div");
+  let creditTicket = "";
+  /** @type {number|undefined} */
+  let creditFilterTimer;
+  /** Set once the store has more unused credits than fit at a glance; kept while filtering. */
+  let creditFilterShown = false;
+  const creditFilter = searchField({
+    id: "new-credit-ticket",
+    label: "Lọc theo số phiếu",
+    placeholder: "Lọc theo số phiếu…",
+    inputmode: "numeric",
+    onInput: (value) => {
+      creditTicket = String(value || "").trim();
+      window.clearTimeout(creditFilterTimer);
+      creditFilterTimer = window.setTimeout(() => void loadCredits(), 300);
+    },
+    onSubmit: () => {
+      window.clearTimeout(creditFilterTimer);
+      void loadCredits();
+    },
+  });
+
+  const creditDraft = { code: "" };
   const creditInput = h("input", {
     type: "text",
     id: "new-credit-code",
@@ -1483,16 +1800,24 @@ export function render_(context) {
         "aria-invalid",
         creditDraft.code && !UUID.test(creditDraft.code) ? "true" : "false",
       );
-      creditSub.reset();
     },
   });
   const creditSubmit = button({
     label: "Áp dụng khoản giảm trừ",
-    variant: "primary",
+    variant: "secondary",
     network: true,
     block: true,
     id: "new-credit-submit",
-    onClick: () => void redeemCredit(),
+    onClick: () => {
+      if (!UUID.test(creditDraft.code)) {
+        show(
+          creditAlert,
+          inlineAlert({ state: "danger", title: "Mã giảm trừ phải đủ 36 ký tự, dạng 0000…-…." }),
+        );
+        return;
+      }
+      void redeemCredit(creditDraft.code, creditSubmit);
+    },
   });
   const creditSheet = sheet({
     id: "new-credit",
@@ -1510,38 +1835,136 @@ export function render_(context) {
             "Dùng đúng một lần, trừ vào tổng trước khi báo khách — không trừ vào số khách đã trả.",
           ),
           infoButton(
-            "Tìm mã giảm trừ ở đâu?",
+            "Danh sách này lấy từ đâu?",
             h(
               "p",
               { class: "hint" },
-              "Mã in trên phiếu giấy của khách lúc phát hành. Khách quên mã thì tìm đơn đã phát hành " +
-                "khoản đó theo số phiếu ở màn hình Đơn hàng: mã nằm ở mục “Khoản giảm trừ của đơn này”.",
+              "Là mọi khoản giảm trừ chưa dùng của cửa hàng này, mới nhất lên trên, kèm số phiếu của " +
+                "đơn đã phát hành khoản đó. Khoản giảm trừ là phiếu cầm tay: không cần khách nhớ mã, " +
+                "hỏi số phiếu cũ của khách rồi chọn đúng dòng.",
             ),
             h(
               "p",
               { class: "hint" },
-              "Máy chủ chưa có đường nào liệt kê các khoản giảm trừ chưa dùng của một khách, nên ở đây " +
-                "chỉ nhập được mã. Bản báo giá và dấu vân của nó được gửi kèm tự động từ bản đang hiện.",
+              "Khoản vẫn nằm trong danh sách cho tới khi một đơn dùng nó được tạo; máy chủ từ chối " +
+                "áp một khoản hai lần vào cùng một báo giá. Bản báo giá và dấu vân của nó được gửi " +
+                "kèm tự động từ bản đang hiện.",
             ),
           ),
         ),
-        h("label", { for: "new-credit-code" }, "Mã khoản giảm trừ"),
-        creditInput,
-        gated(creditSubmit, creditWrite),
+        creditFilterHost,
+        creditListHost,
+        creditMeta,
         creditAlert,
+        h(
+          "details",
+          { class: "manual-entry" },
+          h("summary", { id: "new-credit-manual" }, "Nhập mã thủ công"),
+          h(
+            "div",
+            { class: "stack stack--tight" },
+            h("label", { for: "new-credit-code" }, "Mã khoản giảm trừ"),
+            creditInput,
+            gated(creditSubmit, creditWrite),
+          ),
+        ),
       ),
       creditWrite,
     ),
   });
 
-  async function redeemCredit() {
-    const revision = flow.quote;
-    if (!revision) return;
-    if (!UUID.test(creditDraft.code)) {
-      show(creditAlert, inlineAlert({ state: "danger", title: "Mã giảm trừ phải đủ 36 ký tự, dạng 0000…-…." }));
-      return;
+  function openCredits() {
+    creditTicket = "";
+    creditFilterShown = false;
+    const field = creditFilter.node.querySelector("input");
+    if (field) field.value = "";
+    render(creditAlert);
+    creditSheet.open();
+    void loadCredits();
+  }
+
+  /** The store's unused credits, or those issued on one ticket number. A read; nothing moves. */
+  async function loadCredits() {
+    const ticket = /^[0-9]{1,6}$/.test(creditTicket) ? creditTicket : "";
+    const ticketPart = ticket ? `&ticket=${encodeURIComponent(ticket)}` : "";
+    render(creditListHost, skeletonRows(2));
+    render(creditMeta);
+    try {
+      const body = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/remedy-credits?limit=${CREDIT_LIMIT}${ticketPart}`,
+      );
+      if (ticket !== (/^[0-9]{1,6}$/.test(creditTicket) ? creditTicket : "")) return;
+      const credits = Array.isArray(body?.credits) ? body.credits : [];
+      if (!ticket && (credits.length > CREDIT_FILTER_FROM || body?.truncated)) {
+        creditFilterShown = true;
+      }
+      render(creditFilterHost, creditFilterShown ? creditFilter.node : null);
+      render(
+        creditListHost,
+        credits.length
+          ? list(credits.map(creditChoice), { label: "Khoản giảm trừ chưa dùng", id: "new-credit-list" })
+          : h(
+              "p",
+              { class: "muted", id: "new-credit-empty" },
+              ticket
+                ? `Không có khoản giảm trừ nào chưa dùng phát hành từ Phiếu ${ticket}.`
+                : "Không có khoản giảm trừ nào chưa dùng",
+            ),
+      );
+      render(
+        creditMeta,
+        body?.truncated
+          ? h(
+              "p",
+              { class: "hint" },
+              `Chỉ hiện ${CREDIT_LIMIT} khoản mới nhất. Lọc theo số phiếu để tìm khoản cũ hơn.`,
+            )
+          : null,
+      );
+    } catch (error) {
+      render(creditListHost, errorNotice(error, { onRetry: () => void loadCredits() }));
     }
-    creditSubmit.disabled = true;
+  }
+
+  /**
+   * One unused credit: the paper ticket it was issued on, and its amount as the server stores it.
+   *
+   * @param {any} credit a `StoreRemedyCreditResponse`
+   * @returns {HTMLElement}
+   */
+  function creditChoice(credit) {
+    const numbered = Number.isInteger(credit.ticket_number);
+    const row = listRow({
+      onClick: () => void redeemCredit(String(credit.credit_id || ""), row),
+      leading: "tag",
+      // The ticket is what the customer holds and the counter asks for; the day beside it
+      // tells two Phiếu 7s apart (numbers restart daily).
+      title: numbered ? `Phiếu ${credit.ticket_number}` : "Khách nhắn qua kênh",
+      meta: `${numbered ? ticketDay(credit.ticket_issued_on) : dateOnly(credit.issued_at)} · ${
+        CREDIT_KIND[credit.kind] || enumVi(credit.kind)
+      }`,
+      trailing: h("span", { class: "money" }, money(credit.amount_vnd)),
+      data: { creditId: String(credit.credit_id || ""), requiresNetwork: "true" },
+    });
+    return row;
+  }
+
+  /**
+   * Spend one credit on the revision on screen, through the redemption route.
+   *
+   * @param {string} creditId from the list the server returned, or typed under "Nhập mã thủ công"
+   * @param {HTMLElement} control
+   */
+  async function redeemCredit(creditId, control) {
+    const revision = flow.quote;
+    if (!revision || flow.busy) return;
+    if (creditKeyFor !== creditId) {
+      creditSub.reset();
+      creditKeyFor = creditId;
+    }
+    flow.busy = true;
+    control.setAttribute("aria-busy", "true");
+    if (control instanceof HTMLButtonElement) control.disabled = true;
     render(creditAlert, h("p", { class: "hint", role: "status" }, "Đang áp dụng…"));
     try {
       const applied = await request(
@@ -1549,7 +1972,7 @@ export function render_(context) {
         {
           method: "POST",
           body: {
-            credit_id: creditDraft.code,
+            credit_id: creditId,
             // From the revision on screen: the evidence that the total being changed is the one read.
             expected_current_revision: revision.revision,
             expected_snapshot_hash: revision.snapshot_hash,
@@ -1558,7 +1981,10 @@ export function render_(context) {
         },
       );
       creditSub.reset();
-      creditSubmit.disabled = false;
+      creditKeyFor = "";
+      flow.busy = false;
+      control.removeAttribute("aria-busy");
+      if (control instanceof HTMLButtonElement) control.disabled = false;
       render(creditAlert);
       creditSheet.close();
       toast(`Đã trừ khoản giảm trừ · bản sửa đổi ${applied.revision}`);
@@ -1571,7 +1997,11 @@ export function render_(context) {
       drawReceipt();
       drawActions();
     } catch (error) {
-      if (creditSubmit.getAttribute("data-denied") !== "true") creditSubmit.disabled = false;
+      flow.busy = false;
+      control.removeAttribute("aria-busy");
+      if (control instanceof HTMLButtonElement && control.getAttribute("data-denied") !== "true") {
+        control.disabled = false;
+      }
       const failure = /** @type {any} */ (error);
       const refused = failure.kind === "DENIED" || failure.status === 422 || failure.kind === "STALE";
       show(
@@ -1877,7 +2307,19 @@ export function render_(context) {
   // ============================================================================================
 
   void loadCatalog();
-  if (resumeQuote) {
+  if (handOffContact) {
+    if (UUID.test(handOffContact)) void handOff(handOffContact);
+    else {
+      show(
+        resumeHost,
+        inlineAlert({
+          state: "warn",
+          title: "Mã khách trong đường dẫn không hợp lệ",
+          body: "Không có gì được tạo. Chọn khách ở danh sách bên dưới.",
+        }),
+      );
+    }
+  } else if (resumeQuote) {
     if (UUID.test(resumeQuote)) void resumeFromQuote(resumeQuote, null);
     else show(resumeHost, inlineAlert({ state: "warn", title: "Mã báo giá trong đường dẫn không hợp lệ" }));
   } else if (resumeRequest) {

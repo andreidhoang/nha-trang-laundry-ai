@@ -650,9 +650,9 @@ function executionCard(result) {
               h(
                 "p",
                 { class: "hint" },
-                "Khoản giảm trừ là phiếu cầm tay: ai cầm mã thì dùng được, và dùng đúng một lần. Chép " +
-                  "vào phiếu giấy của khách trước khi rời màn hình. Khách làm mất mã thì tìm lại đơn " +
-                  "này theo số phiếu ở màn hình Đơn hàng: mã nằm ở mục “Khoản giảm trừ của đơn này”.",
+                "Khoản giảm trừ là phiếu cầm tay: ai cầm mã thì dùng được, và dùng đúng một lần. " +
+                  "Khách làm mất mã cũng không mất khoản: ở ＋ Nhận đồ, “Dùng khoản giảm trừ” liệt kê " +
+                  "mọi khoản chưa dùng của tiệm kèm số phiếu của đơn này — chỉ cần hỏi số phiếu.",
               ),
             ),
           ),

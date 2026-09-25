@@ -1647,14 +1647,14 @@ export function render_(context) {
         h(
           "p",
           { class: "hint" },
-          "Khoản giảm trừ là phiếu cầm tay: ai đọc đúng mã thì dùng được, đúng một lần, ở cửa " +
-            "hàng này, cho hoá đơn lần sau. Khách quên mã thì tìm lại đơn theo số phiếu rồi đọc " +
-            "mã ở đây. Máy chủ không ghi hạn dùng cho khoản giảm trừ.",
+          "Khoản giảm trừ là phiếu cầm tay: dùng được đúng một lần, ở cửa hàng này, cho hoá " +
+            "đơn lần sau — khách không cần nhớ mã. Máy chủ không ghi hạn dùng cho khoản giảm trừ.",
         ),
         h(
           "p",
           { class: "hint" },
-          "Dùng mã ở ＋ Nhận đồ: tính giá xong, bấm “Dùng khoản giảm trừ” trên hoá đơn rồi nhập mã.",
+          "Dùng ở ＋ Nhận đồ: tính giá xong, bấm “Dùng khoản giảm trừ” trên hoá đơn rồi chọn " +
+            "dòng mang số phiếu của đơn này.",
         ),
       ),
       children: creditHost,

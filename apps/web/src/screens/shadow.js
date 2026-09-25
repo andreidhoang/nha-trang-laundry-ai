@@ -42,6 +42,7 @@ import { UNKNOWN, dateTime, integer, shortId } from "../core/format.js";
 import { enumLabel, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
+import { newOrderForDraft } from "../ui/handoff.js";
 import {
   errorNotice,
   gated,
@@ -780,6 +781,9 @@ export function render_() {
       h("p", { class: "hint draft__fact" }, "Duyệt chỉ ghi quyết định của bạn — chưa gửi gì cho khách."),
       line,
       failureHost,
+      // CONTACT-PICK-001: the customer who wrote, to ＋ Nhận đồ. This list does not carry the
+      // binding, so the press reads it from the draft's own binding route and hands that over.
+      newOrderForDraft(store, item.agent_run_id),
       provenance(item),
     );
   }
@@ -902,6 +906,8 @@ export function render_() {
             icon: "message",
           })
         : null,
+      // CONTACT-PICK-001. Only where the binding route answers: a rejected draft reads as 404.
+      sendable ? newOrderForDraft(store, item.agent_run_id) : null,
       techDetails(
         [
           [

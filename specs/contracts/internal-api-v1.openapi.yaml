@@ -565,6 +565,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/contacts/recent:
+    get:
+      operationId: list_recent_contacts
+      summary: Channel customers with an order or an order request in this store, newest activity first.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/contacts/{contact_binding_id}/service-messaging:
     get:
       operationId: read_service_messaging
@@ -1111,6 +1128,23 @@ paths:
       summary: Every price a staff member chose inside a published band, on one business day.
       x-authorization-dependencies:
       - require_approval_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/remedy-credits:
+    get:
+      operationId: list_store_remedy_credits
+      summary: Unspent credits of this store, newest first, each with the ticket it was issued on.
+      x-authorization-dependencies:
+      - current_principal
       - get_operations_service
       x-documented-by-fastapi: true
       responses:

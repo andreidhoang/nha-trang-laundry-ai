@@ -191,6 +191,14 @@ DECLARED_CONTROLS = (
     "staff.device-revoke",
     "approvals.order-approve",
     "approvals.order-refuse",
+    # CREDIT-PICK-001 / CONTACT-PICK-001: the last two typed values on Nhận đồ, now picked or
+    # handed over. Each is a control a person presses; none is an id field.
+    "newOrder.credit-open",
+    "newOrder.credit-pick",
+    "newOrder.recent-pick",
+    "shadow.new-order",
+    "manualSend.new-order",
+    "approvals.new-order",
 )
 
 PASS: list[str] = []
@@ -3256,6 +3264,353 @@ def scenario_order_envelope(console: Console) -> None:
         )
 
 
+def _unused_credit_ids(console: Console) -> list[str]:
+    """The store's unused credits as the counter's picker reads them."""
+
+    listed = console.call("GET", f"/internal/v1/stores/{STORE}/remedy-credits?limit=200")
+    rows = (listed.get("body") or {}).get("credits") or []
+    return [str(row.get("credit_id")) for row in rows if isinstance(row, dict)]
+
+
+def scenario_credit_pick(console: Console) -> None:
+    """`CREDIT-PICK-001`: a returning customer's credit is picked from a list, never typed."""
+
+    head("13", "KHOẢN GIẢM TRỪ — a complaint pays a credit; the next bill picks it from a list")
+    console.sign_in("demo-operations")
+    order = _collected_suits(console)
+    order_id = order["order_id"]
+    slip = console.call("GET", f"/internal/v1/orders/{order_id}")["body"] or {}
+    ticket_number = slip.get("ticket_number")
+    opened = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/incidents",
+        {"order_id": order_id, "evidence_summary": "Áo vest thứ nhất bị sờn cổ sau khi ủi"},
+    )
+    incident = str((opened.get("body") or {}).get("incident_id") or "")
+    ok("the complaint is recorded against the suits", opened["status"] == 201, opened["text"][:160])
+    console.open(f"#/incidents/{incident}", settle=2000)
+    said = _propose_remedy(console, kind="DAMAGE_COMPENSATION", amount="40000", garment="1")
+    carry_out = console.page.locator("button[data-remedy-execute]")
+    if carry_out.count():
+        carry_out.first.click()
+        touched("remedy.execute")
+        console.page.wait_for_timeout(2200)
+    credits = (
+        console.call("GET", f"/internal/v1/stores/{STORE}/orders/{order_id}/remedy-credits")["body"]
+        or {}
+    )
+    issued = [c for c in credits.get("credits") or [] if c.get("status") == "UNUSED"]
+    credit_id = str(issued[0]["credit_id"]) if issued else ""
+    ok(
+        "carried out at the counter, it is a 40.000 ₫ credit the customer does not have to "
+        "remember",
+        len(issued) == 1 and issued[0].get("amount_vnd") == 40_000,
+        f"{issued} :: {said[:120]}",
+    )
+    ok(
+        "and the store's unused-credit list carries it, with no contact field",
+        credit_id in _unused_credit_ids(console)
+        and "contact"
+        not in json.dumps(
+            console.call("GET", f"/internal/v1/stores/{STORE}/remedy-credits")["body"]
+        ),
+        credit_id[:8],
+    )
+
+    head("13b", "LẦN SAU — the customer is back with a new bag and no code")
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "7")
+    priced = console.price()
+    before = (priced.get("body") or {}).get("display_total_min_vnd")
+    ok("the new bag is priced by the server", priced["status"] < 300, f"HTTP {priced['status']}")
+    console.page.locator("#new-credit-open").click()
+    touched("newOrder.credit-open")
+    row = console.page.locator(f"#new-credit-list [data-credit-id='{credit_id}']")
+    with contextlib.suppress(Exception):
+        row.wait_for(state="visible", timeout=8000)
+    shown = row.first.inner_text() if row.count() else ""
+    ok(
+        f"'Dùng khoản giảm trừ' lists it as the ticket it was issued on (Phiếu {ticket_number}) "
+        "and its amount -- no code on screen",
+        row.count() == 1
+        and f"Phiếu {ticket_number}" in shown
+        and "40.000" in shown
+        and credit_id not in console.text(),
+        shown.replace("\n", " | ")[:160],
+    )
+    manual = console.page.locator("details:has(#new-credit-code)")
+    ok(
+        "typing a code survives only folded under 'Nhập mã thủ công'",
+        manual.count() == 1
+        and manual.first.get_attribute("open") is None
+        and not console.page.locator("#new-credit-code").is_visible(),
+        "",
+    )
+    (applied,) = console.press_capturing(row.first, "/remedy-credits")
+    touched("newOrder.credit-pick")
+    console.page.wait_for_timeout(1200)
+    body = applied.get("body") or {}
+    quote_id = str((priced.get("body") or {}).get("quote_id") or "")
+    detail = (
+        console.call(
+            "GET",
+            f"/internal/v1/stores/{STORE}/quotes/{quote_id}?revision={body.get('revision')}",
+        )["body"]
+        or {}
+    )
+    after = detail.get("display_total_min_vnd")
+    ok(
+        "one tap spends it through the redemption route with the values the list returned",
+        applied["status"] == 201 and body.get("credit_vnd") == 40_000,
+        applied["text"][:200],
+    )
+    ok(
+        "and the total drops by exactly the server's figure",
+        isinstance(before, int)
+        and isinstance(after, int)
+        and before - after == body.get("credit_vnd") == 40_000,
+        f"{before} -> {after}",
+    )
+    ok(
+        "the receipt on screen says so",
+        "giảm 40.000" in console.page.locator("#new-receipt").inner_text(),
+        console.page.locator("#new-receipt").inner_text()[-160:].replace("\n", " | "),
+    )
+    done = console.confirm()
+    ok(
+        "the customer agrees and the order is created",
+        (done["order"] or {}).get("status") == 201,
+        (done["order"] or {}).get("text", "")[:160],
+    )
+    ok(
+        "and the credit is no longer listed: the order spent it",
+        credit_id not in _unused_credit_ids(console)
+        and (
+            not READS_DATABASE
+            or sql(f"select redeemed_at is not null from remedy_credits where id='{credit_id}'")
+            == "t"
+        ),
+        credit_id[:8],
+    )
+
+
+def _seed_channel_customer() -> tuple[str, str, str]:
+    """A customer who wrote through a channel, and the draft reply the agent would have left.
+
+    The binding is recorded through the channel envelope's own resolve path
+    (`ContactChannelBindingRepository.resolve_or_create`), and the draft exactly as the consent
+    walk places one (`message_draft_test_data.seed_message_draft`): no channel adapter exists yet
+    and the AI is off, so these two are the harness's, and nothing after them is.
+    """
+
+    import pathlib
+
+    import workspace_env  # noqa: F401  (the workspace packages, as every scripts/ entry point)
+
+    fixtures = pathlib.Path(__file__).resolve().parents[1] / "packages" / "db" / "tests"
+    if str(fixtures) not in sys.path:
+        sys.path.insert(0, str(fixtures))
+
+    import psycopg
+    from message_draft_test_data import seed_message_draft
+    from nha_trang_laundry_contracts.channel_envelope import ChannelProvider
+    from nha_trang_laundry_db.channel import ContactChannelBindingRepository
+
+    handle = f"conformance-{uuid.uuid4().hex[:12]}"
+    with psycopg.connect(arguments.database_url, autocommit=True) as connection:
+        resolved = ContactChannelBindingRepository().resolve_or_create(
+            connection,
+            provider=ChannelProvider.TELEGRAM_SANDBOX,
+            provider_user_ref=handle,
+            correlation_id=uuid.uuid4(),
+        )
+        binding = resolved.binding.contact_id
+        draft = seed_message_draft(
+            connection,
+            uuid.UUID(STORE),
+            text="Dạ tiệm nhận giặt chăn ạ, anh/chị mang qua tiệm giúp em nhé.",
+            contact_binding_id=binding,
+        )
+    return str(binding), str(draft.agent_run_id), handle
+
+
+def _intakes_for(binding: str) -> str:
+    return sql(
+        f"select count(*) from order_requests where store_id='{STORE}' "
+        f"and contact_binding_id='{binding}'"
+    )
+
+
+def scenario_contact_pick(console: Console) -> None:
+    """`CONTACT-PICK-001`: a channel customer is handed over from the conversation, never pasted."""
+
+    head("14", "KHÁCH NHẮN TIN — from the conversation to Nhận đồ without copying a code")
+    if not arguments.database_url:
+        ok("this scenario seeds a channel customer, which needs --database-url", False)
+        return
+    binding, draft, handle = _seed_channel_customer()
+    note(
+        f"a customer wrote on Telegram (binding {binding[:8]}…); the agent left draft {draft[:8]}…"
+    )
+    console.sign_in("demo-operations")
+    console.open("#/new", settle=1600)
+    recent = console.page.locator(f"#new-recent [data-contact='{binding}']")
+    ok(
+        "before any order, the customer is not in 'Khách nhắn tin gần đây': nothing ties them to "
+        "this store yet",
+        console.page.locator("#new-recent").count() == 1 and recent.count() == 0,
+        console.page.locator("#new-recent").inner_text()[:120]
+        if console.page.locator("#new-recent").count()
+        else "no section",
+    )
+    fold = console.page.locator("details:has(#new-contact)")
+    ok(
+        "'Nhập mã thủ công' is still there, folded",
+        fold.count() == 1
+        and fold.first.get_attribute("open") is None
+        and not console.page.locator("#new-contact").is_visible(),
+        "",
+    )
+
+    head("14b", "BẢN NHÁP AI — 'Tạo đơn cho khách này' on the draft opens the intake at step 2")
+    console.open("#/shadow", settle=1800)
+    hand_off = console.page.locator(f"article[data-agent-run='{draft}'] [data-new-order-draft]")
+    ok("the draft card offers the hand-off", hand_off.count() == 1, console.text()[:120])
+    (created,) = console.press_capturing(hand_off.first, "/order-requests")
+    touched("shadow.new-order")
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#new-ticket", timeout=15000)
+    console.page.wait_for_timeout(600)
+    request_id = str((created.get("body") or {}).get("order_request_id") or "")
+    ok(
+        "the server opened the intake for that binding -- the one the draft names, not a typed one",
+        created["status"] == 201
+        and (created.get("body") or {}).get("contact_binding_id") == binding,
+        created["text"][:200],
+    )
+    ok(
+        "and the flow is on step 2, 'Đồ & giá', for 'Khách nhắn qua kênh'",
+        console.page.locator("#new-ticket").count() == 1
+        and "Khách nhắn qua kênh" in console.page.locator("#new-ticket").inner_text()
+        and console.page.locator("#new-add-line").count() == 1,
+        console.page.url,
+    )
+    ok(
+        "the address now names the intake, so a reload resumes it instead of opening another",
+        console.page.url.endswith(f"#/new?request={request_id}"),
+        console.page.url,
+    )
+    console.page.reload(wait_until="networkidle")
+    console.page.wait_for_timeout(1500)
+    ok(
+        "reloaded: still one intake for this customer",
+        _intakes_for(binding) == "1",
+        _intakes_for(binding),
+    )
+    console.add_line("STANDARD_WASH_DRY", "6")
+    priced = console.price()
+    done = console.confirm(source="ZALO")
+    ok(
+        "priced, agreed and ordered for the channel customer",
+        priced["status"] < 300 and (done["order"] or {}).get("status") == 201,
+        (done["order"] or {}).get("text", "")[:160],
+    )
+
+    head("14c", "KHÁCH QUAY LẠI — the returning customer is one tap in the list")
+    console.open("#/new", settle=1800)
+    recent = console.page.locator(f"#new-recent [data-contact='{binding}']")
+    if recent.count() == 0 and console.page.locator("#new-recent-more").count():
+        console.page.locator("#new-recent-more").click()
+        console.page.wait_for_timeout(300)
+    listed = recent.first.inner_text() if recent.count() else ""
+    section_text = (
+        console.page.locator("#new-recent").inner_text()
+        if console.page.locator("#new-recent").count()
+        else ""
+    )
+    ok(
+        "now listed, with its channel and its last order -- and no handle, no message text",
+        recent.count() == 1
+        and "Telegram" in listed
+        and "Đơn gần nhất" in listed
+        and handle not in section_text
+        and "tiệm nhận giặt chăn" not in section_text,
+        listed.replace("\n", " | ")[:160],
+    )
+    (again,) = console.press_capturing(recent.first, "/order-requests")
+    touched("newOrder.recent-pick")
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#new-ticket", timeout=15000)
+    ok(
+        "one tap binds them: a new intake, straight to step 2",
+        again["status"] == 201
+        and (again.get("body") or {}).get("contact_binding_id") == binding
+        and console.page.locator("#new-add-line").count() == 1,
+        again["text"][:160],
+    )
+    ok("two intakes now, one per visit", _intakes_for(binding) == "2", _intakes_for(binding))
+
+    head("14d", "GỬI TAY — the manual send's read hands over the same customer")
+    console.open(f"#/exceptions?draft={draft}", settle=2200)
+    manual = console.page.locator(f"[data-new-order-contact='{binding}']")
+    ok("the read draft offers 'Tạo đơn cho khách này'", manual.count() == 1, console.said()[:120])
+    if manual.count():
+        manual.first.click()
+        touched("manualSend.new-order")
+        with contextlib.suppress(Exception):
+            console.page.wait_for_selector("#new-ticket", timeout=15000)
+        console.page.wait_for_timeout(1200)
+    ok(
+        "an intake is already waiting for them, so it is resumed -- not a third one",
+        _intakes_for(binding) == "2" and console.page.locator("#new-ticket").count() == 1,
+        _intakes_for(binding),
+    )
+
+    head("14e", "DUYỆT — the approver's SEND_MESSAGE card hands over the same customer")
+    read = console.call("GET", f"/internal/v1/stores/{STORE}/message-drafts/{draft}/binding")
+    envelope = {
+        key: value
+        for key, value in (read.get("body") or {}).items()
+        if key not in {"text", "recipient_binding_id", "send_progress"}
+    }
+    raised = console.call("POST", "/internal/v1/approvals", envelope)
+    ok(
+        "the operator asks for the message to be approved",
+        raised["status"] == 201,
+        raised["text"][:160],
+    )
+    console.sign_in("demo-approver")
+    console.open("#/approvals", settle=2500)
+    card = console.page.locator(f"article.card:has([data-new-order-contact='{binding}'])")
+    ok(
+        "the card shows the message and offers the hand-off",
+        card.count() == 1,
+        console.text()[:120],
+    )
+    if card.count():
+        card.first.locator(f"[data-new-order-contact='{binding}']").click()
+        touched("approvals.new-order")
+        with contextlib.suppress(Exception):
+            console.page.wait_for_selector("#new-ticket", timeout=15000)
+        console.page.wait_for_timeout(1200)
+    ok(
+        "and lands on the same waiting intake",
+        _intakes_for(binding) == "2" and console.page.locator("#new-ticket").count() == 1,
+        console.page.url,
+    )
+
+    head("14f", "MÃ LẠ — a binding the server never recorded is still refused")
+    stranger = str(uuid.uuid4())
+    console.open(f"#/new?contact={stranger}", settle=2200)
+    ok(
+        "refused with its reason, and nothing is created",
+        "CONTACT_BINDING_UNKNOWN" in console.reason_codes()
+        and "Không có liên hệ nào mang mã này" in console.text()
+        and _intakes_for(stranger) == "0",
+        console.said()[:160],
+    )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -3274,6 +3629,8 @@ SCENARIOS = {
     "export_range": scenario_export_range,
     "sessions": scenario_sessions,
     "order_envelope": scenario_order_envelope,
+    "credit_pick": scenario_credit_pick,
+    "contact_pick": scenario_contact_pick,
 }
 
 

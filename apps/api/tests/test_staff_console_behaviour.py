@@ -557,7 +557,10 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         # press, the channel customer's manual code, resuming a waiting ticket, and the one press
         # that records the customer's agreement and creates the order.
         "Khách vãng lai — phát phiếu",
-        "Khách đã nhắn qua kênh",
+        # CONTACT-PICK-001 retired the "Khách đã nhắn qua kênh" toggle: a channel customer is
+        # handed over from the conversation or picked from the returning-customer list.
+        "Khách nhắn tin gần đây",
+        "Tạo đơn cho khách này",
         "Ghi nhận tiếp nhận",
         "Tiếp tục một khách đang chờ",
         "Tính giá",

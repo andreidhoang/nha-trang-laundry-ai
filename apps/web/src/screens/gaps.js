@@ -102,8 +102,13 @@ const GROUPS = [
         blockedBy:
           "DEC-015 (đã chốt 26/08) — chủ tiệm quyết chưa xây lớp hồ sơ khách hàng; mở lại khi có " +
           "kênh liên lạc chính thức",
+        // CONTACT-PICK-001 corrected this line, which read as if a channel customer could only
+        // be bound by a code: "Khách nhắn tin gần đây" on ＋ Nhận đồ lists the bindings that
+        // already have an order or intake in this store, and every conversation surface hands its
+        // binding over. There is still no customer record and no search by name or phone.
         today:
-          "Liên hệ được nhận diện phía máy chủ qua contact binding; bảng vận hành không tạo khách.",
+          "Khách vãng lai nhận số phiếu. Khách nhắn tin: bấm “Tạo đơn cho khách này” từ cuộc trò " +
+          "chuyện, hoặc chọn ở “Khách nhắn tin gần đây”. Không tìm theo tên hay số điện thoại.",
       },
       {
         ref: "M3 · MÀN 9",
@@ -153,6 +158,10 @@ const GROUPS = [
       // `GET …/incidents/{incident}/remedy-proposals` lists every proposal on an incident,
       // including a pre-DEC-031 loss with no figure, and `#/remedies` shows it for the incident it
       // reads. Neither creates a customer record, so DEC-015 is untouched.
+      //
+      // CREDIT-PICK-001 finished the first of those: the receipt's "Dùng khoản giảm trừ" now lists
+      // the store's unused credits (`GET …/stores/{store}/remedy-credits`) with the ticket each was
+      // issued on, and a tap applies one -- the code is typed only under "Nhập mã thủ công".
       //
       // REMEDY-OWNER-DECIDE-001 closed a gap this register never listed, and it is recorded here so
       // nobody re-adds it: an `APPROVE_REMEDY` envelope (every loss since DEC-031, every claim on a

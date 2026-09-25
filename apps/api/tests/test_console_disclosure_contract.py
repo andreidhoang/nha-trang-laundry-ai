@@ -885,7 +885,11 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     device does; why a row is named by time, not by device).
     #   * +1 `lede` in `screens/gaps.js`: the re-keyed lede.
     # 469 with all four merged: 466 + 10 - 7 = 469.
-    assert sum(counts.values()) == _registry()["total"] == 469
+    # 461 after round 6 slice B (CREDIT-PICK-001 / CONTACT-PICK-001), +4 DESCRIPTIVE: the recent-
+    # customer list's two-paragraph ⓘ, the hand-off's "Đang mở lượt tiếp nhận…" line, and
+    # ui/handoff.js's other-store reason. Seven reworded (the "no route" claims made true).
+    # 473 with all five merged: 469 + 4 = 473.
+    assert sum(counts.values()) == _registry()["total"] == 473
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

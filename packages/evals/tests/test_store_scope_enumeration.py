@@ -226,6 +226,24 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "predicate and the proposals selected WHERE store_id = %s AND incident_id = %s, so "
         "another store's incident is indistinguishable from one that does not exist.",
     ),
+    # --- CREDIT-PICK-001 / CONTACT-PICK-001 ----------------------------------------------------
+    ("GET", "/internal/v1/stores/{store_id}/remedy-credits"): RouteScope(
+        "STORE_SCOPED",
+        ("remedy_reads", "RemedyReadRepository.list_store_credits"),
+        "role and MFA, then membership of the named store, before anything is read; the credits "
+        "are selected WHERE c.store_id = %(store)s AND c.redeemed_at IS NULL, the issuing order "
+        "joined with the credit's own store and its ticket with the order's, so no credit and no "
+        "ticket number of another shop can appear. The credit is a bearer instrument across "
+        "customers (DEC-015) but never across shops, and the row carries no contact field.",
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/contacts/recent"): RouteScope(
+        "STORE_SCOPED",
+        ("recent_contacts", "RecentContactRepository.list_for_store"),
+        "role and MFA, then membership of the named store; a binding is listed only when an "
+        "order_requests or orders row WHERE store_id = %(store)s names it, and every per-row read "
+        "carries the same store predicate. A binding served only by another store, or by none, is "
+        "indistinguishable from one that does not exist. No handle and no message text is read.",
+    ),
     # --- REMEDY-OWNER-DECIDE-001 --------------------------------------------------------------
     (
         "GET",

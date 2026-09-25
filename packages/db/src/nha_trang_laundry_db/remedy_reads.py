@@ -221,6 +221,65 @@ class RemedyApprovalBinding:
     envelope_matches: bool
 
 
+#: `CREDIT-PICK-001` (spec R3). The roles that see a store's unused credits: every counter role
+#: that may spend one (`REMEDY_ROLES`), and `AUDITOR`, which reads and can spend nothing. Listing a
+#: bearer instrument to the people who may already redeem it by code adds no authority, and the
+#: auditor's read adds none either: redemption stays gated by `REMEDY_ROLES` in `redeem`.
+STORE_CREDIT_READ_ROLES: Final = REMEDY_ROLES | frozenset({StaffRole.AUDITOR})
+#: What the counter's picker asks for by default, and the most it may ask for. The list is the
+#: shop's unspent credits, newest first; a store with more than this is told the list is cut.
+STORE_CREDIT_DEFAULT_LIMIT: Final = 50
+STORE_CREDIT_MAX_LIMIT: Final = 200
+
+
+#: The store's unspent credits, newest first. Its `WHERE c.store_id = … AND c.redeemed_at IS NULL
+#: ORDER BY c.issued_at DESC` is the exact shape of `remedy_credits_open_idx` (`0042`), so the page
+#: is read from that partial index and stopped at the limit; `test_counter_picks_postgres.py` reads
+#: the plan to keep it so. The issuing order is joined with the credit's own store in its predicate,
+#: and its ticket with the order's, so no row of another store can supply a ticket number.
+STORE_CREDITS_SQL: Final = """
+    SELECT c.id, p.kind, c.amount_vnd, c.issued_at, c.issued_from_order_id,
+           t.ticket_number, t.issued_on, c.policy_version_id
+    FROM remedy_credits c
+    JOIN remedy_proposals p ON p.id = c.remedy_proposal_id
+    JOIN orders o ON o.id = c.issued_from_order_id AND o.store_id = c.store_id
+    LEFT JOIN counter_tickets t ON t.id = o.bound_contact_id AND t.store_id = o.store_id
+    WHERE c.store_id = %(store)s AND c.redeemed_at IS NULL
+      AND (%(ticket)s::integer IS NULL OR t.ticket_number = %(ticket)s::integer)
+    ORDER BY c.issued_at DESC, c.id DESC
+    LIMIT %(limit)s
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class StoreRemedyCredit:
+    """One unspent credit of a store, with the paper ticket of the order that issued it.
+
+    No contact field on purpose (`DEC-015`): `bearer_contact_id` is the issuing order's customer
+    reference, and naming it here would turn a list of credits into a list of customers.
+    """
+
+    credit_id: UUID
+    kind: str
+    amount_vnd: int
+    issued_at: datetime
+    issued_from_order_id: UUID
+    #: The walk-in ticket the issuing order was tracked by; `None` when that order was bound to a
+    #: channel customer instead, who holds no paper ticket.
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    policy_version_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class StoreRemedyCredits:
+    store_id: UUID
+    ticket_number: int | None
+    limit: int
+    credits: tuple[StoreRemedyCredit, ...]
+    truncated: bool
+
+
 class RemedyReadRepository:
     """Store-scoped reads over `remedy_proposals` and `remedy_credits`. Writes nothing."""
 
@@ -269,6 +328,67 @@ class RemedyReadRepository:
                 for row in rows[:REMEDY_READ_LIMIT]
             ),
             truncated=len(rows) > REMEDY_READ_LIMIT,
+        )
+
+    @staticmethod
+    def list_store_credits(
+        cursor: Any,
+        *,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        ticket_number: int | None = None,
+        limit: int = STORE_CREDIT_DEFAULT_LIMIT,
+    ) -> StoreRemedyCredits:
+        """`CREDIT-PICK-001`: the store's unspent credits, newest first, for the counter to pick.
+
+        A credit is a bearer instrument (`remedies.redeem`: it is deliberately not matched against
+        the new quote's contact), so a credit whose code the customer lost is still theirs -- and
+        the counter, which already redeems by code, can now pick it from a list instead.
+        "Unspent" is `redeemed_at IS NULL`, the one state column the table has: a credit reserved
+        on an open quote is still unspent until that quote becomes an order
+        (`spend_reserved_remedy_credits`), and the redemption route refuses a second reservation
+        on the same quote by itself.
+
+        `ticket_number` narrows to credits issued from orders tracked by that walk-in ticket number,
+        on any day -- numbers restart daily, so the day is returned beside each row. The statement
+        is the shape `remedy_credits_open_idx (store_id, issued_at DESC) WHERE redeemed_at IS NULL`
+        serves, so the newest page is read from the index and stopped at the limit.
+        """
+
+        if not principal.roles & STORE_CREDIT_READ_ROLES or not principal.mfa_verified:
+            raise StoreAccessError("reading credits requires an operations or audit role with MFA")
+        if not 1 <= limit <= STORE_CREDIT_MAX_LIMIT:
+            raise ValueError(f"credit list limit must be between 1 and {STORE_CREDIT_MAX_LIMIT}")
+        if ticket_number is not None and ticket_number < 1:
+            raise ValueError("a ticket number starts at 1")
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=StoreAccessError,
+        )
+        cursor.execute(
+            STORE_CREDITS_SQL, {"store": store_id, "ticket": ticket_number, "limit": limit + 1}
+        )
+        rows = cursor.fetchall()
+        return StoreRemedyCredits(
+            store_id=store_id,
+            ticket_number=ticket_number,
+            limit=limit,
+            credits=tuple(
+                StoreRemedyCredit(
+                    credit_id=_uuid(row[0]),
+                    kind=str(row[1]),
+                    amount_vnd=int(row[2]),
+                    issued_at=row[3],
+                    issued_from_order_id=_uuid(row[4]),
+                    ticket_number=None if row[5] is None else int(row[5]),
+                    ticket_issued_on=row[6],
+                    policy_version_id=_uuid(row[7]),
+                )
+                for row in rows[:limit]
+            ),
+            truncated=len(rows) > limit,
         )
 
     @staticmethod
@@ -555,6 +675,10 @@ __all__ = [
     "NEXT_STEP_PROPOSE_AGAIN",
     "REMEDY_DECIDER_ROLES",
     "REMEDY_READ_LIMIT",
+    "STORE_CREDITS_SQL",
+    "STORE_CREDIT_DEFAULT_LIMIT",
+    "STORE_CREDIT_MAX_LIMIT",
+    "STORE_CREDIT_READ_ROLES",
     "IncidentRemedyProposal",
     "IncidentRemedyProposals",
     "OrderRemedyCredit",
@@ -562,4 +686,6 @@ __all__ = [
     "RemedyApprovalBinding",
     "RemedyReadNotFoundError",
     "RemedyReadRepository",
+    "StoreRemedyCredit",
+    "StoreRemedyCredits",
 ]

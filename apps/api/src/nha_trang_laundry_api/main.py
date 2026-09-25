@@ -62,8 +62,16 @@ from nha_trang_laundry_db.orders import (
 )
 from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
 from nha_trang_laundry_db.range_prices import RangePriceProposalIntegrityError
+from nha_trang_laundry_db.recent_contacts import (
+    RECENT_CONTACT_DEFAULT_LIMIT,
+    RECENT_CONTACT_MAX_LIMIT,
+)
 from nha_trang_laundry_db.remedies import RemedyAuthorizationError, RemedyStateError
-from nha_trang_laundry_db.remedy_reads import RemedyReadNotFoundError
+from nha_trang_laundry_db.remedy_reads import (
+    STORE_CREDIT_DEFAULT_LIMIT,
+    STORE_CREDIT_MAX_LIMIT,
+    RemedyReadNotFoundError,
+)
 from nha_trang_laundry_db.settlement import (
     BUSINESS_TIMEZONE,
     COLLECTED_TODAY_QUERY,
@@ -3352,6 +3360,111 @@ def _order_request_summary_response(item: OrderRequestSummary) -> OrderRequestSu
     )
 
 
+# --- CONTACT-PICK-001: the channel customers this store has served -------------------------------
+#
+# The counter bound a channel customer by typing the binding's UUID. There is no name or phone to
+# search by (`DEC-015`), so this is not a search: it lists the bindings this store has already
+# started an order request or an order for, newest first. A binding with no such row here is not
+# listed -- nothing server-side ties it to the store. `POST …/order-requests` still decides whether
+# a binding is valid; this read only saves typing it.
+
+
+class RecentContactOrderResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    created_at: datetime
+    commercial: CommercialOrderStatus
+    intake: IntakeStatus
+    production: ProductionStatus
+    balance: str
+    #: The bound revision's single total, as on the order board; null when it has none.
+    payable_total_vnd: int | None
+    #: As on the order board, so the console words the status the same way there and here.
+    fulfillment_mode: FulfillmentMode
+    self_collection_recorded: bool
+    required_delivery_legs_succeeded: bool
+
+
+class RecentContactResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The value `POST /internal/v1/stores/{store_id}/order-requests` takes. Opaque.
+    contact_binding_id: UUID
+    #: The channel(s) the binding was recorded on (`ZALO_OA`, `TELEGRAM_SANDBOX`, ...). No handle.
+    channels: list[str]
+    last_activity_at: datetime
+    latest_order: RecentContactOrderResponse | None
+    open_order_count: int
+    #: This store's newest intake for the binding that has not become an order: resume it.
+    waiting_order_request_id: UUID | None
+
+
+class RecentContactsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    limit: int
+    truncated: bool
+    contacts: list[RecentContactResponse]
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/contacts/recent",
+    response_model=RecentContactsResponse,
+)
+def list_recent_contacts(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+    limit: Annotated[int, Query(ge=1, le=RECENT_CONTACT_MAX_LIMIT)] = RECENT_CONTACT_DEFAULT_LIMIT,
+) -> RecentContactsResponse:
+    """Channel customers with an order or an order request in this store, newest activity first.
+
+    No message text, no provider handle, no name or phone: the row is the opaque binding, the
+    channel it came on, and this store's own facts about it.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.list_recent_contacts(store_id=store_id, principal=principal, limit=limit)
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+    return RecentContactsResponse(
+        store_id=result.store_id,
+        limit=result.limit,
+        truncated=result.truncated,
+        contacts=[
+            RecentContactResponse(
+                contact_binding_id=item.contact_binding_id,
+                channels=list(item.channels),
+                last_activity_at=item.last_activity_at,
+                latest_order=(
+                    None
+                    if item.latest_order is None
+                    else RecentContactOrderResponse(
+                        order_id=item.latest_order.order_id,
+                        created_at=item.latest_order.created_at,
+                        commercial=CommercialOrderStatus(item.latest_order.commercial),
+                        intake=IntakeStatus(item.latest_order.intake),
+                        production=ProductionStatus(item.latest_order.production),
+                        balance=item.latest_order.balance,
+                        payable_total_vnd=item.latest_order.payable_total_vnd,
+                        fulfillment_mode=FulfillmentMode(item.latest_order.fulfillment_mode),
+                        self_collection_recorded=item.latest_order.self_collection_recorded,
+                        required_delivery_legs_succeeded=(
+                            item.latest_order.required_delivery_legs_succeeded
+                        ),
+                    )
+                ),
+                open_order_count=item.open_order_count,
+                waiting_order_request_id=item.waiting_order_request_id,
+            )
+            for item in result.contacts
+        ],
+    )
+
+
 @app.post(
     "/internal/v1/approvals/{approval_id}/manual-send",
     response_model=ManualSendResponse,
@@ -3894,6 +4007,88 @@ def list_order_remedy_credits(
                 redeemed_at=credit.redeemed_at,
                 redeemed_quote_id=credit.redeemed_quote_id,
                 redeemed_quote_revision=credit.redeemed_quote_revision,
+            )
+            for credit in result.credits
+        ],
+    )
+
+
+# --- CREDIT-PICK-001: the store's unspent credits, to pick rather than type ---------------------
+#
+# A credit is a bearer instrument (`remedies.redeem`), so the counter may spend any unspent credit
+# of its store by code -- this lists them, so the code is picked instead of typed. Operations roles
+# and `AUDITOR`, with MFA and membership, decided in the repository (`STORE_CREDIT_READ_ROLES`);
+# the route asks only for a signed-in person, as the order board does. No contact field.
+
+
+class StoreRemedyCreditResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The value `POST …/quotes/{quote_id}/remedy-credits` takes as `credit_id`.
+    credit_id: UUID
+    kind: str
+    amount_vnd: int
+    issued_at: datetime
+    issued_from_order_id: UUID
+    #: The walk-in ticket of the issuing order; null when that order was a channel customer's.
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    policy_version_id: UUID
+
+
+class StoreRemedyCreditsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    state: Literal["UNUSED"]
+    ticket: int | None
+    limit: int
+    truncated: bool
+    credits: list[StoreRemedyCreditResponse]
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/remedy-credits",
+    response_model=StoreRemedyCreditsResponse,
+)
+def list_store_remedy_credits(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+    state: Literal["UNUSED"] = "UNUSED",
+    ticket: Annotated[int | None, Query(ge=1, le=100_000)] = None,
+    limit: Annotated[int, Query(ge=1, le=STORE_CREDIT_MAX_LIMIT)] = STORE_CREDIT_DEFAULT_LIMIT,
+) -> StoreRemedyCreditsResponse:
+    """Unspent credits of this store, newest first, each with the ticket it was issued on.
+
+    `state` admits only `UNUSED`: the table records spent-or-not and nothing else, and a spent
+    credit is read from the order that issued it. `ticket=12` narrows to credits issued from orders
+    tracked by walk-in ticket 12, on any day; the day is on each row.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.list_store_remedy_credits(
+            store_id=store_id, principal=principal, ticket_number=ticket, limit=limit
+        )
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+    return StoreRemedyCreditsResponse(
+        store_id=result.store_id,
+        state=state,
+        ticket=result.ticket_number,
+        limit=result.limit,
+        truncated=result.truncated,
+        credits=[
+            StoreRemedyCreditResponse(
+                credit_id=credit.credit_id,
+                kind=credit.kind,
+                amount_vnd=credit.amount_vnd,
+                issued_at=credit.issued_at,
+                issued_from_order_id=credit.issued_from_order_id,
+                ticket_number=credit.ticket_number,
+                ticket_issued_on=credit.ticket_issued_on,
+                policy_version_id=credit.policy_version_id,
             )
             for credit in result.credits
         ],

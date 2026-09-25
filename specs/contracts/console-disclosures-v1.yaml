@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 440
+  DESCRIPTIVE: 444
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   SERVER_GATE: 15
-total: 469
+total: 473
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -2225,10 +2225,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:b318a605cd96
+- slot_id: screens/gaps.js#today:d1457d40cfc4
   module: screens/gaps.js
   key: today
-  text: Liên hệ được nhận diện phía máy chủ qua contact binding; bảng vận hành không tạo khách.
+  text: 'Khách vãng lai nhận số phiếu. Khách nhắn tin: bấm “Tạo đơn cho khách này” từ cuộc trò chuyện,
+    hoặc chọn ở “Khách nhắn tin gần đây”. Không tìm theo tên hay số điện thoại.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2748,6 +2749,25 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:c0201c26ed00
+  module: screens/newOrder.js
+  key: hint
+  text: 'Là những khách đã nhắn tiệm qua kênh chat và đã có lượt tiếp nhận hoặc đơn ở cửa hàng này, mới
+    nhất lên trên. Không có tên hay số điện thoại: tiệm không lưu những thứ đó (DEC-015), nên nhận ra
+    khách qua đơn gần nhất và lúc gần nhất.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:bfc4c47a4ae5
+  module: screens/newOrder.js
+  key: hint
+  text: Khách mới nhắn lần đầu chưa có ở đây. Mở cuộc trò chuyện của khách (Duyệt, Bản nháp AI hoặc Gửi
+    tay) rồi bấm “Tạo đơn cho khách này” — không phải chép mã.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/newOrder.js#hint:41258bf1756c
   module: screens/newOrder.js
   key: hint
@@ -2756,11 +2776,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/newOrder.js#hint:8183352f4a04
+- slot_id: screens/newOrder.js#hint:3441bad46838
   module: screens/newOrder.js
   key: hint
-  text: Máy chủ chưa có đường nào để tìm một liên hệ theo tên, số điện thoại hay đoạn chat, nên bảng vận
-    hành không đoán giúp. Khách đã từng nhắn tin qua kênh chính thức thì dùng mã sinh ra từ lần nhắn đó.
+  text: Tiệm không lưu tên, số điện thoại hay đoạn chat của khách (DEC-015), nên không có gì để tìm. Khách
+    đã nhắn qua kênh chính thức thì bấm từ cuộc trò chuyện của khách, hoặc chọn ở danh sách trên; ô này
+    chỉ dành cho mã đọc được ở nơi khác.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:c94d59532a0f
+  module: screens/newOrder.js
+  key: hint
+  text: Đang mở lượt tiếp nhận cho khách từ cuộc trò chuyện…
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2827,20 +2856,21 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/newOrder.js#hint:8688f3fe9c91
+- slot_id: screens/newOrder.js#hint:934ead115942
   module: screens/newOrder.js
   key: hint
-  text: 'Mã in trên phiếu giấy của khách lúc phát hành. Khách quên mã thì tìm đơn đã phát hành khoản đó
-    theo số phiếu ở màn hình Đơn hàng: mã nằm ở mục “Khoản giảm trừ của đơn này”.'
+  text: 'Là mọi khoản giảm trừ chưa dùng của cửa hàng này, mới nhất lên trên, kèm số phiếu của đơn đã
+    phát hành khoản đó. Khoản giảm trừ là phiếu cầm tay: không cần khách nhớ mã, hỏi số phiếu cũ của khách
+    rồi chọn đúng dòng.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/newOrder.js#hint:5220b49faa8b
+- slot_id: screens/newOrder.js#hint:7d4c7856a054
   module: screens/newOrder.js
   key: hint
-  text: Máy chủ chưa có đường nào liệt kê các khoản giảm trừ chưa dùng của một khách, nên ở đây chỉ nhập
-    được mã. Bản báo giá và dấu vân của nó được gửi kèm tự động từ bản đang hiện.
+  text: Khoản vẫn nằm trong danh sách cho tới khi một đơn dùng nó được tạo; máy chủ từ chối áp một khoản
+    hai lần vào cùng một báo giá. Bản báo giá và dấu vân của nó được gửi kèm tự động từ bản đang hiện.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3035,20 +3065,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#hint:a916dbfedb53
+- slot_id: screens/orderDetail.js#hint:a70cc97400fd
   module: screens/orderDetail.js
   key: hint
-  text: 'Khoản giảm trừ là phiếu cầm tay: ai đọc đúng mã thì dùng được, đúng một lần, ở cửa hàng này,
-    cho hoá đơn lần sau. Khách quên mã thì tìm lại đơn theo số phiếu rồi đọc mã ở đây. Máy chủ không ghi
-    hạn dùng cho khoản giảm trừ.'
+  text: 'Khoản giảm trừ là phiếu cầm tay: dùng được đúng một lần, ở cửa hàng này, cho hoá đơn lần sau
+    — khách không cần nhớ mã. Máy chủ không ghi hạn dùng cho khoản giảm trừ.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#hint:76cd597bc6e5
+- slot_id: screens/orderDetail.js#hint:99e1b18f3ea4
   module: screens/orderDetail.js
   key: hint
-  text: 'Dùng mã ở ＋ Nhận đồ: tính giá xong, bấm “Dùng khoản giảm trừ” trên hoá đơn rồi nhập mã.'
+  text: 'Dùng ở ＋ Nhận đồ: tính giá xong, bấm “Dùng khoản giảm trừ” trên hoá đơn rồi chọn dòng mang số
+    phiếu của đơn này.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3455,12 +3485,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/remedies.js#hint:5f342ab69808
+- slot_id: screens/remedies.js#hint:9fa2182a68ac
   module: screens/remedies.js
   key: hint
-  text: 'Khoản giảm trừ là phiếu cầm tay: ai cầm mã thì dùng được, và dùng đúng một lần. Chép vào phiếu
-    giấy của khách trước khi rời màn hình. Khách làm mất mã thì tìm lại đơn này theo số phiếu ở màn hình
-    Đơn hàng: mã nằm ở mục “Khoản giảm trừ của đơn này”.'
+  text: 'Khoản giảm trừ là phiếu cầm tay: ai cầm mã thì dùng được, và dùng đúng một lần. Khách làm mất
+    mã cũng không mất khoản: ở ＋ Nhận đồ, “Dùng khoản giảm trừ” liệt kê mọi khoản chưa dùng của tiệm kèm
+    số phiếu của đơn này — chỉ cần hỏi số phiếu.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -4062,6 +4092,14 @@ disclosures:
   key: notice
   text: Không có API phía sau. Hiển thị một biểu mẫu ở đây sẽ tạo cảm giác dữ liệu đã được lưu trong khi
     không có gì được lưu cả.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/handoff.js#hint:da08131d89bb
+  module: ui/handoff.js
+  key: hint
+  text: Tin này của cửa hàng khác cửa hàng đang chọn — đổi cửa hàng để tạo đơn cho khách.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

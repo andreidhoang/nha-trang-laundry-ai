@@ -76,6 +76,22 @@ The commonest workflow in the shop, and the one every other workflow is a variat
 row version.** Pressing a button twice does not produce two orders; pressing it against a version
 somebody else has already moved is refused, and the screen offers a fresh board rather than a retry.
 
+**Two variations of steps 1–2 and 4, and neither asks anyone to type a code** (`CREDIT-PICK-001`,
+`CONTACT-PICK-001`, 2026-09-25):
+
+- *A customer who wrote through a channel* has no ticket; their identity is the server's contact
+  binding. Every screen that shows their conversation (the approvals `SEND_MESSAGE` card,
+  `#/shadow`, the manual send) has a **Tạo đơn cho khách này** control that opens
+  `#/new?contact=<binding>` with the binding from its own server read: the intake is created and the
+  flow lands on pricing. A customer this store has served before is one tap in **Khách nhắn tin gần
+  đây** (`GET …/stores/{id}/contacts/recent` — bindings with an order or intake *in this store*
+  only, no handle, no message text). It is not a search: there is nothing to search by (`DEC-015`).
+  `POST …/order-requests` still refuses a binding the server never recorded.
+- *A customer returning with a remedy credit* is not asked for its code: after pricing, **Dùng khoản
+  giảm trừ** lists the store's unused credits (`GET …/stores/{id}/remedy-credits`) as "Phiếu N ·
+  day · amount", and a tap spends that credit on the revision on screen through the existing
+  redemption route. The credit leaves the list when the order that spends it is created.
+
 ### 2.1 Prices, exactly as the code fixes them
 
 - `STANDARD_WASH_DRY` is tiered per kilogram: **under 6 kg, 25.000 ₫/kg with a 1 kg minimum;

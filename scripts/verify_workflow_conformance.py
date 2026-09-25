@@ -1053,6 +1053,25 @@ def scenario_hiring(console: Console) -> None:
         console.type_into("#staff-store-store", STORE)
         console.press("Gán cửa hàng", within="#staff-store-staff")
 
+        head("5a", "DANH SÁCH NHÂN SỰ — the owner sees who works here (READ-PATHS-001)")
+        console.open("#/staff", settle=1800)
+        person = console.page.locator(f"#staff-directory li[data-staff-id='{staff_id}']")
+        ok(
+            "the new person is on the shop's staff list, with their role",
+            person.count() == 1
+            and any(role in person.first.inner_text().lower() for role in ("operator", "vận hành")),
+            person.first.inner_text()[:120] if person.count() else "not listed",
+        )
+        prefill = person.locator("[data-prefill=role]")
+        if prefill.count():
+            prefill.first.click()
+            console.page.wait_for_timeout(400)
+        ok(
+            "and one press fills their id into the role form -- no UUID copied by hand",
+            console.page.locator("#staff-role-id").input_value() == staff_id,
+            "",
+        )
+
         head("5b", "TRÙNG DANH TÍNH — the same person cannot be created twice")
         console.open("#/staff")
         console.type_into("#staff-create-subject", subject)
@@ -1773,6 +1792,36 @@ def scenario_remedy(console: Console) -> None:
         "and nothing is paid past the ceiling: 160.000 ₫ on one suit is refused, not trimmed",
         "vượt trần" in said,
         said[:200],
+    )
+
+    head("12d", "ĐỌC LẠI — the complaint's claims, the order's credit, the customer's source")
+    console.open(f"#/remedies?incident={incident}", settle=1500)
+    if console.page.locator("#remedy-recorded-proposals li").count() == 0:
+        console.type_into("#remedy-incident", incident)
+        read = console.page.locator("button", has_text="Đọc mức trần và thời hạn")
+        if read.count():
+            read.first.click()
+            console.page.wait_for_timeout(2200)
+    listed = console.page.locator("#remedy-recorded-proposals li[data-proposal-id]")
+    recorded = sql(f"select count(*) from remedy_proposals where incident_id='{incident}'")
+    ok(
+        "every claim recorded on the complaint is listed, not only this session's -- the four "
+        "recorded; the refused one was never written",
+        str(listed.count()) == recorded == "4",
+        f"{listed.count()} listed, {recorded} recorded",
+    )
+    console.open(f"#/orders/{order_id}", settle=1800)
+    credit = console.page.locator("#order-remedy-credits li[data-credit-status=UNUSED]")
+    ok(
+        "the order shows its unused 60.000 ₫ credit, so a customer who lost the code keeps it",
+        credit.count() == 1 and "60.000" in credit.first.inner_text(),
+        credit.first.inner_text()[:120] if credit.count() else "none",
+    )
+    source = console.page.locator("[data-field=acquisition-source]")
+    ok(
+        "and says where the customer came from, as recorded when the order was made",
+        source.count() == 1 and bool(source.first.inner_text().strip()),
+        source.first.inner_text()[:80] if source.count() else "absent",
     )
 
 

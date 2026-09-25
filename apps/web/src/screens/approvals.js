@@ -98,6 +98,7 @@ import { enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import { KIND_LABEL as REMEDY_KIND_LABEL, ownerReasonText } from "./remedies.js";
+import { newOrderForContact } from "../ui/handoff.js";
 import {
   errorNotice,
   explain,
@@ -811,6 +812,8 @@ function messageContents(read) {
       "Bấm Duyệt là cho phép đúng những chữ này tới đúng người nhận này. Duyệt chưa gửi gì cả: " +
         "một nhân viên vẫn phải tự gửi tay và ký tên ở màn hình Ngoại lệ.",
     ),
+    // CONTACT-PICK-001: the customer this message is for, handed to ＋ Nhận đồ from this read.
+    newOrderForContact(read.recipient_binding_id, read.store_id),
   );
 }
 

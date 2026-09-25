@@ -41,8 +41,13 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 Trên trang của một đơn, **nút lớn ở cuối màn hình luôn là việc tiếp theo** — máy chủ tính ra, không
 phải đoán. Các việc khác (tạm dừng, huỷ đơn, khách trả trước…) nằm ở nút **Khác**.
 
-- **Khách đã nhắn tin cho tiệm qua kênh chính thức:** ở bước 1 bấm **Khách đã nhắn qua kênh**,
-  nhập mã khách ở *Nhập mã thủ công*, bấm **Ghi nhận tiếp nhận**. Mã lạ bị từ chối, không tự tạo.
+- **Khách đã nhắn tin cho tiệm qua kênh chính thức:** từ cuộc trò chuyện của khách — thẻ tin
+  nhắn ở **Duyệt**, **Bản nháp AI** hoặc **Gửi tay** — bấm **Tạo đơn cho khách này**: máy mở lượt
+  tiếp nhận và đi thẳng tới bước 2. Khách từng đặt ở tiệm thì chọn ở mục **Khách nhắn tin gần đây**
+  ngay dưới nút phát phiếu (một dòng đang chờ báo giá thì mở lại đúng lượt đó, không tạo thêm).
+  Không tìm được theo tên hay số điện thoại — tiệm không lưu những thứ đó. *Nhập mã thủ công* (gập
+  sẵn) chỉ dành cho mã đọc được ở nơi khác: nhập rồi bấm **Ghi nhận tiếp nhận**. Mã lạ bị từ chối,
+  không tự tạo.
 - **Khách đã có phiếu nhưng chưa thành đơn** (mất mạng, khách quay lại sau): mở **＋ Nhận đồ**, chọn
   dòng *Phiếu N* ở mục **Tiếp tục một khách đang chờ** — món, giá và cách giao nhận hiện lại đủ.
   Nếu phiếu hoá ra đã thành đơn, máy báo vậy, kèm nút **Mở đơn** — không tạo lại được.
@@ -191,11 +196,11 @@ dòng. Dòng chỉ có một món thì không cần chọn. Đồ tính theo ký
 
 **Ba điều dễ sai ở màn hình này:**
 
-- **Chép mã giảm trừ ngay lúc phát.** Máy in mã to, kèm câu **“Chép mã giảm trừ này lại ngay”**
-  và nút chép.
-  Chép vào phiếu giấy của khách **trước khi rời màn hình**. Khách làm mất mã thì tìm lại đơn theo
-  số phiếu ở màn hình Đơn hàng, mục **“Khoản giảm trừ của đơn này”** — nhưng chép ngay vẫn là cách
-  chắc nhất.
+- **Khách không cần nhớ mã giảm trừ.** Máy in mã to, kèm câu
+  **“Chép mã giảm trừ này lại ngay”** và nút chép — chép được thì tốt. Nhưng khách làm mất mã cũng không mất khoản: lần sau,
+  danh sách khoản chưa dùng ở **＋ Nhận đồ** ghi số phiếu của đơn đã phát hành từng khoản, nên chỉ
+  cần hỏi số phiếu cũ của khách. Mã cũng vẫn xem được ở mục **“Khoản giảm trừ của đơn này”** trên
+  trang của đơn.
 - **“Chờ chủ tiệm duyệt” nghĩa là chưa xong.** Nói với khách là phải chờ. Bấm thực hiện trước khi
   chủ tiệm duyệt thì máy từ chối. Phiếu duyệt bồi hoàn mở tới **hết ngày hôm sau** (nửa đêm, giờ
   Việt Nam) rồi tự hết hạn — chủ tiệm đi vắng cũng kịp duyệt, nhưng đừng để lâu hơn thế.
@@ -203,9 +208,12 @@ dòng. Dòng chỉ có một món thì không cần chọn. Đồ tính theo ký
   trần cho khách nghe. Gõ một số khác cho lọt là tự quyết thay chủ tiệm.
 
 **Khách quay lại dùng phiếu giảm trừ:** tính giá như bình thường ở **＋ Nhận đồ**, rồi — **trước
-khi khách đồng ý** — bấm **Dùng khoản giảm trừ** dưới hoá đơn tạm, nhập mã in trên phiếu của khách
-và bấm **“Áp dụng khoản giảm trừ”**. Bản báo giá được máy gửi kèm, không phải chép gì khác. Phiếu dùng
-**đúng một lần**. Đọc lại tổng mới cho khách nghe rồi mới bấm **Tiếp tục**.
+khi khách đồng ý** — bấm **Dùng khoản giảm trừ** dưới hoá đơn tạm. Máy liệt kê các khoản chưa dùng
+của tiệm, mỗi dòng là *Phiếu N · ngày · số tiền*; nhiều hơn năm khoản thì gõ số phiếu cũ của khách vào
+ô lọc. Bấm đúng dòng là xong — tổng mới hiện ngay trên hoá đơn. Chỉ khi khách đọc được mã mà không
+nhớ phiếu mới mở *Nhập mã thủ công* và bấm **“Áp dụng khoản giảm trừ”**. Bản báo giá được máy gửi
+kèm, không phải chép gì khác. Phiếu dùng **đúng một lần**. Đọc lại tổng mới cho khách nghe rồi mới
+bấm **Tiếp tục**.
 
 ---
 

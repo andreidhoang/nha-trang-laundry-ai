@@ -44,6 +44,7 @@ import { consentRefusalText } from "../core/errors.js";
 import { h, render } from "../core/dom.js";
 import { UNKNOWN, UUID, dateTime, integer, shortHash, shortId } from "../core/format.js";
 import { ENUM_GLOSS, enumLabel, enumVi } from "../core/i18n.js";
+import { newOrderForContact } from "../ui/handoff.js";
 import {
   boundInput,
   errorNotice,
@@ -713,6 +714,8 @@ export function manualSendPanel({
         ),
         children: [
           boundMessage(bound),
+          // CONTACT-PICK-001: the recipient, handed to ＋ Nhận đồ from this same read.
+          newOrderForContact(bound.recipient_binding_id, bound.store_id),
           raiseResult,
           raiseErrorHost,
           h(

@@ -158,6 +158,11 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/stores/{}/incidents/{}/remedy-proposals",
         "/internal/v1/remedy-proposals/{}/execution",
         "/internal/v1/stores/{}/quotes/{}/remedy-credits",
+        # CREDIT-PICK-001 / CONTACT-PICK-001. The last two values Nhận đồ asked a person to
+        # type: a remedy credit's code and a channel customer's binding. A screen that stops calling
+        # either puts the paste field back on the counter's most common path.
+        "/internal/v1/stores/{}/remedy-credits",
+        "/internal/v1/stores/{}/contacts/recent",
         # REMEDY-OWNER-DECIDE-001. The owner's approvals card reads what an `APPROVE_REMEDY`
         # envelope binds through this; without it every loss claim reaches the queue undecidable.
         "/internal/v1/stores/{}/remedy-proposals/{}/approval-binding",

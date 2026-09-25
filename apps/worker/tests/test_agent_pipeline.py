@@ -23,15 +23,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 from nha_trang_laundry_agent_tools.auth import AgentAuthSettings, AgentRunnerTokenVerifier
-from nha_trang_laundry_agent_tools.backend import DomainAgentToolBackend
+from nha_trang_laundry_agent_tools.backend import build_domain_facade_service
 from nha_trang_laundry_agent_tools.facade import (
-    AgentFacadeService,
     get_agent_facade_service,
     get_agent_verifier,
 )
 from nha_trang_laundry_agent_tools.main import app as facade_app
 from nha_trang_laundry_contracts import (
-    AgentDataClassification,
     AgentDeploymentStage,
     ReleaseCapability,
 )
@@ -56,6 +54,7 @@ from nha_trang_laundry_worker.pipeline import (
     PipelineConfigurationError,
     build_agent_cycle,
     build_agent_pipeline,
+    load_pinned_prompt,
 )
 from nha_trang_laundry_worker.responses_runtime import (
     CURRENT_TOOL_CONTRACT_HASH,
@@ -67,9 +66,12 @@ from nha_trang_laundry_worker.responses_runtime import (
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = datetime.now(UTC)
-INSTRUCTIONS = "Bạn chỉ soạn bản nháp. Không tính tiền, không gửi, không quyết định chính sách."
-REGISTRY_HASH = f"sha256:{'a' * 64}"
-PROMPT_HASH = f"sha256:{'b' * 64}"
+# AGENT-SHADOW-DEFECTS-001 F3: the pipeline only assembles the release the runtime registry pins,
+# so these tests run the real pinned prompt text and hashes rather than invented labels.
+PINNED = load_pinned_prompt()
+INSTRUCTIONS = PINNED.instructions
+REGISTRY_HASH = PINNED.pins.runtime_registry_hash
+PROMPT_HASH = PINNED.pins.prompt_bundle_hash
 
 
 @pytest.fixture
@@ -77,15 +79,16 @@ def postgres_connection() -> Generator[psycopg.Connection[Any], None, None]:
     database_url = os.environ.get("DATABASE_URL")
     if database_url is None:
         pytest.skip("DATABASE_URL is required for PostgreSQL integration tests")
-    with psycopg.connect(database_url) as connection:
+    # Autocommit, as the worker's own connection is in production: every `transaction()` block
+    # commits, and a bare read never leaves an implicit transaction open that turns later writes
+    # into savepoints invisible to the Tool Facade's own connection (AGENT-SHADOW-DEFECTS-001 F7).
+    with psycopg.connect(database_url, autocommit=True) as connection:
         apply_migrations(connection)
         yield connection
 
 
 def _instructions_hash() -> str:
-    from hashlib import sha256
-
-    return f"sha256:{sha256(INSTRUCTIONS.encode('utf-8')).hexdigest()}"
+    return PINNED.instructions_hash
 
 
 def config(**overrides: Any) -> ResponsesRuntimeConfig:
@@ -94,8 +97,9 @@ def config(**overrides: Any) -> ResponsesRuntimeConfig:
         "model_id": "gpt-test",
         "immutable_model_release": "gpt-test-2026-08-01",
         "reasoning_effort": "low",
+        "runtime_registry_version": PINNED.pins.runtime_registry_version,
         "runtime_registry_hash": REGISTRY_HASH,
-        "prompt_bundle_version": "prompt-v1",
+        "prompt_bundle_version": PINNED.pins.prompt_bundle_version,
         "prompt_bundle_hash": PROMPT_HASH,
         "prompt_instructions_hash": _instructions_hash(),
         "tool_contract_hash": CURRENT_TOOL_CONTRACT_HASH,
@@ -214,10 +218,9 @@ def enqueue(
         contact_binding_id=contact_binding_id or uuid4(),
         capability=ReleaseCapability.INTERNAL_SHADOW,
         deployment_stage=AgentDeploymentStage.SHADOW,
-        data_classification=AgentDataClassification.SYNTHETIC,
-        runtime_registry_version="1.0.0-eval",
+        runtime_registry_version=PINNED.pins.runtime_registry_version,
         runtime_registry_hash=REGISTRY_HASH,
-        prompt_bundle_version="prompt-v1",
+        prompt_bundle_version=PINNED.pins.prompt_bundle_version,
         prompt_bundle_hash=PROMPT_HASH,
         tool_contract_hash=CURRENT_TOOL_CONTRACT_HASH,
         correlation_id=uuid4(),
@@ -230,7 +233,11 @@ def enqueue(
 
 
 def _before_pending(connection: psycopg.Connection[Any]) -> datetime:
-    with connection.cursor() as cursor:
+    # Inside a transaction block, so it ends. A bare SELECT here opened an implicit transaction that
+    # nothing ever committed, which turned every later `connection.transaction()` in the test into a
+    # savepoint: the enqueued, claimed run was invisible to any other connection. The facade's
+    # admission ledger (F7) is another connection and must see the run live.
+    with connection.transaction(), connection.cursor() as cursor:
         cursor.execute("SELECT now() - interval '1 minute'")
         row = cursor.fetchone()
     assert row is not None
@@ -306,6 +313,7 @@ def test_the_context_packet_is_bound_to_the_run_being_executed(
         capability=ReleaseCapability.INTERNAL_SHADOW,
         session_key="session-abc",
         bridge_token="token",
+        deadline_at=datetime.now(UTC) + timedelta(seconds=15),
     )
 
     context = loader.load(invocation)
@@ -317,6 +325,7 @@ def test_the_context_packet_is_bound_to_the_run_being_executed(
         capability=ReleaseCapability.INTERNAL_SHADOW,
         session_key="session-other",
         bridge_token="token",
+        deadline_at=datetime.now(UTC) + timedelta(seconds=15),
     )
     assert loader.load(other).session_key_hash != context.session_key_hash
 
@@ -335,16 +344,28 @@ def test_a_transport_timeout_lands_require_human_with_its_terminal_code(
 
     # A provider timeout is not a crash: the runtime settles the reservation, revokes the bridge and
     # returns the deterministic handoff, so the run lands REQUIRE_HUMAN carrying its terminal code.
-    assert result.status == "DRAFT_REQUIRES_HUMAN"
+    #
+    # Corrected by AGENT-SHADOW-DEFECTS-001 F1. This line used to read
+    # `assert result.status == "DRAFT_REQUIRES_HUMAN"`, asserting the defect as correct: the comment
+    # above says REQUIRE_HUMAN and the assertion enshrined the runner mislabelling every handoff a
+    # draft, which is how the fallback sentence reached staff as an AI draft.
+    assert result.status == "REQUIRE_HUMAN"
     with postgres_connection.cursor() as cursor:
         cursor.execute(
             "SELECT result_safe_summary FROM agent_runs WHERE id = %s", (result.agent_run_id,)
         )
         evidence = _row(cursor)[0]["runtime_evidence"]
+        cursor.execute(
+            "SELECT terminal_outcome, terminal_code FROM agent_drafts WHERE agent_run_id = %s",
+            (result.agent_run_id,),
+        )
+        filed = _row(cursor)
     assert evidence["terminal_outcome"] == "REQUIRE_HUMAN"
     assert evidence["terminal_code"] == "PROVIDER_TIMEOUT"
     assert evidence["bridge_revoked"] is True
     assert evidence["retry_count"] == 0
+    # What the Shadow console reads: the badge keys on terminal_outcome, the reason on the code.
+    assert filed == ("REQUIRE_HUMAN", "PROVIDER_TIMEOUT")
 
 
 def test_a_model_call_budget_of_zero_is_rejected_before_any_provider_call() -> None:
@@ -480,7 +501,9 @@ def test_evidence_from_a_failed_run_is_not_attributed_to_the_next_run(
     assembled = pipeline(script=[ResponsesTransportTimeout("PROVIDER_TIMEOUT")], sink=sink)
     failed = assembled.run_cycle(postgres_connection, lambda: True)
 
-    assert sink.take() is None
+    # Drained by the worker for the run that produced it (the sink is keyed by run since F2).
+    assert failed.agent_run_id is not None
+    assert sink.take(UUID(failed.agent_run_id)) is None
 
     enqueue(postgres_connection)
     follow_up = pipeline(sink=CapturingEvidenceSink())
@@ -683,9 +706,10 @@ def _domain_wired_runner_and_transport(
         )
     )
     facade_app.dependency_overrides[get_agent_verifier] = lambda: verifier
-    facade_app.dependency_overrides[get_agent_facade_service] = lambda: AgentFacadeService(
-        DomainAgentToolBackend(database_url=database_url)
-    )
+    # One service for the test, as a deployment holds one, with the admission ledger in the same
+    # database the runs live in (F7): every bridged call is admitted once, against a live run.
+    service = build_domain_facade_service(database_url=database_url)
+    facade_app.dependency_overrides[get_agent_facade_service] = lambda: service
     return runner, LoopbackFacadeTransport(TestClient(facade_app))
 
 
@@ -921,6 +945,18 @@ def test_a_backend_backed_run_records_only_redacted_tool_ledger_and_pure_artifac
     assert result.agent_run_id == str(command.agent_run_id)
     rows = _tool_call_rows(postgres_connection, result.agent_run_id or "")
     assert [row[0] for row in rows] == ["catalogResolve", "orderRequestCreate"]
+    # Both calls were answered, not refused: this test passed before F7 while every call it made
+    # came back 403, because only operation names were asserted.
+    assert [row[2] for row in rows] == [200, 201]
+    with postgres_connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT operation_id FROM agent_facade_invocations
+            WHERE agent_run_id = %s ORDER BY admitted_at
+            """,
+            (result.agent_run_id,),
+        )
+        assert [row[0] for row in cursor.fetchall()] == ["catalogResolve", "orderRequestCreate"]
     for _operation, fingerprint, status_code, result_code, safe_summary in rows:
         # The arguments live only inside a one-way fingerprint; the summary is exactly the
         # three bounded fields `_DatabaseToolCallObserver` is allowed to write.

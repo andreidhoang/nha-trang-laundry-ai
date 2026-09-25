@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -82,6 +84,34 @@ SERVER_OWNED_MODEL_FIELDS = frozenset(
 )
 
 
+_RFC3339_DATE_TIME = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})$"
+)
+
+#: A format checker that really checks `date-time`.
+#:
+#: `jsonschema.FormatChecker` registers `date-time` only when the optional `rfc3339-validator`
+#: package is importable. It is not installed here, so every `format: date-time` in the tool
+#: contract accepted any string -- "tomorrow afternoon please" reached the backend as a timestamp
+#: (AGENT-SHADOW-DEFECTS-001 F8). This checker parses explicitly instead of depending on an
+#: optional import: RFC 3339 shape (T separator, mandatory offset), then a real calendar date and
+#: clock time. Leap seconds are refused; nothing in this system needs one.
+STRICT_FORMAT_CHECKER = FormatChecker()
+
+
+@STRICT_FORMAT_CHECKER.checks("date-time", raises=ValueError)
+def _is_rfc3339_date_time(instance: object) -> bool:
+    if not isinstance(instance, str):
+        return True  # `format` constrains strings only; `type` governs everything else.
+    if _RFC3339_DATE_TIME.fullmatch(instance) is None:
+        return False
+    normalized = instance[:10] + "T" + instance[11:]
+    if normalized.endswith(("z", "Z")):
+        normalized = normalized[:-1] + "+00:00"
+    datetime.fromisoformat(normalized)  # ValueError on 30 February, hour 24, and the like
+    return True
+
+
 class ToolRegistryError(ValueError):
     """The normative registry itself is unsafe or malformed."""
 
@@ -122,7 +152,7 @@ class OperationContract:
             )
         validator = Draft202012Validator(
             self.model_argument_schema,
-            format_checker=FormatChecker(),
+            format_checker=STRICT_FORMAT_CHECKER,
         )
         errors = tuple(
             _format_validation_error(error) for error in validator.iter_errors(arguments)
@@ -136,7 +166,7 @@ class OperationContract:
 
         validator = Draft202012Validator(
             self.success_response_schema,
-            format_checker=FormatChecker(),
+            format_checker=STRICT_FORMAT_CHECKER,
         )
         errors = tuple(_format_validation_error(error) for error in validator.iter_errors(response))
         if errors:
@@ -148,7 +178,7 @@ class OperationContract:
 
         validator = Draft202012Validator(
             self.error_response_schema,
-            format_checker=FormatChecker(),
+            format_checker=STRICT_FORMAT_CHECKER,
         )
         errors = tuple(_format_validation_error(error) for error in validator.iter_errors(response))
         if errors:

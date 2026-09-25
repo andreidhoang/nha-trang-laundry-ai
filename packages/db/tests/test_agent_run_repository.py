@@ -11,7 +11,6 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from nha_trang_laundry_contracts import (
-    AgentDataClassification,
     AgentDeploymentStage,
     AgentToolOperation,
     ReleaseCapability,
@@ -66,7 +65,6 @@ def command(*, created_at: datetime | None = None) -> AgentRunEnqueueCommand:
         contact_binding_id=uuid4(),
         capability=ReleaseCapability.INTERNAL_SHADOW,
         deployment_stage=AgentDeploymentStage.SHADOW,
-        data_classification=AgentDataClassification.SYNTHETIC,
         runtime_registry_version="1.0.0-eval",
         runtime_registry_hash=SHA_A,
         prompt_bundle_version="1.0.0-eval",

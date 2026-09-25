@@ -59,6 +59,7 @@ from .supply_chain import (
 )
 from .tool_registry import (
     OPENCLAW_TOOL_NAMES,
+    STRICT_FORMAT_CHECKER,
     AgentToolOperation,
     AgentToolRegistry,
     AgentToolSideEffect,
@@ -72,6 +73,7 @@ __all__ = [
     "CAPABILITY_OPERATIONS",
     "OPENCLAW_TOOL_NAMES",
     "RESOLVED_STATES",
+    "STRICT_FORMAT_CHECKER",
     "AgentDataClassification",
     "AgentDeploymentStage",
     "AgentRunnerClaims",

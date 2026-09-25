@@ -85,15 +85,21 @@ from nha_trang_laundry_domain.quote_composition import (
     compose_quote_revision,
     frozen_promotion,
 )
+from nha_trang_laundry_domain.quote_presentation import (
+    QuotePresentationError,
+    render_quote_presentation,
+)
 from nha_trang_laundry_domain.quotes import ImmutableQuoteSnapshot
 from nha_trang_laundry_policy import PolicyDecision, PolicyDecisionPoint
 
 from nha_trang_laundry_agent_tools.auth import AgentAuthorizationError
 from nha_trang_laundry_agent_tools.facade import (
+    AgentFacadeService,
     AgentToolBackend,
     AgentToolCall,
     AgentToolRefusal,
     AgentToolUnavailable,
+    PostgresAgentCallLedger,
     UnavailableAgentToolBackend,
 )
 
@@ -410,11 +416,18 @@ class DomainAgentToolBackend:
                     occurred_at=recorded_at,
                 ),
             )
+            # AGENT-SHADOW-DEFECTS-001 F10: say what was stored. This answered
+            # `accepted_fact_count = len(facts)` and no unresolved types, telling the model the
+            # customer's facts were recorded when only their types were. The text is not stored,
+            # deliberately: an address or service description in the intake aggregate would be a
+            # retention class DEC-008 does not schedule, and that is the owner's to add, not this
+            # boundary's. So no fact's content is accepted, and every mentioned type stays
+            # unresolved -- staff capture it from the conversation it arrived in.
             return {
                 "order_request_id": str(stored.order_request_id),
                 "row_version": stored.row_version,
-                "accepted_fact_count": len(facts),
-                "unresolved_fact_types": [],
+                "accepted_fact_count": 0,
+                "unresolved_fact_types": list(fact_types),
             }
 
         with self._connect() as connection:
@@ -722,7 +735,11 @@ class DomainAgentToolBackend:
         resource_id = UUID(str(call.arguments["resource_id"]))
         resource_version = int(str(call.arguments["resource_version"]))
         snapshot_hash_arg = str(call.arguments["snapshot_hash"])
-        rendered_hash_arg = str(call.arguments["rendered_hash"])
+        # `rendered_hash` is required by the contract and deliberately unused. The model has no
+        # rendering to hash -- nothing it can read returns one -- so whatever it sends is a label.
+        # Before AGENT-SHADOW-DEFECTS-001 F4 that label was bound into the approval as if it were
+        # the digest of what the approver authorises. The server renders the content below, and
+        # the model's value is never read.
 
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -745,6 +762,10 @@ class DomainAgentToolBackend:
                     raise AgentAuthorizationError("approval resource is not bound to this run")
             if not hmac.compare_digest(stored.document.snapshot_hash, _jcs_hash(snapshot_hash_arg)):
                 raise _stale_refusal()
+            try:
+                rendered = render_quote_presentation(stored.document, action=action.value)
+            except QuotePresentationError as error:
+                raise AgentToolUnavailable("the stored revision cannot be rendered") from error
             policy = APPROVAL_POLICIES[action]
             if APPROVAL_RESOURCE_TYPES[action] != str(call.arguments["resource_type"]):
                 raise AgentToolUnavailable("approval resource type does not match its action")
@@ -759,10 +780,10 @@ class DomainAgentToolBackend:
                         resource_id=container.quote_id,
                         resource_version=resource_version,
                         snapshot_hash=_jcs_hash(snapshot_hash_arg),
-                        # The rendered hash binds whatever content the run intends to present;
-                        # it is re-verified against the real rendered content at decision and
-                        # execution time (approvals.py _require_exact_binding), never here.
-                        rendered_hash=_jcs_hash(rendered_hash_arg),
+                        # The digest of the server's own rendering of the stored revision for
+                        # this action -- rebuildable by any verifier from the immutable store --
+                        # never a digest the model chose.
+                        rendered_hash=rendered.snapshot_hash,
                         policy_version=self._policy_version(call),
                         requested_by=claims.run_id,
                         idempotency_key=_required_key(call.idempotency_key),
@@ -820,6 +841,27 @@ def build_domain_backend(
         database_url=database_url,
         connection_factory=connection_factory,
         now=now,
+    )
+
+
+def build_domain_facade_service(
+    *,
+    database_url: str,
+    connection_factory: Callable[[str], Any] = psycopg.connect,
+    now: Callable[[], datetime] | None = None,
+) -> AgentFacadeService:
+    """The domain backend with the admission ledger every facade process shares.
+
+    `AgentFacadeService` alone defaults to a process-local ledger, which is correct only for one
+    process. A deployment that opts into the domain backend has a database, so it gets the ledger
+    in it: replay refusal and per-run limits then hold across facade processes and restarts.
+    Selecting this remains a deployment's explicit dependency override (F7).
+    """
+    return AgentFacadeService(
+        DomainAgentToolBackend(
+            database_url=database_url, connection_factory=connection_factory, now=now
+        ),
+        call_ledger=PostgresAgentCallLedger(database_url, connection_factory=connection_factory),
     )
 
 
@@ -973,4 +1015,5 @@ __all__ = [
     "QUOTE_REVISION_ID_NAMESPACE",
     "DomainAgentToolBackend",
     "build_domain_backend",
+    "build_domain_facade_service",
 ]

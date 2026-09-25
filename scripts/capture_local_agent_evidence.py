@@ -22,8 +22,15 @@ SUPERSEDED_OUTPUTS = (
     # governs. That schema is pinned here, so the bundle was re-derived per
     # `context/tasks/TASK-evidence-repin-001.md` rather than hand-edited, and exactly one pin moved.
     "evidence/agent-shadow/local-synthetic-suite-v2.json",
+    # Superseded 2026-09-25 by AGENT-SHADOW-DEFECTS-001. Three pinned files changed to fix
+    # reproduced runtime and eval defects: `agent_runner.py` (handoff disposition, execution pins,
+    # job deadline, ledger-failure naming), `graders.py` (an unmeasured fact no longer passes a
+    # safety assertion) and `runner.py` (the consent-forgery case observes the contract instead of
+    # returning a constant). Re-derived per `context/tasks/TASK-evidence-repin-001.md`; every case
+    # status, the release-blocker list and the DETERMINISTIC_DEGRADED runtime path are unchanged.
+    "evidence/agent-shadow/local-synthetic-suite-v3.json",
 )
-DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v3.json"
+DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v4.json"
 PINNED_ARTIFACTS = (
     "specs/evals/eval-manifest-v1.yaml",
     "specs/evals/fixture-registry-v1.json",

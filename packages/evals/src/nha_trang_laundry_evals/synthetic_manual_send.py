@@ -180,11 +180,19 @@ def execute_manual_worker_double_send_preflight(
         worker_execution_count = cursor.fetchone()
     if attestation_count != (1,) or worker_execution_count != (0,):
         raise SyntheticManualSendError("more than one send execution path was recorded")
+    # Observed, not asserted (AGENT-SHADOW-DEFECTS-001 F9): every provider send attempt leaves a
+    # `channel_send_receipts` row naming its approval, including failures and timeouts.
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM channel_send_receipts WHERE approval_ref = %s",
+            (approval.approval_request_id,),
+        )
+        provider_attempts = cursor.fetchone()
     return SyntheticManualSendPreflight(
         worker_execution_rejected_by_exclusive_token=True,
         exactly_one_execution_path_recorded=True,
         manual_send_recorded=True,
-        provider_attempted=False,
+        provider_attempted=provider_attempts != (0,),
         trace_id="synthetic-manual-worker-double-send-001",
     )
 

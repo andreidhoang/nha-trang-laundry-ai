@@ -501,24 +501,38 @@ def test_record_customer_facts_bumps_version_under_if_match_and_stores_types_onl
     )
     assert status == 200
     data = payload["data"]
-    assert data["row_version"] == 2 and data["accepted_fact_count"] == 2
+    # Corrected by AGENT-SHADOW-DEFECTS-001 F10. This asserted `accepted_fact_count == 2`: the
+    # answer told the model both facts were recorded while only their types were, and the address
+    # and service text were stored nowhere. Storing that text would open a retention class DEC-008
+    # does not schedule, so the answer now says what happened: no fact's content was accepted, and
+    # both types remain unresolved for staff to capture from the conversation.
+    assert data["row_version"] == 2
+    assert data["accepted_fact_count"] == 0
+    assert data["unresolved_fact_types"] == ["CUSTOMER_ADDRESS_TEXT", "SERVICE_TEXT"]
 
     with connection.cursor() as cursor:
         cursor.execute("SELECT row_version FROM order_requests WHERE id = %s", (request_id,))
         assert int(cursor.fetchone()[0]) == 2
         cursor.execute(
             """
-            SELECT payload::text FROM domain_events
+            SELECT payload::text, payload FROM domain_events
             WHERE aggregate_type = 'ORDER_REQUEST' AND aggregate_id = %s
                 AND event_type = 'ORDER_REQUEST_CUSTOMER_FACTS_RECORDED'
             """,
             (request_id,),
         )
-        event_payload = str(cursor.fetchone()[0])
+        event_text, event = cursor.fetchone()
+        event_payload = str(event_text)
         assert FREE_TEXT_MARKER not in event_payload
         assert "service_text" not in event_payload
         assert "address_text" not in event_payload
         assert "CUSTOMER_ADDRESS_TEXT" in event_payload
+        # The ledger says the same thing the answer does: mentioned, not accepted.
+        assert event == {
+            "mentioned_fact_count": 2,
+            "fact_types": ["CUSTOMER_ADDRESS_TEXT", "SERVICE_TEXT"],
+            "fact_text_recorded": False,
+        }
 
     # A stale If-Match is refused and moves nothing.
     with pytest.raises(AgentToolRefusal) as refusal:
@@ -935,6 +949,54 @@ def test_approval_request_create_binds_the_real_quote_revision(
     with connection.cursor() as cursor:
         cursor.execute("SELECT actor_type FROM audit_events WHERE aggregate_type = 'APPROVAL'")
         assert cursor.fetchone()[0] == "AGENT_RUNNER"
+
+
+def test_an_agent_approval_binds_the_server_rendering_never_a_model_chosen_hash(
+    connection: Any, backend: DomainAgentToolBackend
+) -> None:
+    """AGENT-SHADOW-DEFECTS-001 F4.
+
+    The model used to choose `rendered_hash`, and the approval bound it to no content: an approver
+    was asked to authorise a digest of a rendering nothing had produced, and every later check
+    compared that digest only with itself. The server now renders what the approval presents --
+    from the stored, hash-verified revision -- and binds that rendering's digest. The model's
+    value is not bound, whatever it says.
+    """
+    from nha_trang_laundry_db.quotes import QuoteRepository
+    from nha_trang_laundry_domain.quote_presentation import render_quote_presentation
+
+    claims, request_id, quote = _quote_for_approval(connection, backend)
+    chosen_by_model = f"sha256:{'b' * 64}"
+    status, payload = _invoke(
+        backend,
+        AgentToolOperation.APPROVAL_REQUEST_CREATE,
+        arguments={
+            "action": "PRESENT_QUOTE",
+            "resource_type": "QUOTE_REVISION",
+            "resource_id": quote["quote_revision_id"],
+            "resource_version": quote["revision"],
+            "snapshot_hash": quote["snapshot_hash"],
+            "rendered_hash": chosen_by_model,
+        },
+        claims=claims,
+        path_parameters={"order_request_id": str(request_id)},
+        idempotency_key="agent-test-approval-render-01",
+    )
+    assert status == 201
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT rendered_hash, resource_id, resource_version FROM approval_requests
+            WHERE id = %s
+            """,
+            (payload["data"]["approval_request_id"],),
+        )
+        bound, quote_id, version = cursor.fetchone()
+        stored = QuoteRepository.get_revision(cursor, quote_id, int(version))
+    assert stored is not None
+    assert bound != f"JCS-SHA256-V1:{'b' * 64}"
+    assert bound == render_quote_presentation(stored.document, action="PRESENT_QUOTE").snapshot_hash
 
 
 def test_approval_request_create_refuses_an_unbound_resource_like_an_authorization_failure(

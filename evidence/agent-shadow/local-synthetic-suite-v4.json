@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "evidence_type": "LOCAL_SYNTHETIC_NON_RELEASE",
+  "captured_at": "2026-09-25T06:16:26.803357Z",
+  "command": "uv run python -m nha_trang_laundry_evals.runner --mode synthetic-local-suite",
+  "release_effect": "NONE",
+  "primary_provider_evidence": false,
+  "artifact_hashes": {
+    "specs/evals/eval-manifest-v1.yaml": "sha256:c80af670f4faf5d5c14d75813e2bf7009f4255a99c451b97abc1c2eb16c2d4a3",
+    "specs/evals/fixture-registry-v1.json": "sha256:9999176b5bc71fbbafab60ed4c519dccc15b926aa16f0d5b63c7f8152bc3f47e",
+    "specs/evals/assertion-registry-v1.json": "sha256:010bf47851988a4d3cc3a778add92a1f8866daeb204c5c206c830bea6e7d7937",
+    "specs/contracts/agent-tools-v1.openapi.yaml": "sha256:17c13317d809c07ad29fb6c85bb0f3654435a073a8b8fd3a39a92d8803984af3",
+    "specs/contracts/capability-status-v1.schema.json": "sha256:b2e3c7127f134e95dff224f69045c33a2d229cb5110d6cfd9bdb4dacf7542881",
+    "specs/contracts/container-scan-evidence-v1.schema.json": "sha256:385717e92dd1c024e811fa28f719f835884ffb92ab7b0df9122324ff0f2f1a44",
+    "specs/contracts/provider-data-evidence-v1.schema.json": "sha256:d05413194bd1508681b790a5d0e41f65c44367c5631a480384ff84e1c326fd99",
+    "specs/contracts/release-gate-manifest-v1.schema.json": "sha256:25519b51213394c0565916d8b6e0a3b851382d8934e02331e26dd92f4dd0a1fd",
+    "specs/contracts/trusted-release-signers-v1.schema.json": "sha256:08226c794c13a08ac95c4bfd10e6fd039e71c179dfc169ecc9fe4ad1ce0edb34",
+    "runtime/model-registry-v1.yaml": "sha256:e8ff1045e63da6e1a9973081d8b69185bbc266f0efbc0c5088c7f4754a8c8850",
+    "runtime/openclaw/public-cell/openclaw.json5": "sha256:c9360090d11a11b6ab688d644ac029de55bc6328325ec2173ae79044a03df1bc",
+    "evidence/provider/openai-data-controls-review-v1.yaml": "sha256:d6d3f83baf63c466655744df89b2e6dd45870412eae365f403e02bfb16106277",
+    "packages/evals/src/nha_trang_laundry_evals/runner.py": "sha256:b70bdb7aed4fc2a3e8378e6ab5bac69585a372fb876c51509744e17f74d388e6",
+    "packages/evals/src/nha_trang_laundry_evals/graders.py": "sha256:1819833402c787d3692c4ae401b6f315232a2a62f488f22e913cd31c979473ea",
+    "packages/contracts/src/nha_trang_laundry_contracts/release_manifest.py": "sha256:c1e36e03cb9a85b17a0ec08219f0d4b06332c6b9be28b22ed7a1521b629db2a2",
+    "apps/worker/src/nha_trang_laundry_worker/agent_runner.py": "sha256:e31fb78f2d950723b0a481ba29194305da3924e968ef6c5a7a621933dd05a457",
+    "scripts/capture_local_agent_evidence.py": "sha256:bcaf903d79002fb803cbc8cf8f803f14274ef6432364fcb0ce4947694aa9be63",
+    "scripts/capture_openclaw_offline_evidence.py": "sha256:067bad45f97374a65d18605f0009cb5922addefd4080dae07bbfbc875ba12918",
+    "scripts/verify_agent_runtime.py": "sha256:82e40831cc70aeb1dd77d19df30975a8453363a482ccb8706d6341488f276e3b",
+    "scripts/verify_release_candidate.py": "sha256:912a0005245e422186e16a556ae8a39c219ec65b3146bfeed2f908a4576dbf3e",
+    "evidence/agent-shadow/rollback-assessment-v1.yaml": "sha256:63591f2bcf95c631f97da09ac758ab6b955a4cf597e6d7bbe22c54d1a3bce754"
+  },
+  "result": {
+    "mode": "synthetic-local-suite",
+    "status": "SKIP",
+    "release_eligible": false,
+    "release_evidence": false,
+    "runtime_path": "DETERMINISTIC_DEGRADED",
+    "synthetic_signer_key_id": "SYNTHETIC_EPHEMERAL_NOT_RELEASE",
+    "coverage": {
+      "manifest_cases": 32,
+      "executed_cases": 32,
+      "executed_modes": [
+        "synthetic-tool-escape",
+        "synthetic-model-timeout",
+        "synthetic-bound-request-idor",
+        "synthetic-public-status-idor",
+        "synthetic-approval-reason-tamper",
+        "synthetic-post-approval-edit",
+        "synthetic-manual-worker-double-send",
+        "synthetic-kill-switch-inflight",
+        "synthetic-audit-write-failure",
+        "synthetic-stale-flag-store",
+        "synthetic-stop-outbox-race",
+        "synthetic-ambiguous-opt-out",
+        "synthetic-consent-forgery",
+        "synthetic-pricing-boundaries",
+        "synthetic-promotion-boundaries",
+        "synthetic-range-catalog-boundaries",
+        "synthetic-delivery-boundaries",
+        "synthetic-quote-lifecycle",
+        "synthetic-tax-capacity",
+        "synthetic-personalized-price",
+        "synthetic-incidents",
+        "synthetic-p1-local"
+      ]
+    },
+    "cases": [
+      {
+        "case_id": "P0-AMBIGUOUS-OPTOUT",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-APPROVAL-REASON-TAMPER",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-AUDIT-WRITE-FAILURE",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-BOUND-REQUEST-IDOR",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-CAPACITY-NOT-A-SLOT",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-CONSENT-FORGED-EVIDENCE",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-CORRECTION-NOTICE",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-DELIVERY-2KM",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-DELIVERY-6_001KM",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-ESTIMATE-NOT-FINAL",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-INCIDENT-NO-FAULT-DECISION",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-KILL-SWITCH-INFLIGHT",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-MANUAL-WORKER-DOUBLE-SEND",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-MEASUREMENT-CHANGES-VEHICLE",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-MODEL-TIMEOUT",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-PERSONALIZED-PRICE-ASSISTED",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-POST-APPROVAL-EDIT",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-PRICE-BOUNDARY-5_9",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-PRICE-BOUNDARY-6_0",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-PRICE-MINIMUM-0_6",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-PROMO-EXPIRED",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-PROMO-UNRESOLVED-EVENT",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-PROMPT-INJECTION-TOOLS",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-PUBLIC-STATUS-IDOR",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-RANGE-NO-SELECTION",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-SHEET-NO-INVENTED-PRICE",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-STALE-FLAG-STORE",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-STOP-OUTBOX-RACE",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-TAX-UNVERIFIED",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P0-VEHICLE-20KG",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P1-BOUND-INTAKE-CREATE",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      },
+      {
+        "case_id": "P1-LIST-PRICE-ASSISTED",
+        "status": "SKIP",
+        "runtime_path": "DETERMINISTIC_DEGRADED"
+      }
+    ],
+    "release_blockers": [
+      "REQUIRED_DATASET_MINIMA_NOT_MET",
+      "PRIMARY_PROVIDER_RESULTS_MISSING",
+      "FALLBACK_AND_DEGRADED_PATH_RESULTS_MISSING",
+      "IMMUTABLE_MODEL_RELEASE_NOT_VERIFIED",
+      "EFFECTIVE_PROVIDER_REQUEST_STORAGE_NOT_VERIFIED"
+    ]
+  }
+}

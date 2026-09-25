@@ -188,6 +188,19 @@ with sync_playwright() as pw:
     seal = ""
     accepted_revision = "1"
     order_id = ""
+    request_bodies = []
+    page.on(
+        "request",
+        lambda r: (
+            request_bodies.append((r.url, r.post_data or ""))
+            if r.method == "POST" and "/internal/v1/" in r.url
+            else None
+        ),
+    )
+
+    def last_request_body(fragment):
+        found = [body for url, body in request_bodies if fragment in url]
+        return found[-1] if found else None
 
     head(1, "MỞ BẢNG — what a staff member sees before signing in")
     page.goto(CONSOLE, wait_until="networkidle")
@@ -448,98 +461,165 @@ with sync_playwright() as pw:
         for m, s_, u, b in api_calls[-8:]:
             print(f"      API {m} {u} -> {s_} {b[:160]}")
 
-    def move(dimension, target, label, slot=False):
-        """Pick *this walk's* order off the board and move one dimension, as staff do.
+    # CONSOLE-REDESIGN-002: the walk no longer moves three dropdown axes on #/orders. It opens the
+    # order's own page and presses the next step the server offers (ORDER-STEPS-001), one real
+    # event per press, exactly as the counter does. What each check proves is unchanged: the order
+    # is received with the operator's slot attestation, washed, paid the exact total and closed.
 
-        Selecting the first row is what the first version did, and it made the script depend on the
-        board's ordering: run it twice against the same shop and every transition failed with
-        "order is closed", because row one was yesterday's completed order. The board is a real
-        board -- it holds every order the shop has -- so the walk has to find its own.
-        """
-        page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
-        page.wait_for_timeout(1400)
-        card = page.locator("article.card").filter(has=page.locator(f'[title="{order_id}"]'))
-        if card.count() == 0:
-            ok(label, False, f"order {order_id} is not on the board")
+    def primary_step():
+        node = page.locator(".action-bar--v2 button[data-step]")
+        return node.first.get_attribute("data-step") if node.count() else None
+
+    def open_order_page(oid):
+        page.goto(f"{CONSOLE}#/orders/{oid}", wait_until="networkidle")
+        page.wait_for_timeout(1500)
+
+    def last_post(fragment):
+        calls = [c for c in api_calls if c[0] == "POST" and fragment in c[2]]
+        return calls[-1] if calls else None
+
+    def step_control(step):
+        """The page's control for `step`: in the action bar, or under "Khác"."""
+        bar = page.locator(f".action-bar--v2 button[data-step={step}]")
+        if bar.count():
+            return bar.first
+        more = page.locator("button[data-more-steps]")
+        if more.count():
+            more.first.click()
+            page.wait_for_timeout(400)
+        found = page.locator(f"dialog[open] button[data-step={step}]")
+        return found.first if found.count() else None
+
+    def press_step(step, label):
+        """A composite step with nothing to attest: one press, one `POST /steps`."""
+        control = step_control(step)
+        if control is None:
+            ok(label, False, f"the page offers no {step}; the primary step is {primary_step()}")
             return False
-        pick = card.first.locator("button", has_text="Chọn để chuyển trạng thái")
-        if pick.count() == 0:
-            ok(label, False, "the order's card offers no transition control")
-            return False
-        pick.first.click()
-        page.wait_for_timeout(500)
-        page.locator("#move-dimension").select_option(dimension)
-        page.wait_for_timeout(400)
-        page.locator("#move-target").select_option(target)
-        if slot and page.locator("#move-slot").count():
-            page.locator("#move-slot").check()
-        page.wait_for_timeout(200)
-        form = page.locator("form.form").filter(has=page.locator("#move-dimension"))
-        form.locator("button[type=submit]").first.click()
+        before = len(api_calls)
+        control.click()
         page.wait_for_timeout(1800)
-        latest = [c for c in api_calls if c[0] in ("POST", "PATCH", "PUT") and "/orders/" in c[2]]
-        status = latest[-1][1] if latest else 0
-        body = latest[-1][3] if latest else ""
-        good = 200 <= status < 300
-        ok(label, good, f"HTTP {status} {body[:110] if not good else ''}")
+        call = last_post("/steps")
+        good = call is not None and len(api_calls) > before and 200 <= call[1] < 300
+        ok(label, good, f"HTTP {call[1]} {call[3][:110]}" if call and not good else "")
         return good
 
-    head(9, "NHẬN ĐỒ — the bag is taken in and inspected")
-    move("intake", "RECEIVED_PENDING_INSPECTION", "the bag is received and awaiting inspection")
-    move("intake", "ACCEPTED", "the bag is inspected and accepted", slot=True)
-    shot(page, "13-intake-accepted.png")
+    def receive(label):
+        """Nhận đồ: the sheet asks for the slot, and the press is shut until it is ticked."""
+        control = step_control("RECEIVE")
+        if control is None:
+            ok(label, False, f"the page offers no RECEIVE; the primary step is {primary_step()}")
+            return False
+        control.click()
+        page.wait_for_timeout(500)
+        submit = page.locator("#receive-submit")
+        ok(
+            "Nhận đồ asks for the operator's word on the slot, and is shut until it is given",
+            submit.count() == 1 and submit.is_disabled(),
+        )
+        page.locator("#receive-slot").check()
+        submit.click()
+        page.wait_for_timeout(1800)
+        call = last_post("/steps")
+        good = (
+            call is not None
+            and 200 <= call[1] < 300
+            and '"slot_approved":true' in (last_request_body("/steps") or "")
+        )
+        ok(label, good, "" if good else f"HTTP {call[1]} {call[3][:110]}" if call else "no call")
+        return good
 
-    head(10, "XÁC NHẬN ĐƠN — the commercial promise catches up with the bag")
-    move("commercial", "STORE_CONFIRMATION_PENDING", "the shop takes the order for confirmation")
-    move("commercial", "CONFIRMED", "the order is confirmed")
-    move("commercial", "ACTIVE", "the order goes active")
+    def pay(step, label):
+        """Thu tiền / Khách trả trước: read the amount off the sheet, type it, record it."""
+        control = step_control(step)
+        if control is None:
+            ok(label, False, f"the page offers no {step}; the primary step is {primary_step()}")
+            return ""
+        control.click()
+        page.wait_for_timeout(600)
+        due = page.locator("dialog[open] .money-hero__amount").first.inner_text()
+        typed = due.replace("₫", "").replace("\u00a0", "").strip()
+        ok(
+            "the amount field is empty -- the figure is read to the customer and typed",
+            page.locator("#settlement-amount").input_value() == "",
+        )
+        page.locator("#settlement-amount").fill(typed)
+        page.wait_for_timeout(200)
+        page.locator("#settlement-submit").click()
+        page.wait_for_timeout(2000)
+        call = last_post("/settlement")
+        ok(
+            label,
+            call is not None and 200 <= call[1] < 300,
+            f"HTTP {call[1]} {call[3][:120]}" if call else "no settlement call was made",
+        )
+        return (
+            page.locator("dialog[open]").first.inner_text()
+            if page.locator("dialog[open]").count()
+            else ""
+        )
 
-    head(11, "SẢN XUẤT — the machines")
-    for target, label in [
-        ("QUEUED", "queued for washing"),
-        ("IN_PROCESS", "in the machine"),
-        ("QUALITY_CHECK", "checked"),
-        ("READY_AT_STORE", "ready at the counter"),
-        ("RELEASED", "handed to the customer"),
-    ]:
-        move("production", target, f"production: {label}")
-    shot(page, "14-released.png")
-
-    head(12, "TẤT TOÁN — the money")
+    head(9, "NHẬN ĐỒ — the bag is taken in, on the order's own page")
     page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
-    page.wait_for_timeout(1200)
+    page.wait_for_timeout(1400)
     card_link = page.locator(f"a[href*='#/orders/{order_id}']")
     ok(
-        "the board links through to this order's own screen",
+        "the order list links through to this order's own page",
         card_link.count() >= 1,
         f"{card_link.count()} links to {order_id}",
     )
-    if card_link.count():
-        card_link.first.click()
-        page.wait_for_timeout(1800)
-        shot(page, "15-order-detail.png")
-        amount_field = page.locator("#settlement-amount")
-        ok("the order screen offers a settlement", amount_field.count() == 1)
-        if amount_field.count():
-            amount_field.fill("128000")
-            # A walk-in collects at the counter, so this checkbox is what closes fulfilment.
-            if page.locator("#settlement-collected").count():
-                page.locator("#settlement-collected").check()
-            page.wait_for_timeout(200)
-            sform = page.locator("form.form").filter(has=page.locator("#settlement-amount"))
-            sform.locator("button[type=submit]").first.click()
-            page.wait_for_timeout(2000)
-            settled = [c for c in api_calls if c[0] == "POST" and "settlement" in c[2]]
-            st = settled[-1] if settled else None
-            ok(
-                "the payment is recorded",
-                bool(st) and 200 <= st[1] < 300,
-                f"HTTP {st[1]} {st[3][:120]}" if st else "no settlement call was made",
-            )
-            shot(page, "16-settled.png")
+    open_order_page(order_id)
+    shot(page, "13-order-created.png")
+    ok(
+        "a new order's page offers Nhận đồ as the one next step",
+        primary_step() == "RECEIVE",
+        primary_step(),
+    )
+    receive("the bag is received and accepted, with the slot attested")
+    shot(page, "14-received.png")
 
-    head(13, "HOÀN TẤT — the order closes")
-    move("commercial", "COMPLETED", "the order reaches COMPLETED")
+    head(10, "SẢN XUẤT — the machines, one press per real event")
+    for step, label in [
+        ("START_WASH", "in the machine"),
+        ("QUALITY_CHECK", "washed and being checked"),
+        ("MARK_READY", "ready at the counter"),
+    ]:
+        ok(f"the page offers {step} next", primary_step() == step, primary_step())
+        press_step(step, f"production: {label}")
+    shot(page, "15-ready.png")
+
+    head(11, "TẤT TOÁN — the money")
+    ok(
+        "a ready walk-in's next step is to take the money",
+        primary_step() == "SETTLE",
+        primary_step(),
+    )
+    said = pay("SETTLE", "the payment is recorded")
+    shot(page, "16-settled.png")
+    ok(
+        "the sheet says the exact total was recorded and offers the handover straight away",
+        "đúng bằng tổng đã báo" in said
+        and page.locator("dialog[open] button[data-step=HAND_OVER]").count() == 1,
+        said[:140],
+    )
+
+    head(12, "HOÀN TẤT — the bag goes to the customer and the order closes")
+    handover = page.locator("dialog[open] button[data-step=HAND_OVER]")
+    if handover.count():
+        handover.first.click()
+        page.wait_for_timeout(2000)
+    call = last_post("/steps")
+    ok(
+        "the order reaches COMPLETED",
+        call is not None and 200 <= call[1] < 300 and '"commercial":"COMPLETED"' in call[3],
+        f"HTTP {call[1]} {call[3][:120]}" if call else "no call was made",
+    )
+    open_order_page(order_id)
+    ok(
+        "and its page says it is closed, with nothing left to press",
+        "Đơn đã đóng" in page.locator("main").first.inner_text()
+        and page.locator("button[data-step]").count() == 0,
+    )
     shot(page, "17-completed.png")
 
     head(14, "CÁC MÀN CÒN LẠI — every other screen a staff member can open")
@@ -663,6 +743,36 @@ with sync_playwright() as pw:
     )
 
     head(16, "PHÂN QUYỀN — the auditor may look and may not touch")
+    # An open order for the auditor to look at, made by the owner through the same routes the
+    # counter uses (a finished order has no step left to show refused).
+    auditor_order = page.evaluate(
+        """async (store) => {
+        const jar = document.cookie.split('; ');
+        const csrf = jar.find(c => c.startsWith('staff_csrf='))?.split('=')[1] || '';
+        const post = async (path, body) => (await fetch(path, {method: 'POST',
+            credentials: 'include', headers: {'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf, 'Idempotency-Key': 'daily-' + crypto.randomUUID()},
+            body: JSON.stringify(body)})).json();
+        const t = await post(`/internal/v1/stores/${store}/counter-tickets`, {});
+        const rq = await post(`/internal/v1/stores/${store}/order-requests`,
+            {contact_binding_id: t.ticket_id});
+        const q = await post(`/internal/v1/stores/${store}/quotes`, {
+            bound_order_request_id: rq.order_request_id, fulfillment_mode: 'SELF_DROP_SELF_COLLECT',
+            lines: [{service_code: 'STANDARD_WASH_DRY', quantity: '7', unit: 'KG',
+                     quantity_basis: 'STAFF_MEASUREMENT'}]});
+        const a = await post(`/internal/v1/stores/${store}/quotes/${q.quote_id}/acceptance`,
+            {expected_current_revision: q.revision, expected_snapshot_hash: q.snapshot_hash});
+        const o = await post(`/internal/v1/stores/${store}/orders`, {
+            bound_contact_id: rq.contact_binding_id, quote_id: q.quote_id,
+            quote_revision: a.revision, quote_snapshot_hash: a.snapshot_hash,
+            fulfillment_mode: 'SELF_DROP_SELF_COLLECT',
+            customer_final_quote_accepted_at: new Date().toISOString(),
+            acquisition_source: 'WALK_IN'});
+        return o.order_id || '';
+    }""",
+        STORE,
+    )
+    ok("an open order exists for the auditor to look at", bool(auditor_order), auditor_order)
     actx = browser.new_context(
         viewport={"width": 1280, "height": 900},
         **REC.context_options(),  # type: ignore[arg-type]
@@ -690,11 +800,17 @@ with sync_playwright() as pw:
     apage.wait_for_timeout(1500)
     shot(apage, "19-auditor.png")
     atext = apage.locator("main").first.inner_text() or ""
-    # Writes only. "Tìm theo số phiếu" (ORDER-LOOKUP-001) is the first read form on this screen,
+    # Writes only. "Tìm theo số phiếu" (ORDER-LOOKUP-001) is the one read form on this screen,
     # and an auditor is entitled to it; it is marked `data-intent="read"` and asserted usable
     # below, so excluding it here narrows nothing the check was about.
-    submits = apage.locator("form.form button[type=submit]:not([data-intent='read'])")
-    reads = apage.locator("form.form button[type=submit][data-intent='read']")
+    # CONSOLE-REDESIGN-001 + 002: the list holds no write form any more (orders are created on
+    # Nhận đồ; steps live on the order page). Its one write entry is the header's "Nhận đồ",
+    # which an auditor must meet disabled with the reason -- that and any other write control
+    # (a submit that is not a read, or a control `gated()` marked denied) are what is checked.
+    submits = apage.locator(
+        "main button[type=submit]:not([data-intent='read']), main button[data-denied]"
+    )
+    reads = apage.locator("button[type=submit][data-intent='read']")
     print(f"      the auditor's submit buttons ({submits.count()}):")
     for i in range(submits.count()):
         b = submits.nth(i)
@@ -741,15 +857,15 @@ with sync_playwright() as pw:
     )
     ok(
         "the auditor is told they may not write, and the write controls are disabled",
-        disabled,
-        f"{submits.count()} submit buttons, all disabled={disabled}",
+        submits.count() > 0 and disabled,
+        f"{submits.count()} write controls, all disabled={disabled}",
     )
     ok(
         "and the auditor can still look an order up by its ticket, which is a read",
         reads.count() == 1 and not reads.first.is_disabled(),
         f"{reads.count()} read control(s)",
     )
-    hints = apage.locator("form.form p.hint").all_text_contents()
+    hints = apage.locator("main p.hint").all_text_contents()
     print("      what the auditor's order screen actually says:")
     for line in atext.splitlines()[:14]:
         if line.strip():
@@ -759,6 +875,23 @@ with sync_playwright() as pw:
         "and the screen says why rather than just hiding the controls",
         submits.count() > 0 and explained >= submits.count(),
         f"{explained} of {submits.count()} write controls explain the refusal",
+    )
+    # CONSOLE-REDESIGN-002: the order's steps live on its own page now, so that is where an auditor
+    # must meet them -- visible, disabled, with the reason beside them, never hidden.
+    apage.goto(f"{CONSOLE}#/orders/{auditor_order}", wait_until="networkidle")
+    apage.wait_for_timeout(1600)
+    shot(apage, "19b-auditor-order.png")
+    steps_ = apage.locator("button[data-step]")
+    live_steps = apage.locator("button[data-step]:not([disabled])")
+    step_hints = [
+        h
+        for h in apage.locator(".action-bar--v2 p.hint").all_text_contents()
+        if "Vai trò được phép" in h
+    ]
+    ok(
+        "on an order's page the auditor sees the next step, disabled, with the reason beside it",
+        steps_.count() >= 1 and live_steps.count() == 0 and len(step_hints) >= 1,
+        f"{steps_.count()} step controls, {live_steps.count()} live, {len(step_hints)} reasons",
     )
     actx.close()
 
@@ -907,97 +1040,95 @@ with sync_playwright() as pw:
     )
     delivery_id = str(made["json"].get("order_id", "")) if 200 <= made["status"] < 300 else ""
 
-    def move_delivery(dimension, target, label, slot=False):
-        page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
-        page.wait_for_timeout(1400)
-        card = page.locator("article.card").filter(has=page.locator(f'[title="{delivery_id}"]'))
-        if card.count() == 0:
-            ok(label, False, f"order {delivery_id} is not on the board")
-            return False
-        card.first.locator("button", has_text="Chọn để chuyển trạng thái").click()
+    head(
+        19,
+        "CHẶNG GIAO — the bag is fetched, washed, paid for, and a failed trip precedes a good one",
+    )
+    open_order_page(delivery_id)
+    receive("delivery: the driver brings the bag in and it is accepted")
+
+    def record_leg(step, outcome, label):
+        control = step_control(step)
+        if control is None:
+            ok(label, False, f"the page offers no {step}; the primary step is {primary_step()}")
+            return ""
+        control.click()
         page.wait_for_timeout(500)
-        page.locator("#move-dimension").select_option(dimension)
-        page.wait_for_timeout(350)
-        page.locator("#move-target").select_option(target)
-        if slot and page.locator("#move-slot").count():
-            page.locator("#move-slot").check()
-        page.wait_for_timeout(200)
-        form_ = page.locator("form.form").filter(has=page.locator("#move-dimension"))
-        form_.locator("button[type=submit]").first.click()
-        page.wait_for_timeout(1700)
-        last_ = [c for c in api_calls if c[0] in ("POST", "PATCH") and "/orders/" in c[2]][-1]
-        good = 200 <= last_[1] < 300
-        ok(label, good, f"HTTP {last_[1]} {last_[3][:110] if not good else ''}")
-        return good
-
-    head(19, "CHẶNG GIAO — a failed trip, then a successful one")
-    for dimension, target, label, slot in [
-        ("intake", "RECEIVED_PENDING_INSPECTION", "the driver brings the bag in", False),
-        ("intake", "ACCEPTED", "inspected and accepted", True),
-        ("commercial", "STORE_CONFIRMATION_PENDING", "taken for confirmation", False),
-        ("commercial", "CONFIRMED", "confirmed", False),
-        ("commercial", "ACTIVE", "active", False),
-        ("production", "QUEUED", "queued", False),
-        ("production", "IN_PROCESS", "washing", False),
-        ("production", "QUALITY_CHECK", "checked", False),
-        ("production", "READY_AT_STORE", "ready", False),
-        ("production", "RELEASED", "handed to the courier", False),
-    ]:
-        move_delivery(dimension, target, f"delivery: {label}", slot=slot)
-
-    def record_leg(outcome, label):
-        page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
-        page.wait_for_timeout(1400)
-        page.locator("#leg-order").fill(delivery_id)
-        page.locator("#leg-kind").select_option("RETURN")
-        page.locator("#leg-outcome").select_option(outcome)
-        form_ = page.locator("form.form").filter(has=page.locator("#leg-order"))
-        form_.locator("button[type=submit]").first.click()
+        page.locator(f"dialog[open] button[data-leg-outcome={outcome}]").first.click()
         page.wait_for_timeout(1800)
-        legs = [c for c in api_calls if c[0] == "POST" and "delivery-legs" in c[2]]
+        legs = last_post("delivery-legs")
         ok(
             label,
-            bool(legs) and 200 <= legs[-1][1] < 300,
-            f"HTTP {legs[-1][1]} {legs[-1][3][:110]}" if legs else "no call was made",
+            legs is not None and 200 <= legs[1] < 300,
+            f"HTTP {legs[1]} {legs[3][:110]}" if legs else "no call was made",
         )
+        said_ = (
+            page.locator("dialog[open]").first.inner_text()
+            if page.locator("dialog[open]").count()
+            else ""
+        )
+        return said_
 
-    record_leg("FAILED", "a failed delivery attempt is recorded rather than hidden")
-    record_leg("SUCCEEDED", "and so is the successful second attempt")
+    def close_sheet():
+        done = page.locator("dialog[open] button", has_text="Xong")
+        if done.count():
+            done.first.click()
+            page.wait_for_timeout(500)
 
-    head(20, "ĐÓNG ĐƠN GIAO — this one closes on the leg, not on self-collection")
-    page.goto(f"{CONSOLE}#/orders/{delivery_id}", wait_until="networkidle")
-    page.wait_for_timeout(1800)
-    d_amount = page.locator("#settlement-amount")
-    if d_amount.count():
-        d_amount.fill("170000")
-        # Deliberately NOT ticking "khách tự lấy đồ": this order left with the courier.
-        form_ = page.locator("form.form").filter(has=page.locator("#settlement-amount"))
-        form_.locator("button[type=submit]").first.click()
-        page.wait_for_timeout(2200)
-        settled = [c for c in api_calls if c[0] == "POST" and "settlement" in c[2]]
-        ok(
-            "the delivered total is settled",
-            bool(settled) and 200 <= settled[-1][1] < 300,
-            f"HTTP {settled[-1][1]}" if settled else "no call was made",
-        )
-        # This read "Chưa ghi nhận giao đồ" off the settlement's success line -- on an order whose
-        # successful leg this walk had recorded one section earlier, so the line was false. The
-        # paid panel now says the rule (a delivery closes on a successful leg), which is true
-        # whether or not the leg is in yet, and the form is gone so the money cannot be taken twice.
-        said_ = [
-            line_.strip()
-            for line_ in page.locator("main").first.inner_text().splitlines()
-            if "chặng giao thành công" in line_ or "Đã thu đủ tiền" in line_
-        ]
-        ok(
-            "and the screen says it is paid and closes on a successful delivery, not a pickup",
-            any("Đã thu đủ tiền" in s for s in said_)
-            and any("chặng giao thành công" in s for s in said_)
-            and page.locator("#settlement-amount").count() == 0,
-            said_[:2],
-        )
+    record_leg(
+        "DELIVERY_PICKUP", "SUCCEEDED", "delivery: the pickup trip is recorded, no money in it"
+    )
+    close_sheet()
+    for step, label in [
+        ("START_WASH", "washing"),
+        ("QUALITY_CHECK", "checked"),
+        ("MARK_READY", "ready"),
+    ]:
+        press_step(step, f"delivery: {label}")
+
+    head(20, "TIỀN TRƯỚC KHI ĐỒ RỜI TIỆM — DEC-023, then the trip that closes the order")
+    ok(
+        "a ready delivery's next step is the prepayment, before the laundry leaves",
+        primary_step() == "PREPAY",
+        primary_step(),
+    )
+    said = pay("PREPAY", "the delivered total is settled at the counter")
+    ok(
+        "and the sheet says the order closes only on a successful delivery, not a pickup",
+        "chuyến giao thành công" in said,
+        said[:160],
+    )
+    close_sheet()
+    main_text = page.locator("main").first.inner_text()
+    ok(
+        "the page now says it is paid, and no payment is offered a second time",
+        "Đã thu đủ tiền" in main_text
+        and page.locator("button[data-step=SETTLE], button[data-step=PREPAY]").count() == 0,
+    )
     shot(page, "21-delivery-settled.png")
-    move_delivery("commercial", "COMPLETED", "the delivery order closes on its successful leg")
+    press_step("RELEASE", "delivery: handed to the courier")
+    said = record_leg(
+        "DELIVERY_RETURN", "FAILED", "a failed delivery attempt is recorded rather than hidden"
+    )
+    ok(
+        "and a failed trip does not close the order",
+        "không thành công" in said and page.locator("dialog[open] button[data-step]").count() == 0,
+        said[:120],
+    )
+    close_sheet()
+    said = record_leg("DELIVERY_RETURN", "SUCCEEDED", "and so is the successful second attempt")
+    closing = page.locator("dialog[open] button[data-step=COMPLETE]")
+    ok("the successful trip offers to close the order right away", closing.count() == 1, said[:120])
+    if closing.count():
+        closing.first.click()
+        page.wait_for_timeout(2000)
+    call = last_post("/steps")
+    ok(
+        "the delivery order closes on its successful leg",
+        call is not None and 200 <= call[1] < 300 and '"commercial":"COMPLETED"' in call[3],
+        f"HTTP {call[1]} {call[3][:120]}" if call else "no call was made",
+    )
+    shot(page, "22-delivery-completed.png")
 
     head(21, "HIỂN THỊ — no screen printed a structure, NaN or an undefined amount")
     ok(

@@ -167,7 +167,7 @@ const REFUSAL = {
     "Khách đã chốt một giá mới hơn cho báo giá này. Dùng bản đã chốt mới nhất và đọc lại cho khách.",
   QUOTE_ALREADY_ORDERED:
     "Báo giá này đã được dùng để tạo đơn rồi. Mỗi báo giá chỉ tạo một đơn — tìm đơn đó trên bảng đơn.",
-  BALANCE_NOT_SETTLED: "Chưa hoàn tất được: đơn chưa thu tiền. Ghi nhận tất toán trước.",
+  BALANCE_NOT_SETTLED: "Chưa hoàn tất được: đơn chưa thu tiền. Bấm “Thu tiền” trước.",
   FULFILLMENT_INCOMPLETE: "Chưa hoàn tất được: đồ chưa được giao hoặc trả cho khách.",
   PRODUCTION_NOT_RELEASED: "Chưa hoàn tất được: đồ của đơn này chưa làm xong.",
   ORDER_CLOSED: "Đơn này đã đóng, không chuyển trạng thái được nữa.",
@@ -196,6 +196,20 @@ const REFUSAL = {
     "kiểu khác để lách.",
   INVALID_STATE_TRANSITION:
     "Đơn đang ở trạng thái không cho phép bước này. Tải lại đơn để xem trạng thái hiện tại.",
+  // ORDER-STEPS-001 (`packages/domain/.../order_steps.py`). The step list on the order page is the
+  // server's own, so these are met only when the order moved under the screen (a second phone) or a
+  // founder ruling refused the step; each says what to do instead.
+  STEP_NOTHING_TO_DO:
+    "Bước này không còn việc gì để làm cho đơn lúc này — có thể người khác vừa làm rồi. Tải lại " +
+    "đơn để xem bước tiếp theo.",
+  WASH_NEEDS_ACTIVE_ORDER:
+    "Chỉ bắt đầu giặt khi đơn đang chạy: đã nhận đồ và không đang xét huỷ. Tải lại đơn để xem " +
+    "bước tiếp theo.",
+  RELEASE_BY_PAYMENT:
+    "Khách tự tới lấy mà chưa trả tiền thì không giao đồ riêng được: bấm “Thu tiền” — thu xong " +
+    "là giao đồ và đóng đơn.",
+  INTAKE_BLOCKERS:
+    "Chưa nhận đồ được: còn thiếu điều kiện bên dưới. Không có gì được ghi.",
   ORDER_MISSING: "Không tìm thấy đơn này trong cửa hàng đang chọn.",
   APPROVAL_EXPIRED: "Phiếu duyệt đã hết hạn. Cần tạo phiếu mới rồi xin duyệt lại.",
   APPROVAL_NOT_PENDING: "Phiếu này đã được quyết định rồi. Tải lại hàng chờ để xem.",
@@ -262,6 +276,16 @@ const CONSENT_REFUSAL_KEY = {
   NOTHING_TO_RELEASE: "NOTHING_TO_RELEASE",
 };
 
+/** The six `RECEIVE` readiness codes (`order_steps.READINESS_BLOCKER_CODES`), matched exactly. */
+const INTAKE_READINESS_CODES = new Set([
+  "CUSTODY_NOT_RECORDED",
+  "QUANTITY_NOT_MEASURED",
+  "SERVICE_NOT_CLASSIFIED",
+  "EXACT_PRICE_NOT_APPROVED",
+  "CUSTOMER_AGREEMENT_MISSING",
+  "SLOT_APPROVAL_REQUIRED",
+]);
+
 /**
  * The Vietnamese sentence for a `DEC-033` reason code, or "" for a code this console does not know
  * -- in which case the caller shows the generic sentence and the code itself.
@@ -307,7 +331,15 @@ const REFUSAL_TEXT = [
   ["INVALID_STATE_TRANSITION: handoff must be recorded first", "HANDOFF_FIRST"],
   ["INVALID_STATE_TRANSITION: the order records custody of the goods", "CUSTODY_RECORDED"],
   ["INVALID_STATE_TRANSITION: production has begun on the goods", "PRODUCTION_BEGUN"],
+  // packages/domain order_steps.py -- composite steps
+  ["INVALID_STATE_TRANSITION: this step has nothing to do for the order now", "STEP_NOTHING_TO_DO"],
+  ["INVALID_STATE_TRANSITION: washing starts only on an active order", "WASH_NEEDS_ACTIVE_ORDER"],
+  [
+    "INVALID_STATE_TRANSITION: an unpaid order the customer collects is released by taking payment",
+    "RELEASE_BY_PAYMENT",
+  ],
   ["INVALID_STATE_TRANSITION", "INVALID_STATE_TRANSITION"],
+  ["HUMAN_APPROVAL_REQUIRED: intake blockers remain", "INTAKE_BLOCKERS"],
   ["HUMAN_APPROVAL_REQUIRED: work has begun", "CANCEL_NEEDS_REVIEW"],
   ["HUMAN_APPROVAL_REQUIRED: cancellation resolution is incomplete", "CANCEL_RESOLUTION_MISSING"],
   ["HUMAN_APPROVAL_REQUIRED: the order was paid, and this resolution", "PAID_RESOLUTION_UNCLEAR"],
@@ -463,7 +495,15 @@ export function classify(status, detail, context = {}) {
         });
       }
       if (detail.outcome === "REQUIRE_HUMAN") {
-        return of("REQUIRE_HUMAN", { reasonCodes: reasonCodesOf(detail) });
+        const codes = reasonCodesOf(detail);
+        // ORDER-STEPS-001: "Nhận đồ" refused for missing readiness facts. The generic "Cần người
+        // quyết định" is true but says nothing a counter can act on; the codes below it do, and
+        // the title says plainly that nothing was recorded.
+        const intake = codes.some((code) => INTAKE_READINESS_CODES.has(code));
+        return of("REQUIRE_HUMAN", {
+          reasonCodes: codes,
+          ...(intake ? { message: REFUSAL.INTAKE_BLOCKERS } : {}),
+        });
       }
       // `NOT_SUPPORTED` is the settlement route's word for "the shop has not decided this case".
       // It shares the 422 status with validation failures and is the opposite of one.

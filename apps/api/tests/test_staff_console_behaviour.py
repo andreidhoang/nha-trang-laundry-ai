@@ -1214,3 +1214,58 @@ def test_nobody_attesting_store_fault_blocks_every_kind() -> None:
     ):
         plan = _plan({"kind": kind, "storeFaultAttested": False, **extra})
         assert plan["state"] == "FAULT_NOT_ATTESTED", kind
+
+
+def test_a_busy_database_reads_as_try_again_and_not_as_do_not_retry() -> None:
+    """`API-INTEGRITY-003`. A timed-out statement used to be a 500, read as FAULT: "Đừng thử lại".
+
+    The API now answers 503 with `{"reason_code": "DATABASE_BUSY" | "DATABASE_UNAVAILABLE"}` and a
+    `Retry-After`. Both mean the command did not happen and a same-key retry is safe, so both
+    classify as `BUSY` -- retryable, with the server's number of seconds kept -- and each code has a
+    gloss saying what happened. Any other 503 keeps the generic UNAVAILABLE, which promises nothing
+    about retrying, and a genuine 500 is still FAULT.
+    """
+
+    got = _run(
+        "import { classify } from './src/core/errors.js';\n"
+        "import { REASON_NOTE } from './src/core/i18n.js';\n"
+        "const view = (e) => ({kind: e.kind, message: e.message, codes: e.reasonCodes, "
+        "retryable: e.retryable, after: e.retryAfterSeconds});\n"
+        "console.log(JSON.stringify({\n"
+        "  busy: view(classify(503, {reason_code: 'DATABASE_BUSY'}, {retryAfterSeconds: 2})),\n"
+        "  down: view(classify(503, {reason_code: 'DATABASE_UNAVAILABLE'}, "
+        "{retryAfterSeconds: 10})),\n"
+        "  other: view(classify(503, 'operations unavailable', {})),\n"
+        "  fault: view(classify(500, 'Internal Server Error', {})),\n"
+        "  notes: [REASON_NOTE.DATABASE_BUSY || '', REASON_NOTE.DATABASE_UNAVAILABLE || ''],\n"
+        "}));\n"
+    )
+    busy, down = got["busy"], got["down"]
+    assert busy["kind"] == down["kind"] == "BUSY"
+    assert busy["retryable"] is down["retryable"] is True
+    assert "đang bận" in busy["message"] and "thử lại" in busy["message"]
+    assert "không kết nối được" in down["message"] and "thử lại" in down["message"]
+    assert busy["codes"] == ["DATABASE_BUSY"] and down["codes"] == ["DATABASE_UNAVAILABLE"]
+    assert (busy["after"], down["after"]) == (2, 10)
+    assert got["other"]["kind"] == "UNAVAILABLE" and got["other"]["retryable"] is False
+    assert got["fault"]["kind"] == "FAULT" and got["fault"]["retryable"] is False
+    assert all(len(note) > 20 for note in got["notes"]), got["notes"]
+
+
+def test_an_approval_whose_resource_moved_on_gets_its_own_title() -> None:
+    """`RESOURCE_CHANGED_SINCE_REQUEST` is not `APPROVAL_STALE`: reloading shows the same phiếu.
+
+    The console matches the machine prefix of the 409 detail, never the English that follows it.
+    """
+
+    got = _run(
+        "import { classify } from './src/core/errors.js';\n"
+        "const e = classify(409, 'RESOURCE_CHANGED_SINCE_REQUEST: the resource this approval "
+        "binds no longer has the content it was requested for', {});\n"
+        "const stale = classify(409, 'approval resource version or hash is stale', {});\n"
+        "console.log(JSON.stringify({kind: e.kind, message: e.message, stale: stale.message}));\n"
+    )
+    assert got["kind"] == "CONFLICT"
+    assert "đã thay đổi sau khi phiếu được tạo" in got["message"]
+    assert "phiếu mới" in got["message"]
+    assert got["message"] != got["stale"]

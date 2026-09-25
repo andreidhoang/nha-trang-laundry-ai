@@ -449,6 +449,13 @@ export const REASON_NOTE = {
     "Phiếu duyệt này do chính người đã tạo yêu cầu xuất bấm duyệt, nên máy chủ không cho xuất. " +
     "Người chọn dữ liệu nào rời khỏi hệ thống không được tự duyệt việc đó. Nhờ một chủ tiệm khác " +
     "duyệt; chưa có dữ liệu nào ra khỏi hệ thống.",
+  // API-INTEGRITY-003: the two 503 reasons. The title (`BUSY`) says what to do; these say what
+  // happened, which is the part a staff member repeats when they ask whether anything was lost.
+  DATABASE_BUSY:
+    "Một câu lệnh phải chờ quá lâu nên máy chủ huỷ nó, và mọi thứ nó định ghi đã được hoàn tác " +
+    "cùng lúc — không có nửa lệnh nào nằm lại.",
+  DATABASE_UNAVAILABLE:
+    "Máy chủ không mở được kết nối tới cơ sở dữ liệu, nên lệnh chưa chạy tới bước nào.",
   EXPORT_ALREADY_PRODUCED:
     "Yêu cầu này đã xuất một lần rồi. Một lần duyệt cho đúng một bản; cần bản nữa thì tạo yêu cầu mới.",
   EXPORT_REQUEST_NOT_FOUND:

@@ -372,7 +372,7 @@ def test_a_draft_edited_after_the_envelope_was_raised_reads_as_changed_and_is_re
             headers=_headers(f"d-{uuid4().hex}"),
         )
         assert approved.status_code == 409
-        assert approved.json() == {"detail": "approval resource version or hash is stale"}
+        assert approved.json()["detail"].startswith("RESOURCE_CHANGED_SINCE_REQUEST:")
 
         refused = client.post(
             f"/internal/v1/approvals/{approval_id}/decisions",
@@ -400,4 +400,4 @@ def test_a_draft_rejected_after_the_envelope_was_raised_is_gone_and_cannot_be_ap
         )
     assert gone.status_code == 404
     assert approved.status_code == 409
-    assert approved.json() == {"detail": "approval resource version or hash is stale"}
+    assert approved.json()["detail"].startswith("RESOURCE_CHANGED_SINCE_REQUEST:")

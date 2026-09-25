@@ -686,7 +686,18 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     entry's `blockedBy` and `today` (a send and an export are both raised from the console
     #     now, from values a server read returned), and the manual-send panel's guardrail and its
     #     four-values hint (step 0 fills them).
-    assert sum(counts.values()) == _registry()["total"] == 401
+    # 406 after API-INTEGRITY-003, merged on top of MESSAGE-DRAFT-BINDING-001: 401 + 5, nothing
+    # re-keyed or retired, all DESCRIPTIVE.
+    #   * `MESSAGES.BUSY` in `core/errors.js`: the title a counter reads for a 503 `DATABASE_BUSY`
+    #     -- "hệ thống đang bận ... thử lại" -- which used to arrive as a 500 and FAULT's "Đừng thử
+    #     lại". A claim that the retry is safe, so it is registered and re-read if it is reworded.
+    #   * `REFUSAL.DATABASE_UNAVAILABLE`: that kind's sentence when no connection could be opened.
+    #   * `REFUSAL.RESOURCE_CHANGED_SINCE_REQUEST`: the approval refusal decision-time re-resolution
+    #     added -- the resource moved on after the phiếu was raised, so the phiếu is finished.
+    #   * 2 `REASON_NOTE` glosses in `core/i18n.js`, one per 503 reason code, saying what happened:
+    #     the timed-out transaction rolled back whole; the connection was never opened.
+    #   The registry diff adds exactly those five slot ids and removes none.
+    assert sum(counts.values()) == _registry()["total"] == 406
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

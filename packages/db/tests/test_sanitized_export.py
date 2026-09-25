@@ -570,6 +570,41 @@ def test_withdrawing_a_stated_exclusion_after_approval_refuses_too(
     assert raised.value.reason_code == "EXPORT_APPROVAL_NOT_BOUND"
 
 
+def test_a_column_added_before_the_owner_decides_refuses_the_approval_itself(
+    connection: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`API-INTEGRITY-003`: the same widening, one step earlier -- between the request and the vote.
+
+    The release already refused it (the test above). The decision did not: `decide` compared the
+    owner's echoed binding with the stored envelope, both frozen at request time, and so recorded an
+    approval of a document that was no longer the export. The decision now re-derives both digests
+    through `read_export_request_binding`, the same derivation the release uses, and refuses with
+    `RESOURCE_CHANGED_SINCE_REQUEST` -- so the owner is told at the approve control, and the ledger
+    never says the owner authorised the wider file.
+    """
+    from nha_trang_laundry_db.approvals import ApprovalResourceChangedError
+
+    shop = _Shop(connection, datetime.now(UTC))
+    _order_with_complaint(connection, shop)
+    created = _request_export(connection, shop, _local_date(shop.now))
+    approval_id = _raise_envelope(connection, shop, created)
+
+    monkeypatch.setattr(exports, "EXPORT_COLUMNS", (*EXPORT_COLUMNS, "bound_contact_id"))
+
+    with pytest.raises(ApprovalResourceChangedError):
+        _decide(connection, shop, created, approval_id, decided_by=shop.owner)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM approval_decisions WHERE approval_request_id = %s",
+            (approval_id,),
+        )
+        assert cursor.fetchone() == (0,)
+
+    # And with the column list the owner was shown, the same decision goes through.
+    monkeypatch.undo()
+    _decide(connection, shop, created, approval_id, decided_by=shop.owner)
+
+
 def test_a_role_outside_the_export_set_cannot_request_or_release_one(
     connection: psycopg.Connection[Any],
 ) -> None:

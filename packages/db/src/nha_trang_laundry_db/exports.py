@@ -775,6 +775,60 @@ def _statement(facts: ExportRequestFacts) -> ExportStatement:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ExportRequestBinding:
+    """What an `EXPORT_SANITIZED_DATA` envelope must bind for this request, derived right now."""
+
+    store_id: UUID
+    resource_version: int
+    snapshot_hash: str
+    rendered_hash: str
+
+
+def read_export_request_binding(
+    cursor: Any, export_request_id: UUID
+) -> ExportRequestBinding | None:
+    """The binding an export envelope must still name, re-derived exactly as `execute` derives it.
+
+    `API-INTEGRITY-003`. `ApprovalRepository.decide` used to compare an export envelope only against
+    the hashes its own client echoed back, which proves the approver saw the stored envelope and
+    nothing about the export. Release already re-derives both digests from the request's facts and
+    from `EXPORT_COLUMNS`/`EXPORT_EXCLUSIONS` as they are at that moment; the decision now asks the
+    same question at the moment the owner signs, through this one function, so the two cannot drift
+    into answering it differently. Widen the column list after the request and the owner is refused
+    at the approve control rather than approving a document the release would then refuse.
+
+    The stored `export_requests` digests are deliberately not read: comparing an envelope's frozen
+    copy with the row's frozen copy proves nothing, as `execute` explains. `None` when there is no
+    such request.
+    """
+
+    cursor.execute(
+        """
+        SELECT store_id, dataset, business_date, row_version
+        FROM export_requests
+        WHERE id = %s
+        """,
+        (export_request_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    statement = _statement(
+        ExportRequestFacts(
+            dataset=str(row[1]),
+            store_id=_uuid(row[0]),
+            business_date=row[2].isoformat(),
+        )
+    )
+    return ExportRequestBinding(
+        store_id=_uuid(row[0]),
+        resource_version=int(row[3]),
+        snapshot_hash=canonical_document(statement.facts).snapshot_hash,
+        rendered_hash=canonical_document(statement).snapshot_hash,
+    )
+
+
 def _require_export_approval(
     binding: ApprovalBinding | None,
     *,
@@ -983,9 +1037,11 @@ __all__ = [
     "ExportAuthorizationError",
     "ExportDataset",
     "ExportExecutionCommand",
+    "ExportRequestBinding",
     "ExportRequestCommand",
     "ExportStateError",
     "ProducedExport",
     "SanitizedExportRepository",
     "StoredExportRequest",
+    "read_export_request_binding",
 ]

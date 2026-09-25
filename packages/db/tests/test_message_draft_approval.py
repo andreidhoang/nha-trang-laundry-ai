@@ -465,7 +465,7 @@ def test_a_draft_changed_after_its_envelope_was_raised_cannot_be_approved_but_ca
     else:
         shop.review(postgres_connection, "REJECT", reason_code="TONE_NOT_APPROPRIATE")
 
-    with pytest.raises(ApprovalStateError, match="approval resource version or hash is stale"):
+    with pytest.raises(ApprovalStateError, match=r"^RESOURCE_CHANGED_SINCE_REQUEST:"):
         repository.decide(
             postgres_connection,
             _decide(shop, created.approval_request_id, original, ApprovalDecision.APPROVED),

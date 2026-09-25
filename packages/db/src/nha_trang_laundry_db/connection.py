@@ -15,7 +15,9 @@ this module will produce for the application.
 What a timeout costs is a failed request, and the transaction it was in rolls back whole: the
 repositories commit a mutation with its event, audit and outbox rows in one transaction, so a
 cancelled statement leaves nothing half-written (invariant 5). A failed request is visible and
-retryable; a hung one is neither.
+retryable; a hung one is neither. `API-INTEGRITY-003` makes the API say so: a cancelled statement,
+a lock not granted in time and a connection that could not be opened answer 503 with `Retry-After`
+and a reason code, instead of the 500 that tells a counter not to retry.
 """
 
 from __future__ import annotations
@@ -145,17 +147,40 @@ def migration_lock_timeout_ms(environment: Mapping[str, str] | None = None) -> i
     )
 
 
+class DatabaseUnavailableError(psycopg.OperationalError):
+    """No connection could be opened: nothing reached the database, so nothing was written.
+
+    `API-INTEGRITY-003`. psycopg raises one `OperationalError` both for a connection that could not
+    be opened and for one lost in the middle of a transaction, and those are opposite answers to
+    the only question a caller has -- *did my write land?* A refused connection certainly did not;
+    a connection dropped around a `COMMIT` may have. The API tells a counter "try again" for the
+    first and "check the board first" for the second, so the difference is made here, where it is
+    still known, rather than guessed at from an exception message later.
+
+    A subclass, so every existing `except psycopg.OperationalError` -- the migration job's startup
+    wait, the readiness probe -- behaves exactly as before. The server's own message is kept only as
+    the cause: it names the host and the role, and this exception's text may reach a log line.
+    """
+
+
 def connect_with_timeouts(
     conninfo: str, timeouts: ConnectionTimeouts, **kwargs: Any
 ) -> psycopg.Connection[Any]:
-    """`psycopg.connect` with these bounds, keeping anything the DSN itself says after them."""
+    """`psycopg.connect` with these bounds, keeping anything the DSN itself says after them.
+
+    A connection that cannot be opened -- refused, unreachable within `connect_timeout`, out of
+    slots, still starting up -- raises `DatabaseUnavailableError`.
+    """
 
     given = conninfo_to_dict(conninfo)
     options = timeouts.session_options()
     if given.get("options"):
         options = f"{options} {given['options']}"
     connect_timeout = int(given.get("connect_timeout") or timeouts.connect_timeout_seconds)
-    return psycopg.connect(conninfo, connect_timeout=connect_timeout, options=options, **kwargs)
+    try:
+        return psycopg.connect(conninfo, connect_timeout=connect_timeout, options=options, **kwargs)
+    except psycopg.OperationalError as error:
+        raise DatabaseUnavailableError("the database connection could not be opened") from error
 
 
 def application_connect(conninfo: str, **kwargs: Any) -> psycopg.Connection[Any]:

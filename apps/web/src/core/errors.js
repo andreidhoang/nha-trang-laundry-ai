@@ -15,7 +15,7 @@
  * @module core/errors
  */
 
-/** @typedef {"OFFLINE"|"NETWORK"|"TIMEOUT"|"SESSION_ENDED"|"DENIED"|"MISSING"|"DISPOSED"|"CONFLICT"|"STALE"|"IDEMPOTENCY_CONFLICT"|"REQUIRE_HUMAN"|"NOT_SUPPORTED"|"INVALID"|"PRECONDITION_REQUIRED"|"TOO_LARGE"|"RATE_LIMITED"|"UNAVAILABLE"|"PRICEBOOK_UNAVAILABLE"|"FAULT"} ErrorKind */
+/** @typedef {"OFFLINE"|"NETWORK"|"TIMEOUT"|"SESSION_ENDED"|"DENIED"|"MISSING"|"DISPOSED"|"CONFLICT"|"STALE"|"IDEMPOTENCY_CONFLICT"|"REQUIRE_HUMAN"|"NOT_SUPPORTED"|"INVALID"|"PRECONDITION_REQUIRED"|"TOO_LARGE"|"RATE_LIMITED"|"BUSY"|"UNAVAILABLE"|"PRICEBOOK_UNAVAILABLE"|"FAULT"} ErrorKind */
 
 export class ApiError extends Error {
   /**
@@ -50,9 +50,19 @@ export class ApiError extends Error {
    * response did not, and the idempotency ledger only protects a retry that carries the same key —
    * which the caller may or may not still hold. Offering a button is how a customer gets charged
    * twice, so the operator is told to check the board instead.
+   *
+   * `BUSY` is the opposite case and is retryable for the opposite reason (`API-INTEGRITY-003`): the
+   * server says exactly what happened -- a statement or lock wait ran out of time and its
+   * transaction rolled back, or no connection could be opened at all -- and a same-key retry of
+   * anything that did commit replays rather than repeats.
    */
   get retryable() {
-    return this.kind === "NETWORK" || this.kind === "TIMEOUT" || this.kind === "RATE_LIMITED";
+    return (
+      this.kind === "NETWORK" ||
+      this.kind === "TIMEOUT" ||
+      this.kind === "RATE_LIMITED" ||
+      this.kind === "BUSY"
+    );
   }
 
   /** Whether the operator's typed input is still valid and can simply be re-submitted. */
@@ -98,6 +108,13 @@ const MESSAGES = {
   PRECONDITION_REQUIRED: "Thiếu phiên bản dòng dữ liệu. Hãy tải lại màn hình.",
   TOO_LARGE: "Nội dung quá lớn.",
   RATE_LIMITED: "Đang bị giới hạn tần suất.",
+  // `API-INTEGRITY-003`. A 503 whose `reason_code` is `DATABASE_BUSY`: before it, a statement that
+  // outran `statement_timeout` was a 500 and the counter read FAULT's "Đừng thử lại" -- the right
+  // advice when nobody knows whether the write landed, and the wrong advice here, where the server
+  // does know. The retry is safe because the same idempotency key travels with it.
+  BUSY:
+    "Hệ thống đang bận nên chưa làm được lệnh này. Chờ vài giây rồi thử lại; bấm lại không bị " +
+    "ghi hai lần.",
   UNAVAILABLE: "Dịch vụ tạm thời không sẵn sàng.",
   PRICEBOOK_UNAVAILABLE:
     "Chưa có bảng giá được duyệt cho cửa hàng này. Không có bảng giá thì không có giá.",
@@ -168,6 +185,17 @@ const REFUSAL = {
   APPROVAL_EXPIRED: "Phiếu duyệt đã hết hạn. Cần tạo phiếu mới rồi xin duyệt lại.",
   APPROVAL_NOT_PENDING: "Phiếu này đã được quyết định rồi. Tải lại hàng chờ để xem.",
   APPROVAL_STALE: "Phiếu vừa đổi trong lúc bạn đang xem. Tải lại hàng chờ rồi đọc lại phiếu.",
+  // `API-INTEGRITY-003`. Not APPROVAL_STALE: the phiếu is exactly as it was, and what moved is the
+  // thing it is about -- a quote priced again, a draft edited, an export's columns widened. Reloading
+  // the queue shows the same phiếu, so the sentence says the phiếu itself is finished.
+  RESOURCE_CHANGED_SINCE_REQUEST:
+    "Nội dung mà phiếu này xin duyệt đã thay đổi sau khi phiếu được tạo (ví dụ báo giá vừa được " +
+    "tính lại), nên không duyệt được nữa. Cần tạo phiếu mới cho nội dung hiện tại.",
+  // A 503 with `reason_code: DATABASE_UNAVAILABLE`: the API could not open a database connection,
+  // so the command never ran. Kind `BUSY` either way; this is the sentence for the longer outage.
+  DATABASE_UNAVAILABLE:
+    "Hệ thống tạm thời không kết nối được cơ sở dữ liệu nên chưa làm được lệnh này. Chờ một lúc " +
+    "rồi thử lại; nếu vẫn không được, báo chủ tiệm.",
   ROW_VERSION_INVALID: "Phiên bản dòng không hợp lệ. Tải lại màn hình rồi làm lại.",
   // The one `NOT_SUPPORTED` code that *is* a typing mistake as often as it is a customer paying
   // the wrong amount. DEC-010 is resolved: the shop takes the exact total in one payment, and
@@ -222,6 +250,7 @@ const REFUSAL_TEXT = [
   ["approval decision is stale", "APPROVAL_STALE"],
   ["approval state is stale", "APPROVAL_STALE"],
   ["approval resource version or hash is stale", "APPROVAL_STALE"],
+  ["RESOURCE_CHANGED_SINCE_REQUEST", "RESOURCE_CHANGED_SINCE_REQUEST"],
   ["approval policy version is stale", "APPROVAL_STALE"],
   // apps/api main.py _parse_if_match
   ["If-Match is invalid", "ROW_VERSION_INVALID"],
@@ -388,6 +417,14 @@ export function classify(status, detail, context = {}) {
 
   if (status === 503) {
     if (text === "pricebook unavailable") return of("PRICEBOOK_UNAVAILABLE");
+    // `API-INTEGRITY-003`: `{"reason_code": "DATABASE_BUSY" | "DATABASE_UNAVAILABLE"}` with a
+    // `Retry-After`. Matched on the code, never on a sentence, and only on these two: any other
+    // 503 keeps the generic UNAVAILABLE, which promises nothing about whether a retry is safe.
+    const codes = reasonCodesOf(detail);
+    if (codes.includes("DATABASE_BUSY")) return of("BUSY", { reasonCodes: codes });
+    if (codes.includes("DATABASE_UNAVAILABLE")) {
+      return of("BUSY", { message: REFUSAL.DATABASE_UNAVAILABLE, reasonCodes: codes });
+    }
     return of("UNAVAILABLE", { message: titled("UNAVAILABLE") });
   }
 

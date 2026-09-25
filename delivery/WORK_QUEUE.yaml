@@ -4799,3 +4799,357 @@ items:
   - no_capability_authorisation_changed
   - rollback_assessment
   blocked_by_decisions: []
+- id: API-INTEGRITY-004
+  phase: PRODUCTION_HARDENING
+  title: Deadlocks and serialization failures answer 503 DATABASE_BUSY; the worker's execution claim re-resolves
+    its resource
+  status: PENDING
+  priority: 308
+  depends_on: []
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - specs/SECURITY_RELIABILITY_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - deadlocks_and_serialization_failures_answer_503
+  - other_class_40_errors_stay_500
+  - the_worker_claim_rechecks_its_resource
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSENT-TRANSACTIONAL-001
+  phase: PRODUCTION_HARDENING
+  title: A STOP blocks service messages on its channel; a block lifts only on the customer's later message;
+    a service send needs a published policy and a provable basis (DEC-033)
+  status: PENDING
+  priority: 309
+  depends_on: []
+  context_domains:
+  - platform
+  - privacy_consent
+  normative_sources:
+  - docs/DECISION_RECORD_CONSENT_2026-09-25.md
+  - docs/POLICY_TRANSACTIONAL_MESSAGING_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_stop_blocks_service_messages_on_that_channel
+  - a_block_lifts_only_on_the_customers_later_message
+  - a_service_send_needs_a_published_policy_and_a_provable_basis
+  - enforced_at_prepare_attest_and_approval_raise
+  - walked_in_a_real_browser_against_the_real_api
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: ORDER-STEPS-001
+  phase: PRODUCTION_HARDENING
+  title: Server-derived next steps and composite business steps for orders
+  status: PENDING
+  priority: 310
+  depends_on: []
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - next_steps_are_computed_from_the_domain
+  - a_business_step_is_all_or_nothing_with_the_same_audit_trail
+  - a_walk_in_order_completes_in_six_calls
+  - the_founder_rulings_hold_in_the_executor
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: READ-ENRICH-001
+  phase: PRODUCTION_HARDENING
+  title: 'Reads a task-first console needs: quote request/contact/mode, ticket numbers on lists, an order''s
+    legs and incidents'
+  status: PENDING
+  priority: 311
+  depends_on: []
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - quotes_carry_their_request_contact_and_mode
+  - lists_carry_ticket_numbers
+  - an_order_lists_its_legs_and_incidents
+  - every_new_read_is_store_scoped
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-REDESIGN-000
+  phase: PRODUCTION_HARDENING
+  title: 'Staff console V2 foundation: design tokens, component kit, light shell, five-slot tab bar, Thêm
+    screen'
+  status: PENDING
+  priority: 312
+  depends_on: []
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_design_system_and_shell_ship_as_one_kit
+  - every_destination_reachable_with_its_denial_reason
+  - v1_screens_keep_working_on_the_new_tokens
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-REDESIGN-001
+  phase: PRODUCTION_HARDENING
+  title: ＋ Nhận đồ in three steps; Tiếp nhận and Báo giá as lists
+  status: PENDING
+  priority: 313
+  depends_on:
+  - CONSOLE-REDESIGN-000
+  - READ-ENRICH-001
+  context_domains:
+  - platform
+  - pricing
+  normative_sources:
+  - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_screens_are_task_first_and_measured
+  - no_identifier_is_pasted_in_daily_work
+  - every_invariant_and_disclosure_is_accounted
+  - browser_suites_pass_on_the_real_api
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-REDESIGN-002
+  phase: PRODUCTION_HARDENING
+  title: Đơn hàng and the order page driven by the server's next steps
+  status: PENDING
+  priority: 314
+  depends_on:
+  - CONSOLE-REDESIGN-000
+  - ORDER-STEPS-001
+  - READ-ENRICH-001
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_screens_are_task_first_and_measured
+  - no_identifier_is_pasted_in_daily_work
+  - every_invariant_and_disclosure_is_accounted
+  - browser_suites_pass_on_the_real_api
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-REDESIGN-003
+  phase: PRODUCTION_HARDENING
+  title: Hôm nay, Duyệt and Bảng trễ hạn on the V2 kit
+  status: PENDING
+  priority: 315
+  depends_on:
+  - CONSOLE-REDESIGN-000
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_screens_are_task_first_and_measured
+  - no_identifier_is_pasted_in_daily_work
+  - every_invariant_and_disclosure_is_accounted
+  - browser_suites_pass_on_the_real_api
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-REDESIGN-004
+  phase: PRODUCTION_HARDENING
+  title: Khiếu nại list and detail with the remedy flow inline
+  status: PENDING
+  priority: 316
+  depends_on:
+  - CONSOLE-REDESIGN-000
+  - READ-ENRICH-001
+  context_domains:
+  - platform
+  - business_truth
+  normative_sources:
+  - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_screens_are_task_first_and_measured
+  - no_identifier_is_pasted_in_daily_work
+  - every_invariant_and_disclosure_is_accounted
+  - browser_suites_pass_on_the_real_api
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-REDESIGN-005
+  phase: PRODUCTION_HARDENING
+  title: Bản nháp AI, Trợ lý AI, Ngoại lệ & gửi tay (with the DEC-033 consent card) on the V2 kit
+  status: PENDING
+  priority: 317
+  depends_on:
+  - CONSOLE-REDESIGN-000
+  - CONSENT-TRANSACTIONAL-001
+  context_domains:
+  - platform
+  - privacy_consent
+  normative_sources:
+  - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_screens_are_task_first_and_measured
+  - no_identifier_is_pasted_in_daily_work
+  - every_invariant_and_disclosure_is_accounted
+  - browser_suites_pass_on_the_real_api
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-REDESIGN-006
+  phase: PRODUCTION_HARDENING
+  title: Nhân sự, Hệ thống, Xuất dữ liệu, Việc chưa hỗ trợ on the V2 kit
+  status: PENDING
+  priority: 318
+  depends_on:
+  - CONSOLE-REDESIGN-000
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_screens_are_task_first_and_measured
+  - no_identifier_is_pasted_in_daily_work
+  - every_invariant_and_disclosure_is_accounted
+  - browser_suites_pass_on_the_real_api
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-FILMED-REVIEW-002
+  phase: PRODUCTION_HARDENING
+  title: Every workflow of the redesigned console filmed at phone size against the real API, reviewed
+    as a user and as an engineer, and every finding fixed
+  status: PENDING
+  priority: 319
+  depends_on:
+  - CONSOLE-REDESIGN-001
+  - CONSOLE-REDESIGN-002
+  - CONSOLE-REDESIGN-003
+  - CONSOLE-REDESIGN-004
+  - CONSOLE-REDESIGN-005
+  - CONSOLE-REDESIGN-006
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-console-redesign-v2.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_workflow_filmed_on_the_new_ui_at_phone_size
+  - each_review_finding_is_fixed_with_a_guard
+  - the_walk_is_recorded_on_video
+  - no_capability_authorisation_changed
+  - rollback_assessment
+  blocked_by_decisions: []

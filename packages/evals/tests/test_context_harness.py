@@ -289,7 +289,10 @@ def test_context_drift_check_passes() -> None:
     # API-INTEGRITY-003, MESSAGE-DRAFT-BINDING-001, PICKUP-ONLY-SETTLE-001, REMEDY-GARMENT-001,
     # READ-PATHS-001 -- and three are what the filmed real-API walk found or needed:
     # REMEDY-INCIDENT-OUTCOME-001, REMEDY-OWNER-DECIDE-001 and CONSOLE-FILMED-WALK-001.
-    assert "154 work items" in result.stdout
+    # 166 after the console redesign round (context/tasks/TASK-console-redesign-v2.md): +12 —
+    # API-INTEGRITY-004, CONSENT-TRANSACTIONAL-001, ORDER-STEPS-001, READ-ENRICH-001, the seven
+    # CONSOLE-REDESIGN slices 000-006, and CONSOLE-FILMED-REVIEW-002.
+    assert "166 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

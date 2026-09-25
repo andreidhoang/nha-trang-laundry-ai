@@ -39,6 +39,7 @@ domains:
     - docs/DECISION_REQUEST_HOSTING_2026-08.md
     - docs/STAFF_CONSOLE_ENGINEERING_SPEC_V1.md
     - docs/STAFF_CONSOLE_UX_REFACTOR_SPEC_V1.md
+    - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
     - apps/web/README.md
     - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
     contracts:
@@ -94,6 +95,7 @@ domains:
     - docs/DECISION_REQUEST_RANGE_PRICE_AUTHORITY_2026-09.md
     - docs/DECISION_REQUEST_QUOTE_APPROVAL_2026-08.md
     - docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+    - docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md
     contracts:
     - specs/contracts/canonical-enums-v1.json
     - specs/contracts/pricebook-import-manifest-v1.json

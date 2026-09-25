@@ -309,6 +309,47 @@ function settlementPanel(spec) {
 }
 
 /**
+ * What stands where the settlement form was, once the order no longer owes anything.
+ *
+ * Only `UNPAID` is an order this form can act on. `PAID` is the common case; `REFUNDED` is a
+ * cancelled order whose money went back; the other states in the column (`PARTIALLY_PAID`,
+ * `OVERPAID`, `ON_ACCOUNT`) no command writes today (`DEC-010`), and a form offered on one of them
+ * would be a guess about what the counter should do. Each says what it is and that nothing more
+ * is taken here.
+ *
+ * @param {any} order an `OrderViewResponse`
+ * @returns {HTMLElement}
+ */
+function settledPanel(order) {
+  const paid = order.balance === "PAID";
+  return panel({
+    eyebrow: "Tất toán",
+    title: paid ? "Đã thu đủ tiền" : `Công nợ: ${enumVi(order.balance)}`,
+    children: h(
+      "div",
+      { class: "stack" },
+      h(
+        "p",
+        null,
+        paid
+          ? "Đơn này đã được tất toán. Bản ghi tất toán không sửa được và không thu thêm lần nữa."
+          : "Đơn này không ở trạng thái chưa thanh toán, nên màn hình này không thu tiền cho nó. " +
+              "Có gì chưa rõ thì báo chủ tiệm.",
+      ),
+      paid && order.self_collection_recorded === false
+        ? h(
+            "p",
+            { class: "hint" },
+            order.fulfillment_mode === "SELF_DROP_SELF_COLLECT"
+              ? "Khách chưa nhận đồ. Khi đưa đồ cho khách, bấm “Khách đã nhận đồ” ở bên dưới."
+              : "Đồ chưa tới tay khách. Đơn đóng khi có một chặng giao thành công.",
+          )
+        : null,
+    ),
+  });
+}
+
+/**
  * Khách đã nhận đồ — the pickup of a walk-in order paid at drop-off. `DEC-032`.
  *
  * `POST /internal/v1/orders/{id}/collection` takes no body: the name is the session's, and the
@@ -353,7 +394,16 @@ function collectionPanel(spec) {
       setResult(result, "ok", "Đã ghi nhận khách nhận đồ. Giờ chuyển đơn sang Hoàn tất.");
       spec.onRecorded();
     } catch (error) {
-      setResult(result, "danger", error.message);
+      // Not `error.message`: for a refusal that is the settlement vocabulary's headline, "Máy chủ
+      // không ghi nhận khoản này", which reads as a payment problem to a staff member who pressed
+      // "Khách đã nhận đồ". The reason code and what to do are in the notice below either way.
+      setResult(
+        result,
+        "danger",
+        error?.kind === "NOT_SUPPORTED" || error?.kind === "CONFLICT"
+          ? "Chưa ghi nhận khách nhận đồ. Lý do và việc cần làm ở ngay bên dưới."
+          : error.message,
+      );
       render(errorHost, errorNotice(error));
     }
   }
@@ -427,6 +477,19 @@ export function render_(context) {
   const timelineTruncation = h("p", { class: "hint" });
   const heading = h("h1", null, "Chi tiết đơn");
   const dueHost = h("div");
+  // The settlement form is for an order that owes money. It used to stay live after the order
+  // was PAID -- "Ghi nhận tất toán" and "Khách trả trước khi gửi đồ" both still pressable on a
+  // walk-in who had just paid at drop-off, directly above the pickup button that is the only thing
+  // left to press. The server refuses a second settlement (`ALREADY_SETTLED`), so no money was at
+  // risk; the screen was offering a counter a way to take the money twice. Found by the real-API
+  // browser walk of `DEC-032`, not by any test.
+  const settlementForm = settlementPanel({
+    orderId,
+    verdict: settlementVerdict,
+    dueHost,
+    onRecorded: () => void loadOrder(),
+  });
+  const settlementHost = h("div", null, settlementForm);
   const collection = collectionPanel({
     orderId,
     verdict: settlementVerdict,
@@ -444,6 +507,7 @@ export function render_(context) {
     try {
       const found = await request(`/internal/v1/orders/${encodeURIComponent(orderId)}`);
       collection.update(found);
+      render(settlementHost, found.balance === "UNPAID" ? settlementForm : settledPanel(found));
       const ticket = ticketLabel(found);
       const due = amountDue(found);
       heading.textContent = ticket || "Chi tiết đơn";
@@ -663,12 +727,7 @@ export function render_(context) {
           : null,
       ),
     }),
-    settlementPanel({
-      orderId,
-      verdict: settlementVerdict,
-      dueHost,
-      onRecorded: () => void loadOrder(),
-    }),
+    settlementHost,
     collection.node,
     panel({
       eyebrow: "Kiểm toán",

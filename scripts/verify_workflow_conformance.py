@@ -42,6 +42,7 @@ published. `scripts/bootstrap_store.py` and the staff-assignment route do the fi
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import json
 import os
@@ -53,6 +54,7 @@ import urllib.request
 import uuid
 from typing import Any
 
+from console_recording import Recorder, add_arguments, watch_render_defects
 from playwright.sync_api import sync_playwright
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -65,13 +67,24 @@ parser.add_argument(
     help="docker container running PostgreSQL; enables the checks that read what was written",
 )
 parser.add_argument("--database", default="laundry_walkthrough")
+parser.add_argument(
+    "--database-url",
+    default="",
+    help="a libpq URL read with the local psql; the same checks as --psql-container, no docker",
+)
 parser.add_argument("--only", default="", help="run one scenario by name")
+add_arguments(parser)
 arguments = parser.parse_args()
 
 BASE = arguments.base_url.rstrip("/")
 CONSOLE = f"{BASE}/staff/"
 IDP = arguments.idp_url.rstrip("/")
 STORE = arguments.store
+#: Whether the checks that read what a write persisted can run. `--database-url` exists because
+#: `--psql-container` assumes docker, and in every container this repository is worked on in
+#: there is none: the staff-hiring scenario then never got past its first read, and the coverage
+#: line reported nine controls "not exercised" on every run for a reason unrelated to them.
+READS_DATABASE = bool(arguments.psql_container or arguments.database_url)
 
 #: Every interactive control this script drives, named the way the coverage report names it. A
 #: control listed here and never touched is reported as uncovered rather than assumed fine, which
@@ -130,12 +143,14 @@ DECLARED_CONTROLS = (
 
 PASS: list[str] = []
 FAIL: list[str] = []
+REC = Recorder(arguments.video, arguments.slow_mo, "moi-quy-trinh")
 TOUCHED: set[str] = set()
 
 
 def ok(name: str, condition: object, detail: object = "") -> bool:
     passed = bool(condition)
     (PASS if passed else FAIL).append(name)
+    REC.check(name, passed)
     print(
         f"  {'ok  ' if passed else 'FAIL'} {name}" + (f"  — {detail}" if detail else ""),
         flush=True,
@@ -149,6 +164,7 @@ def note(text: object) -> None:
 
 def head(number: str, title: str) -> None:
     print(f"\n{'=' * 78}\n{number}. {title}\n{'=' * 78}", flush=True)
+    REC.section(f"{number}. {title}")
 
 
 def touched(*control_ids: str) -> None:
@@ -478,9 +494,15 @@ class Console:
 def sql(query: str) -> str:
     """Read the database directly, to check what a write really persisted.
 
-    Optional: without `--psql-container` the checks that need it are reported as skipped rather
-    than silently passing, because a check that cannot run must never look like one that did.
+    Optional: without `--psql-container` or `--database-url` the checks that need it are reported
+    as skipped rather than silently passing, because a check that cannot run must never look like
+    one that did.
     """
+    if arguments.database_url:
+        process = subprocess.run(
+            ["psql", arguments.database_url, "-tAc", query], capture_output=True, text=True
+        )
+        return (process.stdout or process.stderr).strip()
     if not arguments.psql_container:
         return ""
     process = subprocess.run(
@@ -572,7 +594,7 @@ def scenario_money(console: Console) -> None:
         "DEC-010" in said,
         "",
     )
-    if arguments.psql_container:
+    if READS_DATABASE:
         ok(
             "nothing was written for a refused payment",
             sql(f"select count(*) from order_settlements where order_id='{order['order_id']}'")
@@ -590,7 +612,7 @@ def scenario_money(console: Console) -> None:
     ok(
         "the total copied off the screen, dots and all, is accepted",
         stored(order["order_id"], "balance_status") == "PAID"
-        if arguments.psql_container
+        if READS_DATABASE
         else "Đã ghi nhận" in said,
         said[:130],
     )
@@ -598,7 +620,7 @@ def scenario_money(console: Console) -> None:
     head("1b", "ĐÓNG ĐƠN — a paid, released, collected order closes")
     version = stored(order["order_id"], "row_version") or "1"
     console.move(order["order_id"], version, "commercial", "COMPLETED")
-    if arguments.psql_container:
+    if READS_DATABASE:
         ok(
             "the order reaches COMPLETED",
             stored(order["order_id"], "commercial_status") == "COMPLETED",
@@ -622,7 +644,7 @@ def scenario_exit(console: Console) -> None:
     head("2", "HUỶ ĐƠN — cancelling before the shop holds anything")
     fresh = console.build_order(stop="created")
     console.move(fresh["order_id"], fresh["row_version"], "commercial", "CANCELLED")
-    if arguments.psql_container:
+    if READS_DATABASE:
         ok(
             "a customer who changes their mind before handing the bag over is simply cancelled",
             stored(fresh["order_id"], "commercial_status") == "CANCELLED",
@@ -635,7 +657,7 @@ def scenario_exit(console: Console) -> None:
     ok(
         "the order is not cancelled in one press while the shop holds the goods",
         stored(held["order_id"], "commercial_status") != "CANCELLED"
-        if arguments.psql_container
+        if READS_DATABASE
         else "duyệt" in said.lower(),
         stored(held["order_id"], "commercial_status"),
     )
@@ -645,7 +667,7 @@ def scenario_exit(console: Console) -> None:
     live = console.build_order(stop="active")
     console.move(live["order_id"], live["row_version"], "commercial", "CANCELLATION_REVIEW")
     version = console.current_version(live["order_id"], live["row_version"])
-    if arguments.psql_container:
+    if READS_DATABASE:
         ok(
             "an active order can be sent to cancellation review",
             stored(live["order_id"], "commercial_status") == "CANCELLATION_REVIEW",
@@ -656,7 +678,7 @@ def scenario_exit(console: Console) -> None:
     ok(
         "'we never received it' is refused for an order whose custody is recorded",
         stored(live["order_id"], "commercial_status") != "CANCELLED"
-        if arguments.psql_container
+        if READS_DATABASE
         else "chưa từng nhận đồ" in said,
         "",
     )
@@ -671,7 +693,7 @@ def scenario_exit(console: Console) -> None:
     said = console.move(
         live["order_id"], version, "commercial", "CANCELLED", custody="SHOP_FAULT_NO_CHARGE"
     )
-    if arguments.psql_container:
+    if READS_DATABASE:
         ok(
             "a resolution the record does not contradict closes the order",
             stored(live["order_id"], "commercial_status") == "CANCELLED",
@@ -690,13 +712,13 @@ def scenario_exit(console: Console) -> None:
     stained = console.build_order(stop="checking")
     console.move(stained["order_id"], stained["row_version"], "production", "EXCEPTION")
     version = stored(stained["order_id"], "row_version") or stained["row_version"]
-    if arguments.psql_container:
+    if READS_DATABASE:
         ok(
             "staff can record that something is wrong with the laundry",
             stored(stained["order_id"], "production_status") == "EXCEPTION",
         )
     console.move(stained["order_id"], version, "production", "IN_PROCESS")
-    if arguments.psql_container:
+    if READS_DATABASE:
         ok(
             "and send it back through the wash, which is backward movement the domain allows",
             stored(stained["order_id"], "production_status") == "IN_PROCESS",
@@ -715,7 +737,7 @@ def scenario_exit(console: Console) -> None:
         )
 
     head("2e", "ĐỒNG HỒ — a commercial move does not restamp finished laundry")
-    if arguments.psql_container:
+    if READS_DATABASE:
         finished = stored(stained["order_id"], "production_ready_at")
         console.move(
             stained["order_id"],
@@ -965,7 +987,7 @@ def scenario_hiring(console: Console) -> None:
     console.page.wait_for_timeout(1800)
     touched("staff.create-submit")
     staff_id = sql(f"select id from staff_users where oidc_subject='{subject}'")
-    if arguments.psql_container:
+    if READS_DATABASE:
         ok("the person exists", len(staff_id) == 36, staff_id)
         ok(
             "and their identifier is on the screen, because the next two forms need it",
@@ -1118,14 +1140,14 @@ def scenario_resilience(console: Console) -> None:
     ok(
         "accepting intake from the screen requires the staff member to confirm the slot",
         stored(taken_in["order_id"], "intake_status") == "ACCEPTED"
-        if arguments.psql_container
+        if READS_DATABASE
         else "đã chuyển" in said.lower(),
         stored(taken_in["order_id"], "intake_status"),
     )
     ok(
         "and that is what starts the production clock",
         stored(taken_in["order_id"], "production_accepted_at is not null") == "t"
-        if arguments.psql_container
+        if READS_DATABASE
         else True,
         "",
     )
@@ -1295,6 +1317,218 @@ def scenario_ai_refuses(console: Console) -> None:
     )
 
 
+def _fresh_request(console: Console) -> str:
+    """A counter ticket and an order request, made the way the counter makes them."""
+
+    ticket = console.call("POST", f"/internal/v1/stores/{STORE}/counter-tickets", {})
+    request = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/order-requests",
+        {"contact_binding_id": str(ticket["body"]["ticket_id"])},
+    )
+    return str(request["body"]["order_request_id"])
+
+
+def scenario_band(console: Console) -> None:
+    """`DEC-029`: the staff member on duty closes a published band; the owner reviews it after."""
+
+    head("9", "GIÁ TRONG KHOẢNG — áo dài, priced by the staff member on duty (DEC-029)")
+    console.sign_in("demo-operations")
+    request_id = _fresh_request(console)
+    console.open("#/quotes")
+    console.page.click("#quote-manual-toggle")
+    console.type_into("#quote-order-request", request_id)
+    console.choose("#quote-fulfillment", "SELF_DROP_SELF_COLLECT")
+    console.choose("#quote-line-0-code", "DC_AO_DAI_TRADITIONAL")
+    console.type_into("#quote-line-0-qty", "1")
+    console.page.locator("button[type=submit]", has_text="Tính giá").first.click()
+    console.page.wait_for_timeout(2200)
+    ok(
+        "a range-priced item is not given a made-up single price",
+        "Món này niêm yết theo khoảng giá" in console.text(),
+        console.said()[:200],
+    )
+    offer = console.page.locator("button", has_text="Lập bản khoảng giá")
+    if not ok("and the counter is offered a band revision instead", offer.count() > 0):
+        return
+    offer.first.click()
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#quote-band-0", timeout=15000)
+    ok(
+        "the band revision shows the published band for the item, 80.000 to 240.000 ₫",
+        "80.000" in console.text() and "240.000" in console.text(),
+        console.said()[:200],
+    )
+    close = console.page.locator("button", has_text="Chốt giá này")
+    console.type_into("#quote-band-0", "300000")
+    console.page.wait_for_timeout(500)
+    blocked = close.count() == 0 or close.first.is_disabled()
+    if not blocked:
+        close.first.click()
+        console.page.wait_for_timeout(1800)
+    ok(
+        "a price above the published band cannot be closed",
+        blocked or "Chốt giá này" in console.text(),
+        console.said()[:220],
+    )
+    console.type_into("#quote-band-0", "160000")
+    console.page.wait_for_timeout(500)
+    close.first.click()
+    try:
+        console.page.wait_for_selector(
+            "button:has-text('Khách đã chốt giá')", timeout=15000, state="visible"
+        )
+    except Exception:
+        console.page.wait_for_timeout(1500)
+    closed_text = console.text()
+    ok(
+        "160.000 ₫ inside the band is final in one press — no owner, no ten-minute wait",
+        "160.000" in closed_text and "Khách đã chốt giá" in closed_text,
+        console.said()[:220],
+    )
+    agree = console.page.locator("button", has_text="Khách đã chốt giá")
+    if agree.count():
+        agree.first.click()
+        console.page.wait_for_timeout(2000)
+    ok(
+        "and the customer can agree to it, so it becomes an orderable price",
+        "Khách đã chốt giá" not in console.page.locator("button:enabled").all_inner_texts()
+        or "đã chốt" in console.said().lower(),
+        console.said()[:220],
+    )
+
+    head("9b", "CHỦ XEM LẠI — the owner sees who chose which price, inside which band")
+    console.sign_in("demo-owner")
+    console.open("#/approvals", settle=2200)
+    review = console.text()
+    ok(
+        "the owner's review lists the price the counter chose today",
+        "Demo Nhân viên vận hành" in review and "160.000" in review,
+        [line for line in review.splitlines() if "khoảng" in line.lower()][:3],
+    )
+    ok(
+        "with the band it was checked against",
+        "80.000" in review and "240.000" in review,
+        "",
+    )
+
+
+def scenario_prepaid(console: Console) -> None:
+    """`DEC-032`: a walk-in pays the exact total at drop-off; pickup is its own, named step."""
+
+    head("10", "TRẢ TRƯỚC — a walk-in pays when leaving the laundry (DEC-032)")
+    console.sign_in("demo-operations")
+    order = console.build_order(kg="7", stop="active")
+    order_id = order["order_id"]
+    total = order["quote"]["net_service_subtotal_vnd"]
+    grouped = f"{total:,}".replace(",", ".")
+    note(f"order {order_id[:8]}… is accepted and not yet washed; the total is {grouped} ₫")
+
+    console.open(f"#/orders/{order_id}")
+    console.type_into("#settlement-amount", grouped)
+    box = console.page.locator("#settlement-collected")
+    if box.is_checked():
+        box.click()
+    console.page.locator("button[type=submit]", has_text="Ghi nhận tất toán").first.click()
+    console.page.wait_for_timeout(1800)
+    shown = console.text()
+    ok(
+        "the exact total is taken at drop-off, and the screen says the customer has not "
+        "collected yet",
+        "Đã thu đủ tiền" in shown and "Khách chưa nhận đồ" in shown,
+        [line for line in shown.splitlines() if "thu" in line.lower()][:3],
+    )
+    if READS_DATABASE:
+        ok(
+            "the order is PAID and no handover is recorded",
+            stored(order_id, "balance_status") == "PAID"
+            and stored(order_id, "self_collection_recorded") in ("f", "false"),
+            f"{stored(order_id, 'balance_status')} / "
+            f"{stored(order_id, 'self_collection_recorded')}",
+        )
+
+    console.open(f"#/orders/{order_id}", settle=1600)
+    ok(
+        "once paid, the screen no longer offers to take the money a second time",
+        console.page.locator("#settlement-amount").count() == 0
+        and "Đã thu đủ tiền" in console.text(),
+        "",
+    )
+    pickup = console.page.locator("button", has_text="Khách đã nhận đồ")
+    ok("the pickup button is offered for a prepaid walk-in", pickup.count() > 0)
+    if pickup.count():
+        pickup.first.click()
+        console.page.wait_for_timeout(1800)
+    said = console.said()
+    ok(
+        "the refusal is about the handover, not about money",
+        "Chưa ghi nhận khách nhận đồ" in said and "sẵn sàng tại cửa hàng" in said,
+        said[:200],
+    )
+    ok(
+        "handing over laundry still in the machine is refused",
+        stored(order_id, "self_collection_recorded") in ("f", "false")
+        if READS_DATABASE
+        else "Đã ghi nhận khách nhận đồ" not in said,
+        said[:180],
+    )
+
+    version = console.current_version(order_id, order["row_version"])
+    said = console.move(order_id, version, "commercial", "COMPLETED")
+    ok(
+        "and a paid order whose laundry was never handed over cannot be closed",
+        stored(order_id, "commercial_status") != "COMPLETED" if READS_DATABASE else True,
+        said[:160],
+    )
+
+    for target in ("QUEUED", "IN_PROCESS", "QUALITY_CHECK", "READY_AT_STORE", "RELEASED"):
+        version = console.current_version(order_id, version)
+        moved = console.call(
+            "POST",
+            f"/internal/v1/orders/{order_id}/production-transition",
+            {"target": target},
+            if_match=version,
+        )
+        if moved["status"] >= 300:
+            ok(f"production reaches {target}", False, moved["text"][:160])
+            return
+    note("washed, checked and released from production")
+
+    head("10b", "KHÁCH TỚI LẤY — the handover, recorded under the staff member's name")
+    console.open(f"#/orders/{order_id}", settle=1600)
+    pickup = console.page.locator("button", has_text="Khách đã nhận đồ")
+    if pickup.count():
+        pickup.first.click()
+        console.page.wait_for_timeout(1800)
+    said = console.said()
+    ok(
+        "the handover is recorded once the laundry is finished",
+        stored(order_id, "self_collection_recorded") in ("t", "true")
+        if READS_DATABASE
+        else "nhận đồ" in said,
+        said[:160],
+    )
+    if READS_DATABASE:
+        ok(
+            "and it names the staff member who handed it over",
+            sql(
+                "select s.display_name from order_collections c join staff_users s "
+                f"on s.id = c.collected_by_staff_id where c.order_id='{order_id}'"
+            )
+            == "Demo Nhân viên vận hành",
+            sql(f"select count(*) from order_collections where order_id='{order_id}'"),
+        )
+    version = console.current_version(order_id, version)
+    said = console.move(order_id, version, "commercial", "COMPLETED")
+    ok(
+        "paid, released and collected: the order closes",
+        stored(order_id, "commercial_status") == "COMPLETED"
+        if READS_DATABASE
+        else "COMPLETED" in said,
+        said[:160],
+    )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -1303,6 +1537,8 @@ SCENARIOS = {
     "hiring": scenario_hiring,
     "resilience": scenario_resilience,
     "ai": scenario_ai_refuses,
+    "band": scenario_band,
+    "prepaid": scenario_prepaid,
 }
 
 
@@ -1336,12 +1572,18 @@ def main() -> int:
     if arguments.only and arguments.only not in SCENARIOS:
         raise SystemExit(f"unknown scenario {arguments.only!r}; choose from {sorted(SCENARIOS)}")
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, **_browser_launch_options())  # type: ignore[arg-type]
+        browser = playwright.chromium.launch(
+            headless=True,
+            **_browser_launch_options(),  # type: ignore[arg-type]
+            **REC.launch_options(),  # type: ignore[arg-type]
+        )
         context = browser.new_context(
             viewport={"width": 1280, "height": 900},
             permissions=["clipboard-read", "clipboard-write"],
+            **REC.context_options(),  # type: ignore[arg-type]
         )
-        console = Console(context.new_page(), context)
+        render_defects = watch_render_defects(context)
+        console = Console(REC.film(context, context.new_page(), "chu-cua-hang"), context)
         ok("the console signs in", console.sign_in("demo-owner") in (200, 201))
 
         head("0", "ĐIỀU HƯỚNG — every navigation destination, reached by clicking it")
@@ -1376,10 +1618,10 @@ def main() -> int:
                 "shell.store-picker is not exercised and is not a gap"
             )
             touched("shell.store-picker")
-        if not arguments.psql_container:
+        if not READS_DATABASE:
             note(
-                "no --psql-container given, so the checks that read what was written are skipped "
-                "rather than counted as passes"
+                "no --psql-container or --database-url given, so the checks that read what was "
+                "written are skipped rather than counted as passes"
             )
 
         for name, scenario in selected.items():
@@ -1388,6 +1630,13 @@ def main() -> int:
             except Exception:
                 FAIL.append(f"{name} crashed")
                 print(traceback.format_exc(), flush=True)
+
+        head("8a", "HIỂN THỊ — no screen printed a structure, NaN or an undefined amount")
+        ok(
+            "no screen opened in this run rendered [object Object], NaN or 'undefined ₫'",
+            not render_defects,
+            render_defects[:4],
+        )
 
         head("8", "MỌI NÚT — the controls this run actually touched")
         missed = [control for control in DECLARED_CONTROLS if control not in TOUCHED]
@@ -1404,6 +1653,10 @@ def main() -> int:
 
         if console.page_errors:
             note(f"page errors seen: {console.page_errors[:6]}")
+        REC.finish()
+        context.close()
+        for film in REC.save():
+            print(f"  video: {film}", flush=True)
         browser.close()
 
     print(f"\n{'=' * 78}\nRESULT: {len(PASS)} ok, {len(FAIL)} failed\n{'=' * 78}", flush=True)

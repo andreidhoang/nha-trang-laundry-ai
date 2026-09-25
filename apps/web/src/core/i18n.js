@@ -276,9 +276,13 @@ export const REASON_NOTE = {
     "Có người vừa đổi đơn này trong lúc bạn đang xem. Tải lại đơn rồi ghi nhận theo số mới.",
   // PREPAID-DROPOFF-001 (DEC-032): the handover rule and the pickup command's refusals. States,
   // not open decisions, so each says what to do first.
+  // Shown by two presses: "Khách đã nhận đồ" on a prepaid walk-in, and the settlement checkbox.
+  // It used to answer only the second ("bấm Khách trả trước…"), which is advice about taking money
+  // given to a staff member who had already taken it and was trying to hand the laundry over.
   GOODS_NOT_READY_FOR_HANDOVER:
-    "Đồ chưa giặt xong nên chưa đưa cho khách được. Khách trả tiền lúc gửi đồ thì bấm “Khách trả " +
-    "trước khi gửi đồ”, không tích ô đã lấy đồ.",
+    "Đồ chưa giặt xong nên chưa đưa cho khách được. Làm xong đơn tới “sẵn sàng tại cửa hàng” " +
+    "rồi mới ghi nhận khách nhận đồ. Nếu khách đang trả tiền lúc gửi đồ thì bấm “Khách trả trước " +
+    "khi gửi đồ”, không tích ô đã lấy đồ.",
   COLLECTION_REQUIRES_PAYMENT:
     "Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì nhập số tiền, tích “Khách đã tự lấy đồ về” " +
     "rồi bấm “Ghi nhận tất toán”.",

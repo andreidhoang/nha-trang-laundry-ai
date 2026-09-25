@@ -1033,7 +1033,7 @@ function rangeReviewCard(item) {
           null,
           h("strong", { class: "money" }, money(line.proposed_amount_vnd)),
           " trong khoảng ",
-          moneyRange(line.band_minimum_vnd, line.band_maximum_vnd),
+          moneyRange(line.band_minimum_vnd, line.band_maximum_vnd).text,
         ),
       ]),
     ),

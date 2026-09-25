@@ -433,3 +433,44 @@ def test_the_exempt_approvals_screen_builds_its_store_url_only_with_a_store() ->
     assert re.search(r"store\s*\n?\s*\?\s*h\(", text), (
         "approvals.js must render a no-store notice instead of the review list when no store is set"
     )
+
+
+def test_a_formatted_range_is_rendered_by_its_text_not_as_an_object() -> None:
+    """`moneyRange` returns `{text, isRange, isKnown}`, not a string.
+
+    The owner's `DEC-029` review card passed the object itself to `h()` as a child, and the
+    screen read "160.000 ₫ trong khoảng [object Object]" -- the one number the review exists to
+    show, the band the price was checked against, replaced by a JavaScript default. The API tests,
+    the contract tests and the stubbed browser suite were all green; only the real-API browser run
+    caught it. Every call must either read `.text` off the result or keep it in a named variable
+    whose fields are read later.
+    """
+
+    call = re.compile(r"moneyRange\(")
+    offenders: list[str] = []
+    for source in javascript_sources():
+        if source.name == "format.js":
+            continue
+        text = source.read_text(encoding="utf-8")
+        for match in call.finditer(text):
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            before = text[line_start : match.start()]
+            if before.lstrip().startswith(("*", "//")):
+                continue
+            depth, index = 0, match.end() - 1
+            while index < len(text):
+                if text[index] == "(":
+                    depth += 1
+                elif text[index] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            used_as_value = text[index + 1 : index + 2] == "."
+            assigned = re.search(r"(?:const|let|var)\s+\w+\s*=\s*$", before) is not None
+            if not (used_as_value or assigned):
+                number = text.count("\n", 0, match.start()) + 1
+                where = f"{source.relative_to(ROOT)}:{number}"
+                offenders.append(f"{where}: {before.strip()}moneyRange(")
+
+    assert not offenders, "moneyRange result used as a value:\n" + "\n".join(offenders)

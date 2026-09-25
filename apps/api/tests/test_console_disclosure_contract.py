@@ -730,7 +730,18 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     notices -- which all said the server had no way to read staff back.
     # With READ-PATHS-001 merged on top of the four above: its -10/+10 are disjoint slots, so
     # the total is unchanged at 410 -- re-derived by regenerating, not by arithmetic.
-    assert sum(counts.values()) == _registry()["total"] == 410
+    # 419 after REMEDY-OWNER-DECIDE-001: +9 added, 0 retired, 1 re-keyed, all DESCRIPTIVE.
+    #   * +8 in `screens/approvals.js`, the `APPROVE_REMEDY` card: its title ("Khoản bồi hoàn bạn
+    #     đang được đề nghị duyệt"), the hint that approving pays nothing until the counter
+    #     executes, the missing-summary line, the no-store notice's title and body, the stale
+    #     notice body (the figures withheld, only a refusal), the not-found body, and the
+    #     unreadable-read body.
+    #   * +1 in `screens/remedies.js`: the recorded list's "đề nghị lại" hint on a row whose owner
+    #     envelope was refused or ran out.
+    #   * 1 re-keyed in `screens/remedies.js`: the recorded-proposals panel's hint, which now says
+    #     an approved, unexecuted row carries its own execute press.
+    #   410 + 9 = 419, predicted from the registry diff before pinning.
+    assert sum(counts.values()) == _registry()["total"] == 419
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

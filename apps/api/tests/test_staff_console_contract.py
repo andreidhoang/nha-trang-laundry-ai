@@ -151,6 +151,9 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/stores/{}/incidents/{}/remedy-proposals",
         "/internal/v1/remedy-proposals/{}/execution",
         "/internal/v1/stores/{}/quotes/{}/remedy-credits",
+        # REMEDY-OWNER-DECIDE-001. The owner's approvals card reads what an `APPROVE_REMEDY`
+        # envelope binds through this; without it every loss claim reaches the queue undecidable.
+        "/internal/v1/stores/{}/remedy-proposals/{}/approval-binding",
         # OPS-BOARD-001. The board query and the day counts both existed with no route and no
         # screen, which is how a surface that answers "which order needs a person right now" stayed
         # reachable only as two numbers inside an assistant sentence. A screen that stops calling
@@ -500,6 +503,61 @@ def test_the_message_draft_card_reads_through_the_envelopes_own_store() -> None:
         "a queue row without a store must be refused, not guessed"
     )
     assert "storeId()" not in body
+
+
+def test_the_remedy_card_reads_through_the_envelopes_own_store_and_compares_its_binding() -> None:
+    """`REMEDY-OWNER-DECIDE-001`. The same guard as the `MESSAGE_DRAFT` card, for money.
+
+    The URL is built from the queue row's `store_id` and a row without one is refused; the read's
+    proposal, approval, version and both digests are compared with the envelope's, together with
+    the server's own `envelope_matches`, before anything is printed or "Duyệt" is enabled; and a
+    mismatch leaves only "Từ chối" (`refuseOnly`).
+    """
+
+    text = (WEB / "src" / "screens" / "approvals.js").read_text(encoding="utf-8")
+    assert re.search(r"REMEDY_PROPOSAL: \(\) => null,", text), (
+        "REMEDY_PROPOSAL must be a type this screen can show, or its envelopes are undecidable"
+    )
+    start = text.index("async function loadRemedyProposal(")
+    body = text[start : text.index("\n}\n", start)]
+    assert "remedy-proposals/${proposalPart}/approval-binding" in body
+    assert re.search(r"const storePart = encodeURIComponent\(envelopeStore\)", body)
+    assert re.search(r"const envelopeStore = typeof item\.store_id === \"string\"", body)
+    assert re.search(r"if \(!envelopeStore\) \{", body), (
+        "a queue row without a store must be refused, not guessed"
+    )
+    assert "storeId()" not in body
+    for comparison in (
+        "read.resource_id !== item.resource_id",
+        "read.approval_id !== item.approval_request_id",
+        "read.resource_version !== item.resource_version",
+        "read.snapshot_hash !== item.snapshot_hash",
+        "read.rendered_hash !== item.rendered_hash",
+        "read.envelope_matches !== true",
+    ):
+        assert comparison in body, f"the remedy card no longer checks {comparison}"
+    # The stale branch renders before the success branch and leaves only a refusal.
+    stale = body.index("read.envelope_matches !== true")
+    shown = body.index("render(contentHost, remedyContents(read))")
+    assert stale < shown
+    assert "true,\n      );\n      return;" in body[stale:shown]
+
+
+def test_the_recorded_proposals_execute_only_what_the_server_says_may_be_executed() -> None:
+    """The list's execute press is offered from the server's `next_step`, never from a status or
+    a clock this file reads, and calls the existing execute route with a per-proposal key."""
+
+    text = (WEB / "src" / "screens" / "remedies.js").read_text(encoding="utf-8")
+    start = text.index("function recordedNextStep(")
+    body = text[start : text.index("\n}\n", start)]
+    assert 'if (step === "EXECUTE") {' in body
+    assert body.count('"Thực hiện bồi hoàn"') == 1
+    assert "Date" not in body and "approval_status ===" not in body.split("AWAIT_OWNER")[0]
+    panel = text[text.index("function recordedProposalsPanel(") :]
+    panel = panel[: panel.index("\n}\n")]
+    assert "/internal/v1/remedy-proposals/${encodeURIComponent(id)}/execution" in panel
+    assert "idempotencyKey: submission.key()" in panel
+    assert "new Submission(`remedy-execute-${id}`)" in panel
 
 
 def test_the_manual_send_panel_is_mounted_only_by_a_screen_that_needs_a_store() -> None:

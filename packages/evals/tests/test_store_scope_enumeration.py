@@ -212,6 +212,19 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "predicate and the proposals selected WHERE store_id = %s AND incident_id = %s, so "
         "another store's incident is indistinguishable from one that does not exist.",
     ),
+    # --- REMEDY-OWNER-DECIDE-001 --------------------------------------------------------------
+    (
+        "GET",
+        "/internal/v1/stores/{store_id}/remedy-proposals/{proposal_id}/approval-binding",
+    ): RouteScope(
+        "STORE_SCOPED",
+        ("remedy_reads", "RemedyReadRepository.read_approval_binding"),
+        "the owner's read of one APPROVE_REMEDY envelope. The deciding role and MFA first, then "
+        "membership of the named store, then the proposal selected WHERE id = %s AND store_id = "
+        "%s with its envelope's own store_id required to equal it -- so another store's proposal "
+        "answers exactly as a missing one (404) after the caller was proved a member of the store "
+        "they named, and an unknown store is the same opaque 403 as a store the caller is not in.",
+    ),
     # --- OPS-BOARD-001 ------------------------------------------------------------------------
     ("GET", "/internal/v1/stores/{store_id}/sla-board"): store_scoped(
         "shadow_console", "ShadowConsoleRepository.sla_risk_board"

@@ -104,6 +104,7 @@ from nha_trang_laundry_db.remedies import (
 from nha_trang_laundry_db.remedy_reads import (
     IncidentRemedyProposals,
     OrderRemedyCredits,
+    RemedyApprovalBinding,
     RemedyReadRepository,
 )
 from nha_trang_laundry_db.settlement import (
@@ -2538,6 +2539,29 @@ class OperationsService:
                 cursor,
                 store_id=store_id,
                 incident_id=incident_id,
+                principal=principal,
+                now=datetime.now(UTC),
+            )
+
+    def read_remedy_approval_binding(
+        self, *, store_id: UUID, proposal_id: UUID, principal: StaffPrincipal
+    ) -> RemedyApprovalBinding:
+        """One remedy proposal's owner envelope, for the owner deciding it.
+
+        `REMEDY-OWNER-DECIDE-001`. A pure read, on one transaction so the proposal, its envelope
+        and the binding resolved from them are read together. Role, MFA and membership are checked
+        in the repository on the cursor that then reads.
+        """
+
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            return RemedyReadRepository.read_approval_binding(
+                cursor,
+                store_id=store_id,
+                proposal_id=proposal_id,
                 principal=principal,
                 now=datetime.now(UTC),
             )

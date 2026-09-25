@@ -3281,6 +3281,11 @@ class IncidentRemedyProposalItemResponse(BaseModel):
     proposed_at: datetime
     executed_at: datetime | None
     credit_id: UUID | None
+    #: What the counter can do next, decided by the server at read time (`REMEDY-OWNER-DECIDE-001`):
+    #: `EXECUTE` (staff-authorised, or owner-approved with the envelope still open -- the execute
+    #: route may be called and still re-checks everything), `AWAIT_OWNER`, `PROPOSE_AGAIN` (the
+    #: envelope was refused or ran out, decided or not, and can never pay), or `NONE`.
+    next_step: Literal["EXECUTE", "AWAIT_OWNER", "PROPOSE_AGAIN", "NONE"]
 
 
 class IncidentRemedyProposalsResponse(BaseModel):
@@ -3323,6 +3328,138 @@ def list_incident_remedy_proposals(
             IncidentRemedyProposalItemResponse.model_validate(item, from_attributes=True)
             for item in result.proposals
         ],
+    )
+
+
+# --- REMEDY-OWNER-DECIDE-001: the owner's read of one remedy envelope ----------------------------
+#
+# Since `DEC-031` every loss, every compensation on a refunded order and anything above the staff
+# limit waits on an `APPROVE_REMEDY` envelope only the owner may decide, and the approvals card had
+# nothing to show them -- so the envelope reached the queue and nobody could decide it from the
+# console. This read is that card's content. The route gate is the approvals gate every decision
+# route uses; the repository narrows it to the roles that may decide THIS action (the owner, with
+# MFA), then requires membership of the named store, then selects the proposal with that store in
+# its predicate. A proposal of another store, one that does not exist, and one that never needed
+# the owner are one 404.
+
+
+class RemedyApprovalBindingResponse(BaseModel):
+    """What the owner reads before deciding one `APPROVE_REMEDY` envelope, and what it binds.
+
+    `resource_version`, `snapshot_hash` and `rendered_hash` are resolved by the same function the
+    decision re-checks them with (`approvals.DECISION_TIME_RESOLVERS["REMEDY_PROPOSAL"]`), not
+    copied from the envelope. `envelope_matches` is false when they no longer equal the envelope's:
+    approving is then refused by the server, and the console withholds the content and offers only
+    a refusal. No figure here is computed -- each is stored, and the console formats it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    action: Literal["APPROVE_REMEDY"]
+    resource_type: Literal["REMEDY_PROPOSAL"]
+    #: The proposal's own id, which is the envelope's `resource_id`.
+    resource_id: UUID
+    resource_version: int
+    snapshot_hash: str
+    rendered_hash: str
+    envelope_matches: bool
+    approval_id: UUID
+    approval_status: str
+    approval_expires_at: datetime
+    #: True for an envelope still `REQUESTED` past its expiry on the server's clock.
+    approval_lapsed: bool
+    next_step: Literal["EXECUTE", "AWAIT_OWNER", "PROPOSE_AGAIN", "NONE"]
+    incident_id: UUID
+    order_id: UUID
+    #: The paper ticket the customer holds, null for an order bound to a channel.
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    kind: str
+    #: `OWNER_APPROVAL_REQUIRED` while waiting or approved-not-yet-paid; `EXECUTED` once paid.
+    status: str
+    amount_vnd: int | None
+    ceiling_vnd: int | None
+    #: The staff limit in the policy version the proposal was checked against.
+    staff_approval_ceiling_vnd: int | None
+    #: Why the owner is needed (`OwnerReason`), exactly as recorded with the proposal; null when no
+    #: recorded event carries them, which the console says rather than guessing.
+    owner_reasons: list[str] | None
+    order_line_id: str | None
+    service_code: str | None
+    service_name: str | None
+    #: Which garment on the line, 1-based; null for a line-level claim.
+    garment_index: int | None
+    #: The complaint as staff typed it. Untrusted text; null once disposed of under retention.
+    incident_summary: str | None
+    proposed_by: UUID
+    proposed_by_name: str
+    proposed_at: datetime
+    executed_at: datetime | None
+    credit_id: UUID | None
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/remedy-proposals/{proposal_id}/approval-binding",
+    response_model=RemedyApprovalBindingResponse,
+)
+def read_remedy_approval_binding(
+    store_id: UUID,
+    proposal_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RemedyApprovalBindingResponse:
+    """One remedy proposal's owner envelope, with what the owner must read to decide it.
+
+    A pure read: it decides, reserves and pays nothing. The store in the path is the envelope's own
+    -- the approvals queue carries it on every row -- and the caller must be a member of it.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        binding = service.read_remedy_approval_binding(
+            store_id=store_id, proposal_id=proposal_id, principal=principal
+        )
+    except RemedyReadNotFoundError as error:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="remedy approval unavailable"
+        ) from error
+    except StoreAccessError as error:
+        _raise_operations_error(error)
+    return RemedyApprovalBindingResponse(
+        store_id=binding.store_id,
+        action="APPROVE_REMEDY",
+        resource_type="REMEDY_PROPOSAL",
+        resource_id=binding.proposal_id,
+        resource_version=binding.resource_version,
+        snapshot_hash=binding.snapshot_hash,
+        rendered_hash=binding.rendered_hash,
+        envelope_matches=binding.envelope_matches,
+        approval_id=binding.approval_id,
+        approval_status=binding.approval_status,
+        approval_expires_at=binding.approval_expires_at,
+        approval_lapsed=binding.approval_lapsed,
+        next_step=binding.next_step,
+        incident_id=binding.incident_id,
+        order_id=binding.order_id,
+        ticket_number=binding.ticket_number,
+        ticket_issued_on=binding.ticket_issued_on,
+        kind=binding.kind,
+        status=binding.status,
+        amount_vnd=binding.amount_vnd,
+        ceiling_vnd=binding.ceiling_vnd,
+        staff_approval_ceiling_vnd=binding.staff_approval_ceiling_vnd,
+        owner_reasons=None if binding.owner_reasons is None else list(binding.owner_reasons),
+        order_line_id=binding.order_line_id,
+        service_code=binding.service_code,
+        service_name=binding.service_name,
+        garment_index=binding.garment_index,
+        incident_summary=binding.incident_summary,
+        proposed_by=binding.proposed_by,
+        proposed_by_name=binding.proposed_by_name,
+        proposed_at=binding.proposed_at,
+        executed_at=binding.executed_at,
+        credit_id=binding.credit_id,
     )
 
 

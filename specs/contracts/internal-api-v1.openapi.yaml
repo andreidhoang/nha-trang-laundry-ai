@@ -989,6 +989,28 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/remedy-proposals/{proposal_id}/approval-binding:
+    get:
+      operationId: read_remedy_approval_binding
+      summary: One remedy proposal's owner envelope, with what the owner must read to decide it.
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: proposal_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/settlements/today:
     get:
       operationId: collected_today

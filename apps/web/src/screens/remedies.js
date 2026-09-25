@@ -33,7 +33,10 @@
  *     recorded on it — a colleague's, yesterday's, and a loss recorded before `DEC-031` with no
  *     figure. The list is re-read after each proposal and execution rather than appended to, so it
  *     never claims more than the server holds. Loss cases waiting on the owner are still reached
- *     through the approvals queue, which is where the owner decides them.
+ *     through the approvals queue, which is where the owner decides them — and since
+ *     `REMEDY-OWNER-DECIDE-001` the owner's card there shows the figures, and a proposal the owner
+ *     approved is paid from its row in this list, by whoever is at the counter when the customer
+ *     comes back, without the browser session that proposed it.
  *
  * @module screens/remedies
  */
@@ -69,8 +72,11 @@ import {
   skeleton,
 } from "../ui/components.js";
 
-/** `RemedyKind` in the counter's words. The token is always shown beside it, never instead. */
-const KIND_LABEL = {
+/**
+ * `RemedyKind` in the counter's words. The token is always shown beside it, never instead.
+ * Exported for the approvals card (`REMEDY-OWNER-DECIDE-001`), so the owner reads the same words.
+ */
+export const KIND_LABEL = {
   FREE_REWASH: "Giặt lại miễn phí",
   DAMAGE_COMPENSATION: "Bồi thường món bị hỏng",
   LATE_DELIVERY_CREDIT: "Giảm trừ do giao trễ",
@@ -118,10 +124,12 @@ const OWNER_REASON_NOTE = {
 };
 
 /**
+ * Exported for the approvals card, which tells the owner why a claim reached them in these words.
+ *
  * @param {string[]|null|undefined} reasons
  * @returns {string}
  */
-function ownerReasonText(reasons) {
+export function ownerReasonText(reasons) {
   const said = (reasons || []).map((reason) => OWNER_REASON_NOTE[reason] || reason);
   return said.join("; ");
 }
@@ -442,10 +450,16 @@ function proposalCard(result) {
 /**
  * What a carried-out remedy leaves behind, and the identifier the customer will need next time.
  *
+ * `incidentNote: false` drops the closing sentence about the incident. The list's execute press
+ * uses it (`REMEDY-OWNER-DECIDE-001`): an incident with several claims on it is paid one row at a
+ * time, and whether this payment closed it is the list's re-read to say, not this card's.
+ *
  * @param {any} result a `RemedyExecutionResponse`
+ * @param {{incidentNote?: boolean}} [options]
  * @returns {HTMLElement}
  */
-function executionCard(result) {
+function executionCard(result, options = {}) {
+  const incidentNote = options.incidentNote !== false;
   return h(
     "div",
     { class: "card stack" },
@@ -484,11 +498,13 @@ function executionCard(result) {
             "giặt lại và đóng sự cố; việc giặt lại là việc mới ở xưởng, đơn cũ không quay lại dây " +
             "chuyền.",
         ),
-    h(
-      "p",
-      { class: "hint" },
-      "Sự cố gắn với đề nghị này đã chuyển sang CLOSED và cột bồi hoàn đã là “đã quyết định”.",
-    ),
+    incidentNote
+      ? h(
+          "p",
+          { class: "hint" },
+          "Sự cố gắn với đề nghị này đã chuyển sang CLOSED và cột bồi hoàn đã là “đã quyết định”.",
+        )
+      : null,
   );
 }
 
@@ -1188,7 +1204,7 @@ export function render_() {
   });
 
   const redemption = redemptionPanel(store, redeemSubmission, writeVerdict);
-  const recorded = recordedProposalsPanel(store);
+  const recorded = recordedProposalsPanel(store, writeVerdict);
 
   if (draft.incidentId) void loadOptions();
 
@@ -1278,18 +1294,75 @@ const RECORDED_APPROVAL_LABEL = {
 /**
  * Đề nghị đã ghi cho sự cố này — `GET …/incidents/{id}/remedy-proposals`.
  *
+ * `REMEDY-OWNER-DECIDE-001` made the list a place to act as well as read. The execute route takes
+ * nothing but the proposal id and an idempotency key — every figure was fixed when the proposal
+ * was recorded — so a row the server marks `next_step: EXECUTE` carries the same "Thực hiện bồi
+ * hoàn" the current-session card has, and an owner approval given hours later, on another device,
+ * can be paid from here. Nothing about what may be executed is decided in this file: the server
+ * says `EXECUTE`, `AWAIT_OWNER`, `PROPOSE_AGAIN` or `NONE`, and the row renders that.
+ *
+ * One `Submission` per proposal, held across list reloads, so a second press after a lost answer
+ * carries the same key and the server replays the payment instead of refusing it as done.
+ *
  * @param {string} store
+ * @param {{allowed: boolean, reason: string}} verdict whether this principal may execute
  * @returns {{node: HTMLElement, load: (incidentId: string) => Promise<void>}}
  */
-function recordedProposalsPanel(store) {
+function recordedProposalsPanel(store, verdict) {
   const host = h(
     "div",
     { id: "remedy-recorded-proposals", class: "stack" },
     h("p", { class: "hint" }, "Đọc một sự cố ở trên để xem các đề nghị đã ghi cho nó."),
   );
+  // Outside `host`, so the list re-read after a payment does not wipe the credit code it issued.
+  const executionHost = h("div", { id: "remedy-recorded-execution", class: "stack" });
+  const executionResult = resultLine();
   const countNode = h("span", { class: "count" }, "—");
   /** The incident whose list is on screen, so a slow reply for an older one is dropped. */
   let current = "";
+  /** @type {Map<string, Submission>} */
+  const submissions = new Map();
+
+  /** @param {any} row */
+  async function execute(row, button) {
+    const id = String(row.proposal_id || "");
+    if (!UUID.test(id)) return;
+    let submission = submissions.get(id);
+    if (!submission) {
+      submission = new Submission(`remedy-execute-${id}`);
+      submissions.set(id, submission);
+    }
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    setResult(executionResult, "warn", "Đang thực hiện…");
+    render(executionHost);
+    try {
+      const done = await request(`/internal/v1/remedy-proposals/${encodeURIComponent(id)}/execution`, {
+        method: "POST",
+        idempotencyKey: submission.key(),
+      });
+      submission.reset();
+      // One claim of possibly several on the incident. Whether paying it closed the incident is
+      // for the list re-read below to show, so this line says what was done and nothing more.
+      setResult(executionResult, "ok", "Đã thực hiện đề nghị này.");
+      render(executionHost, executionCard(done, { incidentNote: false }));
+      await load(current);
+    } catch (error) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      const refused = error.kind === "DENIED" || error.status === 422;
+      setResult(
+        executionResult,
+        refused ? "warn" : "danger",
+        refused
+          ? "Máy chủ chưa cho thực hiện. Đọc lý do bên dưới rồi đọc lại danh sách."
+          : "Không thực hiện được.",
+      );
+      const notice = errorNotice(error, { onRetry: () => void load(current) });
+      render(executionHost, notice);
+      revealError(notice);
+    }
+  }
 
   /** @param {string} incidentId */
   async function load(incidentId) {
@@ -1307,7 +1380,11 @@ function recordedProposalsPanel(store) {
       render(
         host,
         rows.length
-          ? h("ol", { class: "stack" }, rows.map((row) => recordedProposalCard(row, body.order_id)))
+          ? h(
+              "ol",
+              { class: "stack" },
+              rows.map((row) => recordedProposalCard(row, body.order_id, verdict, execute)),
+            )
           : h("p", { class: "hint" }, "Sự cố này chưa có đề nghị bồi hoàn nào."),
         body?.truncated ? h("p", { class: "hint" }, "Máy chủ cắt danh sách; có thể còn nữa.") : null,
       );
@@ -1331,9 +1408,12 @@ function recordedProposalsPanel(store) {
           { class: "hint" },
           "Danh sách của máy chủ, cũ nhất trước: mọi đề nghị đã ghi cho sự cố, của ai và lúc nào, " +
             "kể cả vụ mất đồ ghi trước DEC-031 không có số tiền. Đề nghị đang chờ chủ tiệm được " +
-            "duyệt ở màn hình Duyệt.",
+            "duyệt ở màn hình Duyệt. Đề nghị nào đã được duyệt mà chưa thực hiện thì có nút " +
+            "thực hiện ngay trên dòng của nó, kể cả khi chủ tiệm duyệt từ hôm qua hay trên máy khác.",
         ),
         host,
+        executionResult,
+        executionHost,
       ),
     }),
     load,
@@ -1341,23 +1421,98 @@ function recordedProposalsPanel(store) {
 }
 
 /**
+ * What the server says the counter may do next with one row, as a sentence and, for `EXECUTE`,
+ * the press. `next_step` is the server's; nothing here compares a clock or reads a status to decide
+ * whether a proposal may be paid.
+ *
+ * @param {any} row
+ * @param {{allowed: boolean, reason: string}} verdict
+ * @param {(row: any, button: HTMLButtonElement) => Promise<void>} onExecute
+ * @returns {HTMLElement|null}
+ */
+function recordedNextStep(row, verdict, onExecute) {
+  const step = String(row.next_step || "");
+  if (step === "EXECUTE") {
+    const button = h(
+      "button",
+      {
+        type: "button",
+        dataVariant: "primary",
+        dataRequiresNetwork: "true",
+        dataRemedyExecute: String(row.proposal_id || ""),
+      },
+      "Thực hiện bồi hoàn",
+    );
+    button.addEventListener("click", () => void onExecute(row, button));
+    return h(
+      "div",
+      { class: "stack stack--tight" },
+      h(
+        "p",
+        { class: "hint" },
+        row.approval_id
+          ? `Chủ tiệm đã duyệt, chưa thực hiện. Thực hiện trước khi phiếu duyệt hết hạn lúc ${dateTime(row.approval_expires_at)}.`
+          : "Nhân viên được tự duyệt khoản này, chưa thực hiện.",
+      ),
+      h("div", { class: "action-bar" }, gated(button, verdict)),
+    );
+  }
+  if (step === "AWAIT_OWNER") {
+    return h(
+      "p",
+      { class: "hint", dataNextStep: step },
+      `Chưa thực hiện được: đang chờ chủ tiệm duyệt ở màn hình Duyệt, hạn tới ${dateTime(row.approval_expires_at)}. `,
+      h("a", { href: "#/approvals" }, "Mở màn hình Duyệt"),
+    );
+  }
+  if (step === "PROPOSE_AGAIN") {
+    return h(
+      "div",
+      { class: "notice", dataState: "warn", dataNextStep: step },
+      h(
+        "p",
+        null,
+        row.approval_status === "REJECTED"
+          ? "Chủ tiệm đã từ chối khoản này, nên không thực hiện được."
+          : "Phiếu duyệt của khoản này đã quá hạn, nên không thực hiện được nữa.",
+      ),
+      h(
+        "p",
+        { class: "hint" },
+        "Muốn bồi hoàn thì đề nghị lại ở biểu mẫu bên dưới: máy chủ tính lại trần và mở phiếu duyệt mới.",
+      ),
+    );
+  }
+  return null;
+}
+
+/**
  * @param {any} row an `IncidentRemedyProposalItemResponse`
  * @param {string|null|undefined} orderId the incident's order, for the credit link
+ * @param {{allowed: boolean, reason: string}} verdict
+ * @param {(row: any, button: HTMLButtonElement) => Promise<void>} onExecute
  * @returns {HTMLElement}
  */
-function recordedProposalCard(row, orderId) {
+function recordedProposalCard(row, orderId, verdict, onExecute) {
   const status = String(row.status || "");
   const approval = row.approval_id
     ? row.approval_lapsed
       ? "phiếu duyệt đã quá hạn, chủ tiệm không duyệt được nữa"
       : RECORDED_APPROVAL_LABEL[row.approval_status] || String(row.approval_status || UNKNOWN)
     : null;
+  // An approved envelope leaves the proposal's own status at OWNER_APPROVAL_REQUIRED until it is
+  // paid, so "Chờ chủ tiệm duyệt" on the badge would be false for it. The server's next step says.
+  const statusLabel =
+    status === "OWNER_APPROVAL_REQUIRED" && row.next_step === "EXECUTE"
+      ? "Chủ tiệm đã duyệt, chờ thực hiện"
+      : RECORDED_STATUS_LABEL[status] || status || UNKNOWN;
   return h(
     "li",
     {
       class: "card stack stack--tight",
       dataProposalId: String(row.proposal_id || ""),
       dataProposalStatus: status,
+      dataProposalNextStep: String(row.next_step || ""),
     },
     h(
       "div",
@@ -1372,7 +1527,7 @@ function recordedProposalCard(row, orderId) {
             status === "EXECUTED" ? "ok" : status === "POLICY_UNRESOLVED" ? "danger" : "warn",
           title: status || UNKNOWN,
         },
-        RECORDED_STATUS_LABEL[status] || status || UNKNOWN,
+        statusLabel,
         h("span", { class: "badge__token mono" }, status || UNKNOWN),
       ),
     ),
@@ -1414,6 +1569,7 @@ function recordedProposalCard(row, orderId) {
         { mono: true },
       ],
     ]),
+    recordedNextStep(row, verdict, onExecute),
   );
 }
 

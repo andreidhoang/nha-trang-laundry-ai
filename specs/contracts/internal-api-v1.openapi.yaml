@@ -1116,6 +1116,40 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/reports/daily:
+    get:
+      operationId: report_daily
+      summary: The same figures, one row per shop-local day of the window, every day present.
+      x-authorization-dependencies:
+      - require_report_reader
+      - get_ops_board_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/reports/summary:
+    get:
+      operationId: report_summary
+      summary: The owner's numbers for `[from, to]`, shop-local calendar days, at most 92.
+      x-authorization-dependencies:
+      - require_report_reader
+      - get_ops_board_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/settlements/today:
     get:
       operationId: collected_today

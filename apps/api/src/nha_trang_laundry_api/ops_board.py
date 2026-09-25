@@ -58,6 +58,7 @@ from nha_trang_laundry_db.exports import (
     StoredExportRequest,
 )
 from nha_trang_laundry_db.identity import StaffPrincipal
+from nha_trang_laundry_db.reports import ReportRepository, StoreReport
 from nha_trang_laundry_db.shadow_console import (
     SLA_BOARD_DEFAULT_LIMIT,
     SLA_BOARD_MAX_LIMIT,
@@ -188,6 +189,41 @@ class OpsBoardService:
             query_version=TODAY_STATUS_COUNTS_QUERY.label,
             business_timezone=BUSINESS_TIMEZONE,
         )
+
+    def store_report(
+        self,
+        *,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        policy: ProductionSlaPolicy,
+        from_date: date,
+        to_date: date,
+        as_of: datetime | None = None,
+    ) -> StoreReport:
+        """The owner's numbers for a window of shop-local days (`REPORT-DASHBOARD-001`).
+
+        One read-only cursor, one statement for the counted facts and one for the on-time
+        population; the repository checks role, MFA and membership before either runs. `policy` is
+        the same constant the SLA board is evaluated under, passed by the route, so the report's
+        on-time figure and the board cannot be computed under two different rules.
+        """
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            # One snapshot for both statements: the counted facts and the on-time population must
+            # describe the same instant, or an order finishing between them is half in the report.
+            cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            return ReportRepository.store_report(
+                cursor,
+                store_id=store_id,
+                principal=principal,
+                policy=policy,
+                from_date=from_date,
+                to_date=to_date,
+                as_of=as_of or datetime.now(UTC),
+            )
 
     def request_export(
         self,

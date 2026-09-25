@@ -58,6 +58,13 @@ from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
 from nha_trang_laundry_db.range_prices import RangePriceProposalIntegrityError
 from nha_trang_laundry_db.remedies import RemedyAuthorizationError, RemedyStateError
 from nha_trang_laundry_db.remedy_reads import RemedyReadNotFoundError
+from nha_trang_laundry_db.reports import (
+    REPORT_READ_ROLES,
+    ReportAuthorizationError,
+    ReportPeriod,
+    ReportWindowError,
+    StoreReport,
+)
 from nha_trang_laundry_db.settlement import (
     BUSINESS_TIMEZONE,
     COLLECTED_TODAY_QUERY,
@@ -1530,6 +1537,23 @@ def require_approval_staff(
     allowed = {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER}
     if not principal.roles & allowed or not principal.mfa_verified:
         _record_authorization_denial("APPROVAL_ROLE_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+def require_report_reader(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """`REPORT-DASHBOARD-001`: the owner's numbers. Owner, approver, accountant, auditor; MFA.
+
+    `OPERATOR` is refused here on purpose (`COUNTER_COMPLETENESS_SPEC_V1.md` §3.5): the counter
+    keeps today's takings under `DEC-014` and today's counts; a period report is not a counter
+    screen.
+    The repository checks the same set again, plus membership of the store, so a route rewrite that
+    dropped this gate would still be refused below it.
+    """
+    if not principal.roles & REPORT_READ_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("REPORT_ROLE_OR_MFA_REQUIRED")
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
     return principal
 
@@ -4945,6 +4969,242 @@ def day_summary(
         total_orders=sum(count for _, count in summary.counts),
         query_version=summary.query_version,
         business_timezone=summary.business_timezone,
+    )
+
+
+# --- REPORT-DASHBOARD-001: the owner's numbers over a window of days --------------------------
+#
+# `FR-RPT-001` and `FR-RPT-005`. Every figure is `{key, numerator, denominator, window,
+# data_quality, query_version}` and no rate is computed on this side of the wire or the other: the
+# console shows "12 / 40" and, beside it, a percentage `format.js` formats from those two integers.
+# Money is summed by PostgreSQL over the ledgers' BIGINT columns and copied here untouched.
+
+
+class ReportWindowResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    from_date: date
+    to_date: date
+    days: int = Field(ge=1)
+    business_timezone: str
+    #: The window's last day is the shop's today, so its figures are "so far", not final.
+    ends_today: bool
+
+
+class ReportFigureWindowResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    from_date: date
+    to_date: date
+
+
+class ReportRemedyKindResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    count: int = Field(ge=0)
+    #: Null for a kind that moves no money (a free rewash), which is not the same as zero.
+    amount_vnd: int | None = Field(default=None, ge=0)
+
+
+class ReportFigureResponse(BaseModel):
+    """One KPI in the `FR-RPT-005` shape. Two integers and where they came from; never a rate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    numerator: int = Field(ge=0)
+    denominator: int | None = Field(ge=0)
+    denominator_key: str | None
+    unit: Literal["ORDERS", "INCIDENTS", "VND", "REMEDIES"]
+    window: ReportFigureWindowResponse
+    data_quality: Literal["COMPLETE", "RULE_ASSUMED"]
+    query_version: str
+    direction: Literal["IN", "OUT"] | None = None
+    entries: int | None = Field(default=None, ge=0)
+    amount_vnd: int | None = Field(default=None, ge=0)
+    by_kind: list[ReportRemedyKindResponse] | None = None
+
+
+class ReportSlaRuleResponse(BaseModel):
+    """The one stated rule the on-time figure is measured against, in the board's own words."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    policy_id: str
+    policy_type: str
+    target_max_hours: int | None
+    notice_vi: str
+
+
+class ReportMarginResponse(BaseModel):
+    """`FR-RPT-002`: margin is not computed, and the report says why instead of omitting it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    shown: Literal[False] = False
+    reason_code: Literal["COST_NOT_CAPTURED"] = "COST_NOT_CAPTURED"
+    blocked_by: str
+
+
+class ReportSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    window: ReportWindowResponse
+    kpis: list[ReportFigureResponse]
+    query_version: str
+    evaluated_at: datetime
+    sla_rule: ReportSlaRuleResponse
+    margin: ReportMarginResponse
+
+
+class ReportDayResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    date: date
+    kpis: list[ReportFigureResponse]
+
+
+class ReportDailyResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    window: ReportWindowResponse
+    days: list[ReportDayResponse]
+    query_version: str
+    evaluated_at: datetime
+    sla_rule: ReportSlaRuleResponse
+
+
+def _report_figures(period: ReportPeriod, query_version: str) -> list[ReportFigureResponse]:
+    return [
+        ReportFigureResponse.model_validate(
+            {
+                "key": figure.key.value,
+                "numerator": figure.numerator,
+                "denominator": figure.denominator,
+                "denominator_key": (
+                    None if figure.denominator_key is None else figure.denominator_key.value
+                ),
+                "unit": figure.unit,
+                "window": {"from_date": period.from_date, "to_date": period.to_date},
+                "data_quality": figure.data_quality.value,
+                "query_version": query_version,
+                "direction": figure.direction,
+                "entries": figure.entries,
+                "amount_vnd": figure.amount_vnd,
+                "by_kind": (
+                    None
+                    if figure.by_kind is None
+                    else [
+                        {"kind": kind, "count": count, "amount_vnd": amount}
+                        for kind, count, amount in figure.by_kind
+                    ]
+                ),
+            }
+        )
+        for figure in period.figures
+    ]
+
+
+def _report_window(report: StoreReport) -> ReportWindowResponse:
+    return ReportWindowResponse(
+        from_date=report.window.from_date,
+        to_date=report.window.to_date,
+        days=report.window.days,
+        business_timezone=report.window.business_timezone,
+        ends_today=report.window.ends_today,
+    )
+
+
+def _report_sla_rule(report: StoreReport) -> ReportSlaRuleResponse:
+    return ReportSlaRuleResponse(
+        policy_id=report.policy_id,
+        policy_type=report.policy_type,
+        target_max_hours=report.policy_target_max_hours,
+        notice_vi=sla_policy_notice_vi(SLA_POLICY),
+    )
+
+
+def _read_store_report(
+    service: OpsBoardService | None,
+    *,
+    store_id: UUID,
+    principal: StaffPrincipal,
+    from_date: date,
+    to_date: date,
+) -> StoreReport:
+    if service is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations board unavailable"
+        )
+    try:
+        return service.store_report(
+            store_id=store_id,
+            principal=principal,
+            # The SLA board's constant, so the on-time figure and the board are one rule.
+            policy=SLA_POLICY,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except ReportAuthorizationError as error:
+        # One body for a wrong role, a missing MFA and a store the caller is not in.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    except ReportWindowError as error:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "NOT_SUPPORTED", "reason_code": error.reason_code},
+        ) from error
+
+
+@app.get("/internal/v1/stores/{store_id}/reports/summary", response_model=ReportSummaryResponse)
+def report_summary(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_report_reader)],
+    from_date: Annotated[date, Query(alias="from")],
+    to_date: Annotated[date, Query(alias="to")],
+    service: Annotated[OpsBoardService | None, Depends(get_ops_board_service)] = None,
+) -> ReportSummaryResponse:
+    """The owner's numbers for `[from, to]`, shop-local calendar days, at most 92."""
+    report = _read_store_report(
+        service, store_id=store_id, principal=principal, from_date=from_date, to_date=to_date
+    )
+    return ReportSummaryResponse(
+        store_id=report.store_id,
+        window=_report_window(report),
+        kpis=_report_figures(report.summary, report.query_version),
+        query_version=report.query_version,
+        evaluated_at=report.evaluated_at,
+        sla_rule=_report_sla_rule(report),
+        margin=ReportMarginResponse(blocked_by="SHOP-INSTRUMENT-001"),
+    )
+
+
+@app.get("/internal/v1/stores/{store_id}/reports/daily", response_model=ReportDailyResponse)
+def report_daily(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_report_reader)],
+    from_date: Annotated[date, Query(alias="from")],
+    to_date: Annotated[date, Query(alias="to")],
+    service: Annotated[OpsBoardService | None, Depends(get_ops_board_service)] = None,
+) -> ReportDailyResponse:
+    """The same figures, one row per shop-local day of the window, every day present."""
+    report = _read_store_report(
+        service, store_id=store_id, principal=principal, from_date=from_date, to_date=to_date
+    )
+    return ReportDailyResponse(
+        store_id=report.store_id,
+        window=_report_window(report),
+        days=[
+            ReportDayResponse(
+                date=period.from_date, kpis=_report_figures(period, report.query_version)
+            )
+            for period in report.days
+        ],
+        query_version=report.query_version,
+        evaluated_at=report.evaluated_at,
+        sla_rule=_report_sla_rule(report),
     )
 
 

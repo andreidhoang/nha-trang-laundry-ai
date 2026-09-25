@@ -255,6 +255,22 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "gate is additionally require_operations_staff, which is the same role set the function "
         "checks plus MFA.",
     ),
+    # --- REPORT-DASHBOARD-001 ------------------------------------------------------------------
+    ("GET", "/internal/v1/stores/{store_id}/reports/summary"): RouteScope(
+        "STORE_SCOPED",
+        ("reports", "ReportRepository.store_report"),
+        "role and MFA first (REPORT_READ_ROLES, the same set `require_report_reader` gates on), "
+        "then require_store_membership on the report's own cursor before either statement runs; "
+        "every fact in both statements is selected WHERE store_id = %(store)s (transitions are "
+        "joined to orders of that store), so no figure crosses a shop and an unknown store is the "
+        "same opaque 403 as a store the caller is not in.",
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/reports/daily"): RouteScope(
+        "STORE_SCOPED",
+        ("reports", "ReportRepository.store_report"),
+        "the same repository call as the summary -- one statement yields the per-day rows and the "
+        "window row -- so it carries the same membership check and the same store predicate.",
+    ),
     ("POST", "/internal/v1/stores/{store_id}/exports"): store_scoped(
         "exports", "SanitizedExportRepository.request"
     ),

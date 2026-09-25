@@ -93,6 +93,7 @@ from nha_trang_laundry_db.range_prices import (
     RangePriceReviewEntry,
     RecordRangePriceProposalCommand,
 )
+from nha_trang_laundry_db.recent_contacts import RecentContactRepository, RecentContacts
 from nha_trang_laundry_db.remedies import (
     RemedyCreditRedemptionCommand,
     RemedyCreditRepository,
@@ -108,6 +109,7 @@ from nha_trang_laundry_db.remedy_reads import (
     OrderRemedyCredits,
     RemedyApprovalBinding,
     RemedyReadRepository,
+    StoreRemedyCredits,
 )
 from nha_trang_laundry_db.settlement import (
     CollectedToday,
@@ -2668,6 +2670,42 @@ class OperationsService:
         ):
             return RemedyReadRepository.list_order_credits(
                 cursor, store_id=store_id, order_id=order_id, principal=principal
+            )
+
+    # --- CREDIT-PICK-001 / CONTACT-PICK-001 ---------------------------------------------------
+    #
+    # Two more pass-throughs: role, MFA, membership and the store predicate are decided in the
+    # repositories. Neither reads a clock.
+
+    def list_store_remedy_credits(
+        self,
+        *,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        ticket_number: int | None,
+        limit: int,
+    ) -> StoreRemedyCredits:
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return RemedyReadRepository.list_store_credits(
+                cursor,
+                store_id=store_id,
+                principal=principal,
+                ticket_number=ticket_number,
+                limit=limit,
+            )
+
+    def list_recent_contacts(
+        self, *, store_id: UUID, principal: StaffPrincipal, limit: int
+    ) -> RecentContacts:
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return RecentContactRepository.list_for_store(
+                cursor, store_id=store_id, principal=principal, limit=limit
             )
 
     def list_incident_remedy_proposals(

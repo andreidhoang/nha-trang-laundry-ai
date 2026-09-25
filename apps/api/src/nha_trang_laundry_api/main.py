@@ -5418,8 +5418,8 @@ class SlaBoardResponse(BaseModel):
     policy_type: str
     policy_target_max_hours: int | None
     #: The sentence `#/assistant` already says, shared rather than copied. It names the rule that
-    #: produced these numbers and states that per-order SLA policy is an unresolved business
-    #: decision -- so a board cannot be read as the shop having promised a customer anything.
+    #: produced these numbers: each order's own promise (`PROMISE-001`), or the stated rule
+    #: for an order taken before the owner published the turnaround policy.
     policy_notice_vi: str
     evaluated_at: datetime
     #: `PROMISE-001`: the keyset is `(due_at, order_id)`, the order the board is ranked in.

@@ -27,10 +27,11 @@ thu*. The takings figure keeps its own route and its own `DEC-014` gate, untouch
 re-served here, because a second route to the same money under a second gate is how a role gate
 gets quietly widened.
 
-**Honesty carried forward, not re-invented.** `SLA_POLICY` is one stated rule and `#/assistant`
-already says so in Vietnamese. Per-order SLA policy is an unresolved business decision, so the board
-states the rule it used in those same words and never implies the shop promised a customer anything.
-The sentence lives in `assistant.sla_policy_notice_vi` and is imported by both surfaces rather than
+**Honesty carried forward, not re-invented.** Since `PROMISE-001` (`DEC-037`) an order carries its
+own promised-ready time once the owner publishes the turnaround policy; `SLA_POLICY` is the one
+stated rule for an order taken before that, and every row says which it was measured by. The board
+states this in the same words `#/assistant` uses. The sentence lives in
+`assistant.sla_policy_notice_vi` and is imported by both surfaces rather than
 copied, so the two cannot drift into telling staff two different things about what the shop owes.
 """
 

@@ -98,7 +98,8 @@ class DataQuality(StrEnum):
     #: Every input is a stored fact and the rule producing the figure is a decided one.
     COMPLETE = "COMPLETE"
     #: The inputs are stored facts, but the rule applied to them is one stated internal rule
-    #: standing in for a business decision nobody has made (here: the per-order SLA rule).
+    #: standing in for a missing fact (here: an order taken before the owner published the
+    #: turnaround policy has no promise, so the SLA board's stated rule judged it).
     RULE_ASSUMED = "RULE_ASSUMED"
 
 

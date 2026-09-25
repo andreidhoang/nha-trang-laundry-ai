@@ -162,13 +162,14 @@ export function manualSendPanel({ sendVerdict }) {
   const prepareSubmission = new Submission("manual-send-prepare");
   const attestSubmission = new Submission("manual-send-attest");
 
-  /** @type {{approvalId: string, resourceVersion: string, snapshotHash: string, renderedHash: string, recipientBindingId: string}} */
+  // No recipient field. API-INTEGRITY-002: the server reads the recipient off the approved draft
+  // and refuses a request that names one, so a box here could only ever be ignored or refused.
+  /** @type {{approvalId: string, resourceVersion: string, snapshotHash: string, renderedHash: string}} */
   const prepare = {
     approvalId: "",
     resourceVersion: "",
     snapshotHash: "",
     renderedHash: "",
-    recipientBindingId: "",
   };
 
   /** @type {{envelopeId: string, resourceVersion: string, renderedHash: string, rowVersion: string, sentAt: string}} */
@@ -204,7 +205,6 @@ export function manualSendPanel({ sendVerdict }) {
     if (!JCS_HASH.test(prepare.renderedHash)) {
       return "Mã băm nội dung phải đúng dạng JCS-SHA256-V1: theo sau là 64 ký tự hex thường.";
     }
-    if (!UUID.test(prepare.recipientBindingId)) return "Ràng buộc người nhận phải là một UUID.";
     return "";
   }
 
@@ -253,7 +253,6 @@ export function manualSendPanel({ sendVerdict }) {
             observed_resource_version: Number.parseInt(prepare.resourceVersion, 10),
             observed_snapshot_hash: prepare.snapshotHash,
             observed_rendered_hash: prepare.renderedHash,
-            recipient_binding_id: prepare.recipientBindingId,
             channel: CHANNEL,
           },
           idempotencyKey: prepareSubmission.key(),
@@ -414,20 +413,12 @@ export function manualSendPanel({ sendVerdict }) {
           normalize: asHash,
         }),
       }),
-      labelled({
-        id: "manual-recipient-binding",
-        label: "Ràng buộc người nhận (recipient_binding_id)",
-        hint:
-          "Máy chủ tự suy ra người nhận từ ràng buộc này. Không có ô nhập số điện thoại, và một " +
-          "chuỗi liên hệ gõ tay không được nhận làm bằng chứng.",
-        control: boundInput({
-          target: prepare,
-          key: "recipientBindingId",
-          pattern: UUID,
-          placeholder: "00000000-0000-0000-0000-000000000000",
-          submission: prepareSubmission,
-        }),
-      }),
+      h(
+        "p",
+        { class: "hint" },
+        "Không có ô người nhận. Máy chủ lấy người nhận từ chính bản nháp đã được duyệt và trả nó " +
+          "về trong kết quả; một yêu cầu tự ghi người nhận bị từ chối.",
+      ),
       labelled({
         id: "manual-channel",
         label: "Kênh",

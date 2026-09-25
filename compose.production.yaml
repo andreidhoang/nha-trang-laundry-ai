@@ -1,6 +1,14 @@
 name: nha-trang-laundry-private-staging
 
+# Bounded json-file logs for every service (`OPS-HARDENING-002`); see compose.yaml for the figures.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-runtime-hardening: &runtime-hardening
+  logging: *default-logging
   init: true
   read_only: true
   cap_drop: ["ALL"]
@@ -21,10 +29,15 @@ services:
   # reachable solely through the pre-provisioned database-private Docker network.
   postgres:
     profiles: ["local-database"]
-    ports: []
+    # `!reset`, not `[]`. An overlay's empty list *appends* nothing to compose.yaml's list, so
+    # `ports: []` here left the development superuser published by the file below
+    # (`OPS-HARDENING-002`); `compose.demo.yaml` had already found and fixed the same trap.
+    ports: !reset []
+    logging: *default-logging
     networks: [database-private]
 
   migrate:
+    logging: *default-logging
     image: ${STAGING_API_IMAGE:-nha-trang-laundry-api:local}
     build:
       context: .

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import hmac
-from collections.abc import Mapping
+from collections import Counter
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Lock
 from typing import Annotated, Any, Protocol
 from uuid import UUID, uuid4
 
+import psycopg
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from nha_trang_laundry_contracts import (
@@ -74,6 +78,166 @@ class AgentToolBackend(Protocol):
     def invoke(self, call: AgentToolCall) -> Mapping[str, Any]: ...
 
 
+class AgentCallAdmissionRefused(RuntimeError):
+    """A verified bearer was not admitted: replayed, over its run's limit, or for a dead run."""
+
+    def __init__(self, reason: str) -> None:
+        if reason not in {"REPLAYED", "RATE_LIMITED", "RUN_NOT_LIVE"}:
+            raise ValueError("unknown admission refusal")
+        self.reason = reason
+        super().__init__(reason)
+
+
+class AgentCallLedger(Protocol):
+    """Admit one verified bearer for one operation, or refuse. Server state, never model input."""
+
+    def admit(
+        self,
+        *,
+        claims: AgentRunnerClaims,
+        operation: AgentToolOperation,
+        max_calls_per_run: int,
+        now: datetime,
+    ) -> None: ...
+
+
+#: The registry's ceiling on tool calls per run (`runtime/model-registry-v1.yaml` limits).
+MAX_TOOL_CALLS_PER_RUN = 6
+
+
+class InMemoryAgentCallLedger:
+    """Single-process admission. A multi-process facade must use `PostgresAgentCallLedger`.
+
+    Entries are kept until their bearer has expired (bearers live at most 60 s), then pruned, so
+    the ledger cannot grow for the life of the process.
+    """
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._jti_expiry: dict[UUID, datetime] = {}
+        self._runs: dict[UUID, tuple[datetime, Counter[AgentToolOperation]]] = {}
+
+    def admit(
+        self,
+        *,
+        claims: AgentRunnerClaims,
+        operation: AgentToolOperation,
+        max_calls_per_run: int,
+        now: datetime,
+    ) -> None:
+        expires_at = datetime.fromtimestamp(claims.exp, UTC)
+        with self._lock:
+            self._prune(now)
+            if claims.jti in self._jti_expiry:
+                raise AgentCallAdmissionRefused("REPLAYED")
+            last_expiry, counts = self._runs.get(claims.run_id, (expires_at, Counter()))
+            if counts[operation] >= max_calls_per_run or (
+                sum(counts.values()) >= MAX_TOOL_CALLS_PER_RUN
+            ):
+                raise AgentCallAdmissionRefused("RATE_LIMITED")
+            counts[operation] += 1
+            self._jti_expiry[claims.jti] = expires_at
+            self._runs[claims.run_id] = (max(last_expiry, expires_at), counts)
+
+    def admitted_count(self) -> int:
+        with self._lock:
+            return len(self._jti_expiry)
+
+    def _prune(self, now: datetime) -> None:
+        # A run's counts are kept while any bearer minted for it could still be presented.
+        horizon = now - timedelta(seconds=5)
+        for jti in [jti for jti, expiry in self._jti_expiry.items() if expiry < horizon]:
+            del self._jti_expiry[jti]
+        for run_id in [run for run, (expiry, _) in self._runs.items() if expiry < horizon]:
+            del self._runs[run_id]
+
+
+class PostgresAgentCallLedger:
+    """Admission shared by every facade process, in `agent_facade_invocations` (migration 0050).
+
+    One transaction per admission, serialized per run by an advisory lock: the run must be live
+    (`PROCESSING`), the bearer's `jti` unseen, and the run under both the operation's registered
+    limit and the registry's six-call ceiling. Anything unreadable fails closed as unavailable.
+    """
+
+    _LOCK_NAMESPACE = 0x41474654  # "AGFT"
+
+    def __init__(
+        self, database_url: str, *, connection_factory: Callable[[str], Any] = psycopg.connect
+    ) -> None:
+        if not database_url:
+            raise AgentToolUnavailable("the call ledger requires an explicit database URL")
+        self._database_url = database_url
+        self._connection_factory = connection_factory
+
+    def admit(
+        self,
+        *,
+        claims: AgentRunnerClaims,
+        operation: AgentToolOperation,
+        max_calls_per_run: int,
+        now: datetime,
+    ) -> None:
+        try:
+            with (
+                self._connection_factory(self._database_url) as connection,
+                connection.transaction(),
+                connection.cursor() as cursor,
+            ):
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(%s, hashtext(%s))",
+                    (self._LOCK_NAMESPACE, str(claims.run_id)),
+                )
+                cursor.execute("SELECT status FROM agent_runs WHERE id = %s", (claims.run_id,))
+                run = cursor.fetchone()
+                if run is None or str(run[0]) != "PROCESSING":
+                    raise AgentCallAdmissionRefused("RUN_NOT_LIVE")
+                cursor.execute(
+                    "SELECT 1 FROM agent_facade_invocations WHERE jti = %s", (claims.jti,)
+                )
+                if cursor.fetchone() is not None:
+                    raise AgentCallAdmissionRefused("REPLAYED")
+                cursor.execute(
+                    """
+                    SELECT count(*) FILTER (WHERE operation_id = %s), count(*)
+                    FROM agent_facade_invocations WHERE agent_run_id = %s
+                    """,
+                    (operation.value, claims.run_id),
+                )
+                counted = cursor.fetchone()
+                if counted is None or (
+                    int(counted[0]) >= max_calls_per_run
+                    or int(counted[1]) >= MAX_TOOL_CALLS_PER_RUN
+                ):
+                    raise AgentCallAdmissionRefused("RATE_LIMITED")
+                cursor.execute(
+                    """
+                    INSERT INTO agent_facade_invocations (
+                        jti, agent_run_id, operation_id, bearer_expires_at, admitted_at
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        claims.jti,
+                        claims.run_id,
+                        operation.value,
+                        datetime.fromtimestamp(claims.exp, UTC),
+                        now,
+                    ),
+                )
+        except AgentCallAdmissionRefused:
+            raise
+        except psycopg.errors.UniqueViolation as error:
+            # Two presentations of one bearer raced past the read: the key decides.
+            raise AgentCallAdmissionRefused("REPLAYED") from error
+        except Exception as error:
+            raise AgentToolUnavailable("the call ledger is unavailable") from error
+
+
+#: The default for a facade process that was given no shared ledger. The service object is built
+#: per request by FastAPI, so the ledger must outlive it or replay protection would be decorative.
+_PROCESS_LEDGER = InMemoryAgentCallLedger()
+
+
 class UnavailableAgentToolBackend:
     def invoke(self, call: AgentToolCall) -> Mapping[str, Any]:
         del call
@@ -81,8 +245,16 @@ class UnavailableAgentToolBackend:
 
 
 class AgentFacadeService:
-    def __init__(self, backend: AgentToolBackend) -> None:
+    def __init__(
+        self,
+        backend: AgentToolBackend,
+        *,
+        call_ledger: AgentCallLedger | None = None,
+        now: Callable[[], datetime] | None = None,
+    ) -> None:
         self._backend = backend
+        self._call_ledger = call_ledger if call_ledger is not None else _PROCESS_LEDGER
+        self._now = now or (lambda: datetime.now(UTC))
 
     def invoke(
         self,
@@ -100,6 +272,15 @@ class AgentFacadeService:
         _authorize_bound_path(claims, path_parameters)
         _validate_required_headers(contract.header_parameters, idempotency_key, if_match)
         validated = contract.validate_model_arguments(arguments)
+        # AGENT-SHADOW-DEFECTS-001 F7: one admission per bearer, within the operation's registered
+        # per-run limit, before the backend is reached. Validation runs first so a malformed body
+        # cannot spend a run's budget; nothing after this point runs for a refused bearer.
+        self._call_ledger.admit(
+            claims=claims,
+            operation=operation,
+            max_calls_per_run=contract.max_calls_per_run,
+            now=self._now(),
+        )
         response = self._backend.invoke(
             AgentToolCall(
                 operation,
@@ -220,6 +401,27 @@ async def _invoke_fixed_route(
             trace_id=trace_id,
             code="POLICY_DENIED",
             message="The bound runner context does not authorize this operation.",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    except AgentCallAdmissionRefused as refusal:
+        if refusal.reason == "RATE_LIMITED":
+            return _error_response(
+                trace_id=trace_id,
+                code="RATE_LIMITED",
+                message="This run has used every call this operation is registered for.",
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        if refusal.reason == "REPLAYED":
+            return _error_response(
+                trace_id=trace_id,
+                code="POLICY_DENIED",
+                message="A runner bearer is admitted once; this one has already been used.",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+        return _error_response(
+            trace_id=trace_id,
+            code="POLICY_DENIED",
+            message="The run this bearer names is not live.",
             status_code=status.HTTP_403_FORBIDDEN,
         )
     except AgentToolRefusal as error:

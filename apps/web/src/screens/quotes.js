@@ -21,13 +21,14 @@
  *     they did not: a bare number showing the top of a range as a settled price. `RANGE-PRICE-001`
  *     is that day. So on a `RANGE` revision both rows read `—` with the reason stated, and the
  *     band is read from `display_total_min_vnd`/`display_total_max_vnd`, which are a real pair.
- *   - **Closing a band is three steps and the console never shortens them.** Twenty of the
- *     forty-four published services carry an interval rather than a rate. The counter asks for a
- *     band revision (`present_range_as_band`), types one amount per banded line, and the server
- *     raises a `SET_RANGE_PRICE` envelope that a *second* person approves on `#/approvals`; only
- *     then does applying it write the price. The screen holds the amounts between the second and
- *     third step and says so, because nothing on the server stores them in between — the envelope
- *     binds a digest, not the content.
+ *   - **Closing a band is the staff member's own attested choice (`DEC-029`, 2026-09-25).**
+ *     Twenty of the forty-four published services carry an interval rather than a rate. The
+ *     counter asks for a band revision (`present_range_as_band`), types one amount per banded
+ *     line, and presses once: the server raises a `SET_RANGE_PRICE` envelope and records that
+ *     staff member's attestation of it in the same command, and the screen then applies it at
+ *     once. Before the ruling a *second* person had to approve on `#/approvals` in between; the
+ *     screen still handles that shape if the server ever returns a `REQUESTED` envelope again,
+ *     because it follows the envelope's status rather than assuming who decides.
  *   - **The band mode is asked for, never assumed.** `GET /internal/v1/pricebook/services` carries
  *     no price kind, so this screen genuinely cannot know which services are banded before it
  *     prices one. It therefore submits the ordinary way, and when the engine answers
@@ -130,17 +131,6 @@ const NEEDS_A_HUMAN_PRICE = "RANGE_PRICE_REQUIRES_HUMAN";
 
 /** One second, as on the approvals queue. An envelope's remaining time is the point. */
 const TICK_MS = 1000;
-
-/**
- * `ApprovalAction.SET_RANGE_PRICE` maps to `_OWNER_FINANCIAL`, which is a ten-minute envelope, and
- * the server enforces expiry at the decision *and* again when the price is applied — so the
- * owner's approval and the staff member's press must both land inside one window.
- *
- * Not a number this screen computes anything from: `expires_at` comes off the raised envelope and
- * drives the countdown. It is written down because the sentence the counter reads has to say ten
- * minutes, and a sentence quoting a figure nothing in the file explains is how copy goes stale.
- */
-const OWNER_FINANCIAL_TTL_VI = "mười phút";
 
 /**
  * One editable line. Kept as plain state rather than read from the DOM at submit time, so that the
@@ -524,7 +514,7 @@ function acceptControl(result, store, onAccepted, writeVerdict, contactId, actio
         "p",
         null,
         "Đọc khoảng giá cho khách được, nhưng chưa chốt được: chưa có con số nào để khách đồng ý. " +
-          "Chốt một giá trong khoảng ở ô bên dưới, chủ tiệm duyệt, rồi mới bấm “Khách đã chốt giá”.",
+          "Chốt một giá trong khoảng ở ô bên dưới, rồi mới bấm “Khách đã chốt giá”.",
       ),
     );
   }
@@ -941,20 +931,22 @@ function revisionLines(detail, catalog) {
 }
 
 /**
- * Closing a published band: the counter's three steps, on one card.
+ * Closing a published band: choose, press once, and the price is written.
  *
  * The shape of this control is dictated by the server and is not a UX preference. Closing a band
- * is *two* commands with a second person in between — propose, approve, apply — because the
- * envelope an owner signs binds a digest of the amounts rather than storing them
- * (`approvals.py` calls comparing an unstored rendering "theatre"). Two consequences fall out of
- * that and both are stated on screen rather than discovered:
+ * is two commands — propose, apply — because the envelope binds a digest of the amounts and
+ * application re-derives it from the amounts in hand (`approvals.py` calls comparing against a
+ * stored copy "theatre"). Since `DEC-029` (2026-09-25) the proposal is the staff member's own
+ * counter attestation, recorded by the server in the same command, so this card sends the second
+ * command itself as soon as the first answers `APPROVED`. Two consequences remain and both are
+ * stated on screen rather than discovered:
  *
- *   1. **The amounts live in this screen between step two and step three.** Nothing on the server
- *      holds them. Navigating away loses them, and the operator has to propose again — which is
- *      cheap, because a proposal writes no price.
- *   2. **The envelope dies in ten minutes** and expiry is checked again at application, so an
- *      approval that arrives late produces a refusal rather than a price. The countdown is
- *      therefore a control, not decoration.
+ *   1. **If writing the price fails, the amounts live in this screen until it succeeds.** The
+ *      apply command needs them again. Navigating away loses them, and the operator chooses again
+ *      — which is cheap, because a proposal writes no price.
+ *   2. **The envelope expires** — thirty minutes under the counter attestation, ten under the
+ *      owner's policy if the ruling is ever reversed — and expiry is checked again at application.
+ *      The countdown is therefore a control, not decoration.
  *
  * The bound comes from the server, per line, off the revision the customer was read — never from
  * the live pricebook and never from anything this screen assembled. A pricebook republished while
@@ -1098,7 +1090,7 @@ function bandCloser(spec) {
     const send = h(
       "button",
       { type: "button", dataVariant: "primary", dataRequiresNetwork: "true" },
-      "Gửi giá cho chủ duyệt",
+      "Chốt giá này",
     );
     send.addEventListener("click", () => void propose(send));
 
@@ -1117,15 +1109,15 @@ function bandCloser(spec) {
         h(
           "p",
           null,
-          "Khoảng giá là chủ tiệm đã cho phép trước: mọi số trong khoảng đều là giá hợp lệ, và " +
-            "bảng vận hành không tự chọn giúp một số nào. Bạn chọn, chủ tiệm duyệt, rồi máy chủ " +
-            "mới ghi thành giá.",
+          "Khoảng giá là chủ tiệm đã cho phép trước: mọi số trong khoảng đều hợp lệ, và bảng vận " +
+            "hành không tự chọn giúp số nào. Bạn chọn số khách đồng ý rồi bấm chốt — không cần " +
+            "chờ chủ tiệm.",
         ),
         h(
           "p",
           { class: "hint" },
-          `Phiếu duyệt chỉ sống ${OWNER_FINANCIAL_TTL_VI}, và máy chủ kiểm lại hạn cả lúc duyệt ` +
-            "lẫn lúc áp dụng — nên gọi chủ tiệm trước khi gửi, đừng gửi rồi mới đi tìm.",
+          "Tên bạn được ghi cùng con số, không sửa được, và chủ tiệm xem lại được. Số ngoài " +
+            "khoảng thì máy chủ từ chối.",
         ),
       ),
       h("div", { class: "stack stack--tight" }, fields),
@@ -1174,12 +1166,21 @@ function bandCloser(spec) {
     );
   }
 
-  /** Step two: the envelope is raised and a second person has to decide it. */
+  /**
+   * Step two, reached only when the price is not written yet.
+   *
+   * Since `DEC-029` the proposal comes back already attested and `propose` writes the price at
+   * once, so the counter sees this card only when that second command failed -- the price is
+   * chosen and attested, and one more press writes it. The owner-waiting wording below it is kept
+   * for an envelope that arrives `REQUESTED`, which is what reversing the ruling would produce:
+   * the screen follows the server's status rather than assuming who decides.
+   */
   function awaitingApproval() {
+    const attested = state.approval.status === "APPROVED";
     const apply = h(
       "button",
       { type: "button", dataVariant: "primary", dataRequiresNetwork: "true" },
-      "Áp dụng giá đã duyệt",
+      attested ? "Ghi giá vào báo giá" : "Áp dụng giá đã duyệt",
     );
     apply.addEventListener("click", () => void applyPrices(apply));
 
@@ -1191,7 +1192,11 @@ function bandCloser(spec) {
       h(
         "div",
         { class: "spread" },
-        h("p", { class: "eyebrow" }, "Đang chờ chủ tiệm duyệt"),
+        h(
+          "p",
+          { class: "eyebrow" },
+          attested ? "Đã chốt giá, chưa ghi vào báo giá" : "Đang chờ chủ tiệm duyệt",
+        ),
         clockHost,
       ),
       facts([
@@ -1203,7 +1208,9 @@ function bandCloser(spec) {
           }),
           { mono: true, span: true },
         ],
-        ["Ai được quyết", enumVi(state.approval.required_role)],
+        attested
+          ? ["Người chốt giá", "bạn — tên bạn đã được ghi cùng con số"]
+          : ["Ai được quyết", enumVi(state.approval.required_role)],
         ["Hết hạn lúc", dateTime(state.approval.expires_at)],
       ]),
       h(
@@ -1239,13 +1246,15 @@ function bandCloser(spec) {
             "chính những con số ấy — nên chúng chỉ còn ở màn hình này. Rời đi là phải gửi lại từ " +
             "đầu. Gửi lại không mất gì: lúc đề nghị chưa có giá nào được ghi.",
         ),
-        h(
-          "p",
-          null,
-          "Máy chủ cũng từ chối để người đề nghị tự duyệt. Người bấm “Duyệt” ở màn hình ",
-          h("a", { href: "#/approvals" }, "Duyệt"),
-          " phải là người khác.",
-        ),
+        attested
+          ? null
+          : h(
+              "p",
+              null,
+              "Máy chủ cũng từ chối để người đề nghị tự duyệt. Người bấm “Duyệt” ở màn hình ",
+              h("a", { href: "#/approvals" }, "Duyệt"),
+              " phải là người khác.",
+            ),
       ),
       h(
         "div",
@@ -1286,30 +1295,42 @@ function bandCloser(spec) {
       return;
     }
     button.disabled = true;
-    setResult(status, "warn", "Đang gửi cho chủ tiệm duyệt…");
+    setResult(status, "warn", "Đang chốt giá…");
     render(errorHost);
+    let approval;
     try {
-      const approval = await request(
+      approval = await request(
         `/internal/v1/stores/${encodeURIComponent(spec.store)}/quotes/${encodeURIComponent(spec.result.quote_id)}/range-prices`,
         { method: "POST", body: body(), idempotencyKey: proposing.key() },
       );
-      proposing.reset();
-      state.approval = approval;
-      setResult(
-        status,
-        "ok",
-        `Đã gửi. Chủ tiệm mở màn hình Duyệt và bấm Duyệt cho phiếu ${shortId(approval.approval_request_id)}.`,
-      );
-      draw();
     } catch (error) {
       button.disabled = false;
       setResult(status, error.kind === "REQUIRE_HUMAN" ? "warn" : "danger", proposeFailure(error));
       render(errorHost, errorNotice(error));
       revealError(errorHost);
+      return;
     }
+    proposing.reset();
+    state.approval = approval;
+    if (approval.status === "APPROVED") {
+      // `DEC-029`: the proposal came back as this staff member's own attestation, so the price is
+      // written straight away -- one press at the counter. If writing it fails, `draw()` has
+      // already put the "Ghi giá vào báo giá" card up and the next press retries with the same key.
+      draw();
+      await applyPrices(null);
+      return;
+    }
+    // Only an envelope that still needs a second person reaches here -- which is what reversing
+    // `DEC-029` would bring back. The screen follows the server's status rather than assuming.
+    setResult(
+      status,
+      "ok",
+      `Đã gửi. Chủ tiệm mở màn hình Duyệt và bấm Duyệt cho phiếu ${shortId(approval.approval_request_id)}.`,
+    );
+    draw();
   }
 
-  /** @param {HTMLButtonElement} button */
+  /** @param {HTMLButtonElement|null} button null when `propose` writes the price on its own */
   async function applyPrices(button) {
     // Checked again, although nothing can have edited an amount while step two is on screen:
     // "Sửa lại số" is the only way back to the boxes and it drops the approval on the way. A
@@ -1318,8 +1339,8 @@ function bandCloser(spec) {
       setResult(status, "danger", "Số tiền đang giữ không hợp lệ; chưa gửi đi.");
       return;
     }
-    button.disabled = true;
-    setResult(status, "warn", "Đang ghi giá đã duyệt…");
+    if (button) button.disabled = true;
+    setResult(status, "warn", "Đang ghi giá…");
     render(errorHost);
     try {
       const closed = await request(
@@ -1331,7 +1352,7 @@ function bandCloser(spec) {
       setResult(status, "ok", `Đã ghi giá vào bản sửa đổi ${closed.revision}.`);
       if (spec.onClosed) await spec.onClosed(closed);
     } catch (error) {
-      button.disabled = false;
+      if (button) button.disabled = false;
       setResult(status, error.kind === "REQUIRE_HUMAN" ? "warn" : "danger", applyFailure(error));
       render(errorHost, errorNotice(error));
       revealError(errorHost);
@@ -1356,8 +1377,8 @@ function bandCloser(spec) {
 function proposeFailure(error) {
   if (error.kind === "TIMEOUT" || error.kind === "NETWORK") {
     return (
-      "Chưa biết lệnh có tới máy chủ hay không. Phiếu duyệt có thể đã được tạo — mở màn hình " +
-      "Duyệt xem có phiếu nào của bản báo giá này trước khi gửi lại. Chưa có giá nào được ghi."
+      "Chưa biết lệnh có tới máy chủ hay không. Bấm “Chốt giá này” lại với đúng số cũ: máy chủ " +
+      "nhận ra lệnh cũ và không tạo thêm phiếu. Chưa có giá nào được ghi."
     );
   }
   if (error.kind === "REQUIRE_HUMAN") {
@@ -1392,9 +1413,9 @@ function applyFailure(error) {
     );
   }
   return (
-    "Chưa ghi được giá. Thường là một trong ba: chủ tiệm chưa bấm Duyệt, phiếu duyệt niêm phong " +
+    "Chưa ghi được giá. Thường là một trong ba: phiếu chưa được xác nhận, phiếu niêm phong " +
     "những con số khác với số đang ở đây, hoặc phiếu đã quá hạn. Máy chủ trả lời chung một câu " +
-    "cho cả ba. Kiểm màn hình Duyệt, và nếu quá hạn thì gửi lại từ đầu."
+    "cho cả ba. Bấm “Sửa lại số” rồi chốt lại từ đầu."
   );
 }
 
@@ -1416,7 +1437,7 @@ function expiryBadge(expiresAt) {
     token: left.text,
     gloss: left.expired
       ? "đã hết hạn — gửi lại từ đầu, không xin gia hạn được"
-      : "thời gian còn lại để chủ duyệt và bạn áp dụng",
+      : "thời gian còn lại để ghi giá này vào báo giá",
     state: left.expired ? "danger" : "warn",
   });
 }
@@ -2009,9 +2030,9 @@ export function render_(context) {
    * approval — and `QUOTE_REVISION` was on the wrong side of that line for as long as no route
    * returned a quote's lines. One does now, so the link is real and this is where it lands.
    *
-   * Read-only on purpose, including for a staff member who could write: the person who proposed
-   * the amounts may not approve them, and a panel that offered a control here would be inviting
-   * the one press the server is guaranteed to refuse.
+   * Read-only on purpose, including for a staff member who could write: a revision opened from
+   * the approvals queue is being reviewed, not priced, and since `DEC-029` a counter-chosen price
+   * is attested by the person who chose it, never by whoever opens it here.
    *
    * @param {string} id
    * @param {string} [revision] the revision an envelope binds, when the caller arrived from one
@@ -2265,7 +2286,7 @@ export function render_(context) {
         "p",
         null,
         "Bảng giá công bố một khoảng cho món này chứ không công bố một đơn giá, nên bộ tính giá " +
-          "không tự chọn một số — đó là việc của người, và của chủ tiệm duyệt.",
+          "không tự chọn một số — đó là việc của nhân viên đang trực quầy.",
       ),
       h(
         "p",
@@ -2497,7 +2518,7 @@ export function render_(context) {
         "p",
         { class: "screen__lede" },
         "Chọn yêu cầu, chọn dịch vụ, nhập khối lượng — máy chủ tính theo bảng giá đã chốt. Món " +
-          "niêm yết theo khoảng giá thì nhân viên chốt một số trong khoảng và chủ tiệm duyệt. " +
+          "niêm yết theo khoảng giá thì nhân viên trực quầy chốt một số trong khoảng, có ghi tên. " +
           "Màn hình này không tự cộng tiền, không làm tròn, và không tự chọn số nào trong khoảng.",
       ),
     ),

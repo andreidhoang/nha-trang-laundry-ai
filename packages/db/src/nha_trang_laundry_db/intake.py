@@ -210,7 +210,7 @@ class OrderRequestRepository:
             raise ValueError("fact recording time must be timezone-aware")
         if command.expected_row_version < 1 or not command.fact_types:
             raise ValueError("fact recording requires a version and at least one fact type")
-        accepted = len(command.fact_types)
+        mentioned = len(command.fact_types)
         fact_types = tuple(sorted(set(command.fact_types)))
 
         recorded: dict[str, Any] = {}
@@ -250,10 +250,12 @@ class OrderRequestRepository:
                 aggregate_version=command.expected_row_version + 1,
                 event_type="ORDER_REQUEST_CUSTOMER_FACTS_RECORDED",
                 # Types and counts only. The text behind a fact stays in the channel
-                # conversation it arrived in; this ledger is not a copy of it.
+                # conversation it arrived in; this ledger is not a copy of it. It used to call the
+                # count "accepted", which no fact's content was (AGENT-SHADOW-DEFECTS-001 F10).
                 event_payload={
-                    "accepted_fact_count": accepted,
+                    "mentioned_fact_count": mentioned,
                     "fact_types": list(fact_types),
+                    "fact_text_recorded": False,
                 },
                 audit_action="ORDER_REQUEST_RECORD_CUSTOMER_FACTS",
                 actor_type=ActorRole.AGENT_RUNNER.value,
@@ -268,7 +270,8 @@ class OrderRequestRepository:
                         {
                             "order_request_id": str(command.order_request_id),
                             "row_version": command.expected_row_version + 1,
-                            "accepted_fact_count": accepted,
+                            "mentioned_fact_count": mentioned,
+                            "fact_text_recorded": False,
                         },
                         f"order-request:{command.order_request_id}:facts:"
                         f"{command.expected_row_version + 1}",

@@ -4,7 +4,7 @@ info:
   version: v1
   description: 'Generated from the built FastAPI application by scripts/generate_internal_api_contract.py.
     It covers EVERY served operation, including those FastAPI excludes from its own schema via include_in_schema=False
-    - on this application that is four operations, three of them the authentication surface. Do not hand-edit:
+    - on this application that is five operations, three of them the authentication surface. Do not hand-edit:
     scripts/verify_contracts.py regenerates this document and fails on any difference, which is what keeps
     a new route from landing without a contract entry. Non-operation entries the application serves -
     today only the /staff static mount - are listed under x-served-mounts rather than omitted; an unrecognized
@@ -13,7 +13,7 @@ paths:
   /healthz:
     get:
       operationId: healthz
-      summary: Return only process health; dependency health is added with real infrastructure.
+      summary: Return only process health; /readyz is the one that asks the database.
       x-authorization-dependencies: []
       x-documented-by-fastapi: false
       responses:
@@ -164,6 +164,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}/collection:
+    post:
+      operationId: record_collection
+      summary: Record that a walk-in customer who paid at drop-off has taken their laundry. `DEC-032`.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/orders/{order_id}/delivery-legs:
     post:
       operationId: record_delivery_leg
@@ -218,7 +235,7 @@ paths:
   /internal/v1/orders/{order_id}/settlement:
     post:
       operationId: record_settlement
-      summary: Attest that the customer paid the quoted total and collected their goods.
+      summary: Attest that the customer paid the quoted total -- and, if ticked, collected their goods.
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
@@ -332,17 +349,6 @@ paths:
         required: true
         schema:
           type: string
-  /internal/v1/shadow/unknown-sends:
-    get:
-      operationId: list_unknown_sends
-      summary: list_unknown_sends
-      x-authorization-dependencies:
-      - current_principal
-      - get_operations_service
-      x-documented-by-fastapi: true
-      responses:
-        '200':
-          description: Success response.
   /internal/v1/shadow/unknown-sends/{receipt_id}/reconcile:
     post:
       operationId: reconcile_unknown_send
@@ -901,6 +907,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/range-price-reviews:
+    get:
+      operationId: list_range_price_reviews
+      summary: Every price a staff member chose inside a published band, on one business day.
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/settlements/today:
     get:
       operationId: collected_today
@@ -974,6 +997,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/shadow/unknown-sends:
+    get:
+      operationId: list_unknown_sends
+      summary: One store's sends whose outcome nobody observed. Membership of the store and MFA required.
+      x-authorization-dependencies:
+      - current_principal
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/sla-board:
     get:
       operationId: sla_board
@@ -991,6 +1031,15 @@ paths:
         required: true
         schema:
           type: string
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Report whether this process can reach its database within two seconds.
+      x-authorization-dependencies: []
+      x-documented-by-fastapi: false
+      responses:
+        '200':
+          description: Success response.
 x-served-mounts:
   /staff: 'Static staff PWA assets served by StaticFiles (name=staff-pwa). Not an API operation and deliberately
     unauthenticated: it serves the console shell, and every datum the console shows comes from an authorized

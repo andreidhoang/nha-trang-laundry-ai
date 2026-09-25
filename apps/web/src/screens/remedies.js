@@ -12,15 +12,16 @@
  *     learns after filling in a form that the owner has to approve it has already told a customer
  *     something the shop cannot do. So the summary block sits above the money box in the DOM, not
  *     beside it and not after it.
- *   - **`LOST_ITEM` is not a form.** It renders through `components.unsupported`, because `DEC-004`
- *     answers loss with "not decided yet" and nothing in this repository may apply the damage
- *     figures to it by analogy. There is no ceiling on it, no window on it, and no submit button
- *     under it — the complaint stays where it belongs, on the incident record, and goes to the
- *     owner as a conversation.
- *   - **No ceiling is ever typed, and none is ever truncated to.** The 5× cap comes from the
- *     order's own priced line and the 10% credit from its settled total; both arrive computed. An
- *     amount above the cap is refused here with the cap named, exactly as the server refuses it
- *     with `REMEDY_CEILING_EXCEEDED` — never quietly reduced to the cap, which would pay a
+ *   - **`LOST_ITEM` is a form that always ends at the owner.** Until `DEC-031` it rendered through
+ *     `components.unsupported`, because `DEC-004` had left loss undecided. `DEC-031` (2026-09-25)
+ *     gave it the damage ceiling and one rule: every loss claim needs the owner, whatever the
+ *     amount. So a loss names the item and a figure like damage, and the form says "chờ chủ tiệm"
+ *     from the first render — staff record and propose, only the owner releases the money.
+ *   - **No ceiling is ever typed, and none is ever truncated to.** The 5× cap comes from the item
+ *     fee the order's own snapshot records — one piece's price on a per-piece line, the bag's fee
+ *     on a weight-priced one — and the 10% credit from its settled total; both arrive computed. An
+ *     item total above the cap is refused here with the cap named, exactly as the server refuses
+ *     it with `REMEDY_CEILING_EXCEEDED` — never quietly reduced to the cap, which would pay a
  *     customer less than the person at the counter believed they had agreed.
  *   - **A credit is a bearer instrument and this screen is the only place its identifier appears.**
  *     There is no route that lists an order's or a ticket's unredeemed credits, so a credit that is
@@ -38,7 +39,7 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UNKNOWN, UUID, dateTime, money, shortId } from "../core/format.js";
+import { UNKNOWN, UUID, dateTime, money, quantity, shortId } from "../core/format.js";
 import { REASON_NOTE } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import {
@@ -65,7 +66,6 @@ import {
   revealError,
   setResult,
   skeleton,
-  unsupported,
 } from "../ui/components.js";
 
 /** `RemedyKind` in the counter's words. The token is always shown beside it, never instead. */
@@ -82,13 +82,53 @@ const KIND_NOTE = {
     "Giặt lại không thu thêm tiền. Không có trần vì không có đồng nào chuyển đi, và không cần " +
     "chủ tiệm duyệt. Cửa sổ 7 ngày tính từ lúc khách nhận đồ.",
   DAMAGE_COMPENSATION:
-    "Đền tiền cho một món tiệm làm hỏng. Trần là 5 lần phí giặt của đúng món đó — số tiệm đã thu, " +
-    "không phải giá mua mới. Cửa sổ 24 giờ tính từ lúc khách nhận đồ.",
+    "Đền tiền cho một món tiệm làm hỏng. Trần là 5 lần phí giặt của món đó: đồ tính theo cái thì " +
+    "lấy giá một cái, đồ tính theo ký thì lấy tiền cả túi. Cửa sổ 24 giờ tính từ lúc khách nhận đồ.",
   LATE_DELIVERY_CREDIT:
     "Giảm trừ 10% vào hoá đơn lần sau khi chuyến giao trễ do lỗi tiệm. Máy chủ tự tính 10% từ " +
     "tổng đã tất toán; nhân viên không gõ số tiền, chỉ khai trễ bao nhiêu phút.",
   LOST_ITEM:
-    "Chủ tiệm chưa quyết chính sách cho trường hợp mất đồ, nên màn hình này không mở biểu mẫu.",
+    "Đền tiền cho một món tiệm làm mất. Trần như hàng hỏng (5 lần phí giặt món đó), hạn 24 giờ từ " +
+    "lúc khách nhận đồ. Nhân viên ghi và đề nghị số tiền; luôn phải chờ chủ tiệm duyệt.",
+};
+
+/** `Unit`, as the counter says it next to a quantity. */
+const UNIT_LABEL = {
+  KG: "kg",
+  ITEM: "cái",
+  PAIR: "đôi",
+  SET: "bộ",
+  ANIMAL_PLUSH_ITEM: "con",
+  CASE: "lần",
+  M2: "m²",
+};
+
+/**
+ * Why the owner is needed, in the counter's words. `OwnerReason`, one sentence each, so the person
+ * at the counter can tell the customer why they have to wait rather than only that they do.
+ */
+const OWNER_REASON_NOTE = {
+  LOSS_CLAIM: "mất đồ luôn do chủ tiệm duyệt, dù số tiền nhỏ",
+  ORDER_REFUNDED: "đơn này đã hoàn tiền, nên mọi khoản đền đều do chủ tiệm duyệt",
+  ITEM_FEE_NOT_RECORDED:
+    "bản giá không ghi giá của từng món trên dòng này, nên chủ tiệm quyết mọi số tiền",
+  ABOVE_STAFF_LIMIT: "tổng đền cho dòng này vượt mức nhân viên được duyệt",
+};
+
+/**
+ * @param {string[]|null|undefined} reasons
+ * @returns {string}
+ */
+function ownerReasonText(reasons) {
+  const said = (reasons || []).map((reason) => OWNER_REASON_NOTE[reason] || reason);
+  return said.join("; ");
+}
+
+/** `ItemFeeBasis` in the counter's words: what the 5× was taken of. */
+const FEE_BASIS_LABEL = {
+  UNIT: "giá một món",
+  BAG: "tiền cả túi (tính theo ký)",
+  NOT_RECORDED: "không ghi giá từng món — chủ tiệm quyết",
 };
 
 /**
@@ -115,15 +155,16 @@ const PLAN_NOTE = {
     "giao thành công, hoặc chưa có tổng nào được tất toán để lấy 10%. Không có tổng thì không có " +
     "10% — và ô này để trống chứ không hiện 0.",
   LINE_NOT_CHOSEN:
-    "Trần 5 lần thuộc về một dòng đã có giá, không thuộc về cả đơn. Chọn đúng món bị hỏng thì mới " +
-    "thấy trần của nó.",
+    "Trần 5 lần thuộc về một món trên đơn, không thuộc về cả đơn. Chọn đúng món thì mới thấy trần " +
+    "của nó và số đã ghi cho nó.",
   AMOUNT_MISSING: "Chưa đủ dữ kiện để gửi. Điền nốt ô còn trống.",
   NOT_AN_AMOUNT:
     "Số tiền phải là số nguyên đồng. “150.000” đọc là 150000; không nhận dấu phẩy và không nhận " +
     "số lẻ. Chưa có gì được gửi đi.",
   ABOVE_CEILING:
-    "Số này vượt trần máy chủ tính cho dòng đã chọn. Máy chủ từ chối và không tự hạ xuống bằng " +
-    "trần — hạ xuống là trả cho khách ít hơn con số bạn vừa thoả thuận với họ.",
+    "Số này vượt trần một món, hoặc cộng với số đã ghi cho dòng này thì vượt trần cả dòng. Máy chủ " +
+    "từ chối và không tự hạ xuống bằng trần — hạ xuống là trả cho khách ít hơn con số bạn vừa thoả " +
+    "thuận với họ.",
   BELOW_LATENESS_THRESHOLD:
     "Số phút khai chưa vượt ngưỡng chủ tiệm công bố, nên đây chưa phải chuyến giao trễ theo " +
     "chính sách. Không có gì được ghi.",
@@ -161,8 +202,17 @@ function ceilingSummary(plan, options) {
   const window = remedyWindow(plan.kind, options);
   const threshold = plan.ownerThresholdVnd;
 
+  // Several pieces on one line: one item's ceiling per claim, and the line's for all of them.
   const ceilingCell = plan.hasCeiling
-    ? h("span", { class: "money" }, money(plan.ceilingVnd))
+    ? Number.isInteger(plan.pieces) && plan.pieces > 1
+      ? h(
+          "span",
+          null,
+          h("span", { class: "money" }, money(plan.ceilingVnd)),
+          ` mỗi món · cả dòng ${plan.pieces} món tối đa `,
+          h("span", { class: "money" }, money(plan.lineCeilingVnd)),
+        )
+      : h("span", { class: "money" }, money(plan.ceilingVnd))
     : plan.kind === REMEDY_KIND.FREE_REWASH
       ? h("span", null, "Không có trần — không có đồng nào chuyển đi")
       : h(
@@ -193,18 +243,36 @@ function ceilingSummary(plan, options) {
           h("strong", null, window.open ? "còn hạn" : "đã đóng"),
         );
 
+  // The server's own reasons, predicted from the per-item terms it sent. A loss, a refunded order
+  // or an item with no recorded fee needs the owner at any amount; otherwise it is the item's total
+  // against the staff limit, never the typed amount alone.
   const ownerCell = plan.requiresOwner
-    ? h("strong", null, "Có — phải có chủ tiệm duyệt trước khi thực hiện")
+    ? h(
+        "span",
+        null,
+        h("strong", null, "Có — phải có chủ tiệm duyệt trước khi thực hiện"),
+        plan.ownerReasons.length ? ` (${ownerReasonText(plan.ownerReasons)}).` : null,
+      )
     : plan.ownerPossible
       ? h(
           "span",
           null,
-          `Tuỳ số tiền. Nhân viên duyệt được tới ${money(threshold)}; trên mức đó phải có chủ tiệm, ` +
-            "và trần của dòng này cao hơn mức đó.",
+          `Tuỳ số tiền. Nhân viên duyệt được tới ${money(threshold)} cho cả dòng, tính cả số đã ` +
+            "ghi trước; trên mức đó phải có chủ tiệm.",
         )
       : threshold === null
         ? h("span", null, UNKNOWN)
         : h("span", null, `Không — nằm trong mức nhân viên duyệt được (tới ${money(threshold)}).`);
+
+  const feeCell =
+    plan.itemFeeVnd === null
+      ? null
+      : h(
+          "span",
+          null,
+          h("span", { class: "money" }, money(plan.itemFeeVnd)),
+          ` · ${FEE_BASIS_LABEL[plan.itemFeeBasis] || plan.itemFeeBasis || UNKNOWN}`,
+        );
 
   return h(
     "div",
@@ -216,7 +284,11 @@ function ceilingSummary(plan, options) {
         h("span", { title: plan.kind }, `${KIND_LABEL[plan.kind] || plan.kind}`),
         { span: true },
       ],
+      ...(feeCell ? [["Phí giặt tính trần", feeCell, { span: true }]] : []),
       ["Trần máy chủ tính", ceilingCell, { span: true }],
+      ...(plan.committedVnd === null
+        ? []
+        : [["Dòng này đã ghi đền", money(plan.committedVnd), { span: true }]]),
       ["Cửa sổ thời gian", windowCell, { span: true }],
       ["Cần chủ tiệm duyệt?", ownerCell, { span: true }],
       ["Khách nhận đồ lúc", dateTime(options?.goods_returned_at), { span: true }],
@@ -224,39 +296,49 @@ function ceilingSummary(plan, options) {
     h(
       "p",
       { class: "hint" },
-      "Mọi con số ở đây do máy chủ tính từ dữ liệu đã lưu của chính đơn này: 5 lần lấy từ tiền " +
-        "dòng đã ghi, 10% lấy từ tổng đã tất toán, cửa sổ đo từ mốc khách nhận đồ. Màn hình này " +
-        "không tính tiền và không được gõ trần.",
+      "Mọi con số ở đây do máy chủ tính từ dữ liệu đã lưu của chính đơn này: 5 lần phí giặt của " +
+        "món (giá một cái, hoặc tiền cả túi nếu tính theo ký), 10% lấy từ tổng đã tất toán, cửa sổ " +
+        "đo từ mốc khách nhận đồ. Màn hình này không tính tiền và không được gõ trần.",
     ),
   );
 }
 
 /**
- * The loss wall, rendered as the refusal it is.
+ * The one sentence a loss needs before anything else: it waits for the owner, whatever the figure.
  *
- * @param {any} options
  * @returns {HTMLElement}
  */
-function lossRefusal(options) {
-  return unsupported({
-    title: "Mất đồ — chưa có chính sách để áp dụng",
-    what:
-      "Ghi nhận và bồi hoàn cho trường hợp tiệm làm mất đồ của khách, với mức đền và người duyệt " +
-      "rõ ràng như ba loại còn lại.",
-    missing:
-      "Chủ tiệm chưa quyết chính sách cho mất đồ. Gói quyết định nói rõ: mất đồ không nằm trong " +
-      "các con số đã chốt, và nếu một vụ mất đồ chạm tới mức 5 lần hay 100.000đ thì phải hỏi lại " +
-      "chủ tiệm trước khi dựa vào mức đó, vì chưa ai hỏi. Nên màn hình này không có trần, không " +
-      "có cửa sổ và không có nút gửi cho loại này — mượn con số của hàng hỏng là tự quyết thay " +
-      "chủ tiệm.",
-    blockedBy:
-      "DEC-004 (đã chốt 18/08 cho hỏng, giặt lại và giao trễ) để ngỏ riêng phần mất đồ. Máy chủ " +
-      `trả về ${options?.loss_reason_code || "LOSS_POLICY_UNRESOLVED"} và dừng ở đó.`,
-    today:
-      "Sự cố đã được ghi trên màn hình Sự cố rồi — đó là bản ghi. Báo chủ tiệm ngay trong ngày, " +
-      "thoả thuận với khách bằng lời, và ghi lại số phiếu. Đừng hứa mức đền nào ở quầy.",
-    specRef: "CORE_OPERATIONS_COMPLETION_SPEC_V1.md §4.3",
-  });
+function lossNotice() {
+  return h(
+    "div",
+    { class: "notice", dataState: "warn" },
+    h("p", { class: "notice__title" }, "Mất đồ — luôn chờ chủ tiệm duyệt"),
+    h(
+      "p",
+      null,
+      "Nhân viên ghi lại và đề nghị số tiền; chỉ chủ tiệm duyệt mới được trả, kể cả số nhỏ. Nói " +
+        "trước với khách là phải chờ, đừng hứa con số nào như đã chốt.",
+    ),
+  );
+}
+
+/**
+ * A refunded order: compensation is still possible, and every amount goes to the owner.
+ *
+ * @returns {HTMLElement}
+ */
+function refundedNotice() {
+  return h(
+    "div",
+    { class: "notice", dataState: "warn" },
+    h("p", { class: "notice__title" }, "Đơn đã hoàn tiền — mọi khoản đền đều chờ chủ tiệm duyệt"),
+    h(
+      "p",
+      null,
+      "Tiền dịch vụ đã trả lại khách, nhưng món bị hỏng hay mất vẫn được đền, trần tính theo giá " +
+        "đã báo. Hoàn tiền và đền trên cùng một đơn thì chủ tiệm duyệt, để không trả hai lần.",
+    ),
+  );
 }
 
 /**
@@ -320,10 +402,14 @@ function proposalCard(result) {
           h(
             "p",
             null,
-            "Số tiền này trên mức nhân viên duyệt được, nên máy chủ đã lập phiếu duyệt và dừng " +
-              "lại. Mở màn hình Duyệt để chủ tiệm quyết; bấm thực hiện trước khi có quyết định " +
-              "thì máy chủ từ chối.",
+            "Máy chủ đã lập phiếu duyệt và dừng lại. Mở màn hình Duyệt để chủ tiệm quyết; bấm " +
+              "thực hiện trước khi có quyết định thì máy chủ từ chối.",
           ),
+          // Why, in the server's own reasons: a 20.000 ₫ loss waits for the owner too, and "above
+          // the staff limit" -- the only reason this notice used to give -- would be false for it.
+          result.owner_reasons?.length
+            ? h("p", null, `Lý do: ${ownerReasonText(result.owner_reasons)}.`)
+            : null,
           h(
             "p",
             { class: "hint" },
@@ -505,13 +591,10 @@ export function render_() {
     }
     const plan = currentPlan();
 
-    if (plan.state === PLAN.LOSS_UNRESOLVED) {
-      render(formHost, lossRefusal(options));
-      return;
-    }
-
     render(
       formHost,
+      draft.kind === REMEDY_KIND.LOST_ITEM ? lossNotice() : null,
+      options.order_refunded === true && plan.needsLine ? refundedNotice() : null,
       ceilingSummary(plan, options),
       planNotice(plan),
       plan.needsLine ? lineField() : null,
@@ -528,10 +611,10 @@ export function render_() {
    * Show a recorded proposal or execution only while its own kind is the one selected.
    *
    * A proposal belongs to the kind it was raised for. Left on screen after the picker moved, a
-   * damage proposal kept its server-computed 600.000 ₫ ceiling visible underneath "Mất đồ — chưa
-   * có chính sách để áp dụng", and kept a live "Thực hiện bồi hoàn" button that would carry out
-   * that damage remedy while the form above it said the shop has no loss policy. The first is the
-   * figure `DEC-004` refuses to lend loss by analogy; the second is worse, because it is a press.
+   * damage proposal kept its server-computed 600.000 ₫ ceiling visible underneath the loss form,
+   * and kept a live "Thực hiện bồi hoàn" button that would carry out that damage remedy while the
+   * form above it described a different kind -- and a loss that only the owner may release. The
+   * first misleads; the second is worse, because it is a press.
    *
    * Hidden rather than discarded, and this is the whole reason the two results are held in
    * variables. The credit id is a bearer instrument that no route can look up again, and the
@@ -591,8 +674,14 @@ export function render_() {
    * @returns {string}
    */
   function planTitle(plan) {
+    if (plan.state === PLAN.ABOVE_CEILING && plan.ceilingBreached === "LINE") {
+      return (
+        `Vượt trần cả dòng: tối đa ${money(plan.lineCeilingVnd)}, ` +
+        `đã ghi ${money(plan.committedVnd)}`
+      );
+    }
     if (plan.state === PLAN.ABOVE_CEILING) {
-      return `Vượt trần: trần của dòng này là ${money(plan.ceilingVnd)}`;
+      return `Vượt trần một món: mỗi đề nghị tối đa ${money(plan.ceilingVnd)}`;
     }
     if (plan.state === PLAN.WINDOW_CLOSED) {
       return `Đã quá hạn: cửa sổ đóng lúc ${dateTime(plan.windowClosesAt)}`;
@@ -602,7 +691,9 @@ export function render_() {
       return "Không biết khách nhận đồ lúc nào";
     }
     if (plan.state === PLAN.CREDIT_UNAVAILABLE) return "Không có khoản giảm trừ để đề nghị";
-    if (plan.state === PLAN.LINE_NOT_CHOSEN) return "Chưa chọn món bị hỏng";
+    if (plan.state === PLAN.LINE_NOT_CHOSEN) {
+      return plan.kind === REMEDY_KIND.LOST_ITEM ? "Chưa chọn món bị mất" : "Chưa chọn món bị hỏng";
+    }
     if (plan.state === PLAN.NOT_AN_AMOUNT) return "Chưa đọc được số tiền";
     if (plan.state === PLAN.BELOW_LATENESS_THRESHOLD) return "Chưa tới ngưỡng giao trễ";
     if (plan.state === PLAN.FAULT_NOT_ATTESTED) return "Chưa xác định lỗi thuộc về tiệm";
@@ -622,23 +713,50 @@ export function render_() {
           redrawForm();
         },
       },
-      h("option", { value: "", selected: !draft.lineId }, "— chọn món bị hỏng —"),
+      h("option", { value: "", selected: !draft.lineId }, "— chọn món —"),
       lines.map((line) =>
         h(
           "option",
-          { value: line.lineId, selected: line.lineId === draft.lineId, title: line.lineId },
-          `${line.lineId} · trần ${money(line.ceiling)}`,
+          {
+            value: line.lineId,
+            selected: line.lineId === draft.lineId,
+            title: `${line.serviceCode} · ${line.lineId}`,
+          },
+          lineOptionText(line),
         ),
       ),
     );
     return labelled({
       id: "remedy-line",
-      label: "Món bị hỏng (dòng đã có giá trên đơn)",
+      label:
+        draft.kind === REMEDY_KIND.LOST_ITEM
+          ? "Món bị mất (dòng đã có giá trên đơn)"
+          : "Món bị hỏng (dòng đã có giá trên đơn)",
       hint:
-        "Trần bên cạnh mỗi dòng là 5 lần tiền dòng đó, do máy chủ tính từ bản báo giá của chính " +
-        "đơn này. Không có dòng nào ở đây nghĩa là đơn chưa có bản giá nào có dòng.",
+        "Trần là 5 lần phí giặt của một món: đồ tính theo cái lấy giá một cái, đồ tính theo ký " +
+        "lấy tiền cả túi. “Đã ghi” là số các đề nghị trước đã giữ cho dòng đó. Không có dòng nào " +
+        "ở đây nghĩa là máy chủ chưa gửi điều kiện từng món.",
       control: select,
     });
+  }
+
+  /**
+   * One line of the picker: the service by name, how many, the ceiling, and what it already holds.
+   *
+   * @param {ReturnType<typeof damageLines>[number]} line
+   * @returns {string}
+   */
+  function lineOptionText(line) {
+    const unit = line.unit ? UNIT_LABEL[line.unit] || line.unit : "";
+    // `quantity`, the house formatter: shown exactly as stored, never re-rounded (`DEC-001`).
+    const count = line.quantity && unit ? ` × ${quantity(line.quantity)} ${unit}` : "";
+    const held = line.committed ? ` · đã ghi ${money(line.committed)}` : "";
+    const owner = line.ownerAlways.length ? " · chủ tiệm duyệt" : "";
+    const cap =
+      line.pieces && line.pieces > 1
+        ? `trần ${money(line.ceiling)}/món, cả dòng ${money(line.lineCeiling)}`
+        : `trần ${money(line.ceiling)}`;
+    return `${line.label}${count} · ${cap}${held}${owner}`;
   }
 
   /** @returns {HTMLElement} */
@@ -660,8 +778,8 @@ export function render_() {
       id: "remedy-amount",
       label: "Số tiền đề nghị đền cho khách (đồng)",
       hint:
-        "Số nguyên đồng. Không gõ trần vào đây — trần đã hiện ở trên và do máy chủ tính. Vượt " +
-        "trần thì máy chủ từ chối chứ không tự hạ xuống.",
+        "Số nguyên đồng. Không gõ trần vào đây — trần đã hiện ở trên và do máy chủ tính. Số này " +
+        "cộng với số đã ghi cho món mà vượt trần thì máy chủ từ chối chứ không tự hạ xuống.",
       control: input,
     });
     refreshAmountFeedback(input);
@@ -685,8 +803,8 @@ export function render_() {
           ? h(
               "p",
               { class: "hint" },
-              `Số này trên mức nhân viên duyệt được (${money(plan.ownerThresholdVnd)}), nên gửi đi ` +
-                "sẽ lập phiếu chờ chủ tiệm duyệt. Nói trước với khách là phải chờ.",
+              `Gửi đi sẽ lập phiếu chờ chủ tiệm duyệt: ${ownerReasonText(plan.ownerReasons)}. ` +
+                "Nói trước với khách là phải chờ.",
             )
           : null,
       );
@@ -854,7 +972,16 @@ export function render_() {
         ],
         [
           "Số dòng có thể đền",
-          lines.length ? String(lines.length) : `${UNKNOWN} (đơn chưa có dòng nào có giá)`,
+          lines.length ? String(lines.length) : `${UNKNOWN} (máy chủ chưa gửi dòng nào có giá)`,
+          { span: true },
+        ],
+        [
+          "Đơn đã hoàn tiền?",
+          loaded.order_refunded === true
+            ? h("strong", null, "Có — mọi khoản đền đều chờ chủ tiệm duyệt")
+            : loaded.order_refunded === false
+              ? "Không"
+              : UNKNOWN,
           { span: true },
         ],
       ]),
@@ -994,17 +1121,17 @@ export function render_() {
       h(
         "p",
         { class: "screen__lede" },
-        "Một sự cố đi tới kết cục ở đây: giặt lại, đền món hỏng, hoặc giảm trừ do giao trễ. Mức " +
-          "trần, thời hạn và việc có cần chủ tiệm duyệt hay không đều do máy chủ tính và hiện ra " +
-          "trước khi bạn gõ bất cứ con số nào.",
+        "Một sự cố đi tới kết cục ở đây: giặt lại, đền món hỏng, đền món mất, hoặc giảm trừ do " +
+          "giao trễ. Mức trần, thời hạn và việc có cần chủ tiệm duyệt hay không đều do máy chủ " +
+          "tính và hiện ra trước khi bạn gõ bất cứ con số nào.",
       ),
     ),
     panel({
       eyebrow: "Đọc trước",
       title: "Sự cố này được phép bồi hoàn tới đâu",
       guardrail:
-        "Màn hình này không tính tiền và không đặt trần. 5 lần phí giặt lấy từ dòng đã có giá của " +
-        "chính đơn, 10% lấy từ tổng đã tất toán, cửa sổ đo từ mốc khách nhận đồ — máy chủ tính " +
+        "Màn hình này không tính tiền và không đặt trần. 5 lần phí giặt của một món lấy từ bản giá " +
+        "của chính đơn, 10% lấy từ tổng đã tất toán, cửa sổ đo từ mốc khách nhận đồ — máy chủ tính " +
         "hết. Chưa công bố chính sách thì mọi loại đều bị từ chối, không có mức tạm.",
       children: h(
         "div",
@@ -1036,7 +1163,7 @@ export function render_() {
       title: "Đề nghị một khoản bồi hoàn",
       guardrail:
         "Nhân viên không bao giờ gõ trần. Vượt trần thì bị từ chối kèm con số trần, không bị tự " +
-        "hạ xuống. Mất đồ thì không có biểu mẫu: chủ tiệm chưa quyết chính sách cho trường hợp đó.",
+        "hạ xuống. Mất đồ, và mọi khoản đền trên đơn đã hoàn tiền, luôn chờ chủ tiệm duyệt.",
       children: h("div", { class: "stack" }, gatedFields(form, writeVerdict), proposalHost, executionHost),
     }),
     redemption,

@@ -102,7 +102,12 @@ export const CAPABILITIES = {
   SHADOW_READ: {
     roles: [OWNER, APPROVER, OPERATOR, AUDITOR],
     mfa: false,
-    why: "Đọc bản nháp, ngoại lệ và dòng thời gian kiểm toán mở cho bốn vai trò.",
+    why: "Đọc bản nháp và dòng thời gian kiểm toán mở cho bốn vai trò; hàng chờ gửi chưa rõ kết quả cần thêm xác thực hai bước.",
+  },
+  UNKNOWN_SENDS_READ: {
+    roles: [OWNER, APPROVER, OPERATOR, AUDITOR],
+    mfa: true,
+    why: "Hàng chờ gửi chưa rõ kết quả chỉ gồm biên nhận của cửa hàng bạn được gán, và cần đã xác thực hai bước.",
   },
   SHADOW_DECIDE: {
     roles: [OWNER, APPROVER],

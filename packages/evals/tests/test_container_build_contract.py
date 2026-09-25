@@ -14,6 +14,27 @@ DOCKERFILES = (
 SERVICES = ("api", "worker", "agent-tools")
 
 
+class _ComposeLoader(yaml.SafeLoader):
+    """`!reset` and `!override` are compose merge tags PyYAML does not know; keep the tagged value.
+
+    `compose.production.yaml` says `ports: !reset []` for `postgres` since `OPS-HARDENING-002`: in
+    an overlay a bare `[]` appended nothing and left `compose.yaml`'s port published. The value the
+    assertion below reads is the same empty list.
+    """
+
+
+def _tagged_value(loader: yaml.SafeLoader, node: yaml.Node) -> object:
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node, deep=True)
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node, deep=True)
+    return loader.construct_scalar(node)  # type: ignore[arg-type]
+
+
+for _tag in ("!override", "!reset"):
+    _ComposeLoader.add_constructor(_tag, _tagged_value)
+
+
 def test_images_pin_base_install_from_lock_and_run_non_root() -> None:
     for path in DOCKERFILES:
         content = path.read_text(encoding="utf-8")
@@ -51,7 +72,9 @@ def test_build_context_excludes_private_state_secrets_and_raw_material() -> None
 
 
 def test_production_compose_is_unprivileged_private_and_disabled_by_default() -> None:
-    compose = yaml.safe_load((ROOT / "compose.production.yaml").read_text(encoding="utf-8"))
+    compose = yaml.load(
+        (ROOT / "compose.production.yaml").read_text(encoding="utf-8"), Loader=_ComposeLoader
+    )
     services = compose["services"]
 
     assert services["postgres"]["profiles"] == ["local-database"]

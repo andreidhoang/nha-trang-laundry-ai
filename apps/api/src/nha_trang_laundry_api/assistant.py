@@ -51,7 +51,6 @@ from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-import psycopg
 from nha_trang_laundry_db.approvals import ApprovalRepository
 from nha_trang_laundry_db.assistant import (
     AssistantLink,
@@ -61,6 +60,7 @@ from nha_trang_laundry_db.assistant import (
     find_order_status,
     today_status_counts,
 )
+from nha_trang_laundry_db.connection import application_connect
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
@@ -501,7 +501,7 @@ class AssistantService:
     def __init__(
         self,
         settings: AuthSettings,
-        connection_factory: Callable[[str], Any] = psycopg.connect,
+        connection_factory: Callable[[str], Any] = application_connect,
         brain: AssistantBrain | None = None,
     ) -> None:
         if not settings.database_url:

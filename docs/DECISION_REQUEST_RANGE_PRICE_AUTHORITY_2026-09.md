@@ -118,6 +118,10 @@ ApprovalAction.SET_RANGE_PRICE: _COUNTER_ATTESTATION,
 
 plus its test. No migration, no data change, no console change. It is reversible in the same one line.
 
+## Outcome — 2026-09-25
+
+**Decided: option B**, as `DEC-029` in `context/DECISION_REGISTRY.yaml`, under the owner's delegation of 2026-09-25 (`docs/DECISION_RECORD_FOUNDER_2026-09-25.md`). It is recorded there as delegated rather than signed, so the signature block below is left blank on purpose: the owner may still sign it, or reverse it as the record describes.
+
 ## 7. Signature block
 
 - **Decision:** A / B / C: ______

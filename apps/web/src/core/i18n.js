@@ -107,9 +107,10 @@ const REASON_TO_WARNING = {
   // between, and PROMO-FIX-003 had the domain choose for them, which turned out to raise the bill
   // above the total the customer had just been read. The choice is a person's again — but it is
   // taken at the redemption, which `REMEDY_CREDIT_PROMOTION_NOT_STACKABLE` refuses outright while
-  // the credit is still unspent. What is left wearing this code is a quote that was already
-  // carrying a credit when it was priced: the programme is withheld, the bag is charged at list
-  // less the credit, nothing is pending and the quote sells.
+  // the credit is still unspent. DEC-030 (2026-09-25) then made pricing follow the same rule:
+  // a reprice releases a reserved credit when a non-stacking programme takes dong off. What is
+  // left wearing this code is acceptance of a bill whose credit was already on the agreed price
+  // before the programme began; the agreed price stands (DEC-021), nothing is pending, it sells.
   //
   // The rest are genuinely unfinished: eligibility resolves at acceptance, a band has to be closed
   // before a promotion can be computed against it, a discount that moved between the quote and the
@@ -186,11 +187,12 @@ export const REASON_NOTE = {
     "Chủ tiệm chưa quyết định dịch vụ này có nằm trong chương trình hay không, nên khuyến mãi không " +
     "áp cho dòng này: tính đúng giá niêm yết. Không có gì phải chờ duyệt, cứ nhận đồ bình thường. " +
     "Muốn dòng này được giảm thì chủ tiệm công bố lại chương trình có tên dịch vụ; đừng tự giảm ở quầy.",
+  // DEC-030 (2026-09-25): pricing now applies the programme and releases the credit, so this code
+  // is left only on a bill whose credit was already on the price the customer agreed.
   PROMOTION_STACKING_REQUIRES_HUMAN:
-    "Bản báo giá này có phiếu bồi hoàn, mà chương trình khuyến mãi không cho cộng dồn hai khoản " +
-    "giảm, nên khuyến mãi không được tính vào: số tiền giảm trên bản này là của phiếu bồi hoàn, " +
-    "không phải của chương trình. Khách trả đúng bằng lúc không có chương trình nào chạy. Không " +
-    "phải chờ ai duyệt — cứ nhận đồ, và nói trước với khách rằng lần này không cộng thêm khuyến mãi.",
+    "Quy tắc của tiệm (DEC-030): khuyến mãi không cộng dồn thì đơn hưởng khuyến mãi, còn phiếu bồi " +
+    "hoàn giữ nguyên, chưa dùng, cho đơn sau. Bản này có phiếu trên giá khách đã đồng ý từ trước " +
+    "khi chương trình bắt đầu, nên giữ đúng giá đó. Không phải chờ ai duyệt.",
   PROMOTION_PENDING_BAND_CLOSE:
     "Dòng khoảng giá chưa được chốt nên chưa xét khuyến mãi được: khuyến mãi áp trên số tiền nhân viên " +
     "chọn, không áp trên khoảng. Chốt giá trong khoảng xong thì mức giảm mới hiện ra.",
@@ -272,6 +274,17 @@ export const REASON_NOTE = {
     "để xem lần tất toán đã ghi.",
   STALE_VERSION:
     "Có người vừa đổi đơn này trong lúc bạn đang xem. Tải lại đơn rồi ghi nhận theo số mới.",
+  // PREPAID-DROPOFF-001 (DEC-032): the handover rule and the pickup command's refusals. States,
+  // not open decisions, so each says what to do first.
+  GOODS_NOT_READY_FOR_HANDOVER:
+    "Đồ chưa giặt xong nên chưa đưa cho khách được. Khách trả tiền lúc gửi đồ thì bấm “Khách trả " +
+    "trước khi gửi đồ”, không tích ô đã lấy đồ.",
+  COLLECTION_REQUIRES_PAYMENT:
+    "Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì nhập số tiền, tích “Khách đã tự lấy đồ về” " +
+    "rồi bấm “Ghi nhận tất toán”.",
+  NOT_A_PREPAID_SELF_COLLECTION:
+    "Đơn này không phải khách tự mang đồ tới rồi tự lấy. Đơn giao tận nơi thì ghi chuyến giao.",
+  ALREADY_COLLECTED: "Đơn này đã ghi nhận khách nhận đồ rồi. Không ghi lần nữa.",
   // `RemedyRefusal`, exactly as packages/domain/.../remedies.py names them, plus the codes
   // `RemedyProposalRepository` raises that are states rather than policy answers. The rule is the
   // settlement vocabulary's: a refusal a staff member meets with a customer in front of them may
@@ -282,17 +295,20 @@ export const REASON_NOTE = {
     "Chưa có bản chính sách bồi hoàn nào được công bố, nên không có con số nào để áp dụng và " +
     "không được suy ra con số nào — kể cả cho loại không chuyển tiền, vì cửa sổ 7 ngày cũng là " +
     "một con số đã công bố. Báo chủ tiệm công bố chính sách; đừng hứa mức nào ở quầy.",
+  // Since DEC-031 only a loss recorded before 2026-09-25 carries this: it has no figure and is
+  // never paid. A new loss is proposed with a figure and goes to the owner.
   LOSS_POLICY_UNRESOLVED:
-    "Chủ tiệm chưa quyết chính sách cho trường hợp mất đồ, và mức của hàng hỏng không được mượn " +
-    "sang. Sự cố vẫn được ghi — đó mới là việc phải làm ở quầy. Báo chủ tiệm trong ngày.",
+    "Bản ghi mất đồ này được lập khi chủ tiệm chưa có chính sách cho mất đồ, nên không có số tiền " +
+    "và không trả được. Muốn đền, lập đề nghị mất đồ mới cho đúng món: đề nghị đó chờ chủ tiệm " +
+    "duyệt.",
   // Re-keyed when the two damage figures became cumulative per item: the ceiling is compared against
   // what earlier proposals on the same garment already committed plus this one, and the refusal
   // carries both numbers (`ceiling_vnd`, `committed_vnd`).
   REMEDY_CEILING_EXCEEDED:
-    "Tổng bồi thường cho món này vượt trần máy chủ tính từ chính dòng đã có giá của đơn (5 lần phí " +
-    "giặt món đó) — tính cả các đề nghị trước đã ghi cho cùng món, dù ai duyệt. Máy chủ từ chối kèm " +
-    "con số trần và số đã ghi, và không tự hạ xuống. Chỉ còn được đề nghị phần chênh lệch; báo chủ " +
-    "tiệm nếu vụ này cần khác đi.",
+    "Vượt trần máy chủ tính. Mỗi đề nghị tối đa 5 lần phí giặt một món (giá một cái, hoặc tiền cả " +
+    "túi nếu tính theo ký); cả dòng tối đa bằng trần của mọi món trên dòng, tính cả các đề nghị " +
+    "hỏng và mất đã ghi trước, dù ai duyệt. Máy chủ từ chối kèm con số trần (và số đã ghi nếu vượt " +
+    "trần cả dòng), không tự hạ xuống. Báo chủ tiệm nếu vụ này cần khác đi.",
   REMEDY_INCIDENT_NOT_OPEN:
     "Sự cố này đã có kết quả và đã đóng, nên không ghi thêm đề nghị bồi hoàn nào vào đó. Nếu khách " +
     "báo một vấn đề mới, mở một sự cố mới cho đơn; các mức trần vẫn tính chung theo từng món.",
@@ -304,11 +320,14 @@ export const REASON_NOTE = {
     "không có gì được ghi và tổng không đổi.",
   // A quote reason code, not a refusal: a re-priced revision that could not carry a credit its
   // previous revision reserved. The credit is not spent and not shrunk, so the customer still has it.
+  // DEC-030 added the fourth reason: a non-stacking programme applies to this bill, so the
+  // promotion is taken and the credit waits for a later order.
   REMEDY_CREDIT_RELEASED:
-    "Bản báo giá trước có phiếu giảm trừ, nhưng bản vừa tính lại không trừ được phiếu đó — hoá đơn " +
-    "mới nhỏ hơn giá trị phiếu, là khoảng giá, hoặc phiếu đã được dùng cho đơn khác. Phiếu KHÔNG bị " +
-    "trừ và không bị cắt bớt: nếu chưa dùng ở đơn khác thì khách vẫn còn nguyên. Nói rõ với khách " +
-    "trước khi chốt; muốn trừ lại thì trừ vào một hoá đơn đủ lớn.",
+    "Bản báo giá trước có phiếu giảm trừ, nhưng bản vừa tính lại không trừ phiếu đó: hoá đơn mới " +
+    "nhỏ hơn giá trị phiếu, là khoảng giá, phiếu đã dùng cho đơn khác, hoặc đơn này đang hưởng " +
+    "khuyến mãi không cộng dồn (DEC-030: đơn hưởng khuyến mãi, phiếu để dành). Phiếu KHÔNG bị trừ " +
+    "và không bị cắt bớt: nếu chưa dùng ở đơn khác thì khách vẫn còn nguyên cho lần sau. Nói rõ " +
+    "với khách trước khi chốt.",
   REMEDY_WINDOW_CLOSED:
     "Đã quá cửa sổ chủ tiệm công bố cho loại này, đo từ lúc khách nhận đồ. Nói với khách đúng mốc " +
     "đã qua chứ không chỉ nói là hết hạn. Muốn làm ngoài cửa sổ thì phải hỏi chủ tiệm.",
@@ -320,9 +339,9 @@ export const REASON_NOTE = {
     "Chưa có nhân viên nào xác định lỗi thuộc về tiệm, mà DEC-004 đặt mọi khoản bồi hoàn lên đúng " +
     "việc đó. Xác định rồi hãy gửi; tên người xác định được ghi kèm.",
   REMEDY_AMOUNT_NOT_APPLICABLE:
-    "Có ô không thuộc về loại bồi hoàn đang chọn, hoặc thiếu ô bắt buộc của loại đó. Chỉ bồi " +
-    "thường món hỏng mới có người gõ số tiền: giặt lại không chuyển tiền, giảm trừ giao trễ do " +
-    "máy chủ tính, mất đồ thì không có số nào.",
+    "Có ô không thuộc về loại bồi hoàn đang chọn, hoặc thiếu ô bắt buộc của loại đó. Chỉ đền món " +
+    "hỏng và đền món mất mới có người gõ món và số tiền: giặt lại không chuyển tiền, giảm trừ giao " +
+    "trễ do máy chủ tính.",
   REMEDY_LINE_NOT_PRICED:
     "Dòng được chọn không có trong bản báo giá hiện tại của đơn, nên không có phí giặt nào để lấy " +
     "5 lần. Mở lại đơn, đọc đúng mã dòng trên bản giá.",
@@ -342,18 +361,19 @@ export const REASON_NOTE = {
   REMEDY_CREDIT_REVISION_NOT_OPEN:
     "Bản báo giá định trừ vào đang là khoảng giá hoặc khách đã chốt rồi. Giảm trừ chỉ đổi tổng " +
     "trước khi báo cho khách, không đổi tổng đã thoả thuận. Lập bản mới rồi trừ vào bản đó.",
+  // DEC-030 (2026-09-25, option A): the promotion applies and the credit waits. This refusal was
+  // already that outcome; the gloss now says it is the rule rather than a choice left open.
   REMEDY_CREDIT_PROMOTION_NOT_STACKABLE:
-    "Bản báo giá này đang có mức giảm của chương trình khuyến mãi, mà chương trình đó không cho " +
-    "cộng dồn với phiếu giảm trừ. Phiếu CHƯA bị trừ, vẫn còn nguyên và vẫn dùng được — không có " +
-    "gì được ghi và tổng vừa đọc cho khách không đổi. Phải có người chọn một trong hai: để khách " +
-    "hưởng khuyến mãi lần này và giữ phiếu cho hoá đơn sau, hoặc lập báo giá không có khuyến mãi " +
-    "rồi trừ phiếu vào bản đó. Hỏi chủ tiệm; máy không chọn thay.",
+    "Bản báo giá này đã có khuyến mãi không cho cộng dồn. Theo quy tắc của tiệm (DEC-030), đơn " +
+    "này hưởng khuyến mãi, còn phiếu bồi hoàn chưa bị trừ và giữ nguyên để dùng cho đơn sau. " +
+    "Không có gì được ghi, tổng vừa đọc cho khách không đổi. Nói với khách: lần này được khuyến " +
+    "mãi, phiếu để dành lần sau.",
   REMEDY_CREDIT_ALREADY_REDEEMED:
     "Phiếu giảm trừ này đã dùng rồi. Phiếu là vật cầm tay, dùng đúng một lần — không phải lỗi của " +
     "bạn, và không trừ thêm lần nữa. Mở lại báo giá cũ để xem lần đã trừ.",
   REMEDY_APPROVAL_REQUIRED:
-    "Khoản này trên mức nhân viên duyệt được, nên phải có phiếu duyệt của chủ tiệm trước khi thực " +
-    "hiện. Mở màn hình Duyệt; chưa duyệt mà bấm thực hiện thì máy chủ từ chối.",
+    "Khoản này phải có chủ tiệm duyệt trước khi thực hiện: vượt mức nhân viên duyệt được, là mất " +
+    "đồ, hoặc đơn đã hoàn tiền. Mở màn hình Duyệt; chưa duyệt mà bấm thực hiện thì máy chủ từ chối.",
   REMEDY_APPROVAL_EXPIRED:
     "Phiếu duyệt của chủ tiệm đã hết hạn. Phiếu có thời hạn ngắn và không tự gia hạn. Gửi lại đề " +
     "nghị để lập phiếu mới, đừng chờ thêm.",
@@ -576,6 +596,7 @@ export const ENUM_GLOSS = {
   ORDER_CREATE_FROM_FINAL_QUOTE: "tạo đơn từ báo giá đã chốt",
   ORDER_STATE_TRANSITION: "chuyển trạng thái đơn",
   ORDER_SETTLEMENT_RECORD: "ghi nhận tất toán",
+  ORDER_COLLECTION_RECORD: "ghi nhận khách nhận đồ",
 };
 
 /**

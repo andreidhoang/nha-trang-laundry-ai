@@ -160,6 +160,10 @@ class OrderView:
     payable_total_vnd: int | None
     ticket_number: int | None
     ticket_issued_on: date | None
+    #: Whether the customer is recorded as having taken the goods at the counter. `DEC-032` made it
+    #: something pickup needs to read: a walk-in who paid at drop-off shows `balance` PAID and this
+    #: false until the staff member handing the bag over records it. The stored flag, not inferred.
+    self_collection_recorded: bool
 
 
 #: The read model, shared by the board and the read by id so the two cannot disagree about a field.
@@ -173,7 +177,7 @@ _ORDER_VIEW_SELECT: Final = """
            o.current_quote_id, o.current_quote_revision,
            CASE WHEN r.display_total_min_vnd = r.display_total_max_vnd
                 THEN r.display_total_min_vnd END AS payable_total_vnd,
-           t.ticket_number, t.issued_on
+           t.ticket_number, t.issued_on, o.self_collection_recorded
     FROM orders o
     JOIN quote_revisions r
       ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
@@ -1137,6 +1141,7 @@ def _order_view_row(row: tuple[object, ...]) -> OrderView:
         payable_total_vnd=None if row[11] is None else int(str(row[11])),
         ticket_number=None if row[12] is None else int(str(row[12])),
         ticket_issued_on=_optional_date(row[13]),
+        self_collection_recorded=bool(row[14]),
     )
 
 

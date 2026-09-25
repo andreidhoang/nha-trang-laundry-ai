@@ -201,6 +201,13 @@ PROMOTION_ADJUSTMENT_ID: Final = "promotion"
 # allocates to `AUTO_IF_TARGETED` lines only; stacking is withheld whole by `_withheld_by_stacking`,
 # because it is a fact about the revision rather than about one line.
 #
+# `DEC-030` (2026-09-25) narrowed where stacking can still be withheld. Composing a price no longer
+# puts a remedy credit in front of the programme: `compose_quote_revision` prices the bag alone and
+# releases carried credits when a non-stacking programme takes dong off, and `redeem_remedy_credit`
+# refuses to add one to such a bill. What is left is re-verification at acceptance of a bill that
+# already carried a credit when the programme started -- where the price the customer agreed is
+# kept (`DEC-021`) and pricing the bag again applies the programme and releases the credit.
+#
 # The owner turns a `HUMAN_CONFIRM` service into a discounted one the way they started the
 # programme: by publishing a document that says so.
 
@@ -834,10 +841,16 @@ def compose_quote_revision(
     on any bill it fits. `QuoteRepository.create_revision` refuses a revision that drops a parent's
     credit without that statement, so a caller that forgets to pass `remedy_credits` fails loudly.
 
-    A carried credit is "on the bag first" for the promotion's stacking test, exactly as a credit
-    redeemed before acceptance is, so a programme that may not stack is withheld rather than
-    compounded -- unless every carried credit ends up released, in which case the revision is
-    composed again without them and the programme applies as if they had never been there.
+    **A programme that may not stack wins, and the credit waits (`DEC-030`, option A).** The
+    revision is priced first with no credit on it. If that price carries a discount from a
+    programme whose document forbids compounding, every carried credit is released -- whole,
+    unspent, stated on the revision with `REMEDY_CREDIT_PROMOTION_NOT_STACKABLE` as the reason --
+    and the customer pays the promoted price. That is the same answer `redeem_remedy_credit` gives
+    when the credit is presented after the programme, so the order the two arrive in no longer
+    decides the bill. Until `DEC-030` a carried credit was treated as "on the bag first" and the
+    programme was withheld instead, which charged 120.000 - 30.000 = 90.000 d where the ruling
+    charges 84.000 d and keeps the 30.000 d owed. A programme that allows stacking, or grants this
+    revision nothing, leaves the credits to land as before.
 
     Every other parameter -- `fulfillment_mode`, the three fates of a range-priced line, and
     `promotion` -- is described on `_compose_fresh`, which does the pricing.
@@ -854,7 +867,7 @@ def compose_quote_revision(
         if item.credit_id in spent_remedy_credit_ids
     ]
 
-    def fresh(carried: tuple[RemedyCredit, ...]) -> QuoteComposition:
+    def fresh() -> QuoteComposition:
         return _compose_fresh(
             quote_id=quote_id,
             revision=revision,
@@ -870,28 +883,24 @@ def compose_quote_revision(
             range_prices=range_prices,
             present_range_as_band=present_range_as_band,
             promotion=promotion,
-            carried=carried,
         )
 
-    composition = fresh(live)
+    # Priced with no credit on it, so the programme is judged on the bag alone. Each credit is then
+    # offered to that bill through `redeem_remedy_credit`, the one place the rule lives: a bill
+    # carrying a non-stacking programme's discount refuses it with
+    # `REMEDY_CREDIT_PROMOTION_NOT_STACKABLE`, and the refusal becomes the release statement. That
+    # is `DEC-030` in whichever order the two instruments arrive -- the promotion applies, the
+    # credit waits unspent.
+    composition = fresh()
     if not credits or isinstance(composition, UnresolvedQuote):
         return composition
     snapshot = composition.snapshot
-    landed = 0
     for credit in live:
         carried = redeem_remedy_credit(priced=snapshot, revision=revision, credit=credit)
         if isinstance(carried, ComposedQuote):
             snapshot = carried.snapshot
-            landed += 1
         else:
             released.append((credit, carried.reason_codes[0]))
-    if live and not landed:
-        # Every carried credit was released, so none of them is on the bag after all and the
-        # programme's stacking test must not see them. Composed again from the same inputs.
-        composition = fresh(())
-        if isinstance(composition, UnresolvedQuote):
-            return composition
-        snapshot = composition.snapshot
     if released:
         stated = _state_released_credits(snapshot, tuple(released))
         if stated is None:
@@ -916,12 +925,12 @@ def _compose_fresh(
     range_prices: RangePriceAttestation | None,
     present_range_as_band: bool,
     promotion: PublishedPromotionProgram | None,
-    carried: tuple[RemedyCredit, ...],
 ) -> QuoteComposition:
     """Price the requested lines and assemble one immutable revision, or refuse with reasons.
 
-    `carried` credits are not applied here -- `compose_quote_revision` lands them afterwards -- but
-    the promotion's stacking test sees them, because they are on the bag before the programme is.
+    No remedy credit is on the bag here. `compose_quote_revision` lands the carried ones afterwards,
+    or releases them when a non-stacking programme took dong off (`DEC-030`), so the programme is
+    judged on the bag alone.
 
     `fulfillment_mode` has no default on purpose. Whether the shop is carrying this laundry decides
     whether a delivery fee exists at all, and guessing it would be this code deciding a fact about
@@ -1100,10 +1109,9 @@ def _compose_fresh(
     promoted = _promotion_outcome(
         published=promotion,
         lines=tuple(lines),
-        # Delivery is a DEBIT and never another promotion. The carried remedy credits are credits
-        # already on this bag, so they are what `stacking_allowed` is tested against -- stated as
-        # the adjustments they will become, at face value, since each lands whole or is released.
-        adjustments=delivery_adjustments + tuple(_carried_placeholder(item) for item in carried),
+        # Delivery is a DEBIT and never another promotion. No remedy credit is here: `DEC-030` has
+        # the programme judged on the bag alone and the credit wait when the two cannot stack.
+        adjustments=delivery_adjustments,
         banded=banded,
         # The moment the price is computed. A promotion keyed to `accepted_at` cannot be resolved
         # here because acceptance has not happened; the engine answers PROVISIONAL and says so, and
@@ -2066,21 +2074,6 @@ def released_remedy_credit_ids(priced: ImmutableQuoteSnapshot) -> frozenset[UUID
                     "a released-credit trace does not name its credit"
                 ) from error
     return frozenset(released)
-
-
-def _carried_placeholder(credit: RemedyCredit) -> QuoteAdjustmentSnapshot:
-    """What a carried credit will be on the revision, for the promotion's stacking test only."""
-
-    return QuoteAdjustmentSnapshot(
-        adjustment_id=f"{REMEDY_CREDIT_ADJUSTMENT_PREFIX}{credit.credit_id}",
-        kind=QuoteAdjustmentKind.REMEDY_CREDIT,
-        direction=AdjustmentDirection.CREDIT,
-        amount_min_vnd=credit.amount_vnd,
-        amount_max_vnd=credit.amount_vnd,
-        reason_code=REMEDY_CREDIT_REASON_CODE,
-        source_version_id=credit.policy_version_id,
-        approval_id=credit.approval_id,
-    )
 
 
 def _state_released_credits(

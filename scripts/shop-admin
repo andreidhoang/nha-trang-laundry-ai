@@ -39,13 +39,9 @@ image="${R1_API_IMAGE:-nha-trang-laundry-api:local}"
 # The migration identity by default: these are schema-and-configuration commands, and the API and
 # worker roles deliberately cannot do them. `DATABASE_URL` in the environment wins, which is how the
 # provider-managed branch and a drill machine pass their own.
-database_url="${DATABASE_URL:-}"
-if [ -z "$database_url" ]; then
-    [ -r .shop/secrets/migration_database_url ] || {
-        echo "$0: set DATABASE_URL, or run scripts/bootstrap_shop_local.py first." >&2
-        exit 67
-    }
-    database_url="$(cat .shop/secrets/migration_database_url)"
+if [ -z "${DATABASE_URL:-}" ] && [ ! -r .shop/secrets/migration_database_url ]; then
+    echo "$0: set DATABASE_URL, or run scripts/bootstrap_shop_local.py first." >&2
+    exit 67
 fi
 
 docker network inspect "$network" >/dev/null 2>&1 || {
@@ -54,13 +50,31 @@ docker network inspect "$network" >/dev/null 2>&1 || {
     exit 68
 }
 
+# **The URL travels on stdin, and is read into the environment inside the container.** It used to
+# be `--env DATABASE_URL="$database_url"`: the migration identity's password in the argument list
+# of `docker` -- readable by anyone on the host with `ps` -- and in the container's recorded
+# configuration, readable by `docker inspect` for as long as the container existed. `printf` is a
+# shell builtin, so feeding stdin puts the value in no process's arguments at all, and a file
+# redirect never reads it into this shell. A trailing newline is optional: `read` returns non-zero
+# at an unterminated last line but has still assigned it.
+IN_CONTAINER='IFS= read -r DATABASE_URL || [ -n "$DATABASE_URL" ] || { echo "shop-admin: no database URL on stdin" >&2; exit 67; }
+SUPERUSER_DATABASE_URL="$DATABASE_URL"
+export DATABASE_URL SUPERUSER_DATABASE_URL
+exec python "$@"'
+
 # `--rm`, no ports, read-only mount: this container exists for one command and reaches the database
 # the same way `api` does, over `database-private`.
-exec docker run --rm \
-    --network "$network" \
-    --volume "$PWD:/repo:ro" \
-    --workdir /repo \
-    --env DATABASE_URL="$database_url" \
-    --env SUPERUSER_DATABASE_URL="$database_url" \
-    --entrypoint python \
-    "$image" "scripts/$script" "$@"
+run_in_network() {
+    docker run --rm -i \
+        --network "$network" \
+        --volume "$PWD:/repo:ro" \
+        --workdir /repo \
+        --entrypoint sh \
+        "$image" -c "$IN_CONTAINER" shop-admin "scripts/$script" "$@"
+}
+
+if [ -n "${DATABASE_URL:-}" ]; then
+    printf '%s\n' "$DATABASE_URL" | run_in_network "$@"
+else
+    run_in_network "$@" < .shop/secrets/migration_database_url
+fi

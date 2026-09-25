@@ -1,8 +1,15 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-09-24 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **143 queue items.** Migrations run `0001`–`0047` (`0045` unused).
+**Last reconciled:** 2026-09-25 (Asia/Ho_Chi_Minh)
+**Active work item:** none. **146 queue items.** Migrations run `0001`–`0051`.
 Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
+
+## Founder rulings, 2026-09-25
+
+The owner delegated the open business decisions. `DEC-029`–`DEC-032` are recorded as delegated, not
+signed, in `docs/DECISION_RECORD_FOUNDER_2026-09-25.md`, and all four are built. The staging review's
+follow-ups are complete except `SHOP-ALERT-DELIVERY-001`, which is BLOCKED on the owner watching one
+forced alert arrive on their phone. Current verdict: `docs/STAGING_READINESS_2026-09.md`.
 
 ## Pre-staging review, 2026-09-24 — read before trusting the section below
 

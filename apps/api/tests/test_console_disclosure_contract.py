@@ -203,8 +203,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # and `EXPORT_DATA` are REPOSITORY_ROLES, so 3 + 2 = 5 -- the board route depends on
     # `current_principal` and the set that decides it is `SHADOW_READ_ROLES`, and the export's
     # `EXPORT_ROLES` is re-checked inside the repository where a route rewrite cannot drop it.
+    #
+    # 6 REPOSITORY_ROLES since API-INTEGRITY-002: `UNKNOWN_SENDS_READ` is the unknown-send queue,
+    # now store-scoped and MFA-gated inside `list_unknown_sends`. Its route depends on
+    # `current_principal`, so it binds to `SHADOW_READ_ROLES` for the same reason SHADOW_READ does.
     assert counts.get("SERVER_GATE") == 13
-    assert counts.get("REPOSITORY_ROLES") == 5
+    assert counts.get("REPOSITORY_ROLES") == 6
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
     # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
@@ -593,18 +597,84 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # on record under "Chi tiết kỹ thuật", which verify_workflow_conformance.py caught. Three
     # arrived with CANCEL-REFUND-001 (a paid order whose resolution does not say the money went
     # back; an unsupported balance shape; a resolution not yet chosen).
-    assert sum(counts.values()) == _registry()["total"] == 381
+    #
+    # 383 after API-INTEGRITY-002: +1 the `UNKNOWN_SENDS_READ` capability's `why`, +1 the
+    # manual-send hint saying there is no recipient field and why. Two sentences were re-keyed
+    # without changing the count, both because they had become false: the exceptions notice that
+    # said the queue showed every store's receipts, and SHADOW_READ's `why`, which no longer covers
+    # the exceptions queue now that it asks for MFA. 381 + 2.
+    #
+    # On its own branch:
+    # 382 after RANGE-COUNTER-ATTEST-001 (`DEC-029`): +1, and four sentences re-keyed in
+    # `screens/quotes.js`. The staff member on duty now chooses inside a published band without the
+    # owner, so every sentence telling the counter "chủ tiệm duyệt" was reworded -- the band notice,
+    # the refusal on a band revision, the band-mode offer and the screen lede. The one addition is
+    # the hint under the band notice saying the chooser's name is recorded with the number, cannot
+    # be altered, and is reviewed by the owner. It replaces the "mười phút ... gọi chủ tiệm" hint,
+    # which was a template literal the scanner does not register, so removing it moved nothing.
+    #
+    # 387 after PREPAID-DROPOFF-001 (`DEC-032`): 382 + 5, and one sentence re-keyed.
+    #   * 4 `REASON_NOTE` entries in `core/i18n.js`, one per new refusal a counter can meet: laundry
+    #     not finished (`GOODS_NOT_READY_FOR_HANDOVER`, from both the pickup command and the
+    #     staging review's rule on ticking "collected"), and the pickup command's three states --
+    #     not paid yet, not a walk-in prepayment, already collected.
+    #   * 1 hint on the board card in `screens/orders.js`: paid at drop-off, not yet collected,
+    #     because "Đã thu" alone reads as "nothing left to do" on the list searched at pickup.
+    #   * The settlement guardrail in `screens/orderDetail.js` re-keyed: it names three moments the
+    #     exact total may be paid instead of two. Its `POLICY_BOUND` binding to DEC-010 moved with
+    #     it. The pickup panel's own lines are conditional expressions the scanner does not
+    #     register, which is why the count moved by five and not more.
+    #
+    # 389 with both landed: disjoint sentences, so 381 + 2 (API-INTEGRITY-002)
+    # + 6 (DEC-029, DEC-032).
+    #
+    # 392 after the owner's range-price review panel on #/approvals: +3 -- the withheld notice, the
+    # panel's hint naming DEC-029, and its empty-list sentence. DEC-029 moved the choice of a price
+    # inside a band to the counter on the strength of this review, which had no screen.
+    #
+    # On the REMEDY-ITEM-FEE-001 branch:
+    # 385 after REMEDY-ITEM-FEE-001 (DEC-031, and DEC-030's copy): -3 retired, +7 added, 17
+    # re-keyed. 381 - 3 + 7 = 385.
+    #   * -3 in `screens/remedies.js`: the loss wall's `missing`, `blockedBy` and `today`. They
+    #     said the owner had not decided loss and that the screen has no form for it; DEC-031
+    #     decided it on 2026-09-25 and the form exists, so the `unsupported` block went and its
+    #     three slots with it -- the exit REMEDY-001 and ORDER-LOOKUP-001 took for false claims.
+    #   * +4 `OWNER_REASON_NOTE`, newly in `CLAIM_TABLES`: the sentence for each `OwnerReason` the
+    #     server can send (loss, refunded order, item fee not recorded, above the staff limit).
+    #   * +3 in `screens/remedies.js`: the loss notice's body ("chỉ chủ tiệm duyệt mới được trả,
+    #     kể cả số nhỏ"), and the refunded-order notice's title and body.
+    #   * 17 re-keyed, none added or removed: six `REASON_NOTE` glosses (the two DEC-030 ones now
+    #     state the rule -- the promotion applies, the credit waits unspent -- and
+    #     `PROMOTION_STACKING_REQUIRES_HUMAN` says this bill is the one case the system does not
+    #     follow it; `LOSS_POLICY_UNRESOLVED` now describes only pre-DEC-031 records;
+    #     `REMEDY_CEILING_EXCEEDED`, `REMEDY_AMOUNT_NOT_APPLICABLE` and `REMEDY_APPROVAL_REQUIRED`
+    #     name loss and the per-piece fee), the `#/gaps` entry's `missing` and `today` (no loss
+    #     queue waits on a policy any more), and nine on the remedies screen whose claims about
+    #     the 5x basis, loss and the owner notice changed with the ruling.
+    #
+    # Still 385 after the two follow-up rulings on the same branch: 0 added, 0 retired, 5
+    # re-keyed. DEC-030 made pricing release a reserved credit when a non-stacking programme
+    # applies, so `PROMOTION_STACKING_REQUIRES_HUMAN` lost its "ask the owner" clause and
+    # `REMEDY_CREDIT_RELEASED` names the programme as a reason. The per-item ceiling ruling reworded
+    # `REMEDY_CEILING_EXCEEDED` and `PLAN_NOTE.ABOVE_CEILING` (one claim per item, a total per
+    # line) and `OWNER_REASON_NOTE.ABOVE_STAFF_LIMIT` (the staff limit is the line's).
+    #
+    # 396 with all founder-ruling items landed: disjoint sentences, so 392 + 4
+    # (REMEDY-ITEM-FEE-001's
+    # -3 retired / +7 added). Predicted before regenerating; the registry came out at 396.
+    assert sum(counts.values()) == _registry()["total"] == 396
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
     # that admits everyone.
     #
     # 19 after OPS-BOARD-001: 16 + 3, one per new capability.
+    # 20 after API-INTEGRITY-002: + `UNKNOWN_SENDS_READ`.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 19
+        == 20
     )
 
 

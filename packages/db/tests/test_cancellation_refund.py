@@ -303,6 +303,50 @@ def test_a_prepaid_delivery_cancelled_unwashed_and_refunded_leaves_takings_at_th
     assert (takings.net_vnd, takings.net_direction) == (0, "IN")
 
 
+def test_a_walk_in_prepaid_at_drop_off_and_cancelled_unwashed_is_refunded_in_full(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """`DEC-032` made this reachable: a walk-in pays at drop-off, then changes their mind.
+
+    The third settlement shape goes through `DEC-024`'s refund exactly as the prepaid delivery
+    above does -- the whole settled amount back, bound to the settlement, dated by when it went
+    back -- and nothing about the pickup record is involved, because nobody collected anything.
+    """
+    store_id = uuid4()
+    staff = _staff(connection, store_id)
+    now = datetime.now(UTC)
+    order = _Order(connection, store_id, staff, FulfillmentMode.SELF_DROP_SELF_COLLECT, at=now)
+    order.to_active()
+    paid = order.settle(collected=False, at=now)
+    assert paid.settlement_shape == "EXACT_PAYMENT_PREPAID_SELF_COLLECTION"
+
+    cancelled = order.cancel_after_review(CustodyResolution.RETURNED_UNWASHED_REFUNDED, at=now)
+
+    assert cancelled.commercial is CommercialOrderStatus.CANCELLED
+    assert _balance(connection, order.order_id) == "REFUNDED"
+    assert _refunds(connection, order.order_id) == [
+        (
+            QUOTED_TOTAL,
+            "TO_CUSTOMER",
+            "RETURNED_UNWASHED_REFUNDED",
+            now,
+            True,
+            staff.staff_user_id,
+        )
+    ]
+    takings = _takings(connection, store_id, staff, now)
+    assert (takings.collected_vnd, takings.refunded_vnd, takings.net_vnd) == (
+        QUOTED_TOTAL,
+        QUOTED_TOTAL,
+        0,
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM order_collections WHERE order_id = %s", (order.order_id,)
+        )
+        assert cursor.fetchone() == (0,)
+
+
 def test_shop_fault_no_charge_on_a_paid_collected_order_refunds_the_settled_amount(
     connection: psycopg.Connection[Any],
 ) -> None:

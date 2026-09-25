@@ -65,6 +65,9 @@ import { amountDue, ticketLabel } from "./orders.js";
  */
 const AUDIT_LIMIT = 100;
 
+/** `SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION`: a walk-in who paid at drop-off. */
+const PREPAID_SELF_COLLECTION = "EXACT_PAYMENT_PREPAID_SELF_COLLECTION";
+
 /**
  * One audit row.
  *
@@ -133,7 +136,8 @@ function auditTimeline(entries) {
  * now on screen beside the field (`spec.dueHost`, filled once the order is read); before, the
  * form demanded an exact total that no order screen showed.
  *
- * Only one shape exists. Anything else is refused with the open decision that owns it, and the
+ * Every supported shape is the exact total in one payment; they differ in when it is paid and
+ * where the laundry goes. Anything else is refused with the decision that owns it, and the
  * refusal is shown verbatim rather than translated into "try again".
  *
  * @param {object} spec
@@ -151,10 +155,27 @@ function settlementPanel(spec) {
   // intent, and replaying the old key with new content is a 409, not a replay. A fixed key would
   // leave an operator whose first attempt the server recorded with no way forward at all.
   const submission = new Submission("settlement");
+  // Which of the two presses the current key belongs to. `DEC-032` added the second one, and the
+  // two send different bodies, so switching between them is a new intent and needs a new key.
+  /** @type {boolean|null} */
+  let keyIntent = null;
 
   /** @param {SubmitEvent} event */
   async function submit(event) {
     event.preventDefault();
+    await send(draft.collected);
+  }
+
+  /**
+   * `collected` is the one fact the two presses differ on: the checkbox for a customer paying at
+   * pickup, or always `false` for "Khách trả trước khi gửi đồ" (`DEC-032`) -- paying now, taking
+   * the laundry later, with the handover recorded at pickup rather than ticked in advance.
+   *
+   * @param {boolean} collected
+   */
+  async function send(collected) {
+    if (keyIntent !== null && keyIntent !== collected) submission.reset();
+    keyIntent = collected;
     // `parseDong` rather than `parseInt`: the total on this very screen renders as "132.000 ₫",
     // and `parseInt("132.000", 10)` is 132 -- a safe integer, so it posted, and the server refused
     // it for not equalling the quoted total. The operator had copied the number the application
@@ -176,22 +197,25 @@ function settlementPanel(spec) {
         `/internal/v1/orders/${encodeURIComponent(spec.orderId)}/settlement`,
         {
           method: "POST",
-          body: { paid_amount_vnd: amount, collected_by_customer: draft.collected },
+          body: { paid_amount_vnd: amount, collected_by_customer: collected },
           idempotencyKey: submission.key(),
         },
       );
       submission.reset();
+      keyIntent = null;
       setResult(
         result,
         "ok",
         `Đã ghi nhận ${money(recorded.paid_amount_vnd)} đúng bằng tổng đã báo. ` +
           "Công nợ chuyển sang PAID. " +
-          // Read from the response, not asserted. A prepaid delivery leaves
+          // Read from the response, not asserted. Both prepayments leave
           // `self_collection_recorded` false on purpose -- the customer paid and nobody has
           // received anything yet -- and this line used to claim otherwise for every settlement.
           (recorded.self_collection_recorded
             ? "Đã ghi nhận khách tự lấy đồ."
-            : "Chưa ghi nhận giao đồ — cần một chặng giao thành công thì mới đóng được đơn."),
+            : recorded.settlement_shape === PREPAID_SELF_COLLECTION
+              ? "Khách chưa nhận đồ. Khi đưa đồ cho khách, bấm “Khách đã nhận đồ”."
+              : "Chưa ghi nhận giao đồ — cần một chặng giao thành công thì mới đóng được đơn."),
       );
       spec.onRecorded();
     } catch (error) {
@@ -219,6 +243,7 @@ function settlementPanel(spec) {
     onChange: (event) => {
       draft.collected = /** @type {HTMLInputElement} */ (event.target).checked;
       submission.reset();
+      keyIntent = null;
     },
   });
 
@@ -226,12 +251,10 @@ function settlementPanel(spec) {
     eyebrow: "LỆNH · POST /internal/v1/orders/{id}/settlement",
     title: "Tất toán",
     guardrail:
-      "Hai trường hợp được hỗ trợ, và cả hai là cùng một khoản tiền: khách trả đúng tổng đã báo, " +
-      "đủ một lần, tại quầy. Khác nhau ở chỗ đồ đi đâu sau đó — khách tự lấy về, hoặc tiệm giao " +
-      "tận nơi và đã thu tiền trước khi đồ rời quầy (chủ tiệm chốt ngày 26/08/2026). Trả thiếu, " +
-      "trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định — chủ tiệm đã chốt " +
-      "ngày 18/08/2026 là tạm thời không nhận các hình thức này — không làm tròn và không ghi " +
-      "nhận một phần. Bản ghi tất toán không sửa được.",
+      "Mọi trường hợp là cùng một khoản tiền: khách trả đúng tổng đã báo, đủ một lần, tại quầy — " +
+      "lúc lấy đồ, lúc gửi đồ (quyết định DEC-032), hoặc trước khi tiệm giao tận nơi. " +
+      "Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định — không " +
+      "làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.",
     children: h(
       "form",
       { class: "form", onSubmit: submit },
@@ -248,9 +271,8 @@ function settlementPanel(spec) {
         id: "settlement-collected",
         label: "Khách đã tự lấy đồ về",
         hint:
-          "Đánh dấu khi chính khách nhận đồ tại quầy. Đơn giao tận nơi thì để trống: khách trả " +
-          "tiền trước, còn việc đồ đã tới tay khách hay chưa do chặng giao hàng ghi nhận, không " +
-          "phải ô này. Đánh dấu sai với hình thức của đơn sẽ bị máy chủ từ chối.",
+          "Chỉ tích khi khách trả tiền lúc lấy đồ và đồ đã giặt xong. Khách trả lúc gửi đồ thì " +
+          "bấm “Khách trả trước khi gửi đồ”. Đơn giao tận nơi thì để trống.",
         control: collectedInput,
       }),
       h(
@@ -264,11 +286,132 @@ function settlementPanel(spec) {
           ),
           spec.verdict,
         ),
+        // `DEC-032`. Its own press rather than "leave the box unticked", so paying early is a
+        // choice the operator makes on purpose and the box keeps meaning only one thing.
+        gated(
+          h(
+            "button",
+            {
+              type: "button",
+              dataVariant: "quiet",
+              dataRequiresNetwork: "true",
+              onClick: () => void send(false),
+            },
+            "Khách trả trước khi gửi đồ",
+          ),
+          spec.verdict,
+        ),
       ),
       result,
       errorHost,
     ),
   });
+}
+
+/**
+ * Khách đã nhận đồ — the pickup of a walk-in order paid at drop-off. `DEC-032`.
+ *
+ * `POST /internal/v1/orders/{id}/collection` takes no body: the name is the session's, and the
+ * precondition is the row version this screen last read (`If-Match`). The button is offered only
+ * for the one case it exists for -- paid, not yet collected, a walk-in -- because every other
+ * order reaches the customer another way: a customer paying at pickup is recorded by the
+ * settlement itself, and a delivery by its legs. The server re-checks all of it, including that
+ * the laundry is finished, and its refusal is shown as it came.
+ *
+ * @param {object} spec
+ * @param {string} spec.orderId
+ * @param {import("../core/rbac.js").Verdict} spec.verdict
+ * @param {() => void} spec.onRecorded
+ * @returns {{node: HTMLElement, update: (order: any) => void}}
+ */
+function collectionPanel(spec) {
+  const host = h("div", { class: "stack" });
+  const result = resultLine();
+  const errorHost = h("div");
+  // One key per order version: the same press after a timeout replays, a press against a newer
+  // read is a new intent (the server keys the payload on the row version it was sent).
+  let submission = new Submission("collection");
+  /** @type {number|null} */
+  let keyVersion = null;
+
+  /** @param {any} order */
+  async function record(order) {
+    if (keyVersion !== order.row_version) {
+      submission = new Submission("collection");
+      keyVersion = order.row_version;
+    }
+    setResult(result, "warn", "Đang ghi nhận…");
+    render(errorHost);
+    try {
+      await request(`/internal/v1/orders/${encodeURIComponent(spec.orderId)}/collection`, {
+        method: "POST",
+        ifMatch: order.row_version,
+        idempotencyKey: submission.key(),
+      });
+      submission.reset();
+      keyVersion = null;
+      setResult(result, "ok", "Đã ghi nhận khách nhận đồ. Giờ chuyển đơn sang Hoàn tất.");
+      spec.onRecorded();
+    } catch (error) {
+      setResult(result, "danger", error.message);
+      render(errorHost, errorNotice(error));
+    }
+  }
+
+  /** @param {any} order an `OrderViewResponse`, or null when it could not be read */
+  function update(order) {
+    if (!order) {
+      render(host);
+      return;
+    }
+    const waiting =
+      order.balance === "PAID" &&
+      order.self_collection_recorded === false &&
+      order.fulfillment_mode === "SELF_DROP_SELF_COLLECT";
+    if (!waiting) {
+      render(
+        host,
+        h(
+          "p",
+          { class: "hint" },
+          order.self_collection_recorded
+            ? "Đã ghi nhận khách nhận đồ."
+            : "Chỉ dùng khi khách đã trả trước lúc gửi đồ.",
+        ),
+      );
+      return;
+    }
+    render(
+      host,
+      h("p", null, "Khách đã trả trước. Khi đưa đồ cho khách, bấm nút dưới — tên bạn được ghi."),
+      h(
+        "div",
+        { class: "action-bar" },
+        gated(
+          h(
+            "button",
+            {
+              type: "button",
+              dataVariant: "primary",
+              dataRequiresNetwork: "true",
+              onClick: () => void record(order),
+            },
+            "Khách đã nhận đồ",
+          ),
+          spec.verdict,
+        ),
+      ),
+      result,
+      errorHost,
+    );
+  }
+
+  const node = panel({
+    eyebrow: "LỆNH · POST /internal/v1/orders/{id}/collection",
+    title: "Khách tới lấy đồ",
+    children: host,
+  });
+  return { node, update };
 }
 
 export function render_(context) {
@@ -284,6 +427,11 @@ export function render_(context) {
   const timelineTruncation = h("p", { class: "hint" });
   const heading = h("h1", null, "Chi tiết đơn");
   const dueHost = h("div");
+  const collection = collectionPanel({
+    orderId,
+    verdict: settlementVerdict,
+    onRecorded: () => void loadOrder(),
+  });
 
   /**
    * Read this order by id. The server takes the store from the order itself, so an order of any
@@ -295,6 +443,7 @@ export function render_(context) {
     render(orderHost, skeleton(1));
     try {
       const found = await request(`/internal/v1/orders/${encodeURIComponent(orderId)}`);
+      collection.update(found);
       const ticket = ticketLabel(found);
       const due = amountDue(found);
       heading.textContent = ticket || "Chi tiết đơn";
@@ -354,6 +503,7 @@ export function render_(context) {
       return found;
     } catch (error) {
       render(dueHost);
+      collection.update(null);
       if (error?.status === 404) {
         render(
           orderHost,
@@ -519,6 +669,7 @@ export function render_(context) {
       dueHost,
       onRecorded: () => void loadOrder(),
     }),
+    collection.node,
     panel({
       eyebrow: "Kiểm toán",
       title: "Dòng thời gian",

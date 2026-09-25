@@ -312,6 +312,17 @@ function orderCard(item, options = {}) {
       ["Công nợ", dimensionBadge(item.balance)],
       ["Bản ghi", `v${item.row_version}`, { mono: true }],
     ]),
+    // `DEC-032`: paid at drop-off, not collected yet. Said on the card because this is the list
+    // the counter searches at pickup, and "Đã thu" alone reads as "nothing left to do".
+    item.balance === "PAID" &&
+    item.self_collection_recorded === false &&
+    item.fulfillment_mode === "SELF_DROP_SELF_COLLECT"
+      ? h(
+          "p",
+          { class: "hint" },
+          "Khách đã trả trước, chưa nhận đồ — mở đơn và bấm “Khách đã nhận đồ” khi đưa đồ.",
+        )
+      : null,
     h(
       "div",
       { class: "form__actions" },

@@ -22,13 +22,20 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from nha_trang_laundry_domain.catalog import FulfillmentMode
+from nha_trang_laundry_domain.catalog import (
+    CommercialOrderStatus,
+    FulfillmentMode,
+    OrderBalanceStatus,
+    ProductionStatus,
+)
 from nha_trang_laundry_domain.settlement import (
     QuotedTotal,
     SettlementAccepted,
     SettlementNotSupported,
     SettlementShape,
+    evaluate_collection,
     evaluate_settlement,
+    handover_refusal,
 )
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
@@ -111,6 +118,42 @@ class SettlementCommand:
     principal: StaffPrincipal
     correlation_id: UUID
     attested_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionCommand:
+    """The customer who paid at drop-off has taken their laundry (`DEC-032`).
+
+    No amount, and nothing about the customer: the money is the settlement's, and the only new fact
+    is that the goods changed hands, witnessed by the staff member in `principal`.
+    `expected_row_version` is the caller's `If-Match` -- the order they read before handing over.
+    """
+
+    order_id: UUID
+    expected_row_version: int
+    principal: StaffPrincipal
+    correlation_id: UUID
+    collected_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StoredCollection:
+    collection_id: UUID
+    order_id: UUID
+    settlement_id: UUID
+    collected_by_staff_id: UUID
+    collected_at: datetime
+    self_collection_recorded: bool
+    row_version: int
+
+
+#: Who took the laundry away at the moment the money was attested, per shape. The pairing is also a
+#: CHECK in the schema (`0033`, widened by `0048`), so neither side can drift from the other alone.
+_COLLECTED_BY: dict[SettlementShape, str] = {
+    SettlementShape.EXACT_PAYMENT_SELF_COLLECTION: "CUSTOMER",
+    SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY: "PENDING_DELIVERY",
+    SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION: "PENDING_COLLECTION",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +265,17 @@ class SettlementRepository:
                 decision=outcome.decision,
             )
         assert isinstance(outcome, SettlementAccepted)
+        if outcome.shape is SettlementShape.EXACT_PAYMENT_SELF_COLLECTION:
+            # The staging review's finding. "The customer took their goods" was accepted for an
+            # order whose laundry was still queued or in the machine -- a handover on record that
+            # could not have happened, and the flag that lets the order complete set with it. The
+            # money path for a customer paying early is `DEC-032`'s prepayment, not this box.
+            refusal = handover_refusal(ProductionStatus(str(row[2])))
+            if refusal is not None:
+                raise SettlementStateError(
+                    "the laundry is not finished, so it cannot have been handed over",
+                    reason_code=refusal,
+                )
 
         settlement_id = uuid4()
         next_version = int(row[5]) + 1
@@ -248,9 +302,10 @@ class SettlementRepository:
                     outcome.expected_total_vnd,
                     command.paid_amount_vnd,
                     outcome.shape.value,
-                    # Who took the laundry away when the money was attested. For a prepaid delivery
-                    # that is nobody yet; a delivery leg attests arrival later.
-                    "CUSTOMER" if collected else "PENDING_DELIVERY",
+                    # Who took the laundry away when the money was attested. For either prepayment
+                    # that is nobody yet: a delivery leg attests arrival later, and for a walk-in
+                    # paying at drop-off (`DEC-032`) the pickup record does.
+                    _COLLECTED_BY[outcome.shape],
                     command.principal.staff_user_id,
                     attested_at,
                     attested_at,
@@ -323,6 +378,148 @@ class SettlementRepository:
             self_collection_recorded=collected,
             row_version=next_version,
         )
+
+    def record_collection(self, connection: Any, command: CollectionCommand) -> StoredCollection:
+        """Record that a customer who paid at drop-off has taken their laundry. `DEC-032`.
+
+        The pickup half of a prepaid walk-in order: a row in `order_collections` naming the staff
+        member who handed the goods over, and `self_collection_recorded` moving with it -- the flag
+        `transition_commercial` reads before it allows COMPLETED. Both, with the domain event, the
+        audit row and the outbox row, in one transaction or not at all (invariant 5); `0048` makes
+        the database refuse either write without the other.
+
+        The decision is `evaluate_collection`'s, over facts read under the order's row lock. The
+        store is the row's, never the caller's, and membership is checked on the same cursor while
+        the row is locked, as `record` does.
+        """
+
+        if not command.principal.roles & SETTLEMENT_ROLES or not command.principal.mfa_verified:
+            raise SettlementAuthorizationError("recording a pickup requires an operations role")
+        collected_at = command.collected_at or datetime.now(UTC)
+        collection_id = uuid4()
+        stored: list[StoredCollection] = []
+
+        def mutation(cursor: Any) -> None:
+            cursor.execute(
+                """
+                SELECT o.store_id, o.commercial_status, o.production_status, o.balance_status,
+                       o.self_collection_recorded, o.row_version,
+                       s.id, s.settlement_shape
+                FROM orders o
+                LEFT JOIN order_settlements s ON s.order_id = o.id
+                WHERE o.id = %s
+                FOR UPDATE OF o
+                """,
+                (command.order_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise SettlementStateError("order is missing", reason_code="ORDER_NOT_FOUND")
+            store_id = _uuid(row[0])
+            require_store_membership(
+                cursor,
+                staff_user_id=command.principal.staff_user_id,
+                store_id=store_id,
+                error=SettlementAuthorizationError,
+            )
+            if int(row[5]) != command.expected_row_version:
+                # `If-Match`. The counter hands a bag over against the order it read; if the order
+                # moved since, the person pressing is looking at something that is no longer true.
+                raise SettlementStateError(
+                    "STALE_VERSION: order changed since it was read; read it again",
+                    reason_code="STALE_VERSION",
+                )
+            refusal = evaluate_collection(
+                commercial=CommercialOrderStatus(str(row[1])),
+                production=ProductionStatus(str(row[2])),
+                balance=OrderBalanceStatus(str(row[3])),
+                settlement_shape=None if row[7] is None else SettlementShape(str(row[7])),
+                self_collection_recorded=bool(row[4]),
+            )
+            if refusal is not None:
+                raise SettlementStateError(
+                    "the pickup cannot be recorded for this order now", reason_code=refusal.value
+                )
+            settlement_id = _uuid(row[6])
+            cursor.execute(
+                """
+                INSERT INTO order_collections (
+                    id, order_id, store_id, settlement_id, settlement_shape,
+                    collected_by_staff_id, collected_at, correlation_id, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    collection_id,
+                    command.order_id,
+                    store_id,
+                    settlement_id,
+                    SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION.value,
+                    command.principal.staff_user_id,
+                    collected_at,
+                    command.correlation_id,
+                    collected_at,
+                ),
+            )
+            # Written after the collection row, which `order_prepaid_collection_consistency` in
+            # `0048` requires to exist before the flag may move. `order_projection_guard` requires
+            # row_version to advance by exactly one.
+            cursor.execute(
+                """
+                UPDATE orders
+                SET self_collection_recorded = TRUE, row_version = row_version + 1
+                WHERE id = %s AND row_version = %s AND self_collection_recorded = FALSE
+                    AND balance_status = 'PAID'
+                RETURNING row_version
+                """,
+                (command.order_id, int(row[5])),
+            )
+            moved = cursor.fetchone()
+            if moved is None:
+                raise SettlementStateError(
+                    "STALE_VERSION: order changed while the pickup was being recorded",
+                    reason_code="STALE_VERSION",
+                )
+            stored.append(
+                StoredCollection(
+                    collection_id=collection_id,
+                    order_id=command.order_id,
+                    settlement_id=settlement_id,
+                    collected_by_staff_id=command.principal.staff_user_id,
+                    collected_at=collected_at,
+                    self_collection_recorded=True,
+                    row_version=int(moved[0]),
+                )
+            )
+
+        commit_material_change(
+            connection,
+            MaterialChange(
+                aggregate_type="ORDER_COLLECTION",
+                # The order, like the settlement: one pickup per order, and keyed this way it
+                # appears on the order's own audit timeline beside the payment it completes.
+                aggregate_id=command.order_id,
+                aggregate_version=1,
+                event_type="ORDER_COLLECTION_RECORDED",
+                event_payload={
+                    "collection_id": str(collection_id),
+                    "order_id": str(command.order_id),
+                },
+                audit_action="ORDER_COLLECTION_RECORD",
+                actor_type="STAFF",
+                actor_id=command.principal.staff_user_id,
+                correlation_id=command.correlation_id,
+                outbox_events=(
+                    OutboxEvent(
+                        "order.collection_recorded.v1",
+                        {"order_id": str(command.order_id), "collection_id": str(collection_id)},
+                        f"order:{command.order_id}:collection",
+                    ),
+                ),
+                occurred_at=collected_at,
+            ),
+            mutation,
+        )
+        return stored[0]
 
     @staticmethod
     def for_order(cursor: Any, order_id: UUID) -> StoredSettlement | None:
@@ -420,10 +617,12 @@ __all__ = [
     "COLLECTED_TODAY_QUERY",
     "SETTLEMENT_ROLES",
     "CollectedToday",
+    "CollectionCommand",
     "DrawerDirection",
     "SettlementAuthorizationError",
     "SettlementCommand",
     "SettlementRepository",
     "SettlementStateError",
+    "StoredCollection",
     "StoredSettlement",
 ]

@@ -1,0 +1,73 @@
+schema_version: 1
+work_item: REMEDY-ITEM-FEE-001
+recorded_at: '2026-09-25T15:00:00+07:00'
+requirement_contract: 'DEC-031, plus two follow-on rulings: per-piece services cap on the recorded unit
+  price; weight-priced on the bag; every loss and every compensation on a refunded order goes to the owner;
+  a line of N pieces carries 5 x item fee x N with each claim capped at one item; a credit reserved before
+  a non-stacking promotion is released rather than withholding the promotion (DEC-030).'
+rollback_impact: Each rule is in packages/domain remedies.py with its own test; 0051 replaces two CHECK
+  constraints from 0042 and adds one, and Postgres refuses to reinstate the old ones while a DEC-031 loss
+  row exists, which is correct. Migrations 0048-0051 are forward-only and additive; rolling data back
+  is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before every
+  upgrade.
+unresolved_assumptions: The fee is min(recorded unit price, line net). A single piece with no recorded
+  unit price uses the line; several pieces with none go to the owner. Owner envelopes expire in ten minutes,
+  and every loss now needs one. Per-piece identity does not exist, so the ceiling is aggregated per line
+  rather than tracked per shirt.
+evidence:
+  a_per_piece_line_caps_each_item_at_five_times_its_unit_price: test_remedy_dec_031.py and test_remedy_item_fee.py
+    (500-example property); red on 96f2036's base, green after; 14/14 mutants killed (M8 needed a reverse-order
+    test, added).
+  every_loss_claim_needs_the_owner: 'Live walk-through against the running API on 2026-09-25, as the real
+    roles (demo-operations, demo-owner, demo-auditor): a 50.000 d loss on ticket 5, under the 100.000
+    d staff limit, returned OWNER_APPROVAL_REQUIRED with owner_reasons [LOSS_CLAIM]. Schema constraint
+    remedy_proposals_loss_needs_the_owner refuses a staff-authorised loss row.'
+  compensation_on_a_refunded_order_needs_the_owner: test_compensation_on_a_refunded_order_needs_the_owner
+    (damage and loss) and the payment-time re-check test; the late-delivery credit on a refunded bill
+    stays refused (84c9648).
+  the_counter_sees_the_item_and_what_it_already_carries: 'Live walk-through against the running API on
+    2026-09-25, as the real roles (demo-operations, demo-owner, demo-auditor): remedy-options named the
+    line ''Giặt sấy tiêu chuẩn'', item fee 140.000 d, ceiling 700.000 d, committed 0, pieces 1; damage
+    of 700.001 d refused 422 REMEDY_CEILING_EXCEEDED. Console predicts owner-required from committed +
+    amount, as the server does.'
+  rollback_assessment: Each rule is in packages/domain remedies.py with its own test; 0051 replaces two
+    CHECK constraints from 0042 and adds one, and Postgres refuses to reinstate the old ones while a DEC-031
+    loss row exists, which is correct. Migrations 0048-0051 are forward-only and additive; rolling data
+    back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before
+    every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 609 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 290 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2105 passed, 4 skipped in 516.96s (0:08:36)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 61 served
+    internal API operations against their contract. Validated 396 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 140 source references, 32 decisions, 4 gates, 9 phases, 146 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_daily_operations.py against the real API and identity provider
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-25 on the fully merged tree, database created empty and migrated 0001-0051, remedy and
+    promotion policies published as shop-till-mac.md section 4 now requires.
+- command: verify_workflow_conformance.py against the real API
+  status: PASSED
+  result: '86 ok, 1 failed (coverage line only: 40/49 controls, unchanged from main)'
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 171 passed, 0 failed
+  note: Includes the fixers' edits to the stub for the one-press range price and the loss form, which
+    none of them could execute.

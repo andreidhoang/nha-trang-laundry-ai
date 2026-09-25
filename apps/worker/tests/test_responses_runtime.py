@@ -112,6 +112,7 @@ def config(**overrides: Any) -> ResponsesRuntimeConfig:
         "model_id": "gpt-test",
         "immutable_model_release": "gpt-test-2026-08-01",
         "reasoning_effort": "low",
+        "runtime_registry_version": "1.0.0-eval",
         "runtime_registry_hash": HASH,
         "prompt_bundle_version": "prompt-v1",
         "prompt_bundle_hash": HASH,
@@ -251,6 +252,7 @@ def harness(
         capability=capability,
         session_key=bridge.session_key,
         bridge_token=token,
+        deadline_at=current_job.deadline_at,
     )
     context = ResponsesRuntimeContext.assemble(
         run_id=current_job.run_id,

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -22,8 +24,10 @@ from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import ApprovalAction
 
-HASH_A = "JCS-SHA256-V1:" + "a" * 64
-HASH_B = "JCS-SHA256-V1:" + "b" * 64
+# See `test_ops_board_postgres.py`: the real draft fixture lives beside the repository tests.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "db" / "tests"))
+
+from message_draft_test_data import current_binding, seed_message_draft
 
 
 def _principal(role: StaffRole) -> StaffPrincipal:
@@ -94,21 +98,26 @@ def test_real_service_manual_send_is_idempotent_version_bound_and_atomic() -> No
     requester = _principal(StaffRole.OPS_APPROVER)
     owner = _principal(StaffRole.OWNER_ADMIN)
     sender = _principal(StaffRole.OPERATOR)
-    recipient_id = uuid4()
     requested_at = datetime.now(UTC) - timedelta(seconds=2)
 
     with psycopg.connect(database_url) as connection:
         apply_migrations(connection)
         store_id = _member_store(connection, requester, owner, sender)
+        # API-INTEGRITY-002: a real draft, and the digests the server computes for it. The envelope
+        # used to name `uuid4()` with the literal "a"/"b" digests, which is now refused as content
+        # that does not exist.
+        draft = seed_message_draft(connection, store_id)
+        binding = current_binding(connection, draft.agent_run_id)
+        hash_a, hash_b = binding.snapshot_hash, binding.rendered_hash
         approval = ApprovalRepository().request(
             connection,
             ApprovalRequestCommand(
                 ApprovalAction.SEND_MESSAGE,
                 "MESSAGE_DRAFT",
-                uuid4(),
+                draft.agent_run_id,
                 1,
-                HASH_A,
-                HASH_B,
+                hash_a,
+                hash_b,
                 "staff-operations-policy-v1",
                 requester.staff_user_id,
                 f"staff-operations-approval-{uuid4().hex}",
@@ -123,8 +132,8 @@ def test_real_service_manual_send_is_idempotent_version_bound_and_atomic() -> No
                 approval.approval_request_id,
                 ApprovalDecision.APPROVED,
                 1,
-                HASH_A,
-                HASH_B,
+                hash_a,
+                hash_b,
                 "HUMAN_REVIEW_COMPLETE",
                 owner,
                 uuid4(),
@@ -136,9 +145,8 @@ def test_real_service_manual_send_is_idempotent_version_bound_and_atomic() -> No
     prepared = service.prepare_manual_send(
         approval_request_id=approval.approval_request_id,
         observed_resource_version=1,
-        observed_snapshot_hash=HASH_A,
-        observed_rendered_hash=HASH_B,
-        recipient_binding_id=recipient_id,
+        observed_snapshot_hash=hash_a,
+        observed_rendered_hash=hash_b,
         channel="INTERNAL_TEST",
         idempotency_key="staff-operations-manual-prepare",
         principal=sender,
@@ -146,22 +154,23 @@ def test_real_service_manual_send_is_idempotent_version_bound_and_atomic() -> No
     replayed_prepare = service.prepare_manual_send(
         approval_request_id=approval.approval_request_id,
         observed_resource_version=1,
-        observed_snapshot_hash=HASH_A,
-        observed_rendered_hash=HASH_B,
-        recipient_binding_id=recipient_id,
+        observed_snapshot_hash=hash_a,
+        observed_rendered_hash=hash_b,
         channel="INTERNAL_TEST",
         idempotency_key="staff-operations-manual-prepare",
         principal=sender,
     )
     assert replayed_prepare.value.manual_send_envelope_id == prepared.value.manual_send_envelope_id
     assert replayed_prepare.replayed is True
+    assert prepared.value.recipient_binding_id == draft.contact_binding_id
     with pytest.raises(IdempotencyConflictError, match="IDEMPOTENCY_CONFLICT"):
         service.prepare_manual_send(
             approval_request_id=approval.approval_request_id,
             observed_resource_version=1,
-            observed_snapshot_hash=HASH_A,
-            observed_rendered_hash=HASH_B,
-            recipient_binding_id=uuid4(),
+            observed_snapshot_hash=hash_a,
+            # A changed body under the same key. It changed the recipient until the recipient
+            # stopped being an input; the observed rendering is the field that still varies.
+            observed_rendered_hash=hash_a,
             channel="INTERNAL_TEST",
             idempotency_key="staff-operations-manual-prepare",
             principal=sender,
@@ -170,7 +179,7 @@ def test_real_service_manual_send_is_idempotent_version_bound_and_atomic() -> No
         service.attest_manual_send(
             manual_send_envelope_id=prepared.value.manual_send_envelope_id,
             observed_resource_version=1,
-            exact_rendered_hash=HASH_B,
+            exact_rendered_hash=hash_b,
             expected_envelope_row_version=2,
             sent_at=datetime.now(UTC) - timedelta(seconds=1),
             idempotency_key="staff-operations-manual-attest-stale",
@@ -180,7 +189,7 @@ def test_real_service_manual_send_is_idempotent_version_bound_and_atomic() -> No
     attested = service.attest_manual_send(
         manual_send_envelope_id=prepared.value.manual_send_envelope_id,
         observed_resource_version=1,
-        exact_rendered_hash=HASH_B,
+        exact_rendered_hash=hash_b,
         expected_envelope_row_version=1,
         sent_at=sent_at,
         idempotency_key="staff-operations-manual-attest",
@@ -189,7 +198,7 @@ def test_real_service_manual_send_is_idempotent_version_bound_and_atomic() -> No
     replayed_attestation = service.attest_manual_send(
         manual_send_envelope_id=prepared.value.manual_send_envelope_id,
         observed_resource_version=1,
-        exact_rendered_hash=HASH_B,
+        exact_rendered_hash=hash_b,
         expected_envelope_row_version=1,
         sent_at=sent_at,
         idempotency_key="staff-operations-manual-attest",

@@ -90,14 +90,14 @@ const TILES = [
     id: "unknown-sends",
     eyebrow: "Cần đối soát",
     title: "Gửi chưa rõ kết quả",
-    capability: "SHADOW_READ",
-    needsStore: false,
+    capability: "UNKNOWN_SENDS_READ",
+    needsStore: true,
     limit: 50,
     href: "/exceptions",
     action: "Mở ngoại lệ",
-    hint: "Toàn hệ thống.",
     zero: "Không có lần gửi nào chưa rõ kết quả.",
-    url: () => "/internal/v1/shadow/unknown-sends?limit=50",
+    url: (store) =>
+      `/internal/v1/stores/${encodeURIComponent(store)}/shadow/unknown-sends?limit=50`,
   },
   {
     id: "incidents",
@@ -177,8 +177,11 @@ function takingsCard() {
         "p",
         null,
         "Gồm: các đơn đã tất toán tại quầy hôm nay — khách trả đủ số tiền trên báo giá, một lần, " +
-          "tại quầy. Có hai trường hợp và cả hai đều đã trả đủ: khách tự lấy đồ về, hoặc đã trả " +
-          "đủ rồi tiệm giao tận nơi sau. Nên tiền đã thu không có nghĩa là đồ đã ra khỏi tiệm. " +
+          // DEC-032 (2026-09-25) added the third case: paid at drop-off, collected later. Still
+          // the exact total in one payment, counted on the day it was taken.
+          "tại quầy. Có ba trường hợp và cả ba đều đã trả đủ: khách trả lúc lấy đồ, khách trả " +
+          "trước khi gửi đồ rồi lấy sau, hoặc trả trước rồi tiệm giao tận nơi. Nên tiền đã thu " +
+          "không có nghĩa là đồ đã ra khỏi tiệm. " +
           "Máy chủ cộng trực tiếp từ sổ ghi tất toán; màn hình này không tự cộng.",
       ),
       h(

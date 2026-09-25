@@ -207,7 +207,7 @@ def run(base_url: str, ca_file: _Path) -> list[Result]:
         f"/internal/v1/stores/{DEMO_STORE_ID}/orders?limit=5",
         f"/internal/v1/stores/{DEMO_STORE_ID}/quotes?limit=5",
         f"/internal/v1/stores/{DEMO_STORE_ID}/shadow/drafts",
-        "/internal/v1/shadow/unknown-sends",
+        f"/internal/v1/stores/{DEMO_STORE_ID}/shadow/unknown-sends",
         "/internal/v1/approvals?limit=5",
         "/internal/v1/queue-recovery",
     ):

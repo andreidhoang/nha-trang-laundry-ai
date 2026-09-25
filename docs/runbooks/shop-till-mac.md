@@ -166,7 +166,8 @@ with no error that explains why.
 Check it:
 
 ```bash
-curl --cacert .shop/ca/ca.crt https://console.giatlasachcong.lan:8443/healthz
+curl --cacert .shop/ca/ca.crt https://console.giatlasachcong.lan:8443/healthz   # the process is up
+curl --cacert .shop/ca/ca.crt https://console.giatlasachcong.lan:8443/readyz    # and reaches its database
 open https://console.giatlasachcong.lan:8443/staff/
 ```
 
@@ -197,7 +198,41 @@ Until the pricebook is published, pricing answers 503 by design and the shop can
 Then **one whole transaction by hand before any customer**: ticket → quote → *khách đã chốt giá* →
 order → nhận đồ → giặt → sẵn sàng → giao ra → tất toán → hoàn tất.
 
-## 5. The schedule
+## 5. The schedule, and the alert that reaches your phone
+
+**What this section cannot promise.** Everything below has been proved against a *local stand-in*
+for Telegram -- a forced failure delivered exactly one message with the right words; a passing
+check delivered none; a refused or unreachable Telegram exited 3 with a log line. **No message has
+ever been delivered to the owner's phone by this code.** That happens for the first time at step
+5c, on this Mac, and until you have watched it arrive the alert path is built, not proven.
+
+### 5a. The alert bot (`DEC-025`)
+
+A **separate** bot, used for nothing else -- never the one a future customer channel would use. On
+your phone, in Telegram: message **@BotFather**, `/newbot`, name it (e.g. *giatlasachcong-canh-bao*),
+copy the token it gives you. Then open the new bot and press **Start** -- a bot cannot message you
+until you have.
+
+The token and your chat id live beside the other secrets, 0600, never in the repository and never
+typed on a command line:
+
+```bash
+cd ~/laundry
+bash -c 'umask 077; IFS= read -rs -p "bot token: " t; echo; printf "%s\n" "$t" > .shop/secrets/alert_telegram_token'
+
+# Your chat id, read once from the bot's own inbox. `printf` is a shell builtin and curl reads the
+# URL from stdin, so the token is in no process's arguments.
+printf 'url = "https://api.telegram.org/bot%s/getUpdates"\n' "$(cat .shop/secrets/alert_telegram_token)" \
+  | curl -s --config - | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"][-1]["message"]["chat"]["id"])' \
+  > .shop/secrets/alert_telegram_chat_id
+chmod 600 .shop/secrets/alert_telegram_chat_id
+cat .shop/secrets/alert_telegram_chat_id      # a number; if this failed, press Start in the bot and repeat
+```
+
+That one `getUpdates` is you reading the bot's inbox by hand, once. Nothing in this system ever
+reads it again: there is no inbound handler, and the one recipient is the number in that file.
+
+### 5b. Install the schedule
 
 ```bash
 export R1_LOCAL_ARCHIVE_PATH="/Volumes/<your drive>/laundry-archive"
@@ -207,6 +242,47 @@ export R1_LOCAL_ARCHIVE_PATH="/Volumes/<your drive>/laundry-archive"
 Launch agents, not `crontab`. On macOS a cron job whose time passes while the machine is asleep is
 never run and never catches up, so the nightly base backup would silently never happen on a laptop
 that sleeps. `deploy/shop-till/README.md` has the detail and the two other macOS traps.
+
+**How an alert gets out.** The data checks run inside the database's network, which has no route
+to the internet by design (ADR-0007 §1). So they do not send anything: they print their alert as one
+line, and `scripts/relay_shop_alert.py`, running on this Mac, delivers it. If it cannot -- no
+internet, wrong token, Telegram refusing -- it says **`ALERT NOT DELIVERED`** and why, in
+`~/Library/Logs/giatlasachcong/alert-delivery.log`, and the agent's last exit status is **3**:
+
+```bash
+launchctl list | grep giatlasachcong      # second column: 0 fine, 1 failing and you were told, 3 NOT told
+tail ~/Library/Logs/giatlasachcong/alert-delivery.log
+```
+
+The console check asks `https://console.giatlasachcong.lan:8443/readyz`, which answers 503 when the
+console is up but cannot reach its database -- `/healthz` only ever said the process was alive.
+
+### 5c. First install: make one alert fail on purpose, and watch it arrive
+
+Do this once, now, standing at the till with your phone. It fails one check deliberately -- a
+base-backup marker that cannot exist -- and touches nothing in the shop:
+
+```bash
+cd ~/laundry
+R1_ALERT_TELEGRAM_TOKEN_FILE=.shop/secrets/alert_telegram_token \
+R1_ALERT_TELEGRAM_CHAT_ID_FILE=.shop/secrets/alert_telegram_chat_id \
+R1_ALERT_LOG_FILE=~/Library/Logs/giatlasachcong/alert-delivery.log \
+  .venv/bin/python scripts/relay_shop_alert.py --label first-install -- \
+  .venv/bin/python scripts/check_shop_operations.py --check base \
+  --base-backup-marker /nonexistent/first-install-test --emit-alert
+echo "exit $?"
+```
+
+**Expected:** `exit 1`, and within seconds your phone shows
+
+```text
+Bảng vận hành — cần xem ngay:
+• base_backup_age: no base backup has ever completed (no marker at /nonexistent/first-install-test)
+```
+
+and the log's last line reads `ALERT DELIVERED`. **`exit 3`** means it did not arrive; the log line
+says why. Nothing is working until you have seen that message on the phone -- write the date you
+did in the shop's notes.
 
 **Keep the Mac awake during shop hours.** System Settings → Lock Screen → *Turn display off* is
 fine; sleep is not. Closing the lid stops the containers.
@@ -219,7 +295,8 @@ loses the record**, because the copy on the machine is the one nobody can alter.
 
 | Situation | This week |
 |---|---|
-| A customer brings **a suit, a coat, áo dài, leather shoes or bags, a pillow, a sofa cover, a carpet, or asks for stain treatment** -- 20 of the published services are price *ranges* | Quote it on the console. Staff agree the figure with the customer and the **owner approves it from their own signed-in session, with MFA, within ten minutes** (`RANGE-PRICE-001`). If the owner cannot be reached, that item cannot be sold on the machine: say so, and do not type a number to get past it. Who else may approve is `DEC-029`, still open. |
+| A customer brings **a suit, a coat, áo dài, leather shoes or bags, a pillow, a sofa cover, a carpet, or asks for stain treatment** -- 20 of the published services are price *ranges* | Quote it on the console. The **staff member on duty agrees the figure with the customer and chooses it inside the published band** -- one press, **no owner approval** (`DEC-029`, decided 2026-09-25 under the owner's delegation). Their name is recorded against the number and cannot be altered, and the server refuses any figure outside the band. The owner reviews who chose which price afterwards (`GET /internal/v1/approvals/{id}/range-price-proposal` returns the amount, the band and `proposed_by`). If that review shows careless pricing, `DEC-029` names the fallback: owner approval above a threshold. |
+| A walk-in customer **wants to pay when dropping the laundry off** | Allowed for the **exact quoted total only** (`DEC-032`): on the order, press **Khách trả trước khi gửi đồ** instead of ticking "Khách đã tự lấy đồ về". At pickup, press **Khách đã nhận đồ** -- the name of whoever hands the bag over is recorded -- then complete the order. Part payment and deposits are still refused (`DEC-010`); the money counts in *Đã thu tại quầy* on the day it was taken. Ticking "collected" for laundry that is not finished is refused. |
 | A customer **complains** | Record it on the **Sự cố** screen against the order, then propose the remedy there. Staff may authorise up to 100.000 ₫ **in total per item** -- above that, or past five times what the shop charged for it, the owner approves (`DEC-004`). **A lost item is the exception**: loss has no ratified figure, so the console records the complaint and refuses any amount. Tell the owner the same day. |
 
 Both limits are listed on the console's own **Chưa hỗ trợ** screen, so staff can read them there
@@ -263,6 +340,28 @@ docker compose $C up -d --build
 
 # 5. One whole transaction by hand, as in section 4, before the first customer.
 ```
+
+**If step 4's build fails with `unable to select packages: age-1.2.1-r10` (or `gzip`, `rclone`).**
+`deploy/production/Postgres.Dockerfile` pins those three to an exact Alpine revision, and Alpine
+keeps only the newest revision of each package, so an *uncached* build -- a new Mac, a reset Docker
+Desktop -- stops resolving once any of them has been rebuilt upstream. Nothing is harmed: the build
+refuses before anything is replaced and the running stack carries on. The error lists the revision
+that exists; either change that one pin to it, or to `~<version>` (any revision of that version),
+in a reviewed commit. This is a known residual of `OPS-HARDENING-002`, not fixed yet because no
+uncached build could be run to prove the replacement.
+
+**A migration that cannot get a lock now gives up after five seconds** rather than queueing every
+request behind it (`MIGRATION_LOCK_TIMEOUT_MS`, default 5000). The migration that could not start
+rolls back whole -- each is one transaction -- `migrate` exits non-zero and the new API is not
+started (`docker compose $C ps` shows what is running). Make sure nobody is at the counter and run
+step 4 again; migrations already applied are skipped.
+
+Every application connection is bounded the same way: 5 s to connect, 15 s per statement, 5 s
+waiting for a lock, 60 s idle inside a transaction. A request that hits one fails and rolls back
+instead of hanging with a connection held. The values are `DATABASE_CONNECT_TIMEOUT_SECONDS`,
+`DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_LOCK_TIMEOUT_MS` and
+`DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` on `api`/`worker`; zero is refused, because zero means
+"no limit".
 
 **Going back.** If step 4 applied **no new migration** (compare `ls packages/db/migrations` at the
 two versions), re-tag the `:previous` images to `:local`, `git checkout "$(cat .shop/previous-version)"`,

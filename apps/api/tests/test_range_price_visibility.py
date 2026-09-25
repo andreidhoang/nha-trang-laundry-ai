@@ -44,7 +44,7 @@ from nha_trang_laundry_api.operations import (
     UnresolvedQuoteResult,
 )
 from nha_trang_laundry_contracts.channel_envelope import ChannelProvider
-from nha_trang_laundry_db.approvals import ApprovalDecision, ApprovalRepository
+from nha_trang_laundry_db.approvals import ApprovalRepository
 from nha_trang_laundry_db.channel import ContactChannelBindingRepository
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
@@ -202,18 +202,22 @@ def _propose(
 def _approve(
     service: OperationsService, *, proposal: RangePriceProposalResult, owner: StaffPrincipal
 ) -> None:
-    decided = service.decide_approval(
-        approval_id=proposal.approval.approval_request_id,
-        decision=ApprovalDecision.APPROVED,
-        resource_version=proposal.resource_version,
-        snapshot_hash=proposal.snapshot_hash,
-        rendered_hash=proposal.rendered_hash,
-        reason_code="RANGE_PRICE_IN_PUBLISHED_BAND",
-        note=None,
-        idempotency_key=f"decide-{uuid4().hex}",
-        principal=owner,
+    """Changed 2026-09-25 under `DEC-029` (option B), and not weakened by it.
+
+    This helper used to have the owner decide the envelope before it could be applied. Under the
+    ruling the staff member's own proposal *is* the approval -- a counter attestation written in
+    the same transaction -- so there is nothing left for the owner to decide first, and a decision
+    here would be refused as not pending. What the owner keeps is review afterwards, so the helper
+    now proves both halves of that: the envelope arrived attested, and the owner can read back the
+    amount it authorises and who chose it.
+    """
+
+    assert proposal.approval.status == "APPROVED"
+    record = service.read_range_price_proposal(
+        approval_id=proposal.approval.approval_request_id, principal=owner
     )
-    assert decided.status == "APPROVED"
+    assert record is not None
+    assert record.rendered_hash == proposal.rendered_hash
 
 
 def _apply(
@@ -331,17 +335,39 @@ def test_the_queue_says_which_action_an_envelope_authorises(
     """Four actions share the `QUOTE_REVISION` resource type, and the console's decision to show
     or withhold the approve control now turns on which one this is. The type alone cannot say."""
 
+    from nha_trang_laundry_db.approvals import ApprovalRequestCommand
+    from nha_trang_laundry_domain.approvals import APPROVAL_RESOURCE_TYPES
+
     _publish(connection)
     store_id = uuid4()
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     owner = _extra_staff(connection, store_id, StaffRole.OWNER_ADMIN)
     banded = _band_quote(service, store_id=store_id, staff=staff)
-    proposal = _propose(service, store_id=store_id, staff=staff, quote=banded)
+    # Changed 2026-09-25 under `DEC-029`: a proposal made through the counter command is attested in
+    # the same transaction, so it is never pending and never reaches this queue (the new test
+    # `test_a_counter_attestation_never_waits_in_the_owners_queue` pins that). The property here --
+    # the queue names the action, not only the resource type -- is about any pending envelope, so it
+    # is exercised on one raised directly and left pending, as an envelope from before the ruling,
+    # or from a reversal of it, would be.
+    pending = ApprovalRepository().request(
+        connection,
+        ApprovalRequestCommand(
+            ApprovalAction.SET_RANGE_PRICE,
+            APPROVAL_RESOURCE_TYPES[ApprovalAction.SET_RANGE_PRICE],
+            banded.quote_id,
+            banded.revision,
+            banded.snapshot_hash,
+            "JCS-SHA256-V1:" + "0" * 64,
+            "range-price-published-band-v1",
+            staff.staff_user_id,
+            f"pending-{uuid4().hex}",
+            uuid4(),
+            store_id=store_id,
+        ),
+    )
 
     queued = service.list_pending_approvals(principal=owner, limit=100)
-    mine = [
-        item for item in queued if item.approval_request_id == proposal.approval.approval_request_id
-    ]
+    mine = [item for item in queued if item.approval_request_id == pending.approval_request_id]
     assert len(mine) == 1
     assert mine[0].action == ApprovalAction.SET_RANGE_PRICE.value
     assert mine[0].resource_type == "QUOTE_REVISION"

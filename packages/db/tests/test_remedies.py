@@ -5,9 +5,10 @@ tests walk each of the four kinds from a recorded complaint to whatever the owne
 becomes, and the rest are refusals -- which is where the risk is, because this is the first path in
 the system that creates money owed to a customer.
 
-The two that matter most are the ones nobody would think to write. `LOST_ITEM` is recorded and
-stopped, and **no test here asserts a loss ceiling** because asserting one would ratify a figure the
-owner explicitly declined to give. And the settlement ledger is compared byte for byte across an
+The two that matter most are the ones nobody would think to write. A loss is never paid on staff
+authority: until `DEC-031` it was recorded and stopped with no figure at all, and since `DEC-031`
+(2026-09-25) it carries the damage ceiling and *always* waits for the owner -- the DEC-031 tests
+live in `test_remedy_item_fee.py`. And the settlement ledger is compared byte for byte across an
 approved remedy, because the temptation when money is owed is to go back and edit what was paid.
 """
 
@@ -99,7 +100,7 @@ from nha_trang_laundry_domain.remedies import (
     RemedyRefusal,
     RemedyStatus,
 )
-from quote_test_data import accepted_quote, counter_ticket, make_quote_snapshot
+from quote_test_data import FixtureLine, accepted_quote, counter_ticket, make_quote_snapshot
 
 ROOT = Path(__file__).resolve().parents[3]
 POLICY = json.loads((ROOT / "templates" / "remedy-policy-dec-004.json").read_text(encoding="utf-8"))
@@ -169,11 +170,18 @@ def _released_order(
     store_id: UUID,
     staff: StaffPrincipal,
     mode: FulfillmentMode = FulfillmentMode.SELF_DROP_SELF_COLLECT,
+    lines: tuple[FixtureLine, ...] | None = None,
+    pricebook: Any = None,
 ) -> tuple[UUID, int]:
     """An order walked to ACTIVE with production RELEASED, through every real transition."""
 
     quote_id, revision, quote, contact_id = accepted_quote(
-        connection, store_id=store_id, principal=staff, fulfillment_mode=mode
+        connection,
+        store_id=store_id,
+        principal=staff,
+        fulfillment_mode=mode,
+        lines=lines,
+        pricebook=pricebook,
     )
     order_id = (
         OrderRepository()
@@ -216,12 +224,19 @@ def _released_order(
     return order_id, version
 
 
-def _settle(connection: Any, order_id: UUID, staff: StaffPrincipal, *, collected: bool) -> None:
+def _settle(
+    connection: Any,
+    order_id: UUID,
+    staff: StaffPrincipal,
+    *,
+    collected: bool,
+    amount: int = QUOTED_TOTAL,
+) -> None:
     SettlementRepository().record(
         connection,
         SettlementCommand(
             order_id=order_id,
-            paid_amount_vnd=QUOTED_TOTAL,
+            paid_amount_vnd=amount,
             collected_by_customer=collected,
             principal=staff,
             correlation_id=uuid4(),
@@ -259,8 +274,15 @@ def _shop(
     mode: FulfillmentMode = FulfillmentMode.SELF_DROP_SELF_COLLECT,
     settle: bool = True,
     publish: bool = True,
+    lines: tuple[FixtureLine, ...] | None = None,
+    pricebook: Any = None,
 ) -> tuple[UUID, StaffPrincipal, UUID, UUID]:
-    """A store, a counter staff member, a released order, and an open incident against it."""
+    """A store, a counter staff member, a released order, and an open incident against it.
+
+    `lines` replaces the single 100.000 d `line-1` with stated lines (`DEC-031` needs a line of
+    several pieces, a bag by weight, a closed band); the settlement is then their sum plus the
+    fixture's 10.000 d delivery fee, the exact quoted total `DEC-010` demands.
+    """
 
     store_id = uuid4()
     StoreRepository.create(
@@ -274,13 +296,16 @@ def _shop(
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     if publish:
         _publish_policy(connection, staff)
-    order_id, _ = _released_order(connection, store_id, staff, mode)
+    order_id, _ = _released_order(connection, store_id, staff, mode, lines, pricebook)
     if settle:
         _settle(
             connection,
             order_id,
             staff,
             collected=mode not in {FulfillmentMode.PICKUP_AND_RETURN, FulfillmentMode.RETURN_ONLY},
+            amount=(
+                QUOTED_TOTAL if lines is None else sum(line.amount_vnd for line in lines) + 10_000
+            ),
         )
     return store_id, staff, order_id, _incident(connection, store_id, order_id, staff)
 
@@ -467,11 +492,16 @@ def test_a_late_delivery_credit_is_ten_percent_the_server_computed(
     assert executed.event_type == CREDIT_EXECUTED and executed.amount_vnd == LATE_CREDIT
 
 
-def test_a_lost_item_is_recorded_and_refuses(connection: psycopg.Connection[Any]) -> None:
-    """`DEC-004` carries loss forward as unresolved, so the record exists and nothing is paid.
+def test_a_lost_item_reaches_an_outcome_only_through_the_owner(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """`DEC-031` rule 2, end to end. Rewritten from the pre-`DEC-031` test, which asserted that a
+    loss was recorded with no figure and could never be paid.
 
-    Deliberately asserts no ceiling, no window and no amount. There is no figure for loss, and a
-    test that pinned one would be this repository ratifying a number the owner declined to give.
+    What is kept is the part that mattered: staff alone can never pay a loss. What changed is that
+    the owner now can -- 50.000 d is well inside what staff may approve for damage, and a loss of it
+    still raises an envelope, still refuses execution until the owner decides, and is paid only
+    after.
     """
 
     store_id, staff, _, incident_id = _shop(connection)
@@ -482,21 +512,61 @@ def test_a_lost_item_is_recorded_and_refuses(connection: psycopg.Connection[Any]
         staff,
         kind=RemedyKind.LOST_ITEM,
         store_fault_attested=True,
+        order_line_id="line-1",
+        amount_vnd=50_000,
     )
-    assert proposal.outcome is PolicyOutcome.REQUIRE_HUMAN
-    assert proposal.reason_code == RemedyRefusal.LOSS_POLICY_UNRESOLVED.value
-    assert proposal.status is RemedyStatus.POLICY_UNRESOLVED
-    assert (proposal.amount_vnd, proposal.ceiling_vnd, proposal.window_closes_at) == (
-        None,
-        None,
-        None,
-    )
-    # The complaint is written down -- that is the outcome for a loss -- and the incident stays open
-    # for review rather than being closed by a remedy nobody decided.
+    assert proposal.outcome is PolicyOutcome.ALLOW
+    assert proposal.status is RemedyStatus.OWNER_APPROVAL_REQUIRED
+    assert proposal.approval_id is not None
+    assert proposal.owner_reasons == ("LOSS_CLAIM",)
+    # The same ceiling and window as damage: 5x the 100.000 d piece, 24 hours from the handover.
+    assert (proposal.amount_vnd, proposal.ceiling_vnd) == (50_000, DAMAGE_CEILING)
+    assert proposal.window_closes_at == NOW + timedelta(hours=24)
     assert _incident_row(connection, incident_id) == ("UNDER_REVIEW", True, False)
 
     with pytest.raises(RemedyStateError) as refused:
         _execute(connection, proposal.proposal_id, staff)
+    assert refused.value.reason_code == "REMEDY_APPROVAL_REQUIRED"
+
+    _approve(connection, store_id, proposal.approval_id, NOW + timedelta(minutes=1))
+    executed = _execute(connection, proposal.proposal_id, staff, NOW + timedelta(minutes=2))
+    assert executed.event_type == CREDIT_EXECUTED and executed.amount_vnd == 50_000
+    assert _incident_row(connection, incident_id) == ("CLOSED", True, True)
+
+
+def test_a_loss_recorded_before_dec_031_still_can_never_be_paid(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The wall stays for the rows it was built for: a `POLICY_UNRESOLVED` loss carries no figure,
+    and migration 0051 keeps that shape legal so a deployed database still migrates."""
+
+    store_id, staff, _, incident_id = _shop(connection)
+    seed = _propose(
+        connection,
+        store_id,
+        incident_id,
+        staff,
+        kind=RemedyKind.FREE_REWASH,
+        store_fault_attested=True,
+    )
+    legacy = uuid4()
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO remedy_proposals (
+                id, store_id, incident_id, order_id, kind, status, policy_version_id,
+                policy_version, store_fault_attested, proposal_hash, proposed_by, proposed_at,
+                correlation_id
+            )
+            SELECT %s, store_id, incident_id, order_id, 'LOST_ITEM', 'POLICY_UNRESOLVED',
+                   policy_version_id, policy_version, TRUE, proposal_hash, proposed_by,
+                   proposed_at, %s
+            FROM remedy_proposals WHERE id = %s
+            """,
+            (legacy, uuid4(), seed.proposal_id),
+        )
+    with pytest.raises(RemedyStateError) as refused:
+        _execute(connection, legacy, staff)
     assert refused.value.reason_code == RemedyRefusal.LOSS_POLICY_UNRESOLVED.value
     assert refused.value.ceiling_vnd is None
 
@@ -1298,7 +1368,11 @@ def test_the_options_read_names_the_ceiling_the_window_and_the_owner_threshold(
     # No delivery happened, so there is no late-delivery credit to offer and the form must say so
     # rather than showing a zero.
     assert options.late_delivery_credit_vnd is None
-    assert options.loss_reason_code == RemedyRefusal.LOSS_POLICY_UNRESOLVED.value
+    # `DEC-031`: this used to assert `loss_reason_code == LOSS_POLICY_UNRESOLVED`, the form's cue to
+    # render loss as unsupported. A loss is now proposable and always needs the owner, and the read
+    # says so -- the form must never let staff believe they can approve one.
+    assert options.loss_requires_owner is True
+    assert options.order_refunded is False
 
 
 def test_the_options_read_fails_closed_with_no_published_policy(

@@ -1,0 +1,70 @@
+schema_version: 1
+work_item: PREPAID-DROPOFF-001
+recorded_at: '2026-09-25T15:00:00+07:00'
+requirement_contract: 'DEC-032: a self-collect customer pays the exact total at drop-off; pickup is recorded
+  separately by a named staff member; an order completes only when paid, released and collected; DEC-010
+  is not reopened.'
+rollback_impact: Reversal is refusing collected_by_customer=false on a self-collect order again, in the
+  domain. Migration 0048 adds order_collections and widens three checks; its rows stay valid. Migrations
+  0048-0051 are forward-only and additive; rolling data back is docs/runbooks/restore-drill.md from the
+  base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: 'Pickup is allowed at READY_AT_STORE or RELEASED (the one ''goods are finished''
+  rule); COMPLETED still needs RELEASED. PICKUP_ONLY orders still cannot prepay (DEC-023: drivers carry
+  no money).'
+evidence:
+  exact_prepayment_at_dropoff_is_recorded_without_a_false_handover: 'Live walk-through against the running
+    API on 2026-09-25, as the real roles (demo-operations, demo-owner, demo-auditor): ticket 5 (140.000
+    d, production NOT_STARTED): ticking ''collected'' was refused 422 GOODS_NOT_READY_FOR_HANDOVER; the
+    exact prepayment was 201 and the order read PAID, self_collection_recorded false.'
+  pickup_is_recorded_by_a_named_staff_member: 'Live walk-through against the running API on 2026-09-25,
+    as the real roles (demo-operations, demo-owner, demo-auditor): after RELEASED, POST /orders/{id}/collection
+    returned 201 with collected_by_staff_id from the session. test_prepaid_dropoff.py 30 DB tests + 3
+    HTTP; 12/12 mutants killed including ''pickup recorded under the payer''s name''.'
+  an_order_completes_only_when_paid_released_and_collected: 'Live walk-through against the running API
+    on 2026-09-25, as the real roles (demo-operations, demo-owner, demo-auditor): pickup before release
+    refused 422 GOODS_NOT_READY_FOR_HANDOVER; COMPLETED before release refused 409; after release and
+    pickup, COMPLETED 200.'
+  partial_payment_is_still_refused: 'Live walk-through against the running API on 2026-09-25, as the real
+    roles (demo-operations, demo-owner, demo-auditor): 135.000 d against 140.000 d: 422 NOT_SUPPORTED
+    AMOUNT_IS_NOT_THE_EXACT_TOTAL (DEC-010). Deposit, overpayment and zero refused in the domain and over
+    HTTP.'
+  rollback_assessment: Reversal is refusing collected_by_customer=false on a self-collect order again,
+    in the domain. Migration 0048 adds order_collections and widens three checks; its rows stay valid.
+    Migrations 0048-0051 are forward-only and additive; rolling data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 609 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 290 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2105 passed, 4 skipped in 516.96s (0:08:36)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 61 served
+    internal API operations against their contract. Validated 396 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 140 source references, 32 decisions, 4 gates, 9 phases, 146 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_daily_operations.py against the real API and identity provider
+  status: PASSED
+  result: 71 ok, 0 failed
+  note: 2026-09-25 on the fully merged tree, database created empty and migrated 0001-0051, remedy and
+    promotion policies published as shop-till-mac.md section 4 now requires.
+- command: verify_workflow_conformance.py against the real API
+  status: PASSED
+  result: '86 ok, 1 failed (coverage line only: 40/49 controls, unchanged from main)'
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 171 passed, 0 failed
+  note: Includes the fixers' edits to the stub for the one-press range price and the loss form, which
+    none of them could execute.

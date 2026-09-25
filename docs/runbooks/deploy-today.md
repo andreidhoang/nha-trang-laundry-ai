@@ -252,8 +252,10 @@ restore that will never happen that way.
 ## 8. Watch it
 
 The alert token is a plain file on the host, readable only by whoever runs cron. It is not a
-Docker secret because nothing in a container reads it — `check_shop_operations.py` runs on the
-host. Create it before the first run, or alerts are silently never delivered:
+Docker secret because nothing in a container reads it — `scripts/relay_shop_alert.py` runs on the
+host and does the posting; the data checks inside the database network only print their alert,
+because that network has no way out (`SHOP-ALERT-DELIVERY-001`). Create it before the first run,
+or every failing check exits 3 with `ALERT NOT DELIVERED` and nobody's phone hears about it:
 
 ```bash
 install -m 0600 /dev/null /etc/nha-trang-laundry/alert-telegram-token

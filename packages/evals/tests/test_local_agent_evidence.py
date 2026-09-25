@@ -12,8 +12,8 @@ from nha_trang_laundry_evals import validate_eval_manifest
 
 ROOT = Path(__file__).resolve().parents[3]
 BUNDLE_INDEX = ROOT / "evidence/agent-shadow/bundle-index-v1.yaml"
-EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v3.json"
-SUPERSEDED_EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v2.json"
+EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v4.json"
+SUPERSEDED_EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v3.json"
 ROLLBACK = ROOT / "evidence/agent-shadow/rollback-assessment-v1.yaml"
 OPENCLAW_EVIDENCE = ROOT / "evidence/agent-shadow/openclaw-offline-verification-v1.json"
 

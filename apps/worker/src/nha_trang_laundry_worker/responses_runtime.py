@@ -20,9 +20,10 @@ from threading import Lock
 from typing import Annotated, Any, Literal, Protocol, Self
 from uuid import UUID
 
-from jsonschema import Draft202012Validator, FormatChecker
+from jsonschema import Draft202012Validator
 from nha_trang_laundry_contracts import (
     CAPABILITY_OPERATIONS,
+    STRICT_FORMAT_CHECKER,
     AgentToolOperation,
     ReleaseCapability,
 )
@@ -42,6 +43,7 @@ from .agent_runner import (
     AgentRuntimeOutput,
     AgentToolBridgeRejected,
     AgentToolBridgeSession,
+    ExecutionPins,
 )
 
 Sha256Pin = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
@@ -185,6 +187,7 @@ class ResponsesRuntimeConfig(BaseModel):
     model_id: BoundedIdentifier
     immutable_model_release: BoundedIdentifier
     reasoning_effort: Literal["low", "medium", "high"]
+    runtime_registry_version: BoundedIdentifier
     runtime_registry_hash: Sha256Pin
     prompt_bundle_version: BoundedIdentifier
     prompt_bundle_hash: Sha256Pin
@@ -524,6 +527,7 @@ class ResponsesRuntimeEvidence(BaseModel):
     runtime_id: BoundedIdentifier
     model_id: BoundedIdentifier
     immutable_model_release: BoundedIdentifier
+    runtime_registry_version: BoundedIdentifier
     runtime_registry_hash: Sha256Pin
     prompt_bundle_version: BoundedIdentifier
     prompt_bundle_hash: Sha256Pin
@@ -663,6 +667,18 @@ class BoundedResponsesRuntime:
         self._now = now or (lambda: datetime.now(UTC))
         self.provider_backed = transport.provider_backed
 
+    @property
+    def execution_pins(self) -> ExecutionPins:
+        """The release this runtime executes, as its configuration pins it."""
+
+        return ExecutionPins(
+            runtime_registry_version=self._config.runtime_registry_version,
+            runtime_registry_hash=self._config.runtime_registry_hash,
+            prompt_bundle_version=self._config.prompt_bundle_version,
+            prompt_bundle_hash=self._config.prompt_bundle_hash,
+            tool_contract_hash=self._config.tool_contract_hash,
+        )
+
     def invoke(
         self, invocation: AgentRuntimeInvocation, bridge: AgentToolBridgeSession
     ) -> AgentRuntimeOutput:
@@ -681,6 +697,11 @@ class BoundedResponsesRuntime:
             ]
             tools = self._tools_for(invocation.capability)
             while True:
+                # The runner revokes the bridge when the job's hard deadline passes. A runtime
+                # thread that resumes after that must not start another provider call: its result
+                # would be discarded and its cost unaccounted for by the run that owned it.
+                if bridge.is_closed:
+                    raise ResponsesRuntimeFailure("RUN_REVOKED")
                 self._require_time(context.deadline_at)
                 reservation = budget.reserve()
                 try:
@@ -776,6 +797,7 @@ class BoundedResponsesRuntime:
                 runtime_id=self._config.runtime_id,
                 model_id=self._config.model_id,
                 immutable_model_release=self._config.immutable_model_release,
+                runtime_registry_version=self._config.runtime_registry_version,
                 runtime_registry_hash=self._config.runtime_registry_hash,
                 prompt_bundle_version=self._config.prompt_bundle_version,
                 prompt_bundle_hash=self._config.prompt_bundle_hash,
@@ -804,6 +826,9 @@ class BoundedResponsesRuntime:
                     "TERMINAL_EVIDENCE_PERSIST_FAILED"
                 ) from error
         return AgentRuntimeOutput(
+            # A validated model draft is the only DRAFT; every other exit is a handoff and says so.
+            disposition="DRAFT_REQUIRES_HUMAN" if outcome == "DRAFT" else "REQUIRE_HUMAN",
+            terminal_code=terminal_code,
             draft_text=draft_text,
             model_calls=budget.model_attempts,
             input_tokens=budget.input_tokens,
@@ -852,6 +877,9 @@ class BoundedResponsesRuntime:
         )
         if mismatch is not None:
             raise ResponsesContextRejected(f"CONTEXT_{mismatch.upper()}_MISMATCH")
+        if context.deadline_at > invocation.deadline_at:
+            # A packet may shorten the run, never extend it past the job's server-set deadline.
+            raise ResponsesContextRejected("CONTEXT_DEADLINE_EXCEEDS_RUN")
         if not _constant_text_equal(
             _sha256_text(context.instructions), self._config.prompt_instructions_hash
         ):
@@ -937,7 +965,7 @@ class BoundedResponsesRuntime:
         contract = TOOL_REGISTRY.get(operation)
         provider_validator = Draft202012Validator(
             _provider_strict_schema(contract.model_argument_schema),
-            format_checker=FormatChecker(),
+            format_checker=STRICT_FORMAT_CHECKER,
         )
         if any(provider_validator.iter_errors(raw_arguments)):
             raise AgentToolBridgeRejected("VALIDATION_ERROR: invalid provider tool arguments")

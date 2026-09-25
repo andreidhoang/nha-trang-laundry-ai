@@ -100,7 +100,11 @@ APPROVAL_POLICIES: Final = MappingProxyType(
         ApprovalAction.SEND_MESSAGE: _OPS_30_MIN,
         ApprovalAction.CONFIRM_SLOT: _OPS_15_MIN,
         ApprovalAction.ACCEPT_ORDER: _OPS_15_MIN,
-        ApprovalAction.SET_RANGE_PRICE: _OWNER_FINANCIAL,
+        # DEC-029 (2026-09-25, option B, delegated): the staff member on duty chooses inside the
+        # band the owner published, under DEC-021's counter attestation. The published band is the
+        # owner's authorisation; the server still refuses every figure outside it. Reverse by
+        # mapping this back to `_OWNER_FINANCIAL`.
+        ApprovalAction.SET_RANGE_PRICE: _COUNTER_ATTESTATION,
         ApprovalAction.SET_DELIVERY_FEE: _OWNER_FINANCIAL,
         ApprovalAction.APPLY_PROMOTION: _OWNER_FINANCIAL,
         ApprovalAction.CANCEL_ACTIVE_ORDER: _OWNER_FINANCIAL,

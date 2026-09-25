@@ -23,7 +23,18 @@
 
 name: nha-trang-laundry-shop
 
+# `OPS-HARDENING-002`. Docker's default json-file driver keeps every line a container ever wrote, on
+# the same disk as `pgdata` -- and on the till that is the Mac's only disk. The volume check alerts at
+# 10% free; unbounded logs are one more way to get there. Three files of ten megabytes per service,
+# six services: at most 180 MB, whatever happens.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-runtime-hardening: &runtime-hardening
+  logging: *default-logging
   init: true
   read_only: true
   cap_drop: ["ALL"]
@@ -65,7 +76,10 @@ services:
     # mid-flight is paid back as recovery time on the next start.
     stop_grace_period: 120s
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
-    ports: []
+    # `!reset` rather than `[]`, so the line means "publish nothing" even when this file is not the
+    # bottom of the stack: in an overlay an empty list appends nothing (`OPS-HARDENING-002`).
+    ports: !reset []
+    logging: *default-logging
     environment:
       POSTGRES_DB: nha_trang_laundry
       POSTGRES_USER: laundry_migrate
@@ -130,7 +144,18 @@ services:
         gid: "70"
         mode: 0400
     tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+      # `archive-wal.sh` stages `<segment>.gz` and `<segment>.gz.age` here, both at once. A 16 MiB
+      # segment that does not compress -- a busy afternoon of index writes, not an idle one --
+      # needs, worst case:
+      #   .gz      n + zlib deflateBound (n>>12 + n>>14 + 7) + 18-byte wrapper + name  ~ 16 MiB + 5.3 KiB
+      #   .gz.age  the .gz + a 16-byte tag per 64 KiB chunk (257) + header (~1 KiB)   ~ 16 MiB + 10.4 KiB
+      #   both at once                                                               ~ 32 MiB + 16 KiB
+      # so the previous 16m failed every such segment with ENOSPC, `archive_command` retried it for
+      # ever, WAL was pinned and the disk that holds the orders filled (`OPS-HARDENING-002`). 80m
+      # holds that pair twice (64 MiB + 32 KiB) with room to spare: the second pair is one left
+      # behind by an archiver killed mid-segment. tmpfs is sized, not reserved -- an idle segment
+      # still uses kilobytes of memory.
+      - /tmp:rw,noexec,nosuid,nodev,size=80m,mode=1777
       - /run/postgresql:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=70,gid=70
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -161,6 +186,7 @@ services:
       dockerfile: apps/api/Dockerfile
     entrypoint: ["python", "-m", "nha_trang_laundry_db.migration_job"]
     command: []
+    logging: *default-logging
     init: true
     user: "10003:10003"
     read_only: true

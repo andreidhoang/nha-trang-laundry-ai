@@ -9,11 +9,12 @@ from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
 from jsonschema import Draft202012Validator
+from message_draft_test_data import current_binding, seed_message_draft
 from nha_trang_laundry_contracts.channel_envelope import (
     ChannelAuthentication,
     ChannelAuthenticationScheme,
@@ -35,11 +36,13 @@ from nha_trang_laundry_contracts.channel_envelope import (
     SendAuthorization,
     SendAuthorizationSource,
 )
+from nha_trang_laundry_db.approvals import ApprovalRepository, ApprovalRequestCommand
 from nha_trang_laundry_db.channel import (
     ChannelReceiptError,
     ChannelSendReceiptRepository,
     ContactChannelBindingRepository,
 )
+from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.inbox import (
     EncryptedInboundPayload,
     InboundWebhook,
@@ -47,6 +50,8 @@ from nha_trang_laundry_db.inbox import (
     InboxRepository,
 )
 from nha_trang_laundry_db.migrations import apply_migrations
+from nha_trang_laundry_db.stores import StoreRepository
+from nha_trang_laundry_domain.catalog import ApprovalAction
 from nha_trang_laundry_domain.consent import OptOutDisposition
 from pydantic import ValidationError
 
@@ -62,6 +67,67 @@ def postgres_connection() -> Generator[psycopg.Connection[Any], None, None]:
     with psycopg.connect(database_url) as connection:
         apply_migrations(connection)
         yield connection
+
+
+@pytest.fixture
+def approved(postgres_connection: psycopg.Connection[Any]) -> tuple[UUID, SendAuthorization]:
+    """A store and a real SEND_MESSAGE approval of it, for receipts that are recorded.
+
+    API-INTEGRITY-002: a receipt names its store, and a `HUMAN_APPROVAL` receipt's approval must
+    exist in that store. `_receipt()` alone still carries `approval_ref=uuid4()`, which is right for
+    the pure model tests above and is refused by the repository -- so every test that records one
+    authorises it with this approval instead.
+    """
+    store_id = uuid4()
+    requester = StaffPrincipal(
+        uuid4(), f"receipt-{uuid4().hex}", frozenset({StaffRole.OPERATOR}), True
+    )
+    StoreRepository.create(
+        postgres_connection,
+        store_id=store_id,
+        name="Cửa hàng",
+        created_by=None,
+        correlation_id=uuid4(),
+    )
+    with postgres_connection.transaction(), postgres_connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO staff_users (id, oidc_subject, display_name, status, created_at)
+            VALUES (%s, %s, 'Nhân viên', 'ACTIVE', %s)
+            """,
+            (requester.staff_user_id, requester.oidc_subject, NOW),
+        )
+        cursor.execute(
+            """
+            INSERT INTO staff_store_assignments (
+                staff_user_id, store_id, assigned_by_staff_id, assigned_at, row_version
+            ) VALUES (%s, %s, %s, %s, 1)
+            """,
+            (requester.staff_user_id, store_id, requester.staff_user_id, NOW),
+        )
+    draft = seed_message_draft(postgres_connection, store_id)
+    binding = current_binding(postgres_connection, draft.agent_run_id)
+    approval = ApprovalRepository().request(
+        postgres_connection,
+        ApprovalRequestCommand(
+            ApprovalAction.SEND_MESSAGE,
+            "MESSAGE_DRAFT",
+            draft.agent_run_id,
+            binding.resource_version,
+            binding.snapshot_hash,
+            binding.rendered_hash,
+            "manual-send-policy-v1",
+            requester.staff_user_id,
+            f"receipt-approval-{uuid4().hex}",
+            uuid4(),
+            store_id=store_id,
+        ),
+    )
+    # Committed, because the race test below records from connections of its own.
+    postgres_connection.commit()
+    return store_id, SendAuthorization(
+        source=SendAuthorizationSource.HUMAN_APPROVAL, approval_ref=approval.approval_request_id
+    )
 
 
 def _envelope(**overrides: Any) -> ChannelInboundEnvelope:
@@ -317,18 +383,23 @@ def test_verified_state_requires_its_evidence_at_the_database(
 )
 def test_every_attempt_outcome_writes_exactly_one_receipt(
     postgres_connection: psycopg.Connection[Any],
+    approved: tuple[UUID, SendAuthorization],
     outcome: SendAttemptOutcome,
     delivery_status: ChannelDeliveryStatus,
     reconciliation_state: ReconciliationState,
 ) -> None:
+    store_id, authorization = approved
     repository = ChannelSendReceiptRepository()
     receipt = _receipt(
+        authorization=authorization,
         attempt=SendAttempt(attempt_number=1, started_at=NOW, outcome=outcome),
         delivery_status=delivery_status,
         reconciliation_state=reconciliation_state,
     )
 
-    repository.record_attempt(postgres_connection, receipt, correlation_id=uuid4())
+    repository.record_attempt(
+        postgres_connection, receipt, store_id=store_id, correlation_id=uuid4()
+    )
 
     with postgres_connection.cursor() as cursor:
         cursor.execute(
@@ -340,15 +411,20 @@ def test_every_attempt_outcome_writes_exactly_one_receipt(
 
 def test_an_unknown_outcome_is_surfaced_for_human_reconciliation(
     postgres_connection: psycopg.Connection[Any],
+    approved: tuple[UUID, SendAuthorization],
 ) -> None:
+    store_id, authorization = approved
     repository = ChannelSendReceiptRepository()
     receipt = _receipt(
+        authorization=authorization,
         attempt=SendAttempt(attempt_number=1, started_at=NOW, outcome=SendAttemptOutcome.TIMEOUT),
         delivery_status=ChannelDeliveryStatus.FAILED,
         reconciliation_state=ReconciliationState.UNKNOWN_REQUIRES_HUMAN,
     )
 
-    repository.record_attempt(postgres_connection, receipt, correlation_id=uuid4())
+    repository.record_attempt(
+        postgres_connection, receipt, store_id=store_id, correlation_id=uuid4()
+    )
 
     assert receipt.receipt_id in repository.unresolved_unknown_outcomes(postgres_connection)
     with postgres_connection.cursor() as cursor:
@@ -362,24 +438,35 @@ def test_an_unknown_outcome_is_surfaced_for_human_reconciliation(
 
 def test_recording_the_same_attempt_twice_loses_at_the_database(
     postgres_connection: psycopg.Connection[Any],
+    approved: tuple[UUID, SendAuthorization],
 ) -> None:
+    store_id, authorization = approved
     repository = ChannelSendReceiptRepository()
-    receipt = _receipt()
+    receipt = _receipt(authorization=authorization)
 
-    repository.record_attempt(postgres_connection, receipt, correlation_id=uuid4())
+    repository.record_attempt(
+        postgres_connection, receipt, store_id=store_id, correlation_id=uuid4()
+    )
 
     duplicate = _receipt(
-        receipt_id=uuid4(), outbox_id=receipt.outbox_id, idempotency_key=receipt.idempotency_key
+        authorization=authorization,
+        receipt_id=uuid4(),
+        outbox_id=receipt.outbox_id,
+        idempotency_key=receipt.idempotency_key,
     )
     with pytest.raises(psycopg.errors.UniqueViolation):
-        repository.record_attempt(postgres_connection, duplicate, correlation_id=uuid4())
+        repository.record_attempt(
+            postgres_connection, duplicate, store_id=store_id, correlation_id=uuid4()
+        )
 
 
 def test_two_workers_racing_one_attempt_record_it_exactly_once(
     postgres_connection: psycopg.Connection[Any],
+    approved: tuple[UUID, SendAuthorization],
 ) -> None:
+    store_id, authorization = approved
     database_url = os.environ["DATABASE_URL"]
-    receipt = _receipt()
+    receipt = _receipt(authorization=authorization)
     barrier = threading.Barrier(2)
     failures: list[BaseException] = []
 
@@ -390,10 +477,12 @@ def test_two_workers_racing_one_attempt_record_it_exactly_once(
                 ChannelSendReceiptRepository().record_attempt(
                     connection,
                     _receipt(
+                        authorization=authorization,
                         receipt_id=uuid4(),
                         outbox_id=receipt.outbox_id,
                         idempotency_key=receipt.idempotency_key,
                     ),
+                    store_id=store_id,
                     correlation_id=uuid4(),
                 )
         except BaseException as error:  # the loser's error is the assertion
@@ -419,25 +508,34 @@ def test_two_workers_racing_one_attempt_record_it_exactly_once(
 
 def test_receipt_repository_refuses_an_unreconcilable_outcome(
     postgres_connection: psycopg.Connection[Any],
+    approved: tuple[UUID, SendAuthorization],
 ) -> None:
+    store_id, authorization = approved
     repository = ChannelSendReceiptRepository()
     receipt = _receipt(
+        authorization=authorization,
         attempt=SendAttempt(attempt_number=1, started_at=NOW, outcome=SendAttemptOutcome.ACCEPTED),
         delivery_status=ChannelDeliveryStatus.PROVIDER_ACCEPTED,
         reconciliation_state=ReconciliationState.UNKNOWN_REQUIRES_HUMAN,
     )
 
     with pytest.raises(ChannelReceiptError, match="accepted send"):
-        repository.record_attempt(postgres_connection, receipt, correlation_id=uuid4())
+        repository.record_attempt(
+            postgres_connection, receipt, store_id=store_id, correlation_id=uuid4()
+        )
 
 
 def test_receipt_write_is_atomic_with_its_event_and_audit_rows(
     postgres_connection: psycopg.Connection[Any],
+    approved: tuple[UUID, SendAuthorization],
 ) -> None:
+    store_id, authorization = approved
     repository = ChannelSendReceiptRepository()
-    receipt = _receipt()
+    receipt = _receipt(authorization=authorization)
 
-    repository.record_attempt(postgres_connection, receipt, correlation_id=uuid4())
+    repository.record_attempt(
+        postgres_connection, receipt, store_id=store_id, correlation_id=uuid4()
+    )
 
     with postgres_connection.cursor() as cursor:
         cursor.execute(
@@ -458,10 +556,14 @@ def test_receipt_write_is_atomic_with_its_event_and_audit_rows(
 
 def test_a_receipt_row_cannot_be_hard_deleted(
     postgres_connection: psycopg.Connection[Any],
+    approved: tuple[UUID, SendAuthorization],
 ) -> None:
+    store_id, authorization = approved
     repository = ChannelSendReceiptRepository()
-    receipt = _receipt()
-    repository.record_attempt(postgres_connection, receipt, correlation_id=uuid4())
+    receipt = _receipt(authorization=authorization)
+    repository.record_attempt(
+        postgres_connection, receipt, store_id=store_id, correlation_id=uuid4()
+    )
 
     with (
         pytest.raises(psycopg.errors.RaiseException),

@@ -294,7 +294,15 @@ def test_the_completion_guard_was_not_widened(connection: psycopg.Connection[Any
         {"commercial_target": CommercialOrderStatus.STORE_CONFIRMATION_PENDING},
         {"commercial_target": CommercialOrderStatus.CONFIRMED},
         {"commercial_target": CommercialOrderStatus.ACTIVE},
+        # Stopped at QUEUED until 2026-09-25, and settled "collected" there. The staging review
+        # found that accepting "the customer took their goods" for laundry still in the queue is a
+        # false handover, and PREPAID-DROPOFF-001 refuses it (GOODS_NOT_READY_FOR_HANDOVER). The
+        # property here is untouched and still measured one step short of RELEASED: finished and
+        # waiting, paid and collected, and COMPLETED is still refused until production releases.
         {"production_target": ProductionStatus.QUEUED},
+        {"production_target": ProductionStatus.IN_PROCESS},
+        {"production_target": ProductionStatus.QUALITY_CHECK},
+        {"production_target": ProductionStatus.READY_AT_STORE},
     ):
         version = _advance(connection, order_id, staff, version, **step).row_version
 
@@ -347,16 +355,31 @@ def test_an_amount_other_than_the_quoted_total_is_refused(
 def test_goods_that_did_not_leave_with_the_customer_are_refused(
     connection: psycopg.Connection[Any],
 ) -> None:
-    """The other branch of the guard is a delivery leg, and delivery is DEC-003 and unbuilt."""
+    """Goods that did not leave with the customer are never recorded as having left.
+
+    Changed 2026-09-25 under `DEC-032`. This asserted a walk-in settled with "collected" unticked
+    was refused outright (`COLLECTION_WAS_NOT_BY_THE_CUSTOMER`), because at the time the only other
+    branch of the guard was a delivery leg. The owner's ruling makes it a customer paying the exact
+    total at drop-off, so the money is taken -- and the property this test is named for is what
+    still has to hold: nothing says the goods left, `self_collection_recorded` stays false, and the
+    order cannot complete until the pickup is recorded on its own (`test_prepaid_dropoff.py`).
+    """
     store_id = uuid4()
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
-    order_id, _ = _ready_active_order(connection, store_id, staff)
+    order_id, version = _ready_active_order(connection, store_id, staff)
 
-    with pytest.raises(SettlementStateError) as raised:
-        _settle(connection, order_id, staff, collected=False)
-    assert raised.value.reason_code == "COLLECTION_WAS_NOT_BY_THE_CUSTOMER"
-    assert raised.value.decision == "DEC-003"
-    assert _order_row(connection, order_id)[1] == "UNPAID"
+    stored = _settle(connection, order_id, staff, collected=False)
+    assert stored.settlement_shape == "EXACT_PAYMENT_PREPAID_SELF_COLLECTION"
+    assert _order_row(connection, order_id)[1:3] == ("PAID", False)
+    with pytest.raises(OrderStateError, match="fulfillment is incomplete"):
+        _advance(
+            connection,
+            order_id,
+            staff,
+            stored.row_version,
+            commercial_target=CommercialOrderStatus.COMPLETED,
+        )
+    assert version < stored.row_version
 
 
 def test_an_order_that_is_not_active_cannot_be_settled(

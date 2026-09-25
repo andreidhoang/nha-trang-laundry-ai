@@ -36,6 +36,21 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 12 | Đọc cho khách số **Phải thu** ngay trên ô tiền, nhập đúng số đó, tích **Khách đã tự lấy đồ**, bấm **Ghi nhận tất toán** | Chi tiết đơn |
 | 13 | Chuyển **thương mại** sang *Hoàn tất* | Đơn hàng |
 
+### Khách muốn trả tiền ngay lúc gửi đồ
+
+Được, nhưng chỉ **đúng tổng đã báo** (quyết định DEC-032, 25/09/2026). Đặt cọc hay trả một phần
+vẫn bị từ chối.
+
+| | Làm gì | Ở màn hình |
+|---|---|---|
+| 9a | Sau bước 9 (đơn *Đang chạy*): **Mở đơn**, nhập đúng số **Phải thu**, bấm **Khách trả trước khi gửi đồ** — **không tích** ô “Khách đã tự lấy đồ” | Chi tiết đơn |
+| 11a | Khách tới lấy: **Tìm theo số phiếu**, **Mở đơn**, đưa đồ rồi bấm **Khách đã nhận đồ** (tên bạn được ghi) | Chi tiết đơn |
+| 13 | Chuyển **thương mại** sang *Hoàn tất* | Đơn hàng |
+
+- Tiền tính vào **Đã thu tại quầy** của **ngày khách trả**, không phải ngày lấy đồ.
+- Đồ chưa giặt xong thì máy không cho bấm đã nhận đồ — và cũng không cho tích ô “Khách đã tự lấy
+  đồ” khi khách trả lúc lấy.
+
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
 
 Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **khoảng giá**, vì phải nhìn món đồ mới
@@ -46,16 +61,14 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 |---|---|
 | 4a | Bấm **Lập bản khoảng giá**. Đọc khoảng cho khách nghe (ví dụ *80.000 – 240.000 ₫*) |
 | 4b | Xem đồ, thoả thuận với khách, gõ **một số nằm trong khoảng** cho từng dòng |
-| 4c | Bấm **Gửi giá cho chủ duyệt**. Gọi chủ tiệm — phiếu duyệt chỉ sống **mười phút** |
-| 4d | Chủ tiệm mở màn hình **Duyệt**, mở bản báo giá xem, rồi bấm **Duyệt** |
-| 4e | Bạn bấm **Áp dụng giá đã duyệt** → quay lại bước 5 ở bảng trên |
+| 4c | Bấm **Chốt giá này** → máy ghi giá luôn → quay lại bước 5 ở bảng trên |
 
-- **Người gửi không tự duyệt được.** Máy chủ từ chối. Phải là hai người.
-- **Đừng rời màn hình Báo giá** giữa 4c và 4e: những con số chỉ còn ở màn hình đó. Rời đi thì gửi
-  lại từ đầu — không mất gì, vì lúc đề nghị chưa có giá nào được ghi.
-- **Quá mười phút** thì phiếu chết hẳn, không gia hạn được. Gửi lại từ đầu.
-- Gõ số ngoài khoảng thì màn hình cảnh báo **ngay khi đang gõ**, trước khi gửi. Đừng lách: muốn ra
-  ngoài khoảng thì chủ tiệm phải công bố lại bảng giá.
+- **Không cần chờ chủ tiệm.** Người đang trực quầy chốt giá trong khoảng chủ tiệm đã niêm yết
+  (quyết định DEC-029, 25/09/2026). **Tên bạn được ghi cùng con số, không sửa được**, và chủ tiệm
+  xem lại được tất cả — nên chỉ gõ đúng số đã thoả thuận với khách.
+- Nếu màn hình dừng ở **Ghi giá vào báo giá** (mất mạng giữa chừng), bấm nút đó thêm một lần.
+- Gõ số ngoài khoảng thì màn hình cảnh báo **ngay khi đang gõ**, và máy chủ cũng từ chối. Đừng
+  lách: muốn ra ngoài khoảng thì chủ tiệm phải công bố lại bảng giá.
 
 ### Ba điều dễ sai nhất
 
@@ -81,8 +94,7 @@ Trang này trước đây dặn ghi tay hai việc. Cả hai đã làm được 
 mất bản ghi** — vì bản trên máy mới là bản không sửa được.
 
 **1. Món có khoảng giá.** Làm theo mục *Món niêm yết theo khoảng giá* ở trên. Vẫn là bạn thoả
-thuận giá với khách và chủ tiệm gật đầu — chỉ khác là được ghi lại kèm tên người chốt, thay vì
-nằm trên một tờ phiếu.
+thuận giá với khách — chỉ khác là được ghi lại kèm tên người chốt, thay vì nằm trên một tờ phiếu.
 
 **2. Khách khiếu nại.** Màn hình **Sự cố** dùng được rồi: chọn đơn, gõ nội dung khách phàn nàn
 bằng lời, bấm ghi nhận. Không phải gõ mã gì cả — máy chủ tự sinh.
@@ -115,13 +127,21 @@ Trước đây phần này làm bằng lời rồi quên. Nay có màn hình **B
 | Loại | Máy chủ tính gì | Hạn | Ai duyệt |
 |---|---|---|---|
 | Giặt lại miễn phí | Không có tiền nào chuyển | 7 ngày kể từ khi khách nhận đồ | Nhân viên |
-| Bồi thường món hỏng | Trần = 5 lần phí giặt **đúng món đó** | 24 giờ kể từ khi khách nhận đồ | Tới 100.000đ là nhân viên, trên mức đó **chủ tiệm** |
+| Bồi thường món hỏng | Trần = 5 lần phí giặt **một món** (xem dưới) | 24 giờ kể từ khi khách nhận đồ | Tới 100.000đ **cho cả dòng** là nhân viên, trên mức đó **chủ tiệm** |
 | Giảm trừ do giao trễ | Máy tính 10% tổng đã thu | Không tính theo hạn, tính theo mức trễ | Theo số tiền, như trên |
-| **Mất đồ** | **Không có mức nào** | — | **Chưa ai** — xem bên dưới |
+| **Mất đồ** | Trần như món hỏng | 24 giờ kể từ khi khách nhận đồ | **Luôn là chủ tiệm**, dù số tiền nhỏ |
 
-> **Mất đồ thì màn hình không mở biểu mẫu**, và đó là đúng. Chủ tiệm chưa quyết chính sách cho
-> trường hợp này, nên máy hiện **“Mất đồ — chưa có chính sách để áp dụng”**. Đừng mượn mức của
-> hàng hỏng. Ghi sự cố, **báo chủ tiệm ngay trong ngày**, đừng hứa con số nào ở quầy.
+**“Phí giặt một món” là gì (DEC-031):** đồ tính theo cái, đôi, bộ thì lấy **giá một cái** — ba
+áo sơ mi 50.000đ thì **mỗi đề nghị** tối đa 250.000đ (một áo), cả ba áo cộng lại tối đa 750.000đ.
+Đồ tính theo ký thì lấy **tiền cả túi** giặt chung, một trần cho cả túi. Máy hiện sẵn phí này, trần,
+và **số đã ghi đền cho dòng đó** cạnh từng dòng. Mức 100.000đ nhân viên được duyệt tính cộng dồn cho
+cả dòng: chia nhỏ ra từng áo thì phần vượt mức vẫn phải chờ chủ tiệm.
+
+> **Mất đồ: nhân viên ghi và đề nghị số tiền, chủ tiệm duyệt mới được trả.** Màn hình hiện
+> **“Mất đồ — luôn chờ chủ tiệm duyệt”** ngay khi chọn loại này. Nói trước với khách là phải chờ,
+> đừng hứa con số nào như đã chốt.
+>
+> **Đơn đã hoàn tiền** vẫn đền được món hỏng hay mất, nhưng mọi khoản đều chờ chủ tiệm duyệt.
 
 **Ba điều dễ sai ở màn hình này:**
 

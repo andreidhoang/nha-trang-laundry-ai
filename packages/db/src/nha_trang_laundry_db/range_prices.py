@@ -33,7 +33,7 @@ from __future__ import annotations
 import hmac
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Final
 from uuid import UUID
 
@@ -88,6 +88,25 @@ class RangePriceProposalRecord:
     proposed_by: UUID
     proposed_at: datetime
     lines: tuple[ProposedRangePriceLine, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RangePriceReviewEntry:
+    """One price chosen inside a band, as the owner reviews it afterwards (`DEC-029`).
+
+    `record` is None exactly when `withheld` is true: the stored amounts no longer re-derive the
+    digest their envelope binds, so no number is shown -- the same refusal the single read makes.
+    The entry still appears, because a review list that silently drops a tampered row is a list
+    that hides the one row the owner most needs to see.
+    """
+
+    approval_id: UUID
+    proposed_by: UUID
+    proposed_by_name: str
+    proposed_at: datetime
+    approval_status: str
+    withheld: bool
+    record: RangePriceProposalRecord | None
 
 
 @dataclass(frozen=True)
@@ -282,6 +301,74 @@ class RangePriceProposalRepository:
         )
         _require_stored_content_matches_envelope(record, envelope_rendered_hash=str(row[8]))
         return record
+
+    @staticmethod
+    def list_for_store_day(
+        cursor: Any,
+        *,
+        store_id: UUID,
+        business_date: date,
+        principal: StaffPrincipal,
+        limit: int = 100,
+    ) -> tuple[RangePriceReviewEntry, ...]:
+        """Every price chosen inside a band in one store on one Asia/Ho_Chi_Minh business day.
+
+        `DEC-029` moved the choice to the staff member on duty and kept the owner's review as its
+        control. The single read is keyed by approval id, which nothing in the console could
+        discover, so the review existed only for someone who already knew what to look for.
+
+        Membership is required against the store named in the request -- this is a store-scoped
+        list, like the order board -- and every entry is then read through `read`, so the digest
+        check that withholds a drifted amount is the same code on both paths. The day is a
+        half-open instant range computed in the database, which keeps the
+        `(store_id, proposed_at DESC)` index usable.
+        """
+
+        if not 1 <= limit <= 200:
+            raise ValueError("range price review limit must be between 1 and 200")
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=StoreAccessError,
+        )
+        cursor.execute(
+            """
+            SELECT p.approval_id, p.proposed_by, s.display_name, p.proposed_at, st.status
+            FROM range_price_proposals p
+            JOIN approval_request_states st ON st.approval_request_id = p.approval_id
+            JOIN staff_users s ON s.id = p.proposed_by
+            WHERE p.store_id = %s
+              AND p.proposed_at >= (%s::date)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
+              AND p.proposed_at < (%s::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'
+            ORDER BY p.proposed_at DESC, p.approval_id
+            LIMIT %s
+            """,
+            (store_id, business_date, business_date, limit),
+        )
+        rows = cursor.fetchall()
+        entries = []
+        for row in rows:
+            approval_id = _uuid(row[0])
+            try:
+                record = RangePriceProposalRepository.read(
+                    cursor, approval_id=approval_id, principal=principal
+                )
+                withheld = record is None
+            except RangePriceProposalIntegrityError:
+                record, withheld = None, True
+            entries.append(
+                RangePriceReviewEntry(
+                    approval_id=approval_id,
+                    proposed_by=_uuid(row[1]),
+                    proposed_by_name=str(row[2]),
+                    proposed_at=row[3],
+                    approval_status=str(row[4]),
+                    withheld=withheld,
+                    record=record,
+                )
+            )
+        return tuple(entries)
 
 
 def _require_stored_content_matches_envelope(

@@ -208,30 +208,50 @@ the database and its volumes, which on the self-managed branch nothing on the ho
 them need Docker and the console's TLS name, which nothing inside the network has. That is two cron
 entries, not one, and the split is a consequence of the topology rather than a preference.
 
+**Both entries go through `scripts/relay_shop_alert.py`, and the data checks must.** They run on
+`database-private`, which is `internal: true` and has no route to Telegram, so a check that posts
+its own alert from in there fails every time -- and this page used to pass it the Telegram settings
+as if it could (`SHOP-ALERT-DELIVERY-001`). Now the check prints its alert as one JSON line
+(`--emit-alert`) and sends nothing; the relay, on the host, delivers it with the credentials in
+`.shop/secrets/alert_telegram_token` and `.shop/secrets/alert_telegram_chat_id` (how to make them:
+`shop-till-mac.md` §5). A delivery that fails is exit 3 and a line in `alert-delivery.log`, and
+cron mails that too.
+
+The database URL reaches the container on **stdin** (`--stdin-file`, `-i`, `--database-url-stdin`).
+It used to be `-e DATABASE_URL="$(cat …)"`, which put the migration identity's password in `ps` and
+`docker inspect` (`OPS-HARDENING-002`).
+
 ```bash
 # Every five minutes. The data checks, inside the database's own network, as the postgres uid --
 # the base-backup marker lives in a 0700 directory owned by it.
-*/5 * * * * cd $HOME/laundry && docker run --rm \
+*/5 * * * * cd $HOME/laundry && \
+  R1_ALERT_TELEGRAM_TOKEN_FILE=$HOME/laundry/.shop/secrets/alert_telegram_token \
+  R1_ALERT_TELEGRAM_CHAT_ID_FILE=$HOME/laundry/.shop/secrets/alert_telegram_chat_id \
+  R1_ALERT_LOG_FILE=$HOME/laundry/.shop/alert-delivery.log \
+  .venv/bin/python scripts/relay_shop_alert.py --label checks-data \
+  --stdin-file .shop/secrets/migration_database_url -- \
+  docker run --rm -i \
   --network nha-trang-laundry-shop_database-private --user 70:70 \
   -v "$PWD:/repo:ro" -w /repo -e HOME=/tmp \
   -v nha-trang-laundry-shop_pgdata:/pgdata:ro \
   -v nha-trang-laundry-shop_pgbackupstaging:/staging:ro \
-  -e DATABASE_URL="$(cat .shop/secrets/migration_database_url)" \
   -e R1_RECOVERY_MODE=self-managed \
   -e R1_PGDATA_PATH=/pgdata -e R1_BASE_BACKUP_MARKER=/staging/last-success \
-  -e R1_ALERT_TELEGRAM_TOKEN_FILE=/repo/.shop/alert-telegram-token \
-  -e R1_ALERT_TELEGRAM_CHAT_ID='<your chat>' \
   --entrypoint python nha-trang-laundry-api:local \
-  scripts/check_shop_operations.py --check wal --check base --check volume
+  scripts/check_shop_operations.py --database-url-stdin \
+  --check wal --check base --check volume --emit-alert
 
 # Every five minutes. The host checks: capability flags need the Docker socket, and the console
-# check has to reach the console the way a tablet does, by name, over TLS.
+# check has to reach the console the way a tablet does, by name, over TLS -- and asks `/readyz`,
+# which answers 503 when the console is up and its database is not.
 */5 * * * * cd $HOME/laundry && \
-  R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
+  R1_ALERT_TELEGRAM_TOKEN_FILE=$HOME/laundry/.shop/secrets/alert_telegram_token \
+  R1_ALERT_TELEGRAM_CHAT_ID_FILE=$HOME/laundry/.shop/secrets/alert_telegram_chat_id \
+  R1_ALERT_LOG_FILE=$HOME/laundry/.shop/alert-delivery.log \
+  .venv/bin/python scripts/relay_shop_alert.py --label checks-host -- \
+  env R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/readyz \
   R1_CONSOLE_CA_FILE=$HOME/laundry/.shop/ca/ca.crt \
-  R1_ALERT_TELEGRAM_TOKEN_FILE=$HOME/laundry/.shop/alert-telegram-token \
-  R1_ALERT_TELEGRAM_CHAT_ID='<your chat>' \
-  uv run python scripts/check_shop_operations.py --check flags --check console
+  .venv/bin/python scripts/check_shop_operations.py --check flags --check console --emit-alert
 ```
 
 Measured against the running pilot stack: `wal_archive_gap` OK, `database_volume` OK at 14.4% free

@@ -1,4 +1,10 @@
-"""P0 manual-attestation versus outbox-worker exclusivity preflight."""
+"""P0 manual-attestation versus outbox-worker exclusivity preflight.
+
+Since `API-INTEGRITY-002` the envelope names a real draft seeded for the fixture's conversation and
+contact, and carries the digests the server derives from it. The fixture's declared digests are
+placeholders a real draft cannot have; its revision is still checked against the derived one, and
+its contact binding is the recipient the attestation must record -- the caller no longer names one.
+"""
 
 from __future__ import annotations
 
@@ -26,7 +32,7 @@ from nha_trang_laundry_db.manual_sends import (
 from nha_trang_laundry_domain.catalog import ActorRole, ApprovalAction
 
 from .fixtures import SyntheticFixtureBundle
-from .synthetic_store import seed_store_membership
+from .synthetic_store import seed_message_draft, seed_store_membership
 
 
 class SyntheticManualSendError(ValueError):
@@ -59,12 +65,29 @@ def execute_manual_worker_double_send_preflight(
     store_id = seed_store_membership(
         connection, principals=(requester, owner, sender), occurred_at=occurred_at
     )
+    draft_id, derived = seed_message_draft(
+        connection,
+        store_id=store_id,
+        conversation_binding_id=binding.conversation_binding_id,
+        contact_binding_id=binding.recipient_binding_id,
+        occurred_at=occurred_at,
+    )
+    if derived.resource_version != binding.resource_version:
+        raise SyntheticManualSendError("fixture revision is not the draft's revision")
+    binding = _Binding(
+        derived.resource_version,
+        derived.snapshot_hash,
+        derived.rendered_hash,
+        binding.recipient_binding_id,
+        binding.conversation_binding_id,
+        binding.channel,
+    )
     approval = approvals.request(
         connection,
         ApprovalRequestCommand(
             ApprovalAction.SEND_MESSAGE,
             "MESSAGE_DRAFT",
-            uuid4(),
+            draft_id,
             binding.resource_version,
             binding.snapshot_hash,
             binding.rendered_hash,
@@ -98,7 +121,6 @@ def execute_manual_worker_double_send_preflight(
             binding.resource_version,
             binding.snapshot_hash,
             binding.rendered_hash,
-            binding.recipient_binding_id,
             binding.channel,
             "TRANSACTIONAL",
             AgentDeploymentStage.SHADOW,
@@ -142,6 +164,8 @@ def execute_manual_worker_double_send_preflight(
         worker_rejected = True
     if not worker_rejected or recorded.status != "MANUAL_SEND_RECORDED":
         raise SyntheticManualSendError("manual-send lock did not consume the worker path")
+    if recorded.recipient_binding_id != binding.recipient_binding_id:
+        raise SyntheticManualSendError("the attested recipient is not the approved draft's")
 
     with connection.cursor() as cursor:
         cursor.execute(
@@ -156,11 +180,19 @@ def execute_manual_worker_double_send_preflight(
         worker_execution_count = cursor.fetchone()
     if attestation_count != (1,) or worker_execution_count != (0,):
         raise SyntheticManualSendError("more than one send execution path was recorded")
+    # Observed, not asserted (AGENT-SHADOW-DEFECTS-001 F9): every provider send attempt leaves a
+    # `channel_send_receipts` row naming its approval, including failures and timeouts.
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM channel_send_receipts WHERE approval_ref = %s",
+            (approval.approval_request_id,),
+        )
+        provider_attempts = cursor.fetchone()
     return SyntheticManualSendPreflight(
         worker_execution_rejected_by_exclusive_token=True,
         exactly_one_execution_path_recorded=True,
         manual_send_recorded=True,
-        provider_attempted=False,
+        provider_attempted=provider_attempts != (0,),
         trace_id="synthetic-manual-worker-double-send-001",
     )
 
@@ -171,6 +203,7 @@ class _Binding:
     snapshot_hash: str
     rendered_hash: str
     recipient_binding_id: UUID
+    conversation_binding_id: UUID
     channel: str
 
 
@@ -186,17 +219,21 @@ def _binding(payload: Mapping[str, Any]) -> _Binding:
     snapshot_hash = message.get("snapshot_hash")
     rendered_hash = message.get("rendered_hash")
     recipient = context.get("contact_binding_id")
+    conversation = context.get("conversation_binding_id")
     channel = context.get("channel")
     if (
         not isinstance(version, int)
         or not isinstance(snapshot_hash, str)
         or not isinstance(rendered_hash, str)
         or not isinstance(recipient, str)
+        or not isinstance(conversation, str)
         or not isinstance(channel, str)
     ):
         raise SyntheticManualSendError("manual-send fixture binding is malformed")
     try:
-        return _Binding(version, snapshot_hash, rendered_hash, UUID(recipient), channel)
+        return _Binding(
+            version, snapshot_hash, rendered_hash, UUID(recipient), UUID(conversation), channel
+        )
     except ValueError as error:
         raise SyntheticManualSendError("manual-send recipient binding is invalid") from error
 

@@ -12,7 +12,6 @@ from uuid import uuid4
 import psycopg
 import rfc8785
 from nha_trang_laundry_contracts import (
-    AgentDataClassification,
     AgentDeploymentStage,
     AgentToolOperation,
     ReleaseCapability,
@@ -70,7 +69,6 @@ def execute_audit_write_failure_preflight(
         contact_binding_id=uuid4(),
         capability=ReleaseCapability.INTERNAL_SHADOW,
         deployment_stage=AgentDeploymentStage.SHADOW,
-        data_classification=AgentDataClassification.SYNTHETIC,
         runtime_registry_version="1.0.0-eval",
         runtime_registry_hash=f"sha256:{'a' * 64}",
         prompt_bundle_version="1.0.0-eval",

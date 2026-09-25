@@ -101,9 +101,42 @@ REMEDY_OPTIONS = {
     "defect_window_closes_at": "2026-09-18T03:00:00+00:00",
     "defect_window_open": True,
     "damage_line_ceilings_vnd": {"line-large": 600_000, "line-small": 90_000},
+    # `DEC-031`: the per-item terms the console now reads instead of the map above -- fee basis,
+    # ceiling, what the item already carries, and what sends it to the owner whatever the amount.
+    "damage_lines": [
+        {
+            "line_id": "line-large",
+            "service_code": "DC_EVENING_DRESS",
+            "service_name": "Váy dạ hội",
+            "unit": "ITEM",
+            "quantity": "1",
+            "item_fee_basis": "UNIT",
+            "item_fee_vnd": 120_000,
+            "ceiling_vnd": 600_000,
+            "pieces": 1,
+            "line_ceiling_vnd": 600_000,
+            "committed_vnd": 0,
+            "owner_always": [],
+        },
+        {
+            "line_id": "line-small",
+            "service_code": "IRON_KNIT",
+            "service_name": "Áo, quần thun",
+            "unit": "ITEM",
+            "quantity": "1",
+            "item_fee_basis": "UNIT",
+            "item_fee_vnd": 18_000,
+            "ceiling_vnd": 90_000,
+            "pieces": 1,
+            "line_ceiling_vnd": 90_000,
+            "committed_vnd": 0,
+            "owner_always": [],
+        },
+    ],
     "late_delivery_credit_vnd": 17_000,
     "late_delivery_threshold_minutes": 120,
-    "loss_reason_code": "LOSS_POLICY_UNRESOLVED",
+    "loss_requires_owner": True,
+    "order_refunded": False,
 }
 
 REMEDY_PROPOSAL_ID = "77777777-8888-4333-8444-bbbbbbbbbbbb"
@@ -549,19 +582,20 @@ def export_queue_item() -> dict[str, object]:
 
 
 def range_price_approval() -> dict[str, object]:
-    """The raised envelope, expiring ten minutes from now.
+    """The raised envelope, as the server answers since `DEC-029`: already attested by the chooser.
 
-    Built at call time rather than as a constant: `_OWNER_FINANCIAL` is a ten-minute TTL and the
-    console renders the time remaining, so a fixed timestamp would make the countdown read "đã hết
-    hạn" the day after this file was written and the section would fail for the wrong reason.
+    `APPROVED`, `OPERATOR` and thirty minutes -- the `DEC-021` counter attestation -- where it read
+    `REQUESTED`, `OWNER_ADMIN` and ten minutes while a range price needed the owner. Built at call
+    time rather than as a constant, because the console renders the time remaining and a fixed
+    timestamp would make it read "đã hết hạn" the day after this file was written.
     """
 
     return {
         "approval_request_id": BAND_APPROVAL,
-        "status": "REQUESTED",
+        "status": "APPROVED",
         "envelope_hash": "JCS-SHA256-V1:" + "b" * 64,
-        "required_role": "OWNER_ADMIN",
-        "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+        "required_role": "OPERATOR",
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
         "resource_version": 1,
         "snapshot_hash": BAND_SNAPSHOT,
         "rendered_hash": BAND_RENDERED,
@@ -1679,10 +1713,18 @@ with sync_playwright() as playwright:
         repr(band_field.input_value()),
     )
 
-    page.locator("button", has_text="Gửi giá cho chủ duyệt").first.click()
-    page.wait_for_timeout(900)
+    # `DEC-029`: one press. The server answers with the chooser's own attestation and the console
+    # writes the price with it straight away -- two requests, no owner step in between.
+    page.locator("button", has_text="Chốt giá này").first.click()
+    page.wait_for_timeout(1500)
 
-    proposed = json.loads((state.get("range_posts") or ["{}"])[-1] or "{}")
+    posts = state.get("range_posts") or []
+    check(
+        "one press sends the proposal and then the price, with nobody else involved",
+        len(posts) == 2,
+        f"{len(posts)} request(s)",
+    )
+    proposed = json.loads((posts[0] if posts else "{}") or "{}")
     check("the proposal actually reaches the server", bool(state.get("range_posts")))
     check(
         "it carries the amount the staff member chose and no band of its own",
@@ -1699,31 +1741,23 @@ with sync_playwright() as playwright:
 
     content = page.content()
     check(
-        "the screen then says a second person has to decide it",
-        "Đang chờ chủ tiệm duyệt" in content and "Đừng rời màn hình này" in content,
-    )
-    check(
-        "with the remaining time on the envelope, not a wall-clock stamp alone",
-        "còn " in content and "phút" in content,
+        "the screen never tells the counter to wait for the owner",
+        "Đang chờ chủ tiệm duyệt" not in content,
     )
 
-    page.locator("button", has_text="Áp dụng giá đã duyệt").first.click()
-    page.wait_for_timeout(900)
-
-    applied = json.loads((state.get("range_posts") or ["{}"])[-1] or "{}")
+    applied = json.loads((posts[-1] if posts else "{}") or "{}")
     check(
-        "applying re-sends exactly the content the owner signed, because nothing stored it",
+        "applying re-sends exactly the content that was attested, because the digest binds it",
         applied == proposed,
         "the applied body differs from the proposed one",
     )
 
-    content = page.content()
     check(
         "the closed band becomes one exact price",
         "Đã ghi giá vào bản sửa đổi 2" in content and "150.000" in content,
     )
     check(
-        "an owner's approval is not the customer's agreement: the quote still has to be accepted",
+        "choosing the price is not the customer's agreement: the quote still has to be accepted",
         page.locator("button", has_text="Khách đã chốt giá").count() == 1,
         "expected the acceptance control on an APPROVED_EXACT revision that is not ACCEPTED_FINAL",
     )
@@ -1874,8 +1908,9 @@ with sync_playwright() as playwright:
         "an amount over the line's cap is refused with the cap named",
         # The whole sentence, not the two words separately: "Vượt trần" is also in the money box's
         # own hint and "600.000" is in the line picker, so testing for each on its own passed
-        # before the refusal was rendered at all.
-        "Vượt trần: trần của dòng này là 600.000" in content,
+        # before the refusal was rendered at all. Reworded with the founder's per-item ruling:
+        # a single claim is capped at one item, and this line is one item.
+        "Vượt trần một món: mỗi đề nghị tối đa 600.000" in content,
     )
     check(
         "and the box still holds what was typed — nothing was silently reduced to the cap",
@@ -1927,7 +1962,7 @@ with sync_playwright() as playwright:
     )
     check(
         "with the refusal glossed in Vietnamese beside its code",
-        "phải có phiếu duyệt của chủ tiệm" in content,
+        "phải có chủ tiệm duyệt trước khi thực hiện" in content,
     )
 
     state["owner_approved"] = True
@@ -1943,23 +1978,36 @@ with sync_playwright() as playwright:
         REMEDY_CREDIT_ID in content and "Chép mã giảm trừ này lại ngay" in content,
     )
 
-    # Loss. The single most likely way this item goes wrong is a helpful console filling in a
-    # figure nobody published, so this asserts the absence of every figure rather than a value.
+    # Loss, since `DEC-031`. Until 2026-09-25 this section asserted that loss rendered as an
+    # unsupported capability with no figure at all. The ruling gave loss the damage ceiling and one
+    # rule -- every loss claim needs the owner, whatever the amount -- so what is asserted now is
+    # that the form never lets a loss read as something staff can approve.
     kind.select_option(value="LOST_ITEM")
     page.wait_for_timeout(300)
     content = page.content()
     check(
-        "loss renders as an unsupported capability, not as a form",
-        "CHƯA HỖ TRỢ" in content and page.locator("#remedy-amount").count() == 0,
+        "loss says it waits for the owner before a line or an amount is chosen",
+        "Mất đồ — luôn chờ chủ tiệm duyệt" in content
+        and page.locator("#remedy-amount").count() == 0,
     )
     check(
-        "it names the reason: the owner has not decided loss policy",
-        "LOSS_POLICY_UNRESOLVED" in content and "chưa quyết chính sách cho mất đồ" in content,
+        "the picker names the garment by its service, not by a bare line identifier",
+        "Áo, quần thun" in content and ">line-small" not in content,
+    )
+    page.locator("#remedy-line").select_option(value="line-small")
+    page.wait_for_timeout(300)
+    amount = page.locator("#remedy-amount")
+    amount.click()
+    page.keyboard.type("1000", delay=8)
+    page.wait_for_timeout(300)
+    content = page.content()
+    check(
+        "a 1.000 d loss, far under the staff limit, still says the owner must approve it",
+        "Có — phải có chủ tiệm duyệt" in content and "mất đồ luôn do chủ tiệm duyệt" in content,
     )
     check(
-        "and no ceiling of any kind is offered for it",
-        "600.000" not in content and "90.000" not in content,
-        "a damage ceiling is visible while loss is selected",
+        "and its ceiling is the damage ceiling of that one item",
+        "90.000" in content,
     )
 
     print()

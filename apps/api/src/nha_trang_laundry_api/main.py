@@ -10,6 +10,7 @@ from time import perf_counter
 from typing import Annotated, Literal, NoReturn
 from urllib.parse import urlencode
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.staticfiles import StaticFiles
@@ -118,6 +119,7 @@ from nha_trang_laundry_api.operations import (
     UnresolvedQuoteResult,
 )
 from nha_trang_laundry_api.ops_board import OpsBoardService, OpsBoardUnavailable
+from nha_trang_laundry_api.readiness import readyz
 from nha_trang_laundry_api.security import BrowserSecurityMiddleware, RequestSizeLimitMiddleware
 
 # SHOP-OBSERVABILITY-001. Before this call, every `_LOGGER.record(...)` below was a no-op in the
@@ -195,7 +197,7 @@ async def correlation_middleware(
 
 
 def _http_operation(path: str) -> str:
-    if path == "/healthz":
+    if path in ("/healthz", "/readyz"):
         return "healthz"
     if path.startswith("/internal/v1/stores/") and "/quotes" in path:
         return "quote_compute"
@@ -315,10 +317,18 @@ class ApprovalDecisionRequest(StrictRequest):
 
 
 class ManualSendPrepareRequest(StrictRequest):
+    """Lock one approved `SEND_MESSAGE` envelope for a manual send.
+
+    `API-INTEGRITY-002` removed `recipient_binding_id`. The recipient is the approved draft's, read
+    by the server; nothing legitimate needs the caller to name it, and the field was how an
+    attestation came to record a recipient no approval had named. `StrictRequest` forbids unknown
+    fields, so a client still sending it is refused with 422 rather than silently ignored -- a
+    console built against the old contract finds out, instead of believing its choice took effect.
+    """
+
     observed_resource_version: StrictInt = Field(ge=1, le=MAX_CANONICAL_INT)
     observed_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     observed_rendered_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
-    recipient_binding_id: UUID
     channel: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,49}$")
 
 
@@ -349,10 +359,11 @@ class RemedyProposalRequest(StrictRequest):
     state either would be authorising its own bound. The same applies to the window: it is measured
     from a recorded handover, not from a date a form supplies.
 
-    `amount_vnd` is an integer of dong and is legal for exactly one kind. `DAMAGE_COMPENSATION` is
-    the only remedy where a person chooses the figure -- a rewash moves no money, a late-delivery
-    credit is computed, and loss has no figure at all -- so supplying it anywhere else is refused
-    with `REMEDY_AMOUNT_NOT_APPLICABLE` rather than ignored.
+    `amount_vnd` is an integer of dong and is legal for exactly two kinds. `DAMAGE_COMPENSATION`
+    and, since `DEC-031`, `LOST_ITEM` are the remedies where a person proposes the figure -- a
+    rewash moves no money and a late-delivery credit is computed -- so supplying it anywhere else
+    is refused with `REMEDY_AMOUNT_NOT_APPLICABLE` rather than ignored. A loss always goes to the
+    owner, whatever the figure.
     """
 
     kind: RemedyKind
@@ -379,9 +390,10 @@ class RemedyCreditRedemptionRequest(StrictRequest):
 class RemedyProposalResponse(BaseModel):
     """The recorded proposal, with the figures the server computed for it.
 
-    `outcome` is `REQUIRE_HUMAN` and `reason_code` is `LOSS_POLICY_UNRESOLVED` for a loss, on a 201
-    rather than an error: the complaint was recorded, and for a loss the record *is* the outcome.
-    Every other field is then null, because `DEC-004` gives loss no figure of any kind.
+    Before `DEC-031` a loss came back `REQUIRE_HUMAN` with `reason_code = LOSS_POLICY_UNRESOLVED`
+    and no figure. A loss is now proposed like damage and always comes back
+    `OWNER_APPROVAL_REQUIRED`; `owner_reasons` says why the owner is needed, so the counter can say
+    so without guessing from the amount.
     """
 
     proposal_id: UUID
@@ -397,10 +409,12 @@ class RemedyProposalResponse(BaseModel):
     ceiling_vnd: int | None
     window_opened_at: str | None
     window_closes_at: str | None
-    #: The `APPROVE_REMEDY` envelope, present exactly when the amount is above the staff ceiling.
+    #: The `APPROVE_REMEDY` envelope, present exactly when `owner_reasons` is not empty.
     approval_id: UUID | None
     reason_code: str | None
     replayed: bool
+    #: `LOSS_CLAIM`, `ORDER_REFUNDED`, `ITEM_FEE_NOT_RECORDED`, `ABOVE_STAFF_LIMIT`, in that order.
+    owner_reasons: list[str] = Field(default_factory=list)
 
 
 class RemedyExecutionResponse(BaseModel):
@@ -415,6 +429,30 @@ class RemedyExecutionResponse(BaseModel):
     replayed: bool
 
 
+class RemedyLineOptionResponse(BaseModel):
+    """One item a damage or loss claim may name, with the terms the server will decide it on."""
+
+    line_id: str
+    service_code: str
+    #: From the pricebook version the order was priced under; null when it cannot be read.
+    service_name: str | None
+    unit: str
+    quantity: str
+    #: `UNIT` (one piece's price), `BAG` (weight-priced: the bag's fee), `NOT_RECORDED`.
+    item_fee_basis: str
+    item_fee_vnd: int
+    #: One item's ceiling: the most one proposal may ask for.
+    ceiling_vnd: int
+    #: Items on the line, and what they may carry together. Equal to `ceiling_vnd` when `pieces`
+    #: is 1 (a bag, a single piece, or a fee that was never recorded).
+    pieces: int
+    line_ceiling_vnd: int
+    #: What live or paid damage and loss proposals already hold against this line.
+    committed_vnd: int
+    #: Reasons every damage amount on this item needs the owner. A loss always does besides.
+    owner_always: list[str]
+
+
 class RemedyOptionsResponse(BaseModel):
     """What the form must show before a staff member types anything.
 
@@ -422,6 +460,9 @@ class RemedyOptionsResponse(BaseModel):
     that the owner has not published the figures -- not render an empty form. A null
     `late_delivery_credit_vnd` means no delivery this system recorded could have been late, and is
     rendered as unavailable rather than as 0.
+
+    `damage_lines` is `DEC-031`'s counter half: per item the fee basis, the ceiling and what the
+    item already carries, so the form predicts "staff can approve" exactly as `propose` decides it.
     """
 
     incident_id: UUID
@@ -434,9 +475,13 @@ class RemedyOptionsResponse(BaseModel):
     defect_window_closes_at: str | None
     defect_window_open: bool
     damage_line_ceilings_vnd: dict[str, int] | None
+    damage_lines: list[RemedyLineOptionResponse] | None
     late_delivery_credit_vnd: int | None
     late_delivery_threshold_minutes: int | None
-    loss_reason_code: str
+    #: `DEC-031`: every loss claim needs the owner. Replaces `loss_reason_code`.
+    loss_requires_owner: bool
+    #: `DEC-031`: the order was refunded, so every compensation on it needs the owner.
+    order_refunded: bool
 
 
 class RemedyCreditRedemptionResponse(BaseModel):
@@ -497,6 +542,10 @@ class OrderViewResponse(OrderResponse):
     payable_total_vnd: int | None
     ticket_number: int | None
     ticket_issued_on: date | None
+    #: `DEC-032`: whether the customer is recorded as having taken the goods. A walk-in who paid at
+    #: drop-off reads `balance` PAID with this false until the pickup is recorded, and the counter
+    #: needs the difference to know which of the two actions to offer.
+    self_collection_recorded: bool
 
 
 class ApprovalResponse(BaseModel):
@@ -543,6 +592,20 @@ class SettlementRequest(StrictRequest):
     # Explicit rather than defaulted. "The customer took their goods" is the fact being attested,
     # and a default true would let a staff member attest to it by not mentioning it.
     collected_by_customer: StrictBool
+
+
+class CollectionResponse(BaseModel):
+    """The pickup of a walk-in order paid at drop-off (`DEC-032`), as recorded."""
+
+    collection_id: UUID
+    order_id: UUID
+    settlement_id: UUID
+    #: The staff member who handed the goods over -- the session's, never the request's.
+    collected_by_staff_id: UUID
+    collected_at: datetime
+    self_collection_recorded: bool
+    row_version: int
+    replayed: bool
 
 
 class SettlementResponse(BaseModel):
@@ -728,6 +791,11 @@ class RangePriceProposalContentResponse(BaseModel):
     #: digest it is about to hand back are the same content. It is not a substitute for the
     #: server's own checks, and no client-side comparison of it authorises anything.
     rendered_hash: str
+    #: Who chose these amounts. `DEC-029` made that staff member's own attestation the authority for
+    #: a price inside the band, and `DEC-021`'s third control is the owner reviewing it afterwards;
+    #: a review read that returned the number without the name would review nothing. Read from the
+    #: immutable `range_price_proposals.proposed_by`, never from the request.
+    proposed_by: UUID
     proposed_at: datetime
     lines: list[ProposedRangePriceLineResponse]
 
@@ -867,8 +935,12 @@ def current_principal(
 
 @app.get("/healthz", include_in_schema=False)
 def healthz() -> dict[str, str]:
-    """Return only process health; dependency health is added with real infrastructure."""
+    """Return only process health; /readyz is the one that asks the database."""
     return {"status": "ok"}
+
+
+# OPS-HARDENING-002: `/readyz`, and why it is not the container healthcheck -- see readiness.py.
+app.add_api_route("/readyz", readyz, methods=["GET"], include_in_schema=False)
 
 
 @app.post("/internal/v1/auth/session", response_model=SessionResponse, include_in_schema=False)
@@ -1497,14 +1569,16 @@ def record_settlement(
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> SettlementResponse:
-    """Attest that the customer paid the quoted total and collected their goods.
+    """Attest that the customer paid the quoted total -- and, if ticked, collected their goods.
 
     The staff member records what they witnessed at the counter; the amount is checked against the
     immutable quote revision the order is bound to. Nothing here computes or adjusts money.
 
-    Only one settlement shape exists. Anything else — a part payment, a deposit, an overpayment,
-    credit terms, or goods that left by a delivery leg — is refused with the reason and the open
-    decision that owns it, because those are the business owner's to make and `DEC-010` holds them.
+    Every supported shape is the exact total in one payment: paid and collected at pickup, paid
+    before a delivery (`DEC-023`), or paid by a walk-in at drop-off with the pickup recorded later
+    on `/collection` (`DEC-032`). Ticking "collected" for laundry that is not finished is refused.
+    Anything else — a part payment, a deposit, an overpayment, credit terms — is refused with the
+    reason and the decision that owns it, because `DEC-010` holds them.
     """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
@@ -1544,6 +1618,63 @@ def record_settlement(
         paid_amount_vnd=stored.paid_amount_vnd,
         settlement_shape=stored.settlement_shape,
         balance_status=stored.balance_status,
+        self_collection_recorded=stored.self_collection_recorded,
+        row_version=stored.row_version,
+        replayed=stored.replayed,
+    )
+
+
+@app.post(
+    "/internal/v1/orders/{order_id}/collection",
+    response_model=CollectionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_collection(
+    order_id: UUID,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> CollectionResponse:
+    """Record that a walk-in customer who paid at drop-off has taken their laundry. `DEC-032`.
+
+    No body. The staff member handing the goods over is the session's, the store is the order
+    row's, and `If-Match` is the order version the counter read before handing the bag over. The
+    order must be paid at drop-off, running, and its laundry finished; each refusal comes back with
+    its reason code and writes nothing. No money moves here -- it moved at drop-off.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    expected = _parse_if_match(if_match)
+    try:
+        stored = service.record_collection(
+            order_id=order_id,
+            expected_row_version=expected,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (SettlementAuthorizationError, StoreAccessError) as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    except SettlementStateError as error:
+        if error.reason_code == "STALE_VERSION":
+            # The same answer a stale transition gets, so the console's "tải lại" path applies.
+            raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "outcome": "NOT_SUPPORTED",
+                "reason_code": error.reason_code,
+                "decision": error.decision,
+            },
+        ) from error
+    except IdempotencyConflictError as error:
+        _raise_operations_error(error)
+    return CollectionResponse(
+        collection_id=stored.collection_id,
+        order_id=stored.order_id,
+        settlement_id=stored.settlement_id,
+        collected_by_staff_id=stored.collected_by_staff_id,
+        collected_at=stored.collected_at,
         self_collection_recorded=stored.self_collection_recorded,
         row_version=stored.row_version,
         replayed=stored.replayed,
@@ -1630,6 +1761,85 @@ def decide_approval(
     return _approval_response(stored)
 
 
+class RangePriceReviewItemResponse(BaseModel):
+    approval_request_id: UUID
+    #: Who chose the price, from the immutable proposal row, with their display name so the owner
+    #: reads a person rather than an identifier.
+    proposed_by: UUID
+    proposed_by_name: str
+    proposed_at: datetime
+    approval_status: str
+    #: True when the stored amounts no longer match the digest their envelope binds. No figure is
+    #: shown then -- the same refusal the single read makes -- but the entry is listed.
+    withheld: bool
+    quote_id: UUID | None
+    revision: int | None
+    lines: list[ProposedRangePriceLineResponse]
+
+
+class RangePriceReviewResponse(BaseModel):
+    store_id: UUID
+    business_date: date
+    business_timezone: str
+    items: list[RangePriceReviewItemResponse]
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/range-price-reviews",
+    response_model=RangePriceReviewResponse,
+)
+def list_range_price_reviews(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+    business_date: Annotated[date | None, Query(alias="date")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> RangePriceReviewResponse:
+    """Every price a staff member chose inside a published band, on one business day.
+
+    `DEC-029` gave that choice to the staff member on duty and kept the owner's review afterwards
+    as its control. The only read was keyed by approval id, which nothing could discover, so the
+    review could not actually be done. This is the list it needs. The day defaults to today in
+    Asia/Ho_Chi_Minh, the business day every other figure in this API uses.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    day = business_date or datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+    try:
+        entries = service.list_range_price_reviews(
+            store_id=store_id, business_date=day, principal=principal, limit=limit
+        )
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+    return RangePriceReviewResponse(
+        store_id=store_id,
+        business_date=day,
+        business_timezone="Asia/Ho_Chi_Minh",
+        items=[
+            RangePriceReviewItemResponse(
+                approval_request_id=entry.approval_id,
+                proposed_by=entry.proposed_by,
+                proposed_by_name=entry.proposed_by_name,
+                proposed_at=entry.proposed_at,
+                approval_status=entry.approval_status,
+                withheld=entry.withheld,
+                quote_id=entry.record.quote_id if entry.record else None,
+                revision=entry.record.revision if entry.record else None,
+                lines=[
+                    ProposedRangePriceLineResponse(
+                        service_code=line.service_code,
+                        band_minimum_vnd=line.band_minimum_vnd,
+                        band_maximum_vnd=line.band_maximum_vnd,
+                        proposed_amount_vnd=line.proposed_amount_vnd,
+                    )
+                    for line in (entry.record.lines if entry.record else ())
+                ],
+            )
+            for entry in entries
+        ],
+    )
+
+
 @app.get(
     "/internal/v1/approvals/{approval_id}/range-price-proposal",
     response_model=RangePriceProposalContentResponse,
@@ -1676,6 +1886,7 @@ def read_range_price_proposal(
         revision=record.revision,
         pricebook_version=record.pricebook_version,
         rendered_hash=record.rendered_hash,
+        proposed_by=record.proposed_by,
         proposed_at=record.proposed_at,
         lines=[
             ProposedRangePriceLineResponse(
@@ -2426,7 +2637,6 @@ def prepare_manual_send(
             observed_resource_version=request.observed_resource_version,
             observed_snapshot_hash=request.observed_snapshot_hash,
             observed_rendered_hash=request.observed_rendered_hash,
-            recipient_binding_id=request.recipient_binding_id,
             channel=request.channel,
             idempotency_key=idempotency_key,
             principal=principal,
@@ -2561,9 +2771,31 @@ def remedy_options(
             if options.damage_line_ceilings_vnd is None
             else dict(options.damage_line_ceilings_vnd)
         ),
+        damage_lines=(
+            None
+            if options.damage_lines is None
+            else [
+                RemedyLineOptionResponse(
+                    line_id=line.line_id,
+                    service_code=line.service_code,
+                    service_name=line.service_name,
+                    unit=line.unit,
+                    quantity=line.quantity,
+                    item_fee_basis=line.item_fee_basis,
+                    item_fee_vnd=line.item_fee_vnd,
+                    ceiling_vnd=line.ceiling_vnd,
+                    pieces=line.pieces,
+                    line_ceiling_vnd=line.line_ceiling_vnd,
+                    committed_vnd=line.committed_vnd,
+                    owner_always=list(line.owner_always),
+                )
+                for line in options.damage_lines
+            ]
+        ),
         late_delivery_credit_vnd=options.late_delivery_credit_vnd,
         late_delivery_threshold_minutes=options.late_delivery_threshold_minutes,
-        loss_reason_code=options.loss_reason_code,
+        loss_requires_owner=options.loss_requires_owner,
+        order_refunded=options.order_refunded,
     )
 
 
@@ -2812,6 +3044,7 @@ def _order_view_response(view: OrderView) -> OrderViewResponse:
         payable_total_vnd=view.payable_total_vnd,
         ticket_number=view.ticket_number,
         ticket_issued_on=view.ticket_issued_on,
+        self_collection_recorded=view.self_collection_recorded,
     )
 
 
@@ -3055,16 +3288,26 @@ def decide_shadow_draft(
     )
 
 
-@app.get("/internal/v1/shadow/unknown-sends", response_model=list[UnknownSendResponse])
+@app.get(
+    "/internal/v1/stores/{store_id}/shadow/unknown-sends",
+    response_model=list[UnknownSendResponse],
+)
 def list_unknown_sends(
+    store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
     limit: int = 50,
 ) -> list[UnknownSendResponse]:
+    """One store's sends whose outcome nobody observed. Membership of the store and MFA required.
+
+    `API-INTEGRITY-002` replaced `GET /internal/v1/shadow/unknown-sends`, which listed every
+    store's receipts to any Shadow reader. The role, MFA and membership checks are the
+    repository's, as for the draft queue this sits beside; the refusal is the same opaque 403.
+    """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
     try:
-        items = service.shadow_unknown_sends(principal=principal, limit=limit)
+        items = service.shadow_unknown_sends(store_id=store_id, principal=principal, limit=limit)
     except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
         _raise_shadow_error(error)
     return [
@@ -3088,19 +3331,28 @@ def list_unknown_sends(
 def reconcile_unknown_send(
     receipt_id: UUID,
     request: ReconcileRequest,
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> None:
-    """Only a human leaves UNKNOWN. There is no automatic caller for this route."""
+    """Only a human leaves UNKNOWN. There is no automatic caller for this route.
+
+    Only a human of the receipt's own store, and exactly once per `Idempotency-Key`: a replay with
+    the same key and body answers 204 again without touching the receipt, a changed body under the
+    same key is 409 `IDEMPOTENCY_CONFLICT` (`API-INTEGRITY-002`).
+    """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
     try:
         service.shadow_resolve_unknown_send(
             receipt_id=receipt_id,
             resolution=ReconciliationState(request.resolution),
+            idempotency_key=idempotency_key,
             principal=principal,
             note=request.note,
         )
+    except IdempotencyConflictError as error:
+        _raise_operations_error(error)
     except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
         _raise_shadow_error(error)
 

@@ -65,6 +65,10 @@ debt, and it keeps the promise `DEC-004` made. If the shop later finds staff wan
 If you want **D** instead, that is not a decision for this document — publish a promotion document
 with `stacking_allowed: true` and the two combine with no code change.
 
+## Outcome — 2026-09-25
+
+**Decided: option A**, as `DEC-030` in `context/DECISION_REGISTRY.yaml`, under the owner's delegation of 2026-09-25 (`docs/DECISION_RECORD_FOUNDER_2026-09-25.md`). It is recorded there as delegated rather than signed, so the signature block below is left blank on purpose: the owner may still sign it, or reverse it as the record describes.
+
 ## 6. Signature block
 
 - **Decision:** A / B / C / D: ______

@@ -27,6 +27,7 @@ from nha_trang_laundry_worker.agent_runner import (
     AgentToolForwardRequest,
     AgentToolForwardResponse,
     DisabledOpenClawProviderRuntime,
+    ExecutionPins,
     ScriptedToolCall,
     SyntheticScriptedRuntime,
 )
@@ -45,8 +46,20 @@ class RecordingTransport:
         return catalog_response()
 
 
+#: AGENT-SHADOW-DEFECTS-001 F3: the runner refuses a job whose queued release differs from the
+#: runtime's, so every job and every runtime double here states the same synthetic release.
+TEST_PINS = ExecutionPins(
+    runtime_registry_version="1.0.0-eval",
+    runtime_registry_hash=f"sha256:{'a' * 64}",
+    prompt_bundle_version="1.0.0-eval",
+    prompt_bundle_hash=f"sha256:{'b' * 64}",
+    tool_contract_hash=f"sha256:{'c' * 64}",
+)
+
+
 class NeverCalledProviderRuntime:
     provider_backed = True
+    execution_pins = TEST_PINS
 
     def invoke(self, invocation: Any, bridge: Any) -> Any:
         del invocation, bridge
@@ -76,6 +89,7 @@ def job(**overrides: Any) -> AgentRunJob:
         "data_classification": AgentDataClassification.SYNTHETIC,
         "started_at": started_at,
         "deadline_at": started_at + timedelta(seconds=20),
+        "pins": TEST_PINS,
     }
     values.update(overrides)
     return AgentRunJob(**values)
@@ -268,6 +282,7 @@ def test_tool_injection_is_rejected_before_transport() -> None:
 def test_runtime_deadline_revokes_bridge_before_a_late_tool_call() -> None:
     class BlockingRuntime:
         provider_backed = False
+        execution_pins = TEST_PINS
 
         def __init__(self) -> None:
             self.release = Event()
@@ -417,6 +432,7 @@ def test_runner_creates_shadow_draft_only_and_never_send_authorization() -> None
         job=current_job,
         runtime=SyntheticScriptedRuntime(
             draft_text="Em đã ghi nhận yêu cầu và sẽ nhờ nhân viên xác nhận.",
+            execution_pins=TEST_PINS,
             tool_calls=(
                 ScriptedToolCall(
                     operation=AgentToolOperation.CATALOG_RESOLVE,
@@ -441,7 +457,9 @@ def test_real_customer_and_provider_paths_are_fail_closed() -> None:
     with pytest.raises(AgentRunRejected, match="real-customer processing is disabled"):
         runner.execute(
             job=job(data_classification=AgentDataClassification.REAL_CUSTOMER),
-            runtime=SyntheticScriptedRuntime(draft_text="Bản nháp an toàn."),
+            runtime=SyntheticScriptedRuntime(
+                draft_text="Bản nháp an toàn.", execution_pins=TEST_PINS
+            ),
             transport=transport,
         )
     with pytest.raises(AgentRunRejected, match="provider runtime release gates are incomplete"):

@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import datetime as dt
 import json
 import os
 import subprocess
@@ -102,16 +101,26 @@ DECLARED_CONTROLS = (
     "shell.nav.staff",
     "shell.nav.gaps",
     "shell.store-picker",
-    "quotes.manual-toggle",
-    "quotes.order-request",
-    "quotes.fulfillment",
-    "quotes.distance",
-    "quotes.manual-fee",
-    "quotes.manual-ack",
-    "quotes.line-code",
-    "quotes.line-qty",
-    "quotes.add-line",
-    "quotes.submit",
+    # CONSOLE-REDESIGN-001: intake, pricing and order create are one flow on Nhận đồ; the old
+    # quotes.* (paste an intake id, one form per endpoint) and the board's create form are gone.
+    "shell.nav.new",
+    "newOrder.walk-in",
+    "newOrder.channel-code",
+    "newOrder.channel-submit",
+    "newOrder.resume",
+    "newOrder.mode",
+    "newOrder.distance",
+    "newOrder.fee",
+    "newOrder.fee-ack",
+    "newOrder.add-line",
+    "newOrder.pick-service",
+    "newOrder.line-qty",
+    "newOrder.price",
+    "newOrder.band-offer",
+    "newOrder.band-close",
+    "newOrder.next",
+    "newOrder.source",
+    "newOrder.confirm",
     "orders.move-order",
     "orders.move-version",
     "orders.move-dimension",
@@ -311,6 +320,106 @@ class Console:
             {"method": method, "path": path, "body": body, "headers": headers},
         )
 
+    def press_capturing(self, locator: Any, *suffixes: str) -> list[dict[str, Any]]:
+        """Click, and return the server's answer to each write the press caused, in order.
+
+        Awaited here rather than read off a listener: the flow's last press navigates to the new
+        order, and a body cannot be read after the page has moved on.
+        """
+        with contextlib.ExitStack() as stack:
+            waits = [
+                stack.enter_context(
+                    self.page.expect_response(
+                        lambda r, sfx=sfx: (
+                            r.request.method == "POST" and r.url.split("?")[0].endswith(sfx)
+                        ),
+                        timeout=20000,
+                    )
+                )
+                for sfx in suffixes
+            ]
+            locator.click()
+        answers: list[dict[str, Any]] = []
+        for wait in waits:
+            try:
+                response = wait.value
+                text = response.text()
+                try:
+                    body = json.loads(text)
+                except ValueError:
+                    body = None
+                answers.append({"status": response.status, "body": body, "text": text[:600]})
+            except Exception as error:  # reported by the caller, never raised past it
+                answers.append({"status": 0, "body": None, "text": str(error)[:200]})
+        return answers
+
+    def walk_in(self) -> dict[str, Any]:
+        """Nhận đồ, step 1: one press issues the ticket and opens the intake for it."""
+        self.open("#/new")
+        ticket, intake = self.press_capturing(
+            self.page.locator("#new-walk-in"), "/counter-tickets", "/order-requests"
+        )
+        touched("newOrder.walk-in")
+        with contextlib.suppress(Exception):
+            self.page.wait_for_selector("#new-ticket", timeout=15000)
+        if intake["status"] >= 300 or ticket["status"] >= 300:
+            raise AssertionError(
+                f"could not take the customer in: {ticket['text']} {intake['text']}"
+            )
+        return {"ticket": ticket["body"], "intake": intake["body"]}
+
+    def add_line(self, service: str, quantity: str, basis: str = "STAFF_MEASUREMENT") -> None:
+        """Pick a service from the sheet by its code, then type the quantity where the cursor is."""
+        index = self.page.locator("#new-lines [data-line]").count()
+        self.page.locator("#new-add-line").click()
+        touched("newOrder.add-line")
+        self.page.wait_for_selector(f"#new-picker [data-code='{service}']", state="visible")
+        self.page.locator(f"#new-picker [data-code='{service}']").click()
+        touched("newOrder.pick-service")
+        self.page.wait_for_selector(f"#new-line-{index}-qty")
+        self.page.wait_for_timeout(150)
+        # Typed where the cursor already is: picking a service focuses its quantity.
+        self.page.keyboard.type(quantity, delay=6)
+        touched("newOrder.line-qty")
+        if basis != "STAFF_MEASUREMENT":
+            self.page.select_option(f"#new-line-{index}-basis", basis)
+
+    def set_mode(
+        self, mode: str, distance_m: int | None = None, manual_fee_vnd: int | None = None
+    ) -> None:
+        if mode != "SELF_DROP_SELF_COLLECT":
+            self.page.locator(f"#new-mode [data-value='{mode}']").click()
+            touched("newOrder.mode")
+        if distance_m is not None:
+            self.type_into("#new-distance", str(distance_m), "newOrder.distance")
+        if manual_fee_vnd is not None:
+            self.type_into("#new-fee", str(manual_fee_vnd), "newOrder.fee")
+            if not self.page.locator("#new-fee-ack").is_checked():
+                self.page.locator("#new-fee-ack").check()
+            touched("newOrder.fee-ack")
+
+    def price(self) -> dict[str, Any]:
+        (priced,) = self.press_capturing(self.page.locator("#new-price"), "/quotes")
+        touched("newOrder.price")
+        with contextlib.suppress(Exception):
+            self.page.wait_for_selector("#new-receipt .receipt", timeout=15000)
+        self.page.wait_for_timeout(400)
+        return priced
+
+    def confirm(self, source: str = "WALK_IN", *, accept: bool = True) -> dict[str, Any]:
+        """Step 3: where they heard of us, then the one press that accepts and creates."""
+        self.page.locator("#new-next").click()
+        touched("newOrder.next")
+        self.page.wait_for_selector("#new-confirm")
+        self.page.locator(f"#new-source [data-value='{source}']").click()
+        touched("newOrder.source")
+        suffixes = ("/acceptance", "/orders") if accept else ("/orders",)
+        answers = self.press_capturing(self.page.locator("#new-confirm"), *suffixes)
+        touched("newOrder.confirm")
+        with contextlib.suppress(Exception):
+            self.page.wait_for_url("**/#/orders/*", timeout=15000)
+        return {"acceptance": answers[0] if accept else None, "order": answers[-1]}
+
     # -- building the situation a scenario is about ------------------------------------
     def build_order(
         self,
@@ -322,73 +431,37 @@ class Console:
         distance_m: int | None = None,
         manual_fee_vnd: int | None = None,
     ) -> dict:
-        """Put an order into the state a scenario starts from, through the real routes.
+        """Put an order into the state a scenario starts from.
 
-        Setting a starting position up by hand through the interface would take twenty minutes per
-        case and prove nothing the walk-through script does not already prove. What each scenario
-        drives in the browser is the step it is actually about.
+        Taking the customer in and creating the order is done on Nhận đồ, in the browser, the way
+        the counter does it -- ticket, bag, price, source, one press -- because since
+        CONSOLE-REDESIGN-001 that flow *is* how an order comes to exist, and every scenario that
+        starts from an order now also proves it. The ladder of state moves after that goes through
+        the routes directly: setting each position up through the order page would take minutes per
+        case and prove nothing the daily walk does not already prove.
         """
-        ticket = self.call("POST", f"/internal/v1/stores/{STORE}/counter-tickets", {})
-        request = self.call(
-            "POST",
-            f"/internal/v1/stores/{STORE}/order-requests",
-            {"contact_binding_id": str(ticket["body"]["ticket_id"])},
-        )
-        quote = self.call(
-            "POST",
-            f"/internal/v1/stores/{STORE}/quotes",
+        self.walk_in()
+        self.set_mode(mode, distance_m, manual_fee_vnd)
+        for line in lines or [
             {
-                "bound_order_request_id": request["body"]["order_request_id"],
-                "fulfillment_mode": mode,
-                **({"verified_distance_m": distance_m} if distance_m is not None else {}),
-                **(
-                    {
-                        "approved_manual_fee_vnd": manual_fee_vnd,
-                        "customer_acknowledged_manual_fee": True,
-                    }
-                    if manual_fee_vnd is not None
-                    else {}
-                ),
-                "lines": lines
-                or [
-                    {
-                        "service_code": "STANDARD_WASH_DRY",
-                        "quantity": kg,
-                        "unit": "KG",
-                        "quantity_basis": "STAFF_MEASUREMENT",
-                    }
-                ],
-            },
-        )
+                "service_code": "STANDARD_WASH_DRY",
+                "quantity": kg,
+                "unit": "KG",
+                "quantity_basis": "STAFF_MEASUREMENT",
+            }
+        ]:
+            self.add_line(line["service_code"], line["quantity"], line["quantity_basis"])
+        quote = self.price()
         if quote["status"] >= 300:
             raise AssertionError(f"could not price the order: {quote['status']} {quote['text']}")
         priced = quote["body"]
-        acceptance = self.call(
-            "POST",
-            f"/internal/v1/stores/{STORE}/quotes/{priced['quote_id']}/acceptance",
-            {
-                "expected_current_revision": priced["revision"],
-                "expected_snapshot_hash": priced["snapshot_hash"],
-            },
-        )
+        done = self.confirm()
+        acceptance, order = done["acceptance"], done["order"]
         if acceptance["status"] >= 300:
             raise AssertionError(
                 f"could not accept the quote: {acceptance['status']} {acceptance['text']} "
                 f"(quote: {json.dumps(priced)[:400]})"
             )
-        order = self.call(
-            "POST",
-            f"/internal/v1/stores/{STORE}/orders",
-            {
-                "bound_contact_id": request["body"]["contact_binding_id"],
-                "quote_id": priced["quote_id"],
-                "quote_revision": acceptance["body"]["revision"],
-                "quote_snapshot_hash": acceptance["body"]["snapshot_hash"],
-                "fulfillment_mode": mode,
-                "customer_final_quote_accepted_at": dt.datetime.now(dt.UTC).isoformat(),
-                "acquisition_source": "WALK_IN",
-            },
-        )
         if order["status"] >= 300:
             raise AssertionError(f"could not build an order: {order['status']} {order['text']}")
         state = {
@@ -788,35 +861,12 @@ def scenario_pricing(console: Console) -> None:
         distance: str = "",
         service: str = "STANDARD_WASH_DRY",
     ) -> tuple[str, str]:
-        ticket = console.call("POST", f"/internal/v1/stores/{STORE}/counter-tickets", {})
-        request = console.call(
-            "POST",
-            f"/internal/v1/stores/{STORE}/order-requests",
-            {"contact_binding_id": str(ticket["body"]["ticket_id"])},
-        )
-        console.open("#/quotes")
-        console.page.click("#quote-manual-toggle")
-        touched("quotes.manual-toggle")
-        console.type_into(
-            "#quote-order-request", request["body"]["order_request_id"], "quotes.order-request"
-        )
-        console.choose("#quote-fulfillment", mode, "quotes.fulfillment")
-        if distance:
-            console.type_into("#quote-distance", distance, "quotes.distance")
-        console.choose("#quote-line-0-code", service, "quotes.line-code")
-        console.type_into("#quote-line-0-qty", kg, "quotes.line-qty")
+        console.walk_in()
+        console.set_mode(mode, int(distance) if distance else None)
+        console.add_line(service, kg)
         console.page.wait_for_timeout(300)
         before_submit = console.text()
-        console.page.locator("button[type=submit]", has_text="Tính giá").first.click()
-        # Wait for the answer rather than for a stopwatch. A fixed pause is long enough on an idle
-        # laptop and not on a busy one, and a pricing check that reads the screen before the price
-        # arrives fails for a reason that has nothing to do with the price.
-        try:
-            console.page.wait_for_selector("text=Bản sửa đổi", timeout=15000)
-        except Exception:
-            console.page.wait_for_timeout(1500)
-        console.page.wait_for_timeout(400)
-        touched("quotes.submit")
+        console.price()
         return console.text(), before_submit
 
     under, warned = price("5.9")
@@ -851,21 +901,35 @@ def scenario_pricing(console: Console) -> None:
     )
     ok("the same bag at 4 km totals 170.000 ₫ — the 2-6 km fee is added", "170.000" in band, "")
 
-    console.open("#/quotes")
-    console.choose("#quote-fulfillment", "PICKUP_AND_RETURN", "quotes.fulfillment")
-    console.type_into("#quote-distance", "9000", "quotes.distance")
+    console.walk_in()
+    console.set_mode("PICKUP_AND_RETURN", 9000)
     console.page.wait_for_timeout(400)
     ok(
         "past 6 km the screen asks the staff member for the fee they agreed with the customer",
-        console.page.locator("#quote-manual-fee").count() == 1,
+        console.page.locator("#new-fee").count() == 1,
         "",
     )
     ok(
         "and asks them to confirm the customer agreed to it",
-        console.page.locator("#quote-manual-ack").count() == 1,
+        console.page.locator("#new-fee-ack").count() == 1,
         "",
     )
-    touched("quotes.manual-fee", "quotes.manual-ack")
+    console.add_line("STANDARD_WASH_DRY", "8")
+    far = console.price()
+    ok(
+        "without the agreed fee nobody guesses one: the price has no total and cannot be agreed",
+        far["status"] < 300
+        and (far["body"] or {}).get("display_total_min_vnd") is None
+        and console.page.locator("#new-next").is_disabled(),
+        console.text()[-200:],
+    )
+    console.set_mode("PICKUP_AND_RETURN", None, 45000)
+    near_fee = console.price()
+    ok(
+        "with the fee typed and the customer's agreement ticked, the server prices the whole trip",
+        near_fee["status"] < 300 and "205.000" in console.text(),
+        [line for line in console.text().splitlines() if "₫" in line][-2:],
+    )
 
     head("3c", "TỪ CHỐI ĐOÁN — what the engine will not price")
     fractional = console.call(
@@ -912,14 +976,38 @@ def scenario_pricing(console: Console) -> None:
     )
 
     head("3d", "NHIỀU DÒNG — a ticket with more than one service on it")
-    console.open("#/quotes")
-    console.page.locator("button", has_text="Thêm dòng").first.click()
-    console.page.wait_for_timeout(400)
-    touched("quotes.add-line")
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "3")
+    console.add_line("IRON_SUIT", "2")
     ok(
         "a second line can be added to one quote",
-        console.page.locator("#quote-line-1-code").count() == 1,
+        console.page.locator("#new-line-1-qty").count() == 1,
         "",
+    )
+    two = console.price()
+    ok(
+        "and both lines are priced by the server on one receipt",
+        two["status"] < 300 and console.page.locator("#new-receipt .receipt__line").count() == 2,
+        f"HTTP {two['status']}",
+    )
+
+    head("3e", "KHÁCH QUA KÊNH — a code nobody issued is refused, never quietly created")
+    console.open("#/new")
+    console.page.locator("#new-channel-toggle").click()
+    console.type_into(
+        "#new-contact", "00000000-0000-4000-8000-000000000999", "newOrder.channel-code"
+    )
+    (refused,) = console.press_capturing(
+        console.page.locator("#new-contact-submit"), "/order-requests"
+    )
+    touched("newOrder.channel-submit")
+    console.page.wait_for_timeout(400)
+    ok(
+        "an unknown channel code is refused by the server with its reason, and the screen says so",
+        refused["status"] == 422
+        and "CONTACT_BINDING_UNKNOWN" in refused["text"]
+        and "CONTACT_BINDING_UNKNOWN" in console.text(),
+        f"HTTP {refused['status']} {refused['text'][:120]}",
     )
 
 
@@ -1423,32 +1511,15 @@ def scenario_ai_refuses(console: Console) -> None:
     )
 
 
-def _fresh_request(console: Console) -> str:
-    """A counter ticket and an order request, made the way the counter makes them."""
-
-    ticket = console.call("POST", f"/internal/v1/stores/{STORE}/counter-tickets", {})
-    request = console.call(
-        "POST",
-        f"/internal/v1/stores/{STORE}/order-requests",
-        {"contact_binding_id": str(ticket["body"]["ticket_id"])},
-    )
-    return str(request["body"]["order_request_id"])
-
-
 def scenario_band(console: Console) -> None:
     """`DEC-029`: the staff member on duty closes a published band; the owner reviews it after."""
 
     head("9", "GIÁ TRONG KHOẢNG — áo dài, priced by the staff member on duty (DEC-029)")
     console.sign_in("demo-operations")
-    request_id = _fresh_request(console)
-    console.open("#/quotes")
-    console.page.click("#quote-manual-toggle")
-    console.type_into("#quote-order-request", request_id)
-    console.choose("#quote-fulfillment", "SELF_DROP_SELF_COLLECT")
-    console.choose("#quote-line-0-code", "DC_AO_DAI_TRADITIONAL")
-    console.type_into("#quote-line-0-qty", "1")
-    console.page.locator("button[type=submit]", has_text="Tính giá").first.click()
-    console.page.wait_for_timeout(2200)
+    taken = console.walk_in()
+    request_id = str(taken["intake"]["order_request_id"])
+    console.add_line("DC_AO_DAI_TRADITIONAL", "1")
+    console.price()
     ok(
         "a range-priced item is not given a made-up single price",
         "Món này niêm yết theo khoảng giá" in console.text(),
@@ -1458,6 +1529,7 @@ def scenario_band(console: Console) -> None:
     if not ok("and the counter is offered a band revision instead", offer.count() > 0):
         return
     offer.first.click()
+    touched("newOrder.band-offer")
     with contextlib.suppress(Exception):
         console.page.wait_for_selector("#quote-band-0", timeout=15000)
     ok(
@@ -1480,27 +1552,34 @@ def scenario_band(console: Console) -> None:
     console.type_into("#quote-band-0", "160000")
     console.page.wait_for_timeout(500)
     close.first.click()
+    touched("newOrder.band-close")
     try:
-        console.page.wait_for_selector(
-            "button:has-text('Khách đã chốt giá')", timeout=15000, state="visible"
-        )
+        console.page.wait_for_selector("#new-next:not([disabled])", timeout=15000)
     except Exception:
         console.page.wait_for_timeout(1500)
     closed_text = console.text()
     ok(
         "160.000 ₫ inside the band is final in one press — no owner, no ten-minute wait",
-        "160.000" in closed_text and "Khách đã chốt giá" in closed_text,
+        "160.000" in closed_text and console.page.locator("#new-next:not([disabled])").count() == 1,
         console.said()[:220],
     )
-    agree = console.page.locator("button", has_text="Khách đã chốt giá")
-    if agree.count():
-        agree.first.click()
-        console.page.wait_for_timeout(2000)
+
+    # The customer steps away and comes back: the waiting ticket resumes from Tiếp nhận with the
+    # closed price restored from the server's reads -- nothing retyped, nothing pasted.
+    console.open("#/order-requests")
+    row = console.page.locator(f"#intake-list [data-request='{request_id}']")
+    ok("the waiting ticket is listed as still waiting for its price", row.count() == 1, "")
+    if row.count():
+        row.first.click()
+        touched("newOrder.resume")
+        with contextlib.suppress(Exception):
+            console.page.wait_for_selector("#new-next:not([disabled])", timeout=15000)
+    done = console.confirm("WALK_IN")
     ok(
-        "and the customer can agree to it, so it becomes an orderable price",
-        "Khách đã chốt giá" not in console.page.locator("button:enabled").all_inner_texts()
-        or "đã chốt" in console.said().lower(),
-        console.said()[:220],
+        "and the customer can agree to it, so it becomes an order",
+        (done["acceptance"] or {}).get("status", 0) < 300 and done["order"]["status"] < 300,
+        f"acceptance {(done['acceptance'] or {}).get('status')} order {done['order']['status']} "
+        f"{done['order']['text'][:120]}",
     )
 
     head("9b", "CHỦ XEM LẠI — the owner sees who chose which price, inside which band")
@@ -2073,6 +2152,7 @@ def main() -> int:
         head("0", "ĐIỀU HƯỚNG — every navigation destination, reached by clicking it")
         for label, route, hash_path in (
             ("Hôm nay", "today", "#/"),
+            ("Nhận đồ", "new", "#/new"),
             ("Tiếp nhận", "order-requests", "#/order-requests"),
             ("Báo giá", "quotes", "#/quotes"),
             ("Đơn hàng", "orders", "#/orders"),

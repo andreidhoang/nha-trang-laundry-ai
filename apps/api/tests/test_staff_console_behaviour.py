@@ -553,9 +553,16 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
 
     # Every control the guide tells staff to press, and every message it tells them how to react to.
     quoted = [
-        "Phát phiếu",
+        # CONSOLE-REDESIGN-001: the counter's intake is one flow on Nhận đồ now -- the walk-in
+        # press, the channel customer's manual code, resuming a waiting ticket, and the one press
+        # that records the customer's agreement and creates the order.
+        "Khách vãng lai — phát phiếu",
+        "Khách đã nhắn qua kênh",
         "Ghi nhận tiếp nhận",
+        "Tiếp tục một khách đang chờ",
         "Tính giá",
+        "Tính lại",
+        "Dùng khoản giảm trừ",
         # RANGE-PRICE-001. The three presses that close a published band, in the order the counter
         # meets them. They are pinned for the same reason as the rest: the guide is printed and
         # taped next to the till, and this procedure is the one a staff member has never done
@@ -568,7 +575,7 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         # has to be retried.
         "Chốt giá này",
         "Ghi giá vào báo giá",
-        "Khách đã chốt giá",
+        "Khách đồng ý — tạo đơn",
         "Tạo đơn",
         # ORDER-LOOKUP-001. Pickup, the step that could not be done on this software: find the
         # order by the number on the customer's slip, open it, and read out the amount printed

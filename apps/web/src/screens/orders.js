@@ -44,10 +44,9 @@ import {
   dateTime,
   matchesFilter,
   money,
-  parseInstant,
   shortId,
 } from "../core/format.js";
-import { ACQUISITION_SOURCE_VI, enumVi } from "../core/i18n.js";
+import { enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import {
@@ -68,46 +67,12 @@ import {
 
 const LIST_LIMIT = 100;
 
-/** `FulfillmentMode`, as the strict request model spells it. */
-const FULFILLMENT_MODES = [
-  "SELF_DROP_SELF_COLLECT",
-  "PICKUP_AND_RETURN",
-  "PICKUP_ONLY",
-  "RETURN_ONLY",
-];
-
 /**
  * The modes whose customer collects at the counter -- every mode outside the server's
  * `MODES_EXPECTING_RETURN`. `PICKUP_ONLY` is one: the courier fetched the laundry, the customer
  * comes in for it, and since the `DEC-032` addendum may have paid at the counter in advance.
  */
 const SELF_COLLECT_MODES = new Set(["SELF_DROP_SELF_COLLECT", "PICKUP_ONLY"]);
-
-/**
- * `AcquisitionSource`. Where the customer says they found the shop.
- *
- * The order matters and is not alphabetical: the four the counter actually hears most sit first, so
- * the common answer is one glance away, and `UNKNOWN` sits last as the resting value rather than
- * hidden in the middle.
- *
- * **`UNKNOWN` is the default and is styled like every other option.** That is deliberate and it is
- * the whole design of this field. A counter that did not get round to asking must be able to leave
- * it, without a warning colour, a confirmation, or a hint that reads as disapproval — because the
- * alternative is a busy operator picking whichever value clears the form, and a channel report
- * built from those is worse than no report at all: it looks like evidence, and the shop will spend
- * money against it. The nudge to ask lives in the field hint, where it costs nothing if ignored.
- */
-const ACQUISITION_SOURCES = [
-  "WALK_IN",
-  "GOOGLE_MAPS",
-  "ZALO",
-  "FACEBOOK",
-  "PARTNER_FRONT_DESK",
-  "REFERRAL_CUSTOMER",
-  "LEAFLET_QR",
-  "RETURNING",
-  "UNKNOWN",
-];
 
 /**
  * `CommercialOrderStatus`, complete and unfiltered.
@@ -205,9 +170,6 @@ const CUSTODY_RESOLUTIONS = [
   "RETURNED_UNWASHED_REFUNDED",
   "SHOP_FAULT_NO_CHARGE",
 ];
-
-/** `OrderCreateRequest.quote_snapshot_hash`, exactly as the server's pattern spells it. */
-const SNAPSHOT_HASH = /^JCS-SHA256-V1:[0-9a-f]{64}$/;
 
 /** A ticket number as staff type it: the counter issues 1, 2, 3… and restarts each morning. */
 const TICKET_NUMBER = /^[1-9][0-9]{0,4}$/;
@@ -375,48 +337,14 @@ export function render_(context) {
   const me = principal();
   const writeVerdict = can(me, "ORDERS_WRITE");
 
-  const createSubmission = new Submission("order-create");
   const transitionSubmission = new Submission("order-transition");
 
-  /**
-   * The create form's state, held here rather than read back from the DOM at submit time so that
-   * what is sent is provably what is shown.
-   *
-   * @type {{contactId: string, quoteId: string, revision: string, hash: string, mode: string, acceptedAt: string}}
-   */
-  // The hand-off from `#/quotes`, which is the only path a counter shift actually takes: the
-  // accepted-quote card links here carrying the four values this form needs, so none of them is
-  // typed or pasted. Read through the same `query` the intake hand-off into `#/quotes` uses.
-  //
-  // Nothing is trusted because it arrived in a URL. These are prefill only: the shapes are
-  // re-checked below exactly as typed input is, and the server re-checks all four again --
-  // `create_order` refuses a quote that is not `APPROVED_EXACT`, a revision that is not the one
-  // accepted, and a seal that does not match the stored snapshot byte for byte.
+  // Deep links into this screen (`?ticket=`, `?order=`): prefill only, re-checked like typed input.
   const handoff = context?.query;
   const prefill = (key, pattern) => {
     const value = String(handoff?.get(key) || "").trim();
     return pattern.test(value) ? value : "";
   };
-
-  const draft = {
-    contactId: prefill("contact", UUID),
-    quoteId: prefill("quote", UUID),
-    revision: prefill("revision", /^[1-9][0-9]{0,5}$/) || "1",
-    hash: prefill("hash", SNAPSHOT_HASH),
-    mode: FULFILLMENT_MODES[0],
-    acceptedAt: "",
-    // The instant the server recorded when staff pressed "Khách đã chốt giá", sent verbatim while
-    // the field still shows it. Converting it to a `datetime-local` string and back would drop the
-    // seconds and depend on the device's timezone twice; the field shows it, the server's value is
-    // what goes back. Any edit to the field clears it and the typed value is sent instead.
-    acceptedAtServer: "",
-    // Rests on "nobody asked" until somebody says otherwise, which is what is actually true before
-    // the question is put to the customer.
-    source: "UNKNOWN",
-  };
-  // Arrived from "Tạo đơn từ báo giá này": the form is the reason the operator is here, so it is
-  // drawn first and brought into view rather than left as the fourth panel down a phone screen.
-  const fromQuote = Boolean(draft.quoteId && draft.hash);
 
   // "Tìm theo số phiếu". The date is optional and empty means "today" -- decided by the server's
   // clock on the shop's business day, not by this device, whose clock and timezone are not the
@@ -446,10 +374,6 @@ export function render_(context) {
     // returns REQUIRE_HUMAN for every slot at this stage, so it is the operator's word or nothing.
     slotApproved: false,
   };
-
-  const createBody = h("div");
-  const createResultHost = h("div", { class: "stack" });
-  const createResult = resultLine();
 
   const moveBody = h("div");
   const moveResultHost = h("div", { class: "stack" });
@@ -622,285 +546,6 @@ export function render_(context) {
     transitionSubmission.reset();
     render(moveBody, gatedFields(moveForm(), writeVerdict));
   };
-
-  // --- create ---------------------------------------------------------------------------------
-
-  /**
-   * @returns {string} an empty string when the draft is submittable
-   */
-  function validateCreate() {
-    if (!UUID.test(draft.contactId.trim())) return "Mã khách chưa đúng dạng.";
-    if (!UUID.test(draft.quoteId.trim())) return "Mã báo giá chưa đúng dạng.";
-    const revision = Number.parseInt(draft.revision.trim(), 10);
-    if (!Number.isInteger(revision) || revision < 1) return "Bản báo giá phải là số nguyên từ 1.";
-    if (!SNAPSHOT_HASH.test(draft.hash.trim())) {
-      return "Mã niêm phong chưa đúng dạng. Chép lại nguyên văn từ bản báo giá.";
-    }
-    // An empty datetime is refused here rather than sent as an empty string, because the field is
-    // required and timezone-aware: there is no defensible value to substitute for "not filled in".
-    if (draft.acceptedAtServer) return "";
-    if (!draft.acceptedAt) return "Chưa nhập thời điểm khách chốt giá.";
-    if (Number.isNaN(new Date(draft.acceptedAt).getTime())) {
-      return "Thời điểm khách chốt giá không đọc được.";
-    }
-    return "";
-  }
-
-  /**
-   * @param {SubmitEvent} event
-   */
-  async function submitCreate(event) {
-    event.preventDefault();
-
-    if (!writeVerdict.allowed) {
-      setResult(createResult, "danger", writeVerdict.reason);
-      return;
-    }
-
-    const problem = validateCreate();
-    if (problem) {
-      setResult(createResult, "danger", problem);
-      return;
-    }
-
-    const payload = {
-      bound_contact_id: draft.contactId.trim(),
-      quote_id: draft.quoteId.trim(),
-      quote_revision: Number.parseInt(draft.revision.trim(), 10),
-      quote_snapshot_hash: draft.hash.trim(),
-      fulfillment_mode: draft.mode,
-      acquisition_source: draft.source,
-      // The server's own record of the moment when the field still shows it, verbatim. Otherwise
-      // `datetime-local` yields a naive wall-clock string; the server requires an aware instant.
-      // `Date` reads it in the device's timezone and `toISOString` emits UTC, so the offset is
-      // always explicit. The device's timezone is therefore load-bearing, which is why the hint
-      // under the field says so.
-      customer_final_quote_accepted_at:
-        draft.acceptedAtServer || new Date(draft.acceptedAt).toISOString(),
-    };
-
-    setResult(createResult, "warn", "Đang gửi lệnh tạo đơn…");
-    render(createResultHost);
-
-    try {
-      const created = await request(`/internal/v1/stores/${encodeURIComponent(store)}/orders`, {
-        method: "POST",
-        body: payload,
-        idempotencyKey: createSubmission.key(),
-      });
-      // Confirmed exactly once, here. The next submission is a new intent and gets a new key.
-      createSubmission.reset();
-      setResult(createResult, "ok", `Đã tạo đơn ${shortId(created.order_id)}.`);
-      render(createResultHost, orderCard(created));
-      // The quote-bound fields are cleared and the form rebuilt, so a second tap on a form that
-      // still looks armed cannot mint a second order under a fresh key. An order is not a quote
-      // revision; there is no cheap way to undo a duplicate one.
-      draft.quoteId = "";
-      draft.hash = "";
-      draft.acceptedAt = "";
-      draft.acceptedAtServer = "";
-      // And the source goes back to "nobody asked", which is true again the moment this customer
-      // leaves. Leaving it on the last answer would let the console supply a plausible value for
-      // the next customer -- exactly the failure `UNKNOWN` exists to prevent, except committed by
-      // the screen rather than by a hurried operator, and on a field that is immutable and that no
-      // screen reads back. `mode` is deliberately left sticky: a wrong fulfilment mode surfaces
-      // downstream when nobody comes to collect, and a wrong source surfaces nowhere, ever.
-      draft.source = "UNKNOWN";
-      render(createBody, gatedFields(createForm(), writeVerdict));
-      await board.reload();
-    } catch (error) {
-      // Same rule as the transition below, and it matters more here: an order is not cheaply
-      // undone. On a TIMEOUT or a NETWORK failure nobody knows whether the order exists, and
-      // "Không tạo được đơn" invites the one action that mints a second one. The idempotency key
-      // is kept on this path precisely so an unchanged resend replays rather than duplicates --
-      // but the board is what actually answers the question, so that is what this asks for.
-      const unknown = error.kind === "TIMEOUT" || error.kind === "NETWORK";
-      setResult(
-        createResult,
-        error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
-        unknown
-          ? "Chưa biết lệnh có tới máy chủ hay không, nên chưa biết đơn đã được tạo hay chưa. " +
-            "Đừng bấm lại — hãy tải lại bảng đơn và tìm mã khách này trước."
-          : error.kind === "REQUIRE_HUMAN"
-            ? "Cần người quyết định trước khi tạo đơn. Không có đơn nào được tạo."
-            : "Không tạo được đơn. Máy chủ nêu lý do bên dưới, nguyên văn.",
-      );
-      const notice = errorNotice(error);
-      render(createResultHost, notice);
-      revealError(notice);
-    }
-  }
-
-  /**
-   * @returns {HTMLElement}
-   */
-  function createForm() {
-    const contactInput = h("input", {
-      type: "text",
-      value: draft.contactId,
-      autocomplete: "off",
-      spellcheck: "false",
-      dataFormat: "id",
-      placeholder: "00000000-0000-0000-0000-000000000000",
-      onInput: (event) => {
-        draft.contactId = event.target.value;
-        createSubmission.reset();
-      },
-    });
-
-    const quoteInput = h("input", {
-      type: "text",
-      value: draft.quoteId,
-      autocomplete: "off",
-      spellcheck: "false",
-      dataFormat: "id",
-      placeholder: "00000000-0000-0000-0000-000000000000",
-      onInput: (event) => {
-        draft.quoteId = event.target.value;
-        createSubmission.reset();
-      },
-    });
-
-    const revisionInput = h("input", {
-      type: "text",
-      inputmode: "numeric",
-      value: draft.revision,
-      autocomplete: "off",
-      maxlength: "6",
-      placeholder: "1",
-      onInput: (event) => {
-        draft.revision = event.target.value;
-        createSubmission.reset();
-      },
-    });
-
-    const hashInput = h("input", {
-      type: "text",
-      value: draft.hash,
-      autocomplete: "off",
-      spellcheck: "false",
-      dataFormat: "hash",
-      placeholder: "JCS-SHA256-V1:…",
-      "aria-invalid": draft.hash && !SNAPSHOT_HASH.test(draft.hash.trim()) ? "true" : null,
-      onInput: (event) => {
-        draft.hash = event.target.value;
-        createSubmission.reset();
-      },
-    });
-
-    const modeSelect = enumSelect("fulfillment_mode", FULFILLMENT_MODES, draft.mode);
-    modeSelect.addEventListener("change", (event) => {
-      draft.mode = /** @type {HTMLSelectElement} */ (event.target).value;
-      createSubmission.reset();
-    });
-
-    const sourceSelect = enumSelect(
-      "acquisition_source",
-      ACQUISITION_SOURCES,
-      draft.source,
-      ACQUISITION_SOURCE_VI,
-    );
-    sourceSelect.addEventListener("change", (event) => {
-      draft.source = /** @type {HTMLSelectElement} */ (event.target).value;
-      createSubmission.reset();
-    });
-
-    const acceptedInput = h("input", {
-      type: "datetime-local",
-      value: draft.acceptedAt,
-      onInput: (event) => {
-        draft.acceptedAt = event.target.value;
-        // A person changed it, so what they typed is what is sent.
-        draft.acceptedAtServer = "";
-        createSubmission.reset();
-      },
-    });
-
-    const submit = h(
-      "button",
-      { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
-      "Tạo đơn",
-    );
-
-    return h(
-      "form",
-      { class: "form", onSubmit: submitCreate },
-      explain(
-        "Vì sao lệnh tạo đơn đang luôn bị từ chối?",
-        h(
-          "p",
-          null,
-          "Máy chủ chỉ nhận một báo giá thoả đủ năm điều: giá đã là giá chính xác chứ không phải " +
-            "ước tính, khách đã chốt bản đó, bản gửi lên đúng là bản khách chốt, đã có người " +
-            "duyệt giá, và báo giá chưa hết hạn. Thiếu một điều là bị từ chối.",
-        ),
-        h(
-          "p",
-          null,
-          "Báo giá phải là bản đã chốt: khách nghe giá, nhân viên bấm \u201cChốt giá\u201d ở màn " +
-            "hình Báo giá, và bản chốt đó mới tạo được đơn. Một bản ước lượng hoặc một khoảng giá " +
-            "sẽ bị từ chối kèm lý do. Trước ngày 25/08/2026 chưa có đường chốt giá nào nên không " +
-            "đơn nào tạo được; nay màn hình Báo giá làm đúng việc đó.",
-        ),
-        h("p", null, h("a", { href: "#/gaps" }, "Xem khoảng trống: đường duyệt giá chính xác")),
-      ),
-      labelled({
-        id: "order-contact",
-        label: "Mã khách",
-        // The old hint said "Chép từ màn hình Tiếp nhận" and was impossible to follow: that
-        // screen rendered the contact id shortened, with no copy control anywhere, and cleared
-        // the one input that ever held it in full. Both halves are fixed -- the intake rows are
-        // copyable now, and the accepted-quote card links here with the value already filled --
-        // so the hint names the path that works and keeps the copy path as the fallback.
-        hint:
-          "Thường không phải gõ: bấm “Tạo đơn từ báo giá này” ở màn hình Báo giá thì ô này đã " +
-          "có sẵn. Cần điền tay thì chép ở màn hình Tiếp nhận. Màn hình này chưa tra cứu được " +
-          "khách theo tên hay số điện thoại.",
-        control: contactInput,
-      }),
-      labelled({
-        id: "order-quote",
-        label: "Mã báo giá",
-        hint: "Của bản báo giá khách đã chốt.",
-        control: quoteInput,
-      }),
-      labelled({
-        id: "order-revision",
-        label: "Bản báo giá",
-        hint: "Số nguyên từ 1. Phải đúng bản mà khách đã chốt, không phải bản mới nhất.",
-        control: revisionInput,
-      }),
-      labelled({
-        id: "order-hash",
-        label: "Mã niêm phong báo giá",
-        hint: "Chép nguyên văn từ bản báo giá, đủ cả phần đầu. Máy chủ so khớp từng ký tự để chắc chắn đây đúng là bản khách đã chốt.",
-        control: hashInput,
-      }),
-      labelled({
-        id: "order-mode",
-        label: "Hình thức giao nhận",
-        control: modeSelect,
-      }),
-      labelled({
-        id: "order-source",
-        label: "Khách biết tiệm qua đâu",
-        hint:
-          "Hỏi một câu: “Anh/chị biết tiệm qua đâu ạ?” Chưa hỏi thì để nguyên “Chưa biết” — đó là " +
-          "câu trả lời đúng, không phải thiếu sót. Ghi xong là không sửa được nữa.",
-        control: sourceSelect,
-      }),
-      labelled({
-        id: "order-accepted",
-        label: "Thời điểm khách chốt giá",
-        hint: draft.acceptedAtServer
-          ? "Đã điền sẵn lúc bấm “Khách đã chốt giá”. Không cần sửa."
-          : "Đọc theo giờ của máy bạn đang dùng — kiểm lại nếu máy đặt sai múi giờ. Bỏ trống thì không gửi.",
-        control: acceptedInput,
-      }),
-      h("div", { class: "action-bar" }, gated(submit, writeVerdict)),
-      createResult,
-    );
-  }
 
   // --- transition -----------------------------------------------------------------------------
 
@@ -1171,37 +816,8 @@ export function render_(context) {
   // it stayed live, so an AUDITOR could fill in an order id, a version and a seal and only then
   // meet the refusal. Both forms are rebuilt on state changes, so this wraps the render rather
   // than running once.
-  render(createBody, gatedFields(createForm(), writeVerdict));
   render(moveBody, gatedFields(moveForm(), writeVerdict));
   void board.reload();
-
-  /**
-   * Fill "Thời điểm khách chốt giá" from the acceptance the server recorded a moment ago.
-   *
-   * The field was required and blank on arrival from the quote, so the operator typed a time from
-   * memory for an event the server had just written down to the microsecond. Read, never guessed:
-   * a revision no acceptance produced reads back null and the field stays empty for a person.
-   */
-  async function prefillAcceptedAt() {
-    try {
-      const quote = encodeURIComponent(draft.quoteId);
-      const revision = await request(
-        `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${quote}?revision=${draft.revision}`,
-      );
-      const at = parseInstant(revision?.customer_accepted_at);
-      // Somebody already typed a time while this was loading; theirs stands.
-      if (!at || draft.acceptedAt) return;
-      draft.acceptedAtServer = revision.customer_accepted_at;
-      draft.acceptedAt = localInputValue(at);
-      createSubmission.reset();
-      // The form is rebuilt from `draft`; keep the cursor where the operator had it.
-      const focused = createBody.contains(document.activeElement) ? document.activeElement?.id : "";
-      render(createBody, gatedFields(createForm(), writeVerdict));
-      if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
-    } catch {
-      // Nothing to add: the field stays empty and its hint says how to fill it.
-    }
-  }
 
   /**
    * `#/orders?order=<id>`, from the order screen: read the order by id and pick it for a transition
@@ -1220,7 +836,6 @@ export function render_(context) {
     }
   }
 
-  if (fromQuote) void prefillAcceptedAt();
   const orderToMove = prefill("order", UUID);
   if (orderToMove) void pickById(orderToMove);
   if (lookup.number) void submitLookup(/** @type {any} */ ({ preventDefault() {} }));
@@ -1315,14 +930,19 @@ export function render_(context) {
     ),
   );
 
+  // Orders are created on ＋ Nhận đồ (`CONSOLE-REDESIGN-001`), which carries the ticket, the
+  // quote, its revision and seal, the mode and the acceptance time from the server's own answers.
+  // The manual form that stood here asked a person to paste four of those.
   const createPanel = panel({
-    eyebrow: "Lệnh",
-    title: "Tạo đơn từ báo giá đã chốt",
-    guardrail:
-      "Đơn chỉ được tạo từ một báo giá khách đã chốt. Bấm “Khách đã chốt giá” ở màn " +
-      "hình Báo giá trước, rồi mới tạo đơn ở đây. Máy chủ kiểm lại toàn bộ điều kiện; màn hình " +
-      "này chỉ bắt lỗi gõ trước khi gửi.",
-    children: h("div", { class: "stack" }, createBody, createResultHost),
+    eyebrow: "Khách gửi đồ",
+    title: "Tạo đơn mới",
+    children: h(
+      "p",
+      null,
+      "Đơn mới được tạo ở ",
+      h("a", { href: "#/new" }, "＋ Nhận đồ"),
+      ": phát phiếu, tính giá, rồi “Khách đồng ý — tạo đơn”. Không phải chép mã nào.",
+    ),
   });
 
   const lookupPanel = panel({
@@ -1330,19 +950,6 @@ export function render_(context) {
     title: "Tìm theo số phiếu",
     children: h("div", { class: "stack" }, lookupForm, lookupHost),
   });
-
-  if (fromQuote) {
-    // After the router has mounted this screen and scrolled to the top: bring the prefilled form
-    // into view and put the cursor on the first field nobody has filled in for the operator.
-    // Centred rather than aligned to the top: the app bar is sticky and would cover the panel's
-    // top edge, and the fields still to decide sit below the four prefilled ones.
-    setTimeout(() => {
-      const first = /** @type {HTMLElement|null} */ (createPanel.querySelector("#order-mode"));
-      if (!first) return;
-      first.scrollIntoView({ block: "center" });
-      first.focus({ preventScroll: true });
-    }, 0);
-  }
 
   return h(
     "section",
@@ -1359,7 +966,6 @@ export function render_(context) {
           "nên hãy đọc từng phần một.",
       ),
     ),
-    fromQuote ? createPanel : null,
     lookupPanel,
     panel({
       eyebrow: "Đã ghi",
@@ -1404,24 +1010,7 @@ export function render_(context) {
       // easiest to miss because it is built once rather than re-rendered.
       children: h("div", { class: "stack" }, gatedFields(legBody, writeVerdict), legResultHost),
     }),
-    fromQuote ? null : createPanel,
-  );
-}
-
-/**
- * An instant as a `datetime-local` value in this device's timezone, to the minute.
- *
- * Only for display in the field: the instant itself is sent verbatim (`acceptedAtServer`). The
- * device's zone is used because that is the zone the field is read back in if somebody edits it.
- *
- * @param {Date} at
- * @returns {string}
- */
-function localInputValue(at) {
-  const pad = (value) => String(value).padStart(2, "0");
-  return (
-    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
-    `T${pad(at.getHours())}:${pad(at.getMinutes())}`
+    createPanel,
   );
 }
 

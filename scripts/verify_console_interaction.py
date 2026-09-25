@@ -815,6 +815,79 @@ CLOSED_REVISION = {
 }
 
 
+#: CONSOLE-REDESIGN-001. The ordinary quote Nhận đồ prices in sections 1-3 and 7: a weight-priced
+#: service, an estimate nobody has agreed to yet, then the revision `accept_quote` derives from it.
+#: The accepted read carries `customer_accepted_at`, which is the only value the order create takes
+#: that the create response does not -- so the check in section 7 is that the console sends exactly
+#: this instant and not one it made up from the device clock.
+EXACT_QUOTE = "88888888-9999-4333-8444-cccccccccccc"
+EXACT_TOTAL_VND = 147_500
+ACCEPTED_AT = "2026-09-25T03:04:05.123456+00:00"
+EXACT_REVISION = {
+    "quote_id": EXACT_QUOTE,
+    "revision": 1,
+    "row_version": 1,
+    "finality": "ESTIMATE",
+    "status": "PROVISIONAL",
+    "snapshot_hash": "JCS-SHA256-V1:" + "e" * 64,
+    "list_service_subtotal_vnd": EXACT_TOTAL_VND,
+    "net_service_subtotal_vnd": EXACT_TOTAL_VND,
+    "display_total_min_vnd": EXACT_TOTAL_VND,
+    "display_total_max_vnd": EXACT_TOTAL_VND,
+    "reason_codes": ["TAX_TREATMENT_UNVERIFIED"],
+    "required_approvals": [],
+    "replayed": False,
+    "promotion": None,
+}
+ACCEPTED_REVISION = {
+    **EXACT_REVISION,
+    "revision": 2,
+    "row_version": 2,
+    "finality": "APPROVED_EXACT",
+    "status": "ACCEPTED_FINAL",
+    "snapshot_hash": "JCS-SHA256-V1:" + "f" * 64,
+}
+
+
+def exact_detail(revision: int) -> dict[str, object]:
+    """`QuoteRevisionDetailResponse` for the ordinary quote, with READ-ENRICH-001's fields."""
+
+    source = ACCEPTED_REVISION if revision == 2 else EXACT_REVISION
+    return {
+        **{
+            key: source[key]
+            for key in (
+                "quote_id",
+                "revision",
+                "row_version",
+                "finality",
+                "status",
+                "snapshot_hash",
+                "display_total_min_vnd",
+                "display_total_max_vnd",
+                "reason_codes",
+            )
+        },
+        "valid_until": "2026-09-26T03:00:00+00:00",
+        "lines": [
+            {
+                "line_id": "line-1",
+                "service_code": "STD_WASH_DRY_LT6",
+                "quantity": "5.9",
+                "unit": "KG",
+                "price_kind": "EXACT",
+                "net_amount_vnd": EXACT_TOTAL_VND,
+                "band_minimum_vnd": None,
+                "band_maximum_vnd": None,
+            }
+        ],
+        "customer_accepted_at": ACCEPTED_AT if revision == 2 else None,
+        "order_request_id": "33333333-4444-4333-8444-777777777777",
+        "contact_binding_id": "22222222-3333-4333-8444-666666666666",
+        "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
+    }
+
+
 #: `EXPORT-FIX-001`. The export envelope `#/exports` raises, and the read that makes it decidable.
 #:
 #: `VIEWABLE_RESOURCES` in `screens/approvals.js` had no `EXPORT_REQUEST` entry, so this envelope
@@ -1613,6 +1686,28 @@ with sync_playwright() as playwright:
             )
             return
         elif url.endswith("/orders") and route.request.method == "POST":
+            # Captured with its key: section 7 checks what the flow sends, and that a refused
+            # press followed by another press is one intent under one key.
+            state.setdefault("order_posts", []).append(
+                {
+                    "key": route.request.headers.get("idempotency-key"),
+                    "body": json.loads(route.request.post_data or "{}"),
+                }
+            )
+            if state.pop("order_refuse_once", False):
+                route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "detail": {
+                                "outcome": "REQUIRE_HUMAN",
+                                "reason_codes": ["CAPACITY_UNVERIFIED"],
+                            }
+                        }
+                    ),
+                )
+                return
             route.fulfill(
                 status=201,
                 content_type="application/json",
@@ -1638,6 +1733,24 @@ with sync_playwright() as playwright:
                 )
                 return
             body = [ORDER_REQUEST]
+        elif "/acceptance" in url and route.request.method == "POST":
+            state.setdefault("accept_posts", []).append(
+                {
+                    "key": route.request.headers.get("idempotency-key"),
+                    "body": json.loads(route.request.post_data or "{}"),
+                }
+            )
+            if state.pop("accept_fail_once", False):
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps({"detail": "operations unavailable"}),
+                )
+                return
+            route.fulfill(
+                status=201, content_type="application/json", body=json.dumps(ACCEPTED_REVISION)
+            )
+            return
         elif "/range-prices" in url:
             # Two routes share this prefix and the suffix is what tells them apart: the bare path
             # raises the envelope, the one carrying an approval id applies it. Both bodies are
@@ -1655,10 +1768,48 @@ with sync_playwright() as playwright:
         elif "/quotes/" in url:
             # `GET /internal/v1/stores/{store}/quotes/{quote}` -- one revision with its lines, the
             # read that makes a band drawable at all. Nothing else returns `band_minimum_vnd`.
-            body = BAND_DETAIL
+            if EXACT_QUOTE in url:
+                body = exact_detail(2 if "revision=2" in url else 1)
+            elif "revision=2" in url:
+                body = {
+                    **BAND_DETAIL,
+                    **{
+                        key: CLOSED_REVISION[key]
+                        for key in (
+                            "revision",
+                            "row_version",
+                            "finality",
+                            "status",
+                            "snapshot_hash",
+                            "display_total_min_vnd",
+                            "display_total_max_vnd",
+                        )
+                    },
+                    "lines": [
+                        {
+                            **BAND_DETAIL["lines"][0],  # type: ignore[index]
+                            "price_kind": "EXACT",
+                            "net_amount_vnd": CHOSEN_VND,
+                            "band_minimum_vnd": None,
+                            "band_maximum_vnd": None,
+                        }
+                    ],
+                }
+            else:
+                body = BAND_DETAIL
         elif url.split("?")[0].endswith("/quotes") and route.request.method == "POST":
             sent = json.loads(route.request.post_data or "{}")
             state.setdefault("quote_posts", []).append(sent)
+            banded = any(
+                line.get("service_code") == "DC_AO_DAI_TRADITIONAL"
+                for line in sent.get("lines", [])
+            )
+            if not banded:
+                # An ordinary weight-priced line: the engine prices it.
+                route.fulfill(
+                    status=201, content_type="application/json", body=json.dumps(EXACT_REVISION)
+                )
+                return
             if not sent.get("present_range_as_band"):
                 # What the engine really answers for a banded service asked for as a price: it
                 # refuses rather than choosing a number in the interval. The console has no way to
@@ -1701,72 +1852,76 @@ with sync_playwright() as playwright:
         route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
 
     page.route("**/internal/**", route_api)
-    page.goto(f"http://localhost:{PORT}/#/quotes", wait_until="networkidle")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    # CONSOLE-REDESIGN-001: pricing happens inside Nhận đồ. One press issues the ticket and opens
+    # the intake; the service is then picked from a sheet by its published name.
+    page.locator("#new-walk-in").click()
     page.wait_for_timeout(1200)
 
     print("=" * 74)
     print("1. THE SERVICE PICKER — chosen by name, never typed as a code")
     print("=" * 74)
 
-    # This section used to drive `#quote-line-0-code` as a text input and assert that
-    # `STANDARD_WASH_DRY`, typed one character at a time, survived intact with the caret where the
-    # operator left it. That invariant is gone because its subject is gone: the field is a
-    # <select> fed by the published pricebook, and an operator no longer types a service code at
-    # all. Those assertions are deleted rather than weakened — the honest replacement is to check
-    # the control that took its place. The typing invariant itself still has real subjects, and is
-    # still asserted below on the quantity field (section 2) and the contact field (section 5).
-
-    code = page.locator("#quote-line-0-code")
-
     check(
-        "the service field is a picker, not a field to type a code into",
-        code.evaluate("node => node.tagName") == "SELECT",
-        code.evaluate("node => node.tagName"),
+        "one press issued the ticket and bound the intake, and the number is on screen",
+        "Phiếu 1" in (page.locator("#new-ticket").text_content() or ""),
+        page.locator("#new-ticket").text_content()
+        if page.locator("#new-ticket").count()
+        else "absent",
     )
     check(
-        "it offers the published services by their Vietnamese names",
-        code.locator("option", has_text="Giặt sấy dưới 6kg").count() == 1,
-        f"{code.locator('option').count()} options",
+        "there is no field to type a service code into",
+        page.locator("#new-lines input[name='service_code'], #new-lines select").count() == 0,
+    )
+    page.locator("#new-add-line").click()
+    page.wait_for_timeout(400)
+    picker = page.locator("#new-picker")
+    check(
+        "the picker offers the published services by their Vietnamese names",
+        picker.locator("[data-code='STD_WASH_DRY_LT6']", has_text="Giặt sấy dưới 6kg").count() == 1,
+        f"{picker.locator('[data-code]').count()} services",
     )
     check(
         "grouped under Vietnamese category headings, not pricebook tokens",
-        code.locator("optgroup[label='Giặt sấy theo ký']").count() == 1
-        and code.locator("optgroup[label='standard_weight']").count() == 0,
-        repr(code.evaluate("n => [...n.querySelectorAll('optgroup')].map(g => g.label)")),
+        picker.locator("h3", has_text="Giặt sấy theo ký").count() == 1
+        and "standard_weight" not in (picker.inner_text() or ""),
+        repr(picker.locator("h3").all_inner_texts()),
     )
-
-    code.select_option(label="Giặt sấy dưới 6kg")
+    page.locator("#new-picker-search").fill("ao dai")
     page.wait_for_timeout(200)
+    check(
+        "searching folds Vietnamese, so 'ao dai' finds Áo dài and hides the washes",
+        picker.locator("[data-code='DC_AO_DAI_TRADITIONAL']").count() == 1
+        and picker.locator("[data-code='STD_WASH_DRY_LT6']").count() == 0,
+    )
+    page.locator("#new-picker-search").fill("")
+    page.wait_for_timeout(200)
+    picker.locator("[data-code='STD_WASH_DRY_LT6']").click()
+    page.wait_for_timeout(400)
 
     check(
         "choosing by name is what sets the code the server will receive",
-        code.input_value() == "STD_WASH_DRY_LT6",
-        repr(code.input_value()),
+        page.locator("#new-lines [data-service='STD_WASH_DRY_LT6']").count() == 1,
     )
     check(
         "and the unit follows the chosen service, as a stated fact not a second choice",
-        "Tính theo: Kilôgam" in page.content() and page.locator("#quote-line-0-unit").count() == 0,
-        repr("Tính theo: Kilôgam" in page.content()),
+        (page.locator("#new-lines .stepper__unit").first.text_content() or "") == "kg"
+        and page.locator("#new-lines select[aria-label='Đơn vị']").count() == 0,
+        repr(page.locator("#new-lines .stepper__unit").first.text_content()),
     )
-
-    # The unit belongs to the service, so de-selecting must not leave the previous one standing.
-    code.select_option(value="")
-    page.wait_for_timeout(200)
-    check(
-        "going back to no service clears the unit rather than keeping a stale one",
-        "Tính theo:" not in page.content(),
-        repr(page.locator("#quote-line-0-code").input_value()),
-    )
-    code.select_option(label="Giặt sấy dưới 6kg")
-    page.wait_for_timeout(200)
 
     print()
     print("=" * 74)
     print("2. THE 6KG NOTICE — must follow the typed weight without stealing focus")
     print("=" * 74)
 
-    qty = page.locator("#quote-line-0-qty")
-    qty.click()
+    check(
+        "picking a service puts the cursor in its quantity: the next thing typed is the weight",
+        page.evaluate("document.activeElement?.id") == "new-line-0-qty",
+        f"activeElement={page.evaluate('document.activeElement?.id')}",
+    )
+    qty = page.locator("#new-line-0-qty")
     page.keyboard.type("3", delay=12)
     page.wait_for_timeout(200)
     check("no cliff notice at 3 kg", "Gần ngưỡng 6kg" not in page.content())
@@ -1777,7 +1932,7 @@ with sync_playwright() as playwright:
     check("the cliff notice appears at 5.9 kg", "Gần ngưỡng 6kg" in page.content())
     check(
         "and focus stayed in the quantity field while it appeared",
-        page.evaluate("document.activeElement?.id") == "quote-line-0-qty",
+        page.evaluate("document.activeElement?.id") == "new-line-0-qty",
         f"activeElement={page.evaluate('document.activeElement?.id')}",
     )
     check("the typed quantity is intact", qty.input_value() == "5.9", repr(qty.input_value()))
@@ -1787,17 +1942,9 @@ with sync_playwright() as playwright:
     print("3. SESSION ENDS MID-FORM — the operator's work must survive")
     print("=" * 74)
 
-    # The bare-UUID field is a collapsed recovery hatch since INTAKE-UI-001; open it first,
-    # exactly as an operator who needs it would.
-    page.locator("#quote-manual-toggle").click()
-    page.wait_for_timeout(150)
-    page.locator("#quote-order-request").click()
-    page.keyboard.type("9f1c7c3e-2f4a-4b6d-8c1e-7a5b3d9e0f21", delay=4)
-    page.wait_for_timeout(150)
-
     # Every subsequent call now 401s, exactly as an eight-hour idle timeout would.
     state["authenticated"] = False
-    page.locator("button[type=submit]").first.click()
+    page.locator("#new-price").click()
     page.wait_for_timeout(1200)
 
     body = page.content()
@@ -1809,19 +1956,17 @@ with sync_playwright() as playwright:
         "and it says the typed input was kept",
         "vẫn còn trên màn hình" in body,
     )
-    typed_request = page.locator("#quote-order-request").input_value()
     check(
-        "the order request the operator typed is still there",
-        typed_request == "9f1c7c3e-2f4a-4b6d-8c1e-7a5b3d9e0f21",
-        repr(typed_request),
+        "the customer's ticket is still the one on screen",
+        "Phiếu 1" in (page.locator("#new-ticket").text_content() or ""),
     )
     check(
         "the service the operator picked is still selected",
-        page.locator("#quote-line-0-code").input_value() == "STD_WASH_DRY_LT6",
+        page.locator("#new-lines [data-service='STD_WASH_DRY_LT6']").count() == 1,
     )
     check(
         "the quantity is still there",
-        page.locator("#quote-line-0-qty").input_value() == "5.9",
+        page.locator("#new-line-0-qty").input_value() == "5.9",
     )
     check(
         "the app bar no longer claims the operator is signed in",
@@ -1988,14 +2133,19 @@ with sync_playwright() as playwright:
 
     print()
     print("=" * 74)
-    print("5. TIẾP NHẬN — real keystrokes, then Báo giá ngay with no typing at all")
+    print("5. TIẾP NHẬN — real keystrokes, then resuming a waiting customer with no typing at all")
     print("=" * 74)
 
-    page.goto(f"http://localhost:{PORT}/#/order-requests")
+    # A customer who wrote through a channel: the one value no route can supply, typed under
+    # "Nhập mã thủ công" -- and still typed one character at a time, because this file exists for
+    # the form that rebuilt itself on every keystroke.
+    page.goto(f"http://localhost:{PORT}/#/new")
     page.reload(wait_until="networkidle")
     page.wait_for_timeout(1000)
+    page.locator("#new-channel-toggle").click()
+    page.wait_for_timeout(200)
 
-    contact_input = page.locator("#intake-contact")
+    contact_input = page.locator("#new-contact")
     contact_input.click()
     page.keyboard.type(CONTACT, delay=6)
     page.wait_for_timeout(200)
@@ -2007,60 +2157,63 @@ with sync_playwright() as playwright:
     )
     check(
         "focus is still in the contact field after 36 keystrokes",
-        page.evaluate("document.activeElement?.id") == "intake-contact",
+        page.evaluate("document.activeElement?.id") == "new-contact",
         f"activeElement={page.evaluate('document.activeElement?.id')}",
     )
+    check(
+        "the screen says why a code is typed at all: there is no contact search",
+        "Chưa tìm được khách theo tên hay số điện thoại" in page.content(),
+    )
 
-    page.locator("button[type=submit]").first.click()
+    page.locator("#new-contact-submit").click()
     page.wait_for_timeout(1200)
-
     check(
-        "the result card announces the recorded intake",
-        "Đã tiếp nhận" in page.content(),
-    )
-    quote_now = page.locator("#intake-quote-now")
-    check(
-        "and offers the Báo giá ngay link carrying the new request id",
-        quote_now.count() == 1
-        and ORDER_REQUEST["order_request_id"] in (quote_now.first.get_attribute("href") or ""),
-        quote_now.first.get_attribute("href") if quote_now.count() else "absent",
-    )
-    check(
-        "the recent-intake list shows the draft's state in Vietnamese, with the token in reach",
-        "Nháp" in page.content() and page.locator("[title='DRAFT']").count() >= 1,
-        repr(page.locator("[title='DRAFT']").count()),
+        "the intake is recorded and the flow moves on to the bag",
+        page.locator("#new-ticket").count() == 1
+        and "Khách nhắn qua kênh" in (page.locator("#new-ticket").text_content() or ""),
     )
 
-    # The whole point of the slice: follow the link and the quote screen binds the request
-    # itself — resolved from the server, without one typed character.
-    quote_now.first.click()
+    # Tiếp nhận is the history now: an intake that has not become an order resumes the flow.
+    page.goto(f"http://localhost:{PORT}/#/order-requests")
+    page.wait_for_timeout(1200)
+    row = page.locator(f"#intake-list [data-request='{ORDER_REQUEST['order_request_id']}']")
+    check(
+        "the waiting intake is listed with its state in words",
+        row.count() == 1 and "Đang chờ báo giá" in (row.first.text_content() or ""),
+        row.first.text_content() if row.count() else "no row",
+    )
+    check(
+        "and its row resumes Nhận đồ carrying the request id, not a form to fill in",
+        row.count() == 1
+        and (row.first.get_attribute("href") or "")
+        == f"#/new?request={ORDER_REQUEST['order_request_id']}",
+        row.first.get_attribute("href") if row.count() else "absent",
+    )
+    check(
+        "no identifier is printed on the row",
+        row.count() == 1
+        and ORDER_REQUEST["order_request_id"][:8] not in (row.first.inner_text() or ""),
+    )
+
+    row.first.click()
     page.wait_for_timeout(1500)
-
-    summary = page.locator("#quote-request-summary")
     check(
-        "the quotes screen prefilled from ?request= with no typing",
-        summary.count() == 1 and "Đang báo giá cho yêu cầu" in summary.first.text_content(),
-        summary.first.text_content() if summary.count() else "no summary rendered",
-    )
-    check(
-        "the prefilled summary names the same request the intake created",
-        summary.count() == 1 and "33333333…7777" in summary.first.text_content(),
-    )
-    check(
-        "the picker offers the same request as a one-tap choice",
-        page.locator("button", has_text="Dùng yêu cầu này").count() >= 1,
+        "resuming reads the intake from the server and lands on the bag, with no typing",
+        page.locator("#new-ticket").count() == 1 and page.locator("#new-add-line").count() == 1,
+        page.url,
     )
 
     # The honest not-found path: a request id the store does not have must say so, not pretend.
     state["request_missing"] = True
-    page.evaluate(f"location.hash = '#/quotes?request={MISSING_REQUEST}'")
+    page.evaluate(f"location.hash = '#/new?request={MISSING_REQUEST}'")
     page.wait_for_timeout(1500)
-    missing_summary = page.locator("#quote-request-summary")
+    missing = page.locator("#new-request-missing")
     check(
         "an unknown ?request= gets the honest not-found notice, nothing prefilled",
-        missing_summary.count() == 1
-        and "Không tìm thấy yêu cầu này" in missing_summary.first.text_content(),
-        missing_summary.first.text_content() if missing_summary.count() else "no notice rendered",
+        missing.count() == 1
+        and "Không tìm thấy yêu cầu này" in (missing.first.text_content() or "")
+        and page.locator("#new-ticket").count() == 0,
+        missing.first.text_content() if missing.count() else "no notice rendered",
     )
     state["request_missing"] = False
 
@@ -2158,90 +2311,165 @@ with sync_playwright() as playwright:
 
     print()
     print("=" * 74)
-    print("7. ĐƠN HÀNG — the acquisition source, and the pressure it must not apply")
+    print("7. XÁC NHẬN — the acquisition source, then acceptance and the order, in that order")
     print("=" * 74)
 
-    # ACQUISITION-ATTRIBUTION-001. The claim is not "a select exists". It is that a counter which
-    # did not ask can leave the field alone and be recorded as not knowing, without the screen
-    # pushing back — because a required field with no comfortable honest option gets filled with
-    # whatever clears the form, and the resulting channel report is worse than no report. That is a
-    # claim about styling and default state, which no source-text test can make.
-    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
-    page.wait_for_timeout(1200)
+    # ACQUISITION-ATTRIBUTION-001. The claim is not "a control exists". It is that a counter which
+    # did not ask can leave the answer alone and be recorded as not knowing, without the screen
+    # pushing back -- a claim about styling and default state no source-text test can make.
+    def walk_to_confirm() -> None:
+        page.goto(f"http://localhost:{PORT}/#/new")
+        page.reload(wait_until="networkidle")
+        page.wait_for_timeout(1000)
+        page.locator("#new-walk-in").click()
+        page.wait_for_timeout(1000)
+        page.locator("#new-add-line").click()
+        page.wait_for_timeout(300)
+        page.locator("#new-picker [data-code='STD_WASH_DRY_LT6']").click()
+        page.wait_for_timeout(300)
+        page.keyboard.type("5.9", delay=8)
+        page.locator("#new-price").click()
+        page.wait_for_timeout(1200)
+        page.locator("#new-next").click()
+        page.wait_for_timeout(500)
 
-    source = page.locator("#order-source")
-    check(
-        "the order form asks where the customer came from",
-        source.count() == 1,
-        f"{source.count()} controls with that id",
-    )
+    state["accept_posts"] = []
+    state["order_posts"] = []
+    walk_to_confirm()
+
+    source = page.locator("#new-source")
+    chips = source.locator("button")
+    pressed = source.locator("button[aria-pressed='true']")
+    check("the confirmation asks where the customer came from", source.count() == 1)
     check(
         "and it rests on 'nobody asked' rather than on a plausible channel",
-        source.count() == 1 and source.input_value() == "UNKNOWN",
-        repr(source.input_value()) if source.count() else "absent",
+        pressed.count() == 1 and pressed.first.get_attribute("data-value") == "UNKNOWN",
+        pressed.first.get_attribute("data-value") if pressed.count() else "none pressed",
     )
     check(
         "the resting option reads as an answer, in Vietnamese",
-        "Chưa biết" in page.content(),
+        pressed.count() == 1 and (pressed.first.text_content() or "").strip() == "Chưa biết",
     )
     check(
         "the send-reconciliation gloss did not leak into it",
         "chưa rõ kết quả" not in (source.text_content() or "").lower(),
-        repr(source.text_content()) if source.count() else "absent",
+        repr(source.text_content()),
     )
     check(
-        "every source the enum offers is reachable in one interaction",
-        source.locator("option").count() == 9,
-        f"{source.locator('option').count()} options",
+        "every source the enum offers is reachable in one tap",
+        chips.count() == 9,
+        f"{chips.count()} options",
     )
-    # The pressure test: no warning colour, no aria-invalid, nothing that reads as disapproval
-    # while the honest answer is selected.
     check(
         "leaving it unanswered raises no warning state",
         source.get_attribute("aria-invalid") is None
-        and "warn" not in (source.get_attribute("class") or "")
-        and "danger" not in (source.get_attribute("class") or ""),
-        f"aria-invalid={source.get_attribute('aria-invalid')} "
+        and pressed.first.get_attribute("data-state") is None
+        and "warn" not in (source.get_attribute("class") or ""),
         f"class={source.get_attribute('class')}",
     )
     check(
-        "the field warns that the entry is final: the detail shows it back, never edits it",
+        "the step warns that the entry is final: the order shows it back, never edits it",
         "không sửa được" in page.content(),
     )
-    # And the label points at the select, which is the CONSOLE-LABEL-001 defect one screen over.
-    source.locator("xpath=../label").first.click()
-    page.wait_for_timeout(150)
     check(
-        "tapping its label focuses the field",
-        page.evaluate("document.activeElement?.id") == "order-source",
-        f"activeElement={page.evaluate('document.activeElement?.id')}",
+        "nothing has been accepted or ordered by reaching this step",
+        not state["accept_posts"] and not state["order_posts"],
     )
 
-    # The assertion that matters most, and the one the first version of this section did not make:
-    # what the *next* customer's form says. A sticky select would have the console itself supply a
-    # plausible answer nobody gave, on a field that is immutable and that no screen reads back --
-    # which is precisely the failure `UNKNOWN` exists to prevent, committed by the software rather
-    # than by a hurried operator. Checking only the initial default cannot see it.
-    source.select_option("GOOGLE_MAPS")
-    page.locator("#order-contact").fill(CONTACT)
-    page.locator("#order-quote").fill("55555555-6666-4333-8444-999999999999")
-    page.locator("#order-hash").fill(f"JCS-SHA256-V1:{'a' * 64}")
-    page.locator("#order-accepted").fill("2026-09-08T10:00")
-    page.wait_for_timeout(150)
-    # Scoped by the field itself: the create form is not the first `form.form` on this screen --
-    # the transition form is, and clicking that one submits a different command entirely.
-    create_form = page.locator("form.form").filter(has=page.locator("#order-source"))
-    create_form.locator("button[type=submit]").first.click()
+    source.locator("button[data-value='GOOGLE_MAPS']").click()
+    # The order is refused once, as the server refuses one it cannot take; the acceptance before it
+    # is recorded. The next press must resume at the order -- not accept a second time -- and be
+    # the same intent under the same key.
+    state["order_refuse_once"] = True
+    page.locator("#new-confirm").click()
+    page.wait_for_timeout(1500)
+    check(
+        "one press records the customer's acceptance first, of the revision on screen",
+        len(state["accept_posts"]) == 1
+        and state["accept_posts"][0]["body"]
+        == {
+            "expected_current_revision": 1,
+            "expected_snapshot_hash": EXACT_REVISION["snapshot_hash"],
+        },
+        repr(state["accept_posts"][:1]),
+    )
+    check(
+        "a refused order stops the flow there and says why, at the button",
+        len(state["order_posts"]) == 1
+        and "Cần người quyết định trước khi tạo đơn"
+        in (page.locator("#new-confirm-result").inner_text() or "")
+        and "#/new" in page.url,
+        page.locator("#new-confirm-result").inner_text()[:160],
+    )
+    check(
+        "and the button now names the one step left",
+        (page.locator("#new-confirm").inner_text() or "").strip() == "Tạo đơn",
+        repr(page.locator("#new-confirm").inner_text()),
+    )
+    page.locator("#new-confirm").click()
+    page.wait_for_timeout(1500)
+    orders = state["order_posts"]
+    sent = orders[-1]["body"] if orders else {}
+    check(
+        "the next press resumes at the order: no second acceptance",
+        len(state["accept_posts"]) == 1 and len(orders) == 2,
+        f"{len(state['accept_posts'])} acceptance(s), {len(orders)} order post(s)",
+    )
+    check(
+        "the retried order is the same intent under the same idempotency key",
+        len(orders) == 2 and orders[0]["key"] and orders[0]["key"] == orders[1]["key"],
+        repr([o["key"] for o in orders]),
+    )
+    check(
+        "every value the order needs was carried from the server's answers, none typed",
+        sent
+        == {
+            "bound_contact_id": CONTACT,
+            "quote_id": EXACT_QUOTE,
+            "quote_revision": 2,
+            "quote_snapshot_hash": ACCEPTED_REVISION["snapshot_hash"],
+            "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
+            "acquisition_source": "GOOGLE_MAPS",
+            "customer_final_quote_accepted_at": ACCEPTED_AT,
+        },
+        repr(sent),
+    )
+    check(
+        "and the created order opens by itself, with the ticket in the confirmation",
+        page.url.endswith(f"#/orders/{ORDER_CREATED['order_id']}")
+        and "Đã tạo đơn · Phiếu 1" in page.content(),
+        page.url,
+    )
+
+    # The assertion that matters most: what the *next* customer's confirmation says. A sticky
+    # answer would have the console supply a plausible source nobody gave, on a field that is
+    # immutable -- the failure `UNKNOWN` exists to prevent, committed by the software.
+    walk_to_confirm()
+    pressed = page.locator("#new-source button[aria-pressed='true']")
+    check(
+        "the next customer's confirmation is back on 'nobody asked', not on the last answer",
+        pressed.count() == 1 and pressed.first.get_attribute("data-value") == "UNKNOWN",
+        pressed.first.get_attribute("data-value") if pressed.count() else "none",
+    )
+
+    # A lost acceptance answer: the press may have landed, so the same key is sent again and the
+    # server replays rather than records twice. Nothing retries by itself.
+    state["accept_posts"] = []
+    state["accept_fail_once"] = True
+    page.locator("#new-confirm").click()
     page.wait_for_timeout(1200)
-
     check(
-        "the order was accepted, so this is the real post-submit form",
-        "Đã tạo đơn" in page.content(),
+        "a lost acceptance answer is not retried by the console on its own",
+        len(state["accept_posts"]) == 1 and "#/new" in page.url,
+        f"{len(state['accept_posts'])} acceptance post(s)",
     )
+    page.locator("#new-confirm").click()
+    page.wait_for_timeout(1500)
+    keys = [post["key"] for post in state["accept_posts"]]
     check(
-        "the next customer's form is back on 'nobody asked', not on the last answer",
-        page.locator("#order-source").input_value() == "UNKNOWN",
-        repr(page.locator("#order-source").input_value()),
+        "and the person's second press carries the same key, so it cannot be recorded twice",
+        len(keys) == 2 and keys[0] == keys[1],
+        repr(keys),
     )
 
     print()
@@ -2255,10 +2483,11 @@ with sync_playwright() as playwright:
     # set. That produced two defects a week apart: a read-only AUDITOR offered a live "Tạo đơn",
     # and a button re-armed mid-write for a second submit of a command already in flight. Neither
     # is visible without driving the events, which is why this section exists.
-    page.goto(f"http://localhost:{PORT}/#/order-requests", wait_until="networkidle")
+    page.goto(f"http://localhost:{PORT}/#/new")
+    page.reload(wait_until="networkidle")
     page.wait_for_timeout(1000)
 
-    ticket_button = page.locator("button", has_text="Phát phiếu")
+    ticket_button = page.locator("#new-walk-in")
     check(
         "the walk-in ticket button is declared network-dependent",
         ticket_button.count() == 1
@@ -2380,18 +2609,21 @@ with sync_playwright() as playwright:
     # band, showing the top of an interval as a price, or treating an owner's approval as the
     # customer's agreement. Each is checked below as a refusal rather than as a feature.
 
-    page.evaluate(f"location.hash = '#/quotes?request={ORDER_REQUEST['order_request_id']}'")
-    page.wait_for_timeout(1500)
-
-    band_code = page.locator("#quote-line-0-code")
-    band_code.select_option(label="Áo dài truyền thống")
-    page.wait_for_timeout(200)
-    band_qty = page.locator("#quote-line-0-qty")
-    band_qty.click()
-    band_qty.type("1", delay=12)
+    state["accept_posts"] = []
+    state["order_posts"] = []
+    page.goto(f"http://localhost:{PORT}/#/new")
+    page.reload(wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    page.locator("#new-walk-in").click()
+    page.wait_for_timeout(1000)
+    page.locator("#new-add-line").click()
+    page.wait_for_timeout(300)
+    page.locator("#new-picker [data-code='DC_AO_DAI_TRADITIONAL']").click()
+    page.wait_for_timeout(300)
+    page.keyboard.type("1", delay=12)
     page.wait_for_timeout(150)
 
-    page.locator("form button[type=submit]", has_text="Tính giá").first.click()
+    page.locator("#new-price").click()
     page.wait_for_timeout(900)
 
     content = page.content()
@@ -2433,7 +2665,8 @@ with sync_playwright() as playwright:
     check(
         "a band cannot be accepted, because there is no single number to agree to",
         "Bản này là một khoảng giá, chưa phải một số" in content
-        and page.locator("button", has_text="Khách đã chốt giá").count() == 0,
+        and page.locator("#new-next").is_disabled()
+        and "Chốt một giá trong khoảng ở trên trước" in content,
     )
 
     band_field = page.locator("#quote-band-0")
@@ -2528,12 +2761,14 @@ with sync_playwright() as playwright:
     )
     check(
         "choosing the price is not the customer's agreement: the quote still has to be accepted",
-        page.locator("button", has_text="Khách đã chốt giá").count() == 1,
-        "expected the acceptance control on an APPROVED_EXACT revision that is not ACCEPTED_FINAL",
+        page.locator("#new-next").count() == 1
+        and not page.locator("#new-next").is_disabled()
+        and not state["accept_posts"],
+        "expected the way on to the acceptance step, and no acceptance sent by closing the band",
     )
     check(
-        "and it is not yet offered as an order",
-        page.locator("a", has_text="Tạo đơn từ báo giá này").count() == 0,
+        "and it is not yet an order",
+        not state["order_posts"],
     )
 
     # `PROMO-WIRING-001` §5.3: today's honest answer is 0 d, and the screen has to say *which* zero

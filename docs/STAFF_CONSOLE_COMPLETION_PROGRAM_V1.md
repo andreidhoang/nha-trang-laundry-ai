@@ -51,6 +51,11 @@ a change whose expensive half is blocked on three unresolved things:
    test fixtures. An approval envelope for `SEND_MESSAGE` therefore requires a value that no code
    path can legitimately generate. **A rendered-message artefact with a canonical hash has to exist
    before the loop can close** — that is a producer, not a projection.
+   *Status note, 2026-09-25:* the producer exists — `API-INTEGRITY-002` derives a draft's
+   `resource_version`, `snapshot_hash` and `rendered_hash` from `agent_drafts` /
+   `agent_draft_reviews` (`message_drafts.py`) — and `MESSAGE-DRAFT-BINDING-001` exposes it on
+   `GET /internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding`, which the approvals
+   card and the manual-send panel read. Point 3 below is untouched by either.
 2. **`resource_version` has no defined meaning per `resource_type`.** It is caller-supplied and
    checked only `>= 1` (`packages/domain/.../approvals.py:135`). For `QUOTE_REVISION` it could be
    `quote_revisions.revision` or `quotes.row_version`. Any preview claiming to "recheck the current

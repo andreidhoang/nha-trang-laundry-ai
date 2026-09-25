@@ -151,6 +151,9 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/stores/{}/incidents/{}/remedy-proposals",
         "/internal/v1/remedy-proposals/{}/execution",
         "/internal/v1/stores/{}/quotes/{}/remedy-credits",
+        # REMEDY-OWNER-DECIDE-001. The owner's approvals card reads what an `APPROVE_REMEDY`
+        # envelope binds through this; without it every loss claim reaches the queue undecidable.
+        "/internal/v1/stores/{}/remedy-proposals/{}/approval-binding",
         # OPS-BOARD-001. The board query and the day counts both existed with no route and no
         # screen, which is how a surface that answers "which order needs a person right now" stayed
         # reachable only as two numbers inside an assistant sentence. A screen that stops calling
@@ -276,7 +279,14 @@ def test_every_screen_declares_a_unique_path() -> None:
 #: the exemption is unsafe and the screen should declare `needsStore` instead. `approvals.js` is
 #: here because its queue spans every store the owner is assigned to, and only the DEC-029 review
 #: panel is per store -- declaring `needsStore` would blank the whole queue for a multi-store owner.
-STORE_GATE_EXEMPT = {"today.js", "approvals.js"}
+#: Its `MESSAGE_DRAFT` card is store-scoped too, but by the envelope's own store rather than the
+#: selected one (`MESSAGE-DRAFT-BINDING-001`), and has its own guard test below. `manualSend.js`
+#: is not a screen at all: it is the panel `exceptions.js` mounts, and that screen declares
+#: `needsStore`. The test below proves both halves of that, and that the panel still refuses
+#: without a store.
+#: `staff.js` is here because an owner with no store yet must still create people and assign stores
+#: (to themselves, first); only READ-PATHS-001's directory panel is per store.
+STORE_GATE_EXEMPT = {"today.js", "approvals.js", "manualSend.js", "staff.js"}
 
 SCREEN_EXPORT = re.compile(r"export const screen = \{(.*?)\n\};", re.S)
 
@@ -433,3 +443,157 @@ def test_the_exempt_approvals_screen_builds_its_store_url_only_with_a_store() ->
     assert re.search(r"store\s*\n?\s*\?\s*h\(", text), (
         "approvals.js must render a no-store notice instead of the review list when no store is set"
     )
+
+
+def test_a_formatted_range_is_rendered_by_its_text_not_as_an_object() -> None:
+    """`moneyRange` returns `{text, isRange, isKnown}`, not a string.
+
+    The owner's `DEC-029` review card passed the object itself to `h()` as a child, and the
+    screen read "160.000 ₫ trong khoảng [object Object]" -- the one number the review exists to
+    show, the band the price was checked against, replaced by a JavaScript default. The API tests,
+    the contract tests and the stubbed browser suite were all green; only the real-API browser run
+    caught it. Every call must either read `.text` off the result or keep it in a named variable
+    whose fields are read later.
+    """
+
+    call = re.compile(r"moneyRange\(")
+    offenders: list[str] = []
+    for source in javascript_sources():
+        if source.name == "format.js":
+            continue
+        text = source.read_text(encoding="utf-8")
+        for match in call.finditer(text):
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            before = text[line_start : match.start()]
+            if before.lstrip().startswith(("*", "//")):
+                continue
+            depth, index = 0, match.end() - 1
+            while index < len(text):
+                if text[index] == "(":
+                    depth += 1
+                elif text[index] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            used_as_value = text[index + 1 : index + 2] == "."
+            assigned = re.search(r"(?:const|let|var)\s+\w+\s*=\s*$", before) is not None
+            if not (used_as_value or assigned):
+                number = text.count("\n", 0, match.start()) + 1
+                where = f"{source.relative_to(ROOT)}:{number}"
+                offenders.append(f"{where}: {before.strip()}moneyRange(")
+
+    assert not offenders, "moneyRange result used as a value:\n" + "\n".join(offenders)
+
+
+def test_the_message_draft_card_reads_through_the_envelopes_own_store() -> None:
+    """`MESSAGE-DRAFT-BINDING-001`. The queue spans stores; the selected one would be wrong.
+
+    The card must build its URL from the queue row's `store_id` and refuse a row without one --
+    never fall back to `storeId()`, which names whichever shop the top bar shows.
+    """
+
+    text = (WEB / "src" / "screens" / "approvals.js").read_text(encoding="utf-8")
+    start = text.index("async function loadMessageDraft(")
+    body = text[start : text.index("\n}\n", start)]
+    assert "message-drafts/${draftPart}/binding" in body
+    assert re.search(r"const storePart = encodeURIComponent\(envelopeStore\)", body)
+    assert re.search(r"const envelopeStore = typeof item\.store_id === \"string\"", body)
+    assert re.search(r"if \(!envelopeStore\) \{", body), (
+        "a queue row without a store must be refused, not guessed"
+    )
+    assert "storeId()" not in body
+
+
+def test_the_remedy_card_reads_through_the_envelopes_own_store_and_compares_its_binding() -> None:
+    """`REMEDY-OWNER-DECIDE-001`. The same guard as the `MESSAGE_DRAFT` card, for money.
+
+    The URL is built from the queue row's `store_id` and a row without one is refused; the read's
+    proposal, approval, version and both digests are compared with the envelope's, together with
+    the server's own `envelope_matches`, before anything is printed or "Duyệt" is enabled; and a
+    mismatch leaves only "Từ chối" (`refuseOnly`).
+    """
+
+    text = (WEB / "src" / "screens" / "approvals.js").read_text(encoding="utf-8")
+    assert re.search(r"REMEDY_PROPOSAL: \(\) => null,", text), (
+        "REMEDY_PROPOSAL must be a type this screen can show, or its envelopes are undecidable"
+    )
+    start = text.index("async function loadRemedyProposal(")
+    body = text[start : text.index("\n}\n", start)]
+    assert "remedy-proposals/${proposalPart}/approval-binding" in body
+    assert re.search(r"const storePart = encodeURIComponent\(envelopeStore\)", body)
+    assert re.search(r"const envelopeStore = typeof item\.store_id === \"string\"", body)
+    assert re.search(r"if \(!envelopeStore\) \{", body), (
+        "a queue row without a store must be refused, not guessed"
+    )
+    assert "storeId()" not in body
+    for comparison in (
+        "read.resource_id !== item.resource_id",
+        "read.approval_id !== item.approval_request_id",
+        "read.resource_version !== item.resource_version",
+        "read.snapshot_hash !== item.snapshot_hash",
+        "read.rendered_hash !== item.rendered_hash",
+        "read.envelope_matches !== true",
+    ):
+        assert comparison in body, f"the remedy card no longer checks {comparison}"
+    # The stale branch renders before the success branch and leaves only a refusal.
+    stale = body.index("read.envelope_matches !== true")
+    shown = body.index("render(contentHost, remedyContents(read))")
+    assert stale < shown
+    assert "true,\n      );\n      return;" in body[stale:shown]
+
+
+def test_the_recorded_proposals_execute_only_what_the_server_says_may_be_executed() -> None:
+    """The list's execute press is offered from the server's `next_step`, never from a status or
+    a clock this file reads, and calls the existing execute route with a per-proposal key."""
+
+    text = (WEB / "src" / "screens" / "remedies.js").read_text(encoding="utf-8")
+    start = text.index("function recordedNextStep(")
+    body = text[start : text.index("\n}\n", start)]
+    assert 'if (step === "EXECUTE") {' in body
+    assert body.count('"Thực hiện bồi hoàn"') == 1
+    assert "Date" not in body and "approval_status ===" not in body.split("AWAIT_OWNER")[0]
+    panel = text[text.index("function recordedProposalsPanel(") :]
+    panel = panel[: panel.index("\n}\n")]
+    assert "/internal/v1/remedy-proposals/${encodeURIComponent(id)}/execution" in panel
+    assert "idempotencyKey: submission.key()" in panel
+    assert "new Submission(`remedy-execute-${id}`)" in panel
+
+
+def test_the_manual_send_panel_is_mounted_only_by_a_screen_that_needs_a_store() -> None:
+    """The exemption of `manualSend.js` above is only safe while all three of these hold."""
+
+    screens = WEB / "src" / "screens"
+    panel = (screens / "manualSend.js").read_text(encoding="utf-8")
+    assert SCREEN_EXPORT.search(panel) is None, "manualSend.js became a screen; declare needsStore"
+    importers = sorted(
+        path.name
+        for path in screens.glob("*.js")
+        if path.name != "manualSend.js" and "./manualSend.js" in path.read_text(encoding="utf-8")
+    )
+    assert importers == ["exceptions.js"], importers
+    block = SCREEN_EXPORT.search((screens / "exceptions.js").read_text(encoding="utf-8"))
+    assert block is not None and "needsStore: true" in block.group(1)
+    assert re.search(r"if \(!store\) \{", panel), (
+        "the manual-send panel must refuse to build a store-scoped URL without a store"
+    )
+
+
+def test_the_exempt_staff_screen_builds_its_store_url_only_with_a_store() -> None:
+    """READ-PATHS-001's staff directory is the one store-scoped part of #/staff.
+
+    The forms must work for an owner with no store yet -- assigning a store, including to
+    themselves, is what those forms are for -- so the screen cannot declare `needsStore`. The
+    directory must therefore refuse to request `/stores/${store}/staff` without one, and say so.
+    """
+
+    text = (WEB / "src" / "screens" / "staff.js").read_text(encoding="utf-8")
+    assert "/internal/v1/stores/${encodeURIComponent(store)}/staff" in text
+    assert re.search(r"if \(!store \|\| !spec\.verdict\.allowed\) return;", text), (
+        "staff.js must not request the staff directory without a selected store; without that "
+        "guard the exemption in STORE_GATE_EXEMPT is unsafe"
+    )
+    assert re.search(r"\} else if \(store\) \{\s*void reload\(\);\s*\} else \{", text), (
+        "staff.js must render a no-store notice instead of the directory when no store is set"
+    )
+    assert "Chưa chọn cửa hàng" in text

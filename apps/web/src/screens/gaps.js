@@ -137,41 +137,23 @@ const GROUPS = [
         missing: "Không có custody_units, custody_events hay batches.",
         blockedBy: "SHOP-INSTRUMENT-001",
       },
-      {
-        ref: "M3",
-        title: "Tra lại một khoản giảm trừ chưa dùng",
-        what:
-          "Tra ra các khoản giảm trừ chưa dùng của một đơn hoặc một số phiếu, để khách quên mã " +
-          "vẫn dùng được phiếu của mình.",
-        missing:
-          "Có bảng remedy_credits và có đường áp dụng một khoản theo mã, nhưng không có đường nào " +
-          "liệt kê các khoản chưa dùng. Phiếu là vật cầm tay: không có mã thì máy chủ không có " +
-          "cách nào tìm ra nó, và đây là hệ quả của DEC-015 chứ không phải một chỗ bị quên.",
-        blockedBy:
-          "DEC-015 (đã quyết) từ chối lập hồ sơ khách, nên không có sổ nào ghi “khách này còn " +
-          "phiếu gì”. Muốn tra theo số phiếu quầy thì phải có một read model riêng, chưa dựng.",
-        today:
-          "Lúc phát hành, màn hình Bồi hoàn hiện mã giảm trừ kèm nút chép. Chép ngay vào phiếu " +
-          "giấy của khách trước khi rời màn hình — sau đó không tra lại được.",
-      },
-      {
-        ref: "M3",
-        title: "Danh sách đề nghị bồi hoàn của một sự cố",
-        what:
-          "Xem lại các đề nghị bồi hoàn đã ghi cho một sự cố, kể cả các vụ mất đồ ghi trước " +
-          "DEC-031 (POLICY_UNRESOLVED, không có số tiền).",
-        missing:
-          "Không có đường nào đọc lại các đề nghị của một sự cố. Màn hình Bồi hoàn vì vậy chỉ hiện " +
-          "đúng đề nghị bạn vừa gửi trong phiên này, và cố ý không dựng một danh sách trong trình " +
-          "duyệt — danh sách đó sẽ đọc như “đây là tất cả”, điều mà bảng vận hành không có cơ sở " +
-          "để nói. Đề nghị đang chờ chủ tiệm (kể cả mọi vụ mất đồ) thì có trên màn hình Duyệt.",
-        blockedBy:
-          "REMEDY-001 dựng đường ghi trước, đường đọc sau. Chưa có mục nào trong hàng đợi cho " +
-          "phần đọc này.",
-        today:
-          "Chép mã đề nghị lúc gửi. Vụ mất đồ nào ghi trước DEC-031 thì lập đề nghị mất đồ mới " +
-          "cho đúng món để chủ tiệm duyệt.",
-      },
+      // "Tra lại một khoản giảm trừ chưa dùng" and "Danh sách đề nghị bồi hoàn của một sự cố" were
+      // here until READ-PATHS-001, and are deleted rather than reworded because both gaps closed.
+      // `GET /internal/v1/stores/{store}/orders/{order}/remedy-credits` lists the credits an order
+      // issued, spent or not, and the order detail shows them with a copy control on an unused
+      // code -- the customer keeps that order's ticket, and the orders screen finds an order by its
+      // ticket number, so a lost code is found again the way the counter already works.
+      // `GET …/incidents/{incident}/remedy-proposals` lists every proposal on an incident,
+      // including a pre-DEC-031 loss with no figure, and `#/remedies` shows it for the incident it
+      // reads. Neither creates a customer record, so DEC-015 is untouched.
+      //
+      // REMEDY-OWNER-DECIDE-001 closed a gap this register never listed, and it is recorded here so
+      // nobody re-adds it: an `APPROVE_REMEDY` envelope (every loss since DEC-031, every claim on a
+      // refunded order, anything above the staff limit) reached #/approvals undecidable, and an
+      // approved claim could be paid only from the browser session that proposed it. The approvals
+      // card now reads `GET …/stores/{store}/remedy-proposals/{proposal}/approval-binding`, and the
+      // incident's proposal list on #/remedies offers "Thực hiện bồi hoàn" on every row the server
+      // marks `next_step: EXECUTE`.
     ],
   },
   {
@@ -181,28 +163,12 @@ const GROUPS = [
       "vận hành không hiển thị KPI — đếm tạm vài con số rồi gọi là KPI là cách nhanh nhất để một " +
       "quyết định kinh doanh dựa trên số bịa.",
     entries: [
-      {
-        // ACQUISITION-ATTRIBUTION-001 added the column and the report, and deliberately stopped
-        // there. The gap that remains is the one an operator feels: the value is permanent and
-        // this console never shows it back, so a mis-tap at the counter is invisible from the
-        // moment it is made. Saying so here is cheaper and more honest than a read path that
-        // would have to thread the field through the order list, the transition response and the
-        // board — and the counter is told, in the field's own hint, that the entry is final.
-        ref: "ACQUISITION-ATTRIBUTION-001",
-        title: "Xem lại nguồn khách đã ghi trên một đơn",
-        what:
-          "Mở một đơn và thấy lại đã ghi khách biết tiệm qua đâu, để phát hiện bấm nhầm.",
-        missing:
-          "Đơn có ghi nguồn khách, nhưng không màn hình nào đọc lại được. OrderResponse không mang " +
-          "trường này, nên bảng đơn và thẻ đơn vừa tạo đều không hiển thị.",
-        blockedBy:
-          "Chưa có đường đọc: cần thêm trường vào read model của đơn, là một việc riêng.",
-        today:
-          "Ghi đúng ngay khi tạo đơn — ghi xong là không sửa được, kể cả bằng lệnh trực tiếp vào " +
-          "cơ sở dữ liệu. Chưa hỏi thì để “Chưa biết”; đó là câu trả lời đúng.",
-        note:
-          "Báo cáo theo kênh chạy bằng scripts/report_acquisition_sources.py, không phải màn hình.",
-      },
+      // "Xem lại nguồn khách đã ghi trên một đơn" (ACQUISITION-ATTRIBUTION-001) was here until
+      // READ-PATHS-001 put `acquisition_source` on the order read model, and is deleted rather than
+      // reworded because the gap closed: the order detail shows the recorded source read-only. It
+      // is still immutable -- a mis-tap is now visible and still cannot be corrected, which the
+      // detail says beside the value and the order form says before it is chosen. The channel
+      // report remains scripts/report_acquisition_sources.py.
       {
         ref: "M3 · MÀN 12",
         title: "Ghi nhận máy / mẻ / phút công",
@@ -301,8 +267,10 @@ const GROUPS = [
   },
   {
     heading: "Duyệt và phiên",
+    // MESSAGE-DRAFT-BINDING-001 retired the "Duyệt một tin nhắn soạn sẵn" entry, so four became
+    // three. The lede counts its entries and has been wrong about that count once already.
     lede:
-      "Bốn mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API " +
+      "Ba mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API " +
       "không trả về, và một bề mặt đoán bừa các trường đó sẽ là duyệt mù hoặc thao tác nhầm người.",
     entries: [
       {
@@ -327,37 +295,32 @@ const GROUPS = [
           "số phiên bản đều hiện ra, nhưng phải tự đối chiếu. Phiếu báo giá thì đã hết vấn đề này " +
           "— đường dẫn mang sẵn số bản sửa đổi.",
       },
-      {
-        ref: "CONSOLE",
-        title: "Duyệt một tin nhắn soạn sẵn",
-        what: "Duyệt hoặc từ chối một phong bì MESSAGE_DRAFT ngay tại hàng chờ.",
-        // Narrowed twice, and both times because the limitation behind it closed rather than
-        // because the wording was improved. It first said the console could decide nothing,
-        // which stopped being true when APPROVAL-DECIDE-001 projected resource_version and both
-        // digests onto the queue read. It then named only orders as viewable, which stopped
-        // being true when RANGE-PRICE-001 added a read for one quote revision with its lines.
-        // What survives is the one type nothing can show: the message body is not stored
-        // anywhere, so there is no content to put in front of an approver.
-        missing:
-          "Hệ thống không lưu nội dung tin nhắn ở đâu cả, và máy chủ cũng không đối chiếu " +
-          "rendered_hash với bất cứ thứ gì. Không có gì để cho người duyệt xem trước khi họ bấm.",
-        blockedBy: "Không có kho dữ liệu nào giữ nội dung bản tin đã soạn",
-        today:
-          "Phiếu MESSAGE_DRAFT vẫn hiện trong hàng chờ kèm thời gian còn lại, nhưng hai nút quyết " +
-          "định bị khoá kèm lý do. Phiếu gắn với đơn hàng thì bấm quyết được; phiếu chốt giá " +
-          "trong khoảng cũng vậy, nhưng chỉ sau khi thẻ phiếu đọc và in được số tiền nhân viên " +
-          "đề nghị — chưa thấy số thì nút vẫn khoá.",
-      },
+      // "Duyệt một tin nhắn soạn sẵn" was here until MESSAGE-DRAFT-BINDING-001 and is deleted
+      // rather than reworded, because the gap it described closed. Its last wording said the
+      // message body was stored nowhere and rendered_hash was checked against nothing; the body is
+      // agent_drafts / agent_draft_reviews, API-INTEGRITY-002 made the server derive and verify
+      // all three binding values from it, and
+      // GET /internal/v1/stores/{store}/message-drafts/{draft}/binding now hands the words to the
+      // approvals card, which prints them above the buttons. A disclosure retires when the
+      // limitation behind it ends; that is the only way one may leave.
       {
         ref: "CONSOLE",
         title: "Tạo yêu cầu duyệt",
-        what: "Tự mở một yêu cầu duyệt cho một việc cần chủ hoặc người duyệt gật đầu.",
+        // Narrowed by MESSAGE-DRAFT-BINDING-001, and it was already half stale: OPS-BOARD-001 had
+        // let #/exports raise its own envelope. Both kinds that can be raised from the console are
+        // raised from values a server read handed back, never from anything typed.
+        what:
+          "Tự mở một yêu cầu duyệt cho những việc khác cần chủ hoặc người duyệt gật đầu, ngoài " +
+          "gửi tin nhắn và xuất dữ liệu.",
         missing:
           "Cần một resource_type khớp đúng ánh xạ hành động của máy chủ, cùng hai mã băm JCS và " +
           "một policy_version. Nhân viên không tạo được các giá trị đó bằng tay.",
         blockedBy:
-          "Chưa có ánh xạ resource_type dùng được từ giao diện và chưa có nguồn policy_version",
-        today: "Yêu cầu duyệt do máy chủ tự mở khi một lệnh chạm vào ngưỡng cần duyệt.",
+          "Chưa có route nào trả về các giá trị đó cho những loại việc còn lại",
+        today:
+          "Xin gửi một tin nhắn thì mở ở màn hình Ngoại lệ, phần Gửi thủ công; xin xuất dữ liệu " +
+          "thì mở ở màn hình Xuất dữ liệu. Các loại khác do máy chủ tự mở khi một lệnh chạm vào " +
+          "ngưỡng cần duyệt.",
       },
       {
         ref: "CONSOLE",

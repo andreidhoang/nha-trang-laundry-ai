@@ -587,6 +587,8 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Đề xuất bồi hoàn",
         "Đọc mức trần và thời hạn",
         "Gửi đề nghị bồi hoàn",
+        # REMEDY-GARMENT-001: which shirt, on a line of several priced per piece.
+        "Món thứ mấy",
         "Thực hiện bồi hoàn",
         "Áp dụng khoản giảm trừ",
         "Chép mã giảm trừ này lại ngay",
@@ -594,6 +596,13 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         # `DEC-031` retired "Mất đồ — chưa có chính sách để áp dụng": loss is proposable now and
         # always waits for the owner, and this is the sentence the screen shows for it.
         "Mất đồ — luôn chờ chủ tiệm duyệt",
+        # REMEDY-OWNER-DECIDE-001: what the owner reads on the approvals card, the refusal it shows
+        # when the claim moved underneath the phiếu, and where the counter pays an approved claim
+        # later -- the list, not the session that proposed it.
+        "Khoản bồi hoàn bạn đang được đề nghị duyệt",
+        "Khoản bồi hoàn đã đổi so với phiếu",
+        "Đề nghị đã ghi cho sự cố này",
+        "Khoản giảm trừ của đơn này",
         "Đã duyệt lịch",
         "Ghi nhận tất toán",
         "Khách đã tự lấy đồ",
@@ -662,6 +671,10 @@ REMEDY_OPTIONS = {
             "line_ceiling_vnd": 600_000,
             "committed_vnd": 0,
             "owner_always": [],
+            # `REMEDY-GARMENT-001`: one dress, garment 1 without asking.
+            "garments": 1,
+            "garment_committed_vnd": [0],
+            "line_level_committed_vnd": 0,
         },
         {
             "line_id": "line-small",
@@ -676,6 +689,9 @@ REMEDY_OPTIONS = {
             "line_ceiling_vnd": 90_000,
             "committed_vnd": 0,
             "owner_always": [],
+            "garments": 1,
+            "garment_committed_vnd": [0],
+            "line_level_committed_vnd": 0,
         },
     ],
     "late_delivery_credit_vnd": 17_000,
@@ -1059,11 +1075,13 @@ def test_each_kind_sends_exactly_the_keys_its_own_shape_owns() -> None:
     assert bodies["rewash"] == {"kind": "FREE_REWASH", "store_fault_attested": True}
     # `50.000` is how this console prints an amount and how a staff member writes one; `parseDong`
     # reads the dot as grouping, which is the defect COUNTER-DEFECTS-001 fixed for settlements.
+    # `REMEDY-GARMENT-001`: a line of one garment names garment 1, so the record says which.
     assert bodies["damage"] == {
         "kind": "DAMAGE_COMPENSATION",
         "store_fault_attested": True,
         "order_line_id": "line-small",
         "amount_vnd": 50_000,
+        "garment_index": 1,
     }
     assert bodies["late"] == {
         "kind": "LATE_DELIVERY_CREDIT",
@@ -1079,6 +1097,7 @@ def test_each_kind_sends_exactly_the_keys_its_own_shape_owns() -> None:
         "store_fault_attested": True,
         "order_line_id": "line-small",
         "amount_vnd": 20_000,
+        "garment_index": 1,
     }
     assert bodies["lossUnchosen"] is None
 
@@ -1101,6 +1120,10 @@ DEC_031_OPTIONS = {
             "line_ceiling_vnd": 750_000,
             "committed_vnd": 30_000,
             "owner_always": [],
+            # `REMEDY-GARMENT-001`: the 30.000 ₫ was shirt #1's.
+            "garments": 3,
+            "garment_committed_vnd": [30_000, 0, 0],
+            "line_level_committed_vnd": 0,
         },
         {
             "line_id": "line-1",
@@ -1115,6 +1138,9 @@ DEC_031_OPTIONS = {
             "line_ceiling_vnd": 700_000,
             "committed_vnd": 0,
             "owner_always": ["ITEM_FEE_NOT_RECORDED"],
+            "garments": None,
+            "garment_committed_vnd": [],
+            "line_level_committed_vnd": 0,
         },
     ],
 }
@@ -1128,7 +1154,12 @@ def test_the_form_predicts_the_owner_from_what_the_item_already_carries() -> Non
     same sum, at the one đồng that decides it.
     """
 
-    base = {"kind": "DAMAGE_COMPENSATION", "storeFaultAttested": True, "lineId": "line-0"}
+    base = {
+        "kind": "DAMAGE_COMPENSATION",
+        "storeFaultAttested": True,
+        "lineId": "line-0",
+        "garmentIndex": "1",
+    }
     at = _plan({**base, "typedAmount": "70000"}, options=DEC_031_OPTIONS)
     over = _plan({**base, "typedAmount": "70001"}, options=DEC_031_OPTIONS)
     assert at["state"] == "READY" and at["requiresOwner"] is False
@@ -1143,29 +1174,181 @@ def test_the_form_predicts_the_owner_from_what_the_item_already_carries() -> Non
     assert ceiling["ceilingBreached"] == "ITEM"
 
 
-def _with_line_committed(committed: int) -> dict[str, Any]:
+def _with_line_committed(
+    committed: int,
+    per_garment: list[int] | None = None,
+    *,
+    line_ceiling: int = 750_000,
+) -> dict[str, Any]:
     lines = [dict(line) for line in DEC_031_OPTIONS["damage_lines"]]  # type: ignore[attr-defined]
     lines[0]["committed_vnd"] = committed
+    lines[0]["garment_committed_vnd"] = per_garment or [committed, 0, 0]
+    lines[0]["line_ceiling_vnd"] = line_ceiling
     return {**DEC_031_OPTIONS, "damage_lines": lines}
 
 
 def test_each_piece_on_a_line_has_its_own_ceiling_on_the_form_too() -> None:
-    """Three shirts: a second full 250.000 ₫ claim goes to the owner; it is not refused.
+    """Three shirts: a full 250.000 ₫ claim on shirt #2 goes to the owner; it is not refused.
 
-    The same answer `evaluate_remedy` gives: one claim within one item's 250.000 ₫, the line within
-    750.000 ₫, and the staff limit on the line's running total.
+    The same answer `evaluate_remedy` gives: one claim within one shirt's 250.000 ₫, the shirt's
+    running total within it too, and the line within 750.000 ₫. Updated for `REMEDY-GARMENT-001`:
+    each claim names its shirt, and the figures compared are that shirt's.
     """
 
     base = {"kind": "DAMAGE_COMPENSATION", "storeFaultAttested": True, "lineId": "line-0"}
-    second = _plan({**base, "typedAmount": "250000"}, options=_with_line_committed(250_000))
+    second = _plan(
+        {**base, "garmentIndex": "2", "typedAmount": "250000"},
+        options=_with_line_committed(250_000, [250_000, 0, 0]),
+    )
     assert second["state"] == "READY"
     assert second["requiresOwner"] is True and second["ownerReasons"] == ["ABOVE_STAFF_LIMIT"]
     assert (second["ceilingVnd"], second["lineCeilingVnd"]) == (250_000, 750_000)
+    assert (second["committedVnd"], second["lineCommittedVnd"]) == (0, 250_000)
 
-    full = _plan({**base, "typedAmount": "200000"}, options=_with_line_committed(600_000))
+    # A discounted line binds before its shirts: 600.000 ₫ in all, two shirts full and 100.000 ₫
+    # on the third. 150.000 ₫ more on the third fits its own 250.000 ₫ and not the line.
+    full = _plan(
+        {**base, "garmentIndex": "3", "typedAmount": "150000"},
+        options=_with_line_committed(600_000, [250_000, 250_000, 100_000], line_ceiling=600_000),
+    )
     assert full["state"] == "ABOVE_CEILING"
     assert full["ceilingBreached"] == "LINE"
-    assert full["lineCeilingVnd"] == 750_000
+    assert full["lineCeilingVnd"] == 600_000
+
+
+def test_the_form_asks_which_shirt_before_it_offers_a_money_box() -> None:
+    """`REMEDY-GARMENT-001`: on three shirts the running total depends on which shirt, so the plan
+    stops at "món thứ mấy" -- and never picks shirt #1 for the person at the counter."""
+
+    base = {"kind": "DAMAGE_COMPENSATION", "storeFaultAttested": True, "lineId": "line-0"}
+    for chosen in (None, "", "0", "4", "2.5", "x"):
+        draft = dict(base) if chosen is None else {**base, "garmentIndex": chosen}
+        plan = _plan({**draft, "typedAmount": "10000"}, options=DEC_031_OPTIONS)
+        assert plan["state"] == "GARMENT_NOT_CHOSEN", chosen
+        assert plan["needsGarment"] is True and plan["needsAmount"] is False, chosen
+        assert plan["garments"] == 3 and plan["garmentIndex"] is None, chosen
+        # The ceiling is known before the shirt is: it is the same for every shirt.
+        assert plan["ceilingVnd"] == 250_000, chosen
+    body = _run(
+        "import { remedyPlan, remedyProposalBody } from './src/core/remedies.js';\n"
+        f"const draft = {json.dumps({**base, 'typedAmount': '10000'})};\n"
+        f"const plan = remedyPlan({{options: {json.dumps(DEC_031_OPTIONS)}, ...draft}});\n"
+        "console.log(JSON.stringify(remedyProposalBody(plan, draft)));\n"
+    )
+    assert body is None
+
+
+def test_shirt_two_has_its_own_staff_limit_and_one_shirt_is_cumulative_on_the_form() -> None:
+    """Shirt #1 carries 100.000 ₫: 100.000 ₫ on shirt #2 is staff's; 1 ₫ more on #1 is the
+    owner's; and 1 ₫ past a full shirt is refused against that shirt's own ceiling."""
+
+    base = {"kind": "DAMAGE_COMPENSATION", "storeFaultAttested": True, "lineId": "line-0"}
+    options = _with_line_committed(100_000, [100_000, 0, 0])
+    other = _plan({**base, "garmentIndex": "2", "typedAmount": "100000"}, options=options)
+    assert other["state"] == "READY" and other["requiresOwner"] is False
+    same = _plan({**base, "garmentIndex": "1", "typedAmount": "1"}, options=options)
+    assert same["requiresOwner"] is True and same["ownerReasons"] == ["ABOVE_STAFF_LIMIT"]
+    full_shirt = _plan(
+        {**base, "garmentIndex": "1", "typedAmount": "1"},
+        options=_with_line_committed(250_000, [250_000, 0, 0]),
+    )
+    assert full_shirt["state"] == "ABOVE_CEILING"
+    assert full_shirt["ceilingBreached"] == "GARMENT"
+    assert (full_shirt["ceilingVnd"], full_shirt["committedVnd"]) == (250_000, 250_000)
+
+    body = _run(
+        "import { remedyPlan, remedyProposalBody } from './src/core/remedies.js';\n"
+        f"const draft = {json.dumps({**base, 'garmentIndex': '2', 'typedAmount': '100000'})};\n"
+        f"const plan = remedyPlan({{options: {json.dumps(options)}, ...draft}});\n"
+        "console.log(JSON.stringify(remedyProposalBody(plan, draft)));\n"
+    )
+    assert body == {
+        "kind": "DAMAGE_COMPENSATION",
+        "store_fault_attested": True,
+        "order_line_id": "line-0",
+        "amount_vnd": 100_000,
+        "garment_index": 2,
+    }
+
+
+def test_a_line_level_claim_counts_against_every_shirt_on_the_form() -> None:
+    """The server counts a claim recorded before shirts could be named against each of them, and
+    sends that in `garment_committed_vnd`; the form compares the same figure."""
+
+    options = _with_line_committed(60_000, [60_000, 60_000, 60_000])
+    lines = [dict(line) for line in options["damage_lines"]]
+    lines[0]["line_level_committed_vnd"] = 60_000
+    options = {**options, "damage_lines": lines}
+    base = {"kind": "DAMAGE_COMPENSATION", "storeFaultAttested": True, "lineId": "line-0"}
+    for garment in ("1", "2", "3"):
+        plan = _plan({**base, "garmentIndex": garment, "typedAmount": "50000"}, options=options)
+        assert plan["requiresOwner"] is True, garment
+        assert plan["committedVnd"] == 60_000, garment
+
+
+def test_a_garment_count_without_per_garment_figures_is_read_the_conservative_way() -> None:
+    """A server that sends `garments` but no `garment_committed_vnd`: the whole line's total counts
+    against the shirt, never zero: the reading the server applies to an unattributed sum."""
+
+    options = _with_line_committed(60_000)
+    lines = [dict(line) for line in options["damage_lines"]]
+    del lines[0]["garment_committed_vnd"]
+    options = {**options, "damage_lines": lines}
+    plan = _plan(
+        {
+            "kind": "DAMAGE_COMPENSATION",
+            "storeFaultAttested": True,
+            "lineId": "line-0",
+            "garmentIndex": "2",
+            "typedAmount": "50000",
+        },
+        options=options,
+    )
+    assert plan["committedVnd"] == 60_000
+    assert plan["requiresOwner"] is True
+
+
+def test_a_bag_sends_no_garment() -> None:
+    """A line with no garment identity is one claimable whole: no picker, no key in the body."""
+
+    body = _run(
+        "import { remedyPlan, remedyProposalBody } from './src/core/remedies.js';\n"
+        f"const options = {json.dumps(DEC_031_OPTIONS)};\n"
+        "const draft = {kind: 'DAMAGE_COMPENSATION', storeFaultAttested: true, lineId: 'line-1', "
+        "typedAmount: '10000'};\n"
+        "const plan = remedyPlan({options, ...draft});\n"
+        "console.log(JSON.stringify({needsGarment: plan.needsGarment, "
+        "body: remedyProposalBody(plan, draft)}));\n"
+    )
+    assert body["needsGarment"] is False
+    assert "garment_index" not in body["body"]
+
+
+def test_the_countdown_reads_a_day_long_window_in_hours_and_days() -> None:
+    """The DEC-031 addendum keeps an owner remedy envelope open up to 48 hours. "còn 1800 phút"
+    is arithmetic for the owner; the short windows read exactly as before."""
+
+    now = "2026-09-25T03:00:00Z"
+    cases = {
+        "2026-09-25T03:00:45Z": "còn 45 giây",
+        "2026-09-25T03:09:30Z": "còn 9 phút 30 giây",
+        "2026-09-25T03:10:00Z": "còn 10 phút",
+        "2026-09-25T03:59:59Z": "còn 59 phút",
+        "2026-09-25T04:00:00Z": "còn 1 giờ",
+        "2026-09-25T06:30:00Z": "còn 3 giờ 30 phút",
+        "2026-09-26T02:59:00Z": "còn 23 giờ 59 phút",
+        "2026-09-26T03:00:00Z": "còn 1 ngày",
+        "2026-09-26T17:00:00Z": "còn 1 ngày 14 giờ",
+        "2026-09-27T03:00:00Z": "còn 2 ngày",
+        "2026-09-25T02:59:59Z": "đã hết hạn",
+    }
+    got = _run(
+        "import { countdown } from './src/core/format.js';\n"
+        f"const now = new Date({json.dumps(now)});\n"
+        f"const cases = {json.dumps(list(cases))};\n"
+        "console.log(JSON.stringify(cases.map((at) => countdown(at, now).text)));\n"
+    )
+    assert got == list(cases.values())
 
 
 def test_an_item_whose_fee_was_never_recorded_needs_the_owner_before_an_amount_is_typed() -> None:
@@ -1214,3 +1397,58 @@ def test_nobody_attesting_store_fault_blocks_every_kind() -> None:
     ):
         plan = _plan({"kind": kind, "storeFaultAttested": False, **extra})
         assert plan["state"] == "FAULT_NOT_ATTESTED", kind
+
+
+def test_a_busy_database_reads_as_try_again_and_not_as_do_not_retry() -> None:
+    """`API-INTEGRITY-003`. A timed-out statement used to be a 500, read as FAULT: "Đừng thử lại".
+
+    The API now answers 503 with `{"reason_code": "DATABASE_BUSY" | "DATABASE_UNAVAILABLE"}` and a
+    `Retry-After`. Both mean the command did not happen and a same-key retry is safe, so both
+    classify as `BUSY` -- retryable, with the server's number of seconds kept -- and each code has a
+    gloss saying what happened. Any other 503 keeps the generic UNAVAILABLE, which promises nothing
+    about retrying, and a genuine 500 is still FAULT.
+    """
+
+    got = _run(
+        "import { classify } from './src/core/errors.js';\n"
+        "import { REASON_NOTE } from './src/core/i18n.js';\n"
+        "const view = (e) => ({kind: e.kind, message: e.message, codes: e.reasonCodes, "
+        "retryable: e.retryable, after: e.retryAfterSeconds});\n"
+        "console.log(JSON.stringify({\n"
+        "  busy: view(classify(503, {reason_code: 'DATABASE_BUSY'}, {retryAfterSeconds: 2})),\n"
+        "  down: view(classify(503, {reason_code: 'DATABASE_UNAVAILABLE'}, "
+        "{retryAfterSeconds: 10})),\n"
+        "  other: view(classify(503, 'operations unavailable', {})),\n"
+        "  fault: view(classify(500, 'Internal Server Error', {})),\n"
+        "  notes: [REASON_NOTE.DATABASE_BUSY || '', REASON_NOTE.DATABASE_UNAVAILABLE || ''],\n"
+        "}));\n"
+    )
+    busy, down = got["busy"], got["down"]
+    assert busy["kind"] == down["kind"] == "BUSY"
+    assert busy["retryable"] is down["retryable"] is True
+    assert "đang bận" in busy["message"] and "thử lại" in busy["message"]
+    assert "không kết nối được" in down["message"] and "thử lại" in down["message"]
+    assert busy["codes"] == ["DATABASE_BUSY"] and down["codes"] == ["DATABASE_UNAVAILABLE"]
+    assert (busy["after"], down["after"]) == (2, 10)
+    assert got["other"]["kind"] == "UNAVAILABLE" and got["other"]["retryable"] is False
+    assert got["fault"]["kind"] == "FAULT" and got["fault"]["retryable"] is False
+    assert all(len(note) > 20 for note in got["notes"]), got["notes"]
+
+
+def test_an_approval_whose_resource_moved_on_gets_its_own_title() -> None:
+    """`RESOURCE_CHANGED_SINCE_REQUEST` is not `APPROVAL_STALE`: reloading shows the same phiếu.
+
+    The console matches the machine prefix of the 409 detail, never the English that follows it.
+    """
+
+    got = _run(
+        "import { classify } from './src/core/errors.js';\n"
+        "const e = classify(409, 'RESOURCE_CHANGED_SINCE_REQUEST: the resource this approval "
+        "binds no longer has the content it was requested for', {});\n"
+        "const stale = classify(409, 'approval resource version or hash is stale', {});\n"
+        "console.log(JSON.stringify({kind: e.kind, message: e.message, stale: stale.message}));\n"
+    )
+    assert got["kind"] == "CONFLICT"
+    assert "đã thay đổi sau khi phiếu được tạo" in got["message"]
+    assert "phiếu mới" in got["message"]
+    assert got["message"] != got["stale"]

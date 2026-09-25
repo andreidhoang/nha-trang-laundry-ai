@@ -122,7 +122,7 @@ class SettlementCommand:
 
 @dataclass(frozen=True, slots=True)
 class CollectionCommand:
-    """The customer who paid at drop-off has taken their laundry (`DEC-032`).
+    """The customer who paid in advance at the counter has taken their laundry (`DEC-032`).
 
     No amount, and nothing about the customer: the money is the settlement's, and the only new fact
     is that the goods changed hands, witnessed by the staff member in `principal`.
@@ -303,8 +303,8 @@ class SettlementRepository:
                     command.paid_amount_vnd,
                     outcome.shape.value,
                     # Who took the laundry away when the money was attested. For either prepayment
-                    # that is nobody yet: a delivery leg attests arrival later, and for a walk-in
-                    # paying at drop-off (`DEC-032`) the pickup record does.
+                    # that is nobody yet: a delivery leg attests arrival later, and for a customer
+                    # paying in advance at the counter (`DEC-032`) the pickup record does.
                     _COLLECTED_BY[outcome.shape],
                     command.principal.staff_user_id,
                     attested_at,
@@ -380,11 +380,13 @@ class SettlementRepository:
         )
 
     def record_collection(self, connection: Any, command: CollectionCommand) -> StoredCollection:
-        """Record that a customer who paid at drop-off has taken their laundry. `DEC-032`.
+        """Record that a customer who paid in advance has taken their laundry. `DEC-032`.
 
-        The pickup half of a prepaid walk-in order: a row in `order_collections` naming the staff
-        member who handed the goods over, and `self_collection_recorded` moving with it -- the flag
-        `transition_commercial` reads before it allows COMPLETED. Both, with the domain event, the
+        The pickup half of a prepaid self-collect order -- a walk-in who paid at drop-off, or, by
+        the `DEC-032` addendum, a `PICKUP_ONLY` customer who paid at the counter before the laundry
+        was finished. A row in `order_collections` naming the staff member who handed the goods
+        over, and `self_collection_recorded` moving with it -- the flag `transition_commercial`
+        reads before it allows COMPLETED. Both, with the domain event, the
         audit row and the outbox row, in one transaction or not at all (invariant 5); `0048` makes
         the database refuse either write without the other.
 

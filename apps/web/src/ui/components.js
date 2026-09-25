@@ -647,7 +647,9 @@ export function errorNotice(error, options = {}) {
           ),
         )
       : null,
-    isApi && api.kind === "RATE_LIMITED" && api.retryAfterSeconds
+    // `BUSY` carries the server's `Retry-After` too (`API-INTEGRITY-003`), and "vài giây" is
+    // better said as the number the server actually asked for.
+    isApi && (api.kind === "RATE_LIMITED" || api.kind === "BUSY") && api.retryAfterSeconds
       ? h("p", null, `Thử lại sau ${api.retryAfterSeconds} giây.`)
       : null,
     isApi && api.correlationId

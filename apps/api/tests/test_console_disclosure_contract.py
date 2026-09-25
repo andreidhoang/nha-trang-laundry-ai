@@ -662,7 +662,86 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 396 with all founder-ruling items landed: disjoint sentences, so 392 + 4
     # (REMEDY-ITEM-FEE-001's
     # -3 retired / +7 added). Predicted before regenerating; the registry came out at 396.
-    assert sum(counts.values()) == _registry()["total"] == 396
+    #
+    # Still 396 after PICKUP-ONLY-SETTLE-001 (the `DEC-032` addendum): 0 added, 0 retired, 1
+    # re-keyed -- the settlement guardrail on `screens/orderDetail.js`, which now names paying at
+    # the counter before the laundry is finished and says no courier takes money. Its `DEC-010`
+    # binding moved with it. The two pickup hints that changed are conditional expressions, which
+    # the enumerator does not register as slots.
+    # 401 after MESSAGE-DRAFT-BINDING-001: -3 retired, +8 added, 5 re-keyed. 396 - 3 + 8 = 401.
+    #   * -3 in `screens/gaps.js`: the "Duyệt một tin nhắn soạn sẵn" entry's `missing`,
+    #     `blockedBy` and `today`. They said the message body is stored nowhere and `rendered_hash`
+    #     is checked against nothing; the body is `agent_drafts`, API-INTEGRITY-002 made the server
+    #     derive and verify the binding from it, and this item added the read the approvals card
+    #     prints. The entry was deleted rather than reworded -- the exit ORDER-LOOKUP-001 took.
+    #   * +6 in `screens/approvals.js`, the `SEND_MESSAGE` card. Two are the disclosure: the line
+    #     saying pressing Duyet allows exactly these words to exactly this recipient and sends
+    #     nothing, and the hint saying Tu choi still works on a card whose approve control is shut.
+    #     Four are refusals that keep approve shut, each saying why: a queue row with no store, a
+    #     draft edited after the envelope was raised (its text withheld, not shown with a caveat),
+    #     a draft rejected since, and a read that failed.
+    #   * +2 in `screens/manualSend.js`, step 0: the recipient is the draft's and nobody picks it,
+    #     and asking for approval is not approval and approval is not sending.
+    #   * 5 re-keyed: the `#/gaps` group lede (four entries became three), the "Tạo yêu cầu duyệt"
+    #     entry's `blockedBy` and `today` (a send and an export are both raised from the console
+    #     now, from values a server read returned), and the manual-send panel's guardrail and its
+    #     four-values hint (step 0 fills them).
+    # 406 after API-INTEGRITY-003, merged on top of MESSAGE-DRAFT-BINDING-001: 401 + 5, nothing
+    # re-keyed or retired, all DESCRIPTIVE.
+    #   * `MESSAGES.BUSY` in `core/errors.js`: the title a counter reads for a 503 `DATABASE_BUSY`
+    #     -- "hệ thống đang bận ... thử lại" -- which used to arrive as a 500 and FAULT's "Đừng thử
+    #     lại". A claim that the retry is safe, so it is registered and re-read if it is reworded.
+    #   * `REFUSAL.DATABASE_UNAVAILABLE`: that kind's sentence when no connection could be opened.
+    #   * `REFUSAL.RESOURCE_CHANGED_SINCE_REQUEST`: the approval refusal decision-time re-resolution
+    #     added -- the resource moved on after the phiếu was raised, so the phiếu is finished.
+    #   * 2 `REASON_NOTE` glosses in `core/i18n.js`, one per 503 reason code, saying what happened:
+    #     the timed-out transaction rolled back whole; the connection was never opened.
+    #   The registry diff adds exactly those five slot ids and removes none.
+    # 400 after REMEDY-GARMENT-001 (the DEC-031 addendum): +4 added, 0 retired, 4 re-keyed.
+    #   * +3 `REASON_NOTE` glosses in `core/i18n.js`, one per new `RemedyRefusal` the counter can
+    #     meet and `test_every_remedy_refusal_the_counter_can_meet_is_glossed_for_them` requires:
+    #     `REMEDY_GARMENT_REQUIRED`, `REMEDY_GARMENT_NOT_APPLICABLE`, `REMEDY_GARMENT_OUT_OF_RANGE`.
+    #   * +1 `PLAN_NOTE.GARMENT_NOT_CHOSEN` in `screens/remedies.js`: the form stops at "món thứ
+    #     mấy" on a line of several garments, and says why before a money box exists.
+    #   * 4 re-keyed because the ruling made them false: `REMEDY_CEILING_EXCEEDED` and
+    #     `PLAN_NOTE.ABOVE_CEILING` (the ceiling is cumulative per garment, line-level claims
+    #     counted against each), `OWNER_REASON_NOTE.ABOVE_STAFF_LIMIT` (the staff limit is the
+    #     garment's, not the line's), and `REMEDY_APPROVAL_EXPIRED` (a remedy envelope is open
+    #     to the end of the next business day, not "a short time"). The garment picker's own hint
+    #     and the per-garment owner sentence are template literals the scanner does not register.
+    # 396 + 4 = 400, predicted before regenerating.
+    # 410 with REMEDY-GARMENT-001 merged on top of the two above: disjoint slots, 406 + 4.
+    # Still 396 after READ-PATHS-001, and the zero is a sum, not an absence: -10 retired, +10 added,
+    # 7 re-keyed. 396 - 10 + 10 = 396.
+    #   * -10 in `screens/gaps.js`: the three entries whose gap closed -- the unused credits of an
+    #     order (`missing`, `blockedBy`, `today`), an incident's remedy proposals (the same three)
+    #     and the acquisition source readback (those three and its `note`). Deleted, not reworded:
+    #     the routes exist, which is the exit REMEDY-001 and ORDER-LOOKUP-001 took.
+    #   * +4 in `screens/orderDetail.js`: the credits panel's hint (a bearer code, found again
+    #     through the order's ticket; no expiry is recorded), its truncation line, its wrong-role
+    #     notice title, and the hint beside the acquisition source saying it cannot be corrected.
+    #   * +2 in `screens/remedies.js`: the recorded-proposals panel's hint and its empty prompt.
+    #   * +4 in `screens/staff.js`: the eyebrow (the old one was below the scanner's threshold), the
+    #     directory hint (roles are the person's everywhere; revocations stay thirty days), and the
+    #     no-store notice and the wrong-role notice title.
+    #   * 7 re-keyed because they had become false: the remedies execution notice's title and body
+    #     ("không tra lại được" -- a lost code is found again on the order detail now), and five on
+    #     the staff screen -- the lede, the role guardrail, the create card's hint and the two 204
+    #     notices -- which all said the server had no way to read staff back.
+    # With READ-PATHS-001 merged on top of the four above: its -10/+10 are disjoint slots, so
+    # the total is unchanged at 410 -- re-derived by regenerating, not by arithmetic.
+    # 419 after REMEDY-OWNER-DECIDE-001: +9 added, 0 retired, 1 re-keyed, all DESCRIPTIVE.
+    #   * +8 in `screens/approvals.js`, the `APPROVE_REMEDY` card: its title ("Khoản bồi hoàn bạn
+    #     đang được đề nghị duyệt"), the hint that approving pays nothing until the counter
+    #     executes, the missing-summary line, the no-store notice's title and body, the stale
+    #     notice body (the figures withheld, only a refusal), the not-found body, and the
+    #     unreadable-read body.
+    #   * +1 in `screens/remedies.js`: the recorded list's "đề nghị lại" hint on a row whose owner
+    #     envelope was refused or ran out.
+    #   * 1 re-keyed in `screens/remedies.js`: the recorded-proposals panel's hint, which now says
+    #     an approved, unexecuted row carries its own execute press.
+    #   410 + 9 = 419, predicted from the registry diff before pinning.
+    assert sum(counts.values()) == _registry()["total"] == 419
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

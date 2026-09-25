@@ -50,6 +50,9 @@ vẫn bị từ chối.
 - Tiền tính vào **Đã thu tại quầy** của **ngày khách trả**, không phải ngày lấy đồ.
 - Đồ chưa giặt xong thì máy không cho bấm đã nhận đồ — và cũng không cho tích ô “Khách đã tự lấy
   đồ” khi khách trả lúc lấy.
+- **Đơn tiệm tới lấy đồ** (giao nhận *chỉ lấy*): khách chỉ trả **tại quầy**, đúng tổng đã báo — hoặc
+  lúc tới lấy (bước 12, như khách tự mang tới), hoặc ghé quầy trả trước khi đồ giặt xong (bước 9a
+  rồi 11a). **Người giao không nhận và không đưa tiền.**
 
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
 
@@ -127,15 +130,21 @@ Trước đây phần này làm bằng lời rồi quên. Nay có màn hình **B
 | Loại | Máy chủ tính gì | Hạn | Ai duyệt |
 |---|---|---|---|
 | Giặt lại miễn phí | Không có tiền nào chuyển | 7 ngày kể từ khi khách nhận đồ | Nhân viên |
-| Bồi thường món hỏng | Trần = 5 lần phí giặt **một món** (xem dưới) | 24 giờ kể từ khi khách nhận đồ | Tới 100.000đ **cho cả dòng** là nhân viên, trên mức đó **chủ tiệm** |
+| Bồi thường món hỏng | Trần = 5 lần phí giặt **một món** (xem dưới) | 24 giờ kể từ khi khách nhận đồ | Tới 100.000đ **cho mỗi món** là nhân viên, trên mức đó **chủ tiệm** |
 | Giảm trừ do giao trễ | Máy tính 10% tổng đã thu | Không tính theo hạn, tính theo mức trễ | Theo số tiền, như trên |
 | **Mất đồ** | Trần như món hỏng | 24 giờ kể từ khi khách nhận đồ | **Luôn là chủ tiệm**, dù số tiền nhỏ |
 
 **“Phí giặt một món” là gì (DEC-031):** đồ tính theo cái, đôi, bộ thì lấy **giá một cái** — ba
-áo sơ mi 50.000đ thì **mỗi đề nghị** tối đa 250.000đ (một áo), cả ba áo cộng lại tối đa 750.000đ.
-Đồ tính theo ký thì lấy **tiền cả túi** giặt chung, một trần cho cả túi. Máy hiện sẵn phí này, trần,
-và **số đã ghi đền cho dòng đó** cạnh từng dòng. Mức 100.000đ nhân viên được duyệt tính cộng dồn cho
-cả dòng: chia nhỏ ra từng áo thì phần vượt mức vẫn phải chờ chủ tiệm.
+áo sơ mi 50.000đ thì **mỗi áo** tối đa 250.000đ, cả ba áo cộng lại tối đa 750.000đ. Đồ tính theo
+ký thì lấy **tiền cả túi** giặt chung, một trần cho cả túi. Máy hiện sẵn phí này, trần, và số đã
+ghi đền cạnh từng dòng.
+
+**Dòng có nhiều món tính theo cái thì chọn “Món thứ mấy” (bổ sung DEC-031):** mỗi áo có mức
+100.000đ nhân viên được duyệt và trần riêng. Áo thứ 1 đã đền 100.000đ thì áo thứ 2 vẫn còn nguyên
+100.000đ của nó. Đề nghị thứ hai cho **cùng một áo** thì cộng dồn với đề nghị trước — chia nhỏ
+một áo ra nhiều lần thì phần vượt mức vẫn phải chờ chủ tiệm. Máy hiện sẵn mỗi áo đã ghi bao
+nhiêu; những khoản ghi cho cả dòng từ trước khi chọn được từng món được tính cho **mọi** áo trên
+dòng. Dòng chỉ có một món thì không cần chọn. Đồ tính theo ký không chọn món: cả túi là một món.
 
 > **Mất đồ: nhân viên ghi và đề nghị số tiền, chủ tiệm duyệt mới được trả.** Màn hình hiện
 > **“Mất đồ — luôn chờ chủ tiệm duyệt”** ngay khi chọn loại này. Nói trước với khách là phải chờ,
@@ -143,13 +152,30 @@ cả dòng: chia nhỏ ra từng áo thì phần vượt mức vẫn phải ch�
 >
 > **Đơn đã hoàn tiền** vẫn đền được món hỏng hay mất, nhưng mọi khoản đều chờ chủ tiệm duyệt.
 
+**Khoản chờ chủ tiệm — chủ duyệt, rồi nhân viên mới trả:**
+
+1. **Chủ tiệm** mở màn hình **Duyệt**. Thẻ phiếu in
+   **“Khoản bồi hoàn bạn đang được đề nghị duyệt”**: loại, số tiền, trần, món nào, vì sao cần chủ
+   tiệm và khách đã phản ánh gì. Đọc xong rồi bấm **Duyệt** hoặc **Từ chối**. Người đã ghi đề nghị
+   thì không tự duyệt được, kể cả chủ tiệm.
+   Nếu thẻ hiện **“Khoản bồi hoàn đã đổi so với phiếu”** thì không duyệt được — từ chối, rồi nhờ
+   nhân viên đề nghị lại.
+2. **Duyệt xong vẫn chưa trả gì.** Người trực quầy (máy nào cũng được, hôm sau cũng được) mở lại sự
+   cố ở màn hình **Bồi hoàn**, bấm **“Đọc mức trần và thời hạn”**, rồi ở mục
+   **“Đề nghị đã ghi cho sự cố này”** bấm **“Thực hiện bồi hoàn”** trên đúng dòng đó. Nút chỉ hiện ở dòng đã được duyệt mà
+   chưa thực hiện; dòng còn chờ thì ghi rõ là đang chờ chủ tiệm.
+3. Phải thực hiện **trước khi phiếu duyệt hết hạn** (hết ngày hôm sau). Quá hạn thì dòng đó báo
+   không thực hiện được nữa — đề nghị lại từ đầu.
+
 **Ba điều dễ sai ở màn hình này:**
 
 - **Chép mã giảm trừ ngay lúc phát.** Máy hiện **“Chép mã giảm trừ này lại ngay”** kèm nút chép.
-  Chép vào phiếu giấy của khách **trước khi rời màn hình** — không có màn hình nào tra lại được mã
-  đó, và không có mã thì khách không dùng được phiếu.
+  Chép vào phiếu giấy của khách **trước khi rời màn hình**. Khách làm mất mã thì tìm lại đơn theo
+  số phiếu ở màn hình Đơn hàng, mục **“Khoản giảm trừ của đơn này”** — nhưng chép ngay vẫn là cách
+  chắc nhất.
 - **“Chờ chủ tiệm duyệt” nghĩa là chưa xong.** Nói với khách là phải chờ. Bấm thực hiện trước khi
-  chủ tiệm duyệt thì máy từ chối, và phiếu duyệt có hạn ngắn — đừng để qua ngày.
+  chủ tiệm duyệt thì máy từ chối. Phiếu duyệt bồi hoàn mở tới **hết ngày hôm sau** (nửa đêm, giờ
+  Việt Nam) rồi tự hết hạn — chủ tiệm đi vắng cũng kịp duyệt, nhưng đừng để lâu hơn thế.
 - **Vượt trần thì máy từ chối, không tự hạ xuống.** Nếu màn hình báo vượt trần, nói đúng con số
   trần cho khách nghe. Gõ một số khác cho lọt là tự quyết thay chủ tiệm.
 

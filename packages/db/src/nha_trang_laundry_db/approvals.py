@@ -37,6 +37,32 @@ class ApprovalAuthorizationError(PermissionError):
     """Raised when a principal cannot decide or execute an approval."""
 
 
+#: `API-INTEGRITY-003`. The machine reason an approval is refused with when the resource it binds,
+#: re-resolved by the server at the moment of the decision, is no longer the content the envelope
+#: was raised for. It leads the exception's text, as `INVALID_STATE_TRANSITION:` does elsewhere, so
+#: the console can match it without parsing the prose that follows.
+RESOURCE_CHANGED_SINCE_REQUEST = "RESOURCE_CHANGED_SINCE_REQUEST"
+
+
+class ApprovalResourceChangedError(ApprovalStateError):
+    """The bound resource moved on between the envelope being raised and a person approving it.
+
+    A subclass of `ApprovalStateError` so every caller that already refuses a stale envelope -- the
+    routes' `except` tuples, `_raise_operations_error`'s 409 -- refuses this one the same way,
+    without learning a new type. What it adds is a distinct reason: "somebody re-priced the quote
+    after you were asked" is a different next step from "you were looking at an old copy of this
+    envelope", and the approver should be told which one happened.
+    """
+
+    reason_code = RESOURCE_CHANGED_SINCE_REQUEST
+
+    def __init__(self) -> None:
+        super().__init__(
+            f"{RESOURCE_CHANGED_SINCE_REQUEST}: the resource this approval binds no longer has "
+            "the content it was requested for"
+        )
+
+
 #: The `execution_capability` of `_COUNTER_ATTESTATION` in `packages/domain`: an action one named
 #: staff member records on their own, under `DEC-021` (finalising a quote) and `DEC-029` (choosing
 #: a price inside a published band). Read off the stored envelope, never off the live policy table,
@@ -152,6 +178,12 @@ class StoredApproval:
     # them. Populated by `list_pending` alongside the binding, and for the same reason: the console
     # has to know what it is being asked to approve before it can know whether it can show it.
     action: str | None = None
+    # `MESSAGE-DRAFT-BINDING-001`. The shop the envelope belongs to, read off the approval row. The
+    # queue spans every store the approver is assigned to, and the content read for a
+    # `MESSAGE_DRAFT` is store-scoped: without the envelope's own store the console could only
+    # guess it from the store selected in the top bar, and would ask the wrong shop for the words
+    # whenever the two differed. Populated by `list_pending` only, like the binding above.
+    store_id: UUID | None = None
 
 
 class ApprovalRepository:
@@ -324,6 +356,15 @@ class ApprovalRepository:
             )
             if str(row[10]) != "REQUESTED":
                 raise ApprovalStateError("approval is not pending")
+            # `API-INTEGRITY-003`. The echo check above proves the approver was shown the stored
+            # envelope; this proves the resource is still what that envelope describes. Only an
+            # approval is refused for it: a rejection authorises nothing, and an owner must be able
+            # to clear an envelope whose resource has moved on without waiting for it to expire.
+            # Skipped for an expired envelope, which keeps the answer and the recorded EXPIRED
+            # transition it has always got. A refusal raised here rolls the whole transaction back:
+            # nothing about the approval changes and nothing is written (invariant 5).
+            if decided_at < _datetime(row[8]) and command.decision is ApprovalDecision.APPROVED:
+                _require_resource_unchanged(cursor, row)
             if decided_at >= _datetime(row[8]):
                 _change_approval_state(
                     connection,
@@ -410,6 +451,10 @@ class ApprovalRepository:
             )
             if str(row[10]) != "REQUESTED":
                 raise ApprovalStateError("approval is not pending")
+            # `API-INTEGRITY-003`, as in `decide`: an attestation is always an approval, so the
+            # resource is always re-resolved before one is recorded.
+            if attested_at < _datetime(row[8]):
+                _require_resource_unchanged(cursor, row)
             if attested_at >= _datetime(row[8]):
                 _change_approval_state(
                     connection,
@@ -590,7 +635,7 @@ class ApprovalRepository:
             """
             SELECT r.id, s.status, r.envelope_hash, r.required_role, r.expires_at,
                    r.resource_type, r.resource_id, r.resource_version, r.snapshot_hash,
-                   r.rendered_hash, r.action
+                   r.rendered_hash, r.action, r.store_id
             FROM approval_requests r
             JOIN approval_request_states s ON s.approval_request_id = r.id
             JOIN staff_store_assignments a
@@ -615,6 +660,7 @@ class ApprovalRepository:
                 snapshot_hash=str(row[8]),
                 rendered_hash=str(row[9]),
                 action=str(row[10]),
+                store_id=_uuid(row[11]),
             )
             for row in cursor.fetchall()
         )
@@ -722,8 +768,10 @@ _RESOLVABLE_RESOURCES: dict[str, str] = {
 #: attempt included it and was wrong. Migration `0029` makes `quote_revisions.approval_id` a
 #: foreign key, so **the approval is written before the revision it authorises exists**. Requiring
 #: the revision to resolve at request time refuses the only order those two writes can happen in.
-#: For that type the store binding is the whole of the check, and the digest it names is verified
-#: later, at decision and execution time, by `_require_exact_binding`.
+#: For that type the store binding is the whole of the check at request time. The digest it names
+#: used to be described as "verified later by `_require_exact_binding`", which compares it only with
+#: the approver's echo of itself; since `API-INTEGRITY-003` it is verified against the quote at
+#: decision time by `_require_resource_unchanged`, when the revision it names does exist.
 
 
 def _message_draft_content(cursor: Any, resource_id: UUID) -> Any:
@@ -800,6 +848,211 @@ def _require_resolvable_resource(cursor: Any, command: ApprovalRequestCommand) -
         raise ApprovalStateError("the approval names a resource this store does not have")
     if not hmac.compare_digest(str(row[2]), command.snapshot_hash):
         raise ApprovalStateError("the approval names a content digest this resource does not have")
+
+
+# --- Decision time: is the resource still what the envelope binds? ------------------------------
+#
+# `API-INTEGRITY-003`. `decide` and `attest` compared the observed binding with the stored envelope
+# and nothing else. That proves the approver's client echoed what the server had stored, which is
+# the envelope and not the resource: raise an envelope over quote revision 3, re-price the quote to
+# revision 4, and an approver who submits the stored hashes exactly approved revision 3 of a quote
+# that no longer offers it -- and the record said so with every check green. Invariant 8 says an
+# approval binds exact content, so the content is now resolved again, by the server, on the
+# transaction that holds the approval's row lock, immediately before the decision row is written.
+
+
+@dataclass(frozen=True, slots=True)
+class CurrentResourceBinding:
+    """What a resource is right now, in the terms an envelope binds it."""
+
+    store_id: UUID
+    resource_version: int
+    snapshot_hash: str
+    #: `None` when this server holds no single rendering of the resource type to compare with, which
+    #: is stated per type below rather than implied by a comparison that always passes.
+    rendered_hash: str | None
+
+
+def _current_message_draft(cursor: Any, resource_id: UUID) -> CurrentResourceBinding | None:
+    """All four facts, computed from the append-only draft and review rows (`API-INTEGRITY-002`).
+
+    A reviewer's EDIT moves the draft to revision 2 and a REJECT leaves nothing sendable, so either
+    one after the envelope was raised refuses its approval here rather than at the send.
+    """
+    content = _message_draft_content(cursor, resource_id)
+    if content is None:
+        return None
+    return CurrentResourceBinding(
+        store_id=_uuid(content.store_id),
+        resource_version=int(content.resource_version),
+        snapshot_hash=str(content.snapshot_hash),
+        rendered_hash=str(content.rendered_hash),
+    )
+
+
+def _current_export_request(cursor: Any, resource_id: UUID) -> CurrentResourceBinding | None:
+    """Both digests re-derived exactly as the release derives them, so the owner and the release
+    are asked the same question. Imported here: `exports` imports this module."""
+    from nha_trang_laundry_db.exports import read_export_request_binding
+
+    content = read_export_request_binding(cursor, resource_id)
+    if content is None:
+        return None
+    return CurrentResourceBinding(
+        store_id=content.store_id,
+        resource_version=content.resource_version,
+        snapshot_hash=content.snapshot_hash,
+        rendered_hash=content.rendered_hash,
+    )
+
+
+def _current_quote_revision(cursor: Any, resource_id: UUID) -> CurrentResourceBinding | None:
+    """The quote's CURRENT revision and its stored snapshot digest.
+
+    The envelope's `resource_version` is a revision number, and a revision is immutable -- so the
+    revision it names can never change underneath it. What can change is whether it is still the
+    quote's price: re-pricing appends revision N+1 and moves `current_revision`, and an approval of
+    N is then an approval of a price nobody is offering any more. That is the change this detects.
+
+    `FOR SHARE` on the container because `QuoteRepository.create_revision` moves `current_revision`
+    with an UPDATE of this row: a re-price racing the decision waits for it to commit, then lands as
+    a revision after an approval rather than inside one. No path locks a quote and then an approval
+    state row, so this adds no lock cycle.
+
+    `rendered_hash` is not compared, and on purpose. Four actions share this resource type, and
+    their renderings are different documents from different sources: the agent path binds
+    `render_quote_presentation(revision, action)`, the counter's `SET_RANGE_PRICE` binds the amounts
+    the staff member chose, and `APPLY_PROMOTION` has no server rendering at all. There is no one
+    function of the resource to recompute here. The executors that consume these envelopes check
+    their own rendering against content they hold -- `apply_range_prices` re-derives the digest
+    from the amounts in hand -- which is where that comparison can mean something.
+    """
+    cursor.execute(
+        """
+        SELECT q.store_id, q.current_revision, r.snapshot_hash
+        FROM quotes q
+        JOIN quote_revisions r ON r.quote_id = q.id AND r.revision = q.current_revision
+        WHERE q.id = %s
+        FOR SHARE OF q
+        """,
+        (resource_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return CurrentResourceBinding(
+        store_id=_uuid(row[0]),
+        resource_version=int(row[1]),
+        snapshot_hash=str(row[2]),
+        rendered_hash=None,
+    )
+
+
+def _current_order(cursor: Any, resource_id: UUID) -> CurrentResourceBinding | None:
+    """The order's row version and the quote digest it was created against.
+
+    The version is compared: every transition bumps it, and cancelling an order the approver last
+    saw in another state is not the cancellation they were asked about. `FOR SHARE` for the same
+    reason as the quote. No rendering of an order is stored or derivable, so none is compared.
+    """
+    cursor.execute(
+        """
+        SELECT o.store_id, o.row_version, o.current_quote_snapshot_hash
+        FROM orders o WHERE o.id = %s
+        FOR SHARE OF o
+        """,
+        (resource_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return CurrentResourceBinding(
+        store_id=_uuid(row[0]),
+        resource_version=int(row[1]),
+        snapshot_hash=str(row[2]),
+        rendered_hash=None,
+    )
+
+
+def _current_remedy_proposal(cursor: Any, resource_id: UUID) -> CurrentResourceBinding | None:
+    """A remedy proposal, bound as `RemedyRepository._request_owner_approval` binds it.
+
+    Version 1 always -- a proposal is one immutable document and `_require_remedy_approval` refuses
+    any other -- the order's quote digest as the snapshot, and the proposal's own document digest as
+    the rendering. The proposal row is written after its envelope (its `approval_id` is a foreign
+    key), which is why request time cannot check it and decision time, by which it exists, can.
+    """
+    cursor.execute(
+        """
+        SELECT p.store_id, o.current_quote_snapshot_hash, p.proposal_hash
+        FROM remedy_proposals p
+        JOIN orders o ON o.id = p.order_id
+        WHERE p.id = %s
+        """,
+        (resource_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return CurrentResourceBinding(
+        store_id=_uuid(row[0]),
+        resource_version=1,
+        snapshot_hash=str(row[1]),
+        rendered_hash=str(row[2]),
+    )
+
+
+#: The resource types the server can resolve at decision time, and how.
+DECISION_TIME_RESOLVERS: dict[str, Callable[[Any, UUID], CurrentResourceBinding | None]] = {
+    "MESSAGE_DRAFT": _current_message_draft,
+    "EXPORT_REQUEST": _current_export_request,
+    "QUOTE_REVISION": _current_quote_revision,
+    "ORDER": _current_order,
+    "REMEDY_PROPOSAL": _current_remedy_proposal,
+}
+
+#: The resource types that name capabilities this system has not built: no table, no rendering,
+#: nothing to resolve. For these the decision keeps exactly the check it had -- the observed binding
+#: must equal the stored envelope -- and this set is where that is written down rather than being
+#: what a missing dictionary entry happens to do. Together with the resolvers above it must cover
+#: every value of `APPROVAL_RESOURCE_TYPES`, and `test_decision_time_resolution.py` holds it to
+#: that: building one of these means moving it into `DECISION_TIME_RESOLVERS`, not leaving it here.
+UNRESOLVABLE_AT_DECISION: frozenset[str] = frozenset(
+    {"SLOT_PROPOSAL", "DELIVERY_FEE_PROPOSAL", "B2B_TERMS", "POLICY_VERSION"}
+)
+
+
+def _require_resource_unchanged(cursor: Any, row: tuple[object, ...]) -> None:
+    """Refuse an approval whose resource is no longer the content its envelope binds.
+
+    Compared with the STORED envelope (`row`), not with what the client sent: by the time this runs
+    `_require_exact_binding` has already made those equal, and the stored envelope is the authority.
+    A resource that no longer resolves at all -- a draft a reviewer rejected, a quote that was never
+    there -- is refused the same way and with the same sentence: the approver's next step is the
+    same and the caller learns nothing about which it was.
+
+    A resource type in neither table is not waved through. `build_approval_envelope` refuses such a
+    type at request time, so reaching this means a row nothing in this repository could have
+    written, and an approval over something the server cannot identify is what invariant 8 forbids.
+    """
+    resource_type = str(row[14])
+    resolver = DECISION_TIME_RESOLVERS.get(resource_type)
+    if resolver is None:
+        if resource_type in UNRESOLVABLE_AT_DECISION:
+            return
+        raise ApprovalStateError("approval resource type cannot be verified by this server")
+    current = resolver(cursor, _uuid(row[0]))
+    if (
+        current is None
+        or current.store_id != _uuid(row[13])
+        or current.resource_version != int(str(row[1]))
+        or not hmac.compare_digest(current.snapshot_hash, str(row[2]))
+        or (
+            current.rendered_hash is not None
+            and not hmac.compare_digest(current.rendered_hash, str(row[3]))
+        )
+    ):
+        raise ApprovalResourceChangedError()
 
 
 def _validate_human_decision(command: ApprovalDecisionCommand) -> None:

@@ -283,7 +283,13 @@ def test_context_drift_check_passes() -> None:
     # 146 after the founder rulings of 2026-09-25 (docs/DECISION_RECORD_FOUNDER_2026-09-25.md): +3,
     # one per ruling that needs code -- REMEDY-ITEM-FEE-001 (DEC-031), RANGE-COUNTER-ATTEST-001
     # (DEC-029), PREPAID-DROPOFF-001 (DEC-032). DEC-030 needs none.
-    assert "146 work items" in result.stdout
+    #
+    # 154 after the follow-ups round (context/tasks/TASK-followups-002.md): +8. Five close what
+    # STAGING_READINESS_2026-09 listed as not done or the console's gap register admitted --
+    # API-INTEGRITY-003, MESSAGE-DRAFT-BINDING-001, PICKUP-ONLY-SETTLE-001, REMEDY-GARMENT-001,
+    # READ-PATHS-001 -- and three are what the filmed real-API walk found or needed:
+    # REMEDY-INCIDENT-OUTCOME-001, REMEDY-OWNER-DECIDE-001 and CONSOLE-FILMED-WALK-001.
+    assert "154 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

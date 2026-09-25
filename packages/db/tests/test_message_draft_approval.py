@@ -411,3 +411,90 @@ def test_an_edit_between_prepare_and_attest_blocks_the_attestation(
             postgres_connection,
             replace(attestation, recorded_at=datetime.now(UTC) + timedelta(seconds=1)),
         )
+
+
+# --- MESSAGE-DRAFT-BINDING-001: an approval decides the draft as it stands -------------------
+
+
+def _decide(
+    shop: _Shop, approval_id: UUID, binding: MessageDraftBinding, decision: ApprovalDecision
+) -> ApprovalDecisionCommand:
+    return ApprovalDecisionCommand(
+        approval_id,
+        decision,
+        binding.resource_version,
+        binding.snapshot_hash,
+        binding.rendered_hash,
+        "HUMAN_REVIEW_COMPLETE",
+        shop.approver,
+        uuid4(),
+    )
+
+
+def _decision_rows(connection: psycopg.Connection[Any], approval_id: UUID) -> int:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM approval_decisions WHERE approval_request_id = %s",
+            (approval_id,),
+        )
+        row = cursor.fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+@pytest.mark.parametrize("review", ["EDIT", "REJECT"])
+def test_a_draft_changed_after_its_envelope_was_raised_cannot_be_approved_but_can_be_refused(
+    postgres_connection: psycopg.Connection[Any], review: str
+) -> None:
+    """The envelope still names revision 1; approving it would record words the draft lost.
+
+    Before this item `decide` compared the decision with the stored envelope only, so the approval
+    went through and the ledger said a person approved text a reviewer had since replaced or
+    rejected. The refusal is the approval's own stale-binding sentence; refusing stays open, because
+    refusing a stale envelope is how an approver clears it from the queue.
+    """
+    shop = _Shop(postgres_connection)
+    original = current_binding(postgres_connection, shop.draft.agent_run_id)
+    repository = ApprovalRepository()
+    created = repository.request(
+        postgres_connection,
+        _request(shop.requester, shop.store_id, shop.draft.agent_run_id, original),
+    )
+    if review == "EDIT":
+        shop.review(postgres_connection, "EDIT", edited_text="Dạ, tiệm mở cửa đến 21 giờ ạ.")
+    else:
+        shop.review(postgres_connection, "REJECT", reason_code="TONE_NOT_APPROPRIATE")
+
+    with pytest.raises(ApprovalStateError, match=r"^RESOURCE_CHANGED_SINCE_REQUEST:"):
+        repository.decide(
+            postgres_connection,
+            _decide(shop, created.approval_request_id, original, ApprovalDecision.APPROVED),
+        )
+    assert _decision_rows(postgres_connection, created.approval_request_id) == 0
+
+    refused = repository.decide(
+        postgres_connection,
+        _decide(shop, created.approval_request_id, original, ApprovalDecision.REJECTED),
+    )
+    assert refused.status == "REJECTED"
+    assert _decision_rows(postgres_connection, created.approval_request_id) == 1
+
+
+def test_an_unchanged_draft_is_still_approved_at_decision_time(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    """Positive control for the check above, including a reviewer APPROVE that keeps revision 1."""
+    shop = _Shop(postgres_connection)
+    binding = current_binding(postgres_connection, shop.draft.agent_run_id)
+    repository = ApprovalRepository()
+    created = repository.request(
+        postgres_connection,
+        _request(shop.requester, shop.store_id, shop.draft.agent_run_id, binding),
+    )
+    shop.review(postgres_connection, "APPROVE")
+
+    approved = repository.decide(
+        postgres_connection,
+        _decide(shop, created.approval_request_id, binding, ApprovalDecision.APPROVED),
+    )
+    assert approved.status == "APPROVED"

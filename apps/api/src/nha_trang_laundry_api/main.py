@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.staticfiles import StaticFiles
 from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
@@ -23,6 +24,7 @@ from nha_trang_laundry_db.approvals import (
 )
 from nha_trang_laundry_db.assistant import AssistantAuthorizationError
 from nha_trang_laundry_db.channel import ChannelBindingError
+from nha_trang_laundry_db.connection import DatabaseUnavailableError
 from nha_trang_laundry_db.counter_tickets import CounterTicketError
 from nha_trang_laundry_db.delivery_legs import (
     DeliveryLegError,
@@ -42,6 +44,7 @@ from nha_trang_laundry_db.manual_sends import (
     ManualSendAuthorizationError,
     ManualSendStateError,
 )
+from nha_trang_laundry_db.message_drafts import SEND_MESSAGE_POLICY_VERSION
 from nha_trang_laundry_db.orders import (
     OrderAuthorizationError,
     OrderNotVisibleError,
@@ -52,6 +55,7 @@ from nha_trang_laundry_db.orders import (
 from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
 from nha_trang_laundry_db.range_prices import RangePriceProposalIntegrityError
 from nha_trang_laundry_db.remedies import RemedyAuthorizationError, RemedyStateError
+from nha_trang_laundry_db.remedy_reads import RemedyReadNotFoundError
 from nha_trang_laundry_db.settlement import (
     BUSINESS_TIMEZONE,
     COLLECTED_TODAY_QUERY,
@@ -373,6 +377,12 @@ class RemedyProposalRequest(StrictRequest):
     store_fault_attested: StrictBool
     order_line_id: str | None = Field(default=None, min_length=1, max_length=64)
     amount_vnd: StrictInt | None = Field(default=None, ge=0, le=MAX_CANONICAL_INT)
+    #: `REMEDY-GARMENT-001`: which garment on the line, by its 1-based position within the line's
+    #: quantity -- shirt #2 of three is `2`. Required on a line of several garments priced per
+    #: piece, because each has its own staff limit and ceiling; optional on a line of one; refused
+    #: on a bag or a line whose per-piece fee was never recorded. The upper bound is the line's
+    #: quantity, which only the server knows, so it is checked there and refused with the count.
+    garment_index: StrictInt | None = Field(default=None, ge=1, le=MAX_CANONICAL_INT)
     #: How late the delivery was, attested by the staff member who handled it. The shop records no
     #: promised arrival time, so this cannot be derived; that a return leg happened at all is
     #: checked against the record, and this is refused unless it clears the published threshold.
@@ -415,6 +425,9 @@ class RemedyProposalResponse(BaseModel):
     replayed: bool
     #: `LOSS_CLAIM`, `ORDER_REFUNDED`, `ITEM_FEE_NOT_RECORDED`, `ABOVE_STAFF_LIMIT`, in that order.
     owner_reasons: list[str] = Field(default_factory=list)
+    #: The garment the claim was recorded against (`REMEDY-GARMENT-001`): the one named, or 1 on a
+    #: line of one garment. Null where the line has no garment identity and for every other kind.
+    garment_index: int | None = None
 
 
 class RemedyExecutionResponse(BaseModel):
@@ -451,6 +464,17 @@ class RemedyLineOptionResponse(BaseModel):
     committed_vnd: int
     #: Reasons every damage amount on this item needs the owner. A loss always does besides.
     owner_always: list[str]
+    #: `REMEDY-GARMENT-001`: garments on the line with a fee of their own, or null when none has
+    #: (a bag, or a fee never recorded) and the line is one claimable whole. When set, a claim
+    #: names one of them as `garment_index`, 1..`garments`.
+    garments: int | None = None
+    #: Per garment, in order 1..`garments`: what already counts against its 100.000 ₫ staff limit
+    #: and its ceiling -- proposals naming it plus every line-level one. Empty when `garments` is
+    #: null.
+    garment_committed_vnd: list[int] = Field(default_factory=list)
+    #: What proposals recorded before a garment could be named hold on this line. Already counted
+    #: in every `garment_committed_vnd` entry, since nothing says which garment they were about.
+    line_level_committed_vnd: int = 0
 
 
 class RemedyOptionsResponse(BaseModel):
@@ -542,10 +566,16 @@ class OrderViewResponse(OrderResponse):
     payable_total_vnd: int | None
     ticket_number: int | None
     ticket_issued_on: date | None
-    #: `DEC-032`: whether the customer is recorded as having taken the goods. A walk-in who paid at
-    #: drop-off reads `balance` PAID with this false until the pickup is recorded, and the counter
-    #: needs the difference to know which of the two actions to offer.
+    #: `DEC-032`: whether the customer is recorded as having taken the goods. A customer who paid in
+    #: advance at the counter -- a walk-in at drop-off, or a `PICKUP_ONLY` customer before the
+    #: laundry was finished -- reads `balance` PAID with this false until the pickup is recorded,
+    #: and the counter needs the difference to know which of the two actions to offer.
     self_collection_recorded: bool
+    #: `READ-PATHS-001`: where the customer said they found the shop, as recorded when the order
+    #: was created. Read-only and immutable (`0036`'s trigger), so the counter can see a mis-tap but
+    #: not correct it. On the staff read model only -- the command reply above does not carry it,
+    #: and the agent tool contract never names it.
+    acquisition_source: AcquisitionSource
 
 
 class ApprovalResponse(BaseModel):
@@ -573,6 +603,40 @@ class ApprovalResponse(BaseModel):
     # show an approver what they are approving: `SET_RANGE_PRICE` and `PRESENT_QUOTE` are both
     # `QUOTE_REVISION`, and only one of them is about a number the quote screen does not render.
     action: str | None = None
+    # The shop the envelope belongs to, from the approval row. Null on the same two paths. The
+    # queue spans every store the approver is assigned to, and a `MESSAGE_DRAFT`'s words are read
+    # through a store-scoped route, so the console needs the envelope's own store rather than the
+    # one selected in its top bar (`MESSAGE-DRAFT-BINDING-001`).
+    store_id: UUID | None = None
+
+
+class MessageDraftBindingResponse(BaseModel):
+    """What a `SEND_MESSAGE` envelope over one draft binds, as the server computes it.
+
+    `MESSAGE-DRAFT-BINDING-001`. Every value is the server's: the words are the draft's current
+    sendable text as stored (the agent's, or a reviewer's EDIT), and `resource_version`,
+    `snapshot_hash` and `rendered_hash` are the digests `ApprovalRepository.request`, `decide` and
+    the manual send compare against -- the same function computes all of them. `action`,
+    `resource_type` and `policy_version` complete an `ApprovalRequest`, so the console raises the
+    envelope from this body without typing any of it.
+
+    The recipient is the opaque contact binding, the identifier `ManualSendResponse` already
+    returns as `recipient_binding_id`. No phone number or chat id exists on a draft to disclose:
+    the channel identity lives behind the binding, and this route adds no path to it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    action: Literal["SEND_MESSAGE"]
+    resource_type: Literal["MESSAGE_DRAFT"]
+    resource_id: UUID
+    resource_version: int
+    text: str
+    recipient_binding_id: UUID
+    snapshot_hash: str
+    rendered_hash: str
+    policy_version: str
 
 
 class ManualSendResponse(BaseModel):
@@ -1160,6 +1224,70 @@ def _store_access_denied(_request: Request, error: StoreAccessError) -> JSONResp
     )
 
 
+#: `API-INTEGRITY-003`. A statement cancelled by `statement_timeout`, or a lock not granted within
+#: `lock_timeout` -- the bounds `OPS-HARDENING-002` put on every application connection. The
+#: transaction it was in has rolled back whole: the repositories write a mutation with its event,
+#: audit and outbox rows in one transaction, and the idempotency claim in that same transaction,
+#: so the same request with the same `Idempotency-Key` runs afresh rather than replaying half of
+#: itself.
+DATABASE_BUSY = "DATABASE_BUSY"
+#: No connection could be opened (`DatabaseUnavailableError`): nothing reached the database at all.
+DATABASE_UNAVAILABLE = "DATABASE_UNAVAILABLE"
+#: A lock wait is bounded at five seconds by default and the writer holding it is a single
+#: counter request, so two seconds is long enough for it to finish and short enough that a
+#: person at the counter does not give up.
+DATABASE_BUSY_RETRY_AFTER_SECONDS = 2
+#: A connection that could not be opened is a restart or an exhausted pool, not one slow
+#: request; asking sooner than this only adds to the queue at the door.
+DATABASE_UNAVAILABLE_RETRY_AFTER_SECONDS = 10
+
+
+def _database_refusal(reason_code: str, retry_after_seconds: int) -> JSONResponse:
+    """503, `Retry-After`, and a reason code a console can act on -- never the server's message.
+
+    Before this a timed-out statement escaped as a bare 500, which the console renders as "Máy chủ
+    gặp lỗi. Đừng thử lại" -- the right advice for a fault whose outcome is unknown, and the wrong
+    advice here, where the outcome is known: nothing was written. The body carries no driver text,
+    because a psycopg message names tables, constraints and sometimes the host.
+    """
+
+    _LOGGER.record(
+        component="api",
+        name="database.request_refused",
+        outcome="failed",
+        correlation=current_correlation() or CorrelationContext.new(),
+        fields={"reason_code": reason_code},
+    )
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": {"reason_code": reason_code}},
+        headers={"Retry-After": str(retry_after_seconds)},
+    )
+
+
+@app.exception_handler(psycopg.errors.QueryCanceled)
+@app.exception_handler(psycopg.errors.LockNotAvailable)
+def _database_busy(_request: Request, error: Exception) -> JSONResponse:
+    """Exactly these two SQLSTATEs (57014, 55P03), and deliberately not their parent classes.
+
+    `OperationalError` also covers a connection lost mid-transaction, where a `COMMIT` may or may
+    not have landed; that stays a 500, because "try again" would be a guess. `IntegrityError` and
+    `ProgrammingError` are a refused write and a defect -- neither is a busy database, and a 503
+    would invite a client to retry into the same failure.
+    """
+
+    del _request, error
+    return _database_refusal(DATABASE_BUSY, DATABASE_BUSY_RETRY_AFTER_SECONDS)
+
+
+@app.exception_handler(DatabaseUnavailableError)
+def _database_unavailable(_request: Request, error: Exception) -> JSONResponse:
+    """The connection was never opened, so no statement ran: retrying is safe by construction."""
+
+    del _request, error
+    return _database_refusal(DATABASE_UNAVAILABLE, DATABASE_UNAVAILABLE_RETRY_AFTER_SECONDS)
+
+
 def require_owner(
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
 ) -> StaffPrincipal:
@@ -1320,6 +1448,73 @@ def disable_staff(
         service.disable_staff(staff_user_id, principal.staff_user_id)
     except IdentityStateError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="staff user unavailable") from error
+
+
+# --- READ-PATHS-001: the staff directory ---------------------------------------------------------
+#
+# The four staff commands above write and nothing read them back, so every form on the staff screen
+# took a pasted UUID and the create reply was the only place one was ever shown. This is the read,
+# for the one role that may act on it. `require_owner` is the same gate the write routes use; the
+# repository re-checks the role against the database, requires MFA, and requires membership of the
+# store named -- so a wrong role, another store and an unknown store are one opaque 403.
+
+
+class StaffDirectoryEntryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    staff_user_id: UUID
+    display_name: str
+    #: `ACTIVE` or `DISABLED`.
+    status: str
+    #: Active roles, in `StaffRole` order. Roles are the person's everywhere, not this store's.
+    roles: list[str]
+    assigned_at: datetime
+    #: Null for a live assignment; set for one revoked inside `recent_revocation_days`.
+    assignment_revoked_at: datetime | None
+
+
+class StaffDirectoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    recent_revocation_days: int
+    truncated: bool
+    staff: list[StaffDirectoryEntryResponse]
+
+
+@app.get("/internal/v1/stores/{store_id}/staff", response_model=StaffDirectoryResponse)
+def list_store_staff(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_owner)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> StaffDirectoryResponse:
+    """Everyone assigned to this store, with their roles and status. Owner only.
+
+    No email and no OIDC subject: the create command hands the owner neither back, and this read
+    does not widen what the console discloses about a person.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        directory = service.list_store_staff(store_id=store_id, principal=principal)
+    except StoreAccessError as error:
+        _raise_operations_error(error)
+    return StaffDirectoryResponse(
+        store_id=directory.store_id,
+        recent_revocation_days=directory.recent_revocation_days,
+        truncated=directory.truncated,
+        staff=[
+            StaffDirectoryEntryResponse(
+                staff_user_id=entry.staff_user_id,
+                display_name=entry.display_name,
+                status=entry.status,
+                roles=list(entry.roles),
+                assigned_at=entry.assigned_at,
+                assignment_revoked_at=entry.assignment_revoked_at,
+            )
+            for entry in directory.entries
+        ],
+    )
 
 
 @app.post("/internal/v1/sessions/{session_id}/revoke", status_code=status.HTTP_204_NO_CONTENT)
@@ -1575,8 +1770,10 @@ def record_settlement(
     immutable quote revision the order is bound to. Nothing here computes or adjusts money.
 
     Every supported shape is the exact total in one payment: paid and collected at pickup, paid
-    before a delivery (`DEC-023`), or paid by a walk-in at drop-off with the pickup recorded later
-    on `/collection` (`DEC-032`). Ticking "collected" for laundry that is not finished is refused.
+    before a delivery (`DEC-023`), or paid in advance by a customer who will collect at the counter
+    -- a walk-in at drop-off, or a `PICKUP_ONLY` customer who comes by before the laundry is
+    finished -- with the pickup recorded later on `/collection` (`DEC-032` and its addendum). No
+    courier takes money. Ticking "collected" for laundry that is not finished is refused.
     Anything else — a part payment, a deposit, an overpayment, credit terms — is refused with the
     reason and the decision that owns it, because `DEC-010` holds them.
     """
@@ -1636,12 +1833,15 @@ def record_collection(
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> CollectionResponse:
-    """Record that a walk-in customer who paid at drop-off has taken their laundry. `DEC-032`.
+    """Record that a customer who paid in advance at the counter has taken their laundry.
+
+    `DEC-032`: a walk-in who paid at drop-off, and, by its addendum, a `PICKUP_ONLY` customer who
+    paid at the counter before the laundry was finished.
 
     No body. The staff member handing the goods over is the session's, the store is the order
     row's, and `If-Match` is the order version the counter read before handing the bag over. The
-    order must be paid at drop-off, running, and its laundry finished; each refusal comes back with
-    its reason code and writes nothing. No money moves here -- it moved at drop-off.
+    order must be paid in advance, running, and its laundry finished; each refusal comes back with
+    its reason code and writes nothing. No money moves here -- it moved at the counter earlier.
     """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
@@ -1897,6 +2097,51 @@ def read_range_price_proposal(
             )
             for line in record.lines
         ],
+    )
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding",
+    response_model=MessageDraftBindingResponse,
+)
+def read_message_draft_binding(
+    store_id: UUID,
+    agent_run_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> MessageDraftBindingResponse:
+    """The exact words a `SEND_MESSAGE` envelope over this draft binds, and its digests.
+
+    `MESSAGE-DRAFT-BINDING-001`. `API-INTEGRITY-002` made the server compute a draft's binding and
+    nothing exposed it: an envelope could not be raised from the console, and an approver deciding
+    one could not read the message. A pure read -- it decides, reserves and sends nothing.
+
+    Role, MFA and membership of the named store are checked in the repository and refused with one
+    opaque 403, so an unknown store is indistinguishable from somebody else's. A draft that does not
+    exist, belongs to another store, or was REJECTed by a reviewer is one 404: none of them has
+    sendable content, and a caller learns nothing about other shops from the difference.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        binding = service.read_message_draft_binding(
+            store_id=store_id, agent_run_id=agent_run_id, principal=principal
+        )
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+    if binding is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no sendable message draft")
+    return MessageDraftBindingResponse(
+        store_id=binding.store_id,
+        action="SEND_MESSAGE",
+        resource_type="MESSAGE_DRAFT",
+        resource_id=binding.agent_run_id,
+        resource_version=binding.resource_version,
+        text=binding.text,
+        recipient_binding_id=binding.contact_binding_id,
+        snapshot_hash=binding.snapshot_hash,
+        rendered_hash=binding.rendered_hash,
+        policy_version=SEND_MESSAGE_POLICY_VERSION,
     )
 
 
@@ -2788,6 +3033,9 @@ def remedy_options(
                     line_ceiling_vnd=line.line_ceiling_vnd,
                     committed_vnd=line.committed_vnd,
                     owner_always=list(line.owner_always),
+                    garments=line.garments,
+                    garment_committed_vnd=list(line.garment_committed_vnd),
+                    line_level_committed_vnd=line.line_level_committed_vnd,
                 )
                 for line in options.damage_lines
             ]
@@ -2829,6 +3077,7 @@ def propose_remedy(
             order_line_id=request.order_line_id,
             amount_vnd=request.amount_vnd,
             attested_late_by_minutes=request.attested_late_by_minutes,
+            garment_index=request.garment_index,
             idempotency_key=idempotency_key,
             principal=principal,
         )
@@ -2925,6 +3174,295 @@ def redeem_remedy_credit(
     return RemedyCreditRedemptionResponse.model_validate(result, from_attributes=True)
 
 
+# --- READ-PATHS-001: reading remedies back -------------------------------------------------------
+#
+# Two reads over what the four routes above write. Same gate as proposing and spending --
+# `require_operations_staff`, which is `REMEDY_ROLES` with MFA -- re-checked in the repository with
+# membership of the named store, and every row selected with that store in its predicate. So an
+# order or incident of another store answers exactly as one that does not exist: 404, after the
+# caller has already been proved a member of the store they named.
+
+
+class OrderRemedyCreditResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The code the counter types into "Dùng một khoản giảm trừ" -- the credit's own identifier.
+    credit_id: UUID
+    remedy_proposal_id: UUID
+    incident_id: UUID
+    kind: str
+    amount_vnd: int
+    #: `UNUSED` until an order spends it, then `REDEEMED`. There is no expired state: the schema
+    #: records no expiry for a credit, and this read does not invent one.
+    status: Literal["UNUSED", "REDEEMED"]
+    issued_at: datetime
+    redeemed_at: datetime | None
+    redeemed_quote_id: UUID | None
+    redeemed_quote_revision: int | None
+
+
+class OrderRemedyCreditsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    order_id: UUID
+    truncated: bool
+    credits: list[OrderRemedyCreditResponse]
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/orders/{order_id}/remedy-credits",
+    response_model=OrderRemedyCreditsResponse,
+)
+def list_order_remedy_credits(
+    store_id: UUID,
+    order_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> OrderRemedyCreditsResponse:
+    """The remedy credits issued against one order, spent or not.
+
+    The customer keeps the order's paper ticket, and the counter finds the order by its number; this
+    is how the counter then finds a credit whose code was lost (`DEC-030` lets one wait unspent).
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.list_order_remedy_credits(
+            store_id=store_id, order_id=order_id, principal=principal
+        )
+    except RemedyReadNotFoundError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order unavailable") from error
+    except StoreAccessError as error:
+        _raise_operations_error(error)
+    return OrderRemedyCreditsResponse(
+        store_id=store_id,
+        order_id=result.order_id,
+        truncated=result.truncated,
+        credits=[
+            OrderRemedyCreditResponse(
+                credit_id=credit.credit_id,
+                remedy_proposal_id=credit.remedy_proposal_id,
+                incident_id=credit.incident_id,
+                kind=credit.kind,
+                amount_vnd=credit.amount_vnd,
+                status="UNUSED" if credit.status == "UNUSED" else "REDEEMED",
+                issued_at=credit.issued_at,
+                redeemed_at=credit.redeemed_at,
+                redeemed_quote_id=credit.redeemed_quote_id,
+                redeemed_quote_revision=credit.redeemed_quote_revision,
+            )
+            for credit in result.credits
+        ],
+    )
+
+
+class IncidentRemedyProposalItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_id: UUID
+    kind: str
+    #: `STAFF_AUTHORIZED`, `OWNER_APPROVAL_REQUIRED`, `EXECUTED`, or `POLICY_UNRESOLVED` -- the
+    #: last only for a loss recorded before `DEC-031`, which carries no amount.
+    status: str
+    amount_vnd: int | None
+    ceiling_vnd: int | None
+    order_line_id: str | None
+    attested_late_by_minutes: int | None
+    window_closes_at: datetime | None
+    approval_id: UUID | None
+    #: The owner envelope's stored state, null when the proposal has none.
+    approval_status: str | None
+    approval_expires_at: datetime | None
+    #: True for an envelope still `REQUESTED` past its expiry on the server's clock.
+    approval_lapsed: bool | None
+    proposed_by: UUID
+    proposed_by_name: str
+    proposed_at: datetime
+    executed_at: datetime | None
+    credit_id: UUID | None
+    #: What the counter can do next, decided by the server at read time (`REMEDY-OWNER-DECIDE-001`):
+    #: `EXECUTE` (staff-authorised, or owner-approved with the envelope still open -- the execute
+    #: route may be called and still re-checks everything), `AWAIT_OWNER`, `PROPOSE_AGAIN` (the
+    #: envelope was refused or ran out, decided or not, and can never pay), or `NONE`.
+    next_step: Literal["EXECUTE", "AWAIT_OWNER", "PROPOSE_AGAIN", "NONE"]
+
+
+class IncidentRemedyProposalsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    incident_id: UUID
+    order_id: UUID | None
+    truncated: bool
+    proposals: list[IncidentRemedyProposalItemResponse]
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-proposals",
+    response_model=IncidentRemedyProposalsResponse,
+)
+def list_incident_remedy_proposals(
+    store_id: UUID,
+    incident_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> IncidentRemedyProposalsResponse:
+    """Every proposal recorded on one incident, oldest first, whoever made it and whenever."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.list_incident_remedy_proposals(
+            store_id=store_id, incident_id=incident_id, principal=principal
+        )
+    except RemedyReadNotFoundError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="incident unavailable") from error
+    except StoreAccessError as error:
+        _raise_operations_error(error)
+    return IncidentRemedyProposalsResponse(
+        store_id=store_id,
+        incident_id=result.incident_id,
+        order_id=result.order_id,
+        truncated=result.truncated,
+        proposals=[
+            IncidentRemedyProposalItemResponse.model_validate(item, from_attributes=True)
+            for item in result.proposals
+        ],
+    )
+
+
+# --- REMEDY-OWNER-DECIDE-001: the owner's read of one remedy envelope ----------------------------
+#
+# Since `DEC-031` every loss, every compensation on a refunded order and anything above the staff
+# limit waits on an `APPROVE_REMEDY` envelope only the owner may decide, and the approvals card had
+# nothing to show them -- so the envelope reached the queue and nobody could decide it from the
+# console. This read is that card's content. The route gate is the approvals gate every decision
+# route uses; the repository narrows it to the roles that may decide THIS action (the owner, with
+# MFA), then requires membership of the named store, then selects the proposal with that store in
+# its predicate. A proposal of another store, one that does not exist, and one that never needed
+# the owner are one 404.
+
+
+class RemedyApprovalBindingResponse(BaseModel):
+    """What the owner reads before deciding one `APPROVE_REMEDY` envelope, and what it binds.
+
+    `resource_version`, `snapshot_hash` and `rendered_hash` are resolved by the same function the
+    decision re-checks them with (`approvals.DECISION_TIME_RESOLVERS["REMEDY_PROPOSAL"]`), not
+    copied from the envelope. `envelope_matches` is false when they no longer equal the envelope's:
+    approving is then refused by the server, and the console withholds the content and offers only
+    a refusal. No figure here is computed -- each is stored, and the console formats it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    action: Literal["APPROVE_REMEDY"]
+    resource_type: Literal["REMEDY_PROPOSAL"]
+    #: The proposal's own id, which is the envelope's `resource_id`.
+    resource_id: UUID
+    resource_version: int
+    snapshot_hash: str
+    rendered_hash: str
+    envelope_matches: bool
+    approval_id: UUID
+    approval_status: str
+    approval_expires_at: datetime
+    #: True for an envelope still `REQUESTED` past its expiry on the server's clock.
+    approval_lapsed: bool
+    next_step: Literal["EXECUTE", "AWAIT_OWNER", "PROPOSE_AGAIN", "NONE"]
+    incident_id: UUID
+    order_id: UUID
+    #: The paper ticket the customer holds, null for an order bound to a channel.
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    kind: str
+    #: `OWNER_APPROVAL_REQUIRED` while waiting or approved-not-yet-paid; `EXECUTED` once paid.
+    status: str
+    amount_vnd: int | None
+    ceiling_vnd: int | None
+    #: The staff limit in the policy version the proposal was checked against.
+    staff_approval_ceiling_vnd: int | None
+    #: Why the owner is needed (`OwnerReason`), exactly as recorded with the proposal; null when no
+    #: recorded event carries them, which the console says rather than guessing.
+    owner_reasons: list[str] | None
+    order_line_id: str | None
+    service_code: str | None
+    service_name: str | None
+    #: Which garment on the line, 1-based; null for a line-level claim.
+    garment_index: int | None
+    #: The complaint as staff typed it. Untrusted text; null once disposed of under retention.
+    incident_summary: str | None
+    proposed_by: UUID
+    proposed_by_name: str
+    proposed_at: datetime
+    executed_at: datetime | None
+    credit_id: UUID | None
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/remedy-proposals/{proposal_id}/approval-binding",
+    response_model=RemedyApprovalBindingResponse,
+)
+def read_remedy_approval_binding(
+    store_id: UUID,
+    proposal_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> RemedyApprovalBindingResponse:
+    """One remedy proposal's owner envelope, with what the owner must read to decide it.
+
+    A pure read: it decides, reserves and pays nothing. The store in the path is the envelope's own
+    -- the approvals queue carries it on every row -- and the caller must be a member of it.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        binding = service.read_remedy_approval_binding(
+            store_id=store_id, proposal_id=proposal_id, principal=principal
+        )
+    except RemedyReadNotFoundError as error:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="remedy approval unavailable"
+        ) from error
+    except StoreAccessError as error:
+        _raise_operations_error(error)
+    return RemedyApprovalBindingResponse(
+        store_id=binding.store_id,
+        action="APPROVE_REMEDY",
+        resource_type="REMEDY_PROPOSAL",
+        resource_id=binding.proposal_id,
+        resource_version=binding.resource_version,
+        snapshot_hash=binding.snapshot_hash,
+        rendered_hash=binding.rendered_hash,
+        envelope_matches=binding.envelope_matches,
+        approval_id=binding.approval_id,
+        approval_status=binding.approval_status,
+        approval_expires_at=binding.approval_expires_at,
+        approval_lapsed=binding.approval_lapsed,
+        next_step=binding.next_step,
+        incident_id=binding.incident_id,
+        order_id=binding.order_id,
+        ticket_number=binding.ticket_number,
+        ticket_issued_on=binding.ticket_issued_on,
+        kind=binding.kind,
+        status=binding.status,
+        amount_vnd=binding.amount_vnd,
+        ceiling_vnd=binding.ceiling_vnd,
+        staff_approval_ceiling_vnd=binding.staff_approval_ceiling_vnd,
+        owner_reasons=None if binding.owner_reasons is None else list(binding.owner_reasons),
+        order_line_id=binding.order_line_id,
+        service_code=binding.service_code,
+        service_name=binding.service_name,
+        garment_index=binding.garment_index,
+        incident_summary=binding.incident_summary,
+        proposed_by=binding.proposed_by,
+        proposed_by_name=binding.proposed_by_name,
+        proposed_at=binding.proposed_at,
+        executed_at=binding.executed_at,
+        credit_id=binding.credit_id,
+    )
+
+
 @app.get("/internal/v1/queue-recovery", response_model=QueueRecoveryResponse)
 def queue_recovery(
     principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
@@ -3005,6 +3543,9 @@ def _raise_remedy_error(error: Exception) -> NoReturn:
             # What earlier proposals already committed against the same item. The ceiling alone
             # would tell staff "at most 500.000 d" about a garment that already has 300.000 d on it.
             detail["committed_vnd"] = error.committed_vnd
+        if error.garments is not None:
+            # How many garments the line holds, for a claim that named none or one it lacks.
+            detail["garments"] = error.garments
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail) from error
     _raise_operations_error(error)
 
@@ -3045,6 +3586,7 @@ def _order_view_response(view: OrderView) -> OrderViewResponse:
         ticket_number=view.ticket_number,
         ticket_issued_on=view.ticket_issued_on,
         self_collection_recorded=view.self_collection_recorded,
+        acquisition_source=view.acquisition_source,
     )
 
 
@@ -3062,6 +3604,7 @@ def _approval_response(stored: StoredApproval) -> ApprovalResponse:
         snapshot_hash=stored.snapshot_hash,
         rendered_hash=stored.rendered_hash,
         action=stored.action,
+        store_id=stored.store_id,
     )
 
 

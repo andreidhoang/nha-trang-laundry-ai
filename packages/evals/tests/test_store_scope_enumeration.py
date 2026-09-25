@@ -186,6 +186,45 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "indistinguishable from one that does not exist. The credit is a bearer instrument across "
         "customers by design (DEC-015) but never across shops.",
     ),
+    # --- READ-PATHS-001 -----------------------------------------------------------------------
+    ("GET", "/internal/v1/stores/{store_id}/staff"): RouteScope(
+        "STORE_SCOPED",
+        ("staff_directory", "StaffDirectoryRepository.list_for_store"),
+        "the owner's staff directory. Owner-gated at the route (`require_owner`, the gate every "
+        "staff write uses); the repository re-reads the owner role from the database, requires "
+        "MFA, and then requires membership of the named store -- an owner is not implicitly a "
+        "member of every store, so a directory of a shop the owner does not work in is refused "
+        "with the same opaque 403 as an unknown store or a wrong role. Lists only rows of "
+        "staff_store_assignments carrying that store_id.",
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/orders/{order_id}/remedy-credits"): RouteScope(
+        "STORE_SCOPED",
+        ("remedy_reads", "RemedyReadRepository.list_order_credits"),
+        "membership of the named store is required before anything is read, then the order is "
+        "located WHERE id = %s AND store_id = %s and the credits WHERE store_id = %s AND "
+        "issued_from_order_id = %s, so another store's order answers exactly as a missing one "
+        "(404) and no credit crosses a shop.",
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-proposals"): RouteScope(
+        "STORE_SCOPED",
+        ("remedy_reads", "RemedyReadRepository.list_incident_proposals"),
+        "membership of the named store first; the incident is located with store_id in its "
+        "predicate and the proposals selected WHERE store_id = %s AND incident_id = %s, so "
+        "another store's incident is indistinguishable from one that does not exist.",
+    ),
+    # --- REMEDY-OWNER-DECIDE-001 --------------------------------------------------------------
+    (
+        "GET",
+        "/internal/v1/stores/{store_id}/remedy-proposals/{proposal_id}/approval-binding",
+    ): RouteScope(
+        "STORE_SCOPED",
+        ("remedy_reads", "RemedyReadRepository.read_approval_binding"),
+        "the owner's read of one APPROVE_REMEDY envelope. The deciding role and MFA first, then "
+        "membership of the named store, then the proposal selected WHERE id = %s AND store_id = "
+        "%s with its envelope's own store_id required to equal it -- so another store's proposal "
+        "answers exactly as a missing one (404) after the caller was proved a member of the store "
+        "they named, and an unknown store is the same opaque 403 as a store the caller is not in.",
+    ),
     # --- OPS-BOARD-001 ------------------------------------------------------------------------
     ("GET", "/internal/v1/stores/{store_id}/sla-board"): store_scoped(
         "shadow_console", "ShadowConsoleRepository.sla_risk_board"
@@ -217,6 +256,12 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ),
     ("GET", "/internal/v1/stores/{store_id}/shadow/drafts"): store_scoped(
         "shadow_console", "ShadowConsoleRepository.list_pending_drafts"
+    ),
+    # MESSAGE-DRAFT-BINDING-001. The words a SEND_MESSAGE envelope binds, with its digests. A
+    # module-level function rather than a repository method, checked mechanically all the same:
+    # role and MFA, then membership of the named store, then a draft of another store answers None.
+    ("GET", "/internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding"): (
+        store_scoped("message_drafts", "read_message_draft_binding_for_store")
     ),
     ("GET", "/internal/v1/stores/{store_id}/shadow/reviews"): store_scoped(
         "shadow_console", "ShadowConsoleRepository.list_reviewed_drafts"

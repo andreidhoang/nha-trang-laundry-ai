@@ -76,6 +76,44 @@ the direction that keeps the owner in control of money nobody ratified.
 **Reverse:** each is a rule in `packages/domain/.../remedies.py` with its own test; none is a
 migration.
 
+### Addendum — per garment and owner window (2026-09-25)
+
+Two follow-ups, ruled under the same delegation and recorded as delegated by the lead
+(`REMEDY-GARMENT-001`).
+
+1. **Per garment.** Point 4 said "cumulative per item", and the code counted the staff limit per
+   *line*: a second damaged shirt on a three-shirt line went to the owner although nothing had been
+   paid on it. Now a claim on a line priced per piece names which garment it is, by its 1-based
+   position within the line's quantity (`garment_index`, 1..quantity), and the 100.000 ₫ staff limit
+   and the 5× unit-fee ceiling are cumulative per (line, garment). Shirt #2 of three at 50.000 ₫
+   has its own 100.000 ₫ and its own 250.000 ₫, whatever shirt #1 holds; a second claim on shirt #2
+   adds to the first. The line never carries more than 5× unit × quantity. A line priced by weight,
+   or whose per-piece fee was never recorded, has no garment identity and keeps the per-line rule; a
+   garment named on it is refused. Claims recorded before garments could be named (migration
+   `0052`) count against **every** garment on their line as well as against the line — the reading
+   that can never pay twice. Loss and compensation on a refunded order still always go to the
+   owner.
+2. **Owner window.** Since `DEC-031` every loss and every refunded-order compensation needs an owner
+   envelope, and those expired in ten minutes, so an owner who was out let the proposal die. An
+   owner-only remedy envelope (`APPROVE_REMEDY`: loss, refunded order, unrecorded fee, or above the
+   staff limit) now stays open until midnight Asia/Ho_Chi_Minh at the end of the next business day
+   — 24 to 48 hours. The customer is not waiting at the counter, and the envelope binds the exact
+   proposal digest (invariant 8), so a longer window cannot approve changed content. Every other
+   action keeps its short window. No closing-day calendar is published, so every calendar day is a
+   business day: the shorter reading.
+3. **One complaint, several garments** (`REMEDY-INCIDENT-OUTCOME-001`, found by the filmed walk).
+   A complaint reaches its outcome when **every** claim on it has one — not when the first is
+   carried out. Paying the faded suit used to close the complaint while the lost suit still waited
+   for the owner, and no further garment could be added to it. A claim still authorised and not
+   carried out, or waiting on a live owner envelope, keeps the complaint open; a refused, expired or
+   cancelled envelope does not. A complaint whose every claim is done is closed, and a new
+   complaint is opened for anything the customer raises after that.
+
+**Reverse:** (1) drop the garment from the staff-limit total in `evaluate_remedy` (the column stays;
+migrations are forward-only). (2) Map `ApprovalAction.APPROVE_REMEDY` back to `_OWNER_FINANCIAL` in
+`packages/domain/.../approvals.py`. (3) Drop the `NOT EXISTS` clause from the incident update in
+`RemedyProposalRepository.execute`.
+
 ## DEC-032 — may a counter customer pay at drop-off? **Yes, the exact total, nothing else**
 
 **Ruling.** A self-collect customer may pay the exact quoted total when they drop the laundry off,
@@ -92,6 +130,38 @@ credit — shapes about *amount* or *credit*. This is exact payment in full, the
 at a different moment. `DEC-023` made the same distinction for delivery.
 
 **Reverse:** refuse `collected_by_customer: false` on a self-collect order again.
+
+### Addendum — PICKUP_ONLY (2026-09-25)
+
+**The gap.** The ruling above spoke of a customer who *drops laundry off*. A `PICKUP_ONLY` customer
+does not: the shop's courier fetches the laundry and the customer comes to the counter for it. The
+code read the ruling literally and kept refusing that customer's advance payment
+(`COLLECTION_WAS_NOT_BY_THE_CUSTOMER`). Paying when collecting already worked end to end; paying
+at the counter before the laundry was finished did not, so the counter had to turn the money away.
+
+**Ruling.** A `PICKUP_ONLY` customer pays **at the shop counter only**, the **exact quoted total**
+(`DEC-010` unchanged), at one of two moments:
+
+- **when collecting**, in one step, exactly as a walk-in does (`EXACT_PAYMENT_SELF_COLLECTION`); or
+- **in advance**, when present at the counter before the laundry is finished. The payment is the
+  walk-in's prepayment (`EXACT_PAYMENT_PREPAID_SELF_COLLECTION`), and the handover is recorded later
+  on the `DEC-032` collection command by the named staff member who makes it. The same guards
+  apply: no handover until the laundry is `READY_AT_STORE` or `RELEASED`, no completion without the
+  collection record, part payments and deposits refused.
+
+**No payment by or to the courier, ever** (`DEC-023`). The order completes only when paid, released
+**and** collected. There is still no `RETURN` leg for this mode, and the courier's `PICKUP` leg
+closes nothing.
+
+**Why, as founder.** It is the same money at the same counter as a walk-in's prepayment; the only
+difference is who carried the bag in. Refusing it gave the customer standing at the counter with
+the money no honest option, which is the situation `DEC-032` was ruled to end. The earlier reason for
+the refusal, that a paid `PICKUP_ONLY` order had no permitted action left to close it, stopped being
+true when `DEC-032` built the collection record.
+
+**Reverse:** in `evaluate_settlement`, refuse `collected_by_customer: false` for `PICKUP_ONLY` again
+(`packages/domain/.../settlement.py`), and offer the console's "Khách đã nhận đồ" to walk-ins only.
+No migration is involved either way.
 
 ---
 

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
+from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from nha_trang_laundry_domain.canonical import CanonicalDocument, canonical_document
 from nha_trang_laundry_domain.catalog import ActorRole, ApprovalAction
@@ -20,13 +22,46 @@ class ApprovalEnvelopeError(ValueError):
     """Raised when an approval cannot safely bind its exact action."""
 
 
+#: The shop's business day, the one every other "hôm nay" in this system means: counter tickets,
+#: the drawer's daily figures, the owner's review of range prices. Vietnam keeps no daylight saving,
+#: so a local day is always exactly 24 hours long.
+BUSINESS_TIMEZONE: Final = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+class ApprovalWindow(StrEnum):
+    """How long an envelope stays decidable once raised.
+
+    `FIXED` is every action's rule until 2026-09-25: `requested_at + maximum_ttl`. The second
+    member is the founder's ruling in the addendum to `DEC-031`, for one action only.
+    """
+
+    #: `requested_at + maximum_ttl`. The counter-time actions -- a quote read to a customer who
+    #: is standing there, a slot, a price chosen inside a band -- keep a short window, because what
+    #: they bind can move under them within the hour.
+    FIXED = "FIXED"
+    #: Open until midnight in `BUSINESS_TIMEZONE` at the end of the business day *after* the one the
+    #: envelope was raised on -- between 24 and 48 hours. `maximum_ttl` is the 48-hour bound.
+    #:
+    #: The DEC-031 addendum (2026-09-25, delegated): since `DEC-031` every loss and every
+    #: compensation on a refunded order needs the owner, and on a ten-minute window an owner who was
+    #: out simply let the proposal die and staff raised it again. The customer is not waiting at the
+    #: counter for a remedy, and the envelope binds the proposal's exact digest (invariant 8), so a
+    #: longer window cannot let the owner decide content that changed. A business day is a local
+    #: calendar day: no closing-day calendar is published, so none is inferred -- counting every day
+    #: is the shorter of the two readings, and a shorter window is the fail-closed one.
+    END_OF_NEXT_BUSINESS_DAY = "END_OF_NEXT_BUSINESS_DAY"
+
+
 @dataclass(frozen=True)
 class ApprovalPolicy:
     required_role: ActorRole
+    #: For `ApprovalWindow.FIXED` the window itself; otherwise the most the window can ever be,
+    #: which `approval_expires_at` asserts.
     maximum_ttl: timedelta
     reason_codes: tuple[str, ...]
     obligations: tuple[str, ...]
     execution_capability: str
+    window: ApprovalWindow = ApprovalWindow.FIXED
 
 
 @dataclass(frozen=True)
@@ -93,6 +128,21 @@ _OWNER_FINANCIAL = ApprovalPolicy(
     "OWNER_APPROVED_ACTION",
 )
 
+# The DEC-031 addendum (2026-09-25, delegated): an owner-only remedy envelope stays open until the
+# end of the next business day. Every other field is `_OWNER_FINANCIAL`'s, unchanged -- the owner,
+# MFA, separation of duty -- so the only thing this policy relaxes is how long the owner has to
+# answer. `APPROVE_REMEDY` is raised only when a proposal has an `OwnerReason` (a loss, a refunded
+# order, an unrecorded item fee, or the staff limit crossed), so every envelope of this action is an
+# owner-only one. Reverse by mapping `APPROVE_REMEDY` back to `_OWNER_FINANCIAL`.
+_OWNER_REMEDY = ApprovalPolicy(
+    _OWNER_FINANCIAL.required_role,
+    timedelta(hours=48),
+    _OWNER_FINANCIAL.reason_codes,
+    _OWNER_FINANCIAL.obligations,
+    _OWNER_FINANCIAL.execution_capability,
+    ApprovalWindow.END_OF_NEXT_BUSINESS_DAY,
+)
+
 APPROVAL_POLICIES: Final = MappingProxyType(
     {
         ApprovalAction.PRESENT_QUOTE: _OPS_30_MIN,
@@ -108,7 +158,7 @@ APPROVAL_POLICIES: Final = MappingProxyType(
         ApprovalAction.SET_DELIVERY_FEE: _OWNER_FINANCIAL,
         ApprovalAction.APPLY_PROMOTION: _OWNER_FINANCIAL,
         ApprovalAction.CANCEL_ACTIVE_ORDER: _OWNER_FINANCIAL,
-        ApprovalAction.APPROVE_REMEDY: _OWNER_FINANCIAL,
+        ApprovalAction.APPROVE_REMEDY: _OWNER_REMEDY,
         ApprovalAction.APPROVE_B2B_TERMS: _OWNER_FINANCIAL,
         ApprovalAction.PUBLISH_POLICY: _OWNER_FINANCIAL,
         ApprovalAction.EXPORT_SANITIZED_DATA: _OWNER_FINANCIAL,
@@ -132,6 +182,30 @@ APPROVAL_RESOURCE_TYPES: Final = MappingProxyType(
         ApprovalAction.EXPORT_SANITIZED_DATA: "EXPORT_REQUEST",
     }
 )
+
+
+def approval_expires_at(policy: ApprovalPolicy, requested_at: datetime) -> datetime:
+    """When an envelope raised at `requested_at` under `policy` stops being decidable.
+
+    A pure function of the two, with no clock read: the expiry is written into the hashed envelope
+    at request time and never recomputed, so it has to be reproducible from what was recorded.
+    """
+
+    if requested_at.tzinfo is None or requested_at.utcoffset() is None:
+        raise ApprovalEnvelopeError("VALIDATION_ERROR: invalid approval binding")
+    if policy.window is ApprovalWindow.FIXED:
+        return requested_at + policy.maximum_ttl
+    local_day = requested_at.astimezone(BUSINESS_TIMEZONE).date()
+    # Midnight at the *start* of the day after next is the end of the next business day. Returned
+    # in the caller's own zone; the canonical form stores every instant in UTC regardless.
+    closes = datetime.combine(
+        local_day + timedelta(days=2), time(0), tzinfo=BUSINESS_TIMEZONE
+    ).astimezone(requested_at.tzinfo)
+    if not requested_at < closes <= requested_at + policy.maximum_ttl:
+        # Unreachable while the zone has no daylight saving. A window outside its own stated bound
+        # is refused rather than issued, because the bound is what the policy promises.
+        raise ApprovalEnvelopeError("POLICY_DENIED: approval window exceeds its maximum")
+    return closes
 
 
 def build_approval_envelope(
@@ -178,6 +252,6 @@ def build_approval_envelope(
         execution_capability=policy.execution_capability,
         requested_by=requested_by,
         requested_at=requested_at,
-        expires_at=requested_at + policy.maximum_ttl,
+        expires_at=approval_expires_at(policy, requested_at),
     )
     return ImmutableApprovalEnvelope(data, canonical_document(data))

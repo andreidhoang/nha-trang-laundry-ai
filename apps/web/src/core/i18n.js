@@ -276,9 +276,13 @@ export const REASON_NOTE = {
     "Có người vừa đổi đơn này trong lúc bạn đang xem. Tải lại đơn rồi ghi nhận theo số mới.",
   // PREPAID-DROPOFF-001 (DEC-032): the handover rule and the pickup command's refusals. States,
   // not open decisions, so each says what to do first.
+  // Shown by two presses: "Khách đã nhận đồ" on a prepaid walk-in, and the settlement checkbox.
+  // It used to answer only the second ("bấm Khách trả trước…"), which is advice about taking money
+  // given to a staff member who had already taken it and was trying to hand the laundry over.
   GOODS_NOT_READY_FOR_HANDOVER:
-    "Đồ chưa giặt xong nên chưa đưa cho khách được. Khách trả tiền lúc gửi đồ thì bấm “Khách trả " +
-    "trước khi gửi đồ”, không tích ô đã lấy đồ.",
+    "Đồ chưa giặt xong nên chưa đưa cho khách được. Làm xong đơn tới “sẵn sàng tại cửa hàng” " +
+    "rồi mới ghi nhận khách nhận đồ. Nếu khách đang trả tiền lúc gửi đồ thì bấm “Khách trả trước " +
+    "khi gửi đồ”, không tích ô đã lấy đồ.",
   COLLECTION_REQUIRES_PAYMENT:
     "Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì nhập số tiền, tích “Khách đã tự lấy đồ về” " +
     "rồi bấm “Ghi nhận tất toán”.",
@@ -305,10 +309,11 @@ export const REASON_NOTE = {
   // what earlier proposals on the same garment already committed plus this one, and the refusal
   // carries both numbers (`ceiling_vnd`, `committed_vnd`).
   REMEDY_CEILING_EXCEEDED:
-    "Vượt trần máy chủ tính. Mỗi đề nghị tối đa 5 lần phí giặt một món (giá một cái, hoặc tiền cả " +
-    "túi nếu tính theo ký); cả dòng tối đa bằng trần của mọi món trên dòng, tính cả các đề nghị " +
-    "hỏng và mất đã ghi trước, dù ai duyệt. Máy chủ từ chối kèm con số trần (và số đã ghi nếu vượt " +
-    "trần cả dòng), không tự hạ xuống. Báo chủ tiệm nếu vụ này cần khác đi.",
+    "Vượt trần máy chủ tính. Mỗi món tối đa 5 lần phí giặt của món đó (giá một cái, hoặc tiền cả " +
+    "túi nếu tính theo ký), cộng dồn mọi đề nghị hỏng và mất đã ghi cho món đó — kể cả đề nghị " +
+    "ghi cho cả dòng từ trước khi chọn được từng món — dù ai duyệt; cả dòng tối đa bằng trần của " +
+    "mọi món trên dòng. Máy chủ từ chối kèm con số trần và số đã ghi, không tự hạ xuống. Báo chủ " +
+    "tiệm nếu vụ này cần khác đi.",
   REMEDY_INCIDENT_NOT_OPEN:
     "Sự cố này đã có kết quả và đã đóng, nên không ghi thêm đề nghị bồi hoàn nào vào đó. Nếu khách " +
     "báo một vấn đề mới, mở một sự cố mới cho đơn; các mức trần vẫn tính chung theo từng món.",
@@ -348,6 +353,17 @@ export const REASON_NOTE = {
   REMEDY_ORDER_NOT_SETTLED:
     "Đơn chưa tất toán nên không có tổng nào để lấy 10%. Thu tiền xong rồi mới đề nghị giảm trừ " +
     "cho lần sau được.",
+  // REMEDY-GARMENT-001 (the DEC-031 addendum): a claim on a line priced per piece names which
+  // garment it is, because each garment has its own staff limit and its own 5x ceiling.
+  REMEDY_GARMENT_REQUIRED:
+    "Dòng này có nhiều món tính giá theo cái, mỗi món có mức nhân viên duyệt và trần riêng, nên " +
+    "phải chọn “Món thứ mấy”. Máy chủ không tự đoán là món thứ nhất. Không có gì được ghi.",
+  REMEDY_GARMENT_NOT_APPLICABLE:
+    "Dòng hoặc loại bồi hoàn này không tách theo từng món: đồ tính theo ký (cả túi), dòng không ghi " +
+    "giá từng món, hoặc giặt lại / giảm trừ giao trễ. Bỏ ô “Món thứ mấy” rồi gửi lại.",
+  REMEDY_GARMENT_OUT_OF_RANGE:
+    "Dòng này không có món thứ đó: số thứ tự món phải từ 1 tới số lượng trên dòng. Chọn lại đúng " +
+    "món; không có gì được ghi.",
   REMEDY_DELIVERY_NOT_RECORDED:
     "Đơn này không có chuyến giao nào đã giao thành công, nên không thể có chuyến giao trễ. Khách " +
     "tự lấy ở quầy thì dùng loại khác.",
@@ -374,9 +390,11 @@ export const REASON_NOTE = {
   REMEDY_APPROVAL_REQUIRED:
     "Khoản này phải có chủ tiệm duyệt trước khi thực hiện: vượt mức nhân viên duyệt được, là mất " +
     "đồ, hoặc đơn đã hoàn tiền. Mở màn hình Duyệt; chưa duyệt mà bấm thực hiện thì máy chủ từ chối.",
+  // The DEC-031 addendum: a remedy envelope stays open until the end of the next business day,
+  // not ten minutes. It still ends, and it still never extends itself.
   REMEDY_APPROVAL_EXPIRED:
-    "Phiếu duyệt của chủ tiệm đã hết hạn. Phiếu có thời hạn ngắn và không tự gia hạn. Gửi lại đề " +
-    "nghị để lập phiếu mới, đừng chờ thêm.",
+    "Phiếu duyệt của chủ tiệm đã hết hạn: phiếu bồi hoàn mở tới hết ngày làm việc kế tiếp (giờ " +
+    "Việt Nam) và không tự gia hạn. Gửi lại đề nghị để lập phiếu mới, đừng chờ thêm.",
   REMEDY_APPROVAL_NOT_BOUND:
     "Phiếu duyệt không gắn đúng với đề nghị đang thực hiện — khác cửa hàng, khác đề nghị, hoặc nội " +
     "dung đã đổi từ lúc chủ tiệm ký. Không có gì được ghi. Gửi lại đề nghị để lập phiếu mới.",
@@ -445,6 +463,13 @@ export const REASON_NOTE = {
     "Phiếu duyệt này do chính người đã tạo yêu cầu xuất bấm duyệt, nên máy chủ không cho xuất. " +
     "Người chọn dữ liệu nào rời khỏi hệ thống không được tự duyệt việc đó. Nhờ một chủ tiệm khác " +
     "duyệt; chưa có dữ liệu nào ra khỏi hệ thống.",
+  // API-INTEGRITY-003: the two 503 reasons. The title (`BUSY`) says what to do; these say what
+  // happened, which is the part a staff member repeats when they ask whether anything was lost.
+  DATABASE_BUSY:
+    "Một câu lệnh phải chờ quá lâu nên máy chủ huỷ nó, và mọi thứ nó định ghi đã được hoàn tác " +
+    "cùng lúc — không có nửa lệnh nào nằm lại.",
+  DATABASE_UNAVAILABLE:
+    "Máy chủ không mở được kết nối tới cơ sở dữ liệu, nên lệnh chưa chạy tới bước nào.",
   EXPORT_ALREADY_PRODUCED:
     "Yêu cầu này đã xuất một lần rồi. Một lần duyệt cho đúng một bản; cần bản nữa thì tạo yêu cầu mới.",
   EXPORT_REQUEST_NOT_FOUND:

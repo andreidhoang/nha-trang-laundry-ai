@@ -54,6 +54,7 @@ import pathlib
 import sys
 import urllib.request
 
+from console_recording import Recorder, add_arguments, watch_render_defects
 from playwright.sync_api import sync_playwright
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -63,6 +64,7 @@ parser.add_argument("--store-id", default="11111111-2222-4333-8444-555555555555"
 parser.add_argument("--subject", default="demo-owner")
 parser.add_argument("--auditor-subject", default="demo-auditor")
 parser.add_argument("--shots", default="", help="directory for screenshots; omitted means none")
+add_arguments(parser)
 arguments = parser.parse_args()
 
 BASE = arguments.base_url.rstrip("/")
@@ -75,10 +77,12 @@ if SHOTS:
 
 PASS: list[str] = []
 FAIL: list[str] = []
+REC = Recorder(arguments.video, arguments.slow_mo, "ca-ngay-cua-hang")
 
 
 def ok(name: str, cond: bool, detail: object = "") -> None:
     (PASS if cond else FAIL).append(name)
+    REC.check(name, bool(cond))
     print(
         f"  {'ok  ' if cond else 'FAIL'} {name}" + (f"  — {detail}" if detail else ""), flush=True
     )
@@ -90,6 +94,7 @@ def note(text: str) -> None:
 
 def head(n: int, title: str) -> None:
     print(f"\n{'=' * 78}\n{n}. {title}\n{'=' * 78}", flush=True)
+    REC.section(f"{n}. {title}")
 
 
 def token(subject: str) -> str:
@@ -129,11 +134,18 @@ def _browser_launch_options() -> dict[str, object]:
 
 
 with sync_playwright() as pw:
-    browser = pw.chromium.launch(headless=True, **_browser_launch_options())  # type: ignore[arg-type]
-    ctx = browser.new_context(
-        viewport={"width": 1280, "height": 900}, permissions=["clipboard-read", "clipboard-write"]
+    browser = pw.chromium.launch(
+        headless=True,
+        **_browser_launch_options(),  # type: ignore[arg-type]
+        **REC.launch_options(),  # type: ignore[arg-type]
     )
-    page = ctx.new_page()
+    ctx = browser.new_context(
+        viewport={"width": 1280, "height": 900},
+        permissions=["clipboard-read", "clipboard-write"],
+        **REC.context_options(),  # type: ignore[arg-type]
+    )
+    render_defects = watch_render_defects(ctx)
+    page = REC.film(ctx, ctx.new_page(), "chu-cua-hang")
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     api_calls = []
@@ -648,8 +660,12 @@ with sync_playwright() as pw:
     )
 
     head(16, "PHÂN QUYỀN — the auditor may look and may not touch")
-    actx = browser.new_context(viewport={"width": 1280, "height": 900})
-    apage = actx.new_page()
+    actx = browser.new_context(
+        viewport={"width": 1280, "height": 900},
+        **REC.context_options(),  # type: ignore[arg-type]
+    )
+    auditor_defects = watch_render_defects(actx)
+    apage = REC.film(actx, actx.new_page(), "kiem-toan-vien")
     apage.goto(CONSOLE, wait_until="networkidle")
     atok = token(arguments.auditor_subject)
     r = apage.evaluate(
@@ -904,23 +920,39 @@ with sync_playwright() as pw:
             bool(settled) and 200 <= settled[-1][1] < 300,
             f"HTTP {settled[-1][1]}" if settled else "no call was made",
         )
+        # This read "Chưa ghi nhận giao đồ" off the settlement's success line -- on an order whose
+        # successful leg this walk had recorded one section earlier, so the line was false. The
+        # paid panel now says the rule (a delivery closes on a successful leg), which is true
+        # whether or not the leg is in yet, and the form is gone so the money cannot be taken twice.
         said_ = [
             line_.strip()
             for line_ in page.locator("main").first.inner_text().splitlines()
-            if "Đã ghi nhận" in line_
+            if "chặng giao thành công" in line_ or "Đã thu đủ tiền" in line_
         ]
         ok(
-            "and the screen says the goods still have to reach the customer",
-            any("Chưa ghi nhận giao đồ" in s for s in said_),
-            said_[:1],
+            "and the screen says it is paid and closes on a successful delivery, not a pickup",
+            any("Đã thu đủ tiền" in s for s in said_)
+            and any("chặng giao thành công" in s for s in said_)
+            and page.locator("#settlement-amount").count() == 0,
+            said_[:2],
         )
     shot(page, "21-delivery-settled.png")
     move_delivery("commercial", "COMPLETED", "the delivery order closes on its successful leg")
 
+    head(21, "HIỂN THỊ — no screen printed a structure, NaN or an undefined amount")
+    ok(
+        "no screen opened in this walk rendered [object Object], NaN or 'undefined ₫'",
+        not render_defects and not auditor_defects,
+        (render_defects + auditor_defects)[:4],
+    )
+
     print(f"\n{'=' * 78}\nRESULT: {len(PASS)} ok, {len(FAIL)} failed\n{'=' * 78}")
     for f in FAIL:
         print(f"  - {f}")
+    REC.finish()
     ctx.close()
+    for film in REC.save():
+        print(f"  video: {film}")
     browser.close()
     if errors:
         print("\n  page errors:", errors[:5])

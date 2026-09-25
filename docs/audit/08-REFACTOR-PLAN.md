@@ -191,6 +191,14 @@ answered by a rule the server already implements — **decide only what the cons
 The UI boundary is now the server's own trust boundary rather than a separate judgment. If you want
 `MESSAGE_DRAFT` decidable, the work is a draft-content read model — not a UI change.
 
+*Status note, 2026-09-25:* that read model now exists. `API-INTEGRITY-002` derives a draft's binding
+from `agent_drafts` / `agent_draft_reviews` and verifies it at request time, and
+`MESSAGE-DRAFT-BINDING-001` exposes it on
+`GET /internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding`. The approvals card prints
+the stored words above its buttons and is decidable on the same rule — decide only what the console
+can show you — and `decide` refuses to APPROVE a draft that was edited or rejected after its envelope
+was raised.
+
 ## Test state at `1ee6002`
 
 `1186 passed, 3 failed, 3 skipped`. All three failures are the stale generated disclosure registry,

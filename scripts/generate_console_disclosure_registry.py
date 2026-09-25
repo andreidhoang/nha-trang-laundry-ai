@@ -62,8 +62,9 @@ CAPABILITY_GATES: dict[str, str] = {
     "APPROVALS_READ": "require_approval_staff",
     # `decide_approval` depends on the same route gate as the queue read. The two checks the gate
     # does not make -- maker-checker separation, and the exact resource version and digests -- are
-    # made inside `_authorize_decision` and `_require_exact_binding`, and neither can be predicted
-    # client-side, so the console does not try: it presents the control and lets the refusal speak.
+    # made inside `_authorize_decision`, `_require_exact_binding` and (API-INTEGRITY-003)
+    # `_require_resource_unchanged`, and none can be predicted client-side, so the console does
+    # not try: it presents the control and lets the refusal speak.
     "APPROVALS_DECIDE": "require_approval_staff",
     "QUEUE_READ": "require_approval_staff",
     "MANUAL_SEND": "require_operations_staff",
@@ -193,7 +194,11 @@ POLICY_BOUND: dict[str, str] = {
     # total may be paid, the third being `DEC-032` (at drop-off). The claim this binding guards is
     # still the refusal of everything else, which is `DEC-010`; the drop-off clause cites DEC-032
     # by id in the sentence itself, so a reader can check both against the register.
-    "screens/orderDetail.js#guardrail:b2daddbe89d3": "DEC-010",
+    #
+    # Re-keyed 2026-09-25 by PICKUP-ONLY-SETTLE-001: the `DEC-032` addendum adds paying at the
+    # counter before the laundry is finished (a `PICKUP_ONLY` customer) and the sentence now says no
+    # courier takes money (`DEC-023`). Still a refusal of every other amount, still `DEC-010`.
+    "screens/orderDetail.js#guardrail:0341c82d18a7": "DEC-010",
 }
 
 

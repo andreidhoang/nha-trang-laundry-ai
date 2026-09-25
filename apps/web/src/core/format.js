@@ -226,10 +226,15 @@ export function dateOnly(value) {
 /**
  * Time left before an approval envelope expires.
  *
- * Approval TTLs are short — ten to thirty minutes (`SECURITY_RELIABILITY_SPEC_V1.md:354`) — and an
- * expiry never extends implicitly, so an approver needs the remaining time rather than the wall
- * clock. Past expiry this returns a negative `seconds`, which the caller renders as expired rather
- * than as a small positive number.
+ * Most approval TTLs are short — ten to thirty minutes (`SECURITY_RELIABILITY_SPEC_V1.md:354`) —
+ * and an expiry never extends implicitly, so an approver needs the remaining time rather than the
+ * wall clock. Past expiry this returns a negative `seconds`, which the caller renders as expired
+ * rather than as a small positive number.
+ *
+ * One action is long: since the DEC-031 addendum an owner-only remedy envelope stays open until the
+ * end of the next business day, up to 48 hours. "còn 1800 phút" is a number an owner has to divide
+ * before it means anything, so from an hour up the text is hours and minutes, and from a day up it
+ * is days and hours — the same units `duration` uses for the SLA board.
  *
  * @param {string|null|undefined} expiresAt
  * @param {Date} [now]
@@ -242,6 +247,24 @@ export function countdown(expiresAt, now = new Date()) {
   if (seconds <= 0) return { seconds, text: "đã hết hạn", expired: true };
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
+  const hours = Math.floor(minutes / 60);
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    const restHours = hours % 24;
+    return {
+      seconds,
+      expired: false,
+      text: restHours > 0 ? `còn ${days} ngày ${restHours} giờ` : `còn ${days} ngày`,
+    };
+  }
+  if (hours >= 1) {
+    const restMinutes = minutes % 60;
+    return {
+      seconds,
+      expired: false,
+      text: restMinutes > 0 ? `còn ${hours} giờ ${restMinutes} phút` : `còn ${hours} giờ`,
+    };
+  }
   // Whole Vietnamese units, never a bare "s". Seconds are noise once the wait reaches ten
   // minutes, so they drop out there; below one minute there is no minute part to show.
   const text =

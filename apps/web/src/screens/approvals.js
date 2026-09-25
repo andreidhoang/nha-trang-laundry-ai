@@ -15,9 +15,16 @@
  *     were never shown is blind approval, and returning the hashes does not by itself fix that. So
  *     the controls enable for a resource type this console can actually render — today `ORDER`,
  *     which `#/orders/:orderId` opens — and stay disabled, with the resource type named, for every
- *     type it cannot. `MESSAGE_DRAFT` is the one that matters: nothing stores the message body, and
- *     `rendered_hash` is explicitly not verified server-side, so there is nothing to show and
- *     nothing to check it against. That is fail-closed in the same direction the server chose.
+ *     type it cannot.
+ *
+ *     `MESSAGE_DRAFT` used to be the example of a type it cannot, with the reason "nothing stores
+ *     the message body, and `rendered_hash` is not verified server-side". Both halves stopped
+ *     being true: the body is `agent_drafts` / `agent_draft_reviews`, and `API-INTEGRITY-002` made
+ *     the server derive and verify all three binding values from it. What was still missing was a
+ *     read, and `MESSAGE-DRAFT-BINDING-001` added it. A `SEND_MESSAGE` card now fetches the exact
+ *     words from `GET /internal/v1/stores/{store}/message-drafts/{draft}/binding`, compares the
+ *     version and both digests with the envelope's, prints the text above the buttons, and stays
+ *     unapprovable — refusable only — when the draft moved after the envelope was raised.
  *
  *     `RANGE-APPROVAL-VISIBILITY-001` found the hole in that rule and it is worth stating plainly,
  *     because the rule read as sound while it was being broken: the gate was on the *resource
@@ -35,6 +42,14 @@
  *     traded that for blind approval of a digest, so the card fetches the export's own business
  *     date, column list and exclusions and prints them above the buttons, and blocks when it
  *     cannot.
+ *
+ *     `REMEDY_PROPOSAL` was the same dead end again, and on money. `DEC-031` sends every loss,
+ *     every compensation on a refunded order and anything above the staff limit to the owner as
+ *     an `APPROVE_REMEDY` envelope, and the type had no entry below, so the owner could not
+ *     approve a lost-item claim from the console at all. `REMEDY-OWNER-DECIDE-001` gave the card
+ *     `GET /internal/v1/stores/{store}/remedy-proposals/{proposal}/approval-binding`, and the card
+ *     is built like the `MESSAGE_DRAFT` one: the envelope's own store, the binding compared with
+ *     the envelope, the figures above the buttons, and only "Từ chối" when they do not match.
  *   - **The server is the authority, not this list.** `_require_exact_binding` re-checks the
  *     version and both digests at decision time, `_authorize_decision` re-checks store membership,
  *     role, MFA and maker-checker separation. A stale card cannot approve anything: the decision is
@@ -42,8 +57,12 @@
  *   - **Only `REQUESTED` is listed.** The `WHERE s.status = 'REQUESTED'` clause means approved,
  *     rejected and expired envelopes are not in this list and cannot be reviewed from it.
  *   - **The countdown is the point.** Approval TTLs are 10, 15 or 30 minutes by action
- *     (`SECURITY_RELIABILITY_SPEC_V1.md:354`) and an expiry never extends implicitly, so remaining
- *     time matters far more than a wall-clock timestamp. One interval drives every badge and stops
+ *     (`SECURITY_RELIABILITY_SPEC_V1.md:354`) — except an owner-only remedy envelope, which since
+ *     the DEC-031 addendum stays open until the end of the next business day in Asia/Ho_Chi_Minh
+ *     (up to 48 hours), and which `countdown` renders in hours and days rather than minutes. An
+ *     expiry never extends implicitly, so remaining time matters far more than a wall-clock
+ *     timestamp. The queue is ordered by expiry, so a day-long remedy envelope sits below the
+ *     ten-minute ones that need an answer first. One interval drives every badge and stops
  *     itself the moment the screen leaves the document — a console is left open all day, and a
  *     leaked timer per navigation is a real bug rather than a tidiness complaint.
  *
@@ -69,6 +88,8 @@ import {
 import { enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
+import { ticketLabel } from "./orders.js";
+import { KIND_LABEL as REMEDY_KIND_LABEL, ownerReasonText } from "./remedies.js";
 import {
   badge,
   dimensionBadge,
@@ -116,7 +137,7 @@ function countdownBadge(expiresAt) {
  *
  * The key is the server's `resource_type`; the value builds the route that shows it. A type absent
  * from this table is not decidable here, and the card says which type it is rather than a generic
- * refusal — "không xem được nội dung loại MESSAGE_DRAFT" tells an approver what to go and fix,
+ * refusal — "không xem được nội dung loại SLOT_PROPOSAL" tells an approver what to go and fix,
  * "không quyết được" does not.
  *
  * `QUOTE_REVISION` was deliberately absent until `RANGE-PRICE-001`, and the reason it left is the
@@ -134,9 +155,12 @@ function countdownBadge(expiresAt) {
  * and those are not the same content. The link is still right for every action here; it is no
  * longer sufficient for one of them. See `SET_RANGE_PRICE` below.
  *
- * `MESSAGE_DRAFT` stays out, and stays out for a reason that has not changed: nothing stores the
- * message body, and `rendered_hash` is explicitly not verified server-side, so there is nothing to
- * show and nothing to check it against.
+ * `MESSAGE_DRAFT` was kept out "for a reason that has not changed: nothing stores the message
+ * body, and `rendered_hash` is explicitly not verified server-side". The reason changed twice and
+ * this entry did not: `agent_drafts` (migration `0021`) stores the body, `API-INTEGRITY-002` made
+ * the server compute and verify all three binding values from it, and `MESSAGE-DRAFT-BINDING-001`
+ * gave the console the read. It is in the table now, as a builder that returns `null` like
+ * `EXPORT_REQUEST` below, because the words are printed on the card itself. See `MESSAGE_DRAFT`.
  *
  * The second argument is the envelope's `resource_version`, and the quote link carries it. Without
  * it `#/quotes?quote=<id>` opened whichever revision is *newest*, which is not necessarily the one
@@ -165,6 +189,16 @@ const VIEWABLE_RESOURCES = {
   // amounts, and stays undecidable until they are on screen. A builder that returns `null` means
   // "this console can show you this, and it shows you here" — not "there is nothing to show".
   EXPORT_REQUEST: () => null,
+  // `MESSAGE-DRAFT-BINDING-001`. `null` for the reason the export entry above gives: the words the
+  // envelope binds are fetched and printed on the card, and no other screen renders one draft's
+  // current sendable text. The card stays shut until that text is on screen.
+  MESSAGE_DRAFT: () => null,
+  // `REMEDY-OWNER-DECIDE-001`. Since `DEC-031` every loss, every compensation on a refunded order
+  // and anything above the staff limit waits here for the owner, and until this entry the queue
+  // showed such an envelope and let nobody decide it — the dead end `EXPORT_REQUEST` above once
+  // was. `null` for the same reason: the card reads the proposal's own figures and prints them
+  // above the buttons, and stays shut until they are on screen and match the envelope.
+  REMEDY_PROPOSAL: () => null,
 };
 
 /**
@@ -199,6 +233,27 @@ const SET_RANGE_PRICE = "SET_RANGE_PRICE";
  */
 const EXPORT_REQUEST = "EXPORT_REQUEST";
 
+/**
+ * The resource type of a `SEND_MESSAGE` envelope, whose words this card fetches and prints.
+ *
+ * `MESSAGE-DRAFT-BINDING-001`. A message leaves the building on a person's manual send, and the
+ * approval is the second person's statement that these exact words may go to this customer. So the
+ * card reads the draft's server-computed binding, refuses to show anything whose version or digests
+ * are not the envelope's own, and prints the text above the buttons as untrusted text — through
+ * text nodes, never markup, because a customer or a model wrote it.
+ */
+const MESSAGE_DRAFT = "MESSAGE_DRAFT";
+
+/**
+ * The resource type of an `APPROVE_REMEDY` envelope, whose figures this card fetches and prints.
+ *
+ * `REMEDY-OWNER-DECIDE-001`. The approval is the owner's statement that the shop may pay this
+ * customer this amount for this item. So the card reads the proposal's server-resolved binding,
+ * compares it with the envelope, and shows the kind, the amount, the ceiling, the item and why the
+ * owner is needed above the buttons — or withholds all of it and offers only a refusal.
+ */
+const REMEDY_PROPOSAL = "REMEDY_PROPOSAL";
+
 /** What this console records as its reason; the server only constrains the shape. */
 const DECISION_REASONS = {
   APPROVED: "APPROVED_AFTER_CONSOLE_REVIEW",
@@ -230,20 +285,33 @@ function hasBinding(item) {
  * Still not wrapped in `gated()` for the disabled case: `gated()` says "your role may not", and a
  * type this screen cannot render is refused for `OWNER_ADMIN` too. The role verdict is applied on
  * top, for the enabled case only, so an auditor sees the role reason and an owner looking at a
- * `MESSAGE_DRAFT` sees the content reason.
+ * `SLOT_PROPOSAL` sees the content reason.
+ *
+ * `refuseOnly` is the one partial state, and it exists for `MESSAGE_DRAFT`. When the draft moved
+ * after the envelope was raised, approving is refused — here and by the server — but refusing is
+ * not: a refusal authorises nothing, and it is how the approver takes a dead envelope out of the
+ * queue instead of watching it for thirty minutes. So "Duyệt" stays shut with the reason and
+ * "Từ chối" works, under the same role gate as ever.
  *
  * @param {any} item
  * @param {(message: string) => Promise<void>} onDecided
  * @param {{allowed: boolean, reason: string}} verdict
  * @param {string|null} [contentBlock] why this card's content cannot be shown yet, if it cannot
+ * @param {{refuseOnly?: boolean}} [options]
  * @returns {HTMLElement}
  */
-function decisionControls(item, onDecided, verdict, contentBlock = null) {
+function decisionControls(item, onDecided, verdict, contentBlock = null, options = {}) {
   const viewer = VIEWABLE_RESOURCES[String(item.resource_type)];
   const decidable = Boolean(viewer) && hasBinding(item) && !contentBlock;
+  const refusable =
+    !decidable &&
+    Boolean(viewer) &&
+    hasBinding(item) &&
+    Boolean(contentBlock) &&
+    options.refuseOnly === true;
   const host = resultLine();
 
-  if (!decidable) {
+  if (!decidable && !refusable) {
     const control = (label) =>
       h(
         "button",
@@ -319,8 +387,10 @@ function decisionControls(item, onDecided, verdict, contentBlock = null) {
       );
     } catch (error) {
       button.removeAttribute("aria-busy");
-      button.disabled = false;
-      sibling.disabled = false;
+      // A refuse-only card's approve control was never pressable and must not become so because
+      // a refusal failed: it is re-enabled only on a card that could approve in the first place.
+      button.disabled = button === approve && !decidable;
+      sibling.disabled = sibling === approve && !decidable;
       const stale = error.kind === "STALE" || error.kind === "PRECONDITION_REQUIRED";
       // A lost answer is not a refusal. The decision may have been recorded, so "không có gì được
       // ghi" would be a guess; what is certain is that a second press cannot decide twice, because
@@ -354,10 +424,33 @@ function decisionControls(item, onDecided, verdict, contentBlock = null) {
     }
   };
 
-  const approve = h("button", { type: "button", dataRequiresNetwork: "true" }, "Duyệt");
+  const approve = decidable
+    ? h("button", { type: "button", dataRequiresNetwork: "true" }, "Duyệt")
+    : h(
+        "button",
+        { type: "button", disabled: true, "aria-disabled": "true", "aria-describedby": BLOCK_ID },
+        "Duyệt",
+      );
   const reject = h("button", { type: "button", dataRequiresNetwork: "true" }, "Từ chối");
-  approve.addEventListener("click", () => void send("APPROVED", approve, reject));
+  if (decidable) approve.addEventListener("click", () => void send("APPROVED", approve, reject));
   reject.addEventListener("click", () => void send("REJECTED", reject, approve));
+
+  if (!decidable) {
+    return h(
+      "div",
+      { class: "stack stack--tight" },
+      h("div", { class: "form__actions" }, approve, gated(reject, verdict)),
+      h("p", { class: "hint" }, contentBlock),
+      h(
+        "p",
+        { class: "hint" },
+        "Từ chối vẫn bấm được: từ chối không cho phép gửi gì, và là cách gỡ một phiếu đã cũ " +
+          "khỏi hàng chờ thay vì chờ nó hết hạn.",
+      ),
+      host,
+      failureHost,
+    );
+  }
 
   // `null` is a legitimate answer here and means "the content is already on this card", which is
   // the shape an `EXPORT_REQUEST` takes: there is no screen that renders a stored export request,
@@ -617,6 +710,416 @@ async function loadExportRequest(item, contentHost, controlsHost, onDecided, ver
 }
 
 /**
+ * The words one `SEND_MESSAGE` envelope binds, exactly as the server stores them.
+ *
+ * Untrusted text: a customer's conversation shaped it and a model or a reviewer wrote it. Every
+ * line goes through `h()`, which appends text nodes, so markup in a draft is shown as characters
+ * and never parsed. Line breaks are kept by splitting into paragraphs rather than by styling
+ * whitespace, the way `#/shadow` renders the same drafts.
+ *
+ * The recipient is the opaque contact binding and nothing more — no phone number or chat id exists
+ * on a draft. It is shown shortened, as the manual-send result shows it, so the approver can see
+ * that the envelope names one recipient without the console disclosing who.
+ *
+ * Nothing is computed. The server sends the text and the identifiers, and this lays them out.
+ *
+ * @param {any} read the `MessageDraftBindingResponse` body
+ * @returns {HTMLElement}
+ */
+function messageContents(read) {
+  const raw = typeof read.text === "string" ? read.text : "";
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim() !== "");
+  return h(
+    "div",
+    { class: "notice", dataState: "warn" },
+    h("p", { class: "notice__title" }, "Tin nhắn bạn đang được đề nghị cho gửi"),
+    h("p", { class: "eyebrow" }, "Nội dung sẽ gửi · Văn bản không tin cậy"),
+    h(
+      "div",
+      { class: "stack stack--tight", dataMessageBody: "true" },
+      lines.length
+        ? lines.map((line) => h("p", null, line))
+        : h("p", { class: "hint" }, `${UNKNOWN} bản nháp không có chữ nào`),
+    ),
+    facts([
+      ["Số ký tự", String(raw.length)],
+      [
+        "Phiên bản bản nháp",
+        h("span", { class: "mono" }, `v${String(read.resource_version)}`),
+      ],
+      [
+        "Người nhận (mã ràng buộc)",
+        h(
+          "span",
+          { class: "mono", title: read.recipient_binding_id || "" },
+          shortId(read.recipient_binding_id),
+        ),
+      ],
+      [
+        "Bản nháp",
+        h("span", { class: "mono", title: read.resource_id || "" }, shortId(read.resource_id)),
+      ],
+    ]),
+    h(
+      "p",
+      { class: "hint" },
+      "Bấm Duyệt là cho phép đúng những chữ này tới đúng người nhận này. Duyệt chưa gửi gì cả: " +
+        "một nhân viên vẫn phải tự gửi tay và ký tên ở màn hình Ngoại lệ.",
+    ),
+  );
+}
+
+/**
+ * Fetch the words one `SEND_MESSAGE` envelope binds, and unblock its controls — or not.
+ *
+ * Same design as `loadExportRequest`: every failure leaves the approve control shut with a reason.
+ * Two outcomes are not failures of the read and still keep it shut, with "Từ chối" left usable:
+ *
+ *   - the read answers a different version or different digests. A reviewer edited the draft after
+ *     the envelope was raised, so the words on screen would not be the words the press hands back.
+ *     The text is withheld rather than shown with a caveat — the approver must not read revision 2
+ *     and sign revision 1 — and the server refuses the approval anyway;
+ *   - the read answers 404. The draft has no sendable content any more: a reviewer rejected it.
+ *
+ * The store in the URL is the envelope's own, from the queue row. The queue spans every store the
+ * approver is assigned to, so the store selected in the top bar would be the wrong one whenever
+ * the two differ; a row without a store is refused rather than guessed.
+ *
+ * @param {any} item
+ * @param {HTMLElement} contentHost
+ * @param {HTMLElement} controlsHost
+ * @param {(message: string) => Promise<void>} onDecided
+ * @param {{allowed: boolean, reason: string}} verdict
+ * @returns {Promise<void>}
+ */
+async function loadMessageDraft(item, contentHost, controlsHost, onDecided, verdict) {
+  /** @param {string} reason @param {HTMLElement} explanation @param {boolean} [refuseOnly] */
+  const block = (reason, explanation, refuseOnly = false) => {
+    render(contentHost, explanation);
+    render(controlsHost, decisionControls(item, onDecided, verdict, reason, { refuseOnly }));
+  };
+  const envelopeStore = typeof item.store_id === "string" ? item.store_id : "";
+  if (!envelopeStore) {
+    block(
+      "Không bấm được: phiếu này không mang mã cửa hàng, nên không đọc được tin nhắn của nó.",
+      h(
+        "div",
+        { class: "notice", dataState: "danger" },
+        h("p", { class: "notice__title" }, "Không biết tin nhắn thuộc cửa hàng nào"),
+        h("p", null, "Tải lại hàng chờ. Chưa đọc được chữ nào thì chưa quyết."),
+      ),
+    );
+    return;
+  }
+  const storePart = encodeURIComponent(envelopeStore);
+  const draftPart = encodeURIComponent(String(item.resource_id));
+  try {
+    const read = await request(
+      `/internal/v1/stores/${storePart}/message-drafts/${draftPart}/binding`,
+    );
+    if (
+      read.resource_id !== item.resource_id ||
+      read.resource_version !== item.resource_version ||
+      read.snapshot_hash !== item.snapshot_hash ||
+      read.rendered_hash !== item.rendered_hash
+    ) {
+      block(
+        "Không bấm Duyệt được: tin nhắn đã đổi sau khi phiếu này được mở.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger" },
+          h("p", { class: "notice__title" }, "Tin nhắn đã đổi so với phiếu"),
+          h(
+            "p",
+            null,
+            "Bản nháp đã được sửa sau khi có người xin duyệt, nên chữ đang lưu không còn là chữ " +
+              "mà phiếu này niêm phong. Màn hình không hiện bản mới để bạn khỏi đọc bản này mà " +
+              "ký bản kia; máy chủ cũng từ chối duyệt. Từ chối phiếu này, rồi xin duyệt lại từ " +
+              "bản nháp mới.",
+          ),
+          h(
+            "p",
+            { class: "hint" },
+            "Phiên bản trong phiếu: ",
+            h("span", { class: "mono" }, `v${String(item.resource_version)}`),
+            " · phiên bản đang lưu: ",
+            h("span", { class: "mono" }, `v${String(read.resource_version)}`),
+          ),
+        ),
+        true,
+      );
+      return;
+    }
+    render(contentHost, messageContents(read));
+    render(controlsHost, decisionControls(item, onDecided, verdict));
+  } catch (error) {
+    if (error && error.kind === "MISSING") {
+      block(
+        "Không bấm Duyệt được: bản nháp này không còn nội dung nào được phép gửi.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger" },
+          h("p", { class: "notice__title" }, "Bản nháp không còn gửi được"),
+          h(
+            "p",
+            null,
+            "Người duyệt bản nháp đã từ chối nó sau khi phiếu này được mở, nên không có chữ nào " +
+              "để cho phép gửi. Máy chủ cũng từ chối duyệt. Từ chối phiếu này để gỡ nó khỏi " +
+              "hàng chờ.",
+          ),
+        ),
+        true,
+      );
+      return;
+    }
+    block(
+      "Không bấm được: chưa đọc được tin nhắn sẽ gửi. Chưa thấy chữ thì chưa quyết.",
+      h(
+        "div",
+        { class: "stack stack--tight" },
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Chưa xem được tin nhắn sẽ gửi cho khách"),
+          h(
+            "p",
+            null,
+            "Phiếu này xin cho một tin nhắn được gửi tay tới khách. Chừng nào chưa đọc được đúng " +
+              "chữ của tin đó thì nút Duyệt vẫn khoá. Máy chủ nêu lý do bên dưới, nguyên văn.",
+          ),
+        ),
+        errorNotice(error),
+      ),
+    );
+  }
+}
+
+/**
+ * What one `APPROVE_REMEDY` envelope asks the owner to authorise, laid out as the server sent it.
+ *
+ * `REMEDY-OWNER-DECIDE-001`. Every figure is the server's and is only formatted here: the amount
+ * the staff member proposed, the ceiling the server checked it against, and the staff limit of the
+ * policy version it was checked under. Why the owner is needed is the list the domain recorded
+ * with the proposal, glossed in the counter's words — never inferred from the amount, because a
+ * 20.000 ₫ loss waits for the owner too. A missing list is said as missing, not guessed.
+ *
+ * The incident summary is what a staff member typed while a customer described the problem, so it
+ * is untrusted text and goes through `h()` — text nodes, never markup — like a message draft.
+ *
+ * @param {any} read the `RemedyApprovalBindingResponse` body
+ * @returns {HTMLElement}
+ */
+function remedyContents(read) {
+  const reasons = Array.isArray(read.owner_reasons) ? read.owner_reasons : null;
+  const ticket = ticketLabel(read);
+  const service = read.service_code
+    ? read.service_name
+      ? `${read.service_name} (${read.service_code})`
+      : String(read.service_code)
+    : null;
+  const summary = typeof read.incident_summary === "string" ? read.incident_summary : "";
+  return h(
+    "div",
+    { class: "notice", dataState: "warn", dataRemedyBinding: String(read.resource_id || "") },
+    h("p", { class: "notice__title" }, "Khoản bồi hoàn bạn đang được đề nghị duyệt"),
+    facts([
+      [
+        "Loại",
+        h(
+          "span",
+          { dataField: "remedy-kind" },
+          `${REMEDY_KIND_LABEL[read.kind] || String(read.kind || UNKNOWN)} (${String(read.kind || UNKNOWN)})`,
+        ),
+        { span: true },
+      ],
+      ["Số tiền đề nghị", h("span", { dataField: "remedy-amount" }, money(read.amount_vnd))],
+      [
+        "Trần máy chủ đã kiểm",
+        h("span", { dataField: "remedy-ceiling" }, money(read.ceiling_vnd)),
+      ],
+      [
+        "Mức nhân viên được tự duyệt",
+        h("span", { dataField: "remedy-staff-limit" }, money(read.staff_approval_ceiling_vnd)),
+      ],
+      [
+        "Vì sao cần chủ tiệm",
+        h(
+          "span",
+          { dataField: "remedy-why" },
+          reasons && reasons.length
+            ? `${ownerReasonText(reasons)}.`
+            : "Máy chủ không có lý do đã ghi cho đề nghị này — hỏi người đề nghị trước khi quyết.",
+        ),
+        { span: true },
+      ],
+      [
+        "Đơn",
+        h(
+          "span",
+          { class: "row", dataField: "remedy-order" },
+          ticket ? h("span", null, ticket) : h("span", null, "Đơn không gắn phiếu giấy"),
+          h(
+            "a",
+            {
+              href: `#/orders/${encodeURIComponent(String(read.order_id || ""))}`,
+              title: String(read.order_id || ""),
+            },
+            `mở đơn ${shortId(read.order_id)}`,
+          ),
+        ),
+        { span: true },
+      ],
+      [
+        "Món",
+        h(
+          "span",
+          { dataField: "remedy-item" },
+          service ? `${service} · dòng ${String(read.order_line_id)}` : "Không ghi dòng nào",
+          " · ",
+          Number.isInteger(read.garment_index)
+            ? `món thứ ${String(read.garment_index)}`
+            : "cả dòng, không chọn món",
+        ),
+        { span: true },
+      ],
+      [
+        "Khách phản ánh",
+        summary
+          ? h("span", { dataField: "remedy-summary" }, summary)
+          : h(
+              "span",
+              { class: "hint", dataField: "remedy-summary" },
+              "Mô tả sự cố không còn được lưu (đã quá hạn giữ) hoặc chưa từng được ghi.",
+            ),
+        { span: true },
+      ],
+      [
+        "Người đề nghị",
+        `${String(read.proposed_by_name || UNKNOWN)} · ${dateTime(read.proposed_at)}`,
+        { span: true },
+      ],
+    ]),
+    h(
+      "p",
+      { class: "hint" },
+      "Bấm Duyệt là cho phép trả đúng số tiền này cho đúng món này. Duyệt chưa trả gì cả: một " +
+        "nhân viên phải bấm “Thực hiện bồi hoàn” ở màn hình Bồi hoàn trước khi phiếu duyệt hết hạn.",
+    ),
+  );
+}
+
+/**
+ * Fetch what one `APPROVE_REMEDY` envelope binds, and unblock its controls — or not.
+ *
+ * `REMEDY-OWNER-DECIDE-001`, built the way `loadMessageDraft` is and for the same reasons. The
+ * store in the URL is the envelope's own, from the queue row, never the one selected in the top
+ * bar; a row without one is refused. The read's proposal, approval, version and both digests are
+ * compared with the envelope's, and the server's own `envelope_matches` must agree. Any mismatch
+ * withholds the figures — the owner must not read today's order and sign the envelope's — and
+ * leaves only "Từ chối", which authorises nothing and takes the dead envelope out of the queue.
+ *
+ * @param {any} item
+ * @param {HTMLElement} contentHost
+ * @param {HTMLElement} controlsHost
+ * @param {(message: string) => Promise<void>} onDecided
+ * @param {{allowed: boolean, reason: string}} verdict
+ * @returns {Promise<void>}
+ */
+async function loadRemedyProposal(item, contentHost, controlsHost, onDecided, verdict) {
+  /** @param {string} reason @param {HTMLElement} explanation @param {boolean} [refuseOnly] */
+  const block = (reason, explanation, refuseOnly = false) => {
+    render(contentHost, explanation);
+    render(controlsHost, decisionControls(item, onDecided, verdict, reason, { refuseOnly }));
+  };
+  const envelopeStore = typeof item.store_id === "string" ? item.store_id : "";
+  if (!envelopeStore) {
+    block(
+      "Không bấm được: phiếu này không mang mã cửa hàng, nên không đọc được khoản bồi hoàn của nó.",
+      h(
+        "div",
+        { class: "notice", dataState: "danger" },
+        h("p", { class: "notice__title" }, "Không biết khoản bồi hoàn thuộc cửa hàng nào"),
+        h("p", null, "Tải lại hàng chờ. Chưa đọc được số tiền thì chưa quyết."),
+      ),
+    );
+    return;
+  }
+  const storePart = encodeURIComponent(envelopeStore);
+  const proposalPart = encodeURIComponent(String(item.resource_id));
+  try {
+    const read = await request(
+      `/internal/v1/stores/${storePart}/remedy-proposals/${proposalPart}/approval-binding`,
+    );
+    if (
+      read.resource_id !== item.resource_id ||
+      read.approval_id !== item.approval_request_id ||
+      read.resource_version !== item.resource_version ||
+      read.snapshot_hash !== item.snapshot_hash ||
+      read.rendered_hash !== item.rendered_hash ||
+      read.envelope_matches !== true
+    ) {
+      block(
+        "Không bấm Duyệt được: đơn hoặc đề nghị bồi hoàn đã đổi sau khi phiếu này được mở.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger", dataRemedyStale: "true" },
+          h("p", { class: "notice__title" }, "Khoản bồi hoàn đã đổi so với phiếu"),
+          h(
+            "p",
+            null,
+            "Bản giá của đơn hoặc chính đề nghị không còn là thứ mà phiếu này niêm phong, nên màn " +
+              "hình không hiện số tiền để bạn khỏi đọc bản này mà ký bản kia; máy chủ cũng từ chối " +
+              "duyệt. Từ chối phiếu này, rồi nhờ nhân viên đề nghị lại từ sự cố.",
+          ),
+        ),
+        true,
+      );
+      return;
+    }
+    render(contentHost, remedyContents(read));
+    render(controlsHost, decisionControls(item, onDecided, verdict));
+  } catch (error) {
+    if (error && error.kind === "MISSING") {
+      block(
+        "Không bấm Duyệt được: máy chủ không tìm thấy khoản bồi hoàn mà phiếu này nói tới.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger" },
+          h("p", { class: "notice__title" }, "Không tìm thấy đề nghị bồi hoàn"),
+          h(
+            "p",
+            null,
+            "Không có đề nghị nào chờ chủ tiệm khớp với phiếu này ở cửa hàng của phiếu. Máy chủ " +
+              "cũng từ chối duyệt. Từ chối phiếu này để gỡ nó khỏi hàng chờ.",
+          ),
+        ),
+        true,
+      );
+      return;
+    }
+    block(
+      "Không bấm được: chưa đọc được khoản bồi hoàn. Chưa thấy số tiền thì chưa quyết.",
+      h(
+        "div",
+        { class: "stack stack--tight" },
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Chưa xem được khoản bồi hoàn cần duyệt"),
+          h(
+            "p",
+            null,
+            "Chừng nào chưa đọc được loại, số tiền, trần và món bị hỏng hay mất thì nút Duyệt vẫn " +
+              "khoá. Máy chủ nêu lý do bên dưới, nguyên văn.",
+          ),
+        ),
+        errorNotice(error),
+      ),
+    );
+  }
+}
+
+/**
  * One pending envelope.
  *
  * @param {any} item
@@ -662,6 +1165,34 @@ function approvalCard(item, registerClock, onDecided, verdict) {
     );
     render(contentHost, h("p", { class: "hint" }, "Đang tải nội dung bản xuất…"));
     void loadExportRequest(item, contentHost, controlsHost, onDecided, verdict);
+  } else if (String(item.resource_type) === MESSAGE_DRAFT) {
+    // Keyed on the resource type, like the export branch: `SEND_MESSAGE` is the only action that
+    // maps to it, and the type is what says there is a stored draft to read.
+    render(
+      controlsHost,
+      decisionControls(
+        item,
+        onDecided,
+        verdict,
+        "Không bấm được: đang tải tin nhắn sẽ gửi. Chưa thấy chữ thì chưa quyết.",
+      ),
+    );
+    render(contentHost, h("p", { class: "hint" }, "Đang tải tin nhắn sẽ gửi…"));
+    void loadMessageDraft(item, contentHost, controlsHost, onDecided, verdict);
+  } else if (String(item.resource_type) === REMEDY_PROPOSAL) {
+    // `REMEDY-OWNER-DECIDE-001`. Keyed on the resource type like the two branches above:
+    // `APPROVE_REMEDY` is the only action that maps to it.
+    render(
+      controlsHost,
+      decisionControls(
+        item,
+        onDecided,
+        verdict,
+        "Không bấm được: đang tải khoản bồi hoàn. Chưa thấy số tiền thì chưa quyết.",
+      ),
+    );
+    render(contentHost, h("p", { class: "hint" }, "Đang tải khoản bồi hoàn cần duyệt…"));
+    void loadRemedyProposal(item, contentHost, controlsHost, onDecided, verdict);
   } else {
     render(controlsHost, decisionControls(item, onDecided, verdict));
   }
@@ -901,11 +1432,34 @@ function limitsPanel() {
           h(
             "p",
             null,
-            "Loại nào bảng vận hành chưa mở ra xem được thì nút vẫn khoá, và đó là cố ý. " +
-              "MESSAGE_DRAFT là loại đáng nói nhất: hệ thống không lưu nội dung tin nhắn, và máy " +
-              "chủ cũng không đối chiếu được mã niêm phong nội dung với bất cứ thứ gì. Bấm duyệt " +
-              "một tin sắp gửi cho khách mà chưa ai đọc được nó chính là duyệt mù — có đủ ba mã " +
-              "cũng không làm điều đó thành an toàn.",
+            // MESSAGE-DRAFT-BINDING-001. This paragraph used to say the system stores no message
+            // body and the server checks the content digest against nothing. Both were false by
+            // then: the draft is stored, the server derives all three binding values from it, and
+            // the card now reads the words through the route this item added.
+            "Phiếu gửi tin nhắn (MESSAGE_DRAFT) cũng vậy: thẻ phiếu tự đọc đúng chữ của tin sẽ " +
+              "gửi, đối chiếu phiên bản và hai mã niêm phong với phiếu, rồi in chữ đó ngay trên " +
+              "hai nút. Nếu bản nháp bị sửa hoặc bị từ chối sau khi phiếu được mở, thẻ không hiện " +
+              "chữ, nút Duyệt khoá và chỉ còn Từ chối — máy chủ cũng từ chối duyệt một phiếu như " +
+              "vậy. Duyệt xong vẫn chưa có gì được gửi: một nhân viên phải tự gửi tay và ký tên.",
+          ),
+          h(
+            "p",
+            null,
+            // REMEDY-OWNER-DECIDE-001. Before it, an APPROVE_REMEDY envelope reached this queue and
+            // nobody could decide it here: the type had no entry in the viewable table.
+            "Phiếu duyệt bồi hoàn (REMEDY_PROPOSAL) — mất đồ, đền trên đơn đã hoàn tiền, hoặc vượt " +
+              "mức nhân viên được tự duyệt — cũng vậy: thẻ phiếu tự đọc loại, số tiền, trần máy " +
+              "chủ đã kiểm, món nào, vì sao cần chủ tiệm và khách đã phản ánh gì, đối chiếu với " +
+              "phiếu, rồi in ngay trên hai nút. Đơn hoặc đề nghị đổi sau khi phiếu được mở thì " +
+              "thẻ không hiện số, nút Duyệt khoá và chỉ còn Từ chối. Duyệt xong vẫn chưa trả gì: " +
+              "nhân viên bấm thực hiện ở màn hình Bồi hoàn.",
+          ),
+          h(
+            "p",
+            null,
+            "Loại nào bảng vận hành chưa mở ra xem được thì nút vẫn khoá, và đó là cố ý — ví dụ " +
+              "khung giờ hay phí giao đề xuất. Bấm duyệt một nội dung chưa ai đọc được chính là " +
+              "duyệt mù, có đủ ba mã cũng không làm điều đó thành an toàn.",
           ),
           h(
             "p",
@@ -926,6 +1480,12 @@ function limitsPanel() {
             "Cùng một lý do: mở một yêu cầu duyệt cần đúng loại việc theo bảng của máy chủ, cộng " +
               "hai mã niêm phong và phiên bản chính sách đang áp dụng. Không giá trị nào trong số " +
               "đó nhân viên gõ tay ra được, nên màn hình không mời bạn thử.",
+          ),
+          h(
+            "p",
+            null,
+            "Phiếu được mở ở nơi có sẵn nội dung máy chủ trả về: xin gửi một tin nhắn ở màn hình " +
+              "Ngoại lệ, phần Gửi thủ công; xin xuất dữ liệu ở màn hình Xuất dữ liệu.",
           ),
         ),
       ),
@@ -955,8 +1515,9 @@ function limitsPanel() {
             h(
               "dd",
               null,
-              "10, 15 hoặc 30 phút tuỳ hành động, và hết hạn thì không bao giờ được gia hạn ngầm. " +
-                "Hết giờ nghĩa là phải tạo lại yêu cầu mới, không phải xin thêm thời gian.",
+              "10, 15 hoặc 30 phút tuỳ hành động; riêng phiếu duyệt bồi hoàn mở tới hết ngày làm " +
+                "việc hôm sau (giờ Việt Nam). Hết hạn thì không bao giờ được gia hạn ngầm: hết giờ " +
+                "nghĩa là phải tạo lại yêu cầu mới, không phải xin thêm thời gian.",
             ),
           ),
           h(
@@ -1033,7 +1594,7 @@ function rangeReviewCard(item) {
           null,
           h("strong", { class: "money" }, money(line.proposed_amount_vnd)),
           " trong khoảng ",
-          moneyRange(line.band_minimum_vnd, line.band_maximum_vnd),
+          moneyRange(line.band_minimum_vnd, line.band_maximum_vnd).text,
         ),
       ]),
     ),

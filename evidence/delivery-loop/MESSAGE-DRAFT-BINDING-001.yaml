@@ -1,0 +1,60 @@
+schema_version: 1
+work_item: MESSAGE-DRAFT-BINDING-001
+recorded_at: '2026-09-25T20:00:00+07:00'
+requirement_contract: A store-scoped read returns a message draft's server-computed binding; the approvals
+  card shows the exact words and decides with the server's hashes; the operator raises the envelope from
+  that read; no automated send, no capability change.
+rollback_impact: No migration. The route and console panels revert as code. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: 'The real-API walk does not film this: no draft exists without an agent run, and
+  all 13 capabilities are NOT_AUTHORIZED. It is proven over HTTP against PostgreSQL and in the stubbed
+  browser suite. Consent and suppression checks for transactional manual sends remain open (STAFF_CONSOLE_COMPLETION_PROGRAM_V1.md
+  section 2, point 3).'
+evidence:
+  the_approver_reads_the_exact_bound_text_and_hashes: test_message_draft_binding_postgres.py 11 tests
+    and test_message_draft_binding_read.py 9, red on b24d9f7.
+  the_envelope_is_raised_from_the_server_read: 'The full HTTP flow: read, raise from the read, list with
+    the same hashes and store_id, approve, lock the manual send to the same recipient and hash. Stubbed
+    browser section 16 checks step 0 sends exactly the server''s values.'
+  an_edited_or_rejected_draft_cannot_be_approved: An edit moves the draft to revision 2; APPROVED gets
+    409 RESOURCE_CHANGED_SINCE_REQUEST, REJECTED is accepted.
+  no_automated_send_and_no_capability_change: No send path added; report_delivery_status.py shows all
+    13 capabilities NOT_AUTHORIZED.
+  rollback_assessment: No migration. The route and console panels revert as code. Rolling data back is
+    docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before every
+    upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 625 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 304 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2274 passed, 4 skipped in 484.88s (0:08:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 66 served
+    internal API operations against their contract. Validated 419 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 140 source references, 32 decisions, 4 gates, 9 phases, 154 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_daily_operations.py against the real API (filmed)
+  status: PASSED
+  result: 72 ok, 0 failed
+  note: Database created empty and migrated 0001-0052, policies published; recorded with --video.
+- command: verify_workflow_conformance.py, whole run, against the real API
+  status: PASSED
+  result: 159 ok, 0 failed
+  note: --database-url given, so every check that reads what a write persisted ran, and the control-coverage
+    line is part of the result.
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 251 passed, 0 failed

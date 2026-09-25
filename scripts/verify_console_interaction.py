@@ -117,6 +117,10 @@ REMEDY_OPTIONS = {
             "line_ceiling_vnd": 600_000,
             "committed_vnd": 0,
             "owner_always": [],
+            # `REMEDY-GARMENT-001`: one dress is garment 1, without a picker.
+            "garments": 1,
+            "garment_committed_vnd": [0],
+            "line_level_committed_vnd": 0,
         },
         {
             "line_id": "line-small",
@@ -131,12 +135,42 @@ REMEDY_OPTIONS = {
             "line_ceiling_vnd": 90_000,
             "committed_vnd": 0,
             "owner_always": [],
+            "garments": 1,
+            "garment_committed_vnd": [0],
+            "line_level_committed_vnd": 0,
         },
     ],
     "late_delivery_credit_vnd": 17_000,
     "late_delivery_threshold_minutes": 120,
     "loss_requires_owner": True,
     "order_refunded": False,
+}
+
+#: `REMEDY-GARMENT-001`. The same incident with a line of three shirts at 50.000 d, shirt #1
+#: already carrying 100.000 d -- the staff limit exactly. Served only once section 11 asks for it,
+#: so every check before it sees the two-line order above unchanged.
+REMEDY_OPTIONS_SHIRTS = {
+    **REMEDY_OPTIONS,
+    "damage_line_ceilings_vnd": {"line-shirts": 250_000},
+    "damage_lines": [
+        {
+            "line_id": "line-shirts",
+            "service_code": "DC_SHIRT",
+            "service_name": "Áo sơ mi",
+            "unit": "ITEM",
+            "quantity": "3",
+            "item_fee_basis": "UNIT",
+            "item_fee_vnd": 50_000,
+            "ceiling_vnd": 250_000,
+            "pieces": 3,
+            "line_ceiling_vnd": 750_000,
+            "committed_vnd": 100_000,
+            "owner_always": [],
+            "garments": 3,
+            "garment_committed_vnd": [100_000, 0, 0],
+            "line_level_committed_vnd": 0,
+        },
+    ],
 }
 
 REMEDY_PROPOSAL_ID = "77777777-8888-4333-8444-bbbbbbbbbbbb"
@@ -177,6 +211,259 @@ REMEDY_EXECUTED = {
 }
 
 
+#: READ-PATHS-001, section 15. One order as `GET /internal/v1/orders/{id}` returns it, with the
+#: acquisition source the counter recorded; the two credits it issued, one unspent and one spent;
+#: the proposals of one incident, including a pre-DEC-031 loss with no figure and an owner envelope
+#: that ran out; and a store's staff, one of them disabled and one with a name that is markup.
+ORDER_VIEW_ID = "eeeeeeee-5555-4333-8444-555555555555"
+ORDER_VIEW = {
+    "order_id": ORDER_VIEW_ID,
+    "store_id": STORE,
+    "commercial": "COMPLETED",
+    "intake": "ACCEPTED",
+    "production": "RELEASED",
+    "balance": "PAID",
+    "row_version": 14,
+    "replayed": False,
+    "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
+    "created_at": "2026-09-20T03:00:00+00:00",
+    "quote_id": "55555555-6666-4333-8444-999999999999",
+    "quote_revision": 2,
+    "payable_total_vnd": 132_000,
+    "ticket_number": 17,
+    "ticket_issued_on": "2026-09-20",
+    "self_collection_recorded": True,
+    "acquisition_source": "GOOGLE_MAPS",
+}
+UNUSED_CREDIT_ID = "abababab-1111-4333-8444-555555555555"
+SPENT_CREDIT_ID = "cdcdcdcd-2222-4333-8444-555555555555"
+ORDER_CREDITS = {
+    "store_id": STORE,
+    "order_id": ORDER_VIEW_ID,
+    "truncated": False,
+    "credits": [
+        {
+            "credit_id": UNUSED_CREDIT_ID,
+            "remedy_proposal_id": "12121212-3333-4333-8444-555555555555",
+            "incident_id": INCIDENTS[0]["incident_id"],
+            "kind": "LATE_DELIVERY_CREDIT",
+            # Not round, so a screen that reformatted or rounded it would be visible.
+            "amount_vnd": 13_200,
+            "status": "UNUSED",
+            "issued_at": "2026-09-21T03:00:00+00:00",
+            "redeemed_at": None,
+            "redeemed_quote_id": None,
+            "redeemed_quote_revision": None,
+        },
+        {
+            "credit_id": SPENT_CREDIT_ID,
+            "remedy_proposal_id": "34343434-4444-4333-8444-555555555555",
+            "incident_id": INCIDENTS[0]["incident_id"],
+            "kind": "DAMAGE_COMPENSATION",
+            "amount_vnd": 80_000,
+            "status": "REDEEMED",
+            "issued_at": "2026-09-21T04:00:00+00:00",
+            "redeemed_at": "2026-09-22T04:00:00+00:00",
+            "redeemed_quote_id": "56565656-5555-4333-8444-555555555555",
+            "redeemed_quote_revision": 3,
+        },
+    ],
+}
+RECORDED_PROPOSALS = {
+    "store_id": STORE,
+    "incident_id": INCIDENTS[0]["incident_id"],
+    "order_id": INCIDENTS[0]["order_id"],
+    "truncated": False,
+    "proposals": [
+        {
+            "proposal_id": "78787878-6666-4333-8444-555555555555",
+            "kind": "DAMAGE_COMPENSATION",
+            "status": "OWNER_APPROVAL_REQUIRED",
+            "amount_vnd": 150_000,
+            "ceiling_vnd": 600_000,
+            "order_line_id": "line-large",
+            "attested_late_by_minutes": None,
+            "window_closes_at": "2026-09-18T03:00:00+00:00",
+            "approval_id": "89898989-7777-4333-8444-555555555555",
+            "approval_status": "REQUESTED",
+            "approval_expires_at": "2026-09-17T03:10:00+00:00",
+            "approval_lapsed": True,
+            "proposed_by": "00000000-0000-4000-8000-0000000000cc",
+            "proposed_by_name": "Nguyễn Thị Lan",
+            "proposed_at": "2026-09-17T03:00:00+00:00",
+            "executed_at": None,
+            "credit_id": None,
+            "next_step": "PROPOSE_AGAIN",
+        },
+        {
+            "proposal_id": "90909090-8888-4333-8444-555555555555",
+            "kind": "LOST_ITEM",
+            "status": "POLICY_UNRESOLVED",
+            "amount_vnd": None,
+            "ceiling_vnd": None,
+            "order_line_id": None,
+            "attested_late_by_minutes": None,
+            "window_closes_at": None,
+            "approval_id": None,
+            "approval_status": None,
+            "approval_expires_at": None,
+            "approval_lapsed": None,
+            "proposed_by": "00000000-0000-4000-8000-0000000000cc",
+            "proposed_by_name": "Nguyễn Thị Lan",
+            "proposed_at": "2026-09-17T04:00:00+00:00",
+            "executed_at": None,
+            "credit_id": None,
+            "next_step": "NONE",
+        },
+    ],
+}
+
+#: `REMEDY-OWNER-DECIDE-001`, section 18. One `APPROVE_REMEDY` envelope as the queue returns it,
+#: the owner's read of what it binds, and two more rows for the incident's list: a loss the owner
+#: approved (the list offers the execute press) and one still waiting (it does not).
+OWNER_REMEDY_APPROVAL = "abcdabcd-1111-4333-8444-666666666666"
+OWNER_REMEDY_PROPOSAL = "cdefcdef-2222-4333-8444-666666666666"
+OWNER_REMEDY_WAITING = "efefefef-3333-4333-8444-666666666666"
+OWNER_REMEDY_SNAPSHOT = "JCS-SHA256-V1:" + "1" * 64
+OWNER_REMEDY_RENDERED = "JCS-SHA256-V1:" + "2" * 64
+#: The complaint as a staff member typed it -- untrusted text, and hostile on purpose.
+OWNER_REMEDY_SUMMARY = 'Khách báo mất áo sơ mi trắng <img src=x onerror="window.__remedyPwned=1">'
+
+
+def owner_remedy_queue_item() -> dict[str, object]:
+    """The envelope in `GET /internal/v1/approvals`, open until the end of the next business day."""
+
+    return {
+        "approval_request_id": OWNER_REMEDY_APPROVAL,
+        "status": "REQUESTED",
+        "envelope_hash": "JCS-SHA256-V1:" + "3" * 64,
+        "required_role": "OWNER_ADMIN",
+        # Twenty hours: long enough that the badge must read in hours, not minutes.
+        "expires_at": (datetime.now(UTC) + timedelta(hours=20)).isoformat(),
+        "replayed": False,
+        "resource_type": "REMEDY_PROPOSAL",
+        "resource_id": OWNER_REMEDY_PROPOSAL,
+        "resource_version": 1,
+        "snapshot_hash": OWNER_REMEDY_SNAPSHOT,
+        "rendered_hash": OWNER_REMEDY_RENDERED,
+        "action": "APPROVE_REMEDY",
+        "store_id": STORE,
+    }
+
+
+def owner_remedy_binding() -> dict[str, object]:
+    """`RemedyApprovalBindingResponse` from `main.py`, field for field."""
+
+    return {
+        "store_id": STORE,
+        "action": "APPROVE_REMEDY",
+        "resource_type": "REMEDY_PROPOSAL",
+        "resource_id": OWNER_REMEDY_PROPOSAL,
+        "resource_version": 1,
+        "snapshot_hash": OWNER_REMEDY_SNAPSHOT,
+        "rendered_hash": OWNER_REMEDY_RENDERED,
+        "envelope_matches": True,
+        "approval_id": OWNER_REMEDY_APPROVAL,
+        "approval_status": "REQUESTED",
+        "approval_expires_at": (datetime.now(UTC) + timedelta(hours=20)).isoformat(),
+        "approval_lapsed": False,
+        "next_step": "AWAIT_OWNER",
+        "incident_id": INCIDENTS[0]["incident_id"],
+        "order_id": ORDER_VIEW_ID,
+        "ticket_number": 17,
+        "ticket_issued_on": "2026-09-20",
+        "kind": "LOST_ITEM",
+        "status": "OWNER_APPROVAL_REQUIRED",
+        # Not round, so a screen that reformatted or rounded it would be visible.
+        "amount_vnd": 52_500,
+        "ceiling_vnd": 250_000,
+        "staff_approval_ceiling_vnd": 100_000,
+        "owner_reasons": ["LOSS_CLAIM"],
+        "order_line_id": "line-shirts",
+        "service_code": "SHIRT_WASH_PRESS",
+        "service_name": "Áo sơ mi giặt ủi",
+        "garment_index": 2,
+        "incident_summary": OWNER_REMEDY_SUMMARY,
+        "proposed_by": "00000000-0000-4000-8000-0000000000cc",
+        "proposed_by_name": "Nguyễn Thị Lan",
+        "proposed_at": "2026-09-25T02:00:00+00:00",
+        "executed_at": None,
+        "credit_id": None,
+    }
+
+
+def executable_recorded_proposals() -> dict[str, object]:
+    """The incident's list once the owner approved one loss and another still waits."""
+
+    expires = (datetime.now(UTC) + timedelta(hours=20)).isoformat()
+    common = {
+        "kind": "LOST_ITEM",
+        "status": "OWNER_APPROVAL_REQUIRED",
+        "ceiling_vnd": 250_000,
+        "order_line_id": "line-shirts",
+        "attested_late_by_minutes": None,
+        "window_closes_at": "2026-09-26T03:00:00+00:00",
+        "approval_expires_at": expires,
+        "approval_lapsed": False,
+        "proposed_by": "00000000-0000-4000-8000-0000000000cc",
+        "proposed_by_name": "Nguyễn Thị Lan",
+        "proposed_at": "2026-09-25T02:00:00+00:00",
+        "executed_at": None,
+        "credit_id": None,
+    }
+    return {
+        **RECORDED_PROPOSALS,
+        "proposals": [
+            *RECORDED_PROPOSALS["proposals"],  # type: ignore[misc]
+            {
+                **common,
+                "proposal_id": OWNER_REMEDY_PROPOSAL,
+                "amount_vnd": 52_500,
+                "approval_id": OWNER_REMEDY_APPROVAL,
+                "approval_status": "APPROVED",
+                "next_step": "EXECUTE",
+            },
+            {
+                **common,
+                "proposal_id": OWNER_REMEDY_WAITING,
+                "amount_vnd": 30_000,
+                "approval_id": "fafafafa-4444-4333-8444-666666666666",
+                "approval_status": "REQUESTED",
+                "next_step": "AWAIT_OWNER",
+            },
+        ],
+    }
+
+
+STAFF_ACTIVE_ID = "a1a1a1a1-1111-4333-8444-555555555555"
+STAFF_DISABLED_ID = "b2b2b2b2-2222-4333-8444-555555555555"
+#: Markup as a display name. The owner typed it; the directory must print it, never parse it.
+HOSTILE_NAME = '<img src=x onerror="window.__staffInjected=1">Bình'
+STAFF_DIRECTORY = {
+    "store_id": STORE,
+    "recent_revocation_days": 30,
+    "truncated": False,
+    "staff": [
+        {
+            "staff_user_id": STAFF_ACTIVE_ID,
+            "display_name": HOSTILE_NAME,
+            "status": "ACTIVE",
+            "roles": ["OPS_APPROVER", "OPERATOR"],
+            "assigned_at": "2026-09-01T03:00:00+00:00",
+            "assignment_revoked_at": None,
+        },
+        {
+            "staff_user_id": STAFF_DISABLED_ID,
+            "display_name": "Lê Thị Cúc",
+            "status": "DISABLED",
+            "roles": ["OPERATOR"],
+            "assigned_at": "2026-08-01T03:00:00+00:00",
+            "assignment_revoked_at": "2026-09-20T03:00:00+00:00",
+        },
+    ],
+}
+
+
 def check(name: str, ok: bool, detail: str = "") -> None:
     (PASS if ok else FAIL).append(name)
     print(f"{'  ok  ' if ok else ' FAIL '} {name}" + (f"  — {detail}" if detail else ""))
@@ -205,9 +492,10 @@ ORDER_REQUEST = {
 }
 ORDER_REQUEST_CREATED = {**ORDER_REQUEST, "store_id": STORE, "replayed": False}
 
-#: `OrderResponse`, verbatim. Note what it does not contain: `acquisition_source`. The console
-#: cannot show the recorded source back, which is a registered gap on `#/gaps` and the reason
-#: section 7 has to check the *form's* behaviour rather than reading the value off a card.
+#: `OrderResponse`, verbatim. Note what it does not contain: `acquisition_source`. The command
+#: reply never carries it; since READ-PATHS-001 the order *read* does (`ORDER_VIEW` below), which is
+#: what section 15 reads it back from. Section 7 still checks the form's behaviour, because what the
+#: next customer's form says is a property of the form, not of any read.
 ORDER_CREATED = {
     "order_id": "44444444-5555-4333-8444-888888888888",
     "store_id": STORE,
@@ -218,6 +506,34 @@ ORDER_CREATED = {
     "row_version": 1,
     "replayed": False,
 }
+
+#: Section 15's order: fetched by the shop's courier, collected by the customer at the counter.
+PICKUP_ORDER_ID = "77777777-8888-4333-8444-999999999999"
+
+
+def order_view(mode: str, *, balance: str, collected: bool) -> dict[str, object]:
+    """One `OrderViewResponse`, as `GET /internal/v1/orders/{id}` sends it, at the counter's
+    pickup moment: running, washed and released, the total known."""
+
+    return {
+        "order_id": PICKUP_ORDER_ID,
+        "store_id": STORE,
+        "commercial": "ACTIVE",
+        "intake": "ACCEPTED",
+        "production": "RELEASED",
+        "balance": balance,
+        "row_version": 14,
+        "replayed": False,
+        "fulfillment_mode": mode,
+        "created_at": "2026-09-25T02:00:00+00:00",
+        "quote_id": "88888888-9999-4333-8444-aaaaaaaaaaaa",
+        "quote_revision": 2,
+        "payable_total_vnd": 110_000,
+        "ticket_number": 12,
+        "ticket_issued_on": "2026-09-25",
+        "self_collection_recorded": collected,
+    }
+
 
 #: What `GET /internal/v1/stores/{id}/settlements/today` returns. A non-round figure so a screen
 #: that quietly rounded or reformatted it would be visible in the assertion.
@@ -581,6 +897,59 @@ def export_queue_item() -> dict[str, object]:
     }
 
 
+#: `MESSAGE-DRAFT-BINDING-001`. A `SEND_MESSAGE` envelope, and the read that makes it decidable.
+#:
+#: Until this item the card said the message body was stored nowhere and kept both buttons shut
+#: for good, and nothing in the console could raise the envelope in the first place. Section 15
+#: checks both halves: the words are on the card above the approve control, and step 0 of the
+#: manual-send panel raises the envelope from the server's read with nothing typed.
+MESSAGE_APPROVAL = "aaaaaaaa-bbbb-4333-8444-dddddddddddd"
+MESSAGE_DRAFT_ID = "bbbbbbbb-cccc-4333-8444-eeeeeeeeeeee"
+MESSAGE_RECIPIENT = "cccccccc-dddd-4333-8444-ffffffffffff"
+MESSAGE_SNAPSHOT = "JCS-SHA256-V1:" + "5" * 64
+MESSAGE_RENDERED = "JCS-SHA256-V1:" + "6" * 64
+#: Untrusted text, and deliberately hostile: a draft is shaped by a customer's conversation. The
+#: markup must arrive on screen as characters, never as an element.
+MESSAGE_TEXT = (
+    "Dạ, đồ của anh/chị đã giặt xong, mời anh/chị ghé tiệm nhận ạ.\n"
+    '<img src=x onerror="window.__pwned = true"> Tiệm mở cửa đến 21 giờ.'
+)
+
+#: `MessageDraftBindingResponse` from `main.py`, field for field.
+MESSAGE_BINDING = {
+    "store_id": STORE,
+    "action": "SEND_MESSAGE",
+    "resource_type": "MESSAGE_DRAFT",
+    "resource_id": MESSAGE_DRAFT_ID,
+    "resource_version": 1,
+    "text": MESSAGE_TEXT,
+    "recipient_binding_id": MESSAGE_RECIPIENT,
+    "snapshot_hash": MESSAGE_SNAPSHOT,
+    "rendered_hash": MESSAGE_RENDERED,
+    "policy_version": "manual-send-policy-v1",
+}
+
+
+def message_queue_item() -> dict[str, object]:
+    """The envelope as `GET /internal/v1/approvals` returns it, with the store it belongs to."""
+
+    return {
+        "approval_request_id": MESSAGE_APPROVAL,
+        "status": "REQUESTED",
+        "envelope_hash": "JCS-SHA256-V1:" + "7" * 64,
+        "required_role": "OPS_APPROVER",
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+        "replayed": False,
+        "resource_type": "MESSAGE_DRAFT",
+        "resource_id": MESSAGE_DRAFT_ID,
+        "resource_version": 1,
+        "snapshot_hash": MESSAGE_SNAPSHOT,
+        "rendered_hash": MESSAGE_RENDERED,
+        "action": "SEND_MESSAGE",
+        "store_id": STORE,
+    }
+
+
 def range_price_approval() -> dict[str, object]:
     """The raised envelope, as the server answers since `DEC-029`: already attested by the chooser.
 
@@ -687,6 +1056,9 @@ state = {
     # the queue while it is being checked and this one is alone while it is.
     "export_listed": False,
     "export_unreadable": False,
+    # Section 15 only: the one order `GET /internal/v1/orders/{id}` and the store's order list
+    # answer with. `None` leaves both on the catch-all, as every earlier section expects.
+    "order_view": None,
 }
 held_ticket_routes: list[Route] = []
 
@@ -773,8 +1145,116 @@ with sync_playwright() as playwright:
                 )
                 return
             body = EXPORT_REQUEST_CONTENT
+        elif "/message-drafts/" in url and url.split("?")[0].endswith("/binding"):
+            # The read section 15 exists for. Three answers: the envelope's own words, a draft a
+            # reviewer edited since (revision 2, other digests), and a draft rejected since (404).
+            state.setdefault("binding_reads", []).append(url)
+            if state.get("message_rejected"):
+                route.fulfill(
+                    status=404,
+                    content_type="application/json",
+                    body=json.dumps({"detail": "no sendable message draft"}),
+                )
+                return
+            if state.get("message_edited"):
+                body = {
+                    **MESSAGE_BINDING,
+                    "resource_version": 2,
+                    "text": "Dạ, tiệm giao tận nơi trong hôm nay ạ.",
+                    "snapshot_hash": "JCS-SHA256-V1:" + "8" * 64,
+                    "rendered_hash": "JCS-SHA256-V1:" + "9" * 64,
+                }
+            else:
+                body = MESSAGE_BINDING
+        elif "/remedy-proposals/" in url and url.split("?")[0].endswith("/approval-binding"):
+            # The read section 18 exists for: the owner's view of one `APPROVE_REMEDY` envelope.
+            # Stale means the order's quote digest moved under the envelope, which the server
+            # reports both as a different `snapshot_hash` and as `envelope_matches: false`.
+            state.setdefault("remedy_binding_reads", []).append(url)
+            body = owner_remedy_binding()
+            if state.get("remedy_stale"):
+                body = {
+                    **body,
+                    "snapshot_hash": "JCS-SHA256-V1:" + "4" * 64,
+                    "envelope_matches": False,
+                }
+        elif "/shadow/reviews" in url and state.get("reviews_listed"):
+            # Two decided drafts: one a person approved, which may now be asked to send, and one
+            # they rejected, which has nothing sendable and must offer no such link.
+            body = [
+                {
+                    "review_id": "dddddddd-eeee-4333-8444-111111111111",
+                    "agent_run_id": MESSAGE_DRAFT_ID,
+                    "decision": "APPROVE",
+                    "reason_code": None,
+                    "edited_text": None,
+                    "decided_by_staff_id": SESSION_OK["staff_user_id"],
+                    "decided_at": "2026-09-25T03:00:00+00:00",
+                    "draft_text": "Dạ, đồ của anh/chị đã giặt xong ạ.",
+                    "terminal_outcome": "DRAFT",
+                    "terminal_code": "DRAFT_REQUIRES_HUMAN",
+                    "produced_at": "2026-09-25T02:59:00+00:00",
+                },
+                {
+                    "review_id": "dddddddd-eeee-4333-8444-222222222222",
+                    "agent_run_id": "eeeeeeee-ffff-4333-8444-333333333333",
+                    "decision": "REJECT",
+                    "reason_code": "TONE_NOT_APPROPRIATE",
+                    "edited_text": None,
+                    "decided_by_staff_id": SESSION_OK["staff_user_id"],
+                    "decided_at": "2026-09-25T02:00:00+00:00",
+                    "draft_text": "Mai lấy nhé.",
+                    "terminal_outcome": "DRAFT",
+                    "terminal_code": "DRAFT_REQUIRES_HUMAN",
+                    "produced_at": "2026-09-25T01:59:00+00:00",
+                },
+            ]
+        elif "/internal/v1/approvals/" in url and url.endswith("/decisions"):
+            # Captured, because the property is what the press sends back: the envelope's own
+            # version and digests, exactly as the queue gave them.
+            state.setdefault("decision_posts", []).append(route.request.post_data)
+            sent = json.loads(route.request.post_data or "{}")
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "approval_request_id": MESSAGE_APPROVAL,
+                        "status": sent.get("decision", "APPROVED"),
+                        "envelope_hash": "JCS-SHA256-V1:" + "7" * 64,
+                        "required_role": "OPS_APPROVER",
+                        "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+                        "replayed": False,
+                    }
+                ),
+            )
+            return
+        elif (
+            url.split("?")[0].endswith("/internal/v1/approvals") and route.request.method == "POST"
+        ):
+            # Step 0 of the manual-send panel raising the `SEND_MESSAGE` envelope.
+            state.setdefault("approval_posts", []).append(route.request.post_data)
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "approval_request_id": MESSAGE_APPROVAL,
+                        "status": "REQUESTED",
+                        "envelope_hash": "JCS-SHA256-V1:" + "7" * 64,
+                        "required_role": "OPS_APPROVER",
+                        "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+                        "replayed": False,
+                    }
+                ),
+            )
+            return
         elif url.split("?")[0].endswith("/internal/v1/approvals"):
-            if state.get("export_listed"):
+            if state.get("remedy_listed"):
+                body = [owner_remedy_queue_item()]
+            elif state.get("message_listed"):
+                body = [message_queue_item()]
+            elif state.get("export_listed"):
                 body = [export_queue_item()]
             else:
                 body = [range_price_queue_item()] if state.get("approvals_listed") else []
@@ -803,11 +1283,14 @@ with sync_playwright() as playwright:
             # A pure read. Nothing is written and nothing is reserved by asking, which is what lets
             # the console put the ceiling and the owner requirement on screen before anything is
             # typed rather than after a round trip that commits something.
-            body = REMEDY_OPTIONS
+            body = REMEDY_OPTIONS_SHIRTS if state.get("remedy_shirts") else REMEDY_OPTIONS
         elif "remedy-proposals" in url and url.endswith("/execution"):
             # The owner-approval branch, both halves. Until the envelope is decided the server
             # refuses with a machine-readable reason and no `outcome` key at all -- the shape that
             # used to reach this console as "Du lieu nhap khong hop le".
+            state.setdefault("execution_posts", []).append(
+                (url, route.request.headers.get("idempotency-key"))
+            )
             if not state.get("owner_approved"):
                 route.fulfill(
                     status=422,
@@ -826,6 +1309,25 @@ with sync_playwright() as playwright:
                 status=201, content_type="application/json", body=json.dumps(REMEDY_EXECUTED)
             )
             return
+        elif "remedy-proposals" in url and route.request.method == "GET":
+            # READ-PATHS-001. Empty until section 15 asks for rows, so section 11's checks about
+            # what *its own* proposal and execution put on screen are not answered by this list.
+            state.setdefault("proposal_reads", []).append(url)
+            body = (
+                executable_recorded_proposals()
+                if state.get("recorded_executable")
+                else RECORDED_PROPOSALS
+                if state.get("recorded_listed")
+                else {**RECORDED_PROPOSALS, "proposals": []}
+            )
+        elif "/orders/" in url and "/remedy-credits" in url:
+            state.setdefault("credit_reads", []).append(url)
+            body = ORDER_CREDITS
+        elif "/stores/" in url and url.split("?")[0].endswith("/staff"):
+            state.setdefault("staff_reads", []).append(url)
+            body = STAFF_DIRECTORY
+        elif url.split("?")[0].endswith(f"/internal/v1/orders/{ORDER_VIEW_ID}"):
+            body = ORDER_VIEW
         elif "remedy-proposals" in url and route.request.method == "POST":
             # Captured rather than merely answered: the property section 11 proves is that the
             # body carries exactly the keys this kind owns and no ceiling of its own. A stub that
@@ -967,6 +1469,18 @@ with sync_playwright() as playwright:
                 status=201, content_type="application/json", body=json.dumps(BAND_REVISION)
             )
             return
+        elif (
+            state.get("order_view") is not None
+            and route.request.method == "GET"
+            and url.split("?")[0].endswith(f"/internal/v1/orders/{PICKUP_ORDER_ID}")
+        ):
+            body = state["order_view"]
+        elif (
+            state.get("order_view") is not None
+            and route.request.method == "GET"
+            and url.split("?")[0].endswith(f"/stores/{STORE}/orders")
+        ):
+            body = [state["order_view"]]
         else:
             body = []
         route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
@@ -1435,7 +1949,7 @@ with sync_playwright() as playwright:
         f"class={source.get_attribute('class')}",
     )
     check(
-        "the field warns that the entry is final, since no screen can show it back",
+        "the field warns that the entry is final: the detail shows it back, never edits it",
         "không sửa được" in page.content(),
     )
     # And the label points at the select, which is the CONSOLE-LABEL-001 defect one screen over.
@@ -1937,6 +2451,8 @@ with sync_playwright() as playwright:
             "store_fault_attested": True,
             "order_line_id": "line-large",
             "amount_vnd": 150_000,
+            # `REMEDY-GARMENT-001`: a line of one garment names garment 1, so the row says which.
+            "garment_index": 1,
         },
         repr(proposed),
     )
@@ -1974,7 +2490,7 @@ with sync_playwright() as playwright:
         "Đã thực hiện" in content and "CREDIT_EXECUTED" in content,
     )
     check(
-        "the credit id is shown in full with a copy control: nothing can look it up",
+        "the credit id is shown in full with a copy control at the moment it is issued",
         REMEDY_CREDIT_ID in content and "Chép mã giảm trừ này lại ngay" in content,
     )
 
@@ -2009,6 +2525,76 @@ with sync_playwright() as playwright:
         "and its ceiling is the damage ceiling of that one item",
         "90.000" in content,
     )
+
+    # `REMEDY-GARMENT-001` (the DEC-031 addendum): on a line of three shirts each shirt has its own
+    # 100.000 d staff limit and its own 250.000 d ceiling. Shirt #1 already carries 100.000 d, so
+    # the same 100.000 d is the staff's on shirt #2 and the owner's on shirt #1 -- and the form must
+    # say which before anything is sent, which only a browser can show.
+    state["remedy_shirts"] = True
+    page.evaluate("location.hash = '#/incidents'")
+    page.wait_for_timeout(500)
+    page.evaluate(f"location.hash = '#/remedies?incident={incident}'")
+    page.wait_for_timeout(900)
+    page.locator("#remedy-kind").select_option(value="DAMAGE_COMPENSATION")
+    page.wait_for_timeout(300)
+    page.locator("#remedy-line").select_option(value="line-shirts")
+    page.wait_for_timeout(300)
+    content = page.content()
+    check(
+        "three shirts: the form asks which shirt before it offers a money box",
+        page.locator("#remedy-garment").count() == 1
+        and page.locator("#remedy-amount").count() == 0
+        and "Chưa chọn món thứ mấy trên dòng này" in content,
+        f"garment={page.locator('#remedy-garment').count()} "
+        f"amount={page.locator('#remedy-amount').count()}",
+    )
+    check(
+        "the shirt picker shows what each shirt already carries, and preselects none",
+        "Món thứ 1 · đã ghi 100.000" in content
+        and page.locator("#remedy-garment").input_value() == "",
+        repr(page.locator("#remedy-garment").input_value()),
+    )
+    page.locator("#remedy-garment").select_option(value="2")
+    page.wait_for_timeout(300)
+    amount = page.locator("#remedy-amount")
+    amount.click()
+    page.keyboard.type("100000", delay=8)
+    page.wait_for_timeout(300)
+    check(
+        "100.000 d on shirt #2 is the staff's to approve, whatever shirt #1 carries",
+        "sẽ lập phiếu chờ chủ tiệm duyệt" not in page.content(),
+    )
+    page.locator("#remedy-garment").select_option(value="1")
+    page.wait_for_timeout(300)
+    content = page.content()
+    check(
+        "the same 100.000 d on shirt #1 is cumulative with its 100.000 d, and the owner's",
+        "sẽ lập phiếu chờ chủ tiệm duyệt" in content and "Món thứ 1 đã ghi đền" in content,
+    )
+    check(
+        "and changing the shirt kept what was typed",
+        page.locator("#remedy-amount").input_value() == "100000",
+        repr(page.locator("#remedy-amount").input_value()),
+    )
+    page.locator("#remedy-garment").select_option(value="2")
+    page.locator("#remedy-fault").check()
+    page.wait_for_timeout(300)
+    page.locator("button", has_text="Gửi đề nghị bồi hoàn").first.click()
+    page.wait_for_timeout(900)
+    proposed = json.loads((state.get("remedy_posts") or ["{}"])[-1] or "{}")
+    check(
+        "the proposal names shirt #2 by its position on the line",
+        proposed
+        == {
+            "kind": "DAMAGE_COMPENSATION",
+            "store_fault_attested": True,
+            "order_line_id": "line-shirts",
+            "amount_vnd": 100_000,
+            "garment_index": 2,
+        },
+        repr(proposed),
+    )
+    state["remedy_shirts"] = False
 
     print()
     print("=" * 74)
@@ -2457,6 +3043,700 @@ with sync_playwright() as playwright:
     )
     EXPORT_REQUEST_CONTENT["rendered_hash"] = EXPORT_RENDERED
     state["export_listed"] = False
+
+    print()
+    print("=" * 74)
+    print("15. KHÁCH TỚI LẤY ĐỒ — the pickup press for every customer who collects at the counter")
+    print("=" * 74)
+
+    # `PICKUP-ONLY-SETTLE-001`, the `DEC-032` addendum. The shop's courier fetched the laundry; the
+    # customer came by the counter and paid the exact total before it was finished. The server
+    # records that as the walk-in's prepayment and closes the order only once the handover is
+    # recorded -- so if the console offers "Khách đã nhận đồ" to walk-ins alone, this customer's
+    # order is paid, released and impossible to close from the screen. Only a browser can see
+    # which button a real order view produces; the server tests cannot.
+
+    def pickup_button() -> int:
+        return page.get_by_role("button", name="Khách đã nhận đồ").count()
+
+    def open_order(view: dict[str, object]) -> None:
+        state["order_view"] = view
+        page.evaluate("location.hash = '#/orders'")
+        page.wait_for_timeout(600)
+        page.evaluate(f"location.hash = '#/orders/{PICKUP_ORDER_ID}'")
+        page.wait_for_timeout(900)
+
+    open_order(order_view("PICKUP_ONLY", balance="PAID", collected=False))
+    check(
+        "a courier-fetched order paid in advance offers the pickup press",
+        pickup_button() == 1,
+        f"{pickup_button()} buttons",
+    )
+    check(
+        "and says the customer has paid and is still to be handed the bag",
+        "Khách đã trả trước. Khi đưa đồ cho khách" in rendered_text(),
+    )
+    check(
+        "once paid, the settlement form is gone and the screen says the money is taken",
+        page.locator("#settlement-amount").count() == 0 and "Đã thu đủ tiền" in rendered_text(),
+    )
+    # The guardrail belongs to the form, and the form is shown only while the order owes money
+    # (a paid order used to keep it live, offering to take the money twice).
+    open_order(order_view("PICKUP_ONLY", balance="UNPAID", collected=False))
+    check(
+        "the settlement guardrail says no courier takes money",
+        "Người giao không thu tiền" in rendered_text(),
+    )
+
+    open_order(order_view("SELF_DROP_SELF_COLLECT", balance="PAID", collected=False))
+    check("a walk-in paid at drop-off still offers it", pickup_button() == 1)
+
+    # The refusal direction. A delivery reaches its customer by a leg (`DEC-023`), a customer who
+    # paid at pickup was recorded by that settlement, and an unpaid customer pays first.
+    for mode, balance, collected, why in (
+        ("PICKUP_AND_RETURN", "PAID", False, "a prepaid delivery"),
+        ("RETURN_ONLY", "PAID", False, "a prepaid return-only delivery"),
+        ("PICKUP_ONLY", "PAID", True, "a courier-fetched order already collected"),
+        ("PICKUP_ONLY", "UNPAID", False, "a courier-fetched order not yet paid"),
+    ):
+        open_order(order_view(mode, balance=balance, collected=collected))
+        check(f"{why} offers no pickup press", pickup_button() == 0, f"{pickup_button()} buttons")
+
+    # The list the counter searches at pickup says the same thing on the card.
+    state["order_view"] = order_view("PICKUP_ONLY", balance="PAID", collected=False)
+    page.evaluate("location.hash = '#/'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(1200)
+    check(
+        "the order list marks a courier-fetched order as paid and waiting for the customer",
+        "Khách đã trả trước, chưa nhận đồ" in rendered_text(),
+    )
+    state["order_view"] = None
+
+    print()
+    print("=" * 74)
+    print("16. DUYỆT GỬI TIN — the exact words above the button, and raised from the server's read")
+    print("=" * 74)
+
+    # `MESSAGE-DRAFT-BINDING-001`. The card used to say the message body was stored nowhere and
+    # kept both buttons shut for good, and nothing in the console could raise the envelope. Four
+    # properties, each only provable in a browser: the words are in the document above the approve
+    # control; hostile markup in a draft is shown as characters and never becomes an element; a
+    # draft that moved after the envelope was raised withholds its text and leaves only "Từ chối";
+    # and step 0 raises the envelope from the read with nothing typed.
+
+    def approve_state() -> object:
+        return page.evaluate(
+            """() => {
+              const card = document.querySelector("article.card");
+              if (!card) return "no card";
+              const find = (label) => [...card.querySelectorAll("button")]
+                .find((b) => b.textContent.trim() === label);
+              const approve = find("Duyệt");
+              const refuse = find("Từ chối");
+              if (!approve || !refuse) return "missing a control";
+              return { approve: approve.disabled, refuse: refuse.disabled };
+            }"""
+        )
+
+    state["message_listed"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    text = rendered_text()
+
+    check(
+        "the queue names the send action and its resource type",
+        "SEND_MESSAGE" in text and "MESSAGE_DRAFT" in text,
+    )
+    check(
+        "the card read the words through the envelope's own store",
+        any(
+            f"/stores/{STORE}/message-drafts/{MESSAGE_DRAFT_ID}/binding" in u
+            for u in state.get("binding_reads", [])
+        ),
+        repr(state.get("binding_reads")),
+    )
+    check(
+        "the exact words the envelope binds are on the card",
+        "mời anh/chị ghé tiệm nhận ạ." in text and "Tiệm mở cửa đến 21 giờ." in text,
+    )
+    check(
+        "hostile markup in the draft is shown as characters",
+        '<img src=x onerror="window.__pwned = true">' in text,
+    )
+    check(
+        "and never becomes an element or runs",
+        page.evaluate(
+            """() => document.querySelectorAll("article.card img").length === 0
+                     && window.__pwned !== true"""
+        )
+        is True,
+    )
+    check(
+        "the stale 'hệ thống không lưu nội dung tin nhắn' reasoning is gone from the screen",
+        "không lưu nội dung tin nhắn" not in text,
+    )
+    ordering = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          const body = card.querySelector("[data-message-body]");
+          if (!approve) return "no approve control";
+          if (!body) return "the message body is not rendered";
+          const before =
+            Boolean(body.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING);
+          return { before, disabled: approve.disabled };
+        }"""
+    )
+    check(
+        "the words precede the approve control in the document",
+        isinstance(ordering, dict) and ordering.get("before") is True,
+        repr(ordering),
+    )
+    check(
+        "and the control is pressable — this envelope was undecidable by anyone",
+        isinstance(ordering, dict) and ordering.get("disabled") is False,
+        repr(ordering),
+    )
+
+    page.locator("article.card button", has_text="Duyệt").first.click()
+    page.wait_for_timeout(700)
+    posts = [json.loads(p or "{}") for p in state.get("decision_posts", [])]
+    check(
+        "pressing Duyệt sends back the envelope's own version and both digests",
+        bool(posts)
+        and posts[-1].get("decision") == "APPROVED"
+        and posts[-1].get("resource_version") == 1
+        and posts[-1].get("snapshot_hash") == MESSAGE_SNAPSHOT
+        and posts[-1].get("rendered_hash") == MESSAGE_RENDERED,
+        repr(posts[-1:]),
+    )
+
+    # A reviewer edited the draft after the envelope was raised. The words on file are no longer
+    # the words the press would hand back, so they are withheld and only a refusal is offered.
+    state["message_edited"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    text = rendered_text()
+    controls = approve_state()
+    check(
+        "an edited draft leaves Duyệt shut and Từ chối usable",
+        controls == {"approve": True, "refuse": False},
+        repr(controls),
+    )
+    check(
+        "its new text is withheld rather than shown with a caveat",
+        "tiệm giao tận nơi" not in text and "mời anh/chị ghé tiệm nhận ạ." not in text,
+    )
+    check(
+        "and the card names the reason, with both versions",
+        "Tin nhắn đã đổi so với phiếu" in text and "v1" in text and "v2" in text,
+    )
+    before = len(state.get("decision_posts", []))
+    page.locator("article.card button", has_text="Từ chối").first.click()
+    page.wait_for_timeout(700)
+    posts = [json.loads(p or "{}") for p in state.get("decision_posts", [])]
+    check(
+        "refusing the stale envelope sends a REJECTED decision and nothing else",
+        len(posts) == before + 1 and posts[-1].get("decision") == "REJECTED",
+        repr(posts[-1:]),
+    )
+    state["message_edited"] = False
+
+    # A reviewer rejected the draft since: nothing is sendable.
+    state["message_rejected"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    text = rendered_text()
+    controls = approve_state()
+    check(
+        "a rejected draft leaves Duyệt shut and Từ chối usable",
+        controls == {"approve": True, "refuse": False},
+        repr(controls),
+    )
+    check(
+        "and says the draft has nothing left to send",
+        "Bản nháp không còn gửi được" in text and "mời anh/chị" not in text,
+    )
+    state["message_rejected"] = False
+    state["message_listed"] = False
+
+    # Where the operator starts: a decided draft on `#/shadow`. Only one a person approved or
+    # rewrote offers the way to ask for a send.
+    state["reviews_listed"] = True
+    page.evaluate("location.hash = '#/shadow'")
+    page.wait_for_timeout(900)
+    links = page.evaluate(
+        """() => [...document.querySelectorAll("a[href^='#/exceptions?draft=']")]
+                 .map((a) => a.getAttribute("href"))"""
+    )
+    check(
+        "an approved draft on #/shadow links to step 0 with its id, and a rejected one does not",
+        links == [f"#/exceptions?draft={MESSAGE_DRAFT_ID}"],
+        repr(links),
+    )
+    state["reviews_listed"] = False
+
+    # Step 0: the operator opens the manual-send panel on a draft, as the `#/shadow` link does.
+    page.evaluate(f"location.hash = '#/exceptions?draft={MESSAGE_DRAFT_ID}'")
+    page.wait_for_timeout(1000)
+    text = rendered_text()
+    check(
+        "step 0 reads the draft and prints the words before offering anything",
+        "Đúng những chữ sẽ được xin duyệt và gửi" in text
+        and "mời anh/chị ghé tiệm nhận ạ." in text,
+    )
+    check(
+        "the recipient is the opaque binding, shortened, and nothing else about the customer",
+        MESSAGE_RECIPIENT[:8] in text and MESSAGE_RECIPIENT not in text,
+    )
+    page.locator("button", has_text="Xin duyệt gửi đúng tin này").first.click()
+    page.wait_for_timeout(700)
+    raised = [json.loads(p or "{}") for p in state.get("approval_posts", [])]
+    check(
+        "the envelope is raised from the server's read, value for value",
+        bool(raised)
+        and raised[-1]
+        == {
+            k: MESSAGE_BINDING[k]
+            for k in MESSAGE_BINDING
+            if k not in {"text", "recipient_binding_id"}
+        },
+        repr(raised[-1:]),
+    )
+    check(
+        "and names no recipient of its own",
+        bool(raised) and "recipient_binding_id" not in raised[-1],
+    )
+    prefilled = page.evaluate(
+        """() => ({
+          approval: document.querySelector("#manual-approval-id")?.value,
+          version: document.querySelector("#manual-resource-version")?.value,
+          snapshot: document.querySelector("#manual-snapshot-hash")?.value,
+          rendered: document.querySelector("#manual-rendered-hash")?.value,
+        })"""
+    )
+    check(
+        "step 1 is filled from the raised envelope, so nothing is pasted",
+        prefilled
+        == {
+            "approval": MESSAGE_APPROVAL,
+            "version": "1",
+            "snapshot": MESSAGE_SNAPSHOT,
+            "rendered": MESSAGE_RENDERED,
+        },
+        repr(prefilled),
+    )
+    check(
+        "and the page says a different person must approve and nothing was sent",
+        "không phải bạn" in rendered_text() and "Chưa có gì được gửi" in rendered_text(),
+    )
+
+    print()
+    print("=" * 74)
+    print("17. ĐỌC LẠI — who works here, what an order issued, what an incident holds, and where")
+    print("    the customer came from")
+    print("=" * 74)
+
+    # READ-PATHS-001. Four reads the console's own gap register admitted it lacked. What a browser
+    # can prove that a source test cannot: that each reaches the screen that needs it, that a spent
+    # credit offers no copy control while an unspent one does, that the directory's buttons fill
+    # the *existing* forms rather than replacing them, and that a name typed as markup stays text.
+
+    page.evaluate(f"location.hash = '#/orders/{ORDER_VIEW_ID}'")
+    page.wait_for_timeout(1200)
+    text = rendered_text()
+    source = page.locator("[data-field=acquisition-source]")
+    check(
+        "the order detail shows the recorded acquisition source, glossed with its token",
+        source.count() == 1 and (source.text_content() or "") == "Tìm trên Google (GOOGLE_MAPS)",
+        repr(source.text_content()) if source.count() else "absent",
+    )
+    check(
+        "and says beside it that the value cannot be corrected",
+        "ghi rồi thì không sửa được" in text,
+    )
+    check(
+        "the credits are read from the order's own store, by the order's id",
+        any(
+            f"/stores/{STORE}/orders/{ORDER_VIEW_ID}/remedy-credits" in url
+            for url in state.get("credit_reads", [])
+        ),
+        repr(state.get("credit_reads")),
+    )
+    unused = page.locator(f"#order-remedy-credits li[data-credit-id='{UNUSED_CREDIT_ID}']")
+    spent = page.locator(f"#order-remedy-credits li[data-credit-id='{SPENT_CREDIT_ID}']")
+    check(
+        "the panel is headed for the counter and lists both credits",
+        "Khoản giảm trừ của đơn này" in text and unused.count() == 1 and spent.count() == 1,
+    )
+    check(
+        "an unused code is printed in full with a copy control",
+        UNUSED_CREDIT_ID in (unused.text_content() or "")
+        and unused.locator("button", has_text="Sao chép").count() == 1
+        and unused.get_attribute("data-credit-status") == "UNUSED",
+    )
+    check(
+        "a spent code offers no copy control, and says it was used",
+        spent.locator("button").count() == 0
+        and "Đã dùng" in (spent.text_content() or "")
+        and SPENT_CREDIT_ID not in (spent.text_content() or ""),
+        repr(spent.text_content()),
+    )
+    check(
+        "the amounts are the server's integers, formatted and not rounded",
+        "13.200" in (unused.text_content() or "") and "80.000" in (spent.text_content() or ""),
+    )
+    check(
+        "no expiry is invented for a credit",
+        "Máy chủ không ghi hạn dùng" in text and "hết hạn" not in (unused.text_content() or ""),
+    )
+
+    state["recorded_listed"] = True
+    incident = str(INCIDENTS[0]["incident_id"])
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate(f"location.hash = '#/remedies?incident={incident}'")
+    page.wait_for_timeout(1200)
+    recorded = page.locator("#remedy-recorded-proposals li[data-proposal-id]")
+    check(
+        "reading an incident lists every proposal the server recorded on it",
+        recorded.count() == 2,
+        f"{recorded.count()} rows",
+    )
+    check(
+        "the list is the incident's, read from the selected store",
+        any(
+            f"/stores/{STORE}/incidents/{incident}/remedy-proposals" in url
+            for url in state.get("proposal_reads", [])
+        ),
+    )
+    lapsed = page.locator(
+        "#remedy-recorded-proposals li[data-proposal-status=OWNER_APPROVAL_REQUIRED]"
+    )
+    legacy = page.locator("#remedy-recorded-proposals li[data-proposal-status=POLICY_UNRESOLVED]")
+    check(
+        "an owner envelope that ran out says the owner can no longer decide it",
+        "quá hạn" in (lapsed.text_content() or "")
+        and "Nguyễn Thị Lan" in (lapsed.text_content() or ""),
+        repr(lapsed.text_content()),
+    )
+    check(
+        "a loss recorded before DEC-031 is listed, with no figure rather than 0 ₫",
+        legacy.count() == 1
+        and "Không có số tiền" in (legacy.text_content() or "")
+        and "0 ₫" not in (legacy.text_content() or ""),
+        repr(legacy.text_content()),
+    )
+    state["recorded_listed"] = False
+
+    page.evaluate("location.hash = '#/staff'")
+    page.wait_for_timeout(1200)
+    rows = page.locator("#staff-directory li[data-staff-id]")
+    check(
+        "the owner sees who works in the selected store",
+        rows.count() == 2 and bool(state.get("staff_reads")),
+        f"{rows.count()} rows",
+    )
+    active_row = page.locator(f"#staff-directory li[data-staff-id='{STAFF_ACTIVE_ID}']")
+    disabled_row = page.locator(f"#staff-directory li[data-staff-id='{STAFF_DISABLED_ID}']")
+    check(
+        "a display name that is markup is printed as text and never parsed",
+        HOSTILE_NAME in (active_row.text_content() or "")
+        and active_row.locator("img").count() == 0
+        and page.evaluate("window.__staffInjected") is None,
+    )
+    check(
+        "each person's roles and status are on the row",
+        "OPS_APPROVER" in (active_row.text_content() or "")
+        and "DISABLED" in (disabled_row.text_content() or "")
+        and "Thu hồi lúc" in (disabled_row.text_content() or ""),
+    )
+    check(
+        "a disabled account is not offered to the disable form",
+        disabled_row.locator("[data-prefill=disable]").count() == 0
+        and active_row.locator("[data-prefill=disable]").count() == 1,
+    )
+    active_row.locator("[data-prefill=role]").click()
+    page.wait_for_timeout(300)
+    check(
+        "'Điền vào Gán vai trò' fills the existing role form with that person's id",
+        page.locator("#staff-role-id").input_value() == STAFF_ACTIVE_ID,
+        repr(page.locator("#staff-role-id").input_value()),
+    )
+    active_row.locator("[data-prefill=store]").click()
+    active_row.locator("[data-prefill=disable]").click()
+    page.wait_for_timeout(300)
+    check(
+        "and the store and disable forms the same way, without sending anything",
+        page.locator("#staff-store-staff").input_value() == STAFF_ACTIVE_ID
+        and page.locator("#staff-disable-id").input_value() == STAFF_ACTIVE_ID
+        and "Bấm lần nữa" not in rendered_text(),
+    )
+    check(
+        "the forms are still there, including creating somebody who belongs to no store yet",
+        page.locator("#staff-create-subject").count() == 1
+        and "không có danh sách" not in rendered_text(),
+    )
+
+    print()
+    print("=" * 74)
+    print("18. DUYỆT BỒI HOÀN — the owner reads and decides the claim; the counter pays it later")
+    print("=" * 74)
+
+    # `REMEDY-OWNER-DECIDE-001`. Since DEC-031 every loss waits on an `APPROVE_REMEDY` envelope
+    # only the owner may decide, and until this item the card showed nothing about one and kept
+    # both buttons shut; an approved claim could then be paid only from the browser session that
+    # proposed it. What only a browser can prove: the figures are on the card above an approve
+    # control that is pressable; the press hands back the envelope's own binding; a stale claim
+    # withholds the figures and leaves only "Từ chối"; and the incident's list offers the execute
+    # press on exactly the row the server marks executable.
+
+    def press(control) -> None:  # type: ignore[no-untyped-def]
+        """Press a control only if it can be pressed: a shut one is what the checks report, and
+        waiting thirty seconds on it would end the run before the later checks are reached."""
+
+        if control.count() and control.is_enabled():
+            control.click()
+
+    state["remedy_listed"] = True
+    state["remedy_stale"] = False
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(1000)
+    text = rendered_text()
+    card = page.locator("article.card").first
+    card_text = card.text_content() or ""
+
+    check(
+        "the card read the claim through the envelope's own store and proposal",
+        any(
+            f"/stores/{STORE}/remedy-proposals/{OWNER_REMEDY_PROPOSAL}/approval-binding" in u
+            for u in state.get("remedy_binding_reads", [])
+        ),
+        repr(state.get("remedy_binding_reads")),
+    )
+    fields = page.evaluate(
+        """() => Object.fromEntries(
+             [...document.querySelectorAll("article.card [data-field^='remedy-']")]
+               .map((n) => [n.getAttribute("data-field"), n.textContent]))"""
+    )
+    check(
+        "the card names the kind, with its token",
+        "Mất đồ (LOST_ITEM)" in str(fields.get("remedy-kind")),
+        repr(fields.get("remedy-kind")),
+    )
+    check(
+        "the amount, the ceiling and the staff limit are the server's integers, formatted",
+        "52.500" in str(fields.get("remedy-amount"))
+        and "250.000" in str(fields.get("remedy-ceiling"))
+        and "100.000" in str(fields.get("remedy-staff-limit")),
+        repr(fields),
+    )
+    check(
+        "the item is the line's service and the garment the claim names",
+        "Áo sơ mi giặt ủi (SHIRT_WASH_PRESS)" in str(fields.get("remedy-item"))
+        and "món thứ 2" in str(fields.get("remedy-item")),
+        repr(fields.get("remedy-item")),
+    )
+    check(
+        "why the owner is needed is the recorded reason, in the counter's words",
+        "mất đồ luôn do chủ tiệm duyệt" in str(fields.get("remedy-why")),
+        repr(fields.get("remedy-why")),
+    )
+    check(
+        "the order is named by the customer's ticket, with a link to it",
+        "Phiếu 17" in str(fields.get("remedy-order"))
+        and page.locator(f"article.card a[href='#/orders/{ORDER_VIEW_ID}']").count() == 1,
+        repr(fields.get("remedy-order")),
+    )
+    check(
+        "the complaint is printed as characters and never becomes an element",
+        '<img src=x onerror="window.__remedyPwned=1">' in str(fields.get("remedy-summary"))
+        and page.locator("article.card img").count() == 0
+        and page.evaluate("window.__remedyPwned") is None,
+        repr(fields.get("remedy-summary")),
+    )
+    check(
+        "the envelope's countdown reads in hours, open to the end of the next business day",
+        "còn 19 giờ" in card_text or "còn 20 giờ" in card_text,
+        card_text[:200],
+    )
+    check(
+        "the queue names the action and its resource type",
+        "APPROVE_REMEDY" in text and "REMEDY_PROPOSAL" in text,
+    )
+    ordering = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          const amount = card.querySelector("[data-field='remedy-amount']");
+          if (!approve) return "no approve control";
+          if (!amount) return "the amount is not rendered";
+          const before =
+            Boolean(amount.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING);
+          return { before, disabled: approve.disabled };
+        }"""
+    )
+    check(
+        "the figures precede the approve control, and it is pressable",
+        ordering == {"before": True, "disabled": False},
+        repr(ordering),
+    )
+
+    before = len(state.get("decision_posts", []))
+    press(page.locator("article.card button", has_text="Duyệt").first)
+    page.wait_for_timeout(700)
+    posts = [json.loads(p or "{}") for p in state.get("decision_posts", [])]
+    check(
+        "pressing Duyệt sends back the envelope's own version and both digests",
+        len(posts) == before + 1
+        and posts[-1].get("decision") == "APPROVED"
+        and posts[-1].get("resource_version") == 1
+        and posts[-1].get("snapshot_hash") == OWNER_REMEDY_SNAPSHOT
+        and posts[-1].get("rendered_hash") == OWNER_REMEDY_RENDERED,
+        repr(posts[-1:]),
+    )
+
+    # The order was re-priced under the envelope: the server resolves a different digest and says
+    # the envelope no longer matches. The figures are withheld and only a refusal is offered.
+    state["remedy_stale"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(1000)
+    text = rendered_text()
+    controls = approve_state()
+    check(
+        "a stale claim leaves Duyệt shut and Từ chối usable",
+        controls == {"approve": True, "refuse": False},
+        repr(controls),
+    )
+    check(
+        "its figures are withheld rather than shown with a caveat",
+        "52.500" not in text
+        and "Áo sơ mi giặt ủi" not in text
+        and page.locator("article.card [data-field^='remedy-']").count() == 0,
+    )
+    check(
+        "and the card names the reason",
+        "Khoản bồi hoàn đã đổi so với phiếu" in text
+        and page.locator("article.card [data-remedy-stale]").count() == 1,
+    )
+    before = len(state.get("decision_posts", []))
+    press(page.locator("article.card button", has_text="Từ chối").first)
+    page.wait_for_timeout(700)
+    posts = [json.loads(p or "{}") for p in state.get("decision_posts", [])]
+    check(
+        "refusing the stale claim sends a REJECTED decision",
+        len(posts) == before + 1 and posts[-1].get("decision") == "REJECTED",
+        repr(posts[-1:]),
+    )
+    state["remedy_stale"] = False
+    state["remedy_listed"] = False
+
+    # Later, on the counter: the incident's list, with no session state from any proposal.
+    state["recorded_listed"] = True
+    state["recorded_executable"] = True
+    state["owner_approved"] = True
+    state["execution_posts"] = []
+    incident = str(INCIDENTS[0]["incident_id"])
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate(f"location.hash = '#/remedies?incident={incident}'")
+    page.wait_for_timeout(1200)
+    buttons = page.evaluate(
+        """() => [...document.querySelectorAll(
+                 "#remedy-recorded-proposals li[data-proposal-id] button[data-remedy-execute]")]
+               .map((b) => ({
+                 row: b.closest("li").getAttribute("data-proposal-id"),
+                 step: b.closest("li").getAttribute("data-proposal-next-step"),
+                 label: b.textContent.trim(),
+                 disabled: b.disabled,
+               }))"""
+    )
+    check(
+        "only the owner-approved, unexecuted row offers the execute press",
+        buttons
+        == [
+            {
+                "row": OWNER_REMEDY_PROPOSAL,
+                "step": "EXECUTE",
+                "label": "Thực hiện bồi hoàn",
+                "disabled": False,
+            }
+        ],
+        repr(buttons),
+    )
+    waiting = page.locator(
+        f"#remedy-recorded-proposals li[data-proposal-id='{OWNER_REMEDY_WAITING}']"
+    )
+    check(
+        "a claim still waiting for the owner says so plainly and offers nothing",
+        "đang chờ chủ tiệm duyệt" in (waiting.text_content() or "")
+        and waiting.locator("button[data-remedy-execute]").count() == 0,
+        repr(waiting.text_content()),
+    )
+    lapsed = page.locator("#remedy-recorded-proposals li[data-proposal-next-step=PROPOSE_AGAIN]")
+    check(
+        "an envelope that ran out says to propose again",
+        lapsed.count() == 1 and "đề nghị lại" in (lapsed.text_content() or ""),
+        repr(lapsed.text_content()) if lapsed.count() else "absent",
+    )
+    approved_row = page.locator(
+        f"#remedy-recorded-proposals li[data-proposal-id='{OWNER_REMEDY_PROPOSAL}']"
+    )
+    check(
+        "the approved row's badge no longer says it waits for the owner",
+        "Chủ tiệm đã duyệt, chờ thực hiện" in (approved_row.text_content() or ""),
+        repr(approved_row.text_content()),
+    )
+    reads_before = len(state.get("proposal_reads", []))
+    press(approved_row.locator("button[data-remedy-execute]").first)
+    page.wait_for_timeout(1000)
+    executed = state.get("execution_posts", [])
+    check(
+        "the press calls the existing execute route for that proposal, with a key and no body",
+        len(executed) == 1
+        and executed[0][0].endswith(
+            f"/internal/v1/remedy-proposals/{OWNER_REMEDY_PROPOSAL}/execution"
+        )
+        and bool(executed[0][1]),
+        repr(executed),
+    )
+    result = page.locator("#remedy-recorded-execution")
+    # Read once, and only if the host exists: a console without it must fail the checks below,
+    # not end the run waiting thirty seconds for an element that is never coming.
+    result_text = (result.text_content() or "") if result.count() else ""
+    check(
+        "the issued credit code is printed in full under the list, with a copy control",
+        REMEDY_CREDIT_ID in result_text
+        and result.locator("button", has_text="Sao chép").count() >= 1,
+        repr(result_text),
+    )
+    check(
+        "and the list is re-read from the server rather than edited in place",
+        len(state.get("proposal_reads", [])) > reads_before,
+    )
+    check(
+        "paying one claim from the list claims nothing about closing the incident",
+        bool(result_text) and "CLOSED" not in result_text,
+        repr(result_text),
+    )
+    state["recorded_executable"] = False
+    state["recorded_listed"] = False
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

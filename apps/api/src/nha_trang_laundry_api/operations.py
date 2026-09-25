@@ -62,6 +62,10 @@ from nha_trang_laundry_db.manual_sends import (
     ManualSendRepository,
     StoredManualSend,
 )
+from nha_trang_laundry_db.message_drafts import (
+    MessageDraftBinding,
+    read_message_draft_binding_for_store,
+)
 from nha_trang_laundry_db.orders import (
     CreateOrderCommand,
     OrderRepository,
@@ -97,6 +101,12 @@ from nha_trang_laundry_db.remedies import (
     ReservedRemedyCredits,
     read_reserved_remedy_credits,
 )
+from nha_trang_laundry_db.remedy_reads import (
+    IncidentRemedyProposals,
+    OrderRemedyCredits,
+    RemedyApprovalBinding,
+    RemedyReadRepository,
+)
 from nha_trang_laundry_db.settlement import (
     CollectedToday,
     CollectionCommand,
@@ -113,6 +123,7 @@ from nha_trang_laundry_db.shadow_console import (
     ShadowConsoleRepository,
     UnknownSend,
 )
+from nha_trang_laundry_db.staff_directory import StaffDirectory, StaffDirectoryRepository
 from nha_trang_laundry_db.store_access import (
     StoreAccessError,
     member_store_ids,
@@ -375,6 +386,9 @@ class StoredRemedyProposalResult:
     #: `OwnerReason` values; empty when staff may authorise. A replay of a proposal recorded before
     #: this field existed reads as empty, which is only ever shown, never decided on.
     owner_reasons: tuple[str, ...] = ()
+    #: `REMEDY-GARMENT-001`: the garment recorded. A replay of a proposal recorded before the field
+    #: existed reads as `None`, which is what those rows hold.
+    garment_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -967,6 +981,24 @@ class OperationsService:
         if stored.status == "EXPIRED":
             raise ApprovalStateError("approval expired")
         return stored
+
+    def read_message_draft_binding(
+        self, *, store_id: UUID, agent_run_id: UUID, principal: StaffPrincipal
+    ) -> MessageDraftBinding | None:
+        """One draft's server-computed `SEND_MESSAGE` binding (`MESSAGE-DRAFT-BINDING-001`).
+
+        A pure read. Role, MFA and membership are checked inside
+        `read_message_draft_binding_for_store`, on the cursor that then reads the draft.
+        """
+
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            return read_message_draft_binding_for_store(
+                cursor, store_id=store_id, agent_run_id=agent_run_id, principal=principal
+            )
 
     def list_pending_approvals(
         self, *, principal: StaffPrincipal, limit: int
@@ -2103,10 +2135,18 @@ class OperationsService:
         attested_late_by_minutes: int | None,
         idempotency_key: str,
         principal: StaffPrincipal,
+        garment_index: int | None = None,
     ) -> StoredRemedyProposalResult:
         """Record what a staff member proposed, after the server checked it against `DEC-004`."""
 
         proposed_at = datetime.now(UTC)
+        # The same key with a different garment is a different claim, so the garment is part of the
+        # payload. Only when named: a request that names none hashes exactly as it did before
+        # `REMEDY-GARMENT-001`, so a retry of a request made then still replays instead of
+        # conflicting with itself.
+        garment_payload: dict[str, object] = (
+            {} if garment_index is None else {"garment_index": garment_index}
+        )
         with self._connection_factory(self._database_url) as connection:
             result = self._idempotency.execute(
                 connection,
@@ -2123,6 +2163,7 @@ class OperationsService:
                         "order_line_id": order_line_id,
                         "amount_vnd": amount_vnd,
                         "attested_late_by_minutes": attested_late_by_minutes,
+                        **garment_payload,
                     },
                     occurred_at=proposed_at,
                 ),
@@ -2140,6 +2181,7 @@ class OperationsService:
                             amount_vnd=amount_vnd,
                             attested_late_by_minutes=attested_late_by_minutes,
                             proposed_at=proposed_at,
+                            garment_index=garment_index,
                         ),
                     )
                 ),
@@ -2460,6 +2502,70 @@ class OperationsService:
                 cursor, store_id=store_id, principal=principal, limit=limit
             )
 
+    # --- READ-PATHS-001 -----------------------------------------------------------------
+    #
+    # Three reads the console's own gap register admitted were missing. Pass-throughs: the role,
+    # the membership and the store predicate are all decided in the repositories, and the one
+    # instant any of them compares against is taken here, once, and handed down.
+
+    def list_store_staff(self, *, store_id: UUID, principal: StaffPrincipal) -> StaffDirectory:
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return StaffDirectoryRepository.list_for_store(
+                cursor, store_id=store_id, principal=principal, now=datetime.now(UTC)
+            )
+
+    def list_order_remedy_credits(
+        self, *, store_id: UUID, order_id: UUID, principal: StaffPrincipal
+    ) -> OrderRemedyCredits:
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return RemedyReadRepository.list_order_credits(
+                cursor, store_id=store_id, order_id=order_id, principal=principal
+            )
+
+    def list_incident_remedy_proposals(
+        self, *, store_id: UUID, incident_id: UUID, principal: StaffPrincipal
+    ) -> IncidentRemedyProposals:
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return RemedyReadRepository.list_incident_proposals(
+                cursor,
+                store_id=store_id,
+                incident_id=incident_id,
+                principal=principal,
+                now=datetime.now(UTC),
+            )
+
+    def read_remedy_approval_binding(
+        self, *, store_id: UUID, proposal_id: UUID, principal: StaffPrincipal
+    ) -> RemedyApprovalBinding:
+        """One remedy proposal's owner envelope, for the owner deciding it.
+
+        `REMEDY-OWNER-DECIDE-001`. A pure read, on one transaction so the proposal, its envelope
+        and the binding resolved from them are read together. Role, MFA and membership are checked
+        in the repository on the cursor that then reads.
+        """
+
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            return RemedyReadRepository.read_approval_binding(
+                cursor,
+                store_id=store_id,
+                proposal_id=proposal_id,
+                principal=principal,
+                now=datetime.now(UTC),
+            )
+
     # --- INTAKE-UI-001 ------------------------------------------------------------------
     #
     # The staff counter path onto the same `order_requests` aggregate the agent tool path writes.
@@ -2682,6 +2788,7 @@ def _remedy_proposal_mapping(value: Any) -> dict[str, object]:
         "approval_id": None if value.approval_id is None else str(value.approval_id),
         "reason_code": value.reason_code,
         "owner_reasons": list(value.owner_reasons),
+        "garment_index": value.garment_index,
     }
 
 
@@ -2705,7 +2812,16 @@ def _stored_remedy_proposal_result(
         reason_code=_optional_text(value["reason_code"]),
         replayed=replayed,
         owner_reasons=_text_tuple(value.get("owner_reasons")),
+        garment_index=_optional_position(value.get("garment_index")),
     )
+
+
+def _optional_position(value: object) -> int | None:
+    """A stored garment position, or `None` for a record written before it existed."""
+
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return None
 
 
 def _text_tuple(value: object) -> tuple[str, ...]:

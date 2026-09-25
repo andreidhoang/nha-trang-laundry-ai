@@ -1,8 +1,22 @@
 # Production continuation brief
 
 **Last reconciled:** 2026-09-25 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **146 queue items.** Migrations run `0001`–`0051`.
+**Active work item:** none. **154 queue items.** Migrations run `0001`–`0052`.
 Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
+
+## Follow-ups closed and every workflow filmed, 2026-09-25 (evening)
+
+`context/tasks/TASK-followups-002.md`, eight items. Every engineering follow-up the morning's
+readiness report listed as "not done" is built: timeouts answer 503 with a safe retry, approvals
+re-resolve their resource at decision time, a message draft's binding is readable and decidable,
+a `PICKUP_ONLY` customer may prepay at the counter, remedies are per garment with a longer owner
+window, and the console's four admitted read gaps are closed. The owner asked to *watch* the shop
+run, so the real-API browser scripts gained `--video` and `--database-url`, and the walk was filmed
+on a database migrated from empty. **The filmed walk found what 2105 green tests had not**: the
+owner could not decide any `DEC-031` remedy from the console (`REMEDY-OWNER-DECIDE-001`), paying
+one claim closed a complaint about several garments (`REMEDY-INCIDENT-OUTCOME-001`), and four
+console defects listed in `CONSOLE-FILMED-WALK-001`. To film again: `--video DIR --slow-mo 220` on
+`verify_daily_operations.py` and `verify_workflow_conformance.py --only <scenario>`.
 
 ## Founder rulings, 2026-09-25
 

@@ -164,6 +164,11 @@ class OrderView:
     #: something pickup needs to read: a walk-in who paid at drop-off shows `balance` PAID and this
     #: false until the staff member handing the bag over records it. The stored flag, not inferred.
     self_collection_recorded: bool
+    #: Where the customer said they found the shop, as the staff member who asked recorded it at
+    #: creation (`ACQUISITION-ATTRIBUTION-001`). Immutable by trigger, so this is only ever a
+    #: readback: a counter that mis-tapped can now see it, and still cannot change it. Staff read
+    #: model only -- the agent tool contract never names this field.
+    acquisition_source: AcquisitionSource
 
 
 #: The read model, shared by the board and the read by id so the two cannot disagree about a field.
@@ -177,7 +182,7 @@ _ORDER_VIEW_SELECT: Final = """
            o.current_quote_id, o.current_quote_revision,
            CASE WHEN r.display_total_min_vnd = r.display_total_max_vnd
                 THEN r.display_total_min_vnd END AS payable_total_vnd,
-           t.ticket_number, t.issued_on, o.self_collection_recorded
+           t.ticket_number, t.issued_on, o.self_collection_recorded, o.acquisition_source
     FROM orders o
     JOIN quote_revisions r
       ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
@@ -1142,6 +1147,7 @@ def _order_view_row(row: tuple[object, ...]) -> OrderView:
         ticket_number=None if row[12] is None else int(str(row[12])),
         ticket_issued_on=_optional_date(row[13]),
         self_collection_recorded=bool(row[14]),
+        acquisition_source=AcquisitionSource(str(row[15])),
     )
 
 

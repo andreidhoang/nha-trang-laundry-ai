@@ -29,9 +29,22 @@ request; there is no fallback, no default and no minimum.
    twice. The late-delivery credit stays refused on a refunded bill (10% of nothing).
 4. The ceiling is per item (the founder's clarification, 2026-09-25). A line of N pieces carries
    5 x the item fee x N in total -- never more than 5x what the line was charged -- and each single
-   proposal stays capped at one item's 5 x the item fee. The 100.000 d staff limit stays cumulative
-   per line, as `REMEDY-CUMULATIVE-001` built, so a claim split across pieces reaches the owner
-   rather than being refused. Loss and damage on the same line share both.
+   proposal stays capped at one item's 5 x the item fee. Loss and damage on the same line share
+   every limit.
+
+**Per garment (`REMEDY-GARMENT-001`, the DEC-031 addendum, 2026-09-25).** `DEC-004` says staff may
+approve up to 100.000 d *per item* and caps each at 5x *the item's* fee, and until this addendum
+the staff limit was cumulative per *line*, so a second damaged shirt on a three-shirt line went to
+the owner even though that shirt had had nothing paid on it. Now a claim on a line with a recorded
+per-piece fee (`ItemFeeBasis.UNIT`) names which garment it is by its 1-based position within the
+line's quantity (`garment_index`), and the staff limit and the 5x ceiling are cumulative per
+(line, garment): shirt #2 has its own 100.000 d and its own 250.000 d, and a second claim on shirt
+#2 adds to the first. The line's total (5 x unit fee x quantity, never above 5x its charge) still
+binds every garment together. A line with no per-garment fee -- a bag, or a fee nobody recorded --
+has no garment identity: it is one claimable whole, as before, and a `garment_index` on it is
+refused rather than ignored. A proposal recorded before the addendum names no garment; it is
+counted against **every** garment on its line as well as against the line (`RemedyCommitments`),
+so no garment's headroom is larger than it would be if that proposal had been about it.
 
 Until `DEC-031`, loss was recorded and refused with `LOSS_POLICY_UNRESOLVED`. Rows written then
 still carry `POLICY_UNRESOLVED`, which nothing moves out of, and `execute` still refuses them; no
@@ -99,13 +112,15 @@ REMEDY_POLICY_SCHEMA: Final = "remedy-policy-v1"
 #: The rule version an approval envelope names, so the envelope records which reading of `DEC-004`
 #: was in force when it was signed. It moves when what counts as an authorised remedy changes -- not
 #: when the owner republishes a figure, which is what the configuration version records.
-#: `v2` is `DEC-031`: the per-piece item fee, loss and refunded orders to the owner.
-REMEDY_POLICY_VERSION: Final = "remedy-dec-004-dec-031-v2"
+#: `v2` is `DEC-031`: the per-piece item fee, loss and refunded orders to the owner. `v3` is its
+#: addendum: the staff limit and the ceiling cumulative per garment (`REMEDY-GARMENT-001`).
+REMEDY_POLICY_VERSION: Final = "remedy-dec-004-dec-031-v3"
 
 #: The canonical document type a proposal's `rendered_hash` is taken over. Named inside the document
 #: so a digest can never be mistaken for the digest of some other kind of content. `v2` adds the
 #: item fee the ceiling multiplied and why the owner is needed, so the owner approves those too.
-REMEDY_PROPOSAL_DOCUMENT_SCHEMA: Final = "remedy-proposal-attestation-v2"
+#: `v3` adds the garment the claim names: the owner approves a figure for *that* shirt.
+REMEDY_PROPOSAL_DOCUMENT_SCHEMA: Final = "remedy-proposal-attestation-v3"
 
 #: `reason_code` on the quote adjustment a redeemed credit becomes. `quotes.CODE_PATTERN` applies.
 REMEDY_CREDIT_REASON_CODE: Final = "REMEDY_CREDIT_DEC_004"
@@ -177,7 +192,8 @@ class OwnerReason(StrEnum):
     ORDER_REFUNDED = "ORDER_REFUNDED"
     #: `DEC-031` rule 1: no recorded number is the fee of one item on this line.
     ITEM_FEE_NOT_RECORDED = "ITEM_FEE_NOT_RECORDED"
-    #: `DEC-004`: the item's running total is above what staff may approve.
+    #: `DEC-004`: the item's running total is above what staff may approve. For a garment with its
+    #: own fee, the item is the garment (`REMEDY-GARMENT-001`); otherwise it is the line.
     ABOVE_STAFF_LIMIT = "ABOVE_STAFF_LIMIT"
 
 
@@ -216,6 +232,16 @@ class RemedyRefusal(StrEnum):
     REMEDY_DELIVERY_NOT_RECORDED = "REMEDY_DELIVERY_NOT_RECORDED"
     #: The attested lateness does not reach the published threshold, which is named in the refusal.
     REMEDY_LATENESS_BELOW_THRESHOLD = "REMEDY_LATENESS_BELOW_THRESHOLD"
+    #: `REMEDY-GARMENT-001`. The line has several garments with a fee each and the claim does not
+    #: say which one. Guessing garment #1 would spend that garment's headroom on another's damage.
+    REMEDY_GARMENT_REQUIRED = "REMEDY_GARMENT_REQUIRED"
+    #: A garment was named where no garment has an identity: a weight-priced bag, a line whose
+    #: per-piece fee was never recorded, or a kind that is not about one item at all. Refused rather
+    #: than ignored, so nobody believes a per-garment limit applied where it did not.
+    REMEDY_GARMENT_NOT_APPLICABLE = "REMEDY_GARMENT_NOT_APPLICABLE"
+    #: The garment named is not on the line: its position is below 1 or above the line's quantity.
+    #: The refusal carries the count, so staff can see how many garments the line holds.
+    REMEDY_GARMENT_OUT_OF_RANGE = "REMEDY_GARMENT_OUT_OF_RANGE"
     #: The credit is larger than what is left to discount on the revision it would land on. Refused
     #: and carried, never capped: capping would quietly cancel part of a debt the shop owes.
     REMEDY_CREDIT_UNALLOCATABLE = "REMEDY_CREDIT_UNALLOCATABLE"
@@ -257,6 +283,10 @@ REMEDY_REFUSAL_AUTHORITIES: Final = {
     RemedyRefusal.REMEDY_LINE_NOT_PRICED: "INVARIANT-3",
     RemedyRefusal.REMEDY_ORDER_NOT_SETTLED: "INVARIANT-3",
     RemedyRefusal.REMEDY_DELIVERY_NOT_RECORDED: "INVARIANT-3",
+    # The DEC-031 addendum: which garment a claim is about decides whose limits it spends.
+    RemedyRefusal.REMEDY_GARMENT_REQUIRED: "DEC-031",
+    RemedyRefusal.REMEDY_GARMENT_NOT_APPLICABLE: "DEC-031",
+    RemedyRefusal.REMEDY_GARMENT_OUT_OF_RANGE: "DEC-031",
     # Invariant 2: money is non-negative integer VND, so a discount may not exceed what is owed.
     RemedyRefusal.REMEDY_CREDIT_UNALLOCATABLE: "INVARIANT-2",
     # Invariant 4: an agreed revision is an immutable historical snapshot. DEC-010 keeps the
@@ -394,6 +424,10 @@ class ItemCompensationTerms:
     pieces: int
     #: Every item on the line together, never above 5x what the line was charged.
     line_ceiling_vnd: int
+    #: `REMEDY-GARMENT-001`: how many garments on the line have an identity of their own -- the
+    #: piece count of a `UNIT` line -- or `None` when no garment does (a bag, or a fee nobody
+    #: recorded) and the line is one claimable whole. A claim on a line with a count names one.
+    garments: int | None
     #: Reasons that apply to a damage claim on this item whatever its amount (`ORDER_REFUNDED`,
     #: `ITEM_FEE_NOT_RECORDED`). A loss adds `LOSS_CLAIM`; the staff limit adds `ABOVE_STAFF_LIMIT`
     #: only once an amount exists. Empty means the staff limit alone decides.
@@ -454,6 +488,16 @@ class RemedyCommitments:
     line_committed_vnd: int
     #: How many live-or-paid `LATE_DELIVERY_CREDIT` proposals the order already has.
     late_delivery_credits: int
+    #: `REMEDY-GARMENT-001`: what already counts against the garment the request names -- the
+    #: live-or-paid proposals naming that garment **plus every proposal on the line that names no
+    #: garment**. The second half is the conservative reading of a proposal recorded before
+    #: migration `0052`: nothing says which shirt it was about, so it is assumed to have been about
+    #: each of them, and no garment is given headroom that proposal might already have used.
+    #:
+    #: `None` -- the default -- means the caller did not attribute, and then the whole line counts
+    #: against the garment: the pre-addendum rule, and never more headroom than the attributed
+    #: figure gives. Never above the line's total, since it is summed from a subset of its rows.
+    garment_committed_vnd: int | None = None
 
     def __post_init__(self) -> None:
         for value in (self.line_committed_vnd, self.late_delivery_credits):
@@ -461,6 +505,20 @@ class RemedyCommitments:
             # total would hand a request headroom nobody granted.
             if not _valid_amount(value):
                 raise RemedyPolicyError("prior remedy commitments must be non-negative integers")
+        if self.garment_committed_vnd is not None and (
+            not _valid_amount(self.garment_committed_vnd)
+            or self.garment_committed_vnd > self.line_committed_vnd
+        ):
+            # One garment's share of the line cannot exceed the line. A figure that does was not
+            # summed from the same rows, and deciding from it would be deciding from a guess.
+            raise RemedyPolicyError("a garment's commitments must be part of its line's")
+
+    def against_garment(self) -> int:
+        """What already counts against the garment a request names; the line when unattributed."""
+
+        if self.garment_committed_vnd is None:
+            return self.line_committed_vnd
+        return self.garment_committed_vnd
 
 
 @dataclass(frozen=True, slots=True)
@@ -476,6 +534,10 @@ class RemedyRequest:
     #: The compensation asked for. Required for `DAMAGE_COMPENSATION` and `LOST_ITEM`, forbidden
     #: otherwise -- the late-delivery credit is computed by the server and a rewash moves no money.
     amount_vnd: int | None = None
+    #: `REMEDY-GARMENT-001`: which garment on the line, by its 1-based position within the line's
+    #: quantity. Required on a line of several garments with a fee each; optional on a line of one
+    #: (there is only garment 1); refused on a line or a kind with no garment identity.
+    garment_index: int | None = None
     #: How late the delivery was, attested by the staff member who handled it. The shop records no
     #: promised arrival time, so this cannot be derived; what *is* checkable -- that a return leg
     #: happened at all -- is checked against the record below.
@@ -502,6 +564,9 @@ class RemedyAuthorized:
     #: For damage and loss: what every item on the line may carry together. `ceiling_vnd` above is
     #: one item's, and bounds this proposal alone.
     line_ceiling_vnd: int | None = None
+    #: The garment the claim is about, resolved: the one named, `1` on a line of one garment, and
+    #: `None` where the line has no garment identity. What the proposal row records.
+    garment_index: int | None = None
 
     def __post_init__(self) -> None:
         # One fact, stated twice for the callers that only need the yes/no. They may never disagree.
@@ -520,6 +585,8 @@ class RemedyRefused:
     #: What earlier proposals had already committed against the same item, when that is why the
     #: ceiling was reached. Staff need both numbers to tell a customer what is still possible.
     committed_vnd: int | None = None
+    #: How many garments the line holds, when the claim named none of them or one it does not have.
+    garments: int | None = None
     outcome: PolicyOutcome = PolicyOutcome.DENY
 
     @property
@@ -614,6 +681,9 @@ def item_compensation_terms(
         ceiling_vnd=fee * policy.damage_compensation_multiple,
         pieces=pieces,
         line_ceiling_vnd=line_fee * policy.damage_compensation_multiple,
+        # A garment has an identity exactly when it has a fee of its own: `UNIT`. Its count is the
+        # line's piece count, which is 1 for a single piece whose unit price was not recorded.
+        garments=pieces if basis is ItemFeeBasis.UNIT else None,
         owner_always=tuple(owner_always),
     )
 
@@ -705,16 +775,34 @@ def evaluate_remedy(
     terms = item_compensation_terms(policy, facts, request.order_line_id)
     if terms is None:
         return RemedyRefused(RemedyRefusal.REMEDY_LINE_NOT_PRICED)
+    garment = resolve_garment(terms, request.garment_index)
+    if isinstance(garment, RemedyRefused):
+        return garment
     # One proposal is about one item, so it may not ask for more than one item's ceiling -- on a
     # line of three shirts, 300.000 d in one claim is more than any one shirt can be owed.
     if request.amount_vnd > terms.ceiling_vnd:
         return RemedyRefused(RemedyRefusal.REMEDY_CEILING_EXCEEDED, ceiling_vnd=terms.ceiling_vnd)
-    # The line's total and the staff limit are compared against its running total: what earlier
-    # proposals on this line already committed, plus this one. Owner approval answers the staff
-    # limit; it is not a way past the line's ceiling, so the ceiling is checked first and
-    # regardless of who would approve.
-    total = committed.line_committed_vnd + request.amount_vnd
-    if total > terms.line_ceiling_vnd:
+    # The item's running total: what already counts against it, plus this. For one garment of
+    # several with a fee each, that is the garment (`REMEDY-GARMENT-001`), with the line's
+    # garment-less proposals counted against it too; on a line of one garment, or a line with no
+    # garment identity, the item *is* the line and this is the line's total, exactly as before.
+    item_prior = (
+        committed.against_garment()
+        if terms.garments is not None and terms.garments > 1
+        else committed.line_committed_vnd
+    )
+    item_total = item_prior + request.amount_vnd
+    if item_total > terms.ceiling_vnd:
+        return RemedyRefused(
+            RemedyRefusal.REMEDY_CEILING_EXCEEDED,
+            ceiling_vnd=terms.ceiling_vnd,
+            committed_vnd=item_prior,
+        )
+    # The line's total binds every garment together: never above 5x what the line was charged.
+    # Owner approval answers the staff limit; it is not a way past either ceiling, so both are
+    # checked first and regardless of who would approve.
+    line_total = committed.line_committed_vnd + request.amount_vnd
+    if line_total > terms.line_ceiling_vnd:
         return RemedyRefused(
             RemedyRefusal.REMEDY_CEILING_EXCEEDED,
             ceiling_vnd=terms.line_ceiling_vnd,
@@ -725,9 +813,10 @@ def evaluate_remedy(
         # `DEC-031` rule 2: never staff-authorised, at any amount.
         reasons.append(OwnerReason.LOSS_CLAIM)
     reasons.extend(terms.owner_always)
-    if total > policy.staff_approval_ceiling_vnd:
+    if item_total > policy.staff_approval_ceiling_vnd:
         # Inclusive, as it always was: "staff may approve up to 100.000 d" -- of the item's total,
-        # so a claim split into pieces reaches the owner exactly when the whole would have.
+        # so a claim on one garment split into several reaches the owner exactly when the whole
+        # would have. Another garment's claims are another item's (`REMEDY-GARMENT-001`).
         reasons.append(OwnerReason.ABOVE_STAFF_LIMIT)
     return RemedyAuthorized(
         kind=request.kind,
@@ -741,7 +830,59 @@ def evaluate_remedy(
         item_fee_basis=terms.basis,
         item_fee_vnd=terms.item_fee_vnd,
         line_ceiling_vnd=terms.line_ceiling_vnd,
+        garment_index=garment,
     )
+
+
+def resolve_garment(
+    terms: ItemCompensationTerms, garment_index: object
+) -> int | RemedyRefused | None:
+    """Which garment a claim on this line is about, or why it cannot say. `REMEDY-GARMENT-001`.
+
+    A line with a fee per garment (`terms.garments` set) needs to know which: on a line of several
+    the claim must name one, and on a line of one it is garment 1 whether named or not. A line with
+    no garment identity takes no index at all -- refused, not ignored, because a per-garment limit
+    that silently did not apply is the misreading this refusal prevents.
+    """
+
+    if terms.garments is None:
+        if garment_index is not None:
+            return RemedyRefused(RemedyRefusal.REMEDY_GARMENT_NOT_APPLICABLE)
+        return None
+    if garment_index is None:
+        if terms.garments == 1:
+            return 1
+        return RemedyRefused(RemedyRefusal.REMEDY_GARMENT_REQUIRED, garments=terms.garments)
+    if (
+        not isinstance(garment_index, int)
+        or isinstance(garment_index, bool)
+        or not 1 <= garment_index <= terms.garments
+    ):
+        return RemedyRefused(RemedyRefusal.REMEDY_GARMENT_OUT_OF_RANGE, garments=terms.garments)
+    return garment_index
+
+
+def committed_against_garment(by_garment: Mapping[int | None, int], garment_index: int) -> int:
+    """What counts against one garment: proposals naming it plus every line-level proposal.
+
+    `by_garment` is one line's live-or-paid amounts keyed by the garment each proposal named, with
+    `None` for a proposal that named none (written before migration `0052`). The line-level sum is
+    added to every garment -- the conservative reading `RemedyCommitments.garment_committed_vnd`
+    states -- so the answer is never below what that garment could already have been paid.
+    """
+
+    return by_garment.get(garment_index, 0) + by_garment.get(None, 0)
+
+
+def committed_against_any_garment(by_garment: Mapping[int | None, int]) -> int:
+    """The most any one garment on the line carries, line-level proposals counted against each.
+
+    For re-checking a line-level proposal itself before it is paid: nothing says which garment it
+    was about, so it is checked against the garment that leaves it the least room.
+    """
+
+    named = [amount for garment, amount in by_garment.items() if garment is not None]
+    return max(named, default=0) + by_garment.get(None, 0)
 
 
 #: The two kinds that pay against one item's ceiling: damage and, since `DEC-031`, loss.
@@ -810,6 +951,9 @@ def _refuse_wrong_shape(request: RemedyRequest) -> RemedyRefused | None:
         ):
             return RemedyRefused(RemedyRefusal.REMEDY_AMOUNT_NOT_APPLICABLE)
         return None
+    if request.garment_index is not None and kind not in _ITEM_KINDS:
+        # A rewash or a late delivery is about the order, not one garment on it.
+        return RemedyRefused(RemedyRefusal.REMEDY_GARMENT_NOT_APPLICABLE)
     if kind is RemedyKind.LATE_DELIVERY_CREDIT:
         if (
             request.amount_vnd is not None
@@ -864,6 +1008,7 @@ def remedy_proposal_document(
             "line_ceiling_vnd": authorized.line_ceiling_vnd,
             "owner_reasons": [reason.value for reason in authorized.owner_reasons],
             "order_line_id": order_line_id,
+            "garment_index": authorized.garment_index,
             "policy_version_id": str(policy_version_id),
             "policy_version": policy_version,
             "policy_rule_version": REMEDY_POLICY_VERSION,
@@ -992,10 +1137,13 @@ __all__ = [
     "RemedyRequest",
     "RemedyStatus",
     "allocate_remedy_credit",
+    "committed_against_any_garment",
+    "committed_against_garment",
     "evaluate_remedy",
     "item_compensation_terms",
     "item_fee",
     "parse_remedy_policy",
     "remedy_line_facts",
     "remedy_proposal_document",
+    "resolve_garment",
 ]

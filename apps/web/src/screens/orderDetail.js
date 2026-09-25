@@ -22,8 +22,13 @@
  *     nothing more — not that the order is new, not that the order is absent. The empty state says
  *     the ambiguous thing because the ambiguous thing is what is true.
  *   - **Nothing is re-sorted and nothing is totalled.** The server orders by `(occurred_at, id)`,
- *     oldest first, and that order is preserved; the one amount on this screen is displayed, never
+ *     oldest first, and that order is preserved; every amount on this screen is displayed, never
  *     computed.
+ *   - **Two readbacks READ-PATHS-001 added.** The acquisition source the counter recorded when the
+ *     order was created is shown read-only — it is immutable, so a mis-tap can be seen and not
+ *     corrected. And the remedy credits the order issued are listed with their codes, because the
+ *     customer keeps this order's paper ticket and `DEC-030` lets a credit wait unspent: finding
+ *     the order by its ticket number is now how a lost credit code is found again.
  *
  * @module screens/orderDetail
  */
@@ -31,7 +36,7 @@
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UNKNOWN, UUID, count, dateTime, money, parseDong, shortId } from "../core/format.js";
-import { enumLabel, enumVi } from "../core/i18n.js";
+import { ACQUISITION_SOURCE_VI, enumLabel, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import { navigate } from "../core/router.js";
@@ -65,8 +70,95 @@ import { amountDue, ticketLabel } from "./orders.js";
  */
 const AUDIT_LIMIT = 100;
 
-/** `SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION`: a walk-in who paid at drop-off. */
+/**
+ * `SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION`: paid in advance at the counter, to be
+ * collected there later -- a walk-in at drop-off (`DEC-032`), or a `PICKUP_ONLY` customer who came
+ * by before the laundry was finished (its addendum).
+ */
 const PREPAID_SELF_COLLECTION = "EXACT_PAYMENT_PREPAID_SELF_COLLECTION";
+
+/** `RemedyKind` in the counter's words, for the credit cards below. */
+const CREDIT_KIND_LABEL = {
+  DAMAGE_COMPENSATION: "Bồi thường món bị hỏng",
+  LATE_DELIVERY_CREDIT: "Giảm trừ do giao trễ",
+  LOST_ITEM: "Mất đồ",
+};
+
+/**
+ * The recorded acquisition source, `Gloss (TOKEN)`, from the scoped map `orders.js` writes it with.
+ *
+ * @param {string|null|undefined} value
+ * @returns {string}
+ */
+function acquisitionSourceLabel(value) {
+  if (!value) return UNKNOWN;
+  const gloss = ACQUISITION_SOURCE_VI[value];
+  if (!gloss) return String(value);
+  return `${gloss.charAt(0).toUpperCase()}${gloss.slice(1)} (${value})`;
+}
+
+/**
+ * One remedy credit the order issued.
+ *
+ * The copy control is offered only for an unused code: a spent one cannot be applied again, and a
+ * copy button beside it would invite the counter to try.
+ *
+ * @param {any} credit an `OrderRemedyCreditResponse`
+ * @returns {HTMLElement}
+ */
+function creditCard(credit) {
+  const id = String(credit.credit_id || "");
+  const unused = credit.status === "UNUSED";
+  return h(
+    "li",
+    { class: "card stack stack--tight", dataCreditId: id, dataCreditStatus: String(credit.status) },
+    h(
+      "div",
+      { class: "row" },
+      h("strong", { class: "money" }, money(credit.amount_vnd)),
+      badge(
+        unused
+          ? { token: "UNUSED", gloss: "Chưa dùng", state: "ok" }
+          : { token: String(credit.status || UNKNOWN), gloss: "Đã dùng", state: "neutral" },
+      ),
+    ),
+    facts([
+      [
+        "Mã giảm trừ",
+        unused
+          ? copyable({ value: id })
+          : h("span", { class: "mono", title: id }, shortId(id)),
+        { mono: true, span: true },
+      ],
+      ["Loại", CREDIT_KIND_LABEL[credit.kind] || String(credit.kind || UNKNOWN)],
+      ["Phát hành lúc", dateTime(credit.issued_at)],
+      unused ? null : ["Dùng lúc", dateTime(credit.redeemed_at)],
+      unused || !credit.redeemed_quote_id
+        ? null
+        : [
+            "Đã trừ vào báo giá",
+            h(
+              "a",
+              {
+                href:
+                  `#/quotes?quote=${encodeURIComponent(String(credit.redeemed_quote_id))}` +
+                  `&revision=${encodeURIComponent(String(credit.redeemed_quote_revision))}`,
+                title: String(credit.redeemed_quote_id),
+              },
+              `${shortId(credit.redeemed_quote_id)} · bản ${credit.redeemed_quote_revision}`,
+            ),
+          ],
+    ]),
+  );
+}
+
+/**
+ * The fulfilment modes whose customer collects at the counter: every mode outside the server's
+ * `MODES_EXPECTING_RETURN` (packages/domain/.../catalog.py). `PICKUP_ONLY` is one -- the courier
+ * fetched the laundry, and the customer comes in for it. The server decides; this only chooses
+ * which button to offer, and it offered none to a `PICKUP_ONLY` customer who had paid in advance.
+ */
+const SELF_COLLECT_MODES = new Set(["SELF_DROP_SELF_COLLECT", "PICKUP_ONLY"]);
 
 /**
  * One audit row.
@@ -252,7 +344,8 @@ function settlementPanel(spec) {
     title: "Tất toán",
     guardrail:
       "Mọi trường hợp là cùng một khoản tiền: khách trả đúng tổng đã báo, đủ một lần, tại quầy — " +
-      "lúc lấy đồ, lúc gửi đồ (quyết định DEC-032), hoặc trước khi tiệm giao tận nơi. " +
+      "lúc lấy đồ, lúc gửi đồ hoặc ghé quầy trả trước khi đồ xong (quyết định DEC-032), hoặc " +
+      "trước khi tiệm giao tận nơi. Người giao không thu tiền. " +
       "Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định — không " +
       "làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.",
     children: h(
@@ -271,8 +364,9 @@ function settlementPanel(spec) {
         id: "settlement-collected",
         label: "Khách đã tự lấy đồ về",
         hint:
-          "Chỉ tích khi khách trả tiền lúc lấy đồ và đồ đã giặt xong. Khách trả lúc gửi đồ thì " +
-          "bấm “Khách trả trước khi gửi đồ”. Đơn giao tận nơi thì để trống.",
+          "Chỉ tích khi khách trả tiền lúc lấy đồ và đồ đã giặt xong. Khách trả lúc gửi đồ — " +
+          "hoặc khách của đơn tiệm tới lấy đồ ghé quầy trả trước khi đồ xong — thì bấm “Khách " +
+          "trả trước khi gửi đồ”. Đơn giao tận nơi thì để trống. Không nhận tiền qua người giao.",
         control: collectedInput,
       }),
       h(
@@ -309,12 +403,56 @@ function settlementPanel(spec) {
 }
 
 /**
- * Khách đã nhận đồ — the pickup of a walk-in order paid at drop-off. `DEC-032`.
+ * What stands where the settlement form was, once the order no longer owes anything.
+ *
+ * Only `UNPAID` is an order this form can act on. `PAID` is the common case; `REFUNDED` is a
+ * cancelled order whose money went back; the other states in the column (`PARTIALLY_PAID`,
+ * `OVERPAID`, `ON_ACCOUNT`) no command writes today (`DEC-010`), and a form offered on one of them
+ * would be a guess about what the counter should do. Each says what it is and that nothing more
+ * is taken here.
+ *
+ * @param {any} order an `OrderViewResponse`
+ * @returns {HTMLElement}
+ */
+function settledPanel(order) {
+  const paid = order.balance === "PAID";
+  return panel({
+    eyebrow: "Tất toán",
+    title: paid ? "Đã thu đủ tiền" : `Công nợ: ${enumVi(order.balance)}`,
+    children: h(
+      "div",
+      { class: "stack" },
+      h(
+        "p",
+        null,
+        paid
+          ? "Đơn này đã được tất toán. Bản ghi tất toán không sửa được và không thu thêm lần nữa."
+          : "Đơn này không ở trạng thái chưa thanh toán, nên màn hình này không thu tiền cho nó. " +
+              "Có gì chưa rõ thì báo chủ tiệm.",
+      ),
+      paid && order.self_collection_recorded === false
+        ? h(
+            "p",
+            { class: "hint" },
+            SELF_COLLECT_MODES.has(order.fulfillment_mode)
+              ? "Khách chưa nhận đồ. Khi đưa đồ cho khách, bấm “Khách đã nhận đồ” ở bên dưới."
+              : // Not "the goods have not arrived": the order read carries no delivery-leg fact,
+                // and the walk that found this had recorded the successful leg before the money.
+                "Đơn giao tận nơi: đơn đóng được khi đã có một chặng giao thành công.",
+          )
+        : null,
+    ),
+  });
+}
+
+/**
+ * Khách đã nhận đồ — the pickup of an order paid in advance at the counter. `DEC-032`.
  *
  * `POST /internal/v1/orders/{id}/collection` takes no body: the name is the session's, and the
  * precondition is the row version this screen last read (`If-Match`). The button is offered only
- * for the one case it exists for -- paid, not yet collected, a walk-in -- because every other
- * order reaches the customer another way: a customer paying at pickup is recorded by the
+ * for the one case it exists for -- paid, not yet collected, collected at the counter (a walk-in,
+ * or `PICKUP_ONLY` since the `DEC-032` addendum) -- because every other order reaches the customer
+ * another way: a customer paying at pickup is recorded by the
  * settlement itself, and a delivery by its legs. The server re-checks all of it, including that
  * the laundry is finished, and its refusal is shown as it came.
  *
@@ -353,7 +491,16 @@ function collectionPanel(spec) {
       setResult(result, "ok", "Đã ghi nhận khách nhận đồ. Giờ chuyển đơn sang Hoàn tất.");
       spec.onRecorded();
     } catch (error) {
-      setResult(result, "danger", error.message);
+      // Not `error.message`: for a refusal that is the settlement vocabulary's headline, "Máy chủ
+      // không ghi nhận khoản này", which reads as a payment problem to a staff member who pressed
+      // "Khách đã nhận đồ". The reason code and what to do are in the notice below either way.
+      setResult(
+        result,
+        "danger",
+        error?.kind === "NOT_SUPPORTED" || error?.kind === "CONFLICT"
+          ? "Chưa ghi nhận khách nhận đồ. Lý do và việc cần làm ở ngay bên dưới."
+          : error.message,
+      );
       render(errorHost, errorNotice(error));
     }
   }
@@ -367,7 +514,7 @@ function collectionPanel(spec) {
     const waiting =
       order.balance === "PAID" &&
       order.self_collection_recorded === false &&
-      order.fulfillment_mode === "SELF_DROP_SELF_COLLECT";
+      SELF_COLLECT_MODES.has(order.fulfillment_mode);
     if (!waiting) {
       render(
         host,
@@ -376,7 +523,7 @@ function collectionPanel(spec) {
           { class: "hint" },
           order.self_collection_recorded
             ? "Đã ghi nhận khách nhận đồ."
-            : "Chỉ dùng khi khách đã trả trước lúc gửi đồ.",
+            : "Chỉ dùng khi khách đã trả trước tại quầy và tới quầy lấy đồ.",
         ),
       );
       return;
@@ -419,14 +566,31 @@ export function render_(context) {
   const shadowVerdict = can(principal(), "SHADOW_READ");
   const settlementVerdict = can(principal(), "ORDERS_WRITE");
   const incidentVerdict = can(principal(), "INCIDENTS_WRITE");
+  // The credit read uses the remedy surface's gate: an operations role with MFA.
+  const creditVerdict = can(principal(), "INCIDENTS_READ");
   const wellFormed = UUID.test(orderId);
 
   const orderHost = h("div", null, skeleton(1));
   const timelineHost = h("div", null, skeleton(3));
   const timelineCount = h("span", { class: "count" }, "…");
+  const creditHost = h("div", { id: "order-remedy-credits" }, skeleton(1));
+  const creditCount = h("span", { class: "count" }, "…");
   const timelineTruncation = h("p", { class: "hint" });
   const heading = h("h1", null, "Chi tiết đơn");
   const dueHost = h("div");
+  // The settlement form is for an order that owes money. It used to stay live after the order
+  // was PAID -- "Ghi nhận tất toán" and "Khách trả trước khi gửi đồ" both still pressable on a
+  // walk-in who had just paid at drop-off, directly above the pickup button that is the only thing
+  // left to press. The server refuses a second settlement (`ALREADY_SETTLED`), so no money was at
+  // risk; the screen was offering a counter a way to take the money twice. Found by the real-API
+  // browser walk of `DEC-032`, not by any test.
+  const settlementForm = settlementPanel({
+    orderId,
+    verdict: settlementVerdict,
+    dueHost,
+    onRecorded: () => void loadOrder(),
+  });
+  const settlementHost = h("div", null, settlementForm);
   const collection = collectionPanel({
     orderId,
     verdict: settlementVerdict,
@@ -444,6 +608,7 @@ export function render_(context) {
     try {
       const found = await request(`/internal/v1/orders/${encodeURIComponent(orderId)}`);
       collection.update(found);
+      render(settlementHost, found.balance === "UNPAID" ? settlementForm : settledPanel(found));
       const ticket = ticketLabel(found);
       const due = amountDue(found);
       heading.textContent = ticket || "Chi tiết đơn";
@@ -474,6 +639,14 @@ export function render_(context) {
             ["Giao nhận", enumVi(found.fulfillment_mode)],
             ["Tạo lúc", dateTime(found.created_at)],
             [
+              "Nguồn khách",
+              h(
+                "span",
+                { dataField: "acquisition-source" },
+                acquisitionSourceLabel(found.acquisition_source),
+              ),
+            ],
+            [
               "Báo giá",
               h(
                 "span",
@@ -488,6 +661,12 @@ export function render_(context) {
             "p",
             { class: "hint" },
             "Bốn trục chuyển động độc lập với nhau; đừng đọc chúng như một chuỗi tuần tự.",
+          ),
+          h(
+            "p",
+            { class: "hint" },
+            "Nguồn khách là điều nhân viên ghi lúc tạo đơn. Chỉ để xem lại: ghi rồi thì không sửa " +
+              "được, kể cả khi thấy bấm nhầm.",
           ),
           h(
             "div",
@@ -524,6 +703,47 @@ export function render_(context) {
       }
       render(orderHost, errorNotice(error, { onRetry: () => void start() }));
       return null;
+    }
+  }
+
+  /**
+   * The remedy credits this order issued, from the order's own store.
+   *
+   * @param {string} store the order's own store, read off the order
+   */
+  async function loadCredits(store) {
+    if (!creditVerdict.allowed) {
+      creditCount.textContent = "—";
+      render(
+        creditHost,
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Vai trò này không đọc được khoản giảm trừ"),
+          h("p", null, creditVerdict.reason),
+        ),
+      );
+      return;
+    }
+    render(creditHost, skeleton(1));
+    try {
+      const body = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/orders/${encodeURIComponent(orderId)}/remedy-credits`,
+      );
+      const credits = Array.isArray(body?.credits) ? body.credits : [];
+      creditCount.textContent = String(credits.length);
+      render(
+        creditHost,
+        credits.length
+          ? h("ul", { class: "stack" }, credits.map(creditCard))
+          : empty("Đơn này chưa phát hành khoản giảm trừ nào."),
+        body?.truncated
+          ? h("p", { class: "hint" }, "Máy chủ cắt danh sách; có thể còn khoản khác.")
+          : null,
+      );
+    } catch (error) {
+      creditCount.textContent = "—";
+      render(creditHost, errorNotice(error, { onRetry: () => void loadCredits(store) }));
     }
   }
 
@@ -573,8 +793,11 @@ export function render_(context) {
     const found = await loadOrder();
     if (found) {
       void loadTimeline(found.store_id || storeId());
+      void loadCredits(found.store_id || storeId());
       return;
     }
+    creditCount.textContent = "—";
+    render(creditHost, empty("Chưa đọc khoản giảm trừ vì chưa đọc được đơn."));
     timelineCount.textContent = "—";
     render(timelineHost, empty("Chưa đọc dòng thời gian vì chưa đọc được đơn."));
   }
@@ -592,6 +815,8 @@ export function render_(context) {
       h("p", { class: "hint mono" }, orderId || UNKNOWN),
     );
     render(orderHost, malformed);
+    creditCount.textContent = "—";
+    render(creditHost, empty("Chưa đọc khoản giảm trừ vì mã đơn trong địa chỉ không hợp lệ."));
     timelineCount.textContent = "—";
     render(
       timelineHost,
@@ -663,13 +888,30 @@ export function render_(context) {
           : null,
       ),
     }),
-    settlementPanel({
-      orderId,
-      verdict: settlementVerdict,
-      dueHost,
-      onRecorded: () => void loadOrder(),
-    }),
+    settlementHost,
     collection.node,
+    panel({
+      eyebrow: "Đọc · GET /internal/v1/stores/{store}/orders/{id}/remedy-credits",
+      title: "Khoản giảm trừ của đơn này",
+      count: creditCount,
+      children: h(
+        "div",
+        { class: "stack" },
+        h(
+          "p",
+          { class: "hint" },
+          "Khoản giảm trừ là phiếu cầm tay: ai đọc đúng mã thì dùng được, đúng một lần, ở cửa " +
+            "hàng này, cho hoá đơn lần sau. Khách quên mã thì tìm lại đơn theo số phiếu rồi đọc " +
+            "mã ở đây. Máy chủ không ghi hạn dùng cho khoản giảm trừ.",
+        ),
+        creditHost,
+        h(
+          "p",
+          null,
+          h("a", { href: "#/remedies" }, "Dùng một khoản cho hoá đơn lần sau ở màn hình Bồi hoàn"),
+        ),
+      ),
+    }),
     panel({
       eyebrow: "Kiểm toán",
       title: "Dòng thời gian",

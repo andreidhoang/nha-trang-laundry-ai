@@ -205,6 +205,21 @@ DECLARED_CONTROLS = (
     "reports.preset",
     "reports.info",
     "reports.custom-apply",
+    # SHOP-CAPTURE-001 (DEC-038): "Máy nào?" at Bắt đầu giặt (a machine, or Bỏ qua), the rewash's
+    # optional machine, the trip cost on the leg sheet, Sổ thu chi, and the owner's machine list.
+    "orderDetail.machine-pick",
+    "orderDetail.machine-skip",
+    "orderDetail.rewash-machine",
+    "orderDetail.trip-cost",
+    "shell.nav.expenses",
+    "expenses.add",
+    "expenses.category",
+    "expenses.save",
+    "expenses.void",
+    "shell.nav.machines",
+    "machines.add",
+    "machines.rename",
+    "machines.retire",
 )
 
 PASS: list[str] = []
@@ -690,8 +705,13 @@ class Console:
         slot: bool = True,
         reopen: bool = True,
         reason: str = "",
+        machine: str = "",
     ) -> str:
         """Press one step on the order's page, exactly as staff would, and return what it said.
+
+        SHOP-CAPTURE-001: START_WASH answers "Máy nào?" with the machine whose code is `machine`,
+        or presses "Bỏ qua" when `machine` is empty; REWASH picks `machine` among its optional
+        chips when given.
 
         RECEIVE ticks the slot attestation (unless `slot=False`); CANCEL picks `custody` when the
         server asks for one and presses twice; HOLD presses twice; REWASH and REJECT_INTAKE pick
@@ -728,11 +748,31 @@ class Console:
             # A two-press control: the first press arms it, the second commits.
             control.click()
             touched("orderDetail.hold-confirm")
+        elif step == "START_WASH":
+            with contextlib.suppress(Exception):
+                self.page.wait_for_selector(
+                    "dialog[open] button[data-machine-skip]", state="visible", timeout=8000
+                )
+            if machine:
+                self.page.locator(
+                    f"dialog[open] button[data-machine-code='{machine}']"
+                ).first.click()
+                touched("orderDetail.machine-pick")
+            else:
+                self.page.locator("dialog[open] button[data-machine-skip]").first.click()
+                touched("orderDetail.machine-skip")
         elif step in {"REWASH", "REJECT_INTAKE"}:
             prefix = "orderDetail.rewash" if step == "REWASH" else "orderDetail.reject"
             if reason:
                 self.page.locator(f"dialog[open] #step-reason [data-value={reason}]").click()
                 touched(f"{prefix}-reason")
+            if machine and step == "REWASH":
+                with contextlib.suppress(Exception):
+                    self.page.wait_for_selector("dialog[open] #rewash-machine", timeout=5000)
+                self.page.locator(
+                    "dialog[open] #rewash-machine button", has_text=machine
+                ).first.click()
+                touched("orderDetail.rewash-machine")
             confirm = self.page.locator("dialog[open] #step-reason-submit")
             if not confirm.is_disabled():
                 confirm.click()
@@ -3717,7 +3757,7 @@ def scenario_report(console: Console) -> None:
     ok(
         "every figure carries the rule's version, and the on-time figure says it is assumed",
         len({kpi["query_version"] for kpi in after.values()}) == 1
-        and next(iter(after.values()))["query_version"].startswith("report-v1:")
+        and next(iter(after.values()))["query_version"].startswith("report-v2:")
         and after["ON_TIME_INTERNAL"]["data_quality"] == "RULE_ASSUMED"
         and all(
             kpi["data_quality"] == "COMPLETE"
@@ -3780,11 +3820,16 @@ def scenario_report(console: Console) -> None:
         shown == str(after["MONEY_NET"]["numerator"]),
         f"{shown} vs {after['MONEY_NET']['numerator']}",
     )
+    # SHOP-CAPTURE-001: margin is the month's, and only when its Sổ thu chi is complete; a month
+    # this walk never gave rent and wages to says so, naming what is missing, with no figure.
     margin = console.page.locator("[data-kpi=MARGIN]")
     ok(
-        "margin is shown as not computed, with the reason",
-        margin.count() == 1 and "chưa ghi chi phí" in margin.first.inner_text(),
-        margin.first.inner_text()[:80] if margin.count() else "absent",
+        "margin is shown as not yet computable, naming what Sổ thu chi is missing",
+        margin.count() == 1
+        and margin.first.get_attribute("data-margin-status") == "INCOMPLETE"
+        and "Chưa đủ số liệu" in margin.first.inner_text()
+        and "còn thiếu" in margin.first.inner_text(),
+        margin.first.inner_text()[:120] if margin.count() else "absent",
     )
     info = console.page.locator("[data-kpi=ON_TIME_INTERNAL] .info-btn")
     if info.count():
@@ -3860,6 +3905,427 @@ def scenario_report(console: Console) -> None:
     console.sign_in("demo-owner")
 
 
+def _capture(console: Console, order_id: str) -> dict[str, Any]:
+    read = console.call("GET", f"/internal/v1/orders/{order_id}/capture")
+    if read["status"] != 200:
+        raise AssertionError(f"the capture read did not answer: {read['status']} {read['text']}")
+    return read["body"]
+
+
+def _summary(console: Console, day: str) -> dict[str, Any]:
+    read = console.call("GET", f"/internal/v1/stores/{STORE}/reports/summary?from={day}&to={day}")
+    if read["status"] != 200:
+        raise AssertionError(f"the report did not answer: {read['status']} {read['text']}")
+    return read["body"]
+
+
+def _nav_to(console: Console, label: str, path: str) -> None:
+    """Reach a destination the way a person does: the sidebar link, or Thêm then its row."""
+    console.open("#/orders")
+    link = console.page.locator("nav a", has_text=label).first
+    if not (link.count() and link.is_visible()):
+        console.page.locator("nav a", has_text="Thêm").first.click()
+        console.page.wait_for_timeout(700)
+        link = console.page.locator(f"main a[data-nav='{path}']").first
+    if link.count():
+        link.click()
+        console.page.wait_for_timeout(1400)
+
+
+def scenario_shop_capture(console: Console) -> None:
+    """SHOP-CAPTURE-001 (DEC-038): the shop measured inside taps staff already make.
+
+    A wash with a machine chosen at Bắt đầu giặt, one skipped, a rewash on a second machine; a
+    pickup trip with its cost typed on the leg sheet (and its return, with cost, over the API); two
+    expenses in Sổ thu chi through the screen, and a wrong third one voided; then the owner's
+    report: cycles captured over cycles, minutes on the machine, the delivery cost per delivered
+    order, the month's spending by category -- and margin shown as not yet computable, with the
+    missing categories named, because this walk never records water, wages or rent.
+    """
+
+    head("S", "ĐO LƯỜNG — máy, mẻ giặt, chi phí chuyến, sổ thu chi (DEC-038)")
+    console.sign_in("demo-owner")
+    today = console.page.evaluate(
+        "() => new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', "
+        "month: '2-digit', day: '2-digit'}).format(new Date())"
+    )
+    month = today[:7]
+    machines = console.call("GET", f"/internal/v1/stores/{STORE}/machines?purpose=WASH")
+    codes = [m["code"] for m in (machines.get("body") or {}).get("machines", [])]
+    ok(
+        "the machine master is seeded: the machines a load goes into are listed for the counter",
+        machines["status"] == 200 and {"WASH-01", "WASH-02"} <= set(codes),
+        codes,
+    )
+    before = _summary(console, today)
+    expenses_before = console.call("GET", f"/internal/v1/stores/{STORE}/expenses?month={month}")
+
+    head("S1", "BẮT ĐẦU GIẶT — one machine chosen, one skipped, a rewash on another")
+    console.sign_in("demo-operations")
+    chosen = console.build_order(kg="7", stop="active")
+    said = console.step(chosen["order_id"], "START_WASH", machine="WASH-01")
+    cycles = _capture(console, chosen["order_id"])["cycles"]
+    ok(
+        "Bắt đầu giặt with WASH-01 chosen opens one cycle on WASH-01",
+        len(cycles) == 1 and cycles[0]["machine_code"] == "WASH-01" and not cycles[0]["ended_at"],
+        said[:120] if len(cycles) != 1 else cycles[0]["machine_code"],
+    )
+    console.step(chosen["order_id"], "QUALITY_CHECK")
+    cycles = _capture(console, chosen["order_id"])["cycles"]
+    ok(
+        "Giặt xong, kiểm tra đồ closes it, with its minutes",
+        len(cycles) == 1 and cycles[0]["ended_at"] and isinstance(cycles[0]["minutes"], int),
+        cycles[:1],
+    )
+    console.step(chosen["order_id"], "REWASH", reason="NOT_CLEAN", machine="WASH-02")
+    cycles = _capture(console, chosen["order_id"])["cycles"]
+    ok(
+        "a rewash opens a second cycle, on the machine picked in its sheet",
+        [(c["kind"], c["machine_code"]) for c in cycles]
+        == [("WASH", "WASH-01"), ("REWASH", "WASH-02")],
+        [(c["kind"], c["machine_code"]) for c in cycles],
+    )
+    console.step(chosen["order_id"], "QUALITY_CHECK")
+    text = console.text()
+    ok(
+        "the order page lists both cycles with their machines",
+        "WASH-01" in text and "WASH-02" in text and "Giặt lại" in text,
+    )
+
+    skipped = console.build_order(kg="5", stop="active")
+    console.open_order(skipped["order_id"])
+    control = console.step_control("START_WASH")
+    first_offered = ""
+    if control is not None:
+        control.click()
+        with contextlib.suppress(Exception):
+            console.page.wait_for_selector(
+                "dialog[open] button[data-machine-skip]", state="visible", timeout=8000
+            )
+        buttons = console.page.locator("dialog[open] button[data-machine-code]")
+        first_offered = (
+            str(buttons.first.get_attribute("data-machine-code")) if buttons.count() else ""
+        )
+        offered = [str(b.get_attribute("data-machine-code")) for b in buttons.all()]
+        ok(
+            "Máy nào? offers only the machines a load goes into, the last used first",
+            first_offered == "WASH-02"
+            and "DRY-01" not in offered
+            and "IRON-TABLE-01" not in offered,
+            offered,
+        )
+        console.page.locator("dialog[open] button[data-machine-skip]").first.click()
+        touched("orderDetail.machine-skip")
+        console.page.wait_for_timeout(1800)
+    cycles = _capture(console, skipped["order_id"])["cycles"]
+    ok(
+        "Bỏ qua still starts the wash, and the cycle is recorded as not captured",
+        len(cycles) == 1 and cycles[0]["machine_id"] is None,
+        cycles,
+    )
+    if READS_DATABASE:
+        ok(
+            "the cycle rows are the wash's own, each with its event, audit and outbox row",
+            sql(
+                "select count(*) from domain_events where aggregate_type='WASH_CYCLE' and "
+                f"payload->>'order_id' in ('{chosen['order_id']}','{skipped['order_id']}')"
+            )
+            == "5",
+            "2 cycles opened and closed on the first order, 1 opened on the second",
+        )
+
+    head("S2", "CHI PHÍ CHUYẾN — the trip's cost on the same sheet as the pickup")
+    trip_order = console.build_order(
+        kg="22", mode="PICKUP_AND_RETURN", distance_m=1500, stop="active"
+    )
+    capture = _capture(console, trip_order["order_id"])
+    ok(
+        "the owner's vehicle rule reads 22 kg as a car (from exactly 20 kg)",
+        capture["suggested_vehicle"] == "O_TO" and capture["weight_kg"] == "22",
+        (capture["suggested_vehicle"], capture["weight_kg"]),
+    )
+    console.open_order(trip_order["order_id"])
+    control = console.step_control("DELIVERY_PICKUP")
+    posted: list[dict[str, Any]] = []
+    if control is not None:
+        control.click()
+        console.page.wait_for_timeout(700)
+        hint = console.page.locator("dialog[open] [data-suggested-vehicle]")
+        ok(
+            "the leg sheet says what the rule suggests, and picks nothing for the driver",
+            hint.count() == 1 and hint.first.get_attribute("data-suggested-vehicle") == "O_TO",
+            hint.first.inner_text() if hint.count() else "absent",
+        )
+        console.page.locator("dialog[open] details[data-trip-fields] summary").click()
+        console.page.locator("dialog[open] #trip-vehicle [data-value=O_TO]").click()
+        console.type_into("#trip-km", "6,5")
+        console.type_into("#trip-cost", "45000")
+        console.type_into("#trip-note", "gửi xe chợ Đầm")
+        touched("orderDetail.trip-cost")
+        posted = console.press_capturing(
+            console.page.locator("dialog[open] button[data-leg-outcome=SUCCEEDED]").first,
+            "/delivery-legs",
+        )
+    ok(
+        "Lấy được đồ records the trip with its vehicle, km, cost and note",
+        posted and posted[0]["status"] == 201,
+        posted[0]["text"][:120] if posted else "no call",
+    )
+    legs = _capture(console, trip_order["order_id"])["legs"]
+    ok(
+        "the order's trip reads back as typed: ô tô, 6.5 km, 45.000 ₫",
+        [(leg["vehicle"], leg["km"], leg["cost_vnd"]) for leg in legs] == [("O_TO", "6.5", 45000)],
+        legs,
+    )
+    refused = console.call(
+        "POST",
+        f"/internal/v1/orders/{trip_order['order_id']}/delivery-legs",
+        {"leg_kind": "RETURN", "outcome": "FAILED", "note": "gọi khách 0382 318 492"},
+    )
+    ok(
+        "a trip note carrying a phone number is refused by name, and nothing is recorded",
+        refused["status"] == 422
+        and "NOTE_LOOKS_LIKE_PHONE" in refused["text"]
+        and len(_capture(console, trip_order["order_id"])["legs"]) == 1,
+        refused["text"][:120],
+    )
+    returned = console.call(
+        "POST",
+        f"/internal/v1/orders/{trip_order['order_id']}/delivery-legs",
+        {"leg_kind": "RETURN", "outcome": "SUCCEEDED", "vehicle": "O_TO", "cost_vnd": 40000},
+    )
+    ok(
+        "the return trip is recorded with its cost",
+        returned["status"] == 201,
+        returned["text"][:120],
+    )
+    if READS_DATABASE:
+        ok(
+            "the note is stored once, on the trip, and in no event, audit or outbox payload",
+            sql(
+                "select count(*) from delivery_leg_costs where note = 'gửi xe chợ Đầm' and "
+                f"order_id = '{trip_order['order_id']}'"
+            )
+            == "1"
+            and sql(
+                "select (select count(*) from domain_events where payload::text like '%chợ Đầm%')"
+                " + (select count(*) from audit_events where details::text like '%chợ Đầm%')"
+                " + (select count(*) from outbox_events where payload::text like '%chợ Đầm%')"
+            )
+            == "0",
+        )
+
+    head("S3", "SỔ THU CHI — two expenses through the screen, a wrong one voided")
+    console.sign_in("demo-operations")
+    denied = console.call("GET", f"/internal/v1/stores/{STORE}/expenses?month={month}")
+    ok("the counter is refused Sổ thu chi by the server", denied["status"] == 403)
+    console.sign_in("demo-owner")
+    _nav_to(console, "Sổ thu chi", "/expenses")
+    touched("shell.nav.expenses")
+    ok(
+        "the navigation reaches Sổ thu chi",
+        console.page.url.endswith("#/expenses"),
+        console.page.url,
+    )
+
+    def add_expense(category: str, amount: str, note_text: str = "") -> dict[str, Any]:
+        console.page.locator("button[data-expense-add]").first.click()
+        console.page.wait_for_selector("#expense-add[open]")
+        touched("expenses.add")
+        console.page.locator(f"#expense-category [data-value={category}]").click()
+        touched("expenses.category")
+        console.type_into("#expense-amount", amount)
+        if note_text:
+            console.type_into("#expense-note", note_text)
+        (answer,) = console.press_capturing(console.page.locator("#expense-save"), "/expenses")
+        touched("expenses.save")
+        console.page.wait_for_timeout(1400)
+        return answer
+
+    first = add_expense("DIEN", "1250000", "tiền điện tháng")
+    second = add_expense("HOA_CHAT", "800000")
+    wrong = add_expense("KHAC", "9900000")
+    ok(
+        "two expenses and a mistyped third are recorded",
+        [first["status"], second["status"], wrong["status"]] == [201, 201, 201],
+        [first["text"][:60], second["text"][:60], wrong["text"][:60]],
+    )
+    row = console.page.locator(f"[data-expense-id='{(wrong.get('body') or {}).get('expense_id')}']")
+    if row.count():
+        row.first.click()
+        console.page.wait_for_selector("#expense-line[open]")
+        console.page.locator("#expense-void").click()
+        console.page.wait_for_timeout(200)
+        (voided,) = console.press_capturing(console.page.locator("#expense-void"), "/void")
+        touched("expenses.void")
+        console.page.wait_for_timeout(1400)
+        ok("the wrong line is voided, two presses, with its version", voided["status"] == 200)
+    after_month = console.call("GET", f"/internal/v1/stores/{STORE}/expenses?month={month}")
+    total_before = int((expenses_before.get("body") or {}).get("total_vnd") or 0)
+    total_after = int((after_month.get("body") or {}).get("total_vnd") or 0)
+    ok(
+        "the month's total, summed by the server, moved by the two real expenses only",
+        total_after - total_before == 2_050_000,
+        f"{total_after} - {total_before}",
+    )
+    hero = console.page.locator(".money-hero__amount").first
+    shown = "".join(ch for ch in (hero.inner_text() if hero.count() else "") if ch.isdigit())
+    ok(
+        "Sổ thu chi prints the server's total",
+        shown == str(total_after),
+        f"{shown} vs {total_after}",
+    )
+    missing_line = console.page.locator("[data-core-missing]").first
+    missing = (after_month.get("body") or {}).get("core_missing", [])
+    ok(
+        "and says, in one line, which core categories margin still waits for",
+        missing_line.count() == 1
+        and str(missing_line.get_attribute("data-core-missing")) == " ".join(missing)
+        and "DIEN" not in missing
+        and "HOA_CHAT" not in missing,
+        missing_line.inner_text() if missing_line.count() else "absent",
+    )
+
+    head("S4", "BÁO CÁO — the measured lines, and margin withheld with what is missing")
+    after = _summary(console, today)
+    cap0, cap1 = before["capture"], after["capture"]
+    ok(
+        "three more cycles, two of them with a machine",
+        (cap1["cycles"] - cap0["cycles"], cap1["cycles_captured"] - cap0["cycles_captured"])
+        == (3, 2),
+        (cap1["cycles"] - cap0["cycles"], cap1["cycles_captured"] - cap0["cycles_captured"]),
+    )
+    timed = {m["code"]: m for m in cap1["machines"]}
+    ok(
+        "WASH-01 and WASH-02 each carry closed cycles and an average in whole minutes",
+        {"WASH-01", "WASH-02"} <= set(timed)
+        and all(isinstance(timed[c]["average_minutes"], int) for c in ("WASH-01", "WASH-02")),
+        sorted(timed),
+    )
+    ok(
+        "one more delivered order with every leg costed, its 85.000 ₫ in the trip total",
+        (
+            cap1["costed_orders"] - cap0["costed_orders"],
+            cap1["trip_cost_vnd"] - cap0["trip_cost_vnd"],
+        )
+        == (1, 85_000)
+        and cap1["cost_per_delivered_order_vnd"] is not None,
+        (cap1["costed_orders"], cap1["trip_cost_vnd"], cap1["cost_per_delivered_order_vnd"]),
+    )
+    month_row = after["months"][-1]
+    spent = {s["category"]: s["amount_vnd"] for s in month_row["spending"]}
+    ok(
+        "the month's spending by category is the server's sum of Sổ thu chi",
+        spent["DIEN"] >= 1_250_000
+        and spent["HOA_CHAT"] >= 800_000
+        and month_row["spending_vnd"] == total_after,
+        spent,
+    )
+    ok(
+        "margin is INCOMPLETE, names the missing categories, and carries no amount",
+        month_row["margin"]["status"] == "INCOMPLETE"
+        and {"NUOC", "LUONG", "MAT_BANG"} <= set(month_row["margin"]["missing"])
+        and month_row["margin"]["amount_vnd"] is None,
+        month_row["margin"],
+    )
+    console.open("#/reports")
+    console.page.locator("[aria-label='Khoảng ngày'] [data-value='today']").click()
+    console.page.wait_for_timeout(1600)
+    captured = console.page.locator("[data-kpi=CYCLES_CAPTURED] [data-fraction]")
+    ok(
+        "Mẻ có ghi máy prints the server's two integers",
+        captured.count() == 1
+        and captured.first.get_attribute("data-fraction")
+        == f"{cap1['cycles_captured']}/{cap1['cycles']}",
+        captured.first.get_attribute("data-fraction") if captured.count() else "absent",
+    )
+    trip_tile = console.page.locator("[data-kpi=TRIP_COST_PER_ORDER] .kpi__value")
+    trip_digits = "".join(
+        ch for ch in (trip_tile.first.inner_text() if trip_tile.count() else "") if ch.isdigit()
+    )
+    ok(
+        "Chi phí giao / đơn prints the server's per-order figure",
+        trip_digits == str(cap1["cost_per_delivered_order_vnd"]),
+        f"{trip_digits} vs {cap1['cost_per_delivered_order_vnd']}",
+    )
+    minutes = console.page.locator("[data-report-machine='WASH-01'] [data-average-minutes]")
+    ok(
+        "the machine line prints WASH-01's average minutes",
+        minutes.count() == 1
+        and minutes.first.get_attribute("data-average-minutes")
+        == str(timed["WASH-01"]["average_minutes"]),
+    )
+    margin = console.page.locator("[data-kpi=MARGIN]")
+    ok(
+        "the margin tile says Chưa đủ số liệu and lists what Sổ thu chi is missing",
+        margin.count() == 1
+        and margin.first.get_attribute("data-margin-status") == "INCOMPLETE"
+        and "Chưa đủ số liệu" in margin.first.inner_text()
+        and "nước" in margin.first.inner_text().lower()
+        and "mặt bằng" in margin.first.inner_text().lower(),
+        margin.first.inner_text()[:160] if margin.count() else "absent",
+    )
+    ok(
+        "and nothing on the report calls the remainder profit",
+        "lợi nhuận" not in console.text().lower(),
+    )
+    month_total = console.page.locator(f"[data-report-month='{month}'] [data-spending-total]")
+    ok(
+        "the month's spending section prints the server's total",
+        month_total.count() == 1
+        and month_total.first.get_attribute("data-spending-total") == str(total_after),
+    )
+
+    head("S5", "MÁY — the owner adds, renames and retires a machine")
+    console.open("#/system")
+    link = console.page.locator("a[data-system-machines]")
+    if link.count():
+        link.first.click()
+        console.page.wait_for_timeout(1400)
+        touched("shell.nav.machines")
+    ok(
+        "Hệ thống leads to the machine list",
+        console.page.url.endswith("#/machines"),
+        console.page.url,
+    )
+    code = f"TEST-{uuid.uuid4().hex[:6].upper()}"
+    console.page.locator("button[data-machine-add]").first.click()
+    console.page.wait_for_selector("#machine-add[open]")
+    console.type_into("#machine-code", code)
+    console.type_into("#machine-new-name", "Máy giặt thử")
+    console.page.locator("#machine-category [data-value=washer]").click()
+    (added,) = console.press_capturing(console.page.locator("#machine-create"), "/machines")
+    touched("machines.add")
+    console.page.wait_for_timeout(1400)
+    ok("the owner adds a machine", added["status"] == 201, added["text"][:120])
+    row = console.page.locator(f"button[data-machine-code='{code}']")
+    if row.count():
+        row.first.click()
+        console.page.wait_for_selector("#machine-edit[open]")
+        console.type_into("#machine-name", "Máy giặt số 3")
+        console.page.locator("#machine-rename").click()
+        console.page.wait_for_timeout(1500)
+        touched("machines.rename")
+    listed = console.call("GET", f"/internal/v1/stores/{STORE}/machines")
+    names = {m["code"]: m["display_name"] for m in (listed.get("body") or {}).get("machines", [])}
+    ok("and renames it", names.get(code) == "Máy giặt số 3", names.get(code))
+    row = console.page.locator(f"button[data-machine-code='{code}']")
+    if row.count():
+        row.first.click()
+        console.page.wait_for_selector("#machine-edit[open]")
+        console.page.locator("#machine-retire").click()
+        console.page.wait_for_timeout(200)
+        console.page.locator("#machine-retire").click()
+        console.page.wait_for_timeout(1500)
+        touched("machines.retire")
+    wash = console.call("GET", f"/internal/v1/stores/{STORE}/machines?purpose=WASH")
+    ok(
+        "and retires it: the counter is never offered it again",
+        code not in [m["code"] for m in (wash.get("body") or {}).get("machines", [])],
+    )
+    console.sign_in("demo-owner")
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -3881,6 +4347,7 @@ SCENARIOS = {
     "credit_pick": scenario_credit_pick,
     "contact_pick": scenario_contact_pick,
     "report": scenario_report,
+    "shop_capture": scenario_shop_capture,
 }
 
 

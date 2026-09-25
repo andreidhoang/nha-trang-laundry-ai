@@ -3104,3 +3104,15 @@ a.row-link {
   color: var(--warn-fg);
   font-size: var(--text-sm);
 }
+
+/* --- SESSION-LIST-001 ------------------------------------------------------------------------ */
+
+/* The device list (`ui/sessions.js`): the time line, then the sign-out on a line of its own, so the
+ * button never flows into the sentence at 390px. */
+.devices .row-item__meta > span {
+  display: block;
+}
+
+.devices__action {
+  margin-top: var(--space-2);
+}

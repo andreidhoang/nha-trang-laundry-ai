@@ -170,6 +170,12 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/stores/{}/day-summary",
         "/internal/v1/stores/{}/exports",
         "/internal/v1/stores/{}/exports/{}/execution",
+        # SESSION-LIST-001. A lost phone: the two reads that name a person's devices, and the revoke
+        # route that was served for months with nothing able to name a session to it. Losing any of
+        # the three puts "disable the whole account" back as the only remedy.
+        "/internal/v1/sessions",
+        "/internal/v1/staff/{}/sessions",
+        "/internal/v1/sessions/{}/revoke",
         # CONSENT-TRANSACTIONAL-001 (DEC-033). The manual-send panel reads a contact's service-
         # messaging state and releases a STOP through these. Without the read, a refusal names a
         # customer the console can say nothing more about; without the release, a STOP can only be

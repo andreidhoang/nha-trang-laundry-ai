@@ -18,6 +18,7 @@ from nha_trang_laundry_db.connection import application_connect
 from nha_trang_laundry_db.identity import (
     IdentityRepository,
     IdentityStateError,
+    LiveSessionList,
     StaffPrincipal,
     StaffRole,
 )
@@ -276,6 +277,17 @@ class StaffIdentityService:
                 staff_user_id=staff_user_id,
                 actor_id=actor_id,
                 correlation_id=uuid4(),
+            )
+
+    def list_sessions(self, staff_user_id: UUID, actor_id: UUID, limit: int) -> LiveSessionList:
+        """`SESSION-LIST-001`: one person's live sessions; the repository decides who may read."""
+        with self._connection_factory(str(self._settings.database_url)) as connection:
+            return self._repository.list_live_sessions(
+                connection,
+                staff_user_id=staff_user_id,
+                actor_id=actor_id,
+                now=datetime.now(UTC),
+                limit=limit,
             )
 
     def revoke_session(self, session_id: UUID, actor_id: UUID) -> None:

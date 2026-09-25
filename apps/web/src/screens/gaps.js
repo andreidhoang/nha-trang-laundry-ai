@@ -292,33 +292,18 @@ const GROUPS = [
   {
     heading: "Duyệt và phiên",
     // MESSAGE-DRAFT-BINDING-001 retired the "Duyệt một tin nhắn soạn sẵn" entry, so four became
-    // three. The lede counts its entries and has been wrong about that count once already.
+    // three; SESSION-LIST-001 retired two more, so three became one. The lede counts its entries
+    // and has been wrong about that count once already.
     lede:
-      "Ba mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API " +
-      "không trả về, và một bề mặt đoán bừa các trường đó sẽ là duyệt mù hoặc thao tác nhầm người.",
+      "Mục dưới đây không thiếu quyết định kinh doanh nào. Nó thiếu đúng những trường mà API " +
+      "không trả về, và một bề mặt đoán bừa các trường đó sẽ là duyệt mù.",
     entries: [
-      {
-        ref: "CONSOLE",
-        title: "Biết chắc mình đang đọc đúng phiên bản của phiếu duyệt gắn với đơn hàng",
-        what:
-          "Mở một phong bì ORDER và thấy ngay rằng đơn hàng đang hiện đúng là phiên bản mà " +
-          "phong bì niêm phong, chứ không phải một phiên bản mới hơn.",
-        // RANGE-APPROVAL-VISIBILITY-001 closed the money half of this and left the rest standing,
-        // so the entry is written for what remains rather than for what was fixed. A
-        // SET_RANGE_PRICE envelope now prints its proposed amounts on the card, and the quote
-        // link carries &revision=<n> so the panel opens the bound revision. The ORDER link does
-        // not: #/orders/:id shows the order as it is now.
-        missing:
-          "Đường dẫn tới đơn hàng không mang theo số phiên bản, và màn hình đơn hàng luôn hiện " +
-          "trạng thái mới nhất. Thẻ phiếu in “Phiên bản v…” còn màn hình đơn hàng in “Phiên bản " +
-          "dòng v…”, nên người duyệt phải tự so hai con số bằng mắt; không có gì bắt họ so.",
-        blockedBy: "Màn hình đơn hàng chưa đọc được một phiên bản cũ của đơn",
-        today:
-          "Máy chủ vẫn từ chối một quyết định gửi kèm phiên bản không khớp bản đã lưu, nên không " +
-          "ai duyệt nhầm được vào một phiên bản khác. Điều còn thiếu là ở phía người đọc: hai con " +
-          "số phiên bản đều hiện ra, nhưng phải tự đối chiếu. Phiếu báo giá thì đã hết vấn đề này " +
-          "— đường dẫn mang sẵn số bản sửa đổi.",
-      },
+      // "Biết chắc mình đang đọc đúng phiên bản của phiếu duyệt gắn với đơn hàng" was here until
+      // SESSION-LIST-001 and is deleted rather than reworded, because the gap it described
+      // closed: an ORDER card reads the order's current row_version and says in words whether the
+      // order changed since the envelope was raised, with Duyệt shut when it did. Nobody compares
+      // two version numbers by eye any more.
+      //
       // "Duyệt một tin nhắn soạn sẵn" was here until MESSAGE-DRAFT-BINDING-001 and is deleted
       // rather than reworded, because the gap it described closed. Its last wording said the
       // message body was stored nowhere and rendered_hash was checked against nothing; the body is
@@ -346,18 +331,11 @@ const GROUPS = [
           "thì mở ở màn hình Xuất dữ liệu. Các loại khác do máy chủ tự mở khi một lệnh chạm vào " +
           "ngưỡng cần duyệt.",
       },
-      {
-        ref: "CONSOLE",
-        title: "Danh sách và thu hồi phiên khác",
-        what: "Xem các phiên đang mở của mình hoặc của người khác, và đóng một phiên cụ thể.",
-        missing:
-          "/internal/v1/session không trả session_id, nên bảng vận hành không biết định danh nào " +
-          "để gửi tới route thu hồi.",
-        blockedBy: "SessionResponse không có trường session_id",
-        today:
-          "Nút Thoát chỉ kết thúc phiên đang dùng. Muốn cắt mọi phiên của một người thì vô hiệu " +
-          "hoá người đó ở màn hình Nhân sự — lệnh ấy thu hồi tất cả phiên của họ.",
-      },
+      // "Danh sách và thu hồi phiên khác" was here until SESSION-LIST-001 and is deleted rather
+      // than reworded, because the gap it described closed: SessionResponse carries session_id,
+      // GET /internal/v1/sessions and GET /internal/v1/staff/{id}/sessions list the live
+      // sessions, and the account sheet and a person's sheet on Nhân sự sign one device out
+      // through the revoke route that was always there. Its RESPONSE_SHAPE binding went with it.
       // "Đọc lại một bản báo giá" was here until RANGE-PRICE-001 and is deleted rather than
       // reworded, because the gap it described closed:
       // `GET /internal/v1/stores/{store}/quotes/{quote}` returns one revision with its lines,

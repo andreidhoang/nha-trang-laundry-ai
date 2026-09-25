@@ -134,6 +134,13 @@ export const CAPABILITIES = {
     mfa: false,
     why: "Quản lý nhân sự chỉ dành cho chủ.",
   },
+  // SESSION-LIST-001. The revoke route admits the session itself or any session for the owner, so
+  // signing out a device other than this one -- even one's own lost phone -- is the owner's press.
+  SESSIONS_REVOKE_OTHER: {
+    roles: [OWNER],
+    mfa: false,
+    why: "Chỉ chủ đăng xuất được một thiết bị khác; mất điện thoại thì báo chủ.",
+  },
   SLA_BOARD_READ: {
     roles: [OWNER, APPROVER, OPERATOR, AUDITOR],
     mfa: false,

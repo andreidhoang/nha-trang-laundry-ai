@@ -35,7 +35,9 @@ from nha_trang_laundry_db.delivery_legs import (
 from nha_trang_laundry_db.exports import ExportAuthorizationError, ExportStateError
 from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import (
+    MAX_SESSION_LIST,
     IdentityStateError,
+    LiveSessionList,
     StaffPrincipal,
     StaffRole,
     StaffSubjectTakenError,
@@ -241,6 +243,12 @@ class SessionResponse(BaseModel):
     staff_user_id: str
     roles: list[str]
     mfa_verified: bool
+    #: `SESSION-LIST-001`. The identifier of the session this cookie is, so the console can mark
+    #: "Thiết bị này" in the session list and never offer to revoke the device it is running on by
+    #: mistake. Only the first half of the cookie: the secret half is never returned, and the
+    #: identifier alone authenticates nothing. Null only for a principal with no session row, which
+    #: the cookie path never produces.
+    session_id: str | None = None
 
 
 class RoleAssignmentRequest(BaseModel):
@@ -1341,6 +1349,7 @@ def _session_response(principal: StaffPrincipal) -> SessionResponse:
         staff_user_id=str(principal.staff_user_id),
         roles=sorted(role.value for role in principal.roles),
         mfa_verified=principal.mfa_verified,
+        session_id=None if principal.session_id is None else str(principal.session_id),
     )
 
 
@@ -1732,6 +1741,104 @@ def list_store_staff(
             for entry in directory.entries
         ],
     )
+
+
+# --- SESSION-LIST-001: which devices are signed in -----------------------------------------------
+#
+# The revoke route below existed with nothing that could name a session to it: no response carried a
+# session id, so "I lost my phone" had one remedy -- the owner disabling the whole account, which
+# cannot be undone from the console. These two reads name the sessions; the revoke route is used as
+# it was, with its authorisation unchanged (own session, or any session for `OWNER_ADMIN`).
+
+
+class StaffSessionEntryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: UUID
+    issued_at: datetime
+    last_seen_at: datetime
+    idle_expires_at: datetime
+    absolute_expires_at: datetime
+    #: True for the session the request itself was made with.
+    current: bool
+
+
+class StaffSessionListResponse(BaseModel):
+    """One person's live sessions. Timestamps and identifiers only: no secret, no hash, and no
+    device description, because none is stored (a user agent would be a new personal datum)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    staff_user_id: UUID
+    truncated: bool
+    sessions: list[StaffSessionEntryResponse]
+
+
+def _session_list_response(
+    listed: LiveSessionList, principal: StaffPrincipal
+) -> StaffSessionListResponse:
+    return StaffSessionListResponse(
+        staff_user_id=listed.staff_user_id,
+        truncated=listed.truncated,
+        sessions=[
+            StaffSessionEntryResponse(
+                session_id=entry.session_id,
+                issued_at=entry.issued_at,
+                last_seen_at=entry.last_seen_at,
+                idle_expires_at=entry.idle_expires_at,
+                absolute_expires_at=entry.absolute_expires_at,
+                current=entry.session_id == principal.session_id,
+            )
+            for entry in listed.sessions
+        ],
+    )
+
+
+@app.get("/internal/v1/sessions", response_model=StaffSessionListResponse)
+def list_own_sessions(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    service: Annotated[StaffIdentityService | None, Depends(get_identity_service)] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_SESSION_LIST)] = 50,
+) -> StaffSessionListResponse:
+    """The caller's own live sessions, newest activity first, with `current` on this one.
+
+    Any signed-in staff member may read their own: it is the list a person needs to sign their
+    lost phone out, and it discloses nothing about anyone else.
+    """
+    if service is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="staff identity unavailable"
+        )
+    try:
+        listed = service.list_sessions(principal.staff_user_id, principal.staff_user_id, limit)
+    except IdentityStateError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="staff user unavailable") from error
+    return _session_list_response(listed, principal)
+
+
+@app.get("/internal/v1/staff/{staff_user_id}/sessions", response_model=StaffSessionListResponse)
+def list_staff_sessions(
+    staff_user_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_owner)],
+    service: Annotated[StaffIdentityService | None, Depends(get_identity_service)] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_SESSION_LIST)] = 50,
+) -> StaffSessionListResponse:
+    """One person's live sessions, for the owner only.
+
+    `require_owner` fails fast; the repository re-reads the owner role from the database, as
+    `revoke_session` does, before it reads a row. `current` is true only on the owner's own
+    session, when the owner reads their own list.
+    """
+    if service is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="staff identity unavailable"
+        )
+    try:
+        listed = service.list_sessions(staff_user_id, principal.staff_user_id, limit)
+    except IdentityStateError as error:
+        # The owner re-check and an unknown person are one answer, like `disable_staff`'s.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="staff user unavailable") from error
+    return _session_list_response(listed, principal)
 
 
 @app.post("/internal/v1/sessions/{session_id}/revoke", status_code=status.HTTP_204_NO_CONTENT)

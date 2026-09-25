@@ -358,6 +358,17 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/sessions/{session_id}/revoke"): RouteScope(
         "NOT_STORE_DATA", None, "own session, or any session for OWNER_ADMIN"
     ),
+    # SESSION-LIST-001. Sessions are a person's, not a shop's: a phone signed in as Lan is Lan's
+    # in every store she works in, so neither read names or filters by a store.
+    ("GET", "/internal/v1/sessions"): RouteScope(
+        "NOT_STORE_DATA", None, "the caller's own live sessions; no secret or hash is returned"
+    ),
+    ("GET", "/internal/v1/staff/{staff_user_id}/sessions"): RouteScope(
+        "NOT_STORE_DATA",
+        None,
+        "one person's live sessions, OWNER_ADMIN only: `require_owner` at the route, and the "
+        "identity repository re-reads the owner role from the database before reading a row",
+    ),
     ("GET", "/internal/v1/stores"): RouteScope(
         "NOT_STORE_DATA",
         None,

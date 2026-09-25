@@ -1485,3 +1485,30 @@ def test_an_approval_whose_resource_moved_on_gets_its_own_title() -> None:
     assert "đã thay đổi sau khi phiếu được tạo" in got["message"]
     assert "phiếu mới" in got["message"]
     assert got["message"] != got["stale"]
+
+
+def test_every_order_step_and_step_reason_reads_in_vietnamese() -> None:
+    """`ORDER-STEPS-002`: no step or reason the server can send reaches the counter as a token.
+
+    Read from the domain enums, so the next step added without a button label, a toast or a gloss
+    fails here rather than showing "REWASH" on a phone. The history row reads
+    "Giặt lại · Chưa sạch" from exactly these two maps.
+    """
+
+    from nha_trang_laundry_domain.catalog import IntakeRejectionReason, RewashReason
+    from nha_trang_laundry_domain.order_steps import OrderStep
+
+    got = _run(
+        "import { ORDER_STEP_VI, ORDER_STEP_DONE_VI, ENUM_GLOSS, enumVi, stepVi } "
+        "from './src/core/i18n.js';\n"
+        "console.log(JSON.stringify({steps: Object.keys(ORDER_STEP_VI), "
+        "done: Object.keys(ORDER_STEP_DONE_VI), gloss: Object.keys(ENUM_GLOSS), "
+        "row: `${stepVi('REWASH')} · ${enumVi('NOT_CLEAN')}`, "
+        "refused: `${stepVi('REJECT_INTAKE')} · ${enumVi('DAMAGED_ON_ARRIVAL')}`}));\n"
+    )
+    assert not [step.value for step in OrderStep if step.value not in got["steps"]]
+    assert not [step.value for step in OrderStep if step.value not in got["done"]]
+    reasons = [*RewashReason, *IntakeRejectionReason]
+    assert not [reason.value for reason in reasons if reason.value not in got["gloss"]]
+    assert got["row"] == "Giặt lại · Chưa sạch"
+    assert got["refused"] == "Không nhận đồ · Hỏng sẵn khi mang tới"

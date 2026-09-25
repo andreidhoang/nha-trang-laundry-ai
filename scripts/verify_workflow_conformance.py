@@ -135,6 +135,11 @@ DECLARED_CONTROLS = (
     "orderDetail.settlement-submit",
     "orderDetail.prepay",
     "orderDetail.collection-submit",
+    # ORDER-STEPS-002: Giặt lại and Không nhận đồ, each with the reason picked in its sheet.
+    "orderDetail.rewash-reason",
+    "orderDetail.rewash-confirm",
+    "orderDetail.reject-reason",
+    "orderDetail.reject-confirm",
     # CONSOLE-REDESIGN-006: the staff controls are the person sheet's, not four id-typed forms.
     "staff.create-open",
     "staff.create-subject",
@@ -639,13 +644,22 @@ class Console:
         )
 
     def step(
-        self, order_id: str, step: str, *, custody: str = "", slot: bool = True, reopen: bool = True
+        self,
+        order_id: str,
+        step: str,
+        *,
+        custody: str = "",
+        slot: bool = True,
+        reopen: bool = True,
+        reason: str = "",
     ) -> str:
         """Press one step on the order's page, exactly as staff would, and return what it said.
 
         RECEIVE ticks the slot attestation (unless `slot=False`); CANCEL picks `custody` when the
-        server asks for one and presses twice; HOLD presses twice. Nothing is sent that the page
-        does not offer: a step the page does not list is reported, not forced.
+        server asks for one and presses twice; HOLD presses twice; REWASH and REJECT_INTAKE pick
+        `reason` from the sheet's choices (ORDER-STEPS-002), and REJECT_INTAKE presses twice.
+        Nothing is sent that the page does not offer: a step the page does not list is reported,
+        not forced.
         """
         if reopen:
             self.open_order(order_id)
@@ -676,6 +690,19 @@ class Console:
             # A two-press control: the first press arms it, the second commits.
             control.click()
             touched("orderDetail.hold-confirm")
+        elif step in {"REWASH", "REJECT_INTAKE"}:
+            prefix = "orderDetail.rewash" if step == "REWASH" else "orderDetail.reject"
+            if reason:
+                self.page.locator(f"dialog[open] #step-reason [data-value={reason}]").click()
+                touched(f"{prefix}-reason")
+            confirm = self.page.locator("dialog[open] #step-reason-submit")
+            if not confirm.is_disabled():
+                confirm.click()
+                if step == "REJECT_INTAKE":
+                    # It ends the order: two presses, as Huỷ đơn.
+                    self.page.wait_for_timeout(200)
+                    confirm.click()
+                touched(f"{prefix}-confirm")
         self.page.wait_for_timeout(1800)
         return self.said()
 
@@ -948,9 +975,9 @@ def scenario_exit(console: Console) -> None:
         )
 
     head("2d", "TẠM DỪNG — a stain at quality check is an interruption, not an ending")
-    # V1 recorded EXCEPTION and sent the laundry back to IN_PROCESS from a three-axis form. No
-    # ORDER-STEPS step means "rewash" yet (listed on #/gaps); the page offers HOLD / RESUME, and
-    # the server still takes the per-axis rewash, which is checked directly below.
+    # V1 recorded EXCEPTION and sent the laundry back to IN_PROCESS from a three-axis form. The
+    # page's own rewash is ORDER-STEPS-002's "Giặt lại" (scenario `rework`); an interruption is
+    # still HOLD / RESUME, and the server still takes the per-axis rewash, checked directly below.
     stained = console.build_order(stop="checking")
     console.step(stained["order_id"], "HOLD")
     if READS_DATABASE:
@@ -2321,6 +2348,170 @@ def scenario_remedy(console: Console) -> None:
     )
 
 
+def _history_text(console: Console) -> str:
+    """The order page's history list as it reads, once the side read has landed."""
+
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#order-timeline", timeout=8000)
+    node = console.page.locator("#order-timeline")
+    return node.first.inner_text() if node.count() else ""
+
+
+def _event_reason(order_id: str, key: str) -> str:
+    return sql(
+        f"select coalesce(payload->>'step','') || ':' || coalesce(payload->>'{key}','') "
+        f"from domain_events where aggregate_id='{order_id}' and payload ? '{key}'"
+    )
+
+
+def scenario_rework(console: Console) -> None:
+    """`ORDER-STEPS-002`: a rewash and a refusal at intake, each a step with a reason."""
+
+    head("13", "GIẶT LẠI — a stain found at quality check is washed again inside the same order")
+    stained = console.build_order(stop="checking")
+    order_id = stained["order_id"]
+    console.open_order(order_id)
+    ok(
+        "the big button is still the ordinary next step, never the rewash",
+        console.primary_step() == "MARK_READY",
+        console.primary_step(),
+    )
+    offered = console.offered()
+    ok("Giặt lại is offered under Khác", "REWASH" in offered, offered)
+    read = console.call("GET", f"/internal/v1/orders/{order_id}")["body"] or {}
+    total_before = read.get("payable_total_vnd")
+    control = console.step_control("REWASH")
+    if control is not None:
+        control.click()
+        console.page.wait_for_timeout(500)
+    reasons = [
+        str(node.get_attribute("data-value"))
+        for node in console.page.locator("dialog[open] #step-reason [data-value]").all()
+    ]
+    submit = console.page.locator("dialog[open] #step-reason-submit")
+    ok(
+        "the sheet offers the three reasons the server listed and is shut until one is picked",
+        reasons == ["NOT_CLEAN", "MACHINE_FAULT", "OTHER"]
+        and submit.count() == 1
+        and submit.first.is_disabled(),
+        reasons,
+    )
+    ok(
+        "and it reads as the counter speaks: why, and that the customer pays nothing more",
+        "Vì sao giặt lại?" in console.dialog_text()
+        and "Chưa sạch" in console.dialog_text()
+        and "Khách không trả thêm tiền" in console.dialog_text(),
+        console.dialog_text()[:160],
+    )
+    console.page.keyboard.press("Escape")
+    console.page.wait_for_timeout(300)
+
+    said = console.step(order_id, "REWASH", reason="NOT_CLEAN", reopen=False)
+    if READS_DATABASE:
+        ok(
+            "the laundry goes back through the wash",
+            stored(order_id, "production_status") == "IN_PROCESS",
+            f"{stored(order_id, 'production_status')} · {said[:120]}",
+        )
+        ok(
+            "the reason is on the step's own event, permanently",
+            _event_reason(order_id, "rewash_reason") == "REWASH:NOT_CLEAN",
+            _event_reason(order_id, "rewash_reason"),
+        )
+    total_after = console.call("GET", f"/internal/v1/orders/{order_id}")["body"] or {}
+    ok(
+        "and the price did not move: a rewash costs the customer nothing",
+        total_before is not None and total_after.get("payable_total_vnd") == total_before,
+        f"{total_before} → {total_after.get('payable_total_vnd')}",
+    )
+    console.open_order(order_id)
+    ok(
+        "the page now offers the check again as the next step",
+        console.primary_step() == "QUALITY_CHECK",
+        console.primary_step(),
+    )
+    history = _history_text(console)
+    ok(
+        "the history names the step and its reason: 'Giặt lại · Chưa sạch'",
+        "Giặt lại · Chưa sạch" in history,
+        history[-200:],
+    )
+    console.step(order_id, "QUALITY_CHECK", reopen=False)
+    console.step(order_id, "MARK_READY")
+    console.pay(order_id, "SETTLE")
+    console.step(order_id, "HAND_OVER")
+    if READS_DATABASE:
+        ok(
+            "the rewashed order walks forward again to completed",
+            stored(order_id, "commercial_status") == "COMPLETED",
+            stored(order_id, "commercial_status"),
+        )
+
+    head("13b", "KHÔNG NHẬN ĐỒ — goods refused on the counter close the order, no money moves")
+    bag = console.build_order(stop="received")
+    bag_id = bag["order_id"]
+    console.open_order(bag_id)
+    ok(
+        "a bag on the counter still offers Nhận đồ as the big button",
+        console.primary_step() == "RECEIVE",
+        console.primary_step(),
+    )
+    offered = console.offered()
+    ok("and Không nhận đồ under Khác", "REJECT_INTAKE" in offered, offered)
+    missing = console.call(
+        "POST",
+        f"/internal/v1/orders/{bag_id}/steps",
+        {"step": "REJECT_INTAKE"},
+        if_match=console.current_version(bag_id, bag["row_version"]),
+    )
+    ok(
+        "the server refuses a refusal with no reason (422), and nothing is written",
+        missing["status"] == 422,
+        f"HTTP {missing['status']} {missing['text'][:100]}",
+    )
+    said = console.step(bag_id, "REJECT_INTAKE", reason="NOT_SERVICEABLE", reopen=False)
+    if READS_DATABASE:
+        ok(
+            "the goods are refused and the order is cancelled",
+            stored(bag_id, "intake_status || '/' || commercial_status") == "REJECTED/CANCELLED",
+            f"{stored(bag_id, 'intake_status || commercial_status')} · {said[:120]}",
+        )
+        ok(
+            "no money moved",
+            stored(bag_id, "balance_status") == "UNPAID"
+            and sql(f"select count(*) from order_settlements where order_id='{bag_id}'") == "0",
+            stored(bag_id, "balance_status"),
+        )
+        ok(
+            "the reason is on the step's own event",
+            _event_reason(bag_id, "rejection_reason") == "REJECT_INTAKE:NOT_SERVICEABLE",
+            _event_reason(bag_id, "rejection_reason"),
+        )
+    console.open_order(bag_id)
+    ok(
+        "the closed order offers no step any more",
+        console.offered() == [] and "Đơn đã đóng" in console.text(),
+        console.offered(),
+    )
+    history = _history_text(console)
+    ok(
+        "the history reads 'Không nhận đồ · Tiệm không giặt loại này'",
+        "Không nhận đồ · Tiệm không giặt loại này" in history,
+        history[-200:],
+    )
+    again = console.call(
+        "POST",
+        f"/internal/v1/orders/{bag_id}/steps",
+        {"step": "REJECT_INTAKE", "rejection_reason": "OTHER"},
+        if_match=console.current_version(bag_id, bag["row_version"]),
+    )
+    ok(
+        "and the server refuses to refuse it twice",
+        again["status"] == 409,
+        f"HTTP {again['status']} {again['text'][:100]}",
+    )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -2334,6 +2525,7 @@ SCENARIOS = {
     "pickup_only": scenario_pickup_only,
     "busy": scenario_busy,
     "remedy": scenario_remedy,
+    "rework": scenario_rework,
 }
 
 

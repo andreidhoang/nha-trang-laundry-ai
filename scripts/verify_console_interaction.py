@@ -556,6 +556,9 @@ def step(name: str, primary: bool = False, **extra: object) -> dict[str, object]
         "primary": primary,
         "requires": list(extra.get("requires", [])),  # type: ignore[call-overload]
         "custody_resolutions": list(extra.get("custody_resolutions", [])),  # type: ignore[call-overload]
+        # ORDER-STEPS-002: the reasons a REWASH / REJECT_INTAKE will take, each dry-run.
+        "rewash_reasons": list(extra.get("rewash_reasons", [])),  # type: ignore[call-overload]
+        "rejection_reasons": list(extra.get("rejection_reasons", [])),  # type: ignore[call-overload]
     }
 
 
@@ -4130,6 +4133,108 @@ with sync_playwright() as playwright:
         open_dialog_text()[:160],
     )
     state["order_write_reply"] = None
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # ORDER-STEPS-002. Giặt lại and Không nhận đồ: never the big button, each a sheet offering
+    # exactly the reasons the server listed, shut until one is picked, and the reason sent as the
+    # step's own field. The refusal ends the order, so it takes two presses.
+    rewash_view = {
+        **order_view("SELF_DROP_SELF_COLLECT", balance="UNPAID", collected=False),
+        "production": "QUALITY_CHECK",
+        "next_steps": [
+            step("MARK_READY", True),
+            step("HOLD"),
+            step(
+                "REWASH",
+                requires=["rewash_reason"],
+                rewash_reasons=["NOT_CLEAN", "MACHINE_FAULT", "OTHER"],
+            ),
+        ],
+    }
+    open_order(rewash_view)
+    check(
+        "Giặt lại is never the big button; it waits under Khác",
+        page.locator(".action-bar--v2 button[data-step=REWASH]").count() == 0
+        and page.locator(".action-bar--v2 button[data-step=MARK_READY]").count() == 1,
+    )
+    page.locator("button[data-more-steps]").click()
+    page.wait_for_timeout(300)
+    page.locator("dialog[open] button[data-step=REWASH]").click()
+    page.wait_for_timeout(300)
+    offered = [
+        str(node.get_attribute("data-value"))
+        for node in page.locator("dialog[open] #step-reason [data-value]").all()
+    ]
+    shut = page.locator("dialog[open] #step-reason-submit").is_disabled()
+    check(
+        "the rewash sheet offers exactly the server's reasons, in words, and is shut until a pick",
+        offered == ["NOT_CLEAN", "MACHINE_FAULT", "OTHER"]
+        and shut
+        and "Chưa sạch" in open_dialog_text()
+        and "NOT_CLEAN" not in open_dialog_text(),
+        f"{offered} shut={shut}",
+    )
+    state["order_writes"] = []
+    page.locator("dialog[open] #step-reason [data-value=MACHINE_FAULT]").click()
+    page.locator("dialog[open] #step-reason-submit").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "Giặt lại posts the step with its reason, If-Match and an Idempotency-Key",
+        len(writes) == 1
+        and writes[0]["path"] == f"{PICKUP_ORDER_ID}/steps"
+        and json.loads(writes[0]["body"] or "{}")
+        == {"step": "REWASH", "rewash_reason": "MACHINE_FAULT"}
+        and writes[0]["if_match"] == '"14"'
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # Only a never-primary step is legal: nothing is promoted to the big button.
+    refuse_only = {
+        **order_view("SELF_DROP_SELF_COLLECT", balance="UNPAID", collected=False),
+        "commercial": "REQUESTED",
+        "intake": "RECEIVED_PENDING_INSPECTION",
+        "production": "NOT_STARTED",
+        "next_steps": [
+            step(
+                "REJECT_INTAKE",
+                requires=["rejection_reason"],
+                rejection_reasons=["NOT_SERVICEABLE", "DAMAGED_ON_ARRIVAL", "OTHER"],
+            )
+        ],
+    }
+    open_order(refuse_only)
+    check(
+        "with no primary step the bar says so and keeps Không nhận đồ under Khác",
+        page.locator(".action-bar--v2 button[data-step]").count() == 0
+        and "Chưa có bước tiếp theo." in rendered_text()
+        and page.locator("button[data-more-steps]").count() == 1,
+    )
+    page.locator("button[data-more-steps]").click()
+    page.wait_for_timeout(300)
+    page.locator("dialog[open] button[data-step=REJECT_INTAKE]").click()
+    page.wait_for_timeout(300)
+    state["order_writes"] = []
+    page.locator("dialog[open] #step-reason [data-value=NOT_SERVICEABLE]").click()
+    page.locator("dialog[open] #step-reason-submit").click()
+    page.wait_for_timeout(300)
+    armed_only = len(state.get("order_writes") or []) == 0
+    page.locator("dialog[open] #step-reason-submit").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "Không nhận đồ needs two presses and then sends the step with its reason",
+        armed_only
+        and len(writes) == 1
+        and json.loads(writes[0]["body"] or "{}")
+        == {"step": "REJECT_INTAKE", "rejection_reason": "NOT_SERVICEABLE"}
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
 

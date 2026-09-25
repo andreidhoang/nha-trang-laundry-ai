@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 428
+  DESCRIPTIVE: 427
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 14
-total: 457
+total: 456
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -2088,40 +2088,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#lede:a7fad0bb8bf8
+- slot_id: screens/gaps.js#lede:58dbdb972233
   module: screens/gaps.js
   key: lede
   text: 'Bảng vận hành hôm nay bao được cả bốn chiều của một đơn tại quầy: thương mại, nhận đồ, sản xuất
     và tất toán, cùng chặng giao. Mỗi việc là một nút trên trang của đơn: nút lớn là bước tiếp theo máy
-    chủ cho phép, các bước khác nằm ở “Khác”. Hai việc chưa có nút — xem mục “Sự cố sản xuất và từ chối
-    nhận đồ” bên dưới.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:39a05239e3ab
-  module: screens/gaps.js
-  key: missing
-  text: Trang đơn chỉ hiện các bước máy chủ tính ra, và danh sách bước chưa có “ghi sự cố để giặt lại”
-    (sản xuất sang EXCEPTION rồi giặt lại) hay “từ chối nhận đồ” (nhận đồ sang REJECTED). Hai đường chuyển
-    trạng thái riêng vẫn còn ở máy chủ nhưng bảng vận hành không còn biểu mẫu nào gọi chúng.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:341c44ea053c
-  module: screens/gaps.js
-  key: blockedBy
-  text: Chưa có bước REWASH hay REJECT_INTAKE trong danh sách bước của ORDER-STEPS
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:6007fa3d7509
-  module: screens/gaps.js
-  key: today
-  text: 'Đồ cần giặt lại: bấm “Tạm dừng”, giặt lại, rồi “Làm tiếp”. Không nhận đồ: đừng bấm “Nhận đồ”
-    — huỷ đơn khi khách mang đồ về.'
+    chủ cho phép, các bước khác nằm ở “Khác” — kể cả “Giặt lại” và “Không nhận đồ”.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2856,6 +2828,22 @@ disclosures:
   module: screens/newOrder.js
   key: notice__title
   text: Không tìm thấy yêu cầu này trong cửa hàng đang chọn
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#note:e976322329da
+  module: screens/orderDetail.js
+  key: note
+  text: Khách không trả thêm tiền. Đồ quay lại bước giặt, rồi kiểm tra lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#note:97d411412391
+  module: screens/orderDetail.js
+  key: note
+  text: Trả túi đồ cho khách. Đơn bị huỷ, không có tiền nào chuyển.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

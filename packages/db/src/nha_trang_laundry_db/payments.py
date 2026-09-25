@@ -15,7 +15,12 @@ event, the audit row and the outbox rows:
 2. the payment row (none for a 0 đồng settlement of a bill a credit covered in full: no money
    moved);
 3. the order's balance (`PARTIALLY_PAID` or `PAID`), its collection flag when the customer takes the
-   goods with the final payment, and its row version.
+   goods with the final payment, and its row version;
+4. `UNCLAIMED-001` (`DEC-036`): the storage fee, when the payment that settles the order includes
+   one -- fixed there, so what the customer paid is what was owed then (`order_storage_fees`).
+
+What is owed is the list of charges at `recorded_at`: the quoted total, plus the storage fee the
+order owes at that instant (`storage_fees.storage_fee_for_order`, under the same row lock).
 
 `0056` checks at commit that the balance, the settlement and the ledger agree; a write that left
 them apart could not commit.
@@ -56,6 +61,7 @@ from nha_trang_laundry_db.settlement import (
     SettlementAuthorizationError,
     collected_by_for_shape,
 )
+from nha_trang_laundry_db.storage_fees import storage_fee_for_order
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -250,12 +256,16 @@ class PaymentRepository:
                 (command.order_id,),
             )
             ledger = cursor.fetchone()
+            # UNCLAIMED-001: the storage fee owed at the moment of this payment, read under the
+            # order lock this transaction holds, so it cannot move before the write below.
+            storage = storage_fee_for_order(cursor, order_id=command.order_id, moment=recorded_at)
         paid_so_far, entries = int(ledger[0]), int(ledger[1])
         quoted = QuotedTotal(_optional_int(row[9]), _optional_int(row[10]))
+        storage_fee_vnd = storage.fee.amount_vnd
         outcome = evaluate_payment(
             commercial=CommercialOrderStatus(str(row[1])),
             balance=OrderBalanceStatus(str(row[3])),
-            charges=owed_charges(quoted),
+            charges=owed_charges(quoted, storage_fee_vnd=storage_fee_vnd),
             paid_vnd=paid_so_far,
             amount_vnd=command.amount_vnd,
             method=command.method,
@@ -270,11 +280,12 @@ class PaymentRepository:
         shape: SettlementShape | None = None
         if outcome.completes:
             # The settling payment writes the settlement row, its shape decided exactly as the
-            # exact-total route decides it. With one charge, what is owed *is* the quoted total,
-            # which is what `evaluate_settlement` and the row's CHECK compare.
+            # exact-total route decides it, over the quoted total -- the storage fee is not part of
+            # the shape. The row records everything owed (quoted total plus any storage fee), which
+            # is what the payments sum to; `0060` checks at commit that the fee row agrees.
             settled = evaluate_settlement(
                 quoted=quoted,
-                tendered_vnd=outcome.owed_vnd,
+                tendered_vnd=outcome.owed_vnd - storage_fee_vnd,
                 collected_by_customer=command.collected_by_customer,
                 fulfillment_mode=FulfillmentMode(str(row[11])),
             )
@@ -294,6 +305,7 @@ class PaymentRepository:
                     )
 
         settlement_id = uuid4() if shape is not None else None
+        fee_fixed = settlement_id is not None and storage_fee_vnd > 0
         payment_id = uuid4() if outcome.amount_vnd > 0 else None
         ordinal = entries + 1
         collected = shape is SettlementShape.EXACT_PAYMENT_SELF_COLLECTION
@@ -323,6 +335,29 @@ class PaymentRepository:
                         collected_by_for_shape(shape),
                         command.principal.staff_user_id,
                         recorded_at,
+                        recorded_at,
+                    ),
+                )
+            if fee_fixed:
+                # UNCLAIMED-001: the fee this settlement includes, fixed now and never again.
+                assert storage.fee.fee is not None and storage.published is not None
+                cursor.execute(
+                    """
+                    INSERT INTO order_storage_fees (
+                        id, order_id, store_id, settlement_id, amount_vnd, days_waiting,
+                        chargeable_days, policy_version_id, fixed_by_staff_id, fixed_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        uuid4(),
+                        command.order_id,
+                        store_id,
+                        settlement_id,
+                        storage_fee_vnd,
+                        storage.fee.fee.days_waiting,
+                        storage.fee.fee.chargeable_days,
+                        storage.published.version_id,
+                        command.principal.staff_user_id,
                         recorded_at,
                     ),
                 )
@@ -414,6 +449,9 @@ class PaymentRepository:
                     "collected_by_customer": collected,
                     "settlement_id": None if settlement_id is None else str(settlement_id),
                     "settlement_shape": None if shape is None else shape.value,
+                    # UNCLAIMED-001: present only when a storage fee was part of what was owed.
+                    **({"storage_fee_vnd": storage_fee_vnd} if storage_fee_vnd > 0 else {}),
+                    **({"storage_fee_fixed": True} if fee_fixed else {}),
                 },
                 audit_action="ORDER_PAYMENT_RECORD",
                 actor_type="STAFF",

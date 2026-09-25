@@ -198,6 +198,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}/contact-attempts:
+    post:
+      operationId: record_contact_attempt
+      summary: 'Ghi lần liên hệ: one call, Zalo, SMS or visit, with its outcome (`UNCLAIMED-001`).'
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_unclaimed_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/orders/{order_id}/delivery-legs:
     post:
       operationId: record_delivery_leg
@@ -208,6 +225,23 @@ paths:
       x-documented-by-fastapi: true
       responses:
         '201':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/orders/{order_id}/disposal:
+    post:
+      operationId: dispose_unclaimed_order
+      summary: 'Thanh lý: the owner closes an order whose laundry nobody came back for (`DEC-036`).'
+      x-authorization-dependencies:
+      - require_disposal_owner
+      - get_unclaimed_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
           description: Success response.
       parameters:
       - name: order_id
@@ -323,6 +357,40 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/orders/{order_id}/storage:
+    get:
+      operationId: read_order_storage
+      summary: 'One order''s storage: the fee owed now, the waiver, the contact attempts, the disposal'
+      x-authorization-dependencies:
+      - require_unclaimed_reader
+      - get_unclaimed_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/orders/{order_id}/storage-fee-waiver:
+    post:
+      operationId: waive_storage_fee
+      summary: 'Miễn phí lưu kho: an `OPS_APPROVER` or the owner waives the storage fee, with a reason.'
+      x-authorization-dependencies:
+      - require_storage_waiver
+      - get_unclaimed_service
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1239,6 +1307,23 @@ paths:
       x-documented-by-fastapi: true
       responses:
         '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/orders/awaiting-pickup:
+    get:
+      operationId: list_awaiting_pickup
+      summary: 'Đồ chờ lấy: finished laundry the customer has not collected (`UNCLAIMED-001`, `DEC-036`).'
+      x-authorization-dependencies:
+      - require_unclaimed_reader
+      - get_unclaimed_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
           description: Success response.
       parameters:
       - name: store_id

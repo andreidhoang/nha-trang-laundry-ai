@@ -15,10 +15,9 @@
   statement of that rule, and the seam where `PAYMENT-002` (an account customer within its limit)
   will be added.
 
-What is owed is a **list of charges**, not one number. Today the list has exactly one entry, the
-bound quote revision's presentable total. `UNCLAIMED-001` adds a storage-fee charge to the same
-list (`DEC-036`), and nothing here has to be redesigned for it: every rule below reads `owed_vnd`,
-the sum of the charges.
+What is owed is a **list of charges**, not one number: the bound quote revision's presentable total,
+and -- `UNCLAIMED-001`, `DEC-036` -- a storage fee when laundry waited past the free days. Nothing
+here was redesigned for the second: every rule below reads `owed_vnd`, the sum of the charges.
 
 Pure: no clock, no database, no environment. Integer đồng only; every amount is validated as an
 `int` that is not a `bool`, and no division or rounding happens anywhere in this module.
@@ -53,12 +52,15 @@ class PaymentMethod(StrEnum):
 class ChargeKind(StrEnum):
     """What one line of the amount owed is for.
 
-    One member today. `UNCLAIMED-001` adds the storage fee (`DEC-036`) as a second kind; the list of
-    charges is the place it goes, so the payment rules below do not change when it does.
+    `UNCLAIMED-001` added the storage fee (`DEC-036`) as the second kind; the list of charges is
+    the place it went, and not one payment rule below changed when it did.
     """
 
     #: The bound quote revision's presentable total: what the customer agreed to pay for the work.
     QUOTED_TOTAL = "QUOTED_TOTAL"
+    #: `DEC-036`: laundry left waiting past the free days (`unclaimed.order_storage_fee`), computed
+    #: at read and fixed when the settling payment is taken. Present only when it is above zero.
+    STORAGE_FEE = "STORAGE_FEE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,11 +106,16 @@ BANK_REF_PATTERN: Final = re.compile(r"^[A-Z0-9]{2,12}$")
 PAYABLE_BALANCES: Final = frozenset({OrderBalanceStatus.UNPAID, OrderBalanceStatus.PARTIALLY_PAID})
 
 
-def owed_charges(quoted: QuotedTotal) -> tuple[OrderCharge, ...] | None:
+def owed_charges(
+    quoted: QuotedTotal, *, storage_fee_vnd: int = 0
+) -> tuple[OrderCharge, ...] | None:
     """What the customer owes, as charges, or `None` when the quote presents no single total.
 
     `None` is not zero: an unresolved delivery fee or a range is "we do not know what this costs",
     and a payment measured against zero would be refused as an overpayment for the wrong reason.
+
+    `storage_fee_vnd` (`UNCLAIMED-001`) is `unclaimed.order_storage_fee`'s amount for the order at
+    the instant in question; a second charge is listed only when it is above zero.
     """
 
     if quoted.minimum_vnd is None or quoted.maximum_vnd is None:
@@ -117,7 +124,19 @@ def owed_charges(quoted: QuotedTotal) -> tuple[OrderCharge, ...] | None:
         return None
     if not _whole_vnd(quoted.minimum_vnd):
         return None
-    return (OrderCharge(ChargeKind.QUOTED_TOTAL, quoted.minimum_vnd),)
+    if not _whole_vnd(storage_fee_vnd):
+        raise ValueError("a storage fee must be a non-negative whole number of đồng")
+    charges = [OrderCharge(ChargeKind.QUOTED_TOTAL, quoted.minimum_vnd)]
+    if storage_fee_vnd > 0:
+        charges.append(OrderCharge(ChargeKind.STORAGE_FEE, storage_fee_vnd))
+    return tuple(charges)
+
+
+def charge_amount(charges: tuple[OrderCharge, ...] | None, kind: ChargeKind) -> int:
+    """The amount of one kind of charge in the list; 0 when it is not there. A list holds each
+    kind at most once, so this reads one entry and adds nothing up."""
+
+    return next((charge.amount_vnd for charge in charges or () if charge.kind is kind), 0)
 
 
 def owed_total(charges: tuple[OrderCharge, ...]) -> int:
@@ -289,6 +308,7 @@ __all__ = [
     "PaymentPosition",
     "PaymentRefusal",
     "PaymentRefused",
+    "charge_amount",
     "evaluate_payment",
     "goods_may_leave",
     "normalise_bank_ref",

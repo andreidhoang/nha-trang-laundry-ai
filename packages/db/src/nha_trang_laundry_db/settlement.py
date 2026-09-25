@@ -40,6 +40,7 @@ from nha_trang_laundry_domain.settlement import (
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.query_version import query_version
+from nha_trang_laundry_db.storage_fees import storage_fee_for_order
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -293,6 +294,16 @@ class SettlementRepository:
             # before a transaction is opened.
             raise SettlementStateError(
                 "order balance is already settled", reason_code="ALREADY_SETTLED"
+            )
+        with connection.cursor() as cursor:
+            # UNCLAIMED-001 (`DEC-036`): laundry left past the free days owes a storage fee on top
+            # of the quoted total, and this route takes only the quoted total. The payments route
+            # measures the money against every charge, so the fee is taken there.
+            storage = storage_fee_for_order(cursor, order_id=command.order_id, moment=attested_at)
+        if storage.fee.amount_vnd > 0:
+            raise SettlementStateError(
+                "a storage fee is owed on top of the total; take the money as a payment",
+                reason_code="STORAGE_FEE_OWED",
             )
 
         outcome = evaluate_settlement(

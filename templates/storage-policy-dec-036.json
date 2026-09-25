@@ -1,0 +1,11 @@
+{
+  "policy_version": "storage-policy-v1",
+  "decision_ref": "DEC-036",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "free_days_after_ready": 20,
+  "fee_per_started_day_vnd": 5000,
+  "fee_cap_percent_of_quoted_total": 50,
+  "disposal_from_day": 60,
+  "disposal_min_contact_attempts": 3,
+  "disposal_min_contact_days": 2
+}

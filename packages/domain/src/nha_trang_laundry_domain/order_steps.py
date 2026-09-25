@@ -320,6 +320,13 @@ def plan_step(
     if step is OrderStep.RECEIVE:
         _plan_receive(simulation, facts, slot_approved=slot_approved, accepted_at=accepted_at)
     elif step is OrderStep.START_WASH:
+        # Founder ruling 2026-09-25 (redesign spec §6.1): washing starts on a live order only.
+        # `transition_production` alone admits it at CONFIRMED-with-intake-ACCEPTED and during
+        # CANCELLATION_REVIEW, which is exactly when nobody should be putting laundry in a machine.
+        if state.commercial is not CommercialOrderStatus.ACTIVE:
+            raise OrderTransitionError(
+                "INVALID_STATE_TRANSITION: washing starts only on an active order"
+            )
         if state.production not in {ProductionStatus.NOT_STARTED, ProductionStatus.QUEUED}:
             # Pinned, because the domain would also accept `ON_HOLD -> IN_PROCESS` (that is
             # RESUME) and `EXCEPTION -> IN_PROCESS` (a rewash, which is not this step's meaning).
@@ -342,6 +349,18 @@ def plan_step(
             raise OrderTransitionError("INVALID_STATE_TRANSITION: invalid hold resume target")
         simulation.production(state.production_resume_status)
     elif step is OrderStep.RELEASE:
+        # Founder ruling 2026-09-25: goods a customer collects in person do not leave an unpaid
+        # order by this step. The counter's way out is SETTLE (collected) then HAND_OVER, which
+        # takes the money in the same visit; a delivery order is released to the courier after
+        # its DEC-023 prepayment, and a courier never takes money.
+        if (
+            state.fulfillment_mode not in MODES_EXPECTING_RETURN
+            and state.balance is OrderBalanceStatus.UNPAID
+        ):
+            raise OrderTransitionError(
+                "INVALID_STATE_TRANSITION: an unpaid order the customer collects is released "
+                "by taking payment, not on its own"
+            )
         _require_production(state, ProductionStatus.READY_AT_STORE)
         simulation.production(ProductionStatus.RELEASED)
     elif step is OrderStep.HAND_OVER:

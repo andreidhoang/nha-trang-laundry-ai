@@ -161,7 +161,8 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
     (
         "self ready unpaid",
         _active(SELF, production=P.READY_AT_STORE),
-        [S.HOLD, S.RELEASE, S.CANCEL, S.SETTLE, S.PREPAY],
+        # Founder ruling 2026-09-25: no RELEASE while unpaid for a customer who collects.
+        [S.HOLD, S.CANCEL, S.SETTLE, S.PREPAY],
         S.SETTLE,
     ),
     (
@@ -215,7 +216,7 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
     (
         "pickup-only ready unpaid",
         _active(P_ONLY, production=P.READY_AT_STORE, pickup_done=True),
-        [S.HOLD, S.RELEASE, S.CANCEL, S.SETTLE, S.PREPAY],
+        [S.HOLD, S.CANCEL, S.SETTLE, S.PREPAY],
         S.SETTLE,
     ),
     (
@@ -296,16 +297,16 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
     (
         "old UI accepted intake, commercial CONFIRMED",
         _facts(commercial=C.CONFIRMED, intake=I.ACCEPTED),
-        # `transition_production` asks only that intake is accepted and the order is open, so the
-        # domain allows washing before commercial ACTIVE. Listed because it is legal; not primary.
-        [S.RECEIVE, S.START_WASH],
+        # `transition_production` alone would allow washing before commercial ACTIVE; the founder
+        # ruling of 2026-09-25 makes START_WASH an active-order step, so RECEIVE finishes first.
+        [S.RECEIVE],
         S.RECEIVE,
     ),
     (
         "cancellation review",
         _facts(commercial=C.CANCELLATION_REVIEW, intake=I.ACCEPTED),
-        # The same domain fact: production does not consult the commercial axis short of closure.
-        [S.START_WASH, S.CANCEL, S.REOPEN],
+        # No washing while a cancellation is being decided (founder ruling 2026-09-25).
+        [S.CANCEL, S.REOPEN],
         S.CANCEL,
     ),
     # --- closed
@@ -503,3 +504,35 @@ def test_readiness_derivation_is_the_one_both_routes_share() -> None:
         I.RECEIVED_PENDING_INSPECTION, READY_QUOTE, slot_approved=True
     )
     assert received.ready and readiness_blockers(received) == ()
+
+
+def test_start_wash_is_refused_on_an_order_that_is_not_active() -> None:
+    """Founder ruling 2026-09-25: the step executor refuses, not only the button list."""
+
+    for commercial in (C.CONFIRMED, C.CANCELLATION_REVIEW):
+        facts = _facts(commercial=commercial, intake=I.ACCEPTED)
+        with pytest.raises(OrderTransitionError, match="active order"):
+            plan_step(
+                S.START_WASH,
+                facts,
+                slot_approved=False,
+                custody_resolution=None,
+                accepted_at=datetime(2026, 9, 25, tzinfo=UTC),
+            )
+
+
+def test_an_unpaid_self_collect_order_is_not_released_on_its_own() -> None:
+    """Founder ruling 2026-09-25: the goods leave a counter order with its payment."""
+
+    for facts in (
+        _active(SELF, production=P.READY_AT_STORE),
+        _active(P_ONLY, production=P.READY_AT_STORE, pickup_done=True),
+    ):
+        with pytest.raises(OrderTransitionError, match="taking payment"):
+            plan_step(
+                S.RELEASE,
+                facts,
+                slot_approved=False,
+                custody_resolution=None,
+                accepted_at=datetime(2026, 9, 25, tzinfo=UTC),
+            )

@@ -62,6 +62,33 @@ class SessionToken:
     expires_at: datetime
 
 
+#: The most sessions one read returns. A person signed in on more devices than this is not a shop
+#: pattern; the read says `truncated` rather than pretending the page is the whole list.
+MAX_SESSION_LIST = 200
+
+
+@dataclass(frozen=True)
+class LiveSession:
+    """One session that would authenticate right now (`SESSION-LIST-001`).
+
+    Timestamps only. The row's `secret_hash` never leaves this module: it is half of what a cookie
+    is checked against, and a read that returned it would hand out a way to test guesses offline.
+    """
+
+    session_id: UUID
+    issued_at: datetime
+    last_seen_at: datetime
+    idle_expires_at: datetime
+    absolute_expires_at: datetime
+
+
+@dataclass(frozen=True)
+class LiveSessionList:
+    staff_user_id: UUID
+    sessions: tuple[LiveSession, ...]
+    truncated: bool
+
+
 class IdentityRepository:
     """Persist and resolve named staff identities without trusting OIDC role claims."""
 
@@ -378,6 +405,87 @@ class IdentityRepository:
                 ),
                 revoke,
             )
+
+    def list_live_sessions(
+        self,
+        connection: Any,
+        *,
+        staff_user_id: UUID,
+        actor_id: UUID,
+        now: datetime,
+        limit: int = 50,
+    ) -> LiveSessionList:
+        """The sessions of one staff user that would authenticate at `now` (`SESSION-LIST-001`).
+
+        "Live" is exactly `authenticate_session`'s test, read without touching a row: not revoked,
+        inside both lifetimes, minted at the user's current authorization version, the account
+        active, and MFA-proven when the user holds a role that needs it. A session that would be
+        refused at its next request is not listed, because offering to sign out a device that is
+        already signed out is a control that does nothing.
+
+        Anyone may read their own. Anyone else's needs an active `OWNER_ADMIN`, re-read from the
+        database here for the reason `revoke_session` gives: a session minted while its holder was
+        an owner keeps claiming so after the role is gone. An unknown staff id is refused rather
+        than answered with an empty list, which would read as "signed in nowhere".
+
+        `now` is passed in, never read, so the boundary (`idle_expires_at > now`, the complement of
+        the authenticator's `now >= idle_expires_at`) is testable at the exact instant.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValueError("limit must be an integer")
+        if not 1 <= limit <= MAX_SESSION_LIST:
+            raise ValueError(f"limit must be between 1 and {MAX_SESSION_LIST}")
+        with connection.transaction(), connection.cursor() as cursor:
+            if staff_user_id != actor_id:
+                _require_owner(cursor, actor_id)
+            cursor.execute("SELECT 1 FROM staff_users WHERE id = %s", (staff_user_id,))
+            if cursor.fetchone() is None:
+                raise IdentityStateError("staff user is missing")
+            cursor.execute(
+                """
+                SELECT s.id, s.issued_at, s.last_seen_at, s.idle_expires_at, s.absolute_expires_at
+                FROM staff_sessions s
+                JOIN staff_users u ON u.id = s.staff_user_id
+                WHERE s.staff_user_id = %s
+                  AND s.revoked_at IS NULL
+                  AND s.idle_expires_at > %s
+                  AND s.absolute_expires_at > %s
+                  AND u.status = 'ACTIVE'
+                  AND s.authorization_version = u.authorization_version
+                  AND (
+                    s.mfa_verified
+                    OR NOT EXISTS (
+                        SELECT 1 FROM staff_role_assignments r
+                        WHERE r.staff_user_id = u.id AND r.revoked_at IS NULL
+                          AND r.role = ANY(%s)
+                    )
+                  )
+                ORDER BY s.last_seen_at DESC, s.id
+                LIMIT %s
+                """,
+                (
+                    staff_user_id,
+                    now,
+                    now,
+                    sorted(role.value for role in SENSITIVE_MFA_ROLES),
+                    limit + 1,
+                ),
+            )
+            rows = cursor.fetchall()
+        return LiveSessionList(
+            staff_user_id=staff_user_id,
+            sessions=tuple(
+                LiveSession(
+                    session_id=_uuid(row[0]),
+                    issued_at=row[1],
+                    last_seen_at=row[2],
+                    idle_expires_at=row[3],
+                    absolute_expires_at=row[4],
+                )
+                for row in rows[:limit]
+            ),
+            truncated=len(rows) > limit,
+        )
 
     @staticmethod
     def _principal_for_subject(cursor: Any, subject: str, mfa_verified: bool) -> StaffPrincipal:

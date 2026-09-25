@@ -18,7 +18,12 @@ import { request, whenSessionEnds } from "./api.js";
 
 const STORE_KEY = "staff_store_id";
 
-/** @typedef {{staffUserId: string, roles: string[], mfaVerified: boolean}} Principal */
+/**
+ * `sessionId` is this browser's own session (`SESSION-LIST-001`): the device list marks it and never
+ * offers to sign it out from there -- "Thoát" is that control, and it also clears the cookies.
+ *
+ * @typedef {{staffUserId: string, roles: string[], mfaVerified: boolean, sessionId: string|null}} Principal
+ */
 
 /** @type {Set<() => void>} */
 const listeners = new Set();
@@ -87,6 +92,7 @@ export async function refresh() {
       staffUserId: String(body.staff_user_id),
       roles: Array.isArray(body.roles) ? body.roles.map(String) : [],
       mfaVerified: Boolean(body.mfa_verified),
+      sessionId: typeof body.session_id === "string" ? body.session_id : null,
     };
     state.status = "active";
     state.lastError = "";

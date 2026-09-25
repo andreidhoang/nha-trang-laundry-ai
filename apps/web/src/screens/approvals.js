@@ -113,6 +113,7 @@ import {
   button,
   emptyState,
   infoButton,
+  inlineAlert,
   page,
   segmented,
   statusPill,
@@ -230,8 +231,10 @@ function exportWindow(record) {
  * The second argument is the envelope's `resource_version`, and the quote link carries it. Without
  * it `#/quotes?quote=<id>` opened whichever revision is *newest*, which is not necessarily the one
  * the envelope binds: an approver could read revision 3 and sign the digest of revision 1. The
- * order link does not take one, and the gap that leaves is recorded on `#/gaps` rather than
- * papered over here.
+ * order link does not take one, because `#/orders/:id` can only show the order as it is now. That
+ * gap stood on `#/gaps` until `SESSION-LIST-001`, which closed it from the other side: an `ORDER`
+ * card reads the order's current `row_version` and says in words whether it is still the version
+ * the envelope binds (`loadOrderVersion`), so nobody compares two numbers by eye.
  *
  * @type {Record<string, (resourceId: string, resourceVersion: number) => string>}
  */
@@ -318,6 +321,18 @@ const MESSAGE_DRAFT = "MESSAGE_DRAFT";
  * owner is needed above the buttons — or withholds all of it and offers only a refusal.
  */
 const REMEDY_PROPOSAL = "REMEDY_PROPOSAL";
+
+/**
+ * The resource type of `ACCEPT_ORDER` and `CANCEL_ACTIVE_ORDER` envelopes, whose version this card
+ * checks against the order as it is now.
+ *
+ * `SESSION-LIST-001`. The envelope binds the order's `row_version` when it was raised, and every
+ * transition bumps it; cancelling an order in a state the approver was never shown is a different
+ * act. The card used to link to `#/orders/:id`, which shows the order as it is now, and leave the
+ * approver to compare "Phiên bản v…" on the card with "Phiên bản dòng v…" on the order by eye. It
+ * now reads the order and says which it is, in words, before the buttons.
+ */
+const ORDER = "ORDER";
 
 /** What this console records as its reason; the server only constrains the shape. */
 const DECISION_REASONS = {
@@ -1202,6 +1217,162 @@ async function loadRemedyProposal(item, contentHost, controlsHost, onDecided, ve
 }
 
 /**
+ * Read the order an `ORDER` envelope names, and say whether it is still the version the envelope
+ * binds — or keep "Duyệt" shut and say why (`SESSION-LIST-001`).
+ *
+ * The rules are the ones every content-reading card on this screen follows:
+ *
+ *   - **The envelope's own store.** A row with no store is refused before anything is read. The
+ *     order route takes no store — the row's is the only one it uses — so the read's `store_id` is
+ *     compared with the envelope's instead, together with its `order_id`.
+ *   - **Compared before shown.** The one comparison that matters is the order's `row_version`
+ *     against the envelope's `resource_version`; nothing about the order is put on the card until
+ *     it has been made.
+ *   - **Changed means refuse-only.** A moved order leaves "Duyệt" shut with the reason, "Từ chối"
+ *     live (it authorises nothing and takes the dead envelope off the queue), and a link to the
+ *     order so the approver can see what it is now. The server refuses the approval anyway:
+ *     `_require_resource_unchanged` compares the same version at the press, and it is the
+ *     authority — this card only saves the approver a refusal they would not understand.
+ *   - **Unknown means shut.** An order that cannot be read leaves both buttons shut, with the
+ *     server's reason; an order that is not there leaves only "Từ chối".
+ *
+ * The version numbers themselves are tier 3: they stay in the card's technical drawer.
+ *
+ * @param {any} item
+ * @param {HTMLElement} contentHost
+ * @param {HTMLElement} controlsHost
+ * @param {(message: string) => Promise<void>} onDecided
+ * @param {{allowed: boolean, reason: string}} verdict
+ * @param {(detail: string) => void} [retitle] names the ticket on the card's title once matched
+ * @returns {Promise<void>}
+ */
+async function loadOrderVersion(item, contentHost, controlsHost, onDecided, verdict, retitle) {
+  /** @param {string} reason @param {HTMLElement} explanation @param {boolean} [refuseOnly] */
+  const block = (reason, explanation, refuseOnly = false) => {
+    render(contentHost, explanation);
+    render(controlsHost, decisionControls(item, onDecided, verdict, reason, { refuseOnly }));
+  };
+  const envelopeStore = typeof item.store_id === "string" ? item.store_id : "";
+  if (!envelopeStore) {
+    block(
+      "Không bấm được: phiếu này không mang mã cửa hàng, nên không đối chiếu được đơn của nó.",
+      h(
+        "div",
+        { class: "notice", dataState: "danger" },
+        h("p", { class: "notice__title" }, "Không biết đơn thuộc cửa hàng nào"),
+        h("p", null, "Tải lại hàng chờ. Chưa đối chiếu được đơn thì chưa quyết."),
+      ),
+    );
+    return;
+  }
+  const orderId = String(item.resource_id);
+  const orderLink = h(
+    "a",
+    { class: "approval__open", href: VIEWABLE_RESOURCES.ORDER(orderId, item.resource_version) },
+    "Mở đơn để xem lại",
+  );
+  try {
+    const read = await request(`/internal/v1/orders/${encodeURIComponent(orderId)}`);
+    if (read.order_id !== item.resource_id || read.store_id !== envelopeStore) {
+      block(
+        "Không bấm Duyệt được: đơn đọc được không phải đơn mà phiếu này niêm phong.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger", dataOrderVersion: "foreign" },
+          h("p", { class: "notice__title" }, "Đơn đọc được không khớp phiếu"),
+          h(
+            "p",
+            null,
+            "Máy chủ trả về một đơn khác mã hoặc khác cửa hàng với phiếu. Không duyệt; từ chối " +
+              "phiếu này rồi báo kỹ thuật.",
+          ),
+        ),
+        true,
+      );
+      return;
+    }
+    if (read.row_version !== item.resource_version) {
+      block(
+        "Không bấm Duyệt được: đơn đã đổi sau khi gửi duyệt. Máy chủ cũng từ chối duyệt.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger", dataOrderVersion: "changed" },
+          h("p", { class: "notice__title" }, "Đơn đã thay đổi sau khi gửi duyệt — mở đơn để xem lại"),
+          h(
+            "p",
+            null,
+            "Đơn đã chuyển bước hoặc được sửa sau khi phiếu được mở. Còn cần duyệt thì nhờ người " +
+              "gửi xin lại trên đơn mới.",
+          ),
+          orderLink,
+        ),
+        true,
+      );
+      return;
+    }
+    const summary = [
+      read.ticket_number == null ? null : `Phiếu ${read.ticket_number}`,
+      enumVi(read.commercial),
+      money(read.payable_total_vnd, "Chưa có tổng"),
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    render(
+      contentHost,
+      h(
+        "div",
+        { class: "stack stack--tight", dataOrderVersion: "current" },
+        inlineAlert({
+          state: "ok",
+          title: "Đơn chưa thay đổi kể từ khi gửi duyệt",
+          body: summary,
+        }),
+      ),
+    );
+    retitle?.(read.ticket_number == null ? "" : `Phiếu ${read.ticket_number}`);
+    render(controlsHost, decisionControls(item, onDecided, verdict));
+  } catch (error) {
+    if (error && error.kind === "MISSING") {
+      block(
+        "Không bấm Duyệt được: máy chủ không tìm thấy đơn mà phiếu này nói tới.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger", dataOrderVersion: "missing" },
+          h("p", { class: "notice__title" }, "Không tìm thấy đơn của phiếu này"),
+          h(
+            "p",
+            null,
+            "Không có đơn nào khớp phiếu này ở cửa hàng của bạn. Máy chủ cũng từ chối duyệt. Từ " +
+              "chối phiếu này để gỡ nó khỏi hàng chờ.",
+          ),
+        ),
+        true,
+      );
+      return;
+    }
+    block(
+      "Không bấm được: chưa đọc được đơn, nên chưa biết đơn có đổi sau khi gửi duyệt không.",
+      h(
+        "div",
+        { class: "stack stack--tight" },
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Chưa đối chiếu được đơn với phiếu"),
+          h(
+            "p",
+            null,
+            "Chừng nào chưa biết đơn còn đúng là đơn đã gửi duyệt thì nút Duyệt vẫn khoá. Máy chủ " +
+              "nêu lý do bên dưới, nguyên văn.",
+          ),
+        ),
+        errorNotice(error),
+      ),
+    );
+  }
+}
+
+/**
  * What one envelope asks, in the approver's words: the action's gloss ("Duyệt bồi hoàn",
  * "Cho gửi tin nhắn"), or the raw action token when the console has no gloss for it — an
  * unfamiliar word is a prompt to add one, a plausible guess would hide the gap.
@@ -1295,6 +1466,20 @@ function approvalCard(item, registerClock, onDecided, verdict) {
     );
     render(contentHost, h("p", { class: "hint" }, "Đang tải khoản bồi hoàn cần duyệt…"));
     void loadRemedyProposal(item, contentHost, controlsHost, onDecided, verdict, retitle);
+  } else if (String(item.resource_type) === ORDER) {
+    // `SESSION-LIST-001`. Keyed on the resource type: both order actions bind the same thing, the
+    // order's row version, and the check is the same for both.
+    render(
+      controlsHost,
+      decisionControls(
+        item,
+        onDecided,
+        verdict,
+        "Không bấm được: đang đọc đơn để biết đơn có đổi sau khi gửi duyệt không.",
+      ),
+    );
+    render(contentHost, h("p", { class: "hint" }, "Đang đọc đơn…"));
+    void loadOrderVersion(item, contentHost, controlsHost, onDecided, verdict, retitle);
   } else {
     render(controlsHost, decisionControls(item, onDecided, verdict));
   }

@@ -3280,3 +3280,15 @@ a.row-link {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 18%, transparent);
   outline: none;
 }
+
+/* --- SESSION-LIST-001 ------------------------------------------------------------------------ */
+
+/* The device list (`ui/sessions.js`): the time line, then the sign-out on a line of its own, so the
+ * button never flows into the sentence at 390px. */
+.devices .row-item__meta > span {
+  display: block;
+}
+
+.devices__action {
+  margin-top: var(--space-2);
+}

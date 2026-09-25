@@ -72,6 +72,10 @@ CAPABILITY_GATES: dict[str, str] = {
     # membership, then the evidence -- none of which the console can predict beyond the role.
     "SERVICE_MESSAGING_RELEASE": "require_approval_staff",
     "STAFF_ADMIN": "require_owner",
+    # SESSION-LIST-001. `revoke_session` has no named gate: its rule is inline -- the session
+    # itself, or any session for OWNER_ADMIN. Signing out *another* device is the second half,
+    # which is exactly the role set `require_owner` admits, so that is what the claim binds to.
+    "SESSIONS_REVOKE_OTHER": "require_owner",
     "ASSISTANT": "require_operations_staff",
     # OPS-BOARD-001. The day summary is the only one of the three new capabilities whose route gate
     # is the whole truth: `require_operations_staff` is exactly the role set `today_status_counts`
@@ -150,16 +154,11 @@ BINDINGS: dict[str, dict[str, Any]] = {
         "already bound. It was parked DESCRIPTIVE, which is the misclassification this item exists "
         "to correct.",
     },
-    "screens/gaps.js#missing:5f121897a2aa": {
-        "kind": "RESPONSE_SHAPE",
-        "module": "nha_trang_laundry_api.main",
-        "model": "SessionResponse",
-        "absent_field": "session_id",
-        "why": "Claims /internal/v1/session does not return session_id, which is why the "
-        "operations "
-        "table cannot name a session to revoke. Verified: the model declares staff_user_id, roles "
-        "and mfa_verified and nothing else.",
-    },
+    # The `RESPONSE_SHAPE` binding on `screens/gaps.js#missing:5f121897a2aa` is gone, with the entry
+    # it bound. It claimed `SessionResponse` carried no `session_id`, which is why the console could
+    # not name a session to revoke; SESSION-LIST-001 added the field and the two session reads, and
+    # its test failing on the new model is how the repository found out. Like `READ_ONLY_MODULE`
+    # below, the binding dies with the limitation rather than being re-keyed to something else.
     # The `READ_ONLY_MODULE` binding that stood here is deliberately gone rather than re-keyed.
     #
     # It bound the sentence "Đây là màn hình chỉ đọc. Không có thao tác nào ở đây ghi vào máy chủ"

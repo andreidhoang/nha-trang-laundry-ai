@@ -332,6 +332,17 @@ paths:
       responses:
         '200':
           description: Success response.
+  /internal/v1/sessions:
+    get:
+      operationId: list_own_sessions
+      summary: The caller's own live sessions, newest activity first, with `current` on this one.
+      x-authorization-dependencies:
+      - current_principal
+      - get_identity_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
   /internal/v1/sessions/{session_id}/revoke:
     post:
       operationId: revoke_session
@@ -421,6 +432,23 @@ paths:
       x-documented-by-fastapi: true
       responses:
         '204':
+          description: Success response.
+      parameters:
+      - name: staff_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/staff/{staff_user_id}/sessions:
+    get:
+      operationId: list_staff_sessions
+      summary: One person's live sessions, for the owner only.
+      x-authorization-dependencies:
+      - require_owner
+      - get_identity_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
           description: Success response.
       parameters:
       - name: staff_user_id

@@ -210,7 +210,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #
     # 14 since CONSENT-TRANSACTIONAL-001: `SERVICE_MESSAGING_RELEASE` (`DEC-033`) binds to
     # `require_approval_staff`, the release route's own gate. 13 + 1 = 14.
-    assert counts.get("SERVER_GATE") == 14
+    #
+    # 15 since SESSION-LIST-001: `SESSIONS_REVOKE_OTHER` (signing out a device other than this one)
+    # binds to `require_owner`, the half of `revoke_session`'s inline rule it describes. 14 + 1.
+    assert counts.get("SERVER_GATE") == 15
     assert counts.get("REPOSITORY_ROLES") == 6
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
@@ -225,7 +228,11 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # ABSENT_ROUTE is gone entirely: both slots claimed the intake and production transitions
     # had no route, and both became false on 2026-08-29 when the routes were added.
     assert "ABSENT_ROUTE" not in counts
-    assert counts.get("RESPONSE_SHAPE") == 1
+    # RESPONSE_SHAPE is gone entirely since SESSION-LIST-001: its one slot said SessionResponse
+    # carried no session_id, which was why the console could not name a session to revoke. The
+    # field and the two session reads landed, the gap entry was retired, and the binding with it.
+    # Asserted absent, like the kinds below, so re-adding one has to be deliberate.
+    assert "RESPONSE_SHAPE" not in counts
     # READ_ONLY_MODULE is gone entirely, like ABSENT_ROUTE and ABSENT_WRITER before it, and for the
     # same reason: its one slot said the approvals screen writes nothing to the server, which was
     # true only because `GET /internal/v1/approvals` withheld the three fields a decision needs.
@@ -866,7 +873,19 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # the field no longer exists and its fact moved into the tier-2 paragraph. Re-keyed (reworded
     # to the window): the exports info paragraph and gaps.js's FR-RPT-003 missing/blockedBy/today.
     # 466 when merged after both: 461 + 6 - 1 = 466.
-    assert sum(counts.values()) == _registry()["total"] == 466
+    # 460 after SESSION-LIST-001 (457 - 7 + 10), counted on 457 before any other round-6 slice.
+    #   * -7 in `screens/gaps.js`: the two retired entries' `missing`, `blockedBy` and `today` (the
+    #     ORDER version entry and "Danh sách và thu hồi phiên khác", whose `missing` was the one
+    #     RESPONSE_SHAPE slot), and the "Duyệt và phiên" lede, re-keyed by its count (three -> one).
+    #   * +1 `why` in `core/rbac.js`, SERVER_GATE: `SESSIONS_REVOKE_OTHER`.
+    #   * +6 in `screens/approvals.js`, DESCRIPTIVE: the ORDER card's changed title ("Đơn đã thay
+    #     đổi sau khi gửi duyệt — mở đơn để xem lại") and body, and the no-store, foreign-order,
+    #     missing-order and unreadable-order notice bodies.
+    #   * +2 `hint` in `ui/sessions.js`, DESCRIPTIVE: the device list's ⓘ (what signing out one
+    #     device does; why a row is named by time, not by device).
+    #   * +1 `lede` in `screens/gaps.js`: the re-keyed lede.
+    # 469 with all four merged: 466 + 10 - 7 = 469.
+    assert sum(counts.values()) == _registry()["total"] == 469
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -875,11 +894,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 19 after OPS-BOARD-001: 16 + 3, one per new capability.
     # 20 after API-INTEGRITY-002: + `UNKNOWN_SENDS_READ`.
     # 21 after CONSENT-TRANSACTIONAL-001: + `SERVICE_MESSAGING_RELEASE`, on its route's gate.
+    # 22 after SESSION-LIST-001: + `SESSIONS_REVOKE_OTHER`, on `require_owner`.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 21
+        == 22
     )
 
 

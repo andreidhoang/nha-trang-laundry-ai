@@ -264,6 +264,8 @@ hạn thì bấm **Xin duyệt lại**. *Nhập mã thủ công* chỉ dùng cho
 | **Chưa nhận đồ được** | Đơn còn thiếu điều kiện (thường là chưa tích *Tiệm làm kịp đơn này*) | Đọc từng dòng lý do ngay bên dưới, làm đúng việc đó rồi bấm lại |
 | Huỷ một đơn đã nhận đồ | Phải nói đồ và tiền đã xử lý thế nào | **Khác** → **Huỷ đơn**, chọn một cách xử lý, bấm hai lần |
 | **Phiên đăng nhập đã kết thúc** | Hết phiên | Đăng nhập lại. Không mất dữ liệu |
+| Mất điện thoại, hoặc quên thoát ở máy khác | Máy đó vẫn đang đăng nhập | Báo chủ tiệm. Chủ mở **Nhân sự** → bấm tên người đó → **Thiết bị đang đăng nhập** → **Đăng xuất thiết bị này** (bấm hai lần). Các máy khác của người đó vẫn làm việc bình thường. Chủ tự mất máy: bấm tên mình ở thanh trên cùng → cùng danh sách, dòng **Thiết bị này** là máy đang cầm |
+| **Đơn đã thay đổi sau khi gửi duyệt — mở đơn để xem lại** (thẻ duyệt) | Đơn đã chuyển bước sau khi xin duyệt, nên phiếu này không còn đúng | Nút **Duyệt** khoá. Bấm **Từ chối**, mở đơn xem lại; còn cần thì xin duyệt lại. Thẻ ghi **Đơn chưa thay đổi kể từ khi gửi duyệt** thì duyệt bình thường |
 | **Máy chủ gặp lỗi** | Lỗi thật | **Đừng thử lại.** Xem bảng đơn để biết lệnh đã vào hay chưa, chụp màn hình, báo chủ tiệm |
 
 **Quy tắc chung khi hoang mang:** không bấm lại lệnh vừa hỏng. Mở bảng đơn, đọc trạng thái thật của

@@ -10,13 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 437
+  DESCRIPTIVE: 440
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
-  RESPONSE_SHAPE: 1
-  SERVER_GATE: 14
-total: 466
+  SERVER_GATE: 15
+total: 469
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1535,6 +1534,16 @@ disclosures:
     gate: require_owner
     why: The console declares which roles and MFA state this capability needs. The test probes the named
       server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:6d4feccf0ae5
+  module: core/rbac.js
+  key: why
+  text: Chỉ chủ đăng xuất được một thiết bị khác; mất điện thoại thì báo chủ.
+  binding:
+    kind: SERVER_GATE
+    capability: SESSIONS_REVOKE_OTHER
+    gate: require_owner
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
 - slot_id: core/rbac.js#why:df31a4668e2b
   module: core/rbac.js
   key: why
@@ -1787,6 +1796,58 @@ disclosures:
   key: notice
   text: Chừng nào chưa đọc được loại, số tiền, trần và món bị hỏng hay mất thì nút Duyệt vẫn khoá. Máy
     chủ nêu lý do bên dưới, nguyên văn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:646697e83773
+  module: screens/approvals.js
+  key: notice
+  text: Tải lại hàng chờ. Chưa đối chiếu được đơn thì chưa quyết.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:589d1793cbd5
+  module: screens/approvals.js
+  key: notice
+  text: Máy chủ trả về một đơn khác mã hoặc khác cửa hàng với phiếu. Không duyệt; từ chối phiếu này rồi
+    báo kỹ thuật.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:b632f1952f5a
+  module: screens/approvals.js
+  key: notice
+  text: Đơn đã chuyển bước hoặc được sửa sau khi phiếu được mở. Còn cần duyệt thì nhờ người gửi xin lại
+    trên đơn mới.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice__title:b13ccc512335
+  module: screens/approvals.js
+  key: notice__title
+  text: Đơn đã thay đổi sau khi gửi duyệt — mở đơn để xem lại
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:e98b0fb82983
+  module: screens/approvals.js
+  key: notice
+  text: Không có đơn nào khớp phiếu này ở cửa hàng của bạn. Máy chủ cũng từ chối duyệt. Từ chối phiếu
+    này để gỡ nó khỏi hàng chờ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:f5f76e2763fb
+  module: screens/approvals.js
+  key: notice
+  text: Chừng nào chưa biết đơn còn đúng là đơn đã gửi duyệt thì nút Duyệt vẫn khoá. Máy chủ nêu lý do
+    bên dưới, nguyên văn.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2394,39 +2455,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#lede:1d8a5d47c430
+- slot_id: screens/gaps.js#lede:665764bec429
   module: screens/gaps.js
   key: lede
-  text: Ba mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API không
-    trả về, và một bề mặt đoán bừa các trường đó sẽ là duyệt mù hoặc thao tác nhầm người.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:5a134aba5146
-  module: screens/gaps.js
-  key: missing
-  text: Đường dẫn tới đơn hàng không mang theo số phiên bản, và màn hình đơn hàng luôn hiện trạng thái
-    mới nhất. Thẻ phiếu in “Phiên bản v…” còn màn hình đơn hàng in “Phiên bản dòng v…”, nên người duyệt
-    phải tự so hai con số bằng mắt; không có gì bắt họ so.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:1b9cfa30ef95
-  module: screens/gaps.js
-  key: blockedBy
-  text: Màn hình đơn hàng chưa đọc được một phiên bản cũ của đơn
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:3482a654ab64
-  module: screens/gaps.js
-  key: today
-  text: 'Máy chủ vẫn từ chối một quyết định gửi kèm phiên bản không khớp bản đã lưu, nên không ai duyệt
-    nhầm được vào một phiên bản khác. Điều còn thiếu là ở phía người đọc: hai con số phiên bản đều hiện
-    ra, nhưng phải tự đối chiếu. Phiếu báo giá thì đã hết vấn đề này — đường dẫn mang sẵn số bản sửa đổi.'
+  text: Mục dưới đây không thiếu quyết định kinh doanh nào. Nó thiếu đúng những trường mà API không trả
+    về, và một bề mặt đoán bừa các trường đó sẽ là duyệt mù.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2453,36 +2486,6 @@ disclosures:
   key: today
   text: Xin gửi một tin nhắn thì mở ở màn hình Ngoại lệ, phần Gửi thủ công; xin xuất dữ liệu thì mở ở
     màn hình Xuất dữ liệu. Các loại khác do máy chủ tự mở khi một lệnh chạm vào ngưỡng cần duyệt.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:5f121897a2aa
-  module: screens/gaps.js
-  key: missing
-  text: /internal/v1/session không trả session_id, nên bảng vận hành không biết định danh nào để gửi tới
-    route thu hồi.
-  binding:
-    kind: RESPONSE_SHAPE
-    module: nha_trang_laundry_api.main
-    model: SessionResponse
-    absent_field: session_id
-    why: 'Claims /internal/v1/session does not return session_id, which is why the operations table cannot
-      name a session to revoke. Verified: the model declares staff_user_id, roles and mfa_verified and
-      nothing else.'
-- slot_id: screens/gaps.js#blockedBy:c2a17dc775d6
-  module: screens/gaps.js
-  key: blockedBy
-  text: SessionResponse không có trường session_id
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:ef2617528ca9
-  module: screens/gaps.js
-  key: today
-  text: Nút Thoát chỉ kết thúc phiên đang dùng. Muốn cắt mọi phiên của một người thì vô hiệu hoá người
-    đó ở màn hình Nhân sự — lệnh ấy thu hồi tất cả phiên của họ.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -4184,6 +4187,25 @@ disclosures:
   text: 'Phiếu duyệt niêm phong một mã băm của đúng những con số này, chứ máy chủ không lưu chính những
     con số ấy — nên chúng chỉ còn ở màn hình này. Rời đi là phải gửi lại từ đầu. Gửi lại không mất gì:
     lúc đề nghị chưa có giá nào được ghi.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/sessions.js#hint:904397587463
+  module: ui/sessions.js
+  key: hint
+  text: Chỉ phiên trên thiết bị đó kết thúc, ngay ở lần nó gọi máy chủ kế tiếp; mọi thiết bị khác của
+    người này vẫn làm việc bình thường. Người đó đăng nhập lại được — muốn chặn hẳn thì chủ dùng Vô hiệu
+    hoá ở màn hình Nhân sự.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/sessions.js#hint:38b394e9f15d
+  module: ui/sessions.js
+  key: hint
+  text: Máy chủ không lưu tên hay loại thiết bị, nên mỗi dòng được gọi theo lúc đăng nhập và lần dùng
+    gần nhất. Thiết bị đang cầm trên tay được đánh dấu “Thiết bị này”; muốn đăng xuất nó thì bấm Thoát.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

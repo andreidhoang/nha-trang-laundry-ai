@@ -30,6 +30,9 @@
  *   - **Disabling is two-press and disarms itself** (`confirmButton`). `disable_staff` also revokes
  *     every session that user holds, which lands on someone mid-shift with no warning; that fact is
  *     printed beside the button, not behind an ⓘ.
+ *   - **A person's signed-in devices are on their sheet** (`SESSION-LIST-001`), read from the owner's
+ *     session list for that person, each signable-out on its own. Losing a phone no longer means
+ *     disabling the account; the shared list and its rules are `ui/sessions.js`.
  *   - **Every write ends in a re-read.** The three commands answer `204` with no body, so the list
  *     is read again and the sheet redrawn from it. For a person who is not in the selected store's
  *     list the sheet says the server accepted the command and nothing more — it has not been shown
@@ -45,6 +48,7 @@ import { enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, snapshot, storeId } from "../core/session.js";
 import { errorNotice, gated, labelled, resultLine, setResult } from "../ui/components.js";
+import { deviceList, devicesInfo } from "../ui/sessions.js";
 import {
   avatar,
   button,
@@ -426,6 +430,15 @@ function personSheet(spec) {
   let person = null;
   /** Set when this sheet disabled a person who is not in the list, so it can say so. */
   let disabledHere = false;
+  /**
+   * `SESSION-LIST-001`: this person's signed-in devices, one list per person opened, read when the
+   * sheet opens and again after a disable (which signs every one of them out).
+   *
+   * @type {ReturnType<typeof deviceList>|null}
+   */
+  let devices = null;
+  /** One ⓘ for the sheet's life; `draw()` runs after every write and must not mint a dialog each time. */
+  const devicesInfoButton = devicesInfo();
   const draft = { role: "OPERATOR", store: "", manualStore: "" };
 
   const roleResult = resultLine();
@@ -471,8 +484,16 @@ function personSheet(spec) {
         : stores[0]?.value || "";
     draft.manualStore = "";
     clearResults();
+    const me = principal();
+    devices = deviceList({
+      path: `/internal/v1/staff/${encodeURIComponent(next.id)}/sessions`,
+      revokeOthers: can(me, "SESSIONS_REVOKE_OTHER"),
+      ownSessionId: me?.sessionId || null,
+      id: "staff-devices",
+    });
     draw();
     dialog.open();
+    if (spec.verdict.allowed) void devices.reload();
   }
 
   /** Redraw from the list the screen just re-read, if this person is in it. */
@@ -595,6 +616,8 @@ function personSheet(spec) {
       setResult(disableResult, null, null);
       await spec.reload();
       draw();
+      // Disabling signs out every device in the same transaction; the list says so by re-reading.
+      if (devices) void devices.reload();
     } catch (error) {
       setResult(
         disableResult,
@@ -854,11 +877,22 @@ function personSheet(spec) {
           }),
     });
 
+    // --- Thiết bị đang đăng nhập (SESSION-LIST-001) -------------------------------------------
+    const devicesNode = devices
+      ? section({
+          title: "Thiết bị đang đăng nhập",
+          info: devicesInfoButton,
+          card: false,
+          children: devices.node,
+        })
+      : null;
+
     render(
       dialog.body,
       summary,
       roleNode,
       storeNode,
+      devicesNode,
       disableNode,
       techDetails([
         ["Mã nhân viên", person.id, { copy: person.id }],

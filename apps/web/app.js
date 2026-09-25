@@ -24,7 +24,8 @@ import * as router from "./src/core/router.js";
 import * as session from "./src/core/session.js";
 import { ROUTES } from "./src/screens/index.js";
 import { errorNotice, icon } from "./src/ui/components.js";
-import { avatar, sheet } from "./src/ui/kit.js";
+import { avatar, section, sheet } from "./src/ui/kit.js";
+import { deviceList, devicesInfo } from "./src/ui/sessions.js";
 
 const screenTitle = document.querySelector("#screen-title");
 const storeLabel = document.querySelector("#appbar-store");
@@ -189,6 +190,37 @@ const accountSheet = sheet({
   ),
 });
 
+/**
+ * "Thiết bị đang đăng nhập" in the account sheet (`SESSION-LIST-001`): the caller's own devices,
+ * this one marked, the others signable-out by the owner. Built once per signed-in session and kept,
+ * because `renderAppbar` runs on every chrome sync and a list rebuilt there would re-request on
+ * each one; it is read when the sheet opens, which is when somebody is looking at it.
+ *
+ * @type {{key: string, list: ReturnType<typeof deviceList>}|null}
+ */
+let accountDevices = null;
+/** Built once, like the sheet it sits in: an ⓘ made per chrome sync would leave a dialog per open. */
+const accountDevicesInfo = devicesInfo();
+
+/** @param {import("./src/core/session.js").Principal} principal */
+function devicesFor(principal) {
+  // Roles are in the key because the sign-out verdict is: a role granted or revoked mid-session
+  // must not leave the list offering (or refusing) a press on yesterday's rule.
+  const key = `${principal.staffUserId}|${principal.sessionId || ""}|${principal.roles.join(",")}`;
+  if (!accountDevices || accountDevices.key !== key) {
+    accountDevices = {
+      key,
+      list: deviceList({
+        path: "/internal/v1/sessions",
+        revokeOthers: can(principal, "SESSIONS_REVOKE_OTHER"),
+        ownSessionId: principal.sessionId,
+        id: "account-devices",
+      }),
+    };
+  }
+  return accountDevices.list;
+}
+
 function renderAppbar() {
   const state = session.snapshot();
   const storeName =
@@ -223,6 +255,12 @@ function renderAppbar() {
     state.memberStoreIds.length > 1
       ? h("p", { class: "hint" }, "Đổi cửa hàng ở dải chọn cửa hàng phía trên màn hình.")
       : null,
+    section({
+      title: "Thiết bị đang đăng nhập",
+      info: accountDevicesInfo,
+      card: false,
+      children: devicesFor(principal).node,
+    }),
   );
   render(
     appbarActions,
@@ -233,7 +271,10 @@ function renderAppbar() {
         class: "appbar__account",
         "aria-label": `Tài khoản: ${roles}, ${mfa} hai bước`,
         title: `${principal.roles.join(" · ")} · ${mfa} hai bước`,
-        onClick: () => accountSheet.open(),
+        onClick: () => {
+          accountSheet.open();
+          void devicesFor(principal).reload();
+        },
       },
       avatar(name),
       h("span", { class: "appbar__account-role" }, roles),

@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -183,6 +184,13 @@ DECLARED_CONTROLS = (
     "approvals.export-approve",
     "exports.execute",
     "exports.download",
+    # SESSION-LIST-001: signing one device out, from the account sheet and from a person's sheet,
+    # and the ORDER approval card that says whether the order moved since it was sent for approval.
+    "shell.account-open",
+    "shell.device-revoke",
+    "staff.device-revoke",
+    "approvals.order-approve",
+    "approvals.order-refuse",
 )
 
 PASS: list[str] = []
@@ -2887,6 +2895,367 @@ def scenario_export_range(console: Console) -> None:
     context.close()
 
 
+# --- SESSION-LIST-001 --------------------------------------------------------------------------
+
+
+def _second_device(console: Console, subject: str) -> Console:
+    """Another browser, signed in as `subject`: its own context, so its own cookie jar."""
+
+    context = console.context.browser.new_context(viewport=viewport())
+    device = Console(context.new_page(), context)
+    if device.sign_in(subject) not in (200, 201):
+        raise AssertionError(f"{subject} could not sign in on a second device")
+    return device
+
+
+def _session_id(device: Console) -> str:
+    answer = device.call("GET", "/internal/v1/session")
+    return str((answer.get("body") or {}).get("session_id") or "")
+
+
+def _no_secret(answer: dict[str, Any]) -> bool:
+    text = str(answer.get("text") or "")
+    return "secret" not in text and "hash" not in text
+
+
+def _revoke_from_list(console: Console, scope: str, session_id: str) -> dict[str, Any]:
+    """Two presses on "Đăng xuất thiết bị này" for one row, returning the server's answer."""
+
+    control = console.page.locator(f"{scope} button[data-revoke-session='{session_id}']")
+    control.first.scroll_into_view_if_needed()
+    control.first.click()
+    console.page.wait_for_timeout(250)
+    # Not `press_capturing`: the revoke answers 204, and a 204 has no body for it to read.
+    with console.page.expect_response(
+        lambda r: r.request.method == "POST" and r.url.split("?")[0].endswith("/revoke"),
+        timeout=20000,
+    ) as info:
+        control.first.click()
+    console.page.wait_for_timeout(1500)
+    return {"status": info.value.status, "text": info.value.status_text}
+
+
+def scenario_sessions(console: Console) -> None:
+    """A lost phone: one person on two devices; the first signs the second out."""
+
+    head("13", "MẤT ĐIỆN THOẠI — one person on two devices; the first signs the second out")
+    console.sign_in("demo-owner")
+    phone = _second_device(console, "demo-owner")
+    try:
+        mine, theirs = _session_id(console), _session_id(phone)
+        ok(
+            "each device is told its own session, and the two differ",
+            bool(mine) and bool(theirs) and mine != theirs,
+            f"{mine[:8]} / {theirs[:8]}",
+        )
+        listed = console.call("GET", "/internal/v1/sessions")
+        rows = (listed.get("body") or {}).get("sessions") or []
+        ok(
+            "the server lists both, marks this one current, and returns no secret or hash",
+            {str(row.get("session_id")): row.get("current") for row in rows}.get(mine) is True
+            and theirs in {str(row.get("session_id")) for row in rows}
+            and _no_secret(listed)
+            and _no_secret(console.call("GET", "/internal/v1/session")),
+            f"{len(rows)} sessions",
+        )
+
+        console.open("#/")
+        console.page.locator("button.appbar__account").first.click()
+        touched("shell.account-open")
+        console.page.wait_for_selector(
+            f"#account-devices [data-session-id='{theirs}']", timeout=10000
+        )
+        here = console.page.locator(f"#account-devices [data-session-id='{mine}']")
+        ok(
+            "the account sheet lists this device first, as “Thiết bị này”, with no sign-out on it",
+            here.count() == 1
+            and "Thiết bị này" in (here.first.inner_text() or "")
+            and here.first.get_attribute("data-session-current") == "true"
+            and console.page.locator(f"button[data-revoke-session='{mine}']").count() == 0
+            and console.page.locator("#account-devices [data-session-id]").first.get_attribute(
+                "data-session-id"
+            )
+            == mine,
+        )
+        answer = _revoke_from_list(console, "#account-devices", theirs)
+        touched("shell.device-revoke")
+        ok("two presses sign the other device out", answer["status"] == 204, answer["text"][:120])
+        ok(
+            "the list is read again: the other device is gone, this one is still there",
+            console.page.locator(f"#account-devices [data-session-id='{theirs}']").count() == 0
+            and console.page.locator(f"#account-devices [data-session-id='{mine}']").count() == 1,
+        )
+        ok(
+            "and this device carries on working",
+            console.call("GET", "/internal/v1/session")["status"] == 200,
+        )
+        if READS_DATABASE:
+            ok(
+                "the sign-out is one change: the session row, its event, its audit and its outbox",
+                sql(
+                    "select (select count(*) from staff_sessions where id = "
+                    f"'{theirs}' and revoked_at is not null)"
+                    " || '/' || (select count(*) from domain_events where aggregate_id = "
+                    f"'{theirs}' and event_type = 'STAFF_SESSION_REVOKED')"
+                    " || '/' || (select count(*) from audit_events where aggregate_id = "
+                    f"'{theirs}' and action = 'STAFF_SESSION_REVOKE')"
+                    " || '/' || (select count(*) from outbox_events where aggregate_id = "
+                    f"'{theirs}' and payload->>'event_type' = 'STAFF_SESSION_REVOKED')"
+                )
+                == "1/1/1/1",
+            )
+        console.page.keyboard.press("Escape")
+
+        # The phone does not know yet. Its next request is what tells it.
+        phone.page.evaluate("() => { location.hash = '#/orders'; }")
+        phone.page.wait_for_timeout(2200)
+        ended = phone.page.content()
+        ok(
+            "the signed-out device's next request ends its session, and it says so",
+            "Phiên đăng nhập đã kết thúc" in ended and "Chưa đăng nhập" in ended,
+        )
+        phone.page.evaluate("() => { location.hash = '#/'; }")
+        phone.page.wait_for_timeout(1200)
+        heading = phone.page.locator("main h1").first
+        ok(
+            "and the next screen it opens is the signed-out screen, with the way back in",
+            heading.count() == 1
+            and (heading.inner_text() or "").strip() == "Chưa đăng nhập"
+            and phone.page.locator("main a.button", has_text="Tới trang đăng nhập").count() == 1,
+        )
+        ok(
+            "the phone's own session read is refused now",
+            phone.call("GET", "/internal/v1/session")["status"] == 401,
+        )
+    finally:
+        phone.context.close()
+
+    head("13a", "THIẾT BỊ CỦA MỘT NGƯỜI — the owner sees them; nobody else can")
+    worker = _second_device(console, "demo-operations")
+    try:
+        # A second sign-in in the same browser leaves the first session alive on the server: the
+        # shape of "I signed in on the shop tablet yesterday and never pressed Thoát".
+        forgotten = _session_id(worker)
+        worker.sign_in("demo-operations")
+        current = _session_id(worker)
+        owner_id = str(console.call("GET", "/internal/v1/session")["body"]["staff_user_id"])
+        worker_id = str(worker.call("GET", "/internal/v1/session")["body"]["staff_user_id"])
+        ok(
+            "a member of staff may not list the owner's devices",
+            worker.call("GET", f"/internal/v1/staff/{owner_id}/sessions")["status"] == 403,
+        )
+        ok(
+            "nor sign out anyone else's, nor even another of their own — that is the owner's press",
+            worker.call("POST", f"/internal/v1/sessions/{forgotten}/revoke")["status"] == 403
+            and worker.call("POST", f"/internal/v1/sessions/{_session_id(console)}/revoke")[
+                "status"
+            ]
+            == 403,
+        )
+        worker.open("#/")
+        worker.page.locator("button.appbar__account").first.click()
+        worker.page.wait_for_selector(
+            f"#account-devices [data-session-id='{forgotten}']", timeout=10000
+        )
+        shut = worker.page.locator(f"#account-devices button[data-revoke-session='{forgotten}']")
+        ok(
+            "their account sheet shows the forgotten device, its sign-out shut, and why",
+            shut.count() == 1
+            and shut.first.is_disabled()
+            and "Chỉ chủ đăng xuất được một thiết bị khác"
+            in (worker.page.locator("#account-devices").inner_text() or ""),
+        )
+        worker.page.keyboard.press("Escape")
+
+        console.open("#/staff")
+        person = console.page.locator(f"#staff-directory [data-staff-id='{worker_id}']")
+        if person.count():
+            person.first.click()
+            touched("staff.person-open")
+        console.page.wait_for_selector(
+            f"#staff-devices [data-session-id='{forgotten}']", timeout=10000
+        )
+        on_sheet = {
+            str(node.get_attribute("data-session-id"))
+            for node in console.page.locator("#staff-devices [data-session-id]").all()
+        }
+        ok(
+            "the owner sees the same devices on the person's sheet",
+            {forgotten, current} <= on_sheet,
+            f"{len(on_sheet)} listed",
+        )
+        answer = _revoke_from_list(console, "#staff-devices", forgotten)
+        touched("staff.device-revoke")
+        ok(
+            "and signs the forgotten one out",
+            answer["status"] == 204
+            and console.page.locator(f"#staff-devices [data-session-id='{forgotten}']").count()
+            == 0,
+            answer["text"][:120],
+        )
+        ok(
+            "while the device the person is using keeps working",
+            worker.call("GET", "/internal/v1/session")["status"] == 200
+            and current
+            in {
+                str(row.get("session_id"))
+                for row in worker.call("GET", "/internal/v1/sessions")["body"]["sessions"]
+            },
+        )
+        console.page.keyboard.press("Escape")
+    finally:
+        worker.context.close()
+
+
+def _raise_order_envelope(maker: Console, order_id: str) -> dict[str, Any]:
+    """An ACCEPT_ORDER envelope over the order as it is now, from values the server handed back.
+
+    Raised over the API because no screen raises an ORDER envelope (`#/gaps`, "Tạo yêu cầu
+    duyệt"): the server opens those itself when a command reaches an approval threshold. The
+    snapshot is the order's bound quote revision's own digest, read from the quote route.
+    """
+
+    view = maker.call("GET", f"/internal/v1/orders/{order_id}")["body"]
+    quote = maker.call(
+        "GET",
+        f"/internal/v1/stores/{STORE}/quotes/{view['quote_id']}?revision={view['quote_revision']}",
+    )["body"]
+    rendered = hashlib.sha256(f"order-card:{order_id}:{view['row_version']}".encode()).hexdigest()
+    raised = maker.call(
+        "POST",
+        "/internal/v1/approvals",
+        {
+            "store_id": STORE,
+            "action": "ACCEPT_ORDER",
+            "resource_type": "ORDER",
+            "resource_id": order_id,
+            "resource_version": view["row_version"],
+            "snapshot_hash": quote["snapshot_hash"],
+            "rendered_hash": f"JCS-SHA256-V1:{rendered}",
+            "policy_version": "conformance-order-envelope-v1",
+        },
+    )
+    if raised["status"] != 201:
+        raise AssertionError(f"could not raise an ORDER envelope: {raised['text']}")
+    return raised["body"]
+
+
+def scenario_order_envelope(console: Console) -> None:
+    """An ORDER approval card says whether the order moved since it was sent for approval."""
+
+    head("14", "DUYỆT ĐƠN — the card says whether the order changed since it was sent for approval")
+    console.sign_in("demo-owner")
+    order = console.build_order(stop="created")
+    order_id = order["order_id"]
+    maker = _second_device(console, "demo-operations")
+    try:
+        stale = _raise_order_envelope(maker, order_id)
+        moved = console.call(
+            "POST",
+            f"/internal/v1/orders/{order_id}/intake-transition",
+            {"target": "RECEIVED_PENDING_INSPECTION", "slot_approved": False},
+            if_match=order["row_version"],
+        )
+        ok("the order moves on after the first envelope", moved["status"] == 200, moved["text"])
+        fresh = _raise_order_envelope(maker, order_id)
+    finally:
+        maker.context.close()
+
+    console.open("#/approvals", settle=1500)
+    touched("shell.nav.approvals")
+    fresh_card = console.page.locator(
+        f"article.card[data-approval-id='{fresh['approval_request_id']}']"
+    )
+    stale_card = console.page.locator(
+        f"article.card[data-approval-id='{stale['approval_request_id']}']"
+    )
+    with contextlib.suppress(Exception):
+        fresh_card.locator("[data-order-version]").first.wait_for(timeout=10000)
+        stale_card.locator("[data-order-version]").first.wait_for(timeout=10000)
+    approve_fresh = fresh_card.get_by_role("button", name="Duyệt", exact=True)
+    ok(
+        "a card whose order has not moved says so, in words, above a live Duyệt",
+        fresh_card.locator("[data-order-version='current']").count() == 1
+        and "Đơn chưa thay đổi kể từ khi gửi duyệt" in (fresh_card.inner_text() or "")
+        and approve_fresh.count() == 1
+        and approve_fresh.is_enabled(),
+    )
+    approve_stale = stale_card.get_by_role("button", name="Duyệt", exact=True)
+    refuse_stale = stale_card.get_by_role("button", name="Từ chối", exact=True)
+    ok(
+        "a card whose order moved says so, links to the order, and shuts Duyệt with the reason",
+        stale_card.locator("[data-order-version='changed']").count() == 1
+        and "Đơn đã thay đổi sau khi gửi duyệt — mở đơn để xem lại"
+        in (stale_card.inner_text() or "")
+        and stale_card.locator(f"a[href='#/orders/{order_id}']").count() >= 1
+        and approve_stale.count() == 1
+        and approve_stale.is_disabled()
+        and "đơn đã đổi sau khi gửi duyệt" in (stale_card.inner_text() or "")
+        and refuse_stale.is_enabled(),
+    )
+    no_versions = "v1" not in (fresh_card.inner_text() or "").split()
+    ok(
+        "neither card asks the approver to compare version numbers",
+        no_versions and "Phiên bản dòng" not in (stale_card.inner_text() or ""),
+    )
+    # The exact binding the card would send: the queue row's own version and digests.
+    queue = console.call("GET", "/internal/v1/approvals?limit=200").get("body") or []
+    row = next(
+        (item for item in queue if item.get("approval_request_id") == stale["approval_request_id"]),
+        {},
+    )
+    refused = console.call(
+        "POST",
+        f"/internal/v1/approvals/{stale['approval_request_id']}/decisions",
+        {
+            "decision": "APPROVED",
+            "reason_code": "APPROVED_AFTER_CONSOLE_REVIEW",
+            "resource_version": row.get("resource_version"),
+            "snapshot_hash": row.get("snapshot_hash"),
+            "rendered_hash": row.get("rendered_hash"),
+        },
+    )
+    ok(
+        "the server refuses to approve the moved order anyway — it is the authority",
+        refused["status"] == 409 and "RESOURCE_CHANGED_SINCE_REQUEST" in refused["text"],
+        f"{refused['status']} {refused['text'][:100]}",
+    )
+    stale_card.scroll_into_view_if_needed()
+    (rejected,) = console.press_capturing(refuse_stale, "/decisions")
+    touched("approvals.order-refuse")
+    ok(
+        "Từ chối still takes the dead envelope off the queue",
+        rejected["status"] == 200 and (rejected["body"] or {}).get("status") == "REJECTED",
+        rejected["text"][:120],
+    )
+    console.page.wait_for_timeout(1200)
+    fresh_card = console.page.locator(
+        f"article.card[data-approval-id='{fresh['approval_request_id']}']"
+    )
+    with contextlib.suppress(Exception):
+        fresh_card.locator("[data-order-version='current']").first.wait_for(timeout=10000)
+    fresh_card.scroll_into_view_if_needed()
+    (approved,) = console.press_capturing(
+        fresh_card.get_by_role("button", name="Duyệt", exact=True), "/decisions"
+    )
+    touched("approvals.order-approve")
+    ok(
+        "and the unchanged order's envelope is approved from its card",
+        approved["status"] == 200 and (approved["body"] or {}).get("status") == "APPROVED",
+        approved["text"][:120],
+    )
+    if READS_DATABASE:
+        ok(
+            "the two decisions are what the database holds",
+            sql(
+                "select string_agg(status, ',' order by status) from approval_request_states "
+                f"where approval_request_id in ('{stale['approval_request_id']}', "
+                f"'{fresh['approval_request_id']}')"
+            )
+            == "APPROVED,REJECTED",
+        )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -2903,6 +3272,8 @@ SCENARIOS = {
     "receipt": scenario_receipt,
     "rework": scenario_rework,
     "export_range": scenario_export_range,
+    "sessions": scenario_sessions,
+    "order_envelope": scenario_order_envelope,
 }
 
 

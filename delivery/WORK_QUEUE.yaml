@@ -5155,3 +5155,230 @@ items:
   - no_capability_authorisation_changed
   - rollback_assessment
   blocked_by_decisions: []
+- id: ORDER-STEPS-002
+  phase: PRODUCTION_HARDENING
+  title: Rewash and refuse-at-intake as named order steps, planned by the domain
+  status: PENDING
+  priority: 320
+  depends_on: []
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/COUNTER_COMPLETENESS_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-counter-completeness-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_steps_are_planned_by_the_real_transition_functions
+  - a_step_records_its_reason_on_the_event_and_audit
+  - neither_step_is_ever_the_primary_step
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CREDIT-PICK-001
+  phase: PRODUCTION_HARDENING
+  title: Pick an unused remedy credit from a list instead of typing its code
+  status: PENDING
+  priority: 321
+  depends_on: []
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/COUNTER_COMPLETENESS_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-counter-completeness-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_list_is_store_scoped_bounded_and_carries_no_contact
+  - a_picked_credit_redeems_through_the_existing_route
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONTACT-PICK-001
+  phase: PRODUCTION_HARDENING
+  title: 'Start an order for a channel customer without pasting: hand-off from the conversation and a returning-customer list'
+  status: PENDING
+  priority: 322
+  depends_on: []
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/COUNTER_COMPLETENESS_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-counter-completeness-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_contact_is_listed_only_when_the_store_link_is_server_side
+  - no_message_text_or_provider_handle_is_returned
+  - the_server_still_refuses_an_unknown_binding
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: RECEIPT-PRINT-001
+  phase: PRODUCTION_HARDENING
+  title: A printable and shareable receipt for the customer, with no promised-ready time
+  status: PENDING
+  priority: 323
+  depends_on: []
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/COUNTER_COMPLETENESS_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-counter-completeness-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_figure_is_the_servers_verbatim
+  - print_hides_the_shell_and_shows_no_identifier
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: REPORT-DASHBOARD-001
+  phase: PRODUCTION_HARDENING
+  title: 'The owner''s numbers: a versioned report read model with numerator, denominator, window and data quality'
+  status: PENDING
+  priority: 324
+  depends_on:
+  - ORDER-STEPS-002
+  context_domains:
+  - platform
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - docs/COUNTER_COMPLETENESS_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-counter-completeness-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_kpi_carries_numerator_denominator_window_and_quality
+  - known_fixture_counts_match_every_kpi
+  - no_rate_or_money_is_computed_outside_sql_or_format
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: EXPORT-RANGE-001
+  phase: PRODUCTION_HARDENING
+  title: Export a date range through the owner-approved envelope that binds the window
+  status: PENDING
+  priority: 325
+  depends_on: []
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/COUNTER_COMPLETENESS_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-counter-completeness-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - an_approval_releases_only_the_window_it_bound
+  - a_one_day_export_is_unchanged
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SESSION-LIST-001
+  phase: PRODUCTION_HARDENING
+  title: List and revoke sessions one by one, and an order approval card that says whether the order changed
+  status: PENDING
+  priority: 326
+  depends_on: []
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/COUNTER_COMPLETENESS_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-counter-completeness-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - no_secret_is_returned_and_only_the_owner_reads_others
+  - revoking_one_session_leaves_the_others
+  - an_order_card_shows_whether_the_bound_version_is_current
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: COUNTER-FILMED-REVIEW-003
+  phase: PRODUCTION_HARDENING
+  title: Every new flow filmed at phone size against the real API, reviewed as a counter worker and as an engineer, and every finding fixed
+  status: PENDING
+  priority: 327
+  depends_on:
+  - ORDER-STEPS-002
+  - CREDIT-PICK-001
+  - CONTACT-PICK-001
+  - RECEIPT-PRINT-001
+  - REPORT-DASHBOARD-001
+  - EXPORT-RANGE-001
+  - SESSION-LIST-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/COUNTER_COMPLETENESS_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-counter-completeness-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_new_flow_filmed_at_phone_size
+  - each_review_finding_is_fixed_with_a_guard
+  - gaps_register_lists_exactly_what_is_missing
+  - no_capability_authorisation_changed
+  - rollback_assessment
+  blocked_by_decisions: []

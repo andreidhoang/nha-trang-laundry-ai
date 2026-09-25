@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 361
+  DESCRIPTIVE: 364
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 389
+total: 392
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1519,6 +1519,32 @@ disclosures:
   text: 'Cùng một lý do: mở một yêu cầu duyệt cần đúng loại việc theo bảng của máy chủ, cộng hai mã niêm
     phong và phiên bản chính sách đang áp dụng. Không giá trị nào trong số đó nhân viên gõ tay ra được,
     nên màn hình không mời bạn thử.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:3a39f8215878
+  module: screens/approvals.js
+  key: notice
+  text: 'Số tiền đang lưu không khớp với nội dung phiếu đã ghi, nên màn hình không hiện con số nào. Người
+    chốt:'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#hint:aa2c0918b16e
+  module: screens/approvals.js
+  key: hint
+  text: 'Theo DEC-029, nhân viên trực quầy tự chốt giá trong khoảng chủ tiệm đã niêm yết. Đây là chỗ chủ
+    tiệm xem lại: ai chốt, món gì, bao nhiêu, trong khoảng nào.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#hint:0ea73b8b4012
+  module: screens/approvals.js
+  key: hint
+  text: Chưa chọn cửa hàng nên chưa có gì để xem lại.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

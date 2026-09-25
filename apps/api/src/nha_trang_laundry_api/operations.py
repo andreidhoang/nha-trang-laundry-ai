@@ -84,6 +84,7 @@ from nha_trang_laundry_db.range_prices import (
     ProposedRangePriceLine,
     RangePriceProposalRecord,
     RangePriceProposalRepository,
+    RangePriceReviewEntry,
     RecordRangePriceProposalCommand,
 )
 from nha_trang_laundry_db.remedies import (
@@ -1613,6 +1614,34 @@ class OperationsService:
         ):
             return RangePriceProposalRepository.read(
                 cursor, approval_id=approval_id, principal=principal
+            )
+
+    def list_range_price_reviews(
+        self,
+        *,
+        store_id: UUID,
+        business_date: date,
+        principal: StaffPrincipal,
+        limit: int = 100,
+    ) -> tuple[RangePriceReviewEntry, ...]:
+        """The owner's review of prices chosen inside a band on one business day (`DEC-029`).
+
+        Approvers only, with MFA -- the same rule as the single read. The staff member who chose a
+        price is not the person reviewing it: an OPERATOR is refused here even for their own store.
+        """
+
+        if not principal.roles & APPROVAL_DECISION_ROLES or not principal.mfa_verified:
+            raise StoreAccessError("reviewing chosen range prices requires an approver")
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return RangePriceProposalRepository.list_for_store_day(
+                cursor,
+                store_id=store_id,
+                business_date=business_date,
+                principal=principal,
+                limit=limit,
             )
 
     def apply_range_prices(

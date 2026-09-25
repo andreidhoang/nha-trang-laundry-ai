@@ -64,6 +64,10 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("GET", "/internal/v1/stores/{store_id}/orders"): store_scoped(
         "orders", "OrderRepository.list_for_store"
     ),
+    # DEC-029's owner review: membership of the named store, then every entry through `read`.
+    ("GET", "/internal/v1/stores/{store_id}/range-price-reviews"): store_scoped(
+        "range_prices", "RangePriceProposalRepository.list_for_store_day"
+    ),
     ("POST", "/internal/v1/orders/{order_id}/transition"): store_scoped(
         "orders", "OrderRepository.transition"
     ),

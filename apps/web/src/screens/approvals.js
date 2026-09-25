@@ -68,9 +68,10 @@ import {
 } from "../core/format.js";
 import { enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
-import { principal } from "../core/session.js";
+import { principal, storeId } from "../core/session.js";
 import {
   badge,
+  dimensionBadge,
   errorNotice,
   explain,
   facts,
@@ -978,6 +979,115 @@ function limitsPanel() {
 /**
  * @returns {HTMLElement}
  */
+/**
+ * One price a staff member chose inside a published band, as the owner reviews it (`DEC-029`).
+ *
+ * `DEC-029` gave the choice to the staff member on duty and kept this review as its control, so
+ * the card leads with who chose, then the band and the number. Nothing is computed: the server
+ * sends the band and the amount as integers of đồng and they are formatted here. A row whose
+ * stored amounts no longer match what its envelope bound arrives with `withheld` and no lines;
+ * it is shown as exactly that, never as a number and never left out.
+ *
+ * @param {any} item a `RangePriceReviewItemResponse`
+ * @returns {HTMLElement}
+ */
+function rangeReviewCard(item) {
+  if (item.withheld) {
+    return h(
+      "li",
+      { class: "card" },
+      h(
+        "div",
+        { class: "notice", dataState: "danger" },
+        h("p", { class: "notice__title" }, "Không hiện số tiền của lần chốt giá này"),
+        h(
+          "p",
+          null,
+          "Số tiền đang lưu không khớp với nội dung phiếu đã ghi, nên màn hình không hiện con số " +
+            "nào. Người chốt: ",
+          h("strong", null, String(item.proposed_by_name)),
+          ". Hãy xem lại cơ sở dữ liệu cùng người phụ trách kỹ thuật.",
+        ),
+      ),
+    );
+  }
+  return h(
+    "li",
+    { class: "card" },
+    h(
+      "p",
+      { class: "card__title" },
+      h("strong", null, String(item.proposed_by_name)),
+      " · ",
+      dateTime(item.proposed_at),
+      " · ",
+      dimensionBadge(item.approval_status),
+    ),
+    h(
+      "dl",
+      { class: "fields" },
+      ...item.lines.flatMap((/** @type {any} */ line) => [
+        h("dt", { class: "mono" }, String(line.service_code)),
+        h(
+          "dd",
+          null,
+          h("strong", { class: "money" }, money(line.proposed_amount_vnd)),
+          " trong khoảng ",
+          moneyRange(line.band_minimum_vnd, line.band_maximum_vnd),
+        ),
+      ]),
+    ),
+  );
+}
+
+/**
+ * Today's prices chosen inside a band, for the owner's review (`DEC-029`).
+ *
+ * The ruling moved the choice to the counter on the strength of this review; before this panel
+ * the only read was keyed by approval id and nothing could discover one, so the review the ruling
+ * relies on could not actually be done. Today only, in the shop's time zone, as the server defines
+ * it; the server refuses anyone who is not an approver with MFA, and says so.
+ *
+ * @returns {HTMLElement}
+ */
+function reviewPanel() {
+  const store = storeId();
+  const reviews = listView({
+    limit: LIST_LIMIT,
+    fetch: async () => {
+      const body = await request(
+        `/internal/v1/stores/${encodeURIComponent(String(store))}/range-price-reviews` +
+          `?limit=${LIST_LIMIT}`,
+      );
+      return Array.isArray(body?.items) ? body.items : [];
+    },
+    renderItem: rangeReviewCard,
+    emptyText:
+      "Hôm nay chưa có món nào được chốt giá trong khoảng ở cửa hàng này. Danh sách này chỉ " +
+      "gồm các lần nhân viên tự chốt giá theo DEC-029.",
+    clearMetaOnError: true,
+  });
+  if (store) void reviews.reload();
+  return panel({
+    eyebrow: "Xem lại sau",
+    title: "Giá trong khoảng nhân viên đã chốt hôm nay",
+    count: reviews.count,
+    children: h(
+      "div",
+      { class: "stack" },
+      h(
+        "p",
+        { class: "hint" },
+        "Theo DEC-029, nhân viên trực quầy tự chốt giá trong khoảng chủ tiệm đã niêm yết. Đây là " +
+          "chỗ chủ tiệm xem lại: ai chốt, món gì, bao nhiêu, trong khoảng nào.",
+      ),
+      store
+        ? h("div", { class: "stack" }, reviews.bar.node, reviews.truncation, reviews.host)
+        : h("p", { class: "hint" }, "Chưa chọn cửa hàng nên chưa có gì để xem lại."),
+    ),
+  });
+}
+
 export function render_() {
   /**
    * The live countdown badges, rebuilt every time the list reloads.
@@ -1065,6 +1175,7 @@ export function render_() {
         queue.host,
       ),
     }),
+    reviewPanel(),
     limitsPanel(),
   );
 

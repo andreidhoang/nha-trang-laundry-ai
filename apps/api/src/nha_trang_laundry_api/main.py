@@ -10,6 +10,7 @@ from time import perf_counter
 from typing import Annotated, Literal, NoReturn
 from urllib.parse import urlencode
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.staticfiles import StaticFiles
@@ -1723,6 +1724,85 @@ def decide_approval(
     except (ApprovalAuthorizationError, ApprovalStateError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
     return _approval_response(stored)
+
+
+class RangePriceReviewItemResponse(BaseModel):
+    approval_request_id: UUID
+    #: Who chose the price, from the immutable proposal row, with their display name so the owner
+    #: reads a person rather than an identifier.
+    proposed_by: UUID
+    proposed_by_name: str
+    proposed_at: datetime
+    approval_status: str
+    #: True when the stored amounts no longer match the digest their envelope binds. No figure is
+    #: shown then -- the same refusal the single read makes -- but the entry is listed.
+    withheld: bool
+    quote_id: UUID | None
+    revision: int | None
+    lines: list[ProposedRangePriceLineResponse]
+
+
+class RangePriceReviewResponse(BaseModel):
+    store_id: UUID
+    business_date: date
+    business_timezone: str
+    items: list[RangePriceReviewItemResponse]
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/range-price-reviews",
+    response_model=RangePriceReviewResponse,
+)
+def list_range_price_reviews(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+    business_date: Annotated[date | None, Query(alias="date")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> RangePriceReviewResponse:
+    """Every price a staff member chose inside a published band, on one business day.
+
+    `DEC-029` gave that choice to the staff member on duty and kept the owner's review afterwards
+    as its control. The only read was keyed by approval id, which nothing could discover, so the
+    review could not actually be done. This is the list it needs. The day defaults to today in
+    Asia/Ho_Chi_Minh, the business day every other figure in this API uses.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    day = business_date or datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+    try:
+        entries = service.list_range_price_reviews(
+            store_id=store_id, business_date=day, principal=principal, limit=limit
+        )
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+    return RangePriceReviewResponse(
+        store_id=store_id,
+        business_date=day,
+        business_timezone="Asia/Ho_Chi_Minh",
+        items=[
+            RangePriceReviewItemResponse(
+                approval_request_id=entry.approval_id,
+                proposed_by=entry.proposed_by,
+                proposed_by_name=entry.proposed_by_name,
+                proposed_at=entry.proposed_at,
+                approval_status=entry.approval_status,
+                withheld=entry.withheld,
+                quote_id=entry.record.quote_id if entry.record else None,
+                revision=entry.record.revision if entry.record else None,
+                lines=[
+                    ProposedRangePriceLineResponse(
+                        service_code=line.service_code,
+                        band_minimum_vnd=line.band_minimum_vnd,
+                        band_maximum_vnd=line.band_maximum_vnd,
+                        proposed_amount_vnd=line.proposed_amount_vnd,
+                    )
+                    for line in (entry.record.lines if entry.record else ())
+                ],
+            )
+            for entry in entries
+        ],
+    )
 
 
 @app.get(

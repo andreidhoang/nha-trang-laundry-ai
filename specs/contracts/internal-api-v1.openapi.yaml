@@ -907,6 +907,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/range-price-reviews:
+    get:
+      operationId: list_range_price_reviews
+      summary: Every price a staff member chose inside a published band, on one business day.
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/settlements/today:
     get:
       operationId: collected_today

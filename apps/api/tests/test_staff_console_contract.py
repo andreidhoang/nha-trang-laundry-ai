@@ -271,7 +271,12 @@ def test_every_screen_declares_a_unique_path() -> None:
 #: every staff user this API can create, because assigning one has no HTTP route. So it gates per
 #: tile instead: a tile that needs a store is skipped rather than requested. The exemption is named
 #: here rather than inferred, and the test below still proves the guard exists.
-STORE_GATE_EXEMPT = {"today.js"}
+#: Screens that call a store-scoped route for one part of themselves and must still render without a
+#: store. Each has a test below proving the part that needs a store is guarded; without that guard
+#: the exemption is unsafe and the screen should declare `needsStore` instead. `approvals.js` is
+#: here because its queue spans every store the owner is assigned to, and only the DEC-029 review
+#: panel is per store -- declaring `needsStore` would blank the whole queue for a multi-store owner.
+STORE_GATE_EXEMPT = {"today.js", "approvals.js"}
 
 SCREEN_EXPORT = re.compile(r"export const screen = \{(.*?)\n\};", re.S)
 
@@ -414,3 +419,17 @@ def test_only_a_pinned_read_may_be_marked_as_one() -> None:
             label = re.search(r'"[^"]+"', text[match.end() : match.end() + 60])
             found.add((path.relative_to(WEB / "src").as_posix(), label.group(0) if label else "?"))
     assert found == pinned
+
+
+def test_the_exempt_approvals_screen_builds_its_store_url_only_with_a_store() -> None:
+    """The DEC-029 review panel is the one store-scoped part of #/approvals; it must be guarded."""
+
+    text = (WEB / "src" / "screens" / "approvals.js").read_text(encoding="utf-8")
+    assert "range-price-reviews" in text
+    assert re.search(r"if \(store\) void reviews\.reload\(\)", text), (
+        "approvals.js must not load the range-price review without a selected store; without that "
+        "guard the exemption in STORE_GATE_EXEMPT is unsafe"
+    )
+    assert re.search(r"store\s*\n?\s*\?\s*h\(", text), (
+        "approvals.js must render a no-store notice instead of the review list when no store is set"
+    )

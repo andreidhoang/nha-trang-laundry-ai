@@ -627,7 +627,11 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #
     # 389 with both landed: disjoint sentences, so 381 + 2 (API-INTEGRITY-002)
     # + 6 (DEC-029, DEC-032).
-    assert sum(counts.values()) == _registry()["total"] == 389
+    #
+    # 392 after the owner's range-price review panel on #/approvals: +3 -- the withheld notice, the
+    # panel's hint naming DEC-029, and its empty-list sentence. DEC-029 moved the choice of a price
+    # inside a band to the counter on the strength of this review, which had no screen.
+    assert sum(counts.values()) == _registry()["total"] == 392
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

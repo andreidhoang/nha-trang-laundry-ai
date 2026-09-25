@@ -727,6 +727,22 @@ export function render_() {
         ...(item.reason_code ? [["Mã lý do", item.reason_code, { mono: true }]] : []),
         ["Agent ghi lúc", dateTime(item.produced_at)],
       ]),
+      // MESSAGE-DRAFT-BINDING-001. A draft somebody approved or rewrote is one a person may now
+      // ask to send, and that request is raised on `#/exceptions` from the server's own binding —
+      // this link only carries the draft id there. A rejected draft has nothing sendable, and the
+      // server answers its binding with a 404, so no link is offered for it.
+      decision === "APPROVE" || decision === "EDIT"
+        ? h(
+            "p",
+            null,
+            h(
+              "a",
+              { href: `#/exceptions?draft=${encodeURIComponent(String(item.agent_run_id || ""))}` },
+              "Xin duyệt gửi tay tin này",
+            ),
+            " — mở phần Gửi thủ công với đúng chữ máy chủ đang lưu. Chưa có gì được gửi.",
+          )
+        : null,
     );
   }
 

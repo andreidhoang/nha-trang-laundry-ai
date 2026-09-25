@@ -17,7 +17,10 @@
  *   - **Hashes are pasted, never typed.** The manual-send routes compare `rendered_hash` and
  *     `snapshot_hash` with `hmac.compare_digest`. An approximate hash is a refusal, not a warning,
  *     so the fields are validated against the exact `JCS-SHA256-V1:` shape before a round trip and
- *     the value the server returns is carried into step 2 rather than retyped.
+ *     the value the server returns is carried into step 2 rather than retyped. Since
+ *     `MESSAGE-DRAFT-BINDING-001` there is a step 0 as well: it reads a draft's binding, prints the
+ *     exact words, raises the `SEND_MESSAGE` envelope from what the server returned, and carries
+ *     all four values into step 1 — so the common path has nothing to paste at all.
  *   - **`MANUAL_SEND_RECORDED` is not delivery.** `SECURITY_RELIABILITY_SPEC_V1.md:405` — it means
  *     a human attested a manual send, not that the provider transmitted or the recipient received.
  *     The disclosure sits next to the attest button and next to the result, not only in a tooltip.
@@ -232,9 +235,11 @@ function unknownSendCard(spec) {
 }
 
 /**
+ * @param {{query?: URLSearchParams}} [context] the router's context; `?draft=<agent_run_id>` opens
+ *   the manual-send panel on that draft, which is how `#/shadow` hands a reviewed draft over
  * @returns {HTMLElement}
  */
-export function render_() {
+export function render_(context) {
   const who = principal();
   const store = storeId();
   const readVerdict = can(who, "UNKNOWN_SENDS_READ");
@@ -397,7 +402,11 @@ export function render_() {
     // The "Gửi thủ công" panel: the two-step manual send, built by `./manualSend.js` and mounted
     // here unchanged. Its guardrails (MANUAL_SEND_RECORDED ≠ delivered, no retry of an unknown
     // outcome) travel with it.
-    manualSendPanel({ sendVerdict }),
+    manualSendPanel({
+      sendVerdict,
+      store,
+      draftId: String(context?.query?.get("draft") || "").trim(),
+    }),
   );
 }
 

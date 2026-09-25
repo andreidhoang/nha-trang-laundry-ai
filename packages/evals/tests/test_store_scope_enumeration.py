@@ -218,6 +218,12 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("GET", "/internal/v1/stores/{store_id}/shadow/drafts"): store_scoped(
         "shadow_console", "ShadowConsoleRepository.list_pending_drafts"
     ),
+    # MESSAGE-DRAFT-BINDING-001. The words a SEND_MESSAGE envelope binds, with its digests. A
+    # module-level function rather than a repository method, checked mechanically all the same:
+    # role and MFA, then membership of the named store, then a draft of another store answers None.
+    ("GET", "/internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding"): (
+        store_scoped("message_drafts", "read_message_draft_binding_for_store")
+    ),
     ("GET", "/internal/v1/stores/{store_id}/shadow/reviews"): store_scoped(
         "shadow_console", "ShadowConsoleRepository.list_reviewed_drafts"
     ),

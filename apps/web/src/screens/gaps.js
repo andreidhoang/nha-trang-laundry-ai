@@ -301,8 +301,10 @@ const GROUPS = [
   },
   {
     heading: "Duyệt và phiên",
+    // MESSAGE-DRAFT-BINDING-001 retired the "Duyệt một tin nhắn soạn sẵn" entry, so four became
+    // three. The lede counts its entries and has been wrong about that count once already.
     lede:
-      "Bốn mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API " +
+      "Ba mục dưới đây không thiếu quyết định kinh doanh nào. Chúng thiếu đúng những trường mà API " +
       "không trả về, và một bề mặt đoán bừa các trường đó sẽ là duyệt mù hoặc thao tác nhầm người.",
     entries: [
       {
@@ -327,37 +329,32 @@ const GROUPS = [
           "số phiên bản đều hiện ra, nhưng phải tự đối chiếu. Phiếu báo giá thì đã hết vấn đề này " +
           "— đường dẫn mang sẵn số bản sửa đổi.",
       },
-      {
-        ref: "CONSOLE",
-        title: "Duyệt một tin nhắn soạn sẵn",
-        what: "Duyệt hoặc từ chối một phong bì MESSAGE_DRAFT ngay tại hàng chờ.",
-        // Narrowed twice, and both times because the limitation behind it closed rather than
-        // because the wording was improved. It first said the console could decide nothing,
-        // which stopped being true when APPROVAL-DECIDE-001 projected resource_version and both
-        // digests onto the queue read. It then named only orders as viewable, which stopped
-        // being true when RANGE-PRICE-001 added a read for one quote revision with its lines.
-        // What survives is the one type nothing can show: the message body is not stored
-        // anywhere, so there is no content to put in front of an approver.
-        missing:
-          "Hệ thống không lưu nội dung tin nhắn ở đâu cả, và máy chủ cũng không đối chiếu " +
-          "rendered_hash với bất cứ thứ gì. Không có gì để cho người duyệt xem trước khi họ bấm.",
-        blockedBy: "Không có kho dữ liệu nào giữ nội dung bản tin đã soạn",
-        today:
-          "Phiếu MESSAGE_DRAFT vẫn hiện trong hàng chờ kèm thời gian còn lại, nhưng hai nút quyết " +
-          "định bị khoá kèm lý do. Phiếu gắn với đơn hàng thì bấm quyết được; phiếu chốt giá " +
-          "trong khoảng cũng vậy, nhưng chỉ sau khi thẻ phiếu đọc và in được số tiền nhân viên " +
-          "đề nghị — chưa thấy số thì nút vẫn khoá.",
-      },
+      // "Duyệt một tin nhắn soạn sẵn" was here until MESSAGE-DRAFT-BINDING-001 and is deleted
+      // rather than reworded, because the gap it described closed. Its last wording said the
+      // message body was stored nowhere and rendered_hash was checked against nothing; the body is
+      // agent_drafts / agent_draft_reviews, API-INTEGRITY-002 made the server derive and verify
+      // all three binding values from it, and
+      // GET /internal/v1/stores/{store}/message-drafts/{draft}/binding now hands the words to the
+      // approvals card, which prints them above the buttons. A disclosure retires when the
+      // limitation behind it ends; that is the only way one may leave.
       {
         ref: "CONSOLE",
         title: "Tạo yêu cầu duyệt",
-        what: "Tự mở một yêu cầu duyệt cho một việc cần chủ hoặc người duyệt gật đầu.",
+        // Narrowed by MESSAGE-DRAFT-BINDING-001, and it was already half stale: OPS-BOARD-001 had
+        // let #/exports raise its own envelope. Both kinds that can be raised from the console are
+        // raised from values a server read handed back, never from anything typed.
+        what:
+          "Tự mở một yêu cầu duyệt cho những việc khác cần chủ hoặc người duyệt gật đầu, ngoài " +
+          "gửi tin nhắn và xuất dữ liệu.",
         missing:
           "Cần một resource_type khớp đúng ánh xạ hành động của máy chủ, cùng hai mã băm JCS và " +
           "một policy_version. Nhân viên không tạo được các giá trị đó bằng tay.",
         blockedBy:
-          "Chưa có ánh xạ resource_type dùng được từ giao diện và chưa có nguồn policy_version",
-        today: "Yêu cầu duyệt do máy chủ tự mở khi một lệnh chạm vào ngưỡng cần duyệt.",
+          "Chưa có route nào trả về các giá trị đó cho những loại việc còn lại",
+        today:
+          "Xin gửi một tin nhắn thì mở ở màn hình Ngoại lệ, phần Gửi thủ công; xin xuất dữ liệu " +
+          "thì mở ở màn hình Xuất dữ liệu. Các loại khác do máy chủ tự mở khi một lệnh chạm vào " +
+          "ngưỡng cần duyệt.",
       },
       {
         ref: "CONSOLE",

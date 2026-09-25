@@ -1,6 +1,14 @@
 /**
- * Manual send: the two-step panel where a named human locks an approved envelope and then attests
- * the send, split out of `screens/exceptions` so each half stays one readable unit.
+ * Manual send: the panel where a named human asks for a draft to be approved for sending, locks
+ * the approved envelope, and then attests the send, split out of `screens/exceptions` so each half
+ * stays one readable unit.
+ *
+ * Step 0 is `MESSAGE-DRAFT-BINDING-001`. `API-INTEGRITY-002` made the server compute what a
+ * `SEND_MESSAGE` envelope binds and exposed it nowhere, so no envelope could be raised from this
+ * console at all. Step 0 reads the draft's binding, prints the exact words the envelope will bind,
+ * raises the envelope from the values the server returned — nothing is typed but the draft id —
+ * and carries all four values into step 1. It does not approve and it does not send: a different
+ * person approves on `#/approvals`, and the send is still this panel's human manual send.
  *
  * The rules that shape this panel are documented at the top of `exceptions.js` — nothing retries
  * a send, hashes are pasted never typed, and MANUAL_SEND_RECORDED is not delivery. Both steps are
@@ -52,8 +60,8 @@ const SEND_STEPS = [
     token: "APPROVAL_REQUESTED",
     state: "info",
     what:
-      "Bản nháp được đóng gói thành phong bì và đưa đi duyệt. Sửa một ký tự là tạo bản nháp mới " +
-      "và huỷ phê duyệt cũ.",
+      "Bước 0 bên dưới đóng gói bản nháp thành phong bì và đưa đi duyệt. Sửa một ký tự là tạo " +
+      "bản nháp mới và huỷ phê duyệt cũ.",
   },
   {
     token: "APPROVED_FOR_MANUAL_SEND",
@@ -149,18 +157,76 @@ function manualSendResult(result, spec) {
 }
 
 /**
- * The two-step manual-send panel: lock the approved envelope, then attest the send.
+ * The words a draft's `SEND_MESSAGE` envelope binds, as step 0 prints them.
+ *
+ * Untrusted text — a customer's conversation shaped it and a model or a reviewer wrote it — so it
+ * goes through `h()`, which appends text nodes: markup in a draft is shown as characters and never
+ * parsed. The recipient is the opaque contact binding, shortened, exactly as the step 1 result
+ * shows it; no phone number or chat id exists on a draft to show.
+ *
+ * @param {any} read the `MessageDraftBindingResponse` body
+ * @returns {HTMLElement}
+ */
+function boundMessage(read) {
+  const raw = typeof read.text === "string" ? read.text : "";
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim() !== "");
+  return h(
+    "div",
+    { class: "notice", dataState: "warn" },
+    h("p", { class: "notice__title" }, "Đúng những chữ sẽ được xin duyệt và gửi"),
+    h("p", { class: "eyebrow" }, "Nội dung sẽ gửi · Văn bản không tin cậy"),
+    h(
+      "div",
+      { class: "stack stack--tight", dataMessageBody: "true" },
+      lines.length
+        ? lines.map((line) => h("p", null, line))
+        : h("p", { class: "hint" }, `${UNKNOWN} bản nháp không có chữ nào`),
+    ),
+    facts([
+      ["Số ký tự", integer(raw.length)],
+      ["Phiên bản bản nháp", `v${String(read.resource_version)}`, { mono: true }],
+      [
+        "Người nhận (mã ràng buộc)",
+        h("span", { title: read.recipient_binding_id || "" }, shortId(read.recipient_binding_id)),
+        { mono: true },
+      ],
+      ["Mã băm nội dung", shortHash(read.rendered_hash), { mono: true, span: true }],
+    ]),
+    h(
+      "p",
+      { class: "hint" },
+      "Người nhận do máy chủ lấy từ chính bản nháp; không ai chọn lại được. Sửa bản nháp sau khi " +
+        "xin duyệt là huỷ phiếu này — phải xin duyệt lại.",
+    ),
+  );
+}
+
+/**
+ * The manual-send panel: raise the envelope from a draft, lock the approved envelope, then attest
+ * the send.
  *
  * The panel keeps its own drafts, submissions and result lines; nothing here is shared with the
  * unknown-sends queue it sits next to on the screen.
  *
  * @param {object} spec
  * @param {import("../core/rbac.js").Verdict} spec.sendVerdict
+ * @param {string|null} [spec.store] the selected store; the draft read is scoped to it
+ * @param {string} [spec.draftId] a draft to open step 0 on, from `#/exceptions?draft=<id>`
  * @returns {HTMLElement}
  */
-export function manualSendPanel({ sendVerdict }) {
+export function manualSendPanel({ sendVerdict, store = null, draftId = "" }) {
+  const raiseSubmission = new Submission("manual-send-raise");
   const prepareSubmission = new Submission("manual-send-prepare");
   const attestSubmission = new Submission("manual-send-attest");
+
+  /** @type {{draftId: string}} */
+  const raise = { draftId: UUID.test(draftId) ? draftId : "" };
+  /** The binding read that is on screen, and the only thing step 0 raises an envelope from. */
+  let bound = /** @type {any} */ (null);
+  const raiseResult = resultLine();
+  const raiseErrorHost = h("div");
+  const boundHost = h("div", { class: "stack" });
+  const raiseActionHost = h("div");
 
   // No recipient field. API-INTEGRITY-002: the server reads the recipient off the approved draft
   // and refuses a request that names one, so a box here could only ever be ignored or refused.
@@ -227,6 +293,176 @@ export function manualSendPanel({ sendVerdict }) {
       return "Thời điểm đã gửi nằm ở tương lai. Máy chủ từ chối, không làm tròn.";
     }
     return "";
+  }
+
+  /**
+   * Step 0, first half: read what an envelope over this draft would bind. A pure read.
+   *
+   * @param {Event} [event]
+   */
+  async function readBinding(event) {
+    event?.preventDefault();
+    // Whatever was on screen belonged to the previous read. An envelope must never be raised from
+    // words that are not the ones currently displayed, so the old read goes before the new one.
+    bound = null;
+    render(boundHost);
+    render(raiseActionHost);
+    render(raiseErrorHost);
+    if (!store) {
+      setResult(raiseResult, "danger", "Chưa chọn cửa hàng nên chưa đọc được bản nháp nào.");
+      return;
+    }
+    if (!UUID.test(raise.draftId)) {
+      setResult(raiseResult, "danger", "Mã bản nháp (lượt chạy agent) phải là một UUID.");
+      return;
+    }
+    setResult(raiseResult, "warn", "Đang đọc tin nhắn sẽ gửi…");
+    const storePart = encodeURIComponent(store);
+    const draftPart = encodeURIComponent(raise.draftId);
+    try {
+      const read = await request(
+        `/internal/v1/stores/${storePart}/message-drafts/${draftPart}/binding`,
+      );
+      bound = read;
+      raiseSubmission.reset();
+      setResult(
+        raiseResult,
+        "ok",
+        "Đã đọc. Đọc kỹ đúng những chữ bên dưới trước khi xin duyệt; chưa có gì được ghi.",
+      );
+      render(boundHost, boundMessage(read));
+      render(raiseActionHost, raiseControl());
+    } catch (error) {
+      setResult(
+        raiseResult,
+        error.kind === "MISSING" || error.kind === "DENIED" ? "warn" : "danger",
+        error.kind === "MISSING"
+          ? "Không có tin nào gửi được từ bản nháp này: nó không thuộc cửa hàng đang chọn, hoặc " +
+              "người duyệt bản nháp đã từ chối nó."
+          : "Không đọc được bản nháp. Không có gì được ghi.",
+      );
+      render(raiseErrorHost, errorNotice(error));
+      revealError(raiseErrorHost);
+    }
+  }
+
+  /** Step 0, second half: raise the `SEND_MESSAGE` envelope from the read on screen. */
+  async function raiseEnvelope() {
+    const read = bound;
+    if (!read) return;
+    setResult(raiseResult, "warn", "Đang tạo phiếu xin duyệt gửi…");
+    render(raiseErrorHost);
+    try {
+      const approval = await request("/internal/v1/approvals", {
+        method: "POST",
+        // Every value is the server's, copied from the read. A console that derived its own
+        // digests would be asking an approver to sign a document the server never computed.
+        body: {
+          store_id: read.store_id,
+          action: read.action,
+          resource_type: read.resource_type,
+          resource_id: read.resource_id,
+          resource_version: read.resource_version,
+          snapshot_hash: read.snapshot_hash,
+          rendered_hash: read.rendered_hash,
+          policy_version: read.policy_version,
+        },
+        idempotencyKey: raiseSubmission.key(),
+      });
+      raiseSubmission.reset();
+      setResult(
+        raiseResult,
+        "ok",
+        `Đã tạo phiếu xin duyệt ${shortId(approval.approval_request_id)}. Một người duyệt khác — ` +
+          "không phải bạn — quyết ở màn hình Duyệt. Chưa có gì được gửi; bốn ô của bước 1 đã được " +
+          "điền sẵn.",
+      );
+      // Carried into step 1, which needs exactly these four. The approver still has to decide
+      // first: step 1 is refused until the envelope is APPROVED, and that refusal is correct.
+      prepare.approvalId = String(approval.approval_request_id || "");
+      prepare.resourceVersion = String(read.resource_version);
+      prepare.snapshotHash = String(read.snapshot_hash);
+      prepare.renderedHash = String(read.rendered_hash);
+      redrawPrepare();
+    } catch (error) {
+      setResult(
+        raiseResult,
+        error.kind === "DENIED" ? "warn" : "danger",
+        error.kind === "DENIED"
+          ? "Máy chủ từ chối: phiên này không được xin duyệt gửi tin cho cửa hàng này. Không có " +
+              "gì được ghi."
+          : "Không tạo được phiếu xin duyệt. Không có gì được ghi.",
+      );
+      render(raiseErrorHost, errorNotice(error));
+      revealError(raiseErrorHost);
+    }
+  }
+
+  /** @returns {HTMLElement} */
+  function raiseControl() {
+    return h(
+      "div",
+      { class: "form__actions" },
+      gated(
+        h(
+          "button",
+          {
+            type: "button",
+            dataVariant: "primary",
+            dataRequiresNetwork: "true",
+            onClick: () => void raiseEnvelope(),
+          },
+          "Xin duyệt gửi đúng tin này",
+        ),
+        sendVerdict,
+      ),
+    );
+  }
+
+  function buildRaiseForm() {
+    return h(
+      "form",
+      { class: "form", onSubmit: (event) => void readBinding(event) },
+      h("p", { class: "eyebrow" }, "Bước 0 · Đọc tin nhắn và xin duyệt gửi"),
+      labelled({
+        id: "manual-draft-id",
+        label: "Mã bản nháp (lượt chạy agent)",
+        hint:
+          "Mở từ một quyết định đã ghi ở màn hình Bản nháp AI thì ô này đã được điền. Máy chủ trả " +
+          "về đúng chữ đang lưu — của agent, hoặc bản người duyệt đã sửa — cùng phiên bản và hai " +
+          "mã niêm phong; không ô nào bên dưới cần gõ tay.",
+        control: boundInput({
+          target: raise,
+          key: "draftId",
+          pattern: UUID,
+          placeholder: "00000000-0000-0000-0000-000000000000",
+          submission: raiseSubmission,
+        }),
+      }),
+      h(
+        "div",
+        { class: "form__actions" },
+        gated(
+          h(
+            "button",
+            { type: "submit", dataVariant: "quiet", dataRequiresNetwork: "true" },
+            "Đọc tin nhắn sẽ gửi",
+          ),
+          sendVerdict,
+        ),
+      ),
+      raiseResult,
+      raiseErrorHost,
+      boundHost,
+      raiseActionHost,
+      h(
+        "p",
+        { class: "hint" },
+        "Xin duyệt không phải là duyệt, và duyệt không phải là gửi. Máy chủ từ chối người đã xin " +
+          "tự duyệt phiếu của mình; tin chỉ rời khỏi hệ thống khi một người tự gửi tay và ký tên " +
+          "ở bước 2.",
+      ),
+    );
   }
 
   async function submitPrepare(event) {
@@ -437,13 +673,16 @@ export function manualSendPanel({ sendVerdict }) {
       // queue lists `WHERE s.status = 'REQUESTED'`, and `prepare` refuses any approval that is
       // not already `APPROVED` (`manual_sends.py`). The two sets are disjoint, so the row that
       // carries these values is never the row that may be sent.
+      //
+      // MESSAGE-DRAFT-BINDING-001 changed the common path: step 0 raises the envelope from the
+      // draft's binding and fills these four boxes itself. The sentence below says so, and keeps
+      // the half that is still true for an envelope raised in another session.
       h(
         "p",
         { class: "hint" },
-        "Bốn giá trị trên phải xin từ người đã tạo yêu cầu duyệt. Hàng chờ duyệt có trả về " +
-          "phiên bản và hai mã niêm phong, nhưng chỉ cho phiếu đang chờ quyết — mà gửi tay thì " +
-          "chỉ làm được sau khi phiếu đã được duyệt, nên phiếu hiện ở đó không phải phiếu gửi " +
-          "được ở đây.",
+        "Xin duyệt ở bước 0 thì bốn ô trên đã được điền sẵn; chờ người duyệt quyết rồi bấm. " +
+          "Phiếu mở ở phiên khác thì phải xin bốn giá trị từ người đã tạo phiếu: hàng chờ duyệt " +
+          "chỉ hiện phiếu đang chờ quyết — mà gửi tay chỉ làm được sau khi phiếu đã được duyệt.",
       ),
       h(
         "div",
@@ -594,13 +833,31 @@ export function manualSendPanel({ sendVerdict }) {
 
   render(attestBody, gatedFields(buildAttestForm(), sendVerdict));
 
+  const prepareBody = h("div");
+
+  // Rebuilt rather than patched when step 0 fills its four boxes, because `boundInput` reads its
+  // value once at build time. The result and error hosts are the panel's own nodes and move into
+  // the rebuilt form with whatever they were saying.
+  function redrawPrepare() {
+    prepareSubmission.reset();
+    render(prepareBody, gatedFields(buildPrepareForm(), sendVerdict));
+  }
+
+  render(prepareBody, gatedFields(buildPrepareForm(), sendVerdict));
+
+  const raiseBody = gatedFields(buildRaiseForm(), sendVerdict);
+  // Opened from `#/shadow` with a draft named: read it straight away, so the words are on screen
+  // before anything can be asked of them. A read changes nothing, and a role that may not read is
+  // not sent to be refused.
+  if (raise.draftId && store && sendVerdict.allowed) void readBinding();
+
   return panel({
     eyebrow: "Gửi tay · Có người chịu trách nhiệm",
     title: "Gửi thủ công",
     guardrail:
-      "Hai bước bên dưới là cách duy nhất một tin đã duyệt rời khỏi hệ thống hôm nay, và cả hai " +
-      "đều ghi tên bạn. Khoá phong bì xong thì tiến trình gửi tự động không còn được phép chạy lệnh " +
-      "gửi đó nữa, nên đừng khoá một phong bì bạn không định tự gửi.",
+      "Bước 1 và bước 2 bên dưới là cách duy nhất một tin đã duyệt rời khỏi hệ thống hôm nay, và " +
+      "cả hai đều ghi tên bạn. Khoá phong bì xong thì tiến trình gửi tự động không còn được phép " +
+      "chạy lệnh gửi đó nữa, nên đừng khoá một phong bì bạn không định tự gửi.",
     children: h(
       "div",
       { class: "stack" },
@@ -625,10 +882,11 @@ export function manualSendPanel({ sendVerdict }) {
           ),
         ),
       ),
-      // No panel-level refusal notice here, unlike the unknown queue. There are exactly two
-      // controls in this panel and `gated()` already states the server's rule under each of them;
-      // a third copy at the top would be the same paragraph three times on one screen.
-      h("div", { class: "card" }, gatedFields(buildPrepareForm(), sendVerdict)),
+      // No panel-level refusal notice here, unlike the unknown queue. Every control in this panel
+      // is wrapped in `gated()`, which already states the server's rule under it; another copy at
+      // the top would be the same paragraph once more on one screen.
+      h("div", { class: "card" }, raiseBody),
+      h("div", { class: "card" }, prepareBody),
       h("div", { class: "card" }, attestBody),
     ),
   });

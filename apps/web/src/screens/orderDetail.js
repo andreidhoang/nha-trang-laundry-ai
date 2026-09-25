@@ -342,7 +342,9 @@ function settledPanel(order) {
             { class: "hint" },
             order.fulfillment_mode === "SELF_DROP_SELF_COLLECT"
               ? "Khách chưa nhận đồ. Khi đưa đồ cho khách, bấm “Khách đã nhận đồ” ở bên dưới."
-              : "Đồ chưa tới tay khách. Đơn đóng khi có một chặng giao thành công.",
+              : // Not "the goods have not arrived": the order read carries no delivery-leg fact,
+                // and the walk that found this had recorded the successful leg before the money.
+                "Đơn giao tận nơi: đơn đóng được khi đã có một chặng giao thành công.",
           )
         : null,
     ),

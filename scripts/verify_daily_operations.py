@@ -920,15 +920,21 @@ with sync_playwright() as pw:
             bool(settled) and 200 <= settled[-1][1] < 300,
             f"HTTP {settled[-1][1]}" if settled else "no call was made",
         )
+        # This read "Chưa ghi nhận giao đồ" off the settlement's success line -- on an order whose
+        # successful leg this walk had recorded one section earlier, so the line was false. The
+        # paid panel now says the rule (a delivery closes on a successful leg), which is true
+        # whether or not the leg is in yet, and the form is gone so the money cannot be taken twice.
         said_ = [
             line_.strip()
             for line_ in page.locator("main").first.inner_text().splitlines()
-            if "Đã ghi nhận" in line_
+            if "chặng giao thành công" in line_ or "Đã thu đủ tiền" in line_
         ]
         ok(
-            "and the screen says the goods still have to reach the customer",
-            any("Chưa ghi nhận giao đồ" in s for s in said_),
-            said_[:1],
+            "and the screen says it is paid and closes on a successful delivery, not a pickup",
+            any("Đã thu đủ tiền" in s for s in said_)
+            and any("chặng giao thành công" in s for s in said_)
+            and page.locator("#settlement-amount").count() == 0,
+            said_[:2],
         )
     shot(page, "21-delivery-settled.png")
     move_delivery("commercial", "COMPLETED", "the delivery order closes on its successful leg")

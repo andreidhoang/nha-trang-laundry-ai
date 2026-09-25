@@ -825,7 +825,30 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # panel left `#/remedies` (spending a credit moves onto the quote receipt in `#/new`,
     # CONSOLE-REDESIGN-001), taking its guardrail and its "phiếu đã dùng xong" hint with it.
     # 441 after merging the concurrent slices above (lead, at integration).
-    assert sum(counts.values()) == _registry()["total"] == 441
+    # 450 after CONSOLE-REDESIGN-002 (437 + 13) (Đơn hàng, Chi tiết đơn on the V2 kit, driven by
+    # ORDER-STEPS-001 `next_steps`): 21 added, 8 retired, all DESCRIPTIVE; POLICY_BOUND unchanged.
+    #   * Retired with the thing they explained: the generic three-axis transition form's guardrail
+    #     and the board's "four parts" lede + guardrail (the list now shows one status word; the
+    #     four raw axes and their "independent" hint live in the order page's tech drawer), and
+    #     the gaps lede that pointed at that form (rewritten to point at the order page's button).
+    #   * Re-keyed, same fact: the delivery-leg guardrail moved from orders.js to orderDetail.js
+    #     with the capability; the DEC-013 note is an ⓘ `hint` instead of a `notice`.
+    #   * Stale and corrected: "API này không có đường nào liệt kê sự cố của riêng một đơn" --
+    #     READ-ENRICH-001 serves that route and the order page lists the incidents now.
+    #   * Shortened below the registry's 40-character floor: the list's prepaid line ("Khách đã
+    #     trả trước, chưa nhận đồ."); its "bấm Khách đã nhận đồ" half is the order page's button.
+    #   * Added: 6 `REASON_NOTE` for the RECEIVE readiness codes, 4 `REFUSAL` for the step refusals,
+    #     5 tier-1 lines at the step sheets (slot attestation, finality, courier, custody, where a
+    #     remedy starts), and the gaps entry for the two targets no step reaches yet (+4 slots).
+    # 454 after merging CONSOLE-REDESIGN-002 onto the lead (441) at integration. The two sides'
+    #   slots are a union of 455 (both sides retired the old "no route lists an order's incidents"
+    #   hint, so 441 + 13 counts that removal twice); the merge itself then retires 3 and adds 2:
+    #   -1 the create form's replay notice in orders.js (001 removed the form; Nhận đồ is the
+    #   only create path), -2 the two order-page remedy hints (004's wording on the old panel and
+    #   002's "bấm Đề xuất bồi hoàn", a button 004 retired) merged into +1 "mở một khiếu nại trong
+    #   danh sách này; bồi hoàn làm ngay trên trang của khiếu nại đó", and +1 the credit section's
+    #   hint pointing at "Dùng khoản giảm trừ" on the Nhận đồ receipt. 455 - 3 + 2 = 454.
+    assert sum(counts.values()) == _registry()["total"] == 454
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

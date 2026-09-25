@@ -984,6 +984,8 @@ export function markUpdated(stamp, at = new Date()) {
  * @param {object} spec
  * @param {() => Promise<any[]>} spec.fetch
  * @param {(item: any) => HTMLElement} spec.renderItem one row of the list
+ * @param {(rows: HTMLElement[]) => HTMLElement} [spec.renderList] wraps the rendered rows (default: a
+ *   `.stack`); a V2 screen passes `kit.list` so rows sit on one inset-grouped card
  * @param {string} spec.emptyText shown when there is nothing to list
  * @param {number|(() => number)} spec.limit the page size `fetch` asks for
  * @param {number} [spec.skeletonRows]
@@ -1019,6 +1021,7 @@ export function markUpdated(stamp, at = new Date()) {
  *   reload: () => Promise<boolean>,
  *   rerender: () => void,
  *   items: () => any[],
+ *   setFilter: (value: string) => void,
  * }}
  */
 export function listView(spec) {
@@ -1035,6 +1038,7 @@ export function listView(spec) {
   /** The rows exactly as last fetched. The filter narrows a copy, never this list. */
   let fetched = /** @type {any[]} */ ([]);
   let filterText = "";
+  let loaded = false;
 
   function visibleItems() {
     const predicate = spec.scope?.() || null;
@@ -1062,12 +1066,14 @@ export function listView(spec) {
           : "";
       }
     }
-    // Two slices added the same two hooks under different names (001: `container`/`emptyNode`,
-    // 004: `renderRows`/`renderEmpty`); both are honoured so neither screen changes behaviour.
+    // Three slices added the same hooks under different names — the rows wrapper is 001's
+    // `container`, 004's `renderRows` and 002's `renderList`; the empty state is 001's `emptyNode`
+    // (told whether a filter/scope is active) or 004's `renderEmpty` (given the sentence). They are
+    // additive aliases of one behaviour, checked in that order, so no screen changes behaviour.
     const emptyText =
       active && spec.filter?.filteredEmptyText ? spec.filter.filteredEmptyText : spec.emptyText;
     const rows = visible.map((item) => spec.renderItem(item));
-    const wrap = spec.container || spec.renderRows;
+    const wrap = spec.container || spec.renderRows || spec.renderList;
     render(
       host,
       visible.length
@@ -1102,6 +1108,7 @@ export function listView(spec) {
     try {
       const items = await spec.fetch();
       fetched = items;
+      loaded = true;
       const limit = typeof spec.limit === "function" ? spec.limit() : spec.limit;
       markUpdated(bar.stamp);
       countNode.textContent = count(items, limit);
@@ -1126,6 +1133,18 @@ export function listView(spec) {
     }
   }
 
+  /**
+   * Set the filter from code rather than the toolbar box -- a segmented control's choice. The same
+   * narrowing as typing: the rows as fetched are kept, and the "Đang lọc X/Y" line says so.
+   *
+   * @param {string} value
+   */
+  function setFilter(value) {
+    filterText = value;
+    // Before the first answer there is nothing to narrow, and the skeleton stays up.
+    if (loaded) renderVisible();
+  }
+
   return {
     bar,
     host,
@@ -1135,6 +1154,7 @@ export function listView(spec) {
     reload,
     rerender: renderVisible,
     items: () => fetched,
+    setFilter,
   };
 }
 

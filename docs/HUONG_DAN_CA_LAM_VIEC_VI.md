@@ -31,18 +31,21 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 4 | Bấm **Tính giá**, đọc **Tổng khách trả** cho khách | Nhận đồ |
 | 5 | Bấm **Tiếp tục**, hỏi khách biết tiệm qua đâu (chưa hỏi thì để *Chưa biết*) | Nhận đồ |
 | 6 | Khách đồng ý → bấm **Khách đồng ý — tạo đơn**. Máy ghi lời đồng ý, tạo đơn, rồi mở luôn trang đơn | Nhận đồ |
-| 7 | Nhận túi đồ từ khách → chuyển **nhận đồ** sang *Đã nhận, chờ kiểm* | Đơn hàng |
-| 8 | Chuyển **nhận đồ** sang *Đã nhận*, tích **Đã duyệt lịch** | Đơn hàng |
-| 9 | Chuyển **thương mại** lần lượt tới *Đang chạy* | Đơn hàng |
-| 10 | Giặt xong thì chuyển **sản xuất**: xếp hàng → đang giặt → kiểm tra → sẵn sàng | Đơn hàng |
-| 11 | Khách tới lấy → **Tìm theo số phiếu** (hỏi ngày trên phiếu nếu không phải hôm nay), bấm **Mở đơn**, rồi **Chuyển trạng thái đơn này**: **sản xuất** sang *Đã giao ra* | Đơn hàng |
-| 12 | Đọc cho khách số **Phải thu** ngay trên ô tiền, nhập đúng số đó, tích **Khách đã tự lấy đồ**, bấm **Ghi nhận tất toán** | Chi tiết đơn |
-| 13 | Chuyển **thương mại** sang *Hoàn tất* | Đơn hàng |
+| 7 | Nhận túi đồ từ khách → bấm **Nhận đồ**, tích **Tiệm làm kịp đơn này**, bấm **Nhận đồ** lần nữa | Chi tiết đơn |
+| 8 | Bỏ đồ vào máy → bấm **Bắt đầu giặt** | Chi tiết đơn |
+| 9 | Giặt xong → **Giặt xong, kiểm tra đồ**; kiểm xong → **Báo đồ đã sẵn sàng** | Chi tiết đơn |
+| 10 | Khách tới lấy → ở **Đơn hàng** gõ số vào ô **Số phiếu…** rồi bấm **Tìm** (phiếu ngày khác thì bấm **Hôm nay** để chọn ngày), mở đơn | Đơn hàng |
+| 11 | Bấm **Thu tiền**, đọc cho khách số **Phải thu**, gõ đúng số khách đưa, bấm **Ghi nhận đã thu tiền** | Chi tiết đơn |
+| 12 | Đưa đồ cho khách, bấm **Giao đồ & đóng đơn** (nút hiện ngay sau khi thu tiền) | Chi tiết đơn |
+
+Trên trang của một đơn, **nút lớn ở cuối màn hình luôn là việc tiếp theo** — máy chủ tính ra, không
+phải đoán. Các việc khác (tạm dừng, huỷ đơn, khách trả trước…) nằm ở nút **Khác**.
 
 - **Khách đã nhắn tin cho tiệm qua kênh chính thức:** ở bước 1 bấm **Khách đã nhắn qua kênh**,
   nhập mã khách ở *Nhập mã thủ công*, bấm **Ghi nhận tiếp nhận**. Mã lạ bị từ chối, không tự tạo.
 - **Khách đã có phiếu nhưng chưa thành đơn** (mất mạng, khách quay lại sau): mở **＋ Nhận đồ**, chọn
   dòng *Phiếu N* ở mục **Tiếp tục một khách đang chờ** — món, giá và cách giao nhận hiện lại đủ.
+  Nếu phiếu hoá ra đã thành đơn, máy báo vậy, kèm nút **Mở đơn** — không tạo lại được.
 - Sửa món sau khi đã tính giá thì nút đổi thành **Tính lại**; bấm để ra giá mới rồi đọc lại cho khách.
 - Nếu máy báo từ chối ở bước 6, đọc lý do ngay dưới nút. Bấm lại chỉ làm tiếp bước còn thiếu: lời
   đồng ý đã ghi thì không ghi lại, và nút đổi thành **Tạo đơn**.
@@ -54,16 +57,15 @@ vẫn bị từ chối.
 
 | | Làm gì | Ở màn hình |
 |---|---|---|
-| 9a | Sau bước 9 (đơn *Đang chạy*): **Mở đơn**, nhập đúng số **Phải thu**, bấm **Khách trả trước khi gửi đồ** — **không tích** ô “Khách đã tự lấy đồ” | Chi tiết đơn |
-| 11a | Khách tới lấy: **Tìm theo số phiếu**, **Mở đơn**, đưa đồ rồi bấm **Khách đã nhận đồ** (tên bạn được ghi) | Chi tiết đơn |
-| 13 | Chuyển **thương mại** sang *Hoàn tất* | Đơn hàng |
+| 7a | Sau bước 7 (đã nhận đồ): bấm **Khác** → **Khách trả trước**, gõ đúng số **Phải thu**, bấm **Ghi nhận khách trả trước** | Chi tiết đơn |
+| 10a | Khách tới lấy: tìm phiếu ở ô **Số phiếu…**, mở đơn, đưa đồ rồi bấm **Khách đã nhận đồ** (tên bạn được ghi), rồi **Đóng đơn** | Chi tiết đơn |
 
 - Tiền tính vào **Đã thu tại quầy** của **ngày khách trả**, không phải ngày lấy đồ.
-- Đồ chưa giặt xong thì máy không cho bấm đã nhận đồ — và cũng không cho tích ô “Khách đã tự lấy
-  đồ” khi khách trả lúc lấy.
+- Đồ chưa giặt xong thì chưa có nút **Khách đã nhận đồ**, và nút **Thu tiền** (trả lúc lấy) cũng
+  chỉ hiện khi đồ đã sẵn sàng.
 - **Đơn tiệm tới lấy đồ** (giao nhận *chỉ lấy*): khách chỉ trả **tại quầy**, đúng tổng đã báo — hoặc
-  lúc tới lấy (bước 12, như khách tự mang tới), hoặc ghé quầy trả trước khi đồ giặt xong (bước 9a
-  rồi 11a). **Người giao không nhận và không đưa tiền.**
+  lúc tới lấy (bước 11, như khách tự mang tới), hoặc ghé quầy trả trước khi đồ giặt xong (bước 7a
+  rồi 10a). **Người giao không nhận và không đưa tiền.**
 
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
 
@@ -92,8 +94,9 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
   sai. Cân cho đúng, đừng làm tròn.
 - **Tiền phải đúng bằng tổng đã báo.** Trả thiếu, trả thừa, đặt cọc đều bị từ chối. Nhập số y như
   màn hình in ra — gõ cả dấu chấm cũng được (`170.000`), nhưng **không có dấu phẩy, không số lẻ**.
-- **Đơn giao tận nơi**: thu tiền **trước khi đồ rời tiệm**, và **để trống** ô “Khách đã tự lấy đồ”.
-  Đơn chỉ đóng được khi có một chuyến **TRẢ** thành công.
+- **Đơn giao tận nơi**: thu tiền **trước khi đồ rời tiệm** (**Khách trả trước**), bấm **Đưa đồ đi
+  giao**, rồi khi khách nhận được bấm **Đã giao đồ cho khách** → **Giao thành công**. Đơn chỉ đóng
+  được khi có một chuyến **TRẢ** thành công.
 
 ## Đóng ca
 
@@ -237,10 +240,11 @@ Nếu lỡ gửi tay rồi mới thấy máy từ chối ghi nhận: **báo ch�
 | Màn hình nói | Nghĩa là | Làm gì |
 |---|---|---|
 | **Đang ngoại tuyến** | Máy mất mạng. Không có lệnh nào được gửi đi | Kiểm tra mạng. Trong lúc đó ghi tay, nhập lại sau khi có mạng |
-| **Chưa biết lệnh có tới máy chủ hay không** | Lệnh có thể đã chạy | **Đừng bấm lại.** Tải lại bảng đơn và xem trạng thái thật |
-| **Đơn này vừa được người khác đổi** | Người kia bấm trước | Tải lại bảng đơn, làm lại theo số mới |
+| **Chưa biết lệnh có tới máy chủ hay không** | Lệnh có thể đã chạy | **Đừng bấm lại.** Tải lại đơn và xem trạng thái thật |
+| **Đơn này vừa được người khác đổi** | Người kia bấm trước | Bấm **Đơn vừa đổi — tải lại**, rồi làm theo nút mới |
 | **Máy chủ không ghi nhận khoản này** | Số tiền hoặc tình huống không được hỗ trợ | Đọc mã lý do ngay bên dưới — nó nói rõ phải làm gì |
-| **Cần người duyệt trước khi chuyển** | Đơn đã bắt đầu làm, không huỷ thẳng được | Đưa đơn sang *Đang xét huỷ*, rồi huỷ kèm lý do về đồ và tiền |
+| **Chưa nhận đồ được** | Đơn còn thiếu điều kiện (thường là chưa tích *Tiệm làm kịp đơn này*) | Đọc từng dòng lý do ngay bên dưới, làm đúng việc đó rồi bấm lại |
+| Huỷ một đơn đã nhận đồ | Phải nói đồ và tiền đã xử lý thế nào | **Khác** → **Huỷ đơn**, chọn một cách xử lý, bấm hai lần |
 | **Phiên đăng nhập đã kết thúc** | Hết phiên | Đăng nhập lại. Không mất dữ liệu |
 | **Máy chủ gặp lỗi** | Lỗi thật | **Đừng thử lại.** Xem bảng đơn để biết lệnh đã vào hay chưa, chụp màn hình, báo chủ tiệm |
 

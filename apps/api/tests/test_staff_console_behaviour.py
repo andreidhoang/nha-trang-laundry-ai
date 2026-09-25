@@ -580,9 +580,18 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         # ORDER-LOOKUP-001. Pickup, the step that could not be done on this software: find the
         # order by the number on the customer's slip, open it, and read out the amount printed
         # beside the payment field.
-        "Tìm theo số phiếu",
+        #
+        # CONSOLE-REDESIGN-002: the ticket search is "Số phiếu…" + "Tìm" on the order list, and the
+        # order page's next step replaced the generic transition form -- so the guide quotes the
+        # business verbs the counter now presses, in the order it presses them.
+        "Số phiếu…",
         "Mở đơn",
-        "Chuyển trạng thái đơn này",
+        "Tiệm làm kịp đơn này",
+        "Bắt đầu giặt",
+        "Giặt xong, kiểm tra đồ",
+        "Báo đồ đã sẵn sàng",
+        "Thu tiền",
+        "Giao đồ & đóng đơn",
         "Phải thu",
         # REMEDY-001. The presses that take an incident to an outcome, plus the sentences the
         # guide tells staff to react to. Pinned for the same reason as the band procedure: this one
@@ -615,12 +624,12 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Khoản bồi hoàn đã đổi so với phiếu",
         "Đề nghị đã ghi cho sự cố này",
         "Khoản giảm trừ của đơn này",
-        "Đã duyệt lịch",
-        "Ghi nhận tất toán",
-        "Khách đã tự lấy đồ",
+        "Ghi nhận đã thu tiền",
         # PREPAID-DROPOFF-001 (`DEC-032`): paying at drop-off, and the pickup recorded on its own.
-        "Khách trả trước khi gửi đồ",
+        "Khách trả trước",
+        "Ghi nhận khách trả trước",
         "Khách đã nhận đồ",
+        "Đóng đơn",
         "Đã thu tại quầy",
         # CONSOLE-REDESIGN-003: the morning screen's list of waiting work, its all-clear line, the
         # pickup shortcut, and the owner's range-price review on Duyệt.
@@ -632,7 +641,8 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Chưa biết lệnh có tới máy chủ hay không",
         "Đơn này vừa được người khác đổi",
         "Máy chủ không ghi nhận khoản này",
-        "Cần người duyệt trước khi chuyển",
+        "Chưa nhận đồ được",
+        "Đơn vừa đổi — tải lại",
         "Phiên đăng nhập đã kết thúc",
         "Máy chủ gặp lỗi",
         "Chưa đọc được danh sách cửa hàng",

@@ -121,16 +121,20 @@ DECLARED_CONTROLS = (
     "newOrder.next",
     "newOrder.source",
     "newOrder.confirm",
-    "orders.move-order",
-    "orders.move-version",
-    "orders.move-dimension",
-    "orders.move-target",
-    "orders.move-slot",
-    "orders.move-custody",
-    "orders.move-submit",
+    # CONSOLE-REDESIGN-002: the three-axis transition form on #/orders is gone; every step is a
+    # button on the order's own page, offered only when the server lists it (ORDER-STEPS-001).
+    "orderDetail.step-primary",
+    "orderDetail.step-more",
+    "orderDetail.receive-slot",
+    "orderDetail.receive-submit",
+    "orderDetail.hold-confirm",
+    "orderDetail.cancel-custody",
+    "orderDetail.cancel-confirm",
+    "orderDetail.stale-reload",
     "orderDetail.settlement-amount",
-    "orderDetail.settlement-collected",
     "orderDetail.settlement-submit",
+    "orderDetail.prepay",
+    "orderDetail.collection-submit",
     # CONSOLE-REDESIGN-006: the staff controls are the person sheet's, not four id-typed forms.
     "staff.create-open",
     "staff.create-subject",
@@ -571,31 +575,107 @@ class Console:
                 return row.get("row_version", fallback)
         return fallback
 
-    def move(
-        self,
-        order_id: str,
-        version: object,
-        dimension: str,
-        target: str,
-        *,
-        custody: str = "",
-        slot: bool = False,
+    # -- the order page (CONSOLE-REDESIGN-002) ---------------------------------------
+    def open_order(self, order_id: str, settle: int = 1500) -> None:
+        self.open(f"#/orders/{order_id}", settle=settle)
+
+    def primary_step(self) -> str:
+        node = self.page.locator(".action-bar--v2 button[data-step]")
+        return str(node.first.get_attribute("data-step")) if node.count() else ""
+
+    def offered(self) -> list[str]:
+        """Every step the page offers, primary first then the ones under "Khác"."""
+        steps = [self.primary_step()] if self.primary_step() else []
+        more = self.page.locator("button[data-more-steps]")
+        if more.count():
+            more.first.click()
+            self.page.wait_for_timeout(400)
+            steps += [
+                str(node.get_attribute("data-step"))
+                for node in self.page.locator("dialog[open] button[data-step]").all()
+            ]
+            self.page.keyboard.press("Escape")
+            self.page.wait_for_timeout(300)
+        return steps
+
+    def step_control(self, step: str) -> Any:
+        """The page's control for `step`: in the action bar, or under "Khác"."""
+        bar = self.page.locator(f".action-bar--v2 button[data-step={step}]")
+        if bar.count():
+            touched("orderDetail.step-primary")
+            return bar.first
+        more = self.page.locator("button[data-more-steps]")
+        if more.count():
+            more.first.click()
+            self.page.wait_for_timeout(400)
+            touched("orderDetail.step-more")
+        found = self.page.locator(f"dialog[open] button[data-step={step}]")
+        return found.first if found.count() else None
+
+    def dialog_text(self) -> str:
+        return str(
+            self.page.evaluate("() => document.querySelector('dialog[open]')?.textContent || ''")
+        )
+
+    def step(
+        self, order_id: str, step: str, *, custody: str = "", slot: bool = True, reopen: bool = True
     ) -> str:
-        """Fill the transition panel on #/orders and submit it, exactly as staff would."""
-        self.open("#/orders")
-        self.page.fill("#move-order", str(order_id))
-        self.page.fill("#move-version", str(version))
-        touched("orders.move-order", "orders.move-version")
-        self.choose("#move-dimension", dimension, "orders.move-dimension")
-        self.choose("#move-target", target, "orders.move-target")
-        if dimension == "intake" and slot:
-            self.page.check("#move-slot")
-            touched("orders.move-slot")
-        if custody:
-            self.choose("#move-custody", custody, "orders.move-custody")
-        self.page.locator("button[type=submit]", has_text="Chuyển trạng thái").first.click()
-        self.page.wait_for_timeout(1600)
-        touched("orders.move-submit")
+        """Press one step on the order's page, exactly as staff would, and return what it said.
+
+        RECEIVE ticks the slot attestation (unless `slot=False`); CANCEL picks `custody` when the
+        server asks for one and presses twice; HOLD presses twice. Nothing is sent that the page
+        does not offer: a step the page does not list is reported, not forced.
+        """
+        if reopen:
+            self.open_order(order_id)
+        control = self.step_control(step)
+        if control is None:
+            return f"(the page offers no {step}; primary is {self.primary_step() or 'none'})"
+        control.click()
+        self.page.wait_for_timeout(600)
+        if step == "RECEIVE":
+            if slot:
+                self.page.check("#receive-slot")
+                touched("orderDetail.receive-slot")
+            submit = self.page.locator("#receive-submit")
+            if not submit.is_disabled():
+                submit.click()
+                touched("orderDetail.receive-submit")
+        elif step == "CANCEL":
+            if custody:
+                self.page.locator(f"dialog[open] input[value={custody}]").check()
+                touched("orderDetail.cancel-custody")
+            confirm = self.page.locator("dialog[open] .sheet__actions button").first
+            if not confirm.is_disabled():
+                confirm.click()
+                self.page.wait_for_timeout(200)
+                confirm.click()
+                touched("orderDetail.cancel-confirm")
+        elif step == "HOLD":
+            # A two-press control: the first press arms it, the second commits.
+            control.click()
+            touched("orderDetail.hold-confirm")
+        self.page.wait_for_timeout(1800)
+        return self.said()
+
+    def pay(self, order_id: str, step: str, amount_text: str = "", *, reopen: bool = True) -> str:
+        """Thu tiền / Khách trả trước: type the amount (default: the one the sheet shows)."""
+        if reopen:
+            self.open_order(order_id)
+        control = self.step_control(step)
+        if control is None:
+            return f"(the page offers no {step}; primary is {self.primary_step() or 'none'})"
+        control.click()
+        self.page.wait_for_timeout(600)
+        if step == "PREPAY":
+            touched("orderDetail.prepay")
+        if not amount_text:
+            due = self.page.locator("dialog[open] .money-hero__amount").first.inner_text()
+            amount_text = due.replace("₫", "").replace("\xa0", "").strip()
+        self.type_into("#settlement-amount", amount_text, "orderDetail.settlement-amount")
+        self.page.locator("#settlement-submit").click()
+        touched("orderDetail.settlement-submit")
+        self.page.wait_for_timeout(1800)
         return self.said()
 
 
@@ -670,31 +750,25 @@ def scenario_money(console: Console) -> None:
     grouped = f"{total:,}".replace(",", ".")
     note(f"the quote says {total} đồng; the screen prints it as {grouped}")
 
-    def settle(amount_text: str, *, collected: bool) -> str:
-        console.open(f"#/orders/{order['order_id']}")
-        console.type_into("#settlement-amount", amount_text, "orderDetail.settlement-amount")
-        box = console.page.locator("#settlement-collected")
-        if collected != box.is_checked():
-            box.click()
-            touched("orderDetail.settlement-collected")
-        console.page.locator("button[type=submit]", has_text="Ghi nhận tất toán").first.click()
-        console.page.wait_for_timeout(1600)
-        touched("orderDetail.settlement-submit")
-        return console.said()
+    def settle(amount_text: str) -> tuple[str, str]:
+        said = console.pay(order["order_id"], "SETTLE", amount_text)
+        return said, console.dialog_text()
 
-    said = settle(str(total - 5_000), collected=True)
+    said, sheet = settle(str(total - 5_000))
     # This asserted the words "không sai" ("your input is not wrong"). The console review found that
     # sentence false for the commonest case the same refusal covers -- 13.200 typed for 132.000 --
     # and the client cannot tell a typo from a deliberate part payment. The intent is kept whole:
     # refused, framed as the owner's decision rather than bad input, and never "không hợp lệ".
+    # CONSOLE-REDESIGN-002: the policy sentence ("Trả thiếu, trả thừa, đặt cọc…", POLICY_BOUND) is
+    # one tap away in the same payment sheet, beside the field, rather than a panel guardrail.
     ok(
         "a part payment is refused as the owner's decision, and is not called invalid input",
-        "DEC-010" in said and "Trả thiếu" in said and "không hợp lệ" not in said,
+        "DEC-010" in said and "Trả thiếu" in sheet and "không hợp lệ" not in said,
         said[:150],
     )
     ok(
         "the refusal names the reason code, in words the counter can act on",
-        "AMOUNT_IS_NOT_THE_EXACT_TOTAL" in said and "đúng tổng đã báo" in said,
+        "AMOUNT_IS_NOT_THE_EXACT_TOTAL" in said and "đúng tổng đã báo" in sheet,
         "",
     )
     ok(
@@ -709,30 +783,33 @@ def scenario_money(console: Console) -> None:
             == "0",
         )
 
-    said = settle("170000.5", collected=True)
+    said, _ = settle("170000.5")
     ok(
         "a decimal is refused at the screen rather than read as ten times the amount",
         "nguyên đồng" in said,
         said[:130],
     )
 
-    said = settle(grouped, collected=True)
+    said, sheet = settle(grouped)
     ok(
         "the total copied off the screen, dots and all, is accepted",
         stored(order["order_id"], "balance_status") == "PAID"
         if READS_DATABASE
-        else "Đã ghi nhận" in said,
-        said[:130],
+        else "Đã ghi nhận" in sheet,
+        sheet[:130],
     )
 
     head("1b", "ĐÓNG ĐƠN — a paid, released, collected order closes")
-    version = stored(order["order_id"], "row_version") or "1"
-    console.move(order["order_id"], version, "commercial", "COMPLETED")
+    # Released before the payment (the per-axis ladder), so the one step left is "Đóng đơn", and the
+    # payment sheet offers it straight away.
+    closing = console.page.locator("dialog[open] button[data-step=COMPLETE]")
+    ok("the payment sheet offers to close the order at once", closing.count() == 1)
+    said = console.step(order["order_id"], "COMPLETE")
     if READS_DATABASE:
         ok(
             "the order reaches COMPLETED",
             stored(order["order_id"], "commercial_status") == "COMPLETED",
-            stored(order["order_id"], "commercial_status"),
+            stored(order["order_id"], "commercial_status") + " " + said[:100],
         )
 
     head("1c", "SỔ THU — what the shop's own board says it took today")
@@ -751,7 +828,7 @@ def scenario_exit(console: Console) -> None:
 
     head("2", "HUỶ ĐƠN — cancelling before the shop holds anything")
     fresh = console.build_order(stop="created")
-    console.move(fresh["order_id"], fresh["row_version"], "commercial", "CANCELLED")
+    console.step(fresh["order_id"], "CANCEL")
     if READS_DATABASE:
         ok(
             "a customer who changes their mind before handing the bag over is simply cancelled",
@@ -759,48 +836,80 @@ def scenario_exit(console: Console) -> None:
             stored(fresh["order_id"], "commercial_status"),
         )
 
-    head("2b", "GIỮ ĐỒ RỒI MỚI HUỶ — once the shop holds the bag, cancelling needs a review")
+    head("2b", "GIỮ ĐỒ RỒI MỚI HUỶ — once the shop holds the bag, no one-press cancellation")
+    # `confirmed` is the per-axis ladder's state (custody recorded, commercial not yet ACTIVE); the
+    # V2 page reaches ACTIVE in one RECEIVE, so this state exists only for orders moved by hand.
+    # The server lists no cancellation for it at all -- the review path starts from ACTIVE -- and
+    # the page must not invent one.
     held = console.build_order(stop="confirmed")
-    said = console.move(held["order_id"], held["row_version"], "commercial", "CANCELLED")
+    console.open_order(held["order_id"])
+    offered = console.offered()
     ok(
-        "the order is not cancelled in one press while the shop holds the goods",
-        stored(held["order_id"], "commercial_status") != "CANCELLED"
-        if READS_DATABASE
-        else "duyệt" in said.lower(),
-        stored(held["order_id"], "commercial_status"),
+        "the page offers no one-press cancellation while the shop holds the goods",
+        "CANCEL" not in offered,
+        offered,
     )
-    ok("and the screen says a person must approve it", "duyệt" in said.lower(), said[:120])
+    refused = console.call(
+        "POST",
+        f"/internal/v1/orders/{held['order_id']}/steps",
+        {"step": "CANCEL"},
+        if_match=console.current_version(held["order_id"], held["row_version"]),
+    )
+    ok(
+        "and the server refuses one, saying a person must decide, so the page tells the truth",
+        refused["status"] == 409 and "HUMAN_APPROVAL_REQUIRED" in refused["text"],
+        f"HTTP {refused['status']} {refused['text'][:120]}",
+    )
+    if READS_DATABASE:
+        ok(
+            "the order is not cancelled",
+            stored(held["order_id"], "commercial_status") != "CANCELLED",
+            stored(held["order_id"], "commercial_status"),
+        )
 
     head("2c", "XÉT HUỶ — the reviewed path, and a resolution the record contradicts")
     live = console.build_order(stop="active")
-    console.move(live["order_id"], live["row_version"], "commercial", "CANCELLATION_REVIEW")
-    version = console.current_version(live["order_id"], live["row_version"])
-    if READS_DATABASE:
-        ok(
-            "an active order can be sent to cancellation review",
-            stored(live["order_id"], "commercial_status") == "CANCELLATION_REVIEW",
-        )
-    said = console.move(
-        live["order_id"], version, "commercial", "CANCELLED", custody="NOT_RECEIVED"
+    console.open_order(live["order_id"])
+    control = console.step_control("CANCEL")
+    if control is not None:
+        control.click()
+        console.page.wait_for_timeout(500)
+    answers = [
+        str(node.get_attribute("value"))
+        for node in console.page.locator("dialog[open] input[name=custody_resolution]").all()
+    ]
+    confirm = console.page.locator("dialog[open] .sheet__actions button")
+    ok(
+        "cancelling a received order needs an answer first: the press is shut until one is picked",
+        bool(answers) and confirm.count() == 1 and confirm.first.is_disabled(),
+        f"{len(answers)} answers offered",
     )
     ok(
-        "'we never received it' is refused for an order whose custody is recorded",
-        stored(live["order_id"], "commercial_status") != "CANCELLED"
-        if READS_DATABASE
-        else "chưa từng nhận đồ" in said,
-        "",
+        "and the sheet asks what happened to the goods and the money",
+        "Đồ và tiền của khách đã xử lý thế nào" in console.dialog_text(),
+        console.dialog_text()[:120],
+    )
+    console.page.keyboard.press("Escape")
+    ok(
+        "'we never received it' is not offered for an order whose custody is recorded",
+        answers and "NOT_RECEIVED" not in answers,
+        answers,
+    )
+    refused = console.call(
+        "POST",
+        f"/internal/v1/orders/{live['order_id']}/steps",
+        {"step": "CANCEL", "custody_resolution": "NOT_RECEIVED"},
+        if_match=console.current_version(live["order_id"], live["row_version"]),
     )
     # The server's English used to be the headline, so "custody" was what this looked for. The
-    # console now says it in Vietnamese; what matters is unchanged -- the fact on record is named.
+    # console now never sends it; the server still refuses it, naming the fact on record.
     ok(
-        "and the refusal says which recorded fact contradicts it",
-        "đã ghi nhận tiệm nhận đồ" in said,
-        said[:160],
+        "and the server refuses it, naming the recorded fact that contradicts it",
+        refused["status"] == 409 and "custody" in refused["text"],
+        f"HTTP {refused['status']} {refused['text'][:160]}",
     )
 
-    said = console.move(
-        live["order_id"], version, "commercial", "CANCELLED", custody="SHOP_FAULT_NO_CHARGE"
-    )
+    console.step(live["order_id"], "CANCEL", custody="SHOP_FAULT_NO_CHARGE")
     if READS_DATABASE:
         ok(
             "a resolution the record does not contradict closes the order",
@@ -816,46 +925,53 @@ def scenario_exit(console: Console) -> None:
             recorded,
         )
 
-    head("2d", "GIẶT LẠI — a stain at quality check is an interruption, not an ending")
+    head("2d", "TẠM DỪNG — a stain at quality check is an interruption, not an ending")
+    # V1 recorded EXCEPTION and sent the laundry back to IN_PROCESS from a three-axis form. No
+    # ORDER-STEPS step means "rewash" yet (listed on #/gaps); the page offers HOLD / RESUME, and
+    # the server still takes the per-axis rewash, which is checked directly below.
     stained = console.build_order(stop="checking")
-    console.move(stained["order_id"], stained["row_version"], "production", "EXCEPTION")
-    version = stored(stained["order_id"], "row_version") or stained["row_version"]
+    console.step(stained["order_id"], "HOLD")
     if READS_DATABASE:
         ok(
-            "staff can record that something is wrong with the laundry",
-            stored(stained["order_id"], "production_status") == "EXCEPTION",
-        )
-    console.move(stained["order_id"], version, "production", "IN_PROCESS")
-    if READS_DATABASE:
-        ok(
-            "and send it back through the wash, which is backward movement the domain allows",
-            stored(stained["order_id"], "production_status") == "IN_PROCESS",
+            "staff can stop work on the laundry from the order's page",
+            stored(stained["order_id"], "production_status") == "ON_HOLD",
             stored(stained["order_id"], "production_status"),
         )
-        for target in ("QUALITY_CHECK", "READY_AT_STORE"):
-            console.move(
-                stained["order_id"],
-                stored(stained["order_id"], "row_version"),
-                "production",
-                target,
-            )
+    ok(
+        "and the page then offers to carry on where it stopped",
+        console.primary_step() == "RESUME",
+        console.primary_step(),
+    )
+    console.step(stained["order_id"], "RESUME", reopen=False)
+    console.step(stained["order_id"], "MARK_READY")
+    if READS_DATABASE:
         ok(
-            "the rewash finishes and the clock names when the laundry was actually done",
+            "the laundry finishes and the clock names when it was actually done",
             stored(stained["order_id"], "production_ready_at is not null") == "t",
+            stored(stained["order_id"], "production_status"),
         )
+    rewash = console.build_order(stop="checking")
+    for target in ("EXCEPTION", "IN_PROCESS"):
+        moved = console.call(
+            "POST",
+            f"/internal/v1/orders/{rewash['order_id']}/production-transition",
+            {"target": target},
+            if_match=console.current_version(rewash["order_id"], rewash["row_version"]),
+        )
+    ok(
+        "the server still takes a rewash (EXCEPTION, back through the wash) on its own route",
+        moved["status"] < 300,
+        f"HTTP {moved['status']} {moved['text'][:100]}",
+    )
 
     head("2e", "ĐỒNG HỒ — a commercial move does not restamp finished laundry")
     if READS_DATABASE:
         finished = stored(stained["order_id"], "production_ready_at")
-        console.move(
-            stained["order_id"],
-            stored(stained["order_id"], "row_version"),
-            "commercial",
-            "CANCELLATION_REVIEW",
-        )
+        console.step(stained["order_id"], "CANCEL", custody="SHOP_FAULT_NO_CHARGE")
         ok(
-            "pressing a button on the order board does not change when the washing finished",
-            stored(stained["order_id"], "production_ready_at") == finished,
+            "cancelling from the order's page does not change when the washing finished",
+            stored(stained["order_id"], "production_ready_at") == finished
+            and stored(stained["order_id"], "commercial_status") == "CANCELLED",
             f"{finished} → {stored(stained['order_id'], 'production_ready_at')}",
         )
 
@@ -1060,6 +1176,10 @@ def scenario_roles(console: Console) -> None:
         },
     }
 
+    # An open order, so the auditor's order page has a step to show refused.
+    console.sign_in("demo-owner")
+    sample = console.build_order(stop="created")
+
     for subject, wanted in expected.items():
         head("4", f"PHÂN QUYỀN — {subject}")
         ok(f"{subject} can sign in", console.sign_in(subject) in (200, 201))
@@ -1082,6 +1202,19 @@ def scenario_roles(console: Console) -> None:
                 "and the controls they may not use are shown disabled with a reason, not hidden",
                 denied > 0,
                 f"{denied} marked denied",
+            )
+            # CONSOLE-REDESIGN-002: the steps live on the order's page, so that is where the
+            # auditor must meet them -- shown, shut, with the reason beside them.
+            console.open_order(sample["order_id"])
+            steps = console.page.locator("button[data-step]")
+            live_steps = console.page.locator("button[data-step]:not([disabled])")
+            ok(
+                "on an order's page the next step is shown to an auditor, disabled, with the rule",
+                steps.count() >= 1
+                and live_steps.count() == 0
+                and console.page.locator("button[data-step][data-denied='true']").count() >= 1
+                and "Vai trò được phép" in console.text(),
+                f"{steps.count()} step controls, {live_steps.count()} live",
             )
             refused = console.call("POST", f"/internal/v1/stores/{STORE}/counter-tickets", {})
             ok(
@@ -1310,20 +1443,26 @@ def scenario_resilience(console: Console) -> None:
 
     head("6aa", "NHẬN ĐỒ QUA MÀN HÌNH — the intake step, checkbox and all")
     taken_in = console.build_order(stop="created")
-    console.move(
-        taken_in["order_id"],
-        taken_in["row_version"],
-        "intake",
-        "RECEIVED_PENDING_INSPECTION",
+    console.open_order(taken_in["order_id"])
+    ok(
+        "a new order's page offers Nhận đồ as its next step",
+        console.primary_step() == "RECEIVE",
+        console.primary_step(),
     )
-    version = console.current_version(taken_in["order_id"], taken_in["row_version"])
-    said = console.move(taken_in["order_id"], version, "intake", "ACCEPTED", slot=True)
+    console.step_control("RECEIVE").click()
+    console.page.wait_for_timeout(500)
+    ok(
+        "and will not receive until the staff member confirms the slot",
+        console.page.locator("#receive-submit").is_disabled(),
+    )
+    console.page.keyboard.press("Escape")
+    said = console.step(taken_in["order_id"], "RECEIVE")
     ok(
         "accepting intake from the screen requires the staff member to confirm the slot",
         stored(taken_in["order_id"], "intake_status") == "ACCEPTED"
         if READS_DATABASE
-        else "đã chuyển" in said.lower(),
-        stored(taken_in["order_id"], "intake_status"),
+        else console.primary_step() == "START_WASH",
+        stored(taken_in["order_id"], "intake_status") + " " + said[:80],
     )
     ok(
         "and that is what starts the production clock",
@@ -1335,23 +1474,33 @@ def scenario_resilience(console: Console) -> None:
 
     head("6b", "AI ĐÓ ĐÃ ĐỔI — someone else moved the order while you had it open")
     order = console.build_order(stop="created")
+    console.open_order(order["order_id"])
+    # The second phone at the counter records the handoff while this screen still shows v1.
     console.call(
         "POST",
         f"/internal/v1/orders/{order['order_id']}/intake-transition",
         {"target": "RECEIVED_PENDING_INSPECTION", "slot_approved": False},
         if_match=order["row_version"],
     )
-    said = console.move(order["order_id"], order["row_version"], "intake", "WAITING_PRICE_APPROVAL")
+    said = console.step(order["order_id"], "RECEIVE", reopen=False)
     ok(
         "a stale version is refused, and the screen says somebody else changed the order",
         "người khác đổi" in said,
         said[:160],
     )
+    reload_ = console.page.locator("button", has_text="Đơn vừa đổi — tải lại")
+    ok("and offers the only thing that helps — a fresh read", reload_.count() > 0, "")
+    if reload_.count():
+        reload_.first.click()
+        console.page.wait_for_timeout(1500)
+        touched("orderDetail.stale-reload")
     ok(
-        "and offers the only thing that helps — a fresh board",
-        console.page.locator("button", has_text="Tải lại").count() > 0,
-        "",
+        "after which the page offers the step again, against the new version",
+        console.primary_step() == "RECEIVE",
+        console.primary_step(),
     )
+    console.page.keyboard.press("Escape")
+    console.page.wait_for_timeout(300)
 
     head("6c", "GỬI LẠI — the same command twice is not two rows")
     ticket = console.call("POST", f"/internal/v1/stores/{STORE}/counter-tickets", {})
@@ -1647,19 +1796,11 @@ def _prepay_then_collect(
     console.sign_in("demo-operations")
     order = console.build_order(kg="7", stop="active", mode=mode, manual_fee_vnd=manual_fee_vnd)
     order_id = order["order_id"]
-    console.open(f"#/orders/{order_id}")
-    # The amount a person at the counter reads out is the one the screen shows as "Phải thu" --
-    # the washing and any delivery fee together. Typing the quote's service subtotal instead is
-    # the mistake a script makes and staff do not, and the server rightly refuses it.
-    due = console.page.locator("strong.money").first.inner_text().replace("₫", "").strip()
-    grouped = due.replace("\xa0", "").strip()
-    note(f"order {order_id[:8]}… is accepted and not yet washed; the screen says Phải thu {due} ₫")
-    console.type_into("#settlement-amount", grouped)
-    box = console.page.locator("#settlement-collected")
-    if box.is_checked():
-        box.click()
-    console.page.locator("button[type=submit]", has_text="Ghi nhận tất toán").first.click()
-    console.page.wait_for_timeout(1800)
+    # The amount a person at the counter reads out is the one the sheet shows as "Phải thu" -- the
+    # washing and any delivery fee together. `pay` reads it off the sheet and types it.
+    console.pay(order_id, "PREPAY")
+    note(f"order {order_id[:8]}… is accepted and not yet washed; paid in advance from 'Khác'")
+    console.open_order(order_id, settle=1600)
     shown = console.text()
     ok(
         "the exact total is taken at drop-off, and the screen says the customer has not "
@@ -1676,40 +1817,48 @@ def _prepay_then_collect(
             f"{stored(order_id, 'self_collection_recorded')}",
         )
 
-    console.open(f"#/orders/{order_id}", settle=1600)
+    offered = console.offered()
     ok(
         "once paid, the screen no longer offers to take the money a second time",
-        console.page.locator("#settlement-amount").count() == 0
-        and "Đã thu đủ tiền" in console.text(),
-        "",
+        "SETTLE" not in offered and "PREPAY" not in offered,
+        offered,
     )
-    pickup = console.page.locator("button", has_text="Khách đã nhận đồ")
-    ok("the pickup button is offered to a customer who paid in advance", pickup.count() > 0)
-    if pickup.count():
-        pickup.first.click()
-        console.page.wait_for_timeout(1800)
-    said = console.said()
     ok(
-        "the refusal is about the handover, not about money",
-        "Chưa ghi nhận khách nhận đồ" in said and "sẵn sàng tại cửa hàng" in said,
-        said[:200],
+        "and it does not offer the pickup press while the laundry is still unwashed",
+        "COLLECT" not in offered
+        and console.page.get_by_role("button", name="Khách đã nhận đồ").count() == 0,
+        offered,
+    )
+    refused = console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/collection",
+        if_match=console.current_version(order_id, order["row_version"]),
+    )
+    ok(
+        "the server refuses that handover for the laundry, not for the money",
+        refused["status"] == 422 and "GOODS_NOT_READY_FOR_HANDOVER" in refused["text"],
+        f"HTTP {refused['status']} {refused['text'][:160]}",
     )
     ok(
         "handing over laundry still in the machine is refused",
-        stored(order_id, "self_collection_recorded") in ("f", "false")
-        if READS_DATABASE
-        else "Đã ghi nhận khách nhận đồ" not in said,
-        said[:180],
+        stored(order_id, "self_collection_recorded") in ("f", "false") if READS_DATABASE else True,
+        "",
+    )
+    closing = console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/steps",
+        {"step": "COMPLETE"},
+        if_match=console.current_version(order_id, order["row_version"]),
+    )
+    ok(
+        "and a paid order whose laundry was never handed over cannot be closed",
+        "COMPLETE" not in offered
+        and closing["status"] >= 400
+        and (stored(order_id, "commercial_status") != "COMPLETED" if READS_DATABASE else True),
+        f"HTTP {closing['status']} {closing['text'][:120]}",
     )
 
     version = console.current_version(order_id, order["row_version"])
-    said = console.move(order_id, version, "commercial", "COMPLETED")
-    ok(
-        "and a paid order whose laundry was never handed over cannot be closed",
-        stored(order_id, "commercial_status") != "COMPLETED" if READS_DATABASE else True,
-        said[:160],
-    )
-
     for target in ("QUEUED", "IN_PROCESS", "QUALITY_CHECK", "READY_AT_STORE", "RELEASED"):
         version = console.current_version(order_id, version)
         moved = console.call(
@@ -1724,12 +1873,20 @@ def _prepay_then_collect(
     note("washed, checked and released from production")
 
     head(second, "KHÁCH TỚI LẤY — the handover, recorded under the staff member's name")
-    console.open(f"#/orders/{order_id}", settle=1600)
-    pickup = console.page.locator("button", has_text="Khách đã nhận đồ")
+    console.open_order(order_id, settle=1600)
+    ok(
+        "the pickup press is the next step once the laundry is finished",
+        console.primary_step() == "COLLECT",
+        console.primary_step(),
+    )
+    pickup = console.page.locator(".action-bar--v2 button", has_text="Khách đã nhận đồ")
     if pickup.count():
         pickup.first.click()
+        console.page.wait_for_timeout(500)
+        console.page.locator("#collection-submit").click()
+        touched("orderDetail.collection-submit")
         console.page.wait_for_timeout(1800)
-    said = console.said()
+    said = console.dialog_text()
     ok(
         "the handover is recorded once the laundry is finished",
         stored(order_id, "self_collection_recorded") in ("t", "true")
@@ -1747,14 +1904,17 @@ def _prepay_then_collect(
             == "Demo Nhân viên vận hành",
             sql(f"select count(*) from order_collections where order_id='{order_id}'"),
         )
-    version = console.current_version(order_id, version)
-    said = console.move(order_id, version, "commercial", "COMPLETED")
+    closing_offer = console.page.locator("dialog[open] button[data-step=COMPLETE]")
+    ok("and the sheet offers to close the order straight away", closing_offer.count() == 1)
+    if closing_offer.count():
+        closing_offer.first.click()
+        console.page.wait_for_timeout(1800)
     ok(
         "paid, released and collected: the order closes",
         stored(order_id, "commercial_status") == "COMPLETED"
         if READS_DATABASE
-        else "COMPLETED" in said,
-        said[:160],
+        else "Đơn đã đóng" in console.text(),
+        console.said()[:160],
     )
 
 
@@ -1785,12 +1945,13 @@ def scenario_busy(console: Console) -> None:
         stderr=subprocess.DEVNULL,
     )
     time.sleep(1.0)
-    console.open(f"#/orders/{order_id}")
+    console.open_order(order_id)
+    control = console.step_control("SETTLE")
+    if control is not None:
+        control.click()
+        console.page.wait_for_timeout(500)
     console.type_into("#settlement-amount", grouped)
-    box = console.page.locator("#settlement-collected")
-    if not box.is_checked():
-        box.click()
-    submit = console.page.locator("button[type=submit]", has_text="Ghi nhận tất toán").first
+    submit = console.page.locator("#settlement-submit")
     submit.click()
     try:
         console.page.wait_for_selector("text=Hệ thống đang bận", timeout=12000)
@@ -1809,7 +1970,7 @@ def scenario_busy(console: Console) -> None:
     )
     holder.wait(timeout=30)
     note("the other connection let go of the row")
-    if console.page.locator("#settlement-amount").count():
+    if submit.count() and submit.is_enabled():
         submit.click()
         console.page.wait_for_timeout(2500)
     ok(

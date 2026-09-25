@@ -476,6 +476,9 @@ def test_the_counter_sees_the_channel_customers_this_store_served_and_no_one_els
         "production": board["production"],
         "balance": board["balance"],
         "payable_total_vnd": board["payable_total_vnd"],
+        "fulfillment_mode": board["fulfillment_mode"],
+        "self_collection_recorded": board["self_collection_recorded"],
+        "required_delivery_legs_succeeded": board["required_delivery_legs_succeeded"],
     }
     assert isinstance(second["latest_order"]["payable_total_vnd"], int)
     assert second["open_order_count"] == 1

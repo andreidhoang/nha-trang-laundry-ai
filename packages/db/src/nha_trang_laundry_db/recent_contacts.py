@@ -62,6 +62,11 @@ class RecentContactOrder:
     balance: str
     #: The bound revision's single total, or `None` when it presents none (as on `OrderView`).
     payable_total_vnd: int | None
+    #: The three stored facts the console needs to *word* the status as the order board does
+    #: ("Chờ giao" rather than "Sẵn sàng", "Chờ khách lấy" rather than "Chờ đóng đơn").
+    fulfillment_mode: str
+    self_collection_recorded: bool
+    required_delivery_legs_succeeded: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +122,8 @@ _RECENT_CONTACTS_SQL: Final = f"""
            ) AS channels,
            latest.id, latest.created_at, latest.commercial_status, latest.intake_status,
            latest.production_status, latest.balance_status, latest.payable_total_vnd,
+           latest.fulfillment_mode, latest.self_collection_recorded,
+           latest.required_delivery_legs_succeeded,
            (
                SELECT count(*) FROM orders o
                WHERE o.store_id = %(store)s AND o.bound_contact_id = r.binding
@@ -137,7 +144,8 @@ _RECENT_CONTACTS_SQL: Final = f"""
     FROM recent r
     LEFT JOIN LATERAL (
         SELECT o.id, o.created_at, o.commercial_status, o.intake_status, o.production_status,
-               o.balance_status,
+               o.balance_status, o.fulfillment_mode, o.self_collection_recorded,
+               o.required_delivery_legs_succeeded,
                CASE WHEN rev.display_total_min_vnd = rev.display_total_max_vnd
                     THEN rev.display_total_min_vnd END AS payable_total_vnd
         FROM orders o
@@ -202,6 +210,9 @@ def _contact(row: tuple[Any, ...]) -> RecentContact:
             production=str(row[7]),
             balance=str(row[8]),
             payable_total_vnd=None if row[9] is None else int(row[9]),
+            fulfillment_mode=str(row[10]),
+            self_collection_recorded=bool(row[11]),
+            required_delivery_legs_succeeded=bool(row[12]),
         )
     )
     return RecentContact(
@@ -209,8 +220,8 @@ def _contact(row: tuple[Any, ...]) -> RecentContact:
         channels=tuple(str(item) for item in (row[2] or ())),
         last_activity_at=row[1],
         latest_order=latest,
-        open_order_count=int(row[10]),
-        waiting_order_request_id=None if row[11] is None else _uuid(row[11]),
+        open_order_count=int(row[13]),
+        waiting_order_request_id=None if row[14] is None else _uuid(row[14]),
     )
 
 

@@ -3187,6 +3187,10 @@ class RecentContactOrderResponse(BaseModel):
     balance: str
     #: The bound revision's single total, as on the order board; null when it has none.
     payable_total_vnd: int | None
+    #: As on the order board, so the console words the status the same way there and here.
+    fulfillment_mode: FulfillmentMode
+    self_collection_recorded: bool
+    required_delivery_legs_succeeded: bool
 
 
 class RecentContactResponse(BaseModel):
@@ -3253,6 +3257,11 @@ def list_recent_contacts(
                         production=ProductionStatus(item.latest_order.production),
                         balance=item.latest_order.balance,
                         payable_total_vnd=item.latest_order.payable_total_vnd,
+                        fulfillment_mode=FulfillmentMode(item.latest_order.fulfillment_mode),
+                        self_collection_recorded=item.latest_order.self_collection_recorded,
+                        required_delivery_legs_succeeded=(
+                            item.latest_order.required_delivery_legs_succeeded
+                        ),
                     )
                 ),
                 open_order_count=item.open_order_count,

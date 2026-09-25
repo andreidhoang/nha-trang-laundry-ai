@@ -827,3 +827,97 @@ export function show(host, content) {
     alert.focus({ preventScroll: false });
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// CONSOLE-REDESIGN-005 — message bubble and step card (AI & tin nhắn slice)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Words somebody else wrote — a customer, a model, a reviewer — shown as a chat bubble.
+ *
+ * The text is untrusted: every line becomes its own text node through `h()`, so markup in it is
+ * shown as characters and never parsed. The caller passes the small provenance marker (e.g. an
+ * `eyebrow` saying "Văn bản không tin cậy") as a node, so a registered sentence stays a literal
+ * in the screen module that owns it. Line breaks are kept by splitting into paragraphs rather
+ * than by styling whitespace.
+ *
+ * @param {object} spec
+ * @param {unknown} spec.text the untrusted text; anything but a string renders as empty
+ * @param {unknown} [spec.marker] a small label above the words
+ * @param {unknown} [spec.meta] a small line under the words (character count, time)
+ * @param {string} [spec.emptyText] what an empty text says instead of an empty bubble
+ * @param {"in"|"out"} [spec.side] `in` (default) sits left like a received message
+ * @param {Record<string, string>} [spec.data] data-* attributes on the words' container
+ * @returns {HTMLElement}
+ */
+export function messageBubble(spec) {
+  const raw = typeof spec.text === "string" ? spec.text : "";
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim() !== "");
+  /** @type {Record<string, unknown>} */
+  const props = { class: "bubble__text" };
+  for (const [key, value] of Object.entries(spec.data || {})) {
+    props[`data${key[0].toUpperCase()}${key.slice(1)}`] = value;
+  }
+  return h(
+    "div",
+    { class: ["bubble", spec.side === "out" && "bubble--out"] },
+    spec.marker || null,
+    h(
+      "div",
+      props,
+      lines.length
+        ? lines.map((line) => h("p", null, line))
+        : h("p", { class: "bubble__empty" }, spec.emptyText || "—"),
+    ),
+    spec.meta ? h("p", { class: "bubble__meta" }, spec.meta) : null,
+  );
+}
+
+/**
+ * One step of a vertical stepper: a numbered card whose state says whether it is done, the one
+ * to do now, or still waiting. Presentation only — the caller decides the state from what the
+ * server has answered; this decides nothing.
+ *
+ * @param {object} spec
+ * @param {number} spec.number
+ * @param {string} spec.title
+ * @param {"done"|"current"|"todo"} spec.state
+ * @param {unknown} [spec.info] an `infoButton` beside the title
+ * @param {unknown} [spec.summary] one line under the title (what the step produced, or awaits)
+ * @param {unknown} [spec.children]
+ * @param {string} [spec.id]
+ * @returns {HTMLElement}
+ */
+export function stepCard(spec) {
+  return h(
+    "section",
+    {
+      class: "step",
+      id: spec.id || null,
+      dataState: spec.state,
+      "aria-current": spec.state === "current" ? "step" : null,
+    },
+    h(
+      "div",
+      { class: "step__head" },
+      h(
+        "span",
+        { class: "step__num", "aria-hidden": "true" },
+        spec.state === "done" ? icon("check") : String(spec.number),
+      ),
+      h(
+        "div",
+        { class: "step__titles" },
+        h(
+          "h2",
+          { class: "step__title" },
+          h("span", { class: "sr-only" }, `Bước ${spec.number}: `),
+          spec.title,
+          spec.info || null,
+        ),
+        spec.summary ? h("p", { class: "step__summary" }, spec.summary) : null,
+      ),
+    ),
+    spec.children ? h("div", { class: "step__body" }, spec.children) : null,
+  );
+}

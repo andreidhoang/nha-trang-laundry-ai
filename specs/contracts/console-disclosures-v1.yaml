@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 407
+  DESCRIPTIVE: 413
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 14
-total: 436
+total: 442
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1886,9 +1886,9 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/exceptions.js#guardrail:c542174e4775
+- slot_id: screens/exceptions.js#notice:c542174e4775
   module: screens/exceptions.js
-  key: guardrail
+  key: notice
   text: Tự động gửi lại một tin không rõ đã đi hay chưa chính là cách khách nhận hai lần cùng một tin
     nhắn. Việc đó bị cấm, không phải là không khuyến khích. Bảng điều khiển này không gửi lại và không
     có nút gửi lại; lối ra duy nhất khỏi trạng thái này là một người có tên xác nhận điều đã thực sự xảy
@@ -1902,6 +1902,14 @@ disclosures:
   key: notice
   text: Hàng chờ này lọc theo cửa hàng bạn đang chọn ở thanh trên. Người của cửa hàng khác không thấy
     và không đối soát được các biên nhận này, và bạn cũng không thấy của họ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/exceptions.js#hint:856f016126df
+  module: screens/exceptions.js
+  key: hint
+  text: Không bao giờ gửi lại tự động. Chỉ một người xem bên nhà cung cấp rồi ghi điều đã xảy ra.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2484,11 +2492,64 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/manualSend.js#hint:85e4f0f7a3be
+- slot_id: screens/manualSend.js#hint:8ac0ff95eaa6
   module: screens/manualSend.js
   key: hint
   text: Xin duyệt không phải là duyệt, và duyệt không phải là gửi. Máy chủ từ chối người đã xin tự duyệt
-    phiếu của mình; tin chỉ rời khỏi hệ thống khi một người tự gửi tay và ký tên ở bước 2.
+    phiếu của mình; tin chỉ rời khỏi hệ thống khi một người tự gửi tay và ký tên ở bước 4.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#hint:5fdfa328f0a6
+  module: screens/manualSend.js
+  key: hint
+  text: Một người khác sẽ duyệt đúng những chữ trên. Chưa có gì được gửi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#hint:90bcb0e300bc
+  module: screens/manualSend.js
+  key: hint
+  text: 'Xin duyệt ở bước 2 thì bốn ô này đã được điền sẵn. Phiếu mở ở phiên khác thì phải xin bốn giá
+    trị từ người đã tạo phiếu: hàng chờ duyệt chỉ hiện phiếu đang chờ quyết — mà gửi tay chỉ làm được
+    sau khi phiếu đã được duyệt.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#hint:5883348e1a75
+  module: screens/manualSend.js
+  key: hint
+  text: Chỉ khoá khi chính bạn sẽ gửi tin này — khoá xong máy không tự gửi tin đó nữa.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#hint:ce3a4704866a
+  module: screens/manualSend.js
+  key: hint
+  text: Bước 3 và bước 4 là cách duy nhất một tin đã duyệt rời khỏi hệ thống hôm nay, và cả hai đều ghi
+    tên bạn. Khoá phong bì xong thì tiến trình gửi tự động không còn được phép chạy lệnh gửi đó nữa, nên
+    đừng khoá một phong bì bạn không định tự gửi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#hint:2e83d90effe9
+  module: screens/manualSend.js
+  key: hint
+  text: Không có ô người nhận. Máy chủ lấy người nhận từ chính bản nháp đã được duyệt và trả nó về trong
+    kết quả; một yêu cầu tự ghi người nhận bị từ chối.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#notice:7f451be3ad72
+  module: screens/manualSend.js
+  key: notice
+  text: Các ô này đã được điền từ kết quả khoá phong bì ở bước 3. Không sửa chúng bằng tay.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2519,39 +2580,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/manualSend.js#hint:2e83d90effe9
+- slot_id: screens/manualSend.js#hint:90934421a255
   module: screens/manualSend.js
   key: hint
-  text: Không có ô người nhận. Máy chủ lấy người nhận từ chính bản nháp đã được duyệt và trả nó về trong
-    kết quả; một yêu cầu tự ghi người nhận bị từ chối.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/manualSend.js#hint:e715fa3e867b
-  module: screens/manualSend.js
-  key: hint
-  text: 'Xin duyệt ở bước 0 thì bốn ô trên đã được điền sẵn; chờ người duyệt quyết rồi bấm. Phiếu mở ở
-    phiên khác thì phải xin bốn giá trị từ người đã tạo phiếu: hàng chờ duyệt chỉ hiện phiếu đang chờ
-    quyết — mà gửi tay chỉ làm được sau khi phiếu đã được duyệt.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/manualSend.js#notice:9b57c14c8b63
-  module: screens/manualSend.js
-  key: notice
-  text: Ba ô đầu đã được điền từ kết quả bước 1. Không sửa chúng bằng tay.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/manualSend.js#guardrail:48b2712c7485
-  module: screens/manualSend.js
-  key: guardrail
-  text: Bước 1 và bước 2 bên dưới là cách duy nhất một tin đã duyệt rời khỏi hệ thống hôm nay, và cả hai
-    đều ghi tên bạn. Khoá phong bì xong thì tiến trình gửi tự động không còn được phép chạy lệnh gửi đó
-    nữa, nên đừng khoá một phong bì bạn không định tự gửi.
+  text: Chỉ gỡ chặn tin dịch vụ trên kênh này. Tin quảng cáo vẫn bị chặn — muốn nhận lại quảng cáo, khách
+    phải đồng ý riêng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3462,15 +3495,6 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/shadow.js#hint:b22af4ed5982
-  module: screens/shadow.js
-  key: hint
-  text: Bản gốc của agent vẫn nằm nguyên trong sổ. Dòng này là quyết định của bạn, không phải một tin
-    nhắn đã gửi đi.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/shadow.js#notice:f0ce709a4a3f
   module: screens/shadow.js
   key: notice
@@ -3489,15 +3513,6 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/shadow.js#notice:7f035d90f7b2
-  module: screens/shadow.js
-  key: notice
-  text: Mỗi tin nhắn gửi ra ngoài đều cần một người có tên quyết định. Hệ thống không tự gửi bất cứ thứ
-    gì, và bấm APPROVE ở đây cũng chưa gửi gì cả — nó chỉ ghi rằng bạn đồng ý với nội dung.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/shadow.js#screen__lede:efe092e0bc31
   module: screens/shadow.js
   key: screen__lede
@@ -3507,18 +3522,52 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/shadow.js#guardrail:add42213ce89
+- slot_id: screens/shadow.js#notice:7f035d90f7b2
   module: screens/shadow.js
-  key: guardrail
+  key: notice
+  text: Mỗi tin nhắn gửi ra ngoài đều cần một người có tên quyết định. Hệ thống không tự gửi bất cứ thứ
+    gì, và bấm APPROVE ở đây cũng chưa gửi gì cả — nó chỉ ghi rằng bạn đồng ý với nội dung.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/shadow.js#hint:add42213ce89
+  module: screens/shadow.js
+  key: hint
   text: Duyệt ở đây không phải là gửi. Một bản nháp rời khỏi hàng chờ này ngay khi có người quyết định,
     và mỗi lượt chạy chỉ nhận đúng một quyết định.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/shadow.js#guardrail:4202f9908977
+- slot_id: screens/shadow.js#hint:b22af4ed5982
   module: screens/shadow.js
-  key: guardrail
+  key: hint
+  text: Bản gốc của agent vẫn nằm nguyên trong sổ. Dòng này là quyết định của bạn, không phải một tin
+    nhắn đã gửi đi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/shadow.js#hint:2a7e7520a2bc
+  module: screens/shadow.js
+  key: hint
+  text: Duyệt chỉ ghi quyết định của bạn — chưa gửi gì cho khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/shadow.js#hint:3c9acd449670
+  module: screens/shadow.js
+  key: hint
+  text: Đang hiện các quyết định gần nhất; còn quyết định cũ hơn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/shadow.js#hint:4202f9908977
+  module: screens/shadow.js
+  key: hint
   text: Đây là những bản nháp đã có người quyết định. Bản gốc của agent nằm cạnh quyết định để sau này
     chấm được agent bằng việc thật. Không dòng nào ở đây là một tin nhắn đã gửi đi.
   binding:

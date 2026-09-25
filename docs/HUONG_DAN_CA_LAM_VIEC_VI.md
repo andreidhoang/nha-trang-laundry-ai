@@ -193,16 +193,26 @@ thu tiền.
 ## Khách đã nhắn “dừng” — gửi tin dịch vụ (`DEC-033`)
 
 Khách nhắn **dừng / STOP** trên kênh nào thì tiệm **không chủ động gửi gì** trên kênh đó — kể cả tin
-báo đồ đã xong. Ở *Ngoại lệ → Gửi thủ công*, máy sẽ từ chối và nói rõ lý do:
+báo đồ đã xong. Ở *Ngoại lệ & gửi tay → Gửi tay*, máy sẽ từ chối và nói rõ lý do:
 
 | Máy nói | Làm gì |
 |---|---|
-| **Khách đã yêu cầu dừng nhận tin trên kênh này** | Không gửi. Nếu khách nhắn lại cho tiệm, chủ tiệm hoặc người duyệt chọn **đúng tin nhắn mới đó** trong danh sách máy đưa ra rồi bấm **“Gỡ chặn tin dịch vụ”**. Không gỡ theo lời kể hay cuộc gọi. Tin quảng cáo vẫn bị chặn |
+| **Khách đã yêu cầu dừng nhận tin trên kênh này** | Không gửi. Nếu khách nhắn lại cho tiệm, chủ tiệm hoặc người duyệt bấm **“Gỡ chặn tin dịch vụ”**, chọn **đúng tin nhắn mới đó** (theo giờ khách nhắn) trong danh sách máy đưa ra, rồi bấm **“Gỡ chặn tin dịch vụ”** lần nữa để xác nhận. Không gỡ theo lời kể hay cuộc gọi. Tin quảng cáo vẫn bị chặn |
 | **Khách vừa nhắn một câu có thể là yêu cầu dừng** | Chủ tiệm hoặc người duyệt đọc lại rồi quyết |
 | **Chủ tiệm chưa công bố chính sách tin dịch vụ** | Báo chủ tiệm. Chỉ chủ tiệm công bố được |
 | **Chưa có căn cứ để gửi tin dịch vụ** | Khách không nhắn gần đây và không có đơn đang mở. Đợi khách nhắn cho tiệm trước |
 
 Nếu lỡ gửi tay rồi mới thấy máy từ chối ghi nhận: **báo chủ tiệm ngay**, đừng tìm cách ghi lại.
+
+**Gửi tay một tin đã duyệt** — bốn bước trên cùng một trang, không phải gõ mã nào:
+
+1. **Đọc tin sẽ gửi** — chọn bản nháp đã duyệt (hoặc bấm *Xin duyệt gửi tay* ở *Bản nháp AI*).
+2. **Xin duyệt** — một người khác (không phải bạn) duyệt ở màn *Duyệt*.
+3. **Khoá phong bì** — chỉ khoá khi chính bạn sẽ gửi tin đó.
+4. **Ghi nhận đã gửi** — gửi xong bấm *Vừa gửi xong*, rồi chứng thực. Ghi nhận **không có nghĩa là
+   khách đã nhận**.
+
+*Nhập mã thủ công* chỉ dùng khi phiếu được tạo ở máy khác.
 
 ---
 

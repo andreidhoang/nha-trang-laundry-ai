@@ -20,9 +20,10 @@ from threading import Lock
 from typing import Annotated, Any, Literal, Protocol, Self
 from uuid import UUID
 
-from jsonschema import Draft202012Validator, FormatChecker
+from jsonschema import Draft202012Validator
 from nha_trang_laundry_contracts import (
     CAPABILITY_OPERATIONS,
+    STRICT_FORMAT_CHECKER,
     AgentToolOperation,
     ReleaseCapability,
 )
@@ -964,7 +965,7 @@ class BoundedResponsesRuntime:
         contract = TOOL_REGISTRY.get(operation)
         provider_validator = Draft202012Validator(
             _provider_strict_schema(contract.model_argument_schema),
-            format_checker=FormatChecker(),
+            format_checker=STRICT_FORMAT_CHECKER,
         )
         if any(provider_validator.iter_errors(raw_arguments)):
             raise AgentToolBridgeRejected("VALIDATION_ERROR: invalid provider tool arguments")

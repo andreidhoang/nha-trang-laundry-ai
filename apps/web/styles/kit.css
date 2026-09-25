@@ -3104,3 +3104,172 @@ a.row-link {
   color: var(--warn-fg);
   font-size: var(--text-sm);
 }
+
+/* --- REPORT-DASHBOARD-001 -------------------------------------------------------------------- */
+
+/* `#/reports`: KPI tiles, two across on a phone and four at a desk; the money figure spans them. */
+.kpi-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 64rem) {
+  .kpi-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.kpi--hero {
+  padding: var(--space-4);
+}
+
+.kpi__head {
+  align-items: center;
+  display: flex;
+  gap: var(--space-1);
+  justify-content: space-between;
+}
+
+.kpi__label {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+}
+
+.kpi__value {
+  color: var(--text);
+  font-size: var(--text-2xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-heavy);
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.kpi[data-state="muted"] .kpi__value {
+  color: var(--text-muted);
+}
+
+.kpi__fraction {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+
+.kpi__note .hint {
+  margin: 0;
+}
+
+.kpi__kinds {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.report__refresh {
+  align-items: center;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.report__refresh .updated {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.report__custom {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.report__custom[hidden] {
+  display: none;
+}
+
+.report__dates {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.report__dates input {
+  min-width: 0;
+  width: 100%;
+}
+
+.report__partial {
+  margin: 0;
+}
+
+/* A day's order count as a thin bar under its facts: a length to compare, not a number to read. */
+.report-bar {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-pill);
+  display: block;
+  height: 0.3rem;
+  margin-top: var(--space-1);
+  max-width: 12rem;
+  overflow: hidden;
+}
+
+.report-bar__fill {
+  background: var(--brand-400);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+}
+
+.report-day__money {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-bold);
+  white-space: nowrap;
+}
+
+.report-day__money[data-direction="OUT"] {
+  color: var(--warn-fg);
+}
+
+/* The ⓘ keeps its full tap target but hugs the tile's corner, so a two-word label stays on one
+ * line at 390 px. */
+.kpi__head {
+  align-items: flex-start;
+  margin-right: calc(var(--space-3) * -1);
+  margin-top: calc(var(--space-2) * -1);
+}
+
+.kpi__label {
+  padding-top: var(--space-3);
+}
+
+/* Five windows on one line at 390 px: the options share the row instead of scrolling it. */
+.report .segmented__option {
+  flex: 1 1 auto;
+  padding-inline: var(--space-2);
+}
+
+@media (max-width: 29.99rem) {
+  .report .segmented {
+    gap: 0;
+  }
+
+  .report .segmented__option {
+    font-size: 0.8125rem;
+    padding-inline: var(--space-1);
+  }
+}

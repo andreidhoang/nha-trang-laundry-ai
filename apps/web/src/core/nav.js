@@ -114,6 +114,14 @@ export const NAV_ITEMS = [
     hint: "Gửi chưa rõ kết quả, gửi tay",
   },
   {
+    path: "/reports",
+    label: NAV.reports,
+    capability: "REPORTS_READ",
+    icon: "chart",
+    group: "Quản trị",
+    hint: "Đơn, đúng hẹn, giặt lại, tiền theo ngày",
+  },
+  {
     path: "/staff",
     label: NAV.staff,
     capability: "STAFF_ADMIN",

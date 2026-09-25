@@ -672,7 +672,17 @@ export function render_() {
       ),
     }),
     quick,
-    section({ title: "Tiền hôm nay", info: takingsInfo(), children: takingsHost }),
+    section({
+      title: "Tiền hôm nay",
+      info: takingsInfo(),
+      // REPORT-DASHBOARD-001: the owner's way from today's figure to the period report. Offered
+      // only to the roles that may open it; the counter still sees the entry, disabled with its
+      // reason, under "Thêm".
+      action: can(state.principal, "REPORTS_READ").allowed
+        ? h("a", { class: "group__link", href: "#/reports", dataReportLink: "true" }, "Báo cáo")
+        : null,
+      children: takingsHost,
+    }),
     section({ title: "Cần làm", card: false, children: queueHost }),
     section({
       title: "Đơn hôm nay",

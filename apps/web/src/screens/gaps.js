@@ -182,10 +182,13 @@ const GROUPS = [
   },
   {
     heading: "Đo lường và báo cáo",
+    // REPORT-DASHBOARD-001 built the versioned report read model this lede said did not exist, so
+    // the lede now says what is still missing: the figures that need a measurement nobody has
+    // taken yet, or a decision nobody has made.
     lede:
-      "Mọi chỉ số vận hành đều cần một read model có phiên bản đứng sau. Chưa có cái nào, nên bảng " +
-      "vận hành không hiển thị KPI — đếm tạm vài con số rồi gọi là KPI là cách nhanh nhất để một " +
-      "quyết định kinh doanh dựa trên số bịa.",
+      "Màn Báo cáo có số của chủ: đơn, đúng hẹn theo mốc nội bộ, giặt lại, khiếu nại, tiền đã thu " +
+      "và bồi hoàn — mỗi số kèm tử số, mẫu số, khoảng ngày và phiên bản truy vấn. Các mục dưới đây " +
+      "vẫn thiếu vì cần số đo thật hoặc một quyết định chưa ai đưa ra.",
     entries: [
       // "Xem lại nguồn khách đã ghi trên một đơn" (ACQUISITION-ATTRIBUTION-001) was here until
       // READ-PATHS-001 put `acquisition_source` on the order read model, and is deleted rather than
@@ -207,19 +210,23 @@ const GROUPS = [
         missing: "Không có kho dữ liệu nào ghi nhận chi phí của một chuyến giao.",
         blockedBy: "SHOP-INSTRUMENT-001",
       },
+      // "Bảng điều hành hằng ngày" (M3 · MÀN 14, FR-RPT-001/-005) was here until
+      // REPORT-DASHBOARD-001 built `report-v1` and the #/reports screen: the funnel, the on-time
+      // rate against the board's stated rule, rewash, complaints, money collected and remedies,
+      // each as numerator / denominator / window / data quality / query version. What that entry
+      // still covered and the report cannot show is margin, so the entry is narrowed to it rather
+      // than deleted: the owner's dashboard exists, its margin tile does not.
       {
-        ref: "M3 · MÀN 14 · FR-RPT-001..006",
-        title: "Bảng điều hành hằng ngày",
-        what:
-          "Một bảng số hằng ngày cho chủ: phễu đơn, tỉ lệ đúng hẹn, tỉ lệ giặt lại, doanh thu.",
+        ref: "M3 · MÀN 14 · FR-RPT-002",
+        title: "Biên lợi nhuận",
+        what: "Biên lợi nhuận theo đơn và theo kỳ, kèm cờ cho biết số liệu đã đủ hay chưa.",
         missing:
-          "Không có read model nào tính funnel, on-time, rewash hay doanh thu. FR-RPT-005 buộc mọi " +
-          "KPI phải có tử số, mẫu số, khung thời gian và trạng thái chất lượng dữ liệu — và không " +
-          "có gì cung cấp bốn thứ đó.",
-        blockedBy: "Chưa có read model báo cáo có phiên bản làm nguồn cho FR-RPT-005",
+          "Không có chi phí nào được ghi: phút máy, hoá chất, công người làm, chi phí giao hàng. " +
+          "Màn Báo cáo vì vậy để trống ô biên lợi nhuận và nói lý do.",
+        blockedBy: "SHOP-INSTRUMENT-001 (4–6 tuần đo thật)",
         today:
-          "Màn hình Hôm nay chỉ có số bản ghi đang chờ. Đó là số đếm, không phải KPI, và không " +
-          "được đọc như KPI.",
+          "Xem Tiền đã thu ở màn Báo cáo. Đó là tiền vào két trừ tiền hoàn lại, không phải lợi " +
+          "nhuận.",
       },
       {
         // OPS-BOARD-001 built the narrow half of this, so the sentence changed with it. What
@@ -253,9 +260,12 @@ const GROUPS = [
         what:
           "Mỗi đơn có mốc riêng theo loại dịch vụ và theo điều đã hẹn với khách, thay vì một mốc " +
           "chung cho tất cả.",
+        // REPORT-DASHBOARD-001: the report's on-time tile measures against the same one rule, and
+        // says so on the tile (`RULE_ASSUMED`), so the sentence names both surfaces.
         missing:
-          "Chưa có nguồn cấu hình nào gán ProductionSlaPolicy cho từng đơn. Bảng trễ hạn vì vậy " +
-          "đang áp đúng một quy tắc đã nêu cho mọi đơn, và nói rõ điều đó ngay trên màn hình.",
+          "Chưa có nguồn cấu hình nào gán ProductionSlaPolicy cho từng đơn. Bảng trễ hạn và ô Đúng " +
+          "hẹn của màn Báo cáo vì vậy đang áp đúng một quy tắc đã nêu cho mọi đơn, và nói rõ điều " +
+          "đó ngay trên màn hình.",
         blockedBy: "Chọn chính sách SLA cho từng đơn (chưa có nguồn cấu hình)",
         today:
           "Xem danh sách đơn đang sản xuất ở màn hình Bảng trễ hạn. Mốc ở đó là mốc rủi ro nội bộ " +
@@ -265,9 +275,11 @@ const GROUPS = [
   },
   {
     heading: "Kênh và AI",
+    // REPORT-DASHBOARD-001: versioned metrics now exist for an AI to cite, so the lede's second
+    // half moved from "nothing to summarise" to what really blocks it: no model may run.
     lede:
-      "Chưa có kênh nào nối vào hệ thống, nên chưa có tin nhắn nào để hợp nhất và chưa có gì để AI " +
-      "tóm tắt.",
+      "Chưa có kênh nào nối vào hệ thống, nên chưa có tin nhắn nào để hợp nhất. Số liệu có phiên " +
+      "bản đã có ở màn Báo cáo, nhưng chưa có mô hình AI nào được phép chạy để tóm tắt chúng.",
     entries: [
       {
         ref: "FR-RPT-006",
@@ -281,8 +293,12 @@ const GROUPS = [
         ref: "FR-RPT-007",
         title: "Tóm tắt vận hành bằng AI",
         what: "Một đoạn tóm tắt tình hình trong ngày, viết bằng AI, cho chủ đọc buổi tối.",
-        missing: "Chưa có metric có phiên bản nào để AI trích dẫn.",
-        blockedBy: "Phụ thuộc read model báo cáo có phiên bản (mục Bảng điều hành hằng ngày)",
+        // REPORT-DASHBOARD-001 built the versioned metrics this used to wait for; what blocks it
+        // now is that no model is authorised to run at all.
+        missing:
+          "Chưa có mô hình AI nào được phép chạy: cả 13 năng lực AI đang ở trạng thái " +
+          "NOT_AUTHORIZED. Số liệu để trích dẫn thì đã có, ở màn Báo cáo.",
+        blockedBy: "DEC-006 (chưa có mô hình được uỷ quyền)",
         note:
           "Theo đặc tả, AI chỉ được trích dẫn read model có phiên bản. Nó không được tự tính chỉ " +
           "số, không được sinh SQL, không được chọn định danh và không được thay đổi trạng thái.",

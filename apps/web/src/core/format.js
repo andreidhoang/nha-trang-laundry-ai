@@ -449,3 +449,107 @@ export function ago(value, now = new Date()) {
   if (days < 31) return `${days} ngày trước`;
   return dateOnly(value);
 }
+
+// --- REPORT-DASHBOARD-001 ------------------------------------------------------------------------
+
+const PERCENT = new Intl.NumberFormat("vi-VN", { style: "percent", maximumFractionDigits: 0 });
+
+/**
+ * A fraction the server published, formatted as a percentage — the only rate the console shows.
+ *
+ * `FR-RPT-005`: a KPI travels as its numerator and its denominator, and the report computes no
+ * rate on either side of the wire. This is where two integers become "67 %" for reading, and the
+ * screen always prints the fraction beside it so the reader can see both numbers. The rules:
+ *
+ *   - No denominator, or a zero one, is `—`: "no order reached quality check" is not "0 % rewashed".
+ *   - A non-integer on either side is `—`: it is a contract violation, not something to round.
+ *   - Rounding never flips a fact. A non-zero numerator never reads "0 %" (it is "< 1 %"), and a
+ *     numerator short of its denominator never reads "100 %" (it is "> 99 %").
+ *   - A numerator larger than its denominator is shown as it is (a day with more complaints than
+ *     completed orders is "200 %"), because clamping it would hide the day that most needs reading.
+ *
+ * @param {unknown} numerator
+ * @param {unknown} denominator
+ * @returns {string}
+ */
+export function percent(numerator, denominator) {
+  if (!Number.isInteger(numerator) || !Number.isInteger(denominator)) return UNKNOWN;
+  const top = /** @type {number} */ (numerator);
+  const bottom = /** @type {number} */ (denominator);
+  if (top < 0 || bottom <= 0) return UNKNOWN;
+  const whole = Math.round((top * 100) / bottom);
+  if (top > 0 && whole === 0) return `< ${PERCENT.format(0.01)}`;
+  if (top < bottom && whole === 100) return `> ${PERCENT.format(0.99)}`;
+  return PERCENT.format(top / bottom);
+}
+
+/**
+ * The share of the widest bar a count takes, as a CSS width. Formatting only: a bar list's lengths,
+ * drawn from counts of orders, never from money.
+ *
+ * @param {unknown} count
+ * @param {unknown} widest
+ * @returns {string}
+ */
+export function barWidth(count, widest) {
+  if (!Number.isInteger(count) || !Number.isInteger(widest)) return "0%";
+  const part = /** @type {number} */ (count);
+  const whole = /** @type {number} */ (widest);
+  if (whole <= 0 || part <= 0) return "0%";
+  return `${Math.min(100, Math.max(2, Math.round((part * 100) / whole)))}%`;
+}
+
+const BUSINESS_DAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: TIMEZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/**
+ * The shop's calendar day at an instant, as `YYYY-MM-DD`, in `Asia/Ho_Chi_Minh` whatever the
+ * device's own time zone. The report's windows are shop-local days; a phone set to another zone
+ * must still ask for the shop's today.
+ *
+ * @param {Date} [now]
+ * @returns {string}
+ */
+export function businessDate(now = new Date()) {
+  return BUSINESS_DAY.format(now);
+}
+
+/**
+ * A calendar day moved by whole days. Calendar arithmetic on a date with no time and no zone, so
+ * it is done in UTC where no day is ever 23 or 25 hours long.
+ *
+ * @param {string} day `YYYY-MM-DD`
+ * @param {number} days
+ * @returns {string}
+ */
+export function addDays(day, days) {
+  const [year, month, date] = String(day).split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, date + days)).toISOString().slice(0, 10);
+}
+
+const CALENDAR_DAY = new Intl.DateTimeFormat("vi-VN", {
+  timeZone: "UTC",
+  weekday: "short",
+  day: "2-digit",
+  month: "2-digit",
+});
+
+/**
+ * A calendar day the server named (`YYYY-MM-DD`) for a list row: "T2, 22/09". Read in UTC because
+ * the value is a date, not an instant — shifting it by the device's offset would move it a day.
+ *
+ * @param {string|null|undefined} day
+ * @param {{weekday?: boolean}} [options]
+ * @returns {string}
+ */
+export function calendarDay(day, options = {}) {
+  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(String(day))) return UNKNOWN;
+  const [year, month, date] = String(day).split("-");
+  // `vi-VN` without a weekday prints "22-09"; the counter writes a day as "22/09".
+  if (options.weekday === false) return `${date}/${month}`;
+  return CALENDAR_DAY.format(new Date(Date.UTC(Number(year), Number(month) - 1, Number(date))));
+}

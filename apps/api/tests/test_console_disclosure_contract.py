@@ -211,7 +211,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 14 since CONSENT-TRANSACTIONAL-001: `SERVICE_MESSAGING_RELEASE` (`DEC-033`) binds to
     # `require_approval_staff`, the release route's own gate. 13 + 1 = 14.
     assert counts.get("SERVER_GATE") == 14
-    assert counts.get("REPOSITORY_ROLES") == 6
+    # 7 since REPORT-DASHBOARD-001: `REPORTS_READ` binds to `REPORT_READ_ROLES`, re-checked inside
+    # `ReportRepository.store_report` behind the route's own `require_report_reader`.
+    assert counts.get("REPOSITORY_ROLES") == 7
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
     # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
@@ -855,7 +857,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # fill from the server, MANUAL-SEND-RESUME) and NOT_SUPPORTED's "Mã lý do bên dưới" (the notes
     # are visible, the codes are in the drawer). None removed.
     # 457 after merging the concurrent slices above (lead, at integration).
-    assert sum(counts.values()) == _registry()["total"] == 457
+    # 459 after REPORT-DASHBOARD-001 (round 6 slice D): -8 +10. Retired with the facts they stated:
+    #   the "Bảng điều hành hằng ngày" missing/blockedBy/today, the measurement lede that said no
+    #   KPI exists, the AI-summary missing/blockedBy that waited on versioned metrics, the channels
+    #   lede's "chưa có gì để AI tóm tắt", and the per-order SLA missing (now names both surfaces).
+    #   Added: their true replacements (margin entry missing/today, both ledes, AI summary on
+    #   DEC-006, per-order SLA), the REPORTS_READ `why`, and two reports.js lines.
+    assert sum(counts.values()) == _registry()["total"] == 459
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -864,11 +872,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 19 after OPS-BOARD-001: 16 + 3, one per new capability.
     # 20 after API-INTEGRITY-002: + `UNKNOWN_SENDS_READ`.
     # 21 after CONSENT-TRANSACTIONAL-001: + `SERVICE_MESSAGING_RELEASE`, on its route's gate.
+    # 22 after REPORT-DASHBOARD-001: + `REPORTS_READ`.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 21
+        == 22
     )
 
 

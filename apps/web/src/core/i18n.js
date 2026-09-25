@@ -667,6 +667,9 @@ export const ENUM_GLOSS = {
   ORDER_LOOKUP: "tra cứu đơn",
   REVENUE_UNAVAILABLE: "doanh thu chưa kết nối",
   UNSUPPORTED: "chưa trả lời được",
+  // REPORT-DASHBOARD-001: a KPI's `data_quality` (`FR-RPT-005`)
+  COMPLETE: "đủ dữ liệu",
+  RULE_ASSUMED: "theo một quy tắc tạm",
   // Incident status — `customer_incidents.status CHECK (status IN ('OPEN','UNDER_REVIEW','CLOSED'))`
   OPEN: "đang mở",
   UNDER_REVIEW: "đang xem xét",
@@ -835,4 +838,5 @@ export const NAV = {
   system: "Hệ thống",
   staff: "Nhân sự",
   unsupported: "Việc chưa hỗ trợ",
+  reports: "Báo cáo",
 };

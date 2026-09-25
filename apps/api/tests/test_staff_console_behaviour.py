@@ -1485,3 +1485,78 @@ def test_an_approval_whose_resource_moved_on_gets_its_own_title() -> None:
     assert "đã thay đổi sau khi phiếu được tạo" in got["message"]
     assert "phiếu mới" in got["message"]
     assert got["message"] != got["stale"]
+
+
+# --- REPORT-DASHBOARD-001 -------------------------------------------------------------------------
+
+
+def test_percent_formats_the_servers_fraction_without_flipping_a_fact() -> None:
+    """The only rate the console shows is two server integers formatted, never a computed figure.
+
+    No denominator (or zero) is unknown rather than 0 %; rounding never turns a real rewash into
+    "0 %" or a missed one into "100 %"; a numerator above its denominator is shown as it is.
+    """
+    cases = [[2, 3], [0, 4], [1, 1000], [999, 1000], [4, 4], [2, 1], [3, 0], [1, None], [1.5, 3]]
+    got = _run(
+        "import { percent } from './src/core/format.js';\n"
+        f"const cases = {json.dumps(cases)};\n"
+        "console.log(JSON.stringify(cases.map(([n, d]) => percent(n, d))));\n"
+    )
+    assert got == ["67%", "0%", "< 1%", "> 99%", "100%", "200%", "—", "—", "—"]
+
+
+def test_the_shops_day_is_asia_ho_chi_minh_whatever_the_device_and_windows_end_on_it() -> None:
+    """17:00 UTC is local midnight: the report asks for the shop's day, not the phone's."""
+    got = _run(
+        "import { businessDate, addDays, calendarDay } from './src/core/format.js';\n"
+        "import { presetWindow, windowProblem, MAX_DAYS } from './src/core/reportWindow.js';\n"
+        "const today = '2026-09-25';\n"
+        "console.log(JSON.stringify({\n"
+        "  before: businessDate(new Date('2026-09-24T16:59:59.999Z')),\n"
+        "  midnight: businessDate(new Date('2026-09-24T17:00:00Z')),\n"
+        "  leap: addDays('2028-03-01', -1),\n"
+        "  day: calendarDay('2026-09-22', {weekday: false}),\n"
+        "  presets: ['today', '7d', '30d', 'month', 'custom'].map((p) => presetWindow(p, today)),\n"
+        "  widest: windowProblem(addDays(today, -(MAX_DAYS - 1)), today, today),\n"
+        "  tooLong: windowProblem(addDays(today, -MAX_DAYS), today, today) !== '',\n"
+        "  reversed: windowProblem(today, addDays(today, -1), today) !== '',\n"
+        "  future: windowProblem(today, addDays(today, 1), today) !== '',\n"
+        "  blank: windowProblem('', today, today) !== '',\n"
+        "}));\n"
+    )
+    assert got == {
+        "before": "2026-09-24",
+        "midnight": "2026-09-25",
+        "leap": "2028-02-29",
+        "day": "22/09",
+        "presets": [
+            {"from": "2026-09-25", "to": "2026-09-25"},
+            {"from": "2026-09-19", "to": "2026-09-25"},
+            {"from": "2026-08-27", "to": "2026-09-25"},
+            {"from": "2026-09-01", "to": "2026-09-25"},
+            None,
+        ],
+        "widest": "",
+        "tooLong": True,
+        "reversed": True,
+        "future": True,
+        "blank": True,
+    }
+
+
+def test_the_reports_screen_computes_no_rate_and_adds_no_money() -> None:
+    """Lexical guard for `REPORT-DASHBOARD-001`: the screen divides nothing and sums nothing.
+
+    Every percentage goes through `format.percent` and every amount through `money()`; the one
+    arithmetic the screen does is the widest day's order count for the bar list, which is a count.
+    """
+    text = (WEB / "src" / "screens" / "reports.js").read_text(encoding="utf-8")
+    code = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith(("*", "//", "/*"))
+    )
+    # The fraction "2 / 3" is text inside a template literal; nothing else may divide. The console
+    # is formatted with spaces around operators, so a division is `a / b`; import paths are not.
+    assert re.findall(r"[\w)\]]\s+/\s+[\w(]", code.replace("} / ${", "")) == []
+    assert "Math.round(" not in code
+    assert ".reduce(" not in code
+    assert "percent(kpi.numerator, kpi.denominator)" in code

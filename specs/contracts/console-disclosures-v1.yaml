@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 428
+  DESCRIPTIVE: 429
   MODEL_SEAM: 2
   POLICY_BOUND: 1
-  REPOSITORY_ROLES: 6
+  REPOSITORY_ROLES: 7
   RESPONSE_SHAPE: 1
   SERVER_GATE: 14
-total: 457
+total: 459
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1541,6 +1541,19 @@ disclosures:
     gate: require_operations_staff
     why: The console declares which roles and MFA state this capability needs. The test probes the named
       server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:48e75966a41d
+  module: core/rbac.js
+  key: why
+  text: Báo cáo theo khoảng ngày dành cho chủ tiệm, người duyệt, kế toán và kiểm toán đã xác thực hai
+    bước. Nhân viên quầy xem tiền và đơn của hôm nay ở màn Hôm nay.
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: REPORTS_READ
+    module: nha_trang_laundry_db.reports
+    symbol: REPORT_READ_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
 - slot_id: core/rbac.js#why:869bdf71cf72
   module: core/rbac.js
   key: why
@@ -2215,12 +2228,12 @@ disclosures:
     - custody_events
     - batches
     why: 'Same shape: the custody context is measured empty and the disclosure says so.'
-- slot_id: screens/gaps.js#lede:8defef7ab744
+- slot_id: screens/gaps.js#lede:021d5a31f8ca
   module: screens/gaps.js
   key: lede
-  text: Mọi chỉ số vận hành đều cần một read model có phiên bản đứng sau. Chưa có cái nào, nên bảng vận
-    hành không hiển thị KPI — đếm tạm vài con số rồi gọi là KPI là cách nhanh nhất để một quyết định kinh
-    doanh dựa trên số bịa.
+  text: 'Màn Báo cáo có số của chủ: đơn, đúng hẹn theo mốc nội bộ, giặt lại, khiếu nại, tiền đã thu và
+    bồi hoàn — mỗi số kèm tử số, mẫu số, khoảng ngày và phiên bản truy vấn. Các mục dưới đây vẫn thiếu
+    vì cần số đo thật hoặc một quyết định chưa ai đưa ra.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2249,29 +2262,19 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:5a963448822b
+- slot_id: screens/gaps.js#missing:9d0e56978395
   module: screens/gaps.js
   key: missing
-  text: Không có read model nào tính funnel, on-time, rewash hay doanh thu. FR-RPT-005 buộc mọi KPI phải
-    có tử số, mẫu số, khung thời gian và trạng thái chất lượng dữ liệu — và không có gì cung cấp bốn thứ
-    đó.
+  text: 'Không có chi phí nào được ghi: phút máy, hoá chất, công người làm, chi phí giao hàng. Màn Báo
+    cáo vì vậy để trống ô biên lợi nhuận và nói lý do.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:daabe86cef56
-  module: screens/gaps.js
-  key: blockedBy
-  text: Chưa có read model báo cáo có phiên bản làm nguồn cho FR-RPT-005
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:37f4e66fb029
+- slot_id: screens/gaps.js#today:36362e6b6e8c
   module: screens/gaps.js
   key: today
-  text: Màn hình Hôm nay chỉ có số bản ghi đang chờ. Đó là số đếm, không phải KPI, và không được đọc như
-    KPI.
+  text: Xem Tiền đã thu ở màn Báo cáo. Đó là tiền vào két trừ tiền hoàn lại, không phải lợi nhuận.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2303,11 +2306,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:61908cafa01a
+- slot_id: screens/gaps.js#missing:4787b1e7decc
   module: screens/gaps.js
   key: missing
-  text: Chưa có nguồn cấu hình nào gán ProductionSlaPolicy cho từng đơn. Bảng trễ hạn vì vậy đang áp đúng
-    một quy tắc đã nêu cho mọi đơn, và nói rõ điều đó ngay trên màn hình.
+  text: Chưa có nguồn cấu hình nào gán ProductionSlaPolicy cho từng đơn. Bảng trễ hạn và ô Đúng hẹn của
+    màn Báo cáo vì vậy đang áp đúng một quy tắc đã nêu cho mọi đơn, và nói rõ điều đó ngay trên màn hình.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2329,11 +2332,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#lede:89406ac4c070
+- slot_id: screens/gaps.js#lede:0e8388025fa9
   module: screens/gaps.js
   key: lede
-  text: Chưa có kênh nào nối vào hệ thống, nên chưa có tin nhắn nào để hợp nhất và chưa có gì để AI tóm
-    tắt.
+  text: Chưa có kênh nào nối vào hệ thống, nên chưa có tin nhắn nào để hợp nhất. Số liệu có phiên bản
+    đã có ở màn Báo cáo, nhưng chưa có mô hình AI nào được phép chạy để tóm tắt chúng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2354,18 +2357,19 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:19ed1c651bfb
+- slot_id: screens/gaps.js#missing:5c6806b4f206
   module: screens/gaps.js
   key: missing
-  text: Chưa có metric có phiên bản nào để AI trích dẫn.
+  text: 'Chưa có mô hình AI nào được phép chạy: cả 13 năng lực AI đang ở trạng thái NOT_AUTHORIZED. Số
+    liệu để trích dẫn thì đã có, ở màn Báo cáo.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:7a495c1763e0
+- slot_id: screens/gaps.js#blockedBy:f79369e02850
   module: screens/gaps.js
   key: blockedBy
-  text: Phụ thuộc read model báo cáo có phiên bản (mục Bảng điều hành hằng ngày)
+  text: DEC-006 (chưa có mô hình được uỷ quyền)
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3476,6 +3480,24 @@ disclosures:
   key: hint
   text: 'Bồi hoàn làm ngay trên trang của từng khiếu nại: mở khiếu nại, chọn loại, gửi đề nghị, rồi thực
     hiện trên dòng của nó. Danh sách này chỉ gom các khiếu nại đang mở đã có đề nghị.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/reports.js#why:8549fc3573a3
+  module: screens/reports.js
+  key: why
+  text: 'Biên lợi nhuận cần chi phí thật của từng đơn: phút máy, hoá chất, công người làm và chi phí giao
+    hàng. Hệ thống chưa ghi những thứ đó (SHOP-INSTRUMENT-001). Lấy tiền đã thu trừ đi một con số đoán
+    rồi gọi phần còn lại là lợi nhuận là điều FR-RPT-002 cấm, nên ô này để trống có lý do.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/reports.js#hint:d3a39590b66a
+  module: screens/reports.js
+  key: hint
+  text: 'Hôm nay chưa hết ngày: số của hôm nay tính đến lúc đọc.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

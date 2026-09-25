@@ -170,6 +170,10 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/stores/{}/day-summary",
         "/internal/v1/stores/{}/exports",
         "/internal/v1/stores/{}/exports/{}/execution",
+        # REPORT-DASHBOARD-001. The owner's numbers: the window's figures and one row per day. A
+        # screen that stops calling either leaves FR-RPT-001 back on the gaps register.
+        "/internal/v1/stores/{}/reports/summary",
+        "/internal/v1/stores/{}/reports/daily",
         # CONSENT-TRANSACTIONAL-001 (DEC-033). The manual-send panel reads a contact's service-
         # messaging state and releases a STOP through these. Without the read, a refusal names a
         # customer the console can say nothing more about; without the release, a STOP can only be

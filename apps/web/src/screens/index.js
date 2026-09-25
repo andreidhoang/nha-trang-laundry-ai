@@ -26,6 +26,7 @@ import { screen as orderRequests } from "./orderRequests.js";
 import { screen as orders } from "./orders.js";
 import { screen as quotes } from "./quotes.js";
 import { screen as remedies } from "./remedies.js";
+import { screen as reports } from "./reports.js";
 import { screen as shadow } from "./shadow.js";
 import { screen as slaBoard } from "./slaBoard.js";
 import { screen as staff } from "./staff.js";
@@ -49,6 +50,7 @@ export const ROUTES = [
   incidentDetail,
   remedies,
   exports_,
+  reports,
   system,
   staff,
   gaps,

@@ -105,6 +105,11 @@ CAPABILITY_REPOSITORY_ROLES: dict[str, tuple[str, str]] = {
     # checked again inside the repository. Bound to the repository set because that is the check a
     # route rewrite cannot drop, and because equality is stronger than the subset a gate allows.
     "EXPORT_DATA": ("nha_trang_laundry_db.exports", "EXPORT_ROLES"),
+    # REPORT-DASHBOARD-001. The report routes gate on `require_report_reader`, and
+    # `ReportRepository.store_report` re-checks `REPORT_READ_ROLES` with MFA and membership. Bound
+    # to the repository set for the reason EXPORT_DATA is: equality, where a route rewrite cannot
+    # drop it.
+    "REPORTS_READ": ("nha_trang_laundry_db.reports", "REPORT_READ_ROLES"),
 }
 
 #: Authored bindings, keyed by slot id. A slot absent from this table is registered `DESCRIPTIVE`.

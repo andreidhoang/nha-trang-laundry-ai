@@ -103,6 +103,10 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 1. Mở **Hôm nay**, đối chiếu **Đã thu tại quầy** với tiền mặt trong ngăn kéo.
 2. Lệch thì **không sửa gì trên máy** — ghi ra sổ và báo chủ tiệm. Bản ghi tất toán không sửa được.
 3. Để máy **bật qua đêm** (chỉ tắt màn hình). Bản sao lưu chạy lúc 2 giờ 30 sáng.
+4. Chủ tiệm (và người duyệt, kế toán, kiểm toán) xem số của ngày, tuần, tháng ở **Báo cáo** — bấm
+   **Báo cáo** cạnh ô tiền trên **Hôm nay**, hoặc vào **Thêm → Báo cáo**. Mỗi ô ghi cả hai số
+   (ví dụ **3 / 5 đơn tạo**); **Đúng hẹn (nội bộ)** đo theo mốc nội bộ 8 giờ của Bảng trễ hạn, không
+   phải giờ hẹn với khách. Nhân viên quầy thấy mục này bị khoá, có ghi lý do.
 
 ---
 

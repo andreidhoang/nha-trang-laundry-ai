@@ -605,10 +605,14 @@ def test_on_time_is_the_boards_rule_at_exactly_the_mark_and_one_microsecond_past
 
 
 def test_the_report_version_is_pinned_and_moves_with_the_boards_rule() -> None:
-    """Invariant 18. Editing either statement, the day boundary, or the board's rule fails this."""
+    """Invariant 18. Editing any statement, the day boundary, or the board's rule fails this.
+
+    `report-v2` (`SHOP-CAPTURE-001`): the capture, trip and month statements, the spending
+    vocabulary, the categories margin requires and the rounding rules joined the hash.
+    """
     version = report_query_version(STANDARD_WASH_SLA)
-    assert version.identifier == "report-v1"
-    assert version.digest == "2e30b2c5fdd366f2"
+    assert version.identifier == "report-v2"
+    assert version.digest == "516375541f75687c"
     stricter = ProductionSlaPolicy(
         policy_id="SLA_STANDARD_CLOTHES",
         policy_type=SlaPolicyType.COMMITMENT,

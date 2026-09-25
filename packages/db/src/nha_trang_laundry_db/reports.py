@@ -43,10 +43,29 @@ names: a window `[from, to]` of calendar days means `[from 00:00 local, (to + 1)
 each fact is filed under `(instant AT TIME ZONE zone)::date`. A settlement at 23:59:59 local is in
 that day; one a microsecond after midnight is in the next.
 
-**Margin is not here** (`FR-RPT-002`). No cost is captured anywhere in the schema -- machine
-minutes, chemicals, labour and delivery cost all wait on `SHOP-INSTRUMENT-001` -- and a margin
-computed without them would be the remaining 70 % of a price called profit, which `FR-RPT-002`
-forbids by name. The report says so rather than leaving the tile out silently.
+**What the shop measured** (`SHOP-CAPTURE-001`, `DEC-038`, query `report-v2`):
+
+* Wash cycles started in the window, and how many of them named a machine -- the capture rate is
+  the two integers, never a percentage published here. Skipping the machine is allowed, so "not
+  captured" is a counted state rather than a gap.
+* Per machine: the closed cycles started in the window on it, and their average length in whole
+  minutes, rounded half up by PostgreSQL (`round()` on `numeric`). A cycle still open has no end
+  and is not averaged.
+* Delivery cost per delivered order: the orders whose laundry reached the customer (a succeeded
+  `RETURN` leg) in the window; of those, the ones with a cost on **every** leg they had (pickup,
+  failed attempts and the return); the cost of those legs summed by PostgreSQL; and the per-order
+  figure divided by the domain (`per_order_vnd`, half up to the đồng). An order with an uncosted
+  leg is counted as delivered and left out of the average rather than averaged as if a leg cost 0.
+* **Months**: every calendar month the window touches, whole (the report's window picks the
+  months; the spending and the takings are the month's own): Sổ thu chi by category, and the
+  month's net takings, all summed by PostgreSQL. **Margin** is `month_margin`'s: only when the
+  month's spending has electricity, water, chemicals, wages and rent (`DEC-038`), and otherwise
+  `INCOMPLETE` with the missing list and no amount at all (`FR-RPT-002`: the remaining 70 % is never
+  called profit). Trip costs recorded on legs are **not** subtracted: fuel is also bought by the
+  tank and written in Sổ thu chi under Xăng xe, and subtracting both would count it twice. What the
+  shop paid a hired vehicle belongs in Sổ thu chi too; the console says so where the figure is.
+* Labour minutes per order are not captured, by decision (`DEC-038`): wages enter through Sổ thu
+  chi.
 """
 
 from __future__ import annotations
@@ -60,12 +79,22 @@ from zoneinfo import ZoneInfo
 
 from nha_trang_laundry_domain.catalog import SlaOutcome
 from nha_trang_laundry_domain.orders import PRODUCTION_SEQUENCE
+from nha_trang_laundry_domain.shop_capture import (
+    CORE_MARGIN_CATEGORIES,
+    ExpenseCategory,
+    MonthMargin,
+    month_bounds,
+    month_margin,
+    months_touching,
+    per_order_vnd,
+)
 from nha_trang_laundry_domain.sla import ProductionSlaPolicy, evaluate_production_sla
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.query_version import QueryVersion, query_version
 from nha_trang_laundry_db.settlement import BUSINESS_TIMEZONE
 from nha_trang_laundry_db.shadow_console import sla_board_query_version
+from nha_trang_laundry_db.shop_capture import CategoryTotal, expense_totals
 from nha_trang_laundry_db.store_access import require_store_membership
 
 #: `COUNTER_COMPLETENESS_SPEC_V1.md` §3.5. The four roles that read the owner's numbers. `OPERATOR`
@@ -79,7 +108,7 @@ REPORT_READ_ROLES: Final = frozenset(
 REPORT_MAX_DAYS: Final = 92
 
 #: The published identifier. `report-v1:<digest>` travels with every figure (invariant 18).
-REPORT_QUERY_IDENTIFIER: Final = "report-v1"
+REPORT_QUERY_IDENTIFIER: Final = "report-v2"
 
 #: The production sequence the rewash rule compares positions in, as the SQL receives it.
 _SEQUENCE: Final = tuple(status.value for status in PRODUCTION_SEQUENCE)
@@ -248,6 +277,76 @@ _ON_TIME_SQL = """
 """
 
 
+#: `SHOP-CAPTURE-001`. Wash cycles started in the window: all of them, those that named a machine,
+#: and per machine the closed ones with their average length in whole minutes (half up). The first
+#: row is the window's totals; one row per machine follows.
+_CAPTURE_SQL = """
+    WITH bounds AS (
+        SELECT (%(from_date)s::date)::timestamp AT TIME ZONE %(zone)s AS lower_at,
+               (%(to_date)s::date + 1)::timestamp AT TIME ZONE %(zone)s AS upper_at
+    ), cycles AS (
+        SELECT c.machine_id, c.started_at, c.ended_at
+        FROM wash_cycles c CROSS JOIN bounds b
+        WHERE c.store_id = %(store)s AND c.started_at >= b.lower_at AND c.started_at < b.upper_at
+    )
+    SELECT 0 AS position, NULL::uuid, NULL::text, NULL::text,
+           count(*)::bigint, count(machine_id)::bigint, NULL::integer
+    FROM cycles
+    UNION ALL
+    SELECT 1, m.id, m.code, m.display_name, count(*)::bigint, count(*)::bigint,
+           round(avg(extract(epoch FROM c.ended_at - c.started_at)) / 60)::integer
+    FROM cycles c JOIN machines m ON m.id = c.machine_id
+    WHERE c.ended_at IS NOT NULL
+    GROUP BY m.id, m.code, m.display_name
+    ORDER BY 1, 3
+"""
+
+#: `SHOP-CAPTURE-001`. Orders delivered in the window (a succeeded RETURN leg recorded in it), and
+#: every leg each of them ever had, with its cost where one was recorded.
+_TRIP_SQL = """
+    WITH bounds AS (
+        SELECT (%(from_date)s::date)::timestamp AT TIME ZONE %(zone)s AS lower_at,
+               (%(to_date)s::date + 1)::timestamp AT TIME ZONE %(zone)s AS upper_at
+    ), delivered AS (
+        SELECT DISTINCT d.order_id
+        FROM delivery_legs d CROSS JOIN bounds b
+        WHERE d.store_id = %(store)s AND d.leg_kind = 'RETURN' AND d.outcome = 'SUCCEEDED'
+          AND d.recorded_at >= b.lower_at AND d.recorded_at < b.upper_at
+    ), per_order AS (
+        SELECT l.order_id, count(*) AS legs, count(k.cost_vnd) AS costed_legs,
+               coalesce(sum(k.cost_vnd), 0) AS cost_vnd
+        FROM delivered x
+        JOIN delivery_legs l ON l.order_id = x.order_id
+        LEFT JOIN delivery_leg_costs k ON k.leg_id = l.id
+        GROUP BY l.order_id
+    )
+    SELECT count(*)::bigint,
+           count(*) FILTER (WHERE costed_legs = legs)::bigint,
+           coalesce(sum(legs), 0)::bigint,
+           coalesce(sum(costed_legs), 0)::bigint,
+           coalesce(sum(cost_vnd) FILTER (WHERE costed_legs = legs), 0)::bigint
+    FROM per_order
+"""
+
+#: `SHOP-CAPTURE-001`. One calendar month's takings: the two ledgers of `MONEY_COLLECTED` and
+#: `MONEY_REFUNDED`, over the month's own days.
+_MONTH_MONEY_SQL = """
+    WITH bounds AS (
+        SELECT (%(from_date)s::date)::timestamp AT TIME ZONE %(zone)s AS lower_at,
+               (%(to_date)s::date + 1)::timestamp AT TIME ZONE %(zone)s AS upper_at
+    )
+    SELECT
+        (SELECT coalesce(sum(s.paid_amount_vnd), 0)::bigint
+         FROM order_settlements s CROSS JOIN bounds b
+         WHERE s.store_id = %(store)s AND s.attested_at >= b.lower_at
+           AND s.attested_at < b.upper_at),
+        (SELECT coalesce(sum(r.refunded_amount_vnd), 0)::bigint
+         FROM order_refunds r CROSS JOIN bounds b
+         WHERE r.store_id = %(store)s AND r.direction = 'TO_CUSTOMER'
+           AND r.refunded_at >= b.lower_at AND r.refunded_at < b.upper_at)
+"""
+
+
 def report_query_version(policy: ProductionSlaPolicy) -> QueryVersion:
     """The version that travels with every report figure.
 
@@ -266,6 +365,14 @@ def report_query_version(policy: ProductionSlaPolicy) -> QueryVersion:
         "|".join(REMEDY_KINDS),
         str(REPORT_MAX_DAYS),
         sla_board_query_version(policy).label,
+        # SHOP-CAPTURE-001: the capture statements, the month's money, the spending vocabulary,
+        # the categories margin requires and the two rounding rules.
+        _CAPTURE_SQL,
+        _TRIP_SQL,
+        _MONTH_MONEY_SQL,
+        "|".join(category.value for category in ExpenseCategory),
+        "|".join(category.value for category in CORE_MARGIN_CATEGORIES),
+        "per_order_vnd:half-up;cycle_minutes:round-numeric",
     )
 
 
@@ -329,6 +436,51 @@ class ReportPeriod:
 
 
 @dataclass(frozen=True, slots=True)
+class MachineCycles:
+    """One machine's closed cycles started in the window, and their average length."""
+
+    machine_id: UUID
+    code: str
+    display_name: str
+    closed_cycles: int
+    average_minutes: int
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureFigures:
+    """`SHOP-CAPTURE-001`: what the shop measured over the window. Integers and their provenance."""
+
+    cycles: int
+    cycles_captured: int
+    machines: tuple[MachineCycles, ...]
+    delivered_orders: int
+    #: Delivered orders with a cost on every leg: the population the per-order figure is over.
+    costed_orders: int
+    legs: int
+    costed_legs: int
+    trip_cost_vnd: int
+    #: `per_order_vnd(trip_cost_vnd, costed_orders)`; `None` when no delivered order is costed.
+    cost_per_delivered_order_vnd: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class MonthFigures:
+    """One calendar month the window touches: Sổ thu chi by category, takings, and margin."""
+
+    month: str
+    from_date: date
+    to_date: date
+    #: The month is not over on the report's day: its figures are "so far".
+    in_progress: bool
+    spending: tuple[CategoryTotal, ...]
+    spending_vnd: int
+    spending_entries: int
+    collected_vnd: int
+    refunded_vnd: int
+    margin: MonthMargin
+
+
+@dataclass(frozen=True, slots=True)
 class StoreReport:
     store_id: UUID
     window: ReportWindow
@@ -340,6 +492,9 @@ class StoreReport:
     policy_target_max_hours: int | None
     #: The instant the report was read at. The figures of a window that ends today are "so far".
     evaluated_at: datetime
+    #: `SHOP-CAPTURE-001`.
+    capture: CaptureFigures
+    months: tuple[MonthFigures, ...]
 
 
 def validate_window(from_date: date, to_date: date, *, today: date) -> ReportWindow:
@@ -449,6 +604,12 @@ class ReportRepository:
                 daily.append(_period(row, day, day, on_time_by_day.get(day, (0, 0))))
         if summary is None:  # pragma: no cover - GROUPING SETS always yields the () row
             raise RuntimeError("the report statement returned no window row")
+        capture = _capture(cursor, parameters)
+        today = shop_today(as_of)
+        months = tuple(
+            _month(cursor, store_id=store_id, first=first, today=today)
+            for first in months_touching(window.from_date, window.to_date)
+        )
         return StoreReport(
             store_id=store_id,
             window=window,
@@ -459,7 +620,73 @@ class ReportRepository:
             policy_type=str(policy.policy_type.value),
             policy_target_max_hours=policy.target_max_hours,
             evaluated_at=as_of,
+            capture=capture,
+            months=months,
         )
+
+
+def _capture(cursor: Any, parameters: dict[str, object]) -> CaptureFigures:
+    """The window's cycles and trips. Copies integers; the one division is the domain's."""
+    cursor.execute(_CAPTURE_SQL, parameters)
+    rows = cursor.fetchall()
+    totals = rows[0]
+    machines = tuple(
+        MachineCycles(
+            machine_id=row[1] if isinstance(row[1], UUID) else UUID(str(row[1])),
+            code=str(row[2]),
+            display_name=str(row[3]),
+            closed_cycles=int(row[4]),
+            average_minutes=int(row[6]),
+        )
+        for row in rows[1:]
+    )
+    cursor.execute(_TRIP_SQL, parameters)
+    trip = cursor.fetchone()
+    delivered, costed, legs, costed_legs, cost = (int(value) for value in trip)
+    return CaptureFigures(
+        cycles=int(totals[4]),
+        cycles_captured=int(totals[5]),
+        machines=machines,
+        delivered_orders=delivered,
+        costed_orders=costed,
+        legs=legs,
+        costed_legs=costed_legs,
+        trip_cost_vnd=cost,
+        cost_per_delivered_order_vnd=per_order_vnd(cost, costed),
+    )
+
+
+def _month(cursor: Any, *, store_id: UUID, first: date, today: date) -> MonthFigures:
+    """One whole calendar month: spending by category and takings summed by PostgreSQL, margin by
+    the domain's completeness rule."""
+    first, last = month_bounds(first.strftime("%Y-%m"))
+    spending, spending_vnd, entries = expense_totals(
+        cursor, store_id=store_id, from_date=first, to_date=last
+    )
+    cursor.execute(
+        _MONTH_MONEY_SQL,
+        {"store": store_id, "zone": BUSINESS_TIMEZONE, "from_date": first, "to_date": last},
+    )
+    money = cursor.fetchone()
+    collected, refunded = int(money[0]), int(money[1])
+    recorded = frozenset(total.category for total in spending if total.entries > 0)
+    return MonthFigures(
+        month=first.strftime("%Y-%m"),
+        from_date=first,
+        to_date=last,
+        in_progress=last >= today,
+        spending=spending,
+        spending_vnd=spending_vnd,
+        spending_entries=entries,
+        collected_vnd=collected,
+        refunded_vnd=refunded,
+        margin=month_margin(
+            recorded_categories=recorded,
+            collected_vnd=collected,
+            refunded_vnd=refunded,
+            spending_vnd=spending_vnd,
+        ),
+    )
 
 
 def _period(row: Any, from_date: date, to_date: date, on_time: tuple[int, int]) -> ReportPeriod:
@@ -565,7 +792,10 @@ __all__ = [
     "REPORT_MAX_DAYS",
     "REPORT_QUERY_IDENTIFIER",
     "REPORT_READ_ROLES",
+    "CaptureFigures",
     "DataQuality",
+    "MachineCycles",
+    "MonthFigures",
     "ReportAuthorizationError",
     "ReportFigure",
     "ReportKey",

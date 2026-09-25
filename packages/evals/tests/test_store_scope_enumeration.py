@@ -289,6 +289,41 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "the same repository call as the summary -- one statement yields the per-day rows and the "
         "window row -- so it carries the same membership check and the same store predicate.",
     ),
+    # --- SHOP-CAPTURE-001 (DEC-038) --------------------------------------------------------------
+    ("GET", "/internal/v1/stores/{store_id}/machines"): RouteScope(
+        "STORE_SCOPED",
+        ("shop_capture", "MachineRepository.list"),
+        "role and MFA, then membership of the named store, before the machines are selected "
+        "WHERE m.store_id = %s.",
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/machines"): store_scoped(
+        "shop_capture", "MachineRepository.create"
+    ),
+    ("PATCH", "/internal/v1/stores/{store_id}/machines/{machine_id}"): RouteScope(
+        "STORE_SCOPED",
+        ("shop_capture", "MachineRepository.update"),
+        "keyed by machine_id: the service first requires the row's store to be the path's store "
+        "(else 404), and the repository reads the store off the machine row and requires "
+        "membership of THAT store, a non-member being told the machine does not exist.",
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/expenses"): store_scoped(
+        "shop_capture", "ExpenseRepository.month"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/expenses"): store_scoped(
+        "shop_capture", "ExpenseRepository.record"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/expenses/{expense_id}/void"): RouteScope(
+        "STORE_SCOPED",
+        ("shop_capture", "ExpenseRepository.void"),
+        "keyed by expense_id: the row's store must be the path's store (else 404), and "
+        "membership is required against the store read off the expense row.",
+    ),
+    ("GET", "/internal/v1/orders/{order_id}/capture"): RouteScope(
+        "STORE_SCOPED",
+        ("shop_capture", "order_capture"),
+        "keyed by order_id like the order read: the store is read off the order row and "
+        "membership of it is required; a non-member is told the order does not exist.",
+    ),
     ("POST", "/internal/v1/stores/{store_id}/exports"): store_scoped(
         "exports", "SanitizedExportRepository.request"
     ),

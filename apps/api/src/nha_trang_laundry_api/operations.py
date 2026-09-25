@@ -182,6 +182,7 @@ from nha_trang_laundry_domain.range_prices import (
     resolve_range_prices,
 )
 from nha_trang_laundry_domain.remedies import RemedyKind
+from nha_trang_laundry_domain.shop_capture import TripCost
 
 from nha_trang_laundry_api.auth import AuthSettings
 
@@ -723,6 +724,7 @@ class OperationsService:
         custody_resolution: CustodyResolution | None = None,
         rewash_reason: RewashReason | None = None,
         rejection_reason: IntakeRejectionReason | None = None,
+        machine_id: UUID | None = None,
     ) -> OrderStepResult:
         """`ORDER-STEPS-001`: one named business step, as its domain transitions, all or nothing.
 
@@ -745,6 +747,7 @@ class OperationsService:
                     custody_resolution=custody_resolution,
                     rewash_reason=rewash_reason,
                     rejection_reason=rejection_reason,
+                    machine_id=machine_id,
                 ),
             )
 
@@ -1083,6 +1086,7 @@ class OperationsService:
         outcome: DeliveryLegOutcome,
         idempotency_key: str,
         principal: StaffPrincipal,
+        trip: TripCost | None = None,
     ) -> StoredDeliveryLeg:
         """Record that the courier took laundry out, and whether it reached the customer.
 
@@ -1112,6 +1116,7 @@ class OperationsService:
                         principal=principal,
                         correlation_id=uuid4(),
                         recorded_at=recorded_at,
+                        trip=trip,
                     ),
                 )
                 return {
@@ -1131,6 +1136,21 @@ class OperationsService:
                         "order_id": str(order_id),
                         "leg_kind": leg_kind.value,
                         "outcome": outcome.value,
+                        # SHOP-CAPTURE-001: part of the identity only when given, so a key used
+                        # before trip costs existed hashes as it did, and the same key resent with
+                        # a different cost is a conflict rather than a replay of another figure.
+                        **(
+                            {}
+                            if trip is None or trip.empty
+                            else {
+                                "trip": {
+                                    "vehicle": None if trip.vehicle is None else trip.vehicle.value,
+                                    "km": None if trip.km is None else str(trip.km),
+                                    "cost_vnd": trip.cost_vnd,
+                                    "note": trip.note,
+                                }
+                            }
+                        ),
                     },
                     occurred_at=recorded_at,
                 ),

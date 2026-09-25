@@ -35,6 +35,7 @@ from nha_trang_laundry_db.identity import (
 )
 from nha_trang_laundry_db.pricebook import publish_pricebook
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
+from nha_trang_laundry_db.shop_capture import machine_seeds_from_master, seed_machines
 from nha_trang_laundry_db.store_access import is_store_member
 from nha_trang_laundry_db.stores import StoreRepository
 
@@ -57,6 +58,8 @@ OWNER_NAME = "Demo Chủ cửa hàng"
 # the API image does not ship it, because the running service prices from the published
 # configuration rather than from a file.
 PRICEBOOK_SOURCE = "templates/services-pricebook.csv"
+#: SHOP-CAPTURE-001: the owner-confirmed machine list (`DEC-038`), real like the pricebook.
+MACHINE_SOURCE = "templates/machine-master.csv"
 
 
 class UnsafeTarget(SystemExit):
@@ -192,6 +195,16 @@ def main() -> int:
             actor_id=staff[OWNER_SUBJECT],
             source=(_Path(__file__).resolve().parents[1] / PRICEBOOK_SOURCE).read_bytes(),
         )
+        # SHOP-CAPTURE-001: the owner-confirmed machine master, as `scripts/seed_machines.py`
+        # registers it on deploy day. Real machines, like the pricebook; idempotent by code.
+        machines_created, _present = seed_machines(
+            connection,
+            store_id=store_id,
+            actor_id=staff[OWNER_SUBJECT],
+            seeds=machine_seeds_from_master(
+                (_Path(__file__).resolve().parents[1] / MACHINE_SOURCE).read_text(encoding="utf-8")
+            ),
+        )
 
     print("Seeded synthetic demo data. Nothing here describes a real person.")
     print(f"  Store UUID (paste into the console): {store_id}")
@@ -199,6 +212,7 @@ def main() -> int:
         print(f"  {subject:<18} {staff_id}")
     state = "published" if published else "already published"
     print(f"  Pricebook {state}: JCS-SHA256-V1:{digest}")
+    print(f"  Machines registered from the machine master: {machines_created}")
     return 0
 
 

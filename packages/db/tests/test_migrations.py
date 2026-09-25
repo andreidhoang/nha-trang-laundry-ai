@@ -62,6 +62,8 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0052", "remedy_garment_identity"),
         ("0053", "transactional_suppression"),
         ("0054", "export_range"),
+        # 0055-0057 are reserved for the other round-7 slices; the lead's merge adds them here.
+        ("0058", "shop_capture"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

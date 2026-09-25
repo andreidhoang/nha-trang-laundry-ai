@@ -128,14 +128,28 @@ def test_the_summary_serves_the_seeded_figures_in_the_fr_rpt_005_shape(
         "count": 1,
         "amount_vnd": None,
     }
-    # The rule is named in the board's own words, and margin is refused with its reason.
+    # The rule is named in the board's own words.
     assert body["sla_rule"]["notice_vi"] == sla_policy_notice_vi(SLA_POLICY)
     assert body["sla_rule"]["policy_id"] == SLA_POLICY.policy_id
-    assert body["margin"] == {
-        "shown": False,
-        "reason_code": "COST_NOT_CAPTURED",
-        "blocked_by": "SHOP-INSTRUMENT-001",
-    }
+    # SHOP-CAPTURE-001 (report-v2). The seeded shop moved production through the per-axis route,
+    # which names no machine: six cycles (A; B and C twice each, rewashed; E once -- its exception
+    # resumed where it stopped), none captured. Labour minutes are not captured, by decision.
+    assert "margin" not in body
+    capture = body["capture"]
+    assert (capture["cycles"], capture["cycles_captured"], capture["machines"]) == (6, 0, [])
+    assert capture["labour_minutes_captured"] is False
+    assert capture["cost_per_delivered_order_vnd"] is None
+    # No Sổ thu chi line in the month: margin is withheld with every core category missing, and
+    # carries no amount at all (FR-RPT-002).
+    for month in body["months"]:
+        assert month["margin"] == {
+            "status": "INCOMPLETE",
+            "missing": ["DIEN", "NUOC", "HOA_CHAT", "LUONG", "MAT_BANG"],
+            "amount_vnd": None,
+            "direction": None,
+            "excludes_trip_costs": True,
+        }
+        assert month["query_version"] == version
 
 
 def test_the_daily_route_lists_every_day_with_the_same_figures(

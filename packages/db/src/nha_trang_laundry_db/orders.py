@@ -43,6 +43,7 @@ from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCo
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.quotes import PRICED_FULFILLMENT_MODE_SQL
 from nha_trang_laundry_db.remedies import RemedyStateError, spend_reserved_remedy_credits
+from nha_trang_laundry_db.shop_capture import apply_cycle_effect, require_cycle_machine
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -126,6 +127,10 @@ class OrderTransitionCommand:
     step: OrderStep | None = None
     rewash_reason: RewashReason | None = None
     rejection_reason: IntakeRejectionReason | None = None
+    #: `SHOP-CAPTURE-001`. The machine the load went into, on the transitions of a `START_WASH` /
+    #: `REWASH` step; used only if the move opens a wash cycle. Never set by the per-axis routes,
+    #: whose cycles are recorded as not captured.
+    machine_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +156,13 @@ class OrderStepCommand:
     occurred_at: datetime | None = None
     rewash_reason: RewashReason | None = None
     rejection_reason: IntakeRejectionReason | None = None
+    #: `SHOP-CAPTURE-001` (`DEC-038`): "Máy nào?" at *Bắt đầu giặt*, or at a rewash. Optional;
+    #: absent is "Bỏ qua" and the cycle is counted as not captured.
+    machine_id: UUID | None = None
+
+
+#: SHOP-CAPTURE-001: the steps that put a load into a machine, and so may name one.
+MACHINE_STEPS: Final = frozenset({OrderStep.START_WASH, OrderStep.REWASH})
 
 
 @dataclass(frozen=True)
@@ -1124,6 +1136,21 @@ class OrderRepository:
             ),
             mutation,
         )
+        if command.production_target is not None:
+            # SHOP-CAPTURE-001 (DEC-038): into IN_PROCESS opens the order's wash cycle, into
+            # QUALITY_CHECK closes it -- in this transaction, as its own WASH_CYCLE aggregate, so
+            # the transition's event above keeps exactly the payload it always had.
+            apply_cycle_effect(
+                connection,
+                order_id=command.order_id,
+                store_id=_uuid(row[0]),
+                before=current.production,
+                after=next_state.production,
+                machine_id=command.machine_id,
+                actor_id=command.principal.staff_user_id,
+                correlation_id=command.correlation_id,
+                occurred_at=occurred_at,
+            )
         return {
             "order_id": str(command.order_id),
             "store_id": str(row[0]),
@@ -1187,7 +1214,11 @@ class OrderRepository:
                 if command.rejection_reason is None
                 else {"rejection_reason": command.rejection_reason.value}
             ),
+            # SHOP-CAPTURE-001: present only when given, for the same reason as the two above.
+            **({} if command.machine_id is None else {"machine_id": str(command.machine_id)}),
         }
+        if command.machine_id is not None and command.step not in MACHINE_STEPS:
+            raise OrderStateError("MACHINE_NOT_APPLICABLE: only a wash or a rewash names a machine")
 
         def step_once() -> dict[str, object]:
             with connection.cursor() as cursor:
@@ -1203,6 +1234,13 @@ class OrderRepository:
                     )
             if row is None or int(row[10]) != command.expected_row_version:
                 raise OrderStateError("STALE_VERSION: order is missing or stale")
+            if command.machine_id is not None:
+                # SHOP-CAPTURE-001: a machine of this order's store that a load goes into, and not
+                # retired -- checked under the order lock, before anything is written.
+                with connection.cursor() as cursor:
+                    require_cycle_machine(
+                        cursor, machine_id=command.machine_id, store_id=_uuid(row[0])
+                    )
             facts_row = _read_view_row(connection, command.order_id)
             try:
                 plan = plan_step(
@@ -1246,6 +1284,7 @@ class OrderRepository:
                         step=command.step,
                         rewash_reason=planned.rewash_reason,
                         rejection_reason=planned.rejection_reason,
+                        machine_id=command.machine_id,
                     ),
                     locked,
                     moment,

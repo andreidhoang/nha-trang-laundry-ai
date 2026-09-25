@@ -137,41 +137,15 @@ const GROUPS = [
         missing: "Không có custody_units, custody_events hay batches.",
         blockedBy: "SHOP-INSTRUMENT-001",
       },
-      {
-        ref: "M3",
-        title: "Tra lại một khoản giảm trừ chưa dùng",
-        what:
-          "Tra ra các khoản giảm trừ chưa dùng của một đơn hoặc một số phiếu, để khách quên mã " +
-          "vẫn dùng được phiếu của mình.",
-        missing:
-          "Có bảng remedy_credits và có đường áp dụng một khoản theo mã, nhưng không có đường nào " +
-          "liệt kê các khoản chưa dùng. Phiếu là vật cầm tay: không có mã thì máy chủ không có " +
-          "cách nào tìm ra nó, và đây là hệ quả của DEC-015 chứ không phải một chỗ bị quên.",
-        blockedBy:
-          "DEC-015 (đã quyết) từ chối lập hồ sơ khách, nên không có sổ nào ghi “khách này còn " +
-          "phiếu gì”. Muốn tra theo số phiếu quầy thì phải có một read model riêng, chưa dựng.",
-        today:
-          "Lúc phát hành, màn hình Bồi hoàn hiện mã giảm trừ kèm nút chép. Chép ngay vào phiếu " +
-          "giấy của khách trước khi rời màn hình — sau đó không tra lại được.",
-      },
-      {
-        ref: "M3",
-        title: "Danh sách đề nghị bồi hoàn của một sự cố",
-        what:
-          "Xem lại các đề nghị bồi hoàn đã ghi cho một sự cố, kể cả các vụ mất đồ ghi trước " +
-          "DEC-031 (POLICY_UNRESOLVED, không có số tiền).",
-        missing:
-          "Không có đường nào đọc lại các đề nghị của một sự cố. Màn hình Bồi hoàn vì vậy chỉ hiện " +
-          "đúng đề nghị bạn vừa gửi trong phiên này, và cố ý không dựng một danh sách trong trình " +
-          "duyệt — danh sách đó sẽ đọc như “đây là tất cả”, điều mà bảng vận hành không có cơ sở " +
-          "để nói. Đề nghị đang chờ chủ tiệm (kể cả mọi vụ mất đồ) thì có trên màn hình Duyệt.",
-        blockedBy:
-          "REMEDY-001 dựng đường ghi trước, đường đọc sau. Chưa có mục nào trong hàng đợi cho " +
-          "phần đọc này.",
-        today:
-          "Chép mã đề nghị lúc gửi. Vụ mất đồ nào ghi trước DEC-031 thì lập đề nghị mất đồ mới " +
-          "cho đúng món để chủ tiệm duyệt.",
-      },
+      // "Tra lại một khoản giảm trừ chưa dùng" and "Danh sách đề nghị bồi hoàn của một sự cố" were
+      // here until READ-PATHS-001, and are deleted rather than reworded because both gaps closed.
+      // `GET /internal/v1/stores/{store}/orders/{order}/remedy-credits` lists the credits an order
+      // issued, spent or not, and the order detail shows them with a copy control on an unused
+      // code -- the customer keeps that order's ticket, and the orders screen finds an order by its
+      // ticket number, so a lost code is found again the way the counter already works.
+      // `GET …/incidents/{incident}/remedy-proposals` lists every proposal on an incident,
+      // including a pre-DEC-031 loss with no figure, and `#/remedies` shows it for the incident it
+      // reads. Neither creates a customer record, so DEC-015 is untouched.
     ],
   },
   {
@@ -181,28 +155,12 @@ const GROUPS = [
       "vận hành không hiển thị KPI — đếm tạm vài con số rồi gọi là KPI là cách nhanh nhất để một " +
       "quyết định kinh doanh dựa trên số bịa.",
     entries: [
-      {
-        // ACQUISITION-ATTRIBUTION-001 added the column and the report, and deliberately stopped
-        // there. The gap that remains is the one an operator feels: the value is permanent and
-        // this console never shows it back, so a mis-tap at the counter is invisible from the
-        // moment it is made. Saying so here is cheaper and more honest than a read path that
-        // would have to thread the field through the order list, the transition response and the
-        // board — and the counter is told, in the field's own hint, that the entry is final.
-        ref: "ACQUISITION-ATTRIBUTION-001",
-        title: "Xem lại nguồn khách đã ghi trên một đơn",
-        what:
-          "Mở một đơn và thấy lại đã ghi khách biết tiệm qua đâu, để phát hiện bấm nhầm.",
-        missing:
-          "Đơn có ghi nguồn khách, nhưng không màn hình nào đọc lại được. OrderResponse không mang " +
-          "trường này, nên bảng đơn và thẻ đơn vừa tạo đều không hiển thị.",
-        blockedBy:
-          "Chưa có đường đọc: cần thêm trường vào read model của đơn, là một việc riêng.",
-        today:
-          "Ghi đúng ngay khi tạo đơn — ghi xong là không sửa được, kể cả bằng lệnh trực tiếp vào " +
-          "cơ sở dữ liệu. Chưa hỏi thì để “Chưa biết”; đó là câu trả lời đúng.",
-        note:
-          "Báo cáo theo kênh chạy bằng scripts/report_acquisition_sources.py, không phải màn hình.",
-      },
+      // "Xem lại nguồn khách đã ghi trên một đơn" (ACQUISITION-ATTRIBUTION-001) was here until
+      // READ-PATHS-001 put `acquisition_source` on the order read model, and is deleted rather than
+      // reworded because the gap closed: the order detail shows the recorded source read-only. It
+      // is still immutable -- a mis-tap is now visible and still cannot be corrected, which the
+      // detail says beside the value and the order form says before it is chosen. The channel
+      // report remains scripts/report_acquisition_sources.py.
       {
         ref: "M3 · MÀN 12",
         title: "Ghi nhận máy / mẻ / phút công",

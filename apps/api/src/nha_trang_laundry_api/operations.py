@@ -101,6 +101,11 @@ from nha_trang_laundry_db.remedies import (
     ReservedRemedyCredits,
     read_reserved_remedy_credits,
 )
+from nha_trang_laundry_db.remedy_reads import (
+    IncidentRemedyProposals,
+    OrderRemedyCredits,
+    RemedyReadRepository,
+)
 from nha_trang_laundry_db.settlement import (
     CollectedToday,
     CollectionCommand,
@@ -117,6 +122,7 @@ from nha_trang_laundry_db.shadow_console import (
     ShadowConsoleRepository,
     UnknownSend,
 )
+from nha_trang_laundry_db.staff_directory import StaffDirectory, StaffDirectoryRepository
 from nha_trang_laundry_db.store_access import (
     StoreAccessError,
     member_store_ids,
@@ -2493,6 +2499,47 @@ class OperationsService:
         ):
             return self._incidents.list_for_store(
                 cursor, store_id=store_id, principal=principal, limit=limit
+            )
+
+    # --- READ-PATHS-001 -----------------------------------------------------------------
+    #
+    # Three reads the console's own gap register admitted were missing. Pass-throughs: the role,
+    # the membership and the store predicate are all decided in the repositories, and the one
+    # instant any of them compares against is taken here, once, and handed down.
+
+    def list_store_staff(self, *, store_id: UUID, principal: StaffPrincipal) -> StaffDirectory:
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return StaffDirectoryRepository.list_for_store(
+                cursor, store_id=store_id, principal=principal, now=datetime.now(UTC)
+            )
+
+    def list_order_remedy_credits(
+        self, *, store_id: UUID, order_id: UUID, principal: StaffPrincipal
+    ) -> OrderRemedyCredits:
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return RemedyReadRepository.list_order_credits(
+                cursor, store_id=store_id, order_id=order_id, principal=principal
+            )
+
+    def list_incident_remedy_proposals(
+        self, *, store_id: UUID, incident_id: UUID, principal: StaffPrincipal
+    ) -> IncidentRemedyProposals:
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return RemedyReadRepository.list_incident_proposals(
+                cursor,
+                store_id=store_id,
+                incident_id=incident_id,
+                principal=principal,
+                now=datetime.now(UTC),
             )
 
     # --- INTAKE-UI-001 ------------------------------------------------------------------

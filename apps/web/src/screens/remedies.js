@@ -23,16 +23,17 @@
  *     item total above the cap is refused here with the cap named, exactly as the server refuses
  *     it with `REMEDY_CEILING_EXCEEDED` — never quietly reduced to the cap, which would pay a
  *     customer less than the person at the counter believed they had agreed.
- *   - **A credit is a bearer instrument and this screen is the only place its identifier appears.**
- *     There is no route that lists an order's or a ticket's unredeemed credits, so a credit that is
- *     not written down at the moment it is issued cannot be looked up again — only applied by id.
- *     The execution result therefore renders the identifier as a copyable value under a warning
- *     that says so, rather than as one more field on a card. Moving the kind picker hides that
- *     card but never discards it, for the same reason: see `redrawRecords`.
- *   - **Nothing here is a queue.** No route lists an incident's proposals, and none lists the loss
- *     cases waiting on the owner, so this screen deliberately shows no list of either. A list
- *     assembled in the browser from what this session happened to do would read as "these are the
- *     open ones", which is a claim the console is in no position to make.
+ *   - **A credit is a bearer instrument, found again through the order that issued it.** The
+ *     execution result renders the identifier as a copyable value under a warning, because that is
+ *     the moment the customer is standing there. Since READ-PATHS-001 a lost code is not lost: the
+ *     order detail lists the credits the order issued (the customer keeps that order's ticket).
+ *     Moving the kind picker hides the execution card but never discards it: see `redrawRecords`.
+ *   - **The incident's proposals are the server's list, not this session's.** READ-PATHS-001 added
+ *     `GET …/incidents/{id}/remedy-proposals`, so reading an incident also reads every proposal
+ *     recorded on it — a colleague's, yesterday's, and a loss recorded before `DEC-031` with no
+ *     figure. The list is re-read after each proposal and execution rather than appended to, so it
+ *     never claims more than the server holds. Loss cases waiting on the owner are still reached
+ *     through the approvals queue, which is where the owner decides them.
  *
  * @module screens/remedies
  */
@@ -439,7 +440,7 @@ function proposalCard(result) {
 }
 
 /**
- * What a carried-out remedy leaves behind, and the one identifier that cannot be looked up again.
+ * What a carried-out remedy leaves behind, and the identifier the customer will need next time.
  *
  * @param {any} result a `RemedyExecutionResponse`
  * @returns {HTMLElement}
@@ -466,14 +467,13 @@ function executionCard(result) {
       ? h(
           "div",
           { class: "notice", dataState: "warn" },
-          h("p", { class: "notice__title" }, "Chép mã giảm trừ này lại ngay — không tra lại được"),
+          h("p", { class: "notice__title" }, "Chép mã giảm trừ này lại ngay, vào phiếu của khách"),
           h(
             "p",
             null,
-            "Khoản giảm trừ là phiếu cầm tay: ai cầm phiếu thì dùng được, và dùng đúng một lần. " +
-              "Trong API này chưa có đường nào liệt kê các khoản giảm trừ chưa dùng của một đơn " +
-              "hay một số phiếu, nên chỉ áp dụng được bằng đúng mã dưới đây. Chép vào phiếu giấy " +
-              "của khách trước khi rời màn hình.",
+            "Khoản giảm trừ là phiếu cầm tay: ai cầm mã thì dùng được, và dùng đúng một lần. Chép " +
+              "vào phiếu giấy của khách trước khi rời màn hình. Khách làm mất mã thì tìm lại đơn " +
+              "này theo số phiếu ở màn hình Đơn hàng: mã nằm ở mục “Khoản giảm trừ của đơn này”.",
           ),
           copyable({ value: result.credit_id }),
         )
@@ -948,6 +948,7 @@ export function render_() {
       setResult(optionsResult, "danger", "Mã sự cố phải là UUID đủ 36 ký tự.");
       return;
     }
+    void recorded.load(draft.incidentId);
     options = null;
     proposal = null;
     render(proposalHost);
@@ -1090,6 +1091,7 @@ export function render_() {
       );
       proposeSubmission.reset();
       proposal = created;
+      void recorded.load(created.incident_id);
       // A fresh proposal supersedes whatever the last one was carried out as, so the old execution
       // record goes rather than sitting above a proposal it did not come from.
       execution = null;
@@ -1147,6 +1149,7 @@ export function render_() {
       );
       executeSubmission.reset();
       execution = done;
+      void recorded.load(done.incident_id);
       setResult(executeResult, "ok", "Đã thực hiện. Sự cố đã đóng.");
       render(executionHost, executionCard(done));
 
@@ -1185,6 +1188,7 @@ export function render_() {
   });
 
   const redemption = redemptionPanel(store, redeemSubmission, writeVerdict);
+  const recorded = recordedProposalsPanel(store);
 
   if (draft.incidentId) void loadOptions();
 
@@ -1236,6 +1240,7 @@ export function render_() {
         optionsHost,
       ),
     }),
+    recorded.node,
     panel({
       eyebrow: "Lệnh",
       title: "Đề nghị một khoản bồi hoàn",
@@ -1248,13 +1253,177 @@ export function render_() {
   );
 }
 
+// --- READ-PATHS-001: the proposals recorded on an incident ---------------------------------------
+//
+// Self-contained on purpose: one panel, one read, three call sites in `render_` (read an incident,
+// after a proposal, after an execution). It shares nothing with the proposal form but `KIND_LABEL`.
+
+/** `RemedyStatus` in the counter's words. The token is kept beside it on the badge. */
+const RECORDED_STATUS_LABEL = {
+  STAFF_AUTHORIZED: "Nhân viên được duyệt, chờ thực hiện",
+  OWNER_APPROVAL_REQUIRED: "Chờ chủ tiệm duyệt",
+  EXECUTED: "Đã thực hiện",
+  POLICY_UNRESOLVED: "Ghi trước DEC-031, không có số tiền",
+};
+
+/** The owner envelope's stored state, in the counter's words. */
+const RECORDED_APPROVAL_LABEL = {
+  REQUESTED: "đang chờ chủ tiệm",
+  APPROVED: "chủ tiệm đã duyệt",
+  REJECTED: "chủ tiệm từ chối",
+  EXPIRED: "phiếu duyệt đã hết hạn",
+  EXECUTED: "đã thực hiện",
+};
+
+/**
+ * Đề nghị đã ghi cho sự cố này — `GET …/incidents/{id}/remedy-proposals`.
+ *
+ * @param {string} store
+ * @returns {{node: HTMLElement, load: (incidentId: string) => Promise<void>}}
+ */
+function recordedProposalsPanel(store) {
+  const host = h(
+    "div",
+    { id: "remedy-recorded-proposals", class: "stack" },
+    h("p", { class: "hint" }, "Đọc một sự cố ở trên để xem các đề nghị đã ghi cho nó."),
+  );
+  const countNode = h("span", { class: "count" }, "—");
+  /** The incident whose list is on screen, so a slow reply for an older one is dropped. */
+  let current = "";
+
+  /** @param {string} incidentId */
+  async function load(incidentId) {
+    if (!UUID.test(String(incidentId || ""))) return;
+    current = incidentId;
+    render(host, skeleton(2));
+    countNode.textContent = "…";
+    try {
+      const body = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/incidents/${encodeURIComponent(incidentId)}/remedy-proposals`,
+      );
+      if (current !== incidentId) return;
+      const rows = Array.isArray(body?.proposals) ? body.proposals : [];
+      countNode.textContent = String(rows.length);
+      render(
+        host,
+        rows.length
+          ? h("ol", { class: "stack" }, rows.map((row) => recordedProposalCard(row, body.order_id)))
+          : h("p", { class: "hint" }, "Sự cố này chưa có đề nghị bồi hoàn nào."),
+        body?.truncated ? h("p", { class: "hint" }, "Máy chủ cắt danh sách; có thể còn nữa.") : null,
+      );
+    } catch (error) {
+      if (current !== incidentId) return;
+      countNode.textContent = UNKNOWN;
+      render(host, errorNotice(error, { onRetry: () => void load(incidentId) }));
+    }
+  }
+
+  return {
+    node: panel({
+      eyebrow: "Đọc · GET …/incidents/{id}/remedy-proposals",
+      title: "Đề nghị đã ghi cho sự cố này",
+      count: countNode,
+      children: h(
+        "div",
+        { class: "stack" },
+        h(
+          "p",
+          { class: "hint" },
+          "Danh sách của máy chủ, cũ nhất trước: mọi đề nghị đã ghi cho sự cố, của ai và lúc nào, " +
+            "kể cả vụ mất đồ ghi trước DEC-031 không có số tiền. Đề nghị đang chờ chủ tiệm được " +
+            "duyệt ở màn hình Duyệt.",
+        ),
+        host,
+      ),
+    }),
+    load,
+  };
+}
+
+/**
+ * @param {any} row an `IncidentRemedyProposalItemResponse`
+ * @param {string|null|undefined} orderId the incident's order, for the credit link
+ * @returns {HTMLElement}
+ */
+function recordedProposalCard(row, orderId) {
+  const status = String(row.status || "");
+  const approval = row.approval_id
+    ? row.approval_lapsed
+      ? "phiếu duyệt đã quá hạn, chủ tiệm không duyệt được nữa"
+      : RECORDED_APPROVAL_LABEL[row.approval_status] || String(row.approval_status || UNKNOWN)
+    : null;
+  return h(
+    "li",
+    {
+      class: "card stack stack--tight",
+      dataProposalId: String(row.proposal_id || ""),
+      dataProposalStatus: status,
+    },
+    h(
+      "div",
+      { class: "row" },
+      h("strong", null, KIND_LABEL[row.kind] || String(row.kind || UNKNOWN)),
+      // The `badge` component's markup, built here so this panel adds no import to the module.
+      h(
+        "span",
+        {
+          class: "badge",
+          dataState:
+            status === "EXECUTED" ? "ok" : status === "POLICY_UNRESOLVED" ? "danger" : "warn",
+          title: status || UNKNOWN,
+        },
+        RECORDED_STATUS_LABEL[status] || status || UNKNOWN,
+        h("span", { class: "badge__token mono" }, status || UNKNOWN),
+      ),
+    ),
+    facts([
+      [
+        "Số tiền",
+        Number.isInteger(row.amount_vnd)
+          ? money(row.amount_vnd)
+          : row.kind === "FREE_REWASH"
+            ? "Không có — giặt lại không chuyển tiền"
+            : "Không có số tiền",
+      ],
+      Number.isInteger(row.ceiling_vnd) ? ["Trần đã kiểm", money(row.ceiling_vnd)] : null,
+      approval ? ["Phiếu duyệt", approval, { span: true }] : null,
+      ["Người đề nghị", String(row.proposed_by_name || UNKNOWN)],
+      ["Lúc", dateTime(row.proposed_at)],
+      row.executed_at ? ["Thực hiện lúc", dateTime(row.executed_at)] : null,
+      row.credit_id
+        ? [
+            "Khoản giảm trừ",
+            h(
+              "span",
+              { class: "row" },
+              h("span", { class: "mono", title: String(row.credit_id) }, shortId(row.credit_id)),
+              orderId
+                ? h(
+                    "a",
+                    { href: `#/orders/${encodeURIComponent(String(orderId))}` },
+                    "xem mã và đã dùng chưa ở đơn",
+                  )
+                : null,
+            ),
+            { span: true },
+          ]
+        : null,
+      [
+        "Mã đề nghị",
+        copyable({ value: String(row.proposal_id || ""), display: shortId(row.proposal_id) }),
+        { mono: true },
+      ],
+    ]),
+  );
+}
+
 /**
  * Spending one credit on the next bill.
  *
- * This panel asks for four values and that is the honest shape of the thing today: there is no
- * route that lists an order's or a ticket's unredeemed credits, so a credit can only be applied by
- * its identifier, and the revision and digest are the caller's evidence that it read the quote it
- * is spending on before it changed the total.
+ * This panel asks for four values and that is the honest shape of the thing today: a credit is
+ * applied by its identifier (found again, if lost, on the detail of the order that issued it), and
+ * the revision and digest are the caller's evidence that it read the quote it is spending on before
+ * it changed the total.
  *
  * @param {string} store
  * @param {import("../core/api.js").Submission} submission
@@ -1374,8 +1543,8 @@ function redemptionPanel(store, submission, verdict) {
         id: "credit-id",
         label: "Mã khoản giảm trừ (credit_id)",
         hint:
-          "Chép từ lúc phát hành, hoặc từ phiếu giấy của khách. Trong API này chưa có đường nào " +
-          "liệt kê các khoản chưa dùng, nên không có mã thì không tra ra được.",
+          "Chép từ lúc phát hành, hoặc từ phiếu giấy của khách. Khách quên mã thì tìm đơn đã phát " +
+          "hành khoản đó theo số phiếu ở màn hình Đơn hàng: mã nằm ở mục “Khoản giảm trừ của đơn này”.",
         control: field("creditId", "00000000-0000-0000-0000-000000000000", UUID),
       }),
       labelled({

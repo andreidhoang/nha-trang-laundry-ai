@@ -711,6 +711,25 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     and the per-garment owner sentence are template literals the scanner does not register.
     # 396 + 4 = 400, predicted before regenerating.
     # 410 with REMEDY-GARMENT-001 merged on top of the two above: disjoint slots, 406 + 4.
+    # Still 396 after READ-PATHS-001, and the zero is a sum, not an absence: -10 retired, +10 added,
+    # 7 re-keyed. 396 - 10 + 10 = 396.
+    #   * -10 in `screens/gaps.js`: the three entries whose gap closed -- the unused credits of an
+    #     order (`missing`, `blockedBy`, `today`), an incident's remedy proposals (the same three)
+    #     and the acquisition source readback (those three and its `note`). Deleted, not reworded:
+    #     the routes exist, which is the exit REMEDY-001 and ORDER-LOOKUP-001 took.
+    #   * +4 in `screens/orderDetail.js`: the credits panel's hint (a bearer code, found again
+    #     through the order's ticket; no expiry is recorded), its truncation line, its wrong-role
+    #     notice title, and the hint beside the acquisition source saying it cannot be corrected.
+    #   * +2 in `screens/remedies.js`: the recorded-proposals panel's hint and its empty prompt.
+    #   * +4 in `screens/staff.js`: the eyebrow (the old one was below the scanner's threshold), the
+    #     directory hint (roles are the person's everywhere; revocations stay thirty days), and the
+    #     no-store notice and the wrong-role notice title.
+    #   * 7 re-keyed because they had become false: the remedies execution notice's title and body
+    #     ("không tra lại được" -- a lost code is found again on the order detail now), and five on
+    #     the staff screen -- the lede, the role guardrail, the create card's hint and the two 204
+    #     notices -- which all said the server had no way to read staff back.
+    # With READ-PATHS-001 merged on top of the four above: its -10/+10 are disjoint slots, so
+    # the total is unchanged at 410 -- re-derived by regenerating, not by arithmetic.
     assert sum(counts.values()) == _registry()["total"] == 410
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002

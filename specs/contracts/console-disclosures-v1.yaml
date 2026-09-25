@@ -1951,102 +1951,12 @@ disclosures:
     - custody_events
     - batches
     why: 'Same shape: the custody context is measured empty and the disclosure says so.'
-- slot_id: screens/gaps.js#missing:ee5cf8baa402
-  module: screens/gaps.js
-  key: missing
-  text: 'Có bảng remedy_credits và có đường áp dụng một khoản theo mã, nhưng không có đường nào liệt kê
-    các khoản chưa dùng. Phiếu là vật cầm tay: không có mã thì máy chủ không có cách nào tìm ra nó, và
-    đây là hệ quả của DEC-015 chứ không phải một chỗ bị quên.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:0b169ffca88c
-  module: screens/gaps.js
-  key: blockedBy
-  text: DEC-015 (đã quyết) từ chối lập hồ sơ khách, nên không có sổ nào ghi “khách này còn phiếu gì”.
-    Muốn tra theo số phiếu quầy thì phải có một read model riêng, chưa dựng.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:67282c933f07
-  module: screens/gaps.js
-  key: today
-  text: Lúc phát hành, màn hình Bồi hoàn hiện mã giảm trừ kèm nút chép. Chép ngay vào phiếu giấy của khách
-    trước khi rời màn hình — sau đó không tra lại được.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:85f3618564c3
-  module: screens/gaps.js
-  key: missing
-  text: Không có đường nào đọc lại các đề nghị của một sự cố. Màn hình Bồi hoàn vì vậy chỉ hiện đúng đề
-    nghị bạn vừa gửi trong phiên này, và cố ý không dựng một danh sách trong trình duyệt — danh sách đó
-    sẽ đọc như “đây là tất cả”, điều mà bảng vận hành không có cơ sở để nói. Đề nghị đang chờ chủ tiệm
-    (kể cả mọi vụ mất đồ) thì có trên màn hình Duyệt.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:388736a0f19d
-  module: screens/gaps.js
-  key: blockedBy
-  text: REMEDY-001 dựng đường ghi trước, đường đọc sau. Chưa có mục nào trong hàng đợi cho phần đọc này.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:82645ee0c092
-  module: screens/gaps.js
-  key: today
-  text: Chép mã đề nghị lúc gửi. Vụ mất đồ nào ghi trước DEC-031 thì lập đề nghị mất đồ mới cho đúng món
-    để chủ tiệm duyệt.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/gaps.js#lede:8defef7ab744
   module: screens/gaps.js
   key: lede
   text: Mọi chỉ số vận hành đều cần một read model có phiên bản đứng sau. Chưa có cái nào, nên bảng vận
     hành không hiển thị KPI — đếm tạm vài con số rồi gọi là KPI là cách nhanh nhất để một quyết định kinh
     doanh dựa trên số bịa.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:6778851efd49
-  module: screens/gaps.js
-  key: missing
-  text: Đơn có ghi nguồn khách, nhưng không màn hình nào đọc lại được. OrderResponse không mang trường
-    này, nên bảng đơn và thẻ đơn vừa tạo đều không hiển thị.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:321aa7855421
-  module: screens/gaps.js
-  key: blockedBy
-  text: 'Chưa có đường đọc: cần thêm trường vào read model của đơn, là một việc riêng.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:764b3eb7d264
-  module: screens/gaps.js
-  key: today
-  text: Ghi đúng ngay khi tạo đơn — ghi xong là không sửa được, kể cả bằng lệnh trực tiếp vào cơ sở dữ
-    liệu. Chưa hỏi thì để “Chưa biết”; đó là câu trả lời đúng.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#note:6f8514c88a3a
-  module: screens/gaps.js
-  key: note
-  text: Báo cáo theo kênh chạy bằng scripts/report_acquisition_sources.py, không phải màn hình.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2490,10 +2400,35 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#hint:995c0e23e856
+  module: screens/orderDetail.js
+  key: hint
+  text: 'Nguồn khách là điều nhân viên ghi lúc tạo đơn. Chỉ để xem lại: ghi rồi thì không sửa được, kể
+    cả khi thấy bấm nhầm.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/orderDetail.js#notice:8e31f46ac341
   module: screens/orderDetail.js
   key: notice
   text: Mã đơn sai, hoặc đơn thuộc cửa hàng bạn không làm. Tìm lại bằng số phiếu ở màn hình Đơn hàng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#notice__title:19665c58ee4b
+  module: screens/orderDetail.js
+  key: notice__title
+  text: Vai trò này không đọc được khoản giảm trừ
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#hint:fda2d6a54251
+  module: screens/orderDetail.js
+  key: hint
+  text: Máy chủ cắt danh sách; có thể còn khoản khác.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2528,6 +2463,16 @@ disclosures:
   text: 'Bồi hoàn gắn với sự cố, không gắn thẳng với đơn: mở màn hình Sự cố, tìm đúng lời khách phàn nàn,
     rồi bấm “Đề xuất bồi hoàn” trên chính dòng đó. API này không có đường nào liệt kê sự cố của riêng
     một đơn, nên màn hình này không chọn hộ được.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#hint:a916dbfedb53
+  module: screens/orderDetail.js
+  key: hint
+  text: 'Khoản giảm trừ là phiếu cầm tay: ai đọc đúng mã thì dùng được, đúng một lần, ở cửa hàng này,
+    cho hoá đơn lần sau. Khách quên mã thì tìm lại đơn theo số phiếu rồi đọc mã ở đây. Máy chủ không ghi
+    hạn dùng cho khoản giảm trừ.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3195,20 +3140,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/remedies.js#notice:6bf249817fea
+- slot_id: screens/remedies.js#notice:5f342ab69808
   module: screens/remedies.js
   key: notice
-  text: 'Khoản giảm trừ là phiếu cầm tay: ai cầm phiếu thì dùng được, và dùng đúng một lần. Trong API
-    này chưa có đường nào liệt kê các khoản giảm trừ chưa dùng của một đơn hay một số phiếu, nên chỉ áp
-    dụng được bằng đúng mã dưới đây. Chép vào phiếu giấy của khách trước khi rời màn hình.'
+  text: 'Khoản giảm trừ là phiếu cầm tay: ai cầm mã thì dùng được, và dùng đúng một lần. Chép vào phiếu
+    giấy của khách trước khi rời màn hình. Khách làm mất mã thì tìm lại đơn này theo số phiếu ở màn hình
+    Đơn hàng: mã nằm ở mục “Khoản giảm trừ của đơn này”.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/remedies.js#notice__title:50af547342b0
+- slot_id: screens/remedies.js#notice__title:3d338e84ae91
   module: screens/remedies.js
   key: notice__title
-  text: Chép mã giảm trừ này lại ngay — không tra lại được
+  text: Chép mã giảm trừ này lại ngay, vào phiếu của khách
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3281,6 +3226,23 @@ disclosures:
   key: guardrail
   text: Nhân viên không bao giờ gõ trần. Vượt trần thì bị từ chối kèm con số trần, không bị tự hạ xuống.
     Mất đồ, và mọi khoản đền trên đơn đã hoàn tiền, luôn chờ chủ tiệm duyệt.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:60551e9036fb
+  module: screens/remedies.js
+  key: hint
+  text: Đọc một sự cố ở trên để xem các đề nghị đã ghi cho nó.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:b5cda40d0a94
+  module: screens/remedies.js
+  key: hint
+  text: 'Danh sách của máy chủ, cũ nhất trước: mọi đề nghị đã ghi cho sự cố, của ai và lúc nào, kể cả
+    vụ mất đồ ghi trước DEC-031 không có số tiền. Đề nghị đang chờ chủ tiệm được duyệt ở màn hình Duyệt.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3444,30 +3406,30 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#hint:73bbac9c3756
+- slot_id: screens/staff.js#hint:456a70690bb5
   module: screens/staff.js
   key: hint
-  text: Chép lại mã này. Máy chủ chưa có cách liệt kê hay tra cứu nhân sự, nên nếu mất mã thì hai lệnh
-    bên dưới không dùng được cho người này nữa.
+  text: Chép lại mã này. Người mới chưa thuộc cửa hàng nào nên chưa có trong danh sách nhân sự của cửa
+    hàng nào; nếu mất mã trước khi gán cửa hàng thì không tra lại được.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#notice:14c7ff28b9f3
+- slot_id: screens/staff.js#notice:38e263dbd399
   module: screens/staff.js
   key: notice
-  text: Máy chủ chưa có cách đọc lại vai trò của một nhân viên, nên bảng vận hành không thể xác nhận danh
-    sách vai trò hiện tại của người này. Chỉ biết lệnh vừa rồi đã được nhận.
+  text: Danh sách nhân sự ở đầu màn hình vừa được đọc lại. Nếu người này thuộc cửa hàng đang chọn, vai
+    trò hiện tại của họ hiện ở đó; nếu không, màn hình này chỉ biết lệnh vừa rồi đã được nhận.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#guardrail:304eee7a5f54
+- slot_id: screens/staff.js#guardrail:ffe6334f23f8
   module: screens/staff.js
   key: guardrail
-  text: 'Gán vai trò là cộng thêm, không phải thay thế: lệnh này không gỡ vai trò nào đang có. Bảng vận
-    hành không đọc được vai trò hiện có và máy chủ chưa có cách thu hồi vai trò, nên hãy chắc chắn trước
-    khi gửi.'
+  text: 'Gán vai trò là cộng thêm, không phải thay thế: lệnh này không gỡ vai trò nào đang có. Vai trò
+    hiện có xem ở danh sách nhân sự phía trên; máy chủ chưa có cách thu hồi vai trò, nên hãy chắc chắn
+    trước khi gửi.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3499,12 +3461,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#notice:f78020c49fd6
+- slot_id: screens/staff.js#notice:67452d3fe0d6
   module: screens/staff.js
   key: notice
-  text: Máy chủ chưa có cách đọc lại danh sách cửa hàng của người khác, nên bảng vận hành không xác nhận
-    được trạng thái hiện tại của họ. Người đó đăng nhập rồi xem thanh trên cùng là cách kiểm tra chắc
-    chắn.
+  text: Danh sách nhân sự phía trên chỉ nói về cửa hàng đang chọn và vừa được đọc lại. Máy chủ chưa có
+    cách đọc danh sách cửa hàng của một người, nên với cửa hàng khác thì người đó đăng nhập rồi xem thanh
+    trên cùng là cách kiểm tra chắc chắn.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3519,11 +3481,46 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/staff.js#screen__lede:cc74d8be4eaa
+- slot_id: screens/staff.js#notice:9b3463098914
+  module: screens/staff.js
+  key: notice
+  text: Danh sách nhân sự đọc theo từng cửa hàng. Chọn cửa hàng ở thanh trên cùng để xem ai đang làm ở
+    đó; các lệnh bên dưới vẫn dùng được khi chưa chọn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#notice__title:ac1d7ba2b9f7
+  module: screens/staff.js
+  key: notice__title
+  text: Vai trò này không đọc được danh sách nhân sự
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#hint:ea0cf74ad50d
+  module: screens/staff.js
+  key: hint
+  text: Vai trò là của người đó ở mọi cửa hàng, không riêng cửa hàng này. Người bị thu hồi khỏi cửa hàng
+    vẫn hiện thêm 30 ngày, có ghi rõ lúc thu hồi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#eyebrow:6f5cd357434b
+  module: screens/staff.js
+  key: eyebrow
+  text: Chỉ chủ · danh sách theo cửa hàng đang chọn
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/staff.js#screen__lede:f11976f4f576
   module: screens/staff.js
   key: screen__lede
-  text: 'Ba lệnh danh tính mà máy chủ có. Máy chủ chưa có cách đọc lại nhân sự, nên màn hình này viết
-    chứ không đọc: mọi thứ nó khẳng định là kết quả của lệnh vừa gửi, không phải trạng thái đang có.'
+  text: Ai đang làm ở cửa hàng đang chọn, cùng vai trò và trạng thái, đọc từ máy chủ; bên dưới là các
+    lệnh danh tính. Sau mỗi lệnh được nhận, danh sách được đọc lại, nên điều nó hiện là trạng thái máy
+    chủ đang giữ chứ không phải điều màn hình này đoán.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

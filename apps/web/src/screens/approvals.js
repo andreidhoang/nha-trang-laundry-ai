@@ -878,7 +878,13 @@ function limitsPanel() {
           h(
             "p",
             null,
-            "Riêng phiếu SET_RANGE_PRICE còn một bước nữa. Bản báo giá mà phiếu ấy niêm phong là " +
+            // DEC-029 (2026-09-25): the counter now attests its own range prices, so such an
+            // envelope reaches this queue only if it was raised before the ruling or after a
+            // reversal of it. The rendering rule below still holds for any that does.
+            "Từ 25/09/2026 nhân viên trực quầy tự chốt giá trong khoảng, có ghi tên, không cần " +
+              "chủ tiệm duyệt trước (DEC-029), nên phiếu SET_RANGE_PRICE thường không vào hàng " +
+              "chờ này nữa. Nếu vẫn có một phiếu như vậy, nó còn một bước nữa. Bản báo giá mà " +
+              "phiếu ấy niêm phong là " +
               "bản trước khi chốt giá, nên màn hình báo giá chỉ hiện khoảng đã công bố chứ không " +
               "hiện con số nhân viên đề nghị. Vì vậy thẻ phiếu tự đọc con số ấy và in ngay trên " +
               "hai nút; chừng nào chưa đọc được thì nút vẫn khoá. Duyệt một con số chưa ai cho " +

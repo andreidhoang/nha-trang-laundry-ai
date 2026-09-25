@@ -37,6 +37,20 @@ class ApprovalAuthorizationError(PermissionError):
     """Raised when a principal cannot decide or execute an approval."""
 
 
+#: The `execution_capability` of `_COUNTER_ATTESTATION` in `packages/domain`: an action one named
+#: staff member records on their own, under `DEC-021` (finalising a quote) and `DEC-029` (choosing
+#: a price inside a published band). Read off the stored envelope, never off the live policy table,
+#: so an envelope raised while its action still needed the owner keeps needing the owner.
+COUNTER_ATTESTED_CAPABILITY = "STAFF_ATTESTED_ACTION"
+
+#: Who may make a counter attestation: the staff on duty at the counter, the same set that may
+#: finalise a quote (`operations.QUOTE_ACCEPTANCE_ROLES`). `_COUNTER_ATTESTATION` names `OPERATOR`
+#: as the floor; a supervisor or the owner standing at the counter is on duty too.
+COUNTER_ATTESTATION_ROLES = frozenset(
+    {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.OPERATOR}
+)
+
+
 @dataclass(frozen=True)
 class ApprovalRequestCommand:
     action: ApprovalAction
@@ -71,6 +85,25 @@ class ApprovalDecisionCommand:
     correlation_id: UUID
     decided_at: datetime | None = None
     note: str | None = None
+
+
+@dataclass(frozen=True)
+class ApprovalAttestationCommand:
+    """A staff member attesting their own envelope at the counter (`DEC-021`, `DEC-029`).
+
+    The same observed binding a decision carries, and no `decision` field: an attestation is always
+    an approval by the person who raised the envelope. Declining to attest is simply not attesting,
+    and the envelope expires on its own.
+    """
+
+    approval_request_id: UUID
+    observed_resource_version: int
+    observed_snapshot_hash: str
+    observed_rendered_hash: str
+    reason_code: str
+    principal: StaffPrincipal
+    correlation_id: UUID
+    attested_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -313,88 +346,19 @@ class ApprovalRepository:
                     _datetime(row[8]),
                 )
             else:
-                decision_id = uuid4()
-
-                def mutation(change_cursor: Any) -> None:
-                    change_cursor.execute(
-                        """
-                        UPDATE approval_request_states
-                        SET status = %s, row_version = row_version + 1, updated_at = %s
-                        WHERE approval_request_id = %s AND status = 'REQUESTED'
-                            AND row_version = %s
-                        RETURNING approval_request_id
-                        """,
-                        (
-                            command.decision.value,
-                            decided_at,
-                            command.approval_request_id,
-                            int(str(row[11])),
-                        ),
-                    )
-                    if change_cursor.fetchone() is None:
-                        raise ApprovalStateError("approval decision is stale")
-                    change_cursor.execute(
-                        """
-                        INSERT INTO approval_decisions (
-                            id, approval_request_id, decision_type, decision, decided_by,
-                            reason_code, note,
-                            observed_resource_version, observed_snapshot_hash,
-                            observed_rendered_hash, decided_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            decision_id,
-                            command.approval_request_id,
-                            str(row[12]),
-                            command.decision.value,
-                            command.principal.staff_user_id,
-                            command.reason_code,
-                            command.note,
-                            command.observed_resource_version,
-                            command.observed_snapshot_hash,
-                            command.observed_rendered_hash,
-                            decided_at,
-                        ),
-                    )
-
-                next_version = int(str(row[11])) + 1
-                commit_material_change(
+                _record_decision(
                     connection,
-                    MaterialChange(
-                        aggregate_type="APPROVAL",
-                        aggregate_id=command.approval_request_id,
-                        aggregate_version=next_version,
-                        event_type="APPROVAL_DECIDED",
-                        event_payload={
-                            "decision_type": str(row[12]),
-                            "decision": command.decision.value,
-                            "reason_code": command.reason_code,
-                        },
-                        audit_action="APPROVAL_DECIDE",
-                        actor_type="STAFF",
-                        actor_id=command.principal.staff_user_id,
-                        correlation_id=command.correlation_id,
-                        outbox_events=(
-                            OutboxEvent(
-                                "approval.decided.v1",
-                                {
-                                    "approval_request_id": str(command.approval_request_id),
-                                    "decision_type": str(row[12]),
-                                    "decision": command.decision.value,
-                                    "reason_code": command.reason_code,
-                                },
-                                f"approval:{command.approval_request_id}:decision",
-                            ),
-                        ),
-                        occurred_at=decided_at,
-                        audit_details={
-                            "decision_type": str(row[12]),
-                            "decision": command.decision.value,
-                            "reason_code": command.reason_code,
-                            "resource_version": command.observed_resource_version,
-                        },
-                    ),
-                    mutation,
+                    row=row,
+                    approval_id=command.approval_request_id,
+                    decision=command.decision,
+                    decided_by=command.principal.staff_user_id,
+                    reason_code=command.reason_code,
+                    note=command.note,
+                    observed_resource_version=command.observed_resource_version,
+                    observed_snapshot_hash=command.observed_snapshot_hash,
+                    observed_rendered_hash=command.observed_rendered_hash,
+                    correlation_id=command.correlation_id,
+                    decided_at=decided_at,
                 )
                 stored = StoredApproval(
                     command.approval_request_id,
@@ -407,6 +371,86 @@ class ApprovalRepository:
             raise ApprovalStateError("approval expired")
         if stored is None:
             raise ApprovalStateError("approval decision did not complete")
+        return stored
+
+    def attest(self, connection: Any, command: ApprovalAttestationCommand) -> StoredApproval:
+        """Record a staff member's own counter attestation of the envelope they raised.
+
+        `DEC-029` (2026-09-25) put `SET_RANGE_PRICE` under the attestation `DEC-021` uses to
+        finalise a quote: attributed, immutable, no second signature. `decide` cannot carry that --
+        it refuses a requester deciding their own envelope for every action, which is the
+        maker-checker rule sends, cancellations and every owner-financial action depend on, and it
+        stays exactly as it was. This is a separate, narrower door rather than a relaxation of it:
+
+        * only for an envelope whose *stored* capability is `STAFF_ATTESTED_ACTION` and whose stored
+          obligations carry no `SEPARATION_OF_DUTY`. The policy is read from the row written when
+          the envelope was raised, so reversing `DEC-029` closes this door for every envelope
+          raised after the reversal without touching this code;
+        * only by the staff member who raised it, because the attestation *is* their statement and
+          a colleague's name on it would record the wrong person;
+        * with the store taken from the row, the exact binding re-checked and the expiry enforced,
+          exactly as a decision is;
+        * written as the same `approval_decisions` row a decision writes, with the attester as
+          `decided_by`, so every reader of approvals already sees who authorised what, in one
+          transaction with its event, audit and outbox rows (invariant 5).
+        """
+
+        _validate_reason_code(command.reason_code)
+        attested_at = command.attested_at or datetime.now(UTC)
+        stored: StoredApproval | None = None
+        expired = False
+        with connection.transaction(), connection.cursor() as cursor:
+            row = _lock_approval(cursor, command.approval_request_id)
+            _authorize_attestation(cursor, row, command.principal)
+            _require_exact_binding(
+                row,
+                command.observed_resource_version,
+                command.observed_snapshot_hash,
+                command.observed_rendered_hash,
+            )
+            if str(row[10]) != "REQUESTED":
+                raise ApprovalStateError("approval is not pending")
+            if attested_at >= _datetime(row[8]):
+                _change_approval_state(
+                    connection,
+                    approval_id=command.approval_request_id,
+                    old_version=int(str(row[11])),
+                    new_status="EXPIRED",
+                    event_type="APPROVAL_EXPIRED",
+                    audit_action="APPROVAL_EXPIRE",
+                    actor_type="STAFF",
+                    actor_id=command.principal.staff_user_id,
+                    correlation_id=command.correlation_id,
+                    occurred_at=attested_at,
+                )
+                expired = True
+            else:
+                _record_decision(
+                    connection,
+                    row=row,
+                    approval_id=command.approval_request_id,
+                    decision=ApprovalDecision.APPROVED,
+                    decided_by=command.principal.staff_user_id,
+                    reason_code=command.reason_code,
+                    note=None,
+                    observed_resource_version=command.observed_resource_version,
+                    observed_snapshot_hash=command.observed_snapshot_hash,
+                    observed_rendered_hash=command.observed_rendered_hash,
+                    correlation_id=command.correlation_id,
+                    decided_at=attested_at,
+                    counter_attestation=True,
+                )
+                stored = StoredApproval(
+                    command.approval_request_id,
+                    ApprovalDecision.APPROVED.value,
+                    str(row[9]),
+                    ActorRole(str(row[6])),
+                    _datetime(row[8]),
+                )
+        if expired:
+            raise ApprovalStateError("approval expired")
+        if stored is None:
+            raise ApprovalStateError("approval attestation did not complete")
         return stored
 
     def claim_execution(self, connection: Any, command: ApprovalExecutionCommand) -> StoredApproval:
@@ -642,7 +686,7 @@ def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
         SELECT r.resource_id, r.resource_version, r.snapshot_hash, r.rendered_hash,
                r.requested_by, r.policy_version, r.required_role, r.requested_at,
                r.expires_at, r.envelope_hash, s.status, s.row_version, r.action, r.store_id,
-               r.resource_type
+               r.resource_type, r.execution_capability, r.obligations
         FROM approval_requests r
         JOIN approval_request_states s ON s.approval_request_id = r.id
         WHERE r.id = %s
@@ -759,10 +803,146 @@ def _require_resolvable_resource(cursor: Any, command: ApprovalRequestCommand) -
 
 
 def _validate_human_decision(command: ApprovalDecisionCommand) -> None:
-    if re.fullmatch(r"[A-Z][A-Z0-9_]{1,99}", command.reason_code) is None:
-        raise ApprovalStateError("approval reason code is invalid")
+    _validate_reason_code(command.reason_code)
     if command.note is not None and len(command.note) > 500:
         raise ApprovalStateError("approval note is too long")
+
+
+def _validate_reason_code(reason_code: str) -> None:
+    if re.fullmatch(r"[A-Z][A-Z0-9_]{1,99}", reason_code) is None:
+        raise ApprovalStateError("approval reason code is invalid")
+
+
+def _authorize_attestation(cursor: Any, row: tuple[object, ...], principal: StaffPrincipal) -> None:
+    """Who may attest this envelope: its own requester, on duty, for a counter-attested action.
+
+    One opaque refusal for every failed condition, as `_authorize_decision` gives: the caller learns
+    that they may not attest this envelope, not which of the conditions measured them out.
+    """
+
+    require_store_membership(
+        cursor,
+        staff_user_id=principal.staff_user_id,
+        store_id=_uuid(row[13]),
+        error=ApprovalAuthorizationError,
+    )
+    obligations = row[16] if isinstance(row[16], list) else json.loads(str(row[16]))
+    if (
+        str(row[15]) != COUNTER_ATTESTED_CAPABILITY
+        or "SEPARATION_OF_DUTY" in obligations
+        or not principal.roles & COUNTER_ATTESTATION_ROLES
+        or not principal.mfa_verified
+        or principal.staff_user_id != _uuid(row[4])
+    ):
+        raise ApprovalAuthorizationError("this approval cannot be attested by this staff member")
+
+
+def _record_decision(
+    connection: Any,
+    *,
+    row: tuple[object, ...],
+    approval_id: UUID,
+    decision: ApprovalDecision,
+    decided_by: UUID,
+    reason_code: str,
+    note: str | None,
+    observed_resource_version: int,
+    observed_snapshot_hash: str,
+    observed_rendered_hash: str,
+    correlation_id: UUID,
+    decided_at: datetime,
+    counter_attestation: bool = False,
+) -> None:
+    """Write one decision with its event, audit and outbox rows. Authorisation is the caller's.
+
+    Shared by `decide` (a second person) and `attest` (the requester, at the counter). The row is
+    the same in both cases; `counter_attestation` travels in the event and the audit details so a
+    reader of either can tell a one-person attestation from a maker-checker approval without having
+    to compare two staff ids.
+    """
+
+    decision_id = uuid4()
+
+    def mutation(change_cursor: Any) -> None:
+        change_cursor.execute(
+            """
+            UPDATE approval_request_states
+            SET status = %s, row_version = row_version + 1, updated_at = %s
+            WHERE approval_request_id = %s AND status = 'REQUESTED'
+                AND row_version = %s
+            RETURNING approval_request_id
+            """,
+            (decision.value, decided_at, approval_id, int(str(row[11]))),
+        )
+        if change_cursor.fetchone() is None:
+            raise ApprovalStateError("approval decision is stale")
+        change_cursor.execute(
+            """
+            INSERT INTO approval_decisions (
+                id, approval_request_id, decision_type, decision, decided_by,
+                reason_code, note,
+                observed_resource_version, observed_snapshot_hash,
+                observed_rendered_hash, decided_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                decision_id,
+                approval_id,
+                str(row[12]),
+                decision.value,
+                decided_by,
+                reason_code,
+                note,
+                observed_resource_version,
+                observed_snapshot_hash,
+                observed_rendered_hash,
+                decided_at,
+            ),
+        )
+
+    event_payload: dict[str, object] = {
+        "decision_type": str(row[12]),
+        "decision": decision.value,
+        "reason_code": reason_code,
+    }
+    audit_details: dict[str, object] = {
+        "decision_type": str(row[12]),
+        "decision": decision.value,
+        "reason_code": reason_code,
+        "resource_version": observed_resource_version,
+    }
+    if counter_attestation:
+        event_payload["counter_attestation"] = True
+        audit_details["counter_attestation"] = True
+    commit_material_change(
+        connection,
+        MaterialChange(
+            aggregate_type="APPROVAL",
+            aggregate_id=approval_id,
+            aggregate_version=int(str(row[11])) + 1,
+            event_type="APPROVAL_DECIDED",
+            event_payload=event_payload,
+            audit_action="APPROVAL_DECIDE",
+            actor_type="STAFF",
+            actor_id=decided_by,
+            correlation_id=correlation_id,
+            outbox_events=(
+                OutboxEvent(
+                    "approval.decided.v1",
+                    {
+                        "approval_request_id": str(approval_id),
+                        "decision_type": str(row[12]),
+                        "decision": decision.value,
+                        "reason_code": reason_code,
+                    },
+                    f"approval:{approval_id}:decision",
+                ),
+            ),
+            occurred_at=decided_at,
+            audit_details=audit_details,
+        ),
+        mutation,
+    )
 
 
 def _authorize_decision(cursor: Any, row: tuple[object, ...], principal: StaffPrincipal) -> None:

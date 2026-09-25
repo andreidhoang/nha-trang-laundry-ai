@@ -36,6 +36,21 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 12 | Đọc cho khách số **Phải thu** ngay trên ô tiền, nhập đúng số đó, tích **Khách đã tự lấy đồ**, bấm **Ghi nhận tất toán** | Chi tiết đơn |
 | 13 | Chuyển **thương mại** sang *Hoàn tất* | Đơn hàng |
 
+### Khách muốn trả tiền ngay lúc gửi đồ
+
+Được, nhưng chỉ **đúng tổng đã báo** (quyết định DEC-032, 25/09/2026). Đặt cọc hay trả một phần
+vẫn bị từ chối.
+
+| | Làm gì | Ở màn hình |
+|---|---|---|
+| 9a | Sau bước 9 (đơn *Đang chạy*): **Mở đơn**, nhập đúng số **Phải thu**, bấm **Khách trả trước khi gửi đồ** — **không tích** ô “Khách đã tự lấy đồ” | Chi tiết đơn |
+| 11a | Khách tới lấy: **Tìm theo số phiếu**, **Mở đơn**, đưa đồ rồi bấm **Khách đã nhận đồ** (tên bạn được ghi) | Chi tiết đơn |
+| 13 | Chuyển **thương mại** sang *Hoàn tất* | Đơn hàng |
+
+- Tiền tính vào **Đã thu tại quầy** của **ngày khách trả**, không phải ngày lấy đồ.
+- Đồ chưa giặt xong thì máy không cho bấm đã nhận đồ — và cũng không cho tích ô “Khách đã tự lấy
+  đồ” khi khách trả lúc lấy.
+
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
 
 Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **khoảng giá**, vì phải nhìn món đồ mới
@@ -46,16 +61,14 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 |---|---|
 | 4a | Bấm **Lập bản khoảng giá**. Đọc khoảng cho khách nghe (ví dụ *80.000 – 240.000 ₫*) |
 | 4b | Xem đồ, thoả thuận với khách, gõ **một số nằm trong khoảng** cho từng dòng |
-| 4c | Bấm **Gửi giá cho chủ duyệt**. Gọi chủ tiệm — phiếu duyệt chỉ sống **mười phút** |
-| 4d | Chủ tiệm mở màn hình **Duyệt**, mở bản báo giá xem, rồi bấm **Duyệt** |
-| 4e | Bạn bấm **Áp dụng giá đã duyệt** → quay lại bước 5 ở bảng trên |
+| 4c | Bấm **Chốt giá này** → máy ghi giá luôn → quay lại bước 5 ở bảng trên |
 
-- **Người gửi không tự duyệt được.** Máy chủ từ chối. Phải là hai người.
-- **Đừng rời màn hình Báo giá** giữa 4c và 4e: những con số chỉ còn ở màn hình đó. Rời đi thì gửi
-  lại từ đầu — không mất gì, vì lúc đề nghị chưa có giá nào được ghi.
-- **Quá mười phút** thì phiếu chết hẳn, không gia hạn được. Gửi lại từ đầu.
-- Gõ số ngoài khoảng thì màn hình cảnh báo **ngay khi đang gõ**, trước khi gửi. Đừng lách: muốn ra
-  ngoài khoảng thì chủ tiệm phải công bố lại bảng giá.
+- **Không cần chờ chủ tiệm.** Người đang trực quầy chốt giá trong khoảng chủ tiệm đã niêm yết
+  (quyết định DEC-029, 25/09/2026). **Tên bạn được ghi cùng con số, không sửa được**, và chủ tiệm
+  xem lại được tất cả — nên chỉ gõ đúng số đã thoả thuận với khách.
+- Nếu màn hình dừng ở **Ghi giá vào báo giá** (mất mạng giữa chừng), bấm nút đó thêm một lần.
+- Gõ số ngoài khoảng thì màn hình cảnh báo **ngay khi đang gõ**, và máy chủ cũng từ chối. Đừng
+  lách: muốn ra ngoài khoảng thì chủ tiệm phải công bố lại bảng giá.
 
 ### Ba điều dễ sai nhất
 
@@ -81,8 +94,7 @@ Trang này trước đây dặn ghi tay hai việc. Cả hai đã làm được 
 mất bản ghi** — vì bản trên máy mới là bản không sửa được.
 
 **1. Món có khoảng giá.** Làm theo mục *Món niêm yết theo khoảng giá* ở trên. Vẫn là bạn thoả
-thuận giá với khách và chủ tiệm gật đầu — chỉ khác là được ghi lại kèm tên người chốt, thay vì
-nằm trên một tờ phiếu.
+thuận giá với khách — chỉ khác là được ghi lại kèm tên người chốt, thay vì nằm trên một tờ phiếu.
 
 **2. Khách khiếu nại.** Màn hình **Sự cố** dùng được rồi: chọn đơn, gõ nội dung khách phàn nàn
 bằng lời, bấm ghi nhận. Không phải gõ mã gì cả — máy chủ tự sinh.

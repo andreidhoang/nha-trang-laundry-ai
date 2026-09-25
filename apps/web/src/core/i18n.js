@@ -272,6 +272,17 @@ export const REASON_NOTE = {
     "để xem lần tất toán đã ghi.",
   STALE_VERSION:
     "Có người vừa đổi đơn này trong lúc bạn đang xem. Tải lại đơn rồi ghi nhận theo số mới.",
+  // PREPAID-DROPOFF-001 (DEC-032): the handover rule and the pickup command's refusals. States,
+  // not open decisions, so each says what to do first.
+  GOODS_NOT_READY_FOR_HANDOVER:
+    "Đồ chưa giặt xong nên chưa đưa cho khách được. Khách trả tiền lúc gửi đồ thì bấm “Khách trả " +
+    "trước khi gửi đồ”, không tích ô đã lấy đồ.",
+  COLLECTION_REQUIRES_PAYMENT:
+    "Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì nhập số tiền, tích “Khách đã tự lấy đồ về” " +
+    "rồi bấm “Ghi nhận tất toán”.",
+  NOT_A_PREPAID_SELF_COLLECTION:
+    "Đơn này không phải khách tự mang đồ tới rồi tự lấy. Đơn giao tận nơi thì ghi chuyến giao.",
+  ALREADY_COLLECTED: "Đơn này đã ghi nhận khách nhận đồ rồi. Không ghi lần nữa.",
   // `RemedyRefusal`, exactly as packages/domain/.../remedies.py names them, plus the codes
   // `RemedyProposalRepository` raises that are states rather than policy answers. The rule is the
   // settlement vocabulary's: a refusal a staff member meets with a customer in front of them may
@@ -576,6 +587,7 @@ export const ENUM_GLOSS = {
   ORDER_CREATE_FROM_FINAL_QUOTE: "tạo đơn từ báo giá đã chốt",
   ORDER_STATE_TRANSITION: "chuyển trạng thái đơn",
   ORDER_SETTLEMENT_RECORD: "ghi nhận tất toán",
+  ORDER_COLLECTION_RECORD: "ghi nhận khách nhận đồ",
 };
 
 /**

@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 355
+  DESCRIPTIVE: 361
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 383
+total: 389
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -619,6 +619,40 @@ disclosures:
   module: core/i18n.js
   key: REASON_NOTE.STALE_VERSION
   text: Có người vừa đổi đơn này trong lúc bạn đang xem. Tải lại đơn rồi ghi nhận theo số mới.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.GOODS_NOT_READY_FOR_HANDOVER:1977b40d36f9
+  module: core/i18n.js
+  key: REASON_NOTE.GOODS_NOT_READY_FOR_HANDOVER
+  text: Đồ chưa giặt xong nên chưa đưa cho khách được. Khách trả tiền lúc gửi đồ thì bấm “Khách trả trước
+    khi gửi đồ”, không tích ô đã lấy đồ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.COLLECTION_REQUIRES_PAYMENT:fb8336b0e9a2
+  module: core/i18n.js
+  key: REASON_NOTE.COLLECTION_REQUIRES_PAYMENT
+  text: Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì nhập số tiền, tích “Khách đã tự lấy đồ về” rồi
+    bấm “Ghi nhận tất toán”.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.NOT_A_PREPAID_SELF_COLLECTION:c1e83158fc41
+  module: core/i18n.js
+  key: REASON_NOTE.NOT_A_PREPAID_SELF_COLLECTION
+  text: Đơn này không phải khách tự mang đồ tới rồi tự lấy. Đơn giao tận nơi thì ghi chuyến giao.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.ALREADY_COLLECTED:7af3a41b1217
+  module: core/i18n.js
+  key: REASON_NOTE.ALREADY_COLLECTED
+  text: Đơn này đã ghi nhận khách nhận đồ rồi. Không ghi lần nữa.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2293,14 +2327,13 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#guardrail:e7cdc1e5010d
+- slot_id: screens/orderDetail.js#guardrail:b2daddbe89d3
   module: screens/orderDetail.js
   key: guardrail
-  text: 'Hai trường hợp được hỗ trợ, và cả hai là cùng một khoản tiền: khách trả đúng tổng đã báo, đủ
-    một lần, tại quầy. Khác nhau ở chỗ đồ đi đâu sau đó — khách tự lấy về, hoặc tiệm giao tận nơi và đã
-    thu tiền trước khi đồ rời quầy (chủ tiệm chốt ngày 26/08/2026). Trả thiếu, trả thừa, đặt cọc, trả
-    góp và ghi nợ đều bị từ chối kèm mã quyết định — chủ tiệm đã chốt ngày 18/08/2026 là tạm thời không
-    nhận các hình thức này — không làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.'
+  text: 'Mọi trường hợp là cùng một khoản tiền: khách trả đúng tổng đã báo, đủ một lần, tại quầy — lúc
+    lấy đồ, lúc gửi đồ (quyết định DEC-032), hoặc trước khi tiệm giao tận nơi. Trả thiếu, trả thừa, đặt
+    cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định — không làm tròn và không ghi nhận một phần.
+    Bản ghi tất toán không sửa được.'
   binding:
     kind: POLICY_BOUND
     decision: DEC-010
@@ -2430,6 +2463,14 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orders.js#hint:279ffab96bc8
+  module: screens/orders.js
+  key: hint
+  text: Khách đã trả trước, chưa nhận đồ — mở đơn và bấm “Khách đã nhận đồ” khi đưa đồ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/orders.js#guardrail:3f18d87de043
   module: screens/orders.js
   key: guardrail
@@ -2496,11 +2537,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:c764c99b73d8
+- slot_id: screens/quotes.js#notice:75dd3c92f663
   module: screens/quotes.js
   key: notice
   text: 'Đọc khoảng giá cho khách được, nhưng chưa chốt được: chưa có con số nào để khách đồng ý. Chốt
-    một giá trong khoảng ở ô bên dưới, chủ tiệm duyệt, rồi mới bấm “Khách đã chốt giá”.'
+    một giá trong khoảng ở ô bên dưới, rồi mới bấm “Khách đã chốt giá”.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2592,11 +2633,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:0d5c513c872b
+- slot_id: screens/quotes.js#notice:ef2a59c38b7e
   module: screens/quotes.js
   key: notice
-  text: 'Khoảng giá là chủ tiệm đã cho phép trước: mọi số trong khoảng đều là giá hợp lệ, và bảng vận
-    hành không tự chọn giúp một số nào. Bạn chọn, chủ tiệm duyệt, rồi máy chủ mới ghi thành giá.'
+  text: 'Khoảng giá là chủ tiệm đã cho phép trước: mọi số trong khoảng đều hợp lệ, và bảng vận hành không
+    tự chọn giúp số nào. Bạn chọn số khách đồng ý rồi bấm chốt — không cần chờ chủ tiệm.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/quotes.js#hint:9ca00d7dd719
+  module: screens/quotes.js
+  key: hint
+  text: Tên bạn được ghi cùng con số, không sửa được, và chủ tiệm xem lại được. Số ngoài khoảng thì máy
+    chủ từ chối.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2721,21 +2771,21 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:05a7f56abb03
+- slot_id: screens/quotes.js#notice:9143ff9eb7ed
   module: screens/quotes.js
   key: notice
   text: Bảng giá công bố một khoảng cho món này chứ không công bố một đơn giá, nên bộ tính giá không tự
-    chọn một số — đó là việc của người, và của chủ tiệm duyệt.
+    chọn một số — đó là việc của nhân viên đang trực quầy.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#screen__lede:38d05d509d5e
+- slot_id: screens/quotes.js#screen__lede:29b40670d8b6
   module: screens/quotes.js
   key: screen__lede
   text: Chọn yêu cầu, chọn dịch vụ, nhập khối lượng — máy chủ tính theo bảng giá đã chốt. Món niêm yết
-    theo khoảng giá thì nhân viên chốt một số trong khoảng và chủ tiệm duyệt. Màn hình này không tự cộng
-    tiền, không làm tròn, và không tự chọn số nào trong khoảng.
+    theo khoảng giá thì nhân viên trực quầy chốt một số trong khoảng, có ghi tên. Màn hình này không tự
+    cộng tiền, không làm tròn, và không tự chọn số nào trong khoảng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

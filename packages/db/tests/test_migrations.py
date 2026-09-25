@@ -55,7 +55,7 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         # No 0045: it was reserved for the remedy fixes, which turned out to need no schema change.
         ("0046", "order_refunds"),
         ("0047", "order_lookup"),
-        # No 0048 on this branch: the number was allotted to a concurrent item, not skipped.
+        ("0048", "prepaid_dropoff"),
         ("0049", "store_scoped_send_records"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)

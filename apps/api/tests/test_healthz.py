@@ -87,6 +87,8 @@ class StubOperationsService:
                 payable_total_vnd=110_000,
                 ticket_number=7,
                 ticket_issued_on=date(2026, 8, 1),
+                # PREPAID-DROPOFF-001 (`DEC-032`) put the stored collection flag on the read.
+                self_collection_recorded=False,
             ),
         )
 

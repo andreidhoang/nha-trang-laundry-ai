@@ -549,19 +549,20 @@ def export_queue_item() -> dict[str, object]:
 
 
 def range_price_approval() -> dict[str, object]:
-    """The raised envelope, expiring ten minutes from now.
+    """The raised envelope, as the server answers since `DEC-029`: already attested by the chooser.
 
-    Built at call time rather than as a constant: `_OWNER_FINANCIAL` is a ten-minute TTL and the
-    console renders the time remaining, so a fixed timestamp would make the countdown read "đã hết
-    hạn" the day after this file was written and the section would fail for the wrong reason.
+    `APPROVED`, `OPERATOR` and thirty minutes -- the `DEC-021` counter attestation -- where it read
+    `REQUESTED`, `OWNER_ADMIN` and ten minutes while a range price needed the owner. Built at call
+    time rather than as a constant, because the console renders the time remaining and a fixed
+    timestamp would make it read "đã hết hạn" the day after this file was written.
     """
 
     return {
         "approval_request_id": BAND_APPROVAL,
-        "status": "REQUESTED",
+        "status": "APPROVED",
         "envelope_hash": "JCS-SHA256-V1:" + "b" * 64,
-        "required_role": "OWNER_ADMIN",
-        "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+        "required_role": "OPERATOR",
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
         "resource_version": 1,
         "snapshot_hash": BAND_SNAPSHOT,
         "rendered_hash": BAND_RENDERED,
@@ -1679,10 +1680,18 @@ with sync_playwright() as playwright:
         repr(band_field.input_value()),
     )
 
-    page.locator("button", has_text="Gửi giá cho chủ duyệt").first.click()
-    page.wait_for_timeout(900)
+    # `DEC-029`: one press. The server answers with the chooser's own attestation and the console
+    # writes the price with it straight away -- two requests, no owner step in between.
+    page.locator("button", has_text="Chốt giá này").first.click()
+    page.wait_for_timeout(1500)
 
-    proposed = json.loads((state.get("range_posts") or ["{}"])[-1] or "{}")
+    posts = state.get("range_posts") or []
+    check(
+        "one press sends the proposal and then the price, with nobody else involved",
+        len(posts) == 2,
+        f"{len(posts)} request(s)",
+    )
+    proposed = json.loads((posts[0] if posts else "{}") or "{}")
     check("the proposal actually reaches the server", bool(state.get("range_posts")))
     check(
         "it carries the amount the staff member chose and no band of its own",
@@ -1699,31 +1708,23 @@ with sync_playwright() as playwright:
 
     content = page.content()
     check(
-        "the screen then says a second person has to decide it",
-        "Đang chờ chủ tiệm duyệt" in content and "Đừng rời màn hình này" in content,
-    )
-    check(
-        "with the remaining time on the envelope, not a wall-clock stamp alone",
-        "còn " in content and "phút" in content,
+        "the screen never tells the counter to wait for the owner",
+        "Đang chờ chủ tiệm duyệt" not in content,
     )
 
-    page.locator("button", has_text="Áp dụng giá đã duyệt").first.click()
-    page.wait_for_timeout(900)
-
-    applied = json.loads((state.get("range_posts") or ["{}"])[-1] or "{}")
+    applied = json.loads((posts[-1] if posts else "{}") or "{}")
     check(
-        "applying re-sends exactly the content the owner signed, because nothing stored it",
+        "applying re-sends exactly the content that was attested, because the digest binds it",
         applied == proposed,
         "the applied body differs from the proposed one",
     )
 
-    content = page.content()
     check(
         "the closed band becomes one exact price",
         "Đã ghi giá vào bản sửa đổi 2" in content and "150.000" in content,
     )
     check(
-        "an owner's approval is not the customer's agreement: the quote still has to be accepted",
+        "choosing the price is not the customer's agreement: the quote still has to be accepted",
         page.locator("button", has_text="Khách đã chốt giá").count() == 1,
         "expected the acceptance control on an APPROVED_EXACT revision that is not ACCEPTED_FINAL",
     )

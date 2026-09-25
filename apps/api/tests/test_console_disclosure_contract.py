@@ -603,7 +603,31 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # without changing the count, both because they had become false: the exceptions notice that
     # said the queue showed every store's receipts, and SHADOW_READ's `why`, which no longer covers
     # the exceptions queue now that it asks for MFA. 381 + 2.
-    assert sum(counts.values()) == _registry()["total"] == 383
+    #
+    # On its own branch:
+    # 382 after RANGE-COUNTER-ATTEST-001 (`DEC-029`): +1, and four sentences re-keyed in
+    # `screens/quotes.js`. The staff member on duty now chooses inside a published band without the
+    # owner, so every sentence telling the counter "chủ tiệm duyệt" was reworded -- the band notice,
+    # the refusal on a band revision, the band-mode offer and the screen lede. The one addition is
+    # the hint under the band notice saying the chooser's name is recorded with the number, cannot
+    # be altered, and is reviewed by the owner. It replaces the "mười phút ... gọi chủ tiệm" hint,
+    # which was a template literal the scanner does not register, so removing it moved nothing.
+    #
+    # 387 after PREPAID-DROPOFF-001 (`DEC-032`): 382 + 5, and one sentence re-keyed.
+    #   * 4 `REASON_NOTE` entries in `core/i18n.js`, one per new refusal a counter can meet: laundry
+    #     not finished (`GOODS_NOT_READY_FOR_HANDOVER`, from both the pickup command and the
+    #     staging review's rule on ticking "collected"), and the pickup command's three states --
+    #     not paid yet, not a walk-in prepayment, already collected.
+    #   * 1 hint on the board card in `screens/orders.js`: paid at drop-off, not yet collected,
+    #     because "Đã thu" alone reads as "nothing left to do" on the list searched at pickup.
+    #   * The settlement guardrail in `screens/orderDetail.js` re-keyed: it names three moments the
+    #     exact total may be paid instead of two. Its `POLICY_BOUND` binding to DEC-010 moved with
+    #     it. The pickup panel's own lines are conditional expressions the scanner does not
+    #     register, which is why the count moved by five and not more.
+    #
+    # 389 with both landed: disjoint sentences, so 381 + 2 (API-INTEGRITY-002)
+    # + 6 (DEC-029, DEC-032).
+    assert sum(counts.values()) == _registry()["total"] == 389
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

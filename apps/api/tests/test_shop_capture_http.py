@@ -79,7 +79,8 @@ def _headers(version: int | None = None, key: str | None = None) -> dict[str, st
 def _machines(client: TestClient, store_id: UUID, query: str = "") -> dict[str, Any]:
     response = client.get(f"/internal/v1/stores/{store_id}/machines{query}")
     assert response.status_code == 200, response.text
-    return response.json()
+    body: dict[str, Any] = response.json()
+    return body
 
 
 # --- machines ---------------------------------------------------------------------------------

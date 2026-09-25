@@ -16,9 +16,11 @@
 import { screen as approvals } from "./approvals.js";
 import { screen as assistant } from "./assistant.js";
 import { screen as exceptions } from "./exceptions.js";
+import { screen as expenses } from "./expenses.js";
 import { screen as exports_ } from "./exports.js";
 import { screen as gaps } from "./gaps.js";
 import { detailScreen as incidentDetail, screen as incidents } from "./incidents.js";
+import { screen as machines } from "./machines.js";
 import { screen as more } from "./more.js";
 import { screen as newOrder } from "./newOrder.js";
 import { screen as orderDetail } from "./orderDetail.js";
@@ -53,6 +55,8 @@ export const ROUTES = [
   remedies,
   exports_,
   reports,
+  expenses,
+  machines,
   system,
   staff,
   gaps,

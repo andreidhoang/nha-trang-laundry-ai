@@ -39,6 +39,8 @@ import {
   button,
   infoButton,
   keyValues,
+  list,
+  listRow,
   page,
   section,
   show,
@@ -387,6 +389,23 @@ export function render_() {
       ),
     }),
     sessionSection(),
+    // SHOP-CAPTURE-001: the owner's machine list lives under Hệ thống (spec §6); one row to it.
+    section({
+      title: "Thiết bị của tiệm",
+      card: false,
+      children: list(
+        [
+          listRow({
+            href: "#/machines",
+            leading: "washer",
+            title: "Máy giặt, sấy",
+            meta: "Danh sách máy quầy chọn khi bắt đầu giặt",
+            data: { systemMachines: "true" },
+          }),
+        ],
+        { label: "Thiết bị của tiệm" },
+      ),
+    }),
   );
 }
 

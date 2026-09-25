@@ -898,7 +898,14 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   Added: their true replacements (margin entry missing/today, both ledes, AI summary on
     #   DEC-006, per-order SLA), the REPORTS_READ `why`, and two reports.js lines.
     # 475 with all six round-6 slices merged: 473 + 10 - 8 = 475.
-    assert sum(counts.values()) == _registry()["total"] == 475
+    # 492 after round 7 SHOP-CAPTURE-001 (DEC-038): +24 -7. Added: eight REASON_NOTE sentences for
+    #   the machine, trip and expense refusals; four SERVER_GATE `why` (MACHINES_READ/_WRITE,
+    #   EXPENSES_READ/_WRITE); two Sổ thu chi hints; the three gaps entries' true replacements
+    #   (missing, blockedBy, today) and the measurement lede. Retired with the facts they stated:
+    #   reports.js's "why margin is empty" (margin now shows when the month is complete), the three
+    #   entries' "nothing records machines / trip costs / cost" missing, the machine entry's
+    #   blockedBy, the margin entry's today, and the old measurement lede.
+    assert sum(counts.values()) == _registry()["total"] == 492
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

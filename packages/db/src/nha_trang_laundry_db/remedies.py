@@ -24,8 +24,14 @@ the window, and emits `REWASH_COMMANDED`; it moves no order.
 created first and the proposal row second, carrying the envelope's id. It cannot be the other way
 around: `remedy_proposals.approval_id` is a foreign key, and a proposal that exists without its
 envelope for even one transaction is a proposal somebody could act on. The residue of a failure
-between them is an approval envelope nobody ever decides, which expires on its own ten-minute TTL
-and is visible in the audit trail -- an inert record, not an authorisation.
+between them is an approval envelope nobody ever decides, which expires on its own at the end of the
+next business day (the DEC-031 addendum's window for `APPROVE_REMEDY`) and is visible in the audit
+trail -- an inert record, not an authorisation.
+
+**Which garment (`REMEDY-GARMENT-001`).** A damage or loss claim on a line priced per piece names
+its garment, and the staff limit and the ceiling are cumulative per (line, garment). The committed
+totals are read grouped by the garment each proposal named, and handed to the domain, which owns
+the rule for a proposal written before migration `0053` named any: it counts against every garment.
 """
 
 from __future__ import annotations
@@ -59,6 +65,7 @@ from nha_trang_laundry_domain.quotes import (
 from nha_trang_laundry_domain.remedies import (
     REMEDY_POLICY_CONFIG_TYPE,
     REMEDY_POLICY_VERSION,
+    ItemCompensationTerms,
     RemedyAuthorized,
     RemedyCommitments,
     RemedyCredit,
@@ -70,6 +77,8 @@ from nha_trang_laundry_domain.remedies import (
     RemedyRefused,
     RemedyRequest,
     RemedyStatus,
+    committed_against_any_garment,
+    committed_against_garment,
     evaluate_remedy,
     item_compensation_terms,
     parse_remedy_policy,
@@ -132,6 +141,7 @@ class RemedyStateError(ValueError):
         window_closes_at: datetime | None = None,
         threshold_minutes: int | None = None,
         committed_vnd: int | None = None,
+        garments: int | None = None,
     ) -> None:
         self.reason_code = reason_code
         self.authority = authority
@@ -139,6 +149,8 @@ class RemedyStateError(ValueError):
         self.window_closes_at = window_closes_at
         self.threshold_minutes = threshold_minutes
         self.committed_vnd = committed_vnd
+        #: How many garments the line holds, when the claim named none or one it does not have.
+        self.garments = garments
         super().__init__(message)
 
 
@@ -269,6 +281,9 @@ class RemedyProposalCommand:
     amount_vnd: int | None = None
     attested_late_by_minutes: int | None = None
     proposed_at: datetime | None = None
+    #: `REMEDY-GARMENT-001`: the garment's 1-based position within the line's quantity. Required on
+    #: a line of several garments priced per piece; refused where no garment has a fee of its own.
+    garment_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +310,9 @@ class StoredRemedyProposal:
     #: `OwnerReason` values, in order, when the owner is needed; empty when staff may authorise.
     #: What lets the counter say *why* a 20.000 d loss waits for the owner.
     owner_reasons: tuple[str, ...] = ()
+    #: The garment the claim was recorded against (`REMEDY-GARMENT-001`); `None` for a line with no
+    #: garment identity and for every kind that is not about one item.
+    garment_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,6 +346,16 @@ class RemedyLineOption:
     #: `OwnerReason` values that send *every* damage amount on this line to the owner. A loss adds
     #: `LOSS_CLAIM` on top, whatever this says.
     owner_always: tuple[str, ...]
+    #: `REMEDY-GARMENT-001`: how many garments on the line have a fee of their own, or `None` when
+    #: none does (a bag, or a fee nobody recorded) and the line is one claimable whole.
+    garments: int | None = None
+    #: Per garment, 1..`garments` in order: what already counts against it -- proposals naming it
+    #: plus every line-level one. The number the staff limit and the item ceiling compare against.
+    #: Empty when `garments` is `None`.
+    garment_committed_vnd: tuple[int, ...] = ()
+    #: What proposals recorded before garments could be named (migration `0053`) hold on this line.
+    #: Already inside every figure of `garment_committed_vnd`; shown so staff can see why.
+    line_level_committed_vnd: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -459,6 +487,7 @@ class RemedyProposalRepository:
             terms = item_compensation_terms(policy, facts, line_id)
             assert terms is not None
             line = facts.lines[line_id]
+            by_garment = committed_by_line.get(line_id, {})
             lines.append(
                 RemedyLineOption(
                     line_id=line_id,
@@ -471,8 +500,11 @@ class RemedyProposalRepository:
                     ceiling_vnd=terms.ceiling_vnd,
                     pieces=terms.pieces,
                     line_ceiling_vnd=terms.line_ceiling_vnd,
-                    committed_vnd=committed_by_line.get(line_id, 0),
+                    committed_vnd=sum(by_garment.values()),
                     owner_always=tuple(reason.value for reason in terms.owner_always),
+                    garments=terms.garments,
+                    garment_committed_vnd=_per_garment(terms, by_garment),
+                    line_level_committed_vnd=by_garment.get(None, 0),
                 )
             )
         return RemedyOptions(
@@ -513,7 +545,10 @@ class RemedyProposalRepository:
             )
             published = read_published_remedy_policy(cursor)
             committed = _read_commitments(
-                cursor, order_id=record.order_id, order_line_id=command.order_line_id
+                cursor,
+                order_id=record.order_id,
+                order_line_id=command.order_line_id,
+                garment_index=command.garment_index,
             )
 
         # Before the policy and before any envelope: an incident that already reached its outcome
@@ -534,6 +569,7 @@ class RemedyProposalRepository:
             order_line_id=command.order_line_id,
             amount_vnd=command.amount_vnd,
             attested_late_by_minutes=command.attested_late_by_minutes,
+            garment_index=command.garment_index,
         )
 
         policy = published.policy
@@ -587,7 +623,10 @@ class RemedyProposalRepository:
                 cursor, order_id=record.order_id, incident_id=command.incident_id
             )
             locked = _read_commitments(
-                cursor, order_id=record.order_id, order_line_id=command.order_line_id
+                cursor,
+                order_id=record.order_id,
+                order_line_id=command.order_line_id,
+                garment_index=command.garment_index,
             )
             if locked != committed:
                 recheck = decide(locked)
@@ -618,6 +657,9 @@ class RemedyProposalRepository:
                 proposal_hash=document.snapshot_hash,
                 approval_id=approval_id,
                 proposed_at=proposed_at,
+                # The garment the domain resolved, not the one typed: on a line of one garment an
+                # unnamed claim is garment 1, and the row says so.
+                garment_index=outcome.garment_index,
             )
             _open_incident_review(
                 cursor,
@@ -644,6 +686,8 @@ class RemedyProposalRepository:
                         None if outcome.item_fee_basis is None else outcome.item_fee_basis.value
                     ),
                     "owner_reasons": [reason.value for reason in outcome.owner_reasons],
+                    "order_line_id": command.order_line_id,
+                    "garment_index": outcome.garment_index,
                     "policy_version": published.version,
                     "proposal_hash": document.snapshot_hash,
                 },
@@ -678,6 +722,7 @@ class RemedyProposalRepository:
             window_closes_at=outcome.window_closes_at,
             approval_id=approval_id,
             owner_reasons=tuple(reason.value for reason in outcome.owner_reasons),
+            garment_index=outcome.garment_index,
         )
 
     def _request_owner_approval(
@@ -695,8 +740,9 @@ class RemedyProposalRepository:
         `DEC-004` requires it above the staff ceiling; `DEC-031` adds every loss, every
         compensation on a refunded order, and every claim on an item whose fee was never recorded.
 
-        `APPROVAL_POLICIES` is not touched: `APPROVE_REMEDY` already maps to `_OWNER_FINANCIAL` with
-        `REMEDY_PROPOSAL`, which is owner policy and not this item's to edit. The resource type
+        Who may decide it and for how long is `APPROVAL_POLICIES`, not this module: the owner, MFA
+        and separation of duty as `_OWNER_FINANCIAL`, open until the end of the next business day
+        in Asia/Ho_Chi_Minh since the DEC-031 addendum (`_OWNER_REMEDY`). The resource type
         comes from `APPROVAL_RESOURCE_TYPES` and not a literal, because `build_approval_envelope`
         refuses any other value for this action and a literal would be a second place to get it
         wrong.
@@ -740,7 +786,7 @@ class RemedyProposalRepository:
                 """
                 SELECT p.store_id, p.incident_id, p.order_id, p.kind, p.status, p.amount_vnd,
                        p.approval_id, p.proposal_hash, p.policy_version_id, p.row_version,
-                       o.bound_contact_id, p.order_line_id, p.ceiling_vnd
+                       o.bound_contact_id, p.order_line_id, p.ceiling_vnd, p.garment_index
                 FROM remedy_proposals p
                 JOIN orders o ON o.id = p.order_id
                 WHERE p.id = %s
@@ -810,6 +856,7 @@ class RemedyProposalRepository:
                 amount_vnd=amount_vnd,
                 order_line_id=None if row[11] is None else str(row[11]),
                 ceiling_vnd=None if row[12] is None else int(row[12]),
+                garment_index=None if row[13] is None else int(row[13]),
                 staff_authorized=row[6] is None,
                 policy_version_id=_uuid(row[8]),
             )
@@ -1379,7 +1426,7 @@ _LIVE_PROPOSAL_FILTER = """
 
 
 def _read_commitments(
-    cursor: Any, *, order_id: UUID, order_line_id: str | None
+    cursor: Any, *, order_id: UUID, order_line_id: str | None, garment_index: int | None = None
 ) -> RemedyCommitments:
     """What earlier proposals already committed against this order, for `evaluate_remedy`.
 
@@ -1391,6 +1438,11 @@ def _read_commitments(
 
     Damage and loss on one line share the sum since `DEC-031`: both pay against the same item.
 
+    `REMEDY-GARMENT-001`: the line's sum is read grouped by the garment each proposal named, and
+    when the request names one, `domain.remedies.committed_against_garment` says what counts
+    against it -- including every proposal that named none. With no garment named the domain gets
+    the line alone and treats it as the garment's, which is the pre-addendum rule.
+
     Called twice by `propose`: once unlocked to decide whether the owner is needed before anything
     is written, and once under the order-row lock inside the transaction that inserts, which is the
     read that binds. The second is what stops two counters both reading "nothing committed yet".
@@ -1398,29 +1450,42 @@ def _read_commitments(
 
     cursor.execute(
         """
-        SELECT
-            coalesce(sum(p.amount_vnd) FILTER (
-                WHERE p.kind IN ('DAMAGE_COMPENSATION', 'LOST_ITEM') AND p.order_line_id = %s
-            ), 0),
-            count(*) FILTER (WHERE p.kind = 'LATE_DELIVERY_CREDIT')
+        SELECT count(*) FILTER (WHERE p.kind = 'LATE_DELIVERY_CREDIT')
         FROM remedy_proposals p
         LEFT JOIN approval_request_states s ON s.approval_request_id = p.approval_id
         WHERE p.order_id = %s AND
         """
         + _LIVE_PROPOSAL_FILTER,
-        (order_line_id, order_id, list(_DEAD_ENVELOPE_STATUSES)),
+        (order_id, list(_DEAD_ENVELOPE_STATUSES)),
     )
     row = cursor.fetchone()
     assert row is not None
-    return RemedyCommitments(line_committed_vnd=int(row[0]), late_delivery_credits=int(row[1]))
+    by_garment = (
+        {}
+        if order_line_id is None
+        else _read_line_commitments(cursor, order_id=order_id).get(order_line_id, {})
+    )
+    return RemedyCommitments(
+        line_committed_vnd=sum(by_garment.values()),
+        late_delivery_credits=int(row[0]),
+        garment_committed_vnd=(
+            None if garment_index is None else committed_against_garment(by_garment, garment_index)
+        ),
+    )
 
 
-def _read_line_commitments(cursor: Any, *, order_id: UUID) -> dict[str, int]:
-    """`_read_commitments`'s line total for every line at once, for the options read."""
+def _read_line_commitments(cursor: Any, *, order_id: UUID) -> dict[str, dict[int | None, int]]:
+    """Every line's live-or-paid damage and loss, by the garment each proposal named.
+
+    One read for `propose`, for the options form and -- with its own filter -- nowhere else, so the
+    form's "đã ghi" and the figure `evaluate_remedy` decides from are the same rows summed the same
+    way. `None` is a proposal that named no garment (written before migration `0053`, or on a line
+    with no garment identity).
+    """
 
     cursor.execute(
         """
-        SELECT p.order_line_id, coalesce(sum(p.amount_vnd), 0)
+        SELECT p.order_line_id, p.garment_index, coalesce(sum(p.amount_vnd), 0)
         FROM remedy_proposals p
         LEFT JOIN approval_request_states s ON s.approval_request_id = p.approval_id
         WHERE p.order_id = %s
@@ -1428,10 +1493,26 @@ def _read_line_commitments(cursor: Any, *, order_id: UUID) -> dict[str, int]:
           AND p.order_line_id IS NOT NULL AND
         """
         + _LIVE_PROPOSAL_FILTER
-        + " GROUP BY p.order_line_id",
+        + " GROUP BY p.order_line_id, p.garment_index",
         (order_id, list(_DEAD_ENVELOPE_STATUSES)),
     )
-    return {str(row[0]): int(row[1]) for row in cursor.fetchall()}
+    lines: dict[str, dict[int | None, int]] = {}
+    for row in cursor.fetchall():
+        garment = None if row[1] is None else int(row[1])
+        lines.setdefault(str(row[0]), {})[garment] = int(row[2])
+    return lines
+
+
+def _per_garment(
+    terms: ItemCompensationTerms, by_garment: Mapping[int | None, int]
+) -> tuple[int, ...]:
+    """What counts against each garment 1..N, for the form, by the domain's own rule."""
+
+    if terms.garments is None:
+        return ()
+    return tuple(
+        committed_against_garment(by_garment, garment) for garment in range(1, terms.garments + 1)
+    )
 
 
 def _service_names(cursor: Any, reference: ConfigurationSnapshotReference | None) -> dict[str, str]:
@@ -1609,6 +1690,7 @@ def _insert_proposal(
     proposal_hash: str,
     approval_id: UUID | None,
     proposed_at: datetime,
+    garment_index: int | None,
 ) -> None:
     cursor.execute(
         """
@@ -1616,9 +1698,10 @@ def _insert_proposal(
             id, store_id, incident_id, order_id, kind, status, amount_vnd, direction, ceiling_vnd,
             order_line_id, policy_version_id, policy_version, store_fault_attested,
             attested_late_by_minutes, window_opened_at, window_closes_at, proposal_hash,
-            approval_id, proposed_by, proposed_at, correlation_id
+            approval_id, proposed_by, proposed_at, correlation_id, garment_index
         ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s
         )
         """,
         (
@@ -1643,6 +1726,7 @@ def _insert_proposal(
             command.principal.staff_user_id,
             proposed_at,
             command.correlation_id,
+            garment_index,
         ),
     )
 
@@ -1696,6 +1780,7 @@ def _recheck_before_paying(
     ceiling_vnd: int | None,
     staff_authorized: bool,
     policy_version_id: UUID,
+    garment_index: int | None = None,
 ) -> None:
     """Refuse to pay a proposal that would break a limit `propose` enforces, whoever wrote it.
 
@@ -1718,6 +1803,12 @@ def _recheck_before_paying(
     founder's per-item clarification); and a staff-authorised row is refused if the line now needs
     the owner whatever the amount -- the order was refunded after it was proposed, or its fee was
     never recorded.
+
+    `REMEDY-GARMENT-001` makes the item a garment where the line has garments with a fee each:
+    the item ceiling and the staff limit are re-checked over what was paid on *that* garment plus
+    every line-level payment on the line. A line-level row itself -- one written before migration
+    `0053`, naming no garment -- is re-checked against the garment that leaves it least room,
+    because nothing says which it was about. The line's total still binds everything paid on it.
 
     And one late-delivery credit per order. The order row is locked first, as `propose` locks it,
     so a proposal and a payment on the same order serialise rather than each checking a sum the
@@ -1747,17 +1838,21 @@ def _recheck_before_paying(
     assert amount_vnd is not None and ceiling_vnd is not None and order_line_id is not None
     cursor.execute(
         """
-        SELECT coalesce(sum(amount_vnd), 0),
+        SELECT garment_index, coalesce(sum(amount_vnd), 0),
                coalesce(sum(amount_vnd) FILTER (WHERE approval_id IS NULL), 0)
         FROM remedy_proposals
         WHERE order_id = %s AND kind IN ('DAMAGE_COMPENSATION', 'LOST_ITEM')
           AND order_line_id = %s AND status = 'EXECUTED' AND id <> %s
+        GROUP BY garment_index
         """,
         (order_id, order_line_id, proposal_id),
     )
-    sums = cursor.fetchone()
-    assert sums is not None
-    paid_total, paid_by_staff = int(sums[0]), int(sums[1])
+    paid_by_garment: dict[int | None, int] = {}
+    paid_staff: dict[int | None, int] = {}
+    for garment_row in cursor.fetchall():
+        key = None if garment_row[0] is None else int(garment_row[0])
+        paid_by_garment[key], paid_staff[key] = int(garment_row[1]), int(garment_row[2])
+    paid_total = sum(paid_by_garment.values())
     policy = _policy_by_version(cursor, policy_version_id)
     if policy is None:
         # The figures this proposal was checked against cannot be read back, so neither the item's
@@ -1791,6 +1886,34 @@ def _recheck_before_paying(
             authority="DEC-004",
             ceiling_vnd=item_ceiling,
         )
+    # What was paid on this item: the garment where the line has several with a fee each, the line
+    # otherwise. The domain's own rule decides how line-level rows count.
+    per_garment = terms.garments is not None and terms.garments > 1
+    if not per_garment:
+        paid_on_item, paid_on_item_by_staff = paid_total, sum(paid_staff.values())
+    elif garment_index is not None:
+        paid_on_item = committed_against_garment(paid_by_garment, garment_index)
+        paid_on_item_by_staff = committed_against_garment(paid_staff, garment_index)
+    else:
+        # A line-level row, proposed before migration `0053` under the line rule, which bounded
+        # line-level rows among themselves only by the line together -- so another line-level row
+        # is not "this item" for the ceiling, and refusing on their sum would newly refuse a claim
+        # decided correctly at the time. It does count against every garment, so no garment's
+        # payments plus this one may pass one item's ceiling; and staff alone never pay more than
+        # the limit on any one garment, line-level payments included, which is what every
+        # proposal since the addendum was decided against.
+        paid_on_item = committed_against_any_garment(
+            {garment: amount for garment, amount in paid_by_garment.items() if garment is not None}
+        )
+        paid_on_item_by_staff = committed_against_any_garment(paid_staff)
+    if paid_on_item + amount_vnd > terms.ceiling_vnd:
+        raise RemedyStateError(
+            "paying this would give one item more than its compensation ceiling",
+            reason_code=RemedyRefusal.REMEDY_CEILING_EXCEEDED.value,
+            authority="DEC-004",
+            ceiling_vnd=terms.ceiling_vnd,
+            committed_vnd=paid_on_item,
+        )
     # Everything paid on the line, this included, within every item's ceiling together.
     if paid_total + amount_vnd > terms.line_ceiling_vnd:
         raise RemedyStateError(
@@ -1809,7 +1932,7 @@ def _recheck_before_paying(
             reason_code="REMEDY_APPROVAL_REQUIRED",
             authority="DEC-031",
         )
-    if paid_by_staff + amount_vnd > policy.staff_approval_ceiling_vnd:
+    if paid_on_item_by_staff + amount_vnd > policy.staff_approval_ceiling_vnd:
         raise RemedyStateError(
             "staff alone have already paid up to their limit on this item; the owner must approve",
             reason_code="REMEDY_APPROVAL_REQUIRED",
@@ -1858,6 +1981,7 @@ def _refusal_error(refused: RemedyRefused) -> RemedyStateError:
         window_closes_at=refused.window_closes_at,
         threshold_minutes=refused.threshold_minutes,
         committed_vnd=refused.committed_vnd,
+        garments=refused.garments,
     )
 
 

@@ -59,6 +59,9 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0049", "store_scoped_send_records"),
         ("0050", "agent_run_authority"),
         ("0051", "remedy_loss_to_owner"),
+        # No 0052 on this branch: the number was allotted to a parallel item. `0053` is
+        # REMEDY-GARMENT-001's, and discovery orders by version, so the gap is harmless.
+        ("0053", "remedy_garment_identity"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

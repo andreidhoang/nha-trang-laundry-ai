@@ -117,6 +117,10 @@ REMEDY_OPTIONS = {
             "line_ceiling_vnd": 600_000,
             "committed_vnd": 0,
             "owner_always": [],
+            # `REMEDY-GARMENT-001`: one dress is garment 1, without a picker.
+            "garments": 1,
+            "garment_committed_vnd": [0],
+            "line_level_committed_vnd": 0,
         },
         {
             "line_id": "line-small",
@@ -131,12 +135,42 @@ REMEDY_OPTIONS = {
             "line_ceiling_vnd": 90_000,
             "committed_vnd": 0,
             "owner_always": [],
+            "garments": 1,
+            "garment_committed_vnd": [0],
+            "line_level_committed_vnd": 0,
         },
     ],
     "late_delivery_credit_vnd": 17_000,
     "late_delivery_threshold_minutes": 120,
     "loss_requires_owner": True,
     "order_refunded": False,
+}
+
+#: `REMEDY-GARMENT-001`. The same incident with a line of three shirts at 50.000 d, shirt #1
+#: already carrying 100.000 d -- the staff limit exactly. Served only once section 11 asks for it,
+#: so every check before it sees the two-line order above unchanged.
+REMEDY_OPTIONS_SHIRTS = {
+    **REMEDY_OPTIONS,
+    "damage_line_ceilings_vnd": {"line-shirts": 250_000},
+    "damage_lines": [
+        {
+            "line_id": "line-shirts",
+            "service_code": "DC_SHIRT",
+            "service_name": "Áo sơ mi",
+            "unit": "ITEM",
+            "quantity": "3",
+            "item_fee_basis": "UNIT",
+            "item_fee_vnd": 50_000,
+            "ceiling_vnd": 250_000,
+            "pieces": 3,
+            "line_ceiling_vnd": 750_000,
+            "committed_vnd": 100_000,
+            "owner_always": [],
+            "garments": 3,
+            "garment_committed_vnd": [100_000, 0, 0],
+            "line_level_committed_vnd": 0,
+        },
+    ],
 }
 
 REMEDY_PROPOSAL_ID = "77777777-8888-4333-8444-bbbbbbbbbbbb"
@@ -803,7 +837,7 @@ with sync_playwright() as playwright:
             # A pure read. Nothing is written and nothing is reserved by asking, which is what lets
             # the console put the ceiling and the owner requirement on screen before anything is
             # typed rather than after a round trip that commits something.
-            body = REMEDY_OPTIONS
+            body = REMEDY_OPTIONS_SHIRTS if state.get("remedy_shirts") else REMEDY_OPTIONS
         elif "remedy-proposals" in url and url.endswith("/execution"):
             # The owner-approval branch, both halves. Until the envelope is decided the server
             # refuses with a machine-readable reason and no `outcome` key at all -- the shape that
@@ -1937,6 +1971,8 @@ with sync_playwright() as playwright:
             "store_fault_attested": True,
             "order_line_id": "line-large",
             "amount_vnd": 150_000,
+            # `REMEDY-GARMENT-001`: a line of one garment names garment 1, so the row says which.
+            "garment_index": 1,
         },
         repr(proposed),
     )
@@ -2009,6 +2045,76 @@ with sync_playwright() as playwright:
         "and its ceiling is the damage ceiling of that one item",
         "90.000" in content,
     )
+
+    # `REMEDY-GARMENT-001` (the DEC-031 addendum): on a line of three shirts each shirt has its own
+    # 100.000 d staff limit and its own 250.000 d ceiling. Shirt #1 already carries 100.000 d, so
+    # the same 100.000 d is the staff's on shirt #2 and the owner's on shirt #1 -- and the form must
+    # say which before anything is sent, which only a browser can show.
+    state["remedy_shirts"] = True
+    page.evaluate("location.hash = '#/incidents'")
+    page.wait_for_timeout(500)
+    page.evaluate(f"location.hash = '#/remedies?incident={incident}'")
+    page.wait_for_timeout(900)
+    page.locator("#remedy-kind").select_option(value="DAMAGE_COMPENSATION")
+    page.wait_for_timeout(300)
+    page.locator("#remedy-line").select_option(value="line-shirts")
+    page.wait_for_timeout(300)
+    content = page.content()
+    check(
+        "three shirts: the form asks which shirt before it offers a money box",
+        page.locator("#remedy-garment").count() == 1
+        and page.locator("#remedy-amount").count() == 0
+        and "Chưa chọn món thứ mấy trên dòng này" in content,
+        f"garment={page.locator('#remedy-garment').count()} "
+        f"amount={page.locator('#remedy-amount').count()}",
+    )
+    check(
+        "the shirt picker shows what each shirt already carries, and preselects none",
+        "Món thứ 1 · đã ghi 100.000" in content
+        and page.locator("#remedy-garment").input_value() == "",
+        repr(page.locator("#remedy-garment").input_value()),
+    )
+    page.locator("#remedy-garment").select_option(value="2")
+    page.wait_for_timeout(300)
+    amount = page.locator("#remedy-amount")
+    amount.click()
+    page.keyboard.type("100000", delay=8)
+    page.wait_for_timeout(300)
+    check(
+        "100.000 d on shirt #2 is the staff's to approve, whatever shirt #1 carries",
+        "sẽ lập phiếu chờ chủ tiệm duyệt" not in page.content(),
+    )
+    page.locator("#remedy-garment").select_option(value="1")
+    page.wait_for_timeout(300)
+    content = page.content()
+    check(
+        "the same 100.000 d on shirt #1 is cumulative with its 100.000 d, and the owner's",
+        "sẽ lập phiếu chờ chủ tiệm duyệt" in content and "Món thứ 1 đã ghi đền" in content,
+    )
+    check(
+        "and changing the shirt kept what was typed",
+        page.locator("#remedy-amount").input_value() == "100000",
+        repr(page.locator("#remedy-amount").input_value()),
+    )
+    page.locator("#remedy-garment").select_option(value="2")
+    page.locator("#remedy-fault").check()
+    page.wait_for_timeout(300)
+    page.locator("button", has_text="Gửi đề nghị bồi hoàn").first.click()
+    page.wait_for_timeout(900)
+    proposed = json.loads((state.get("remedy_posts") or ["{}"])[-1] or "{}")
+    check(
+        "the proposal names shirt #2 by its position on the line",
+        proposed
+        == {
+            "kind": "DAMAGE_COMPENSATION",
+            "store_fault_attested": True,
+            "order_line_id": "line-shirts",
+            "amount_vnd": 100_000,
+            "garment_index": 2,
+        },
+        repr(proposed),
+    )
+    state["remedy_shirts"] = False
 
     print()
     print("=" * 74)

@@ -1036,7 +1036,12 @@ decisions:
       record and propose, never authorise; report window 24 hours from handover. (3) A refunded
       order may still be compensated for a damaged or lost garment, capped against the quoted fee,
       and always with the owner's approval; no late-delivery credit on a refunded bill. (4) Staff
-      limit and ceiling remain cumulative per item.
+      limit and ceiling remain cumulative per item. Addendum, same day (REMEDY-GARMENT-001): on a
+      per-piece line the item is the garment a claim names by its 1-based position in the line's
+      quantity, so the staff limit and the 5x ceiling are cumulative per (line, garment); claims
+      recorded before migration 0053 count against every garment; weight-priced lines keep the
+      per-line rule. An owner-only remedy envelope stays open until the end of the next business
+      day in Asia/Ho_Chi_Minh instead of ten minutes; every other action keeps its window.
   - id: DEC-032
     title: May a self-collect customer pay the exact total at drop-off
     status: RESOLVED

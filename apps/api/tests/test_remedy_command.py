@@ -254,6 +254,9 @@ def test_the_options_read_names_each_item_and_what_it_already_carries(
                 line_ceiling_vnd=750_000,
                 committed_vnd=30_000,
                 owner_always=(),
+                garments=3,
+                garment_committed_vnd=(30_000, 0, 0),
+                line_level_committed_vnd=0,
             ),
             RemedyLineOption(
                 line_id="line-1",
@@ -293,6 +296,10 @@ def test_the_options_read_names_each_item_and_what_it_already_carries(
             "line_ceiling_vnd": 750_000,
             "committed_vnd": 30_000,
             "owner_always": [],
+            # `REMEDY-GARMENT-001`: three shirts, and the 30.000 d was shirt #1's alone.
+            "garments": 3,
+            "garment_committed_vnd": [30_000, 0, 0],
+            "line_level_committed_vnd": 0,
         },
         {
             "line_id": "line-1",
@@ -307,6 +314,10 @@ def test_the_options_read_names_each_item_and_what_it_already_carries(
             "line_ceiling_vnd": 700_000,
             "committed_vnd": 0,
             "owner_always": ["ORDER_REFUNDED", "ITEM_FEE_NOT_RECORDED"],
+            # No recorded per-piece fee: no garment identity, one claimable whole.
+            "garments": None,
+            "garment_committed_vnd": [],
+            "line_level_committed_vnd": 0,
         },
     ]
 
@@ -325,6 +336,72 @@ def test_an_unpublished_policy_is_reported_as_unpublished_rather_than_as_zeroes(
     assert body["staff_approval_ceiling_vnd"] is None
     assert body["damage_line_ceilings_vnd"] is None
     assert body["damage_lines"] is None
+
+
+def test_a_claim_names_its_garment_and_the_route_forwards_it(
+    client: TestClient, stub: StubService
+) -> None:
+    """`REMEDY-GARMENT-001`: shirt #2 reaches the service as 2 and comes back recorded as 2."""
+
+    seen: dict[str, Any] = {}
+
+    def propose(**arguments: Any) -> StoredRemedyProposalResult:
+        seen.update(arguments)
+        return _proposal(garment_index=2)
+
+    stub.propose_remedy = propose  # type: ignore[method-assign]
+    response = _propose(client, order_line_id="line-0", amount_vnd=60_000, garment_index=2)
+
+    assert response.status_code == 201
+    assert seen["garment_index"] == 2
+    assert response.json()["garment_index"] == 2
+
+
+def test_a_claim_naming_no_garment_forwards_none(client: TestClient, stub: StubService) -> None:
+    seen: dict[str, Any] = {}
+
+    def propose(**arguments: Any) -> StoredRemedyProposalResult:
+        seen.update(arguments)
+        return _proposal()
+
+    stub.propose_remedy = propose  # type: ignore[method-assign]
+    response = _propose(client, order_line_id="line-1", amount_vnd=60_000)
+
+    assert response.status_code == 201
+    assert seen["garment_index"] is None
+    assert response.json()["garment_index"] is None
+
+
+@pytest.mark.parametrize("garment", [0, -1, True, 1.5, "2"])
+def test_a_garment_that_is_not_a_position_is_refused_by_the_model(
+    client: TestClient, stub: StubService, garment: object
+) -> None:
+    stub.outcome = _proposal()
+    response = _propose(client, order_line_id="line-0", amount_vnd=60_000, garment_index=garment)
+
+    assert response.status_code == 422
+    assert "reason_code" not in response.json()["detail"]
+
+
+def test_a_garment_refusal_carries_how_many_garments_the_line_holds(
+    client: TestClient, stub: StubService
+) -> None:
+    """Shirt #4 of three: the console says "dòng này có 3 món" without parsing a sentence."""
+
+    stub.refusal = RemedyStateError(
+        "this remedy is not authorised",
+        reason_code="REMEDY_GARMENT_OUT_OF_RANGE",
+        authority="DEC-031",
+        garments=3,
+    )
+    response = _propose(client, order_line_id="line-0", amount_vnd=10_000, garment_index=4)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "reason_code": "REMEDY_GARMENT_OUT_OF_RANGE",
+        "authority": "DEC-031",
+        "garments": 3,
+    }
 
 
 def test_an_execution_reports_the_event_it_produced(client: TestClient, stub: StubService) -> None:

@@ -117,13 +117,21 @@ def test_a_per_piece_line_caps_each_item_at_five_times_its_unit_price(
             RemedyKind.DAMAGE_COMPENSATION,
             "line-0",
             250_001,
+            garment_index=1,
         )
     assert refused.value.reason_code == RemedyRefusal.REMEDY_CEILING_EXCEEDED.value
     # 5 x 50.000 d, the price of one shirt -- not 5 x the 150.000 d line.
     assert refused.value.ceiling_vnd == 250_000
 
     at_ceiling = _claim(
-        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 250_000
+        connection,
+        store_id,
+        incident_id,
+        staff,
+        RemedyKind.DAMAGE_COMPENSATION,
+        "line-0",
+        250_000,
+        garment_index=1,
     )
     assert at_ceiling.ceiling_vnd == 250_000
     assert at_ceiling.status is RemedyStatus.OWNER_APPROVAL_REQUIRED
@@ -176,7 +184,14 @@ def test_every_loss_claim_needs_the_owner(connection: psycopg.Connection[Any]) -
 
     store_id, staff, _, incident_id = _shop(connection, lines=(SHIRTS, BAG))
     proposal = _claim(
-        connection, store_id, incident_id, staff, RemedyKind.LOST_ITEM, "line-0", 20_000
+        connection,
+        store_id,
+        incident_id,
+        staff,
+        RemedyKind.LOST_ITEM,
+        "line-0",
+        20_000,
+        garment_index=1,
     )
     assert proposal.status is RemedyStatus.OWNER_APPROVAL_REQUIRED
     assert proposal.owner_reasons == ("LOSS_CLAIM",)
@@ -299,9 +314,14 @@ def test_several_pieces_on_one_line_each_carry_their_own_ceiling(
 ) -> None:
     """The founder's per-item ruling, end to end: three shirts at 50.000 d.
 
-    One claim of 250.000 d goes to the owner; a second of 250.000 d on the same line goes to the
-    owner too -- the line holds 750.000 d -- and both are paid once approved. A single claim of
-    300.000 d is refused: no one shirt can be owed that. Past 750.000 d on the line is refused.
+    One claim of 250.000 d on shirt #1 goes to the owner; a second of 250.000 d on shirt #2 goes to
+    the owner too -- the line holds 750.000 d -- and both are paid once approved. A single claim of
+    300.000 d is refused: no one shirt can be owed that. Shirt #1 is then full, and shirt #3 still
+    has its own 250.000 d, which takes the line to exactly 750.000 d.
+
+    Updated for the DEC-031 addendum (`REMEDY-GARMENT-001`): each claim now names its shirt, and a
+    claim past the full shirt is refused against *that shirt's* ceiling -- which on an undiscounted
+    line is reached before the line's, because the line is the shirts together.
     """
 
     store_id, staff, order_id, incident_id = _shop(connection, lines=(SHIRTS,))
@@ -314,14 +334,17 @@ def test_several_pieces_on_one_line_each_carry_their_own_ceiling(
             RemedyKind.DAMAGE_COMPENSATION,
             "line-0",
             300_000,
+            garment_index=1,
         )
     assert single.value.reason_code == RemedyRefusal.REMEDY_CEILING_EXCEEDED.value
     assert single.value.ceiling_vnd == 250_000
 
     # Both proposed on the complaint before either is carried out (carrying one out closes it).
     proposals = [
-        _claim(connection, store_id, incident_id, staff, kind, "line-0", 250_000)
-        for kind in (RemedyKind.DAMAGE_COMPENSATION, RemedyKind.LOST_ITEM)
+        _claim(
+            connection, store_id, incident_id, staff, kind, "line-0", 250_000, garment_index=garment
+        )
+        for kind, garment in ((RemedyKind.DAMAGE_COMPENSATION, 1), (RemedyKind.LOST_ITEM, 2))
     ]
     paid = []
     for minute, proposal in zip((1, 3), proposals, strict=True):
@@ -346,6 +369,7 @@ def test_several_pieces_on_one_line_each_carry_their_own_ceiling(
         750_000,
         500_000,
     )
+    assert (line.garments, line.garment_committed_vnd) == (3, (250_000, 250_000, 0))
     with pytest.raises(RemedyStateError) as past:
         _claim(
             connection,
@@ -355,36 +379,102 @@ def test_several_pieces_on_one_line_each_carry_their_own_ceiling(
             RemedyKind.DAMAGE_COMPENSATION,
             "line-0",
             250_001,
+            garment_index=3,
         )
     assert past.value.ceiling_vnd == 250_000
+    # Shirt #1 is full: one dong more on it is refused with its ceiling and what it carries.
+    with pytest.raises(RemedyStateError) as shirt_full:
+        _claim(
+            connection,
+            store_id,
+            incident_id,
+            staff,
+            RemedyKind.DAMAGE_COMPENSATION,
+            "line-0",
+            1,
+            garment_index=1,
+        )
+    assert shirt_full.value.reason_code == RemedyRefusal.REMEDY_CEILING_EXCEEDED.value
+    assert (shirt_full.value.ceiling_vnd, shirt_full.value.committed_vnd) == (250_000, 250_000)
     # The third shirt takes the line to exactly 750.000 d, inclusive; one dong more is refused.
     third = _claim(
-        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 250_000
+        connection,
+        store_id,
+        incident_id,
+        staff,
+        RemedyKind.DAMAGE_COMPENSATION,
+        "line-0",
+        250_000,
+        garment_index=3,
     )
     assert third.status is RemedyStatus.OWNER_APPROVAL_REQUIRED
-    with pytest.raises(RemedyStateError) as line_full:
-        _claim(
-            connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 1
-        )
-    assert line_full.value.reason_code == RemedyRefusal.REMEDY_CEILING_EXCEEDED.value
-    assert (line_full.value.ceiling_vnd, line_full.value.committed_vnd) == (750_000, 750_000)
+    for garment in (1, 2, 3):
+        with pytest.raises(RemedyStateError) as line_full:
+            _claim(
+                connection,
+                store_id,
+                incident_id,
+                staff,
+                RemedyKind.DAMAGE_COMPENSATION,
+                "line-0",
+                1,
+                garment_index=garment,
+            )
+        assert line_full.value.reason_code == RemedyRefusal.REMEDY_CEILING_EXCEEDED.value
+        assert line_full.value.ceiling_vnd == 250_000, garment
+    [line] = _options(connection, store_id, incident_id, staff).damage_lines
+    assert line.committed_vnd == 750_000 == line.line_ceiling_vnd
 
 
-def test_the_staff_limit_stays_per_line_when_a_claim_is_split_across_pieces(
+def test_the_staff_limit_is_per_garment_and_cumulative_on_each(
     connection: psycopg.Connection[Any],
 ) -> None:
-    """60.000 d on one shirt, then 50.000 d on another: the second is the owner's, not refused."""
+    """60.000 d on shirt #1, then 50.000 d on shirt #2: each is its own item, so both are staff's.
+
+    This test used to be `..._stays_per_line_when_a_claim_is_split_across_pieces` and asserted the
+    second claim went to the owner: the staff limit was the line's. The DEC-031 addendum
+    (`REMEDY-GARMENT-001`) reversed exactly that -- `DEC-004` says 100.000 d *per item*, and shirt
+    #2 has had nothing paid on it. What the old test protected is kept, on the garment it belongs
+    to: a second claim on shirt #1 is cumulative with the first and 110.000 d is the owner's.
+    """
 
     store_id, staff, _, incident_id = _shop(connection, lines=(SHIRTS,))
     first = _claim(
-        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 60_000
+        connection,
+        store_id,
+        incident_id,
+        staff,
+        RemedyKind.DAMAGE_COMPENSATION,
+        "line-0",
+        60_000,
+        garment_index=1,
     )
     assert first.status is RemedyStatus.STAFF_AUTHORIZED
-    second = _claim(
-        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 50_000
+    assert first.garment_index == 1
+    other_shirt = _claim(
+        connection,
+        store_id,
+        incident_id,
+        staff,
+        RemedyKind.DAMAGE_COMPENSATION,
+        "line-0",
+        50_000,
+        garment_index=2,
     )
-    assert second.status is RemedyStatus.OWNER_APPROVAL_REQUIRED
-    assert second.owner_reasons == ("ABOVE_STAFF_LIMIT",)
+    assert other_shirt.status is RemedyStatus.STAFF_AUTHORIZED
+    assert other_shirt.approval_id is None and other_shirt.garment_index == 2
+    same_shirt = _claim(
+        connection,
+        store_id,
+        incident_id,
+        staff,
+        RemedyKind.DAMAGE_COMPENSATION,
+        "line-0",
+        50_000,
+        garment_index=1,
+    )
+    assert same_shirt.status is RemedyStatus.OWNER_APPROVAL_REQUIRED
+    assert same_shirt.owner_reasons == ("ABOVE_STAFF_LIMIT",)
 
 
 def test_the_schema_refuses_a_staff_authorised_loss(connection: psycopg.Connection[Any]) -> None:
@@ -392,7 +482,14 @@ def test_the_schema_refuses_a_staff_authorised_loss(connection: psycopg.Connecti
 
     store_id, staff, _, incident_id = _shop(connection, lines=(SHIRTS,))
     seed = _claim(
-        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 10_000
+        connection,
+        store_id,
+        incident_id,
+        staff,
+        RemedyKind.DAMAGE_COMPENSATION,
+        "line-0",
+        10_000,
+        garment_index=1,
     )
     # A savepoint, so the refused INSERT rolls back alone and the test's transaction stays usable.
     with (
@@ -507,7 +604,14 @@ def test_a_proposal_written_under_the_line_wide_rule_is_not_paid_above_the_per_p
 
     store_id, staff, _, incident_id = _shop(connection, lines=(IRONING,))
     seed = _claim(
-        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-3", 1_000
+        connection,
+        store_id,
+        incident_id,
+        staff,
+        RemedyKind.DAMAGE_COMPENSATION,
+        "line-3",
+        1_000,
+        garment_index=1,
     )
     legacy = uuid4()
     with connection.cursor() as cursor:
@@ -572,7 +676,14 @@ def test_the_counter_sees_the_item_and_what_it_already_carries(
         connection, lines=(SHIRTS, BAG, PILLOWS), pricebook=reference
     )
     _claim(
-        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 30_000
+        connection,
+        store_id,
+        incident_id,
+        staff,
+        RemedyKind.DAMAGE_COMPENSATION,
+        "line-0",
+        30_000,
+        garment_index=1,
     )
     options = _options(connection, store_id, incident_id, staff)
     assert options.loss_requires_owner is True
@@ -590,6 +701,12 @@ def test_the_counter_sees_the_item_and_what_it_already_carries(
     assert shirts.owner_always == ()
     # Per item: one claim up to 250.000 d, the three shirts together up to 750.000 d.
     assert (shirts.pieces, shirts.line_ceiling_vnd) == (3, 750_000)
+    # Per garment (`REMEDY-GARMENT-001`): the 30.000 d was shirt #1's, and only shirt #1's.
+    assert (shirts.garments, shirts.garment_committed_vnd, shirts.line_level_committed_vnd) == (
+        3,
+        (30_000, 0, 0),
+        0,
+    )
 
     bag = by_line["line-1"]
     assert bag.service_name == "Giặt sấy tiêu chuẩn"
@@ -600,12 +717,15 @@ def test_the_counter_sees_the_item_and_what_it_already_carries(
         0,
     )
     assert (bag.pieces, bag.line_ceiling_vnd) == (1, 650_000)
+    # A bag has no garment identity: one claimable whole, no per-garment figures.
+    assert (bag.garments, bag.garment_committed_vnd) == (None, ())
 
     pillows = by_line["line-2"]
     assert pillows.service_name == "Gối"
     assert pillows.item_fee_basis == "NOT_RECORDED"
     assert pillows.owner_always == ("ITEM_FEE_NOT_RECORDED",)
     assert (pillows.pieces, pillows.line_ceiling_vnd) == (1, 700_000)
+    assert (pillows.garments, pillows.garment_committed_vnd) == (None, ())
     # The legacy map is kept for callers that read it: one claim's ceiling per line.
     assert options.damage_line_ceilings_vnd == {
         "line-0": 250_000,

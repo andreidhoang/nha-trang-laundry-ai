@@ -373,6 +373,12 @@ class RemedyProposalRequest(StrictRequest):
     store_fault_attested: StrictBool
     order_line_id: str | None = Field(default=None, min_length=1, max_length=64)
     amount_vnd: StrictInt | None = Field(default=None, ge=0, le=MAX_CANONICAL_INT)
+    #: `REMEDY-GARMENT-001`: which garment on the line, by its 1-based position within the line's
+    #: quantity -- shirt #2 of three is `2`. Required on a line of several garments priced per
+    #: piece, because each has its own staff limit and ceiling; optional on a line of one; refused
+    #: on a bag or a line whose per-piece fee was never recorded. The upper bound is the line's
+    #: quantity, which only the server knows, so it is checked there and refused with the count.
+    garment_index: StrictInt | None = Field(default=None, ge=1, le=MAX_CANONICAL_INT)
     #: How late the delivery was, attested by the staff member who handled it. The shop records no
     #: promised arrival time, so this cannot be derived; that a return leg happened at all is
     #: checked against the record, and this is refused unless it clears the published threshold.
@@ -415,6 +421,9 @@ class RemedyProposalResponse(BaseModel):
     replayed: bool
     #: `LOSS_CLAIM`, `ORDER_REFUNDED`, `ITEM_FEE_NOT_RECORDED`, `ABOVE_STAFF_LIMIT`, in that order.
     owner_reasons: list[str] = Field(default_factory=list)
+    #: The garment the claim was recorded against (`REMEDY-GARMENT-001`): the one named, or 1 on a
+    #: line of one garment. Null where the line has no garment identity and for every other kind.
+    garment_index: int | None = None
 
 
 class RemedyExecutionResponse(BaseModel):
@@ -451,6 +460,17 @@ class RemedyLineOptionResponse(BaseModel):
     committed_vnd: int
     #: Reasons every damage amount on this item needs the owner. A loss always does besides.
     owner_always: list[str]
+    #: `REMEDY-GARMENT-001`: garments on the line with a fee of their own, or null when none has
+    #: (a bag, or a fee never recorded) and the line is one claimable whole. When set, a claim
+    #: names one of them as `garment_index`, 1..`garments`.
+    garments: int | None = None
+    #: Per garment, in order 1..`garments`: what already counts against its 100.000 ₫ staff limit
+    #: and its ceiling -- proposals naming it plus every line-level one. Empty when `garments` is
+    #: null.
+    garment_committed_vnd: list[int] = Field(default_factory=list)
+    #: What proposals recorded before a garment could be named hold on this line. Already counted
+    #: in every `garment_committed_vnd` entry, since nothing says which garment they were about.
+    line_level_committed_vnd: int = 0
 
 
 class RemedyOptionsResponse(BaseModel):
@@ -2788,6 +2808,9 @@ def remedy_options(
                     line_ceiling_vnd=line.line_ceiling_vnd,
                     committed_vnd=line.committed_vnd,
                     owner_always=list(line.owner_always),
+                    garments=line.garments,
+                    garment_committed_vnd=list(line.garment_committed_vnd),
+                    line_level_committed_vnd=line.line_level_committed_vnd,
                 )
                 for line in options.damage_lines
             ]
@@ -2829,6 +2852,7 @@ def propose_remedy(
             order_line_id=request.order_line_id,
             amount_vnd=request.amount_vnd,
             attested_late_by_minutes=request.attested_late_by_minutes,
+            garment_index=request.garment_index,
             idempotency_key=idempotency_key,
             principal=principal,
         )
@@ -3005,6 +3029,9 @@ def _raise_remedy_error(error: Exception) -> NoReturn:
             # What earlier proposals already committed against the same item. The ceiling alone
             # would tell staff "at most 500.000 d" about a garment that already has 300.000 d on it.
             detail["committed_vnd"] = error.committed_vnd
+        if error.garments is not None:
+            # How many garments the line holds, for a claim that named none or one it lacks.
+            detail["garments"] = error.garments
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail) from error
     _raise_operations_error(error)
 

@@ -42,8 +42,12 @@
  *   - **Only `REQUESTED` is listed.** The `WHERE s.status = 'REQUESTED'` clause means approved,
  *     rejected and expired envelopes are not in this list and cannot be reviewed from it.
  *   - **The countdown is the point.** Approval TTLs are 10, 15 or 30 minutes by action
- *     (`SECURITY_RELIABILITY_SPEC_V1.md:354`) and an expiry never extends implicitly, so remaining
- *     time matters far more than a wall-clock timestamp. One interval drives every badge and stops
+ *     (`SECURITY_RELIABILITY_SPEC_V1.md:354`) — except an owner-only remedy envelope, which since
+ *     the DEC-031 addendum stays open until the end of the next business day in Asia/Ho_Chi_Minh
+ *     (up to 48 hours), and which `countdown` renders in hours and days rather than minutes. An
+ *     expiry never extends implicitly, so remaining time matters far more than a wall-clock
+ *     timestamp. The queue is ordered by expiry, so a day-long remedy envelope sits below the
+ *     ten-minute ones that need an answer first. One interval drives every badge and stops
  *     itself the moment the screen leaves the document — a console is left open all day, and a
  *     leaked timer per navigation is a real bug rather than a tidiness complaint.
  *

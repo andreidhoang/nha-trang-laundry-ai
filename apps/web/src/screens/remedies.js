@@ -112,7 +112,8 @@ const OWNER_REASON_NOTE = {
   ORDER_REFUNDED: "đơn này đã hoàn tiền, nên mọi khoản đền đều do chủ tiệm duyệt",
   ITEM_FEE_NOT_RECORDED:
     "bản giá không ghi giá của từng món trên dòng này, nên chủ tiệm quyết mọi số tiền",
-  ABOVE_STAFF_LIMIT: "tổng đền cho dòng này vượt mức nhân viên được duyệt",
+  // Per item: the garment on a line priced per piece (REMEDY-GARMENT-001), the bag otherwise.
+  ABOVE_STAFF_LIMIT: "tổng đền cho món này (hoặc cả túi, nếu tính theo ký) vượt mức nhân viên được duyệt",
 };
 
 /**
@@ -157,12 +158,15 @@ const PLAN_NOTE = {
   LINE_NOT_CHOSEN:
     "Trần 5 lần thuộc về một món trên đơn, không thuộc về cả đơn. Chọn đúng món thì mới thấy trần " +
     "của nó và số đã ghi cho nó.",
+  GARMENT_NOT_CHOSEN:
+    "Dòng này có nhiều món tính giá theo cái. Mỗi món có mức nhân viên duyệt và trần 5 lần riêng, " +
+    "nên phải chọn “Món thứ mấy” thì mới biết món đó đã ghi bao nhiêu và còn được bao nhiêu.",
   AMOUNT_MISSING: "Chưa đủ dữ kiện để gửi. Điền nốt ô còn trống.",
   NOT_AN_AMOUNT:
     "Số tiền phải là số nguyên đồng. “150.000” đọc là 150000; không nhận dấu phẩy và không nhận " +
     "số lẻ. Chưa có gì được gửi đi.",
   ABOVE_CEILING:
-    "Số này vượt trần một món, hoặc cộng với số đã ghi cho dòng này thì vượt trần cả dòng. Máy chủ " +
+    "Số này vượt trần một món, hoặc cộng với số đã ghi cho món này hay cho cả dòng thì vượt trần. Máy chủ " +
     "từ chối và không tự hạ xuống bằng trần — hạ xuống là trả cho khách ít hơn con số bạn vừa thoả " +
     "thuận với họ.",
   BELOW_LATENESS_THRESHOLD:
@@ -257,8 +261,11 @@ function ceilingSummary(plan, options) {
       ? h(
           "span",
           null,
-          `Tuỳ số tiền. Nhân viên duyệt được tới ${money(threshold)} cho cả dòng, tính cả số đã ` +
-            "ghi trước; trên mức đó phải có chủ tiệm.",
+          Number.isInteger(plan.garments) && plan.garments > 1
+            ? `Tuỳ số tiền. Nhân viên duyệt được tới ${money(threshold)} cho mỗi món, tính cả số ` +
+                "đã ghi trước cho món đó; trên mức đó phải có chủ tiệm."
+            : `Tuỳ số tiền. Nhân viên duyệt được tới ${money(threshold)} cho cả dòng, tính cả số ` +
+                "đã ghi trước; trên mức đó phải có chủ tiệm.",
         )
       : threshold === null
         ? h("span", null, UNKNOWN)
@@ -286,9 +293,16 @@ function ceilingSummary(plan, options) {
       ],
       ...(feeCell ? [["Phí giặt tính trần", feeCell, { span: true }]] : []),
       ["Trần máy chủ tính", ceilingCell, { span: true }],
+      // REMEDY-GARMENT-001: on a line of several garments the item is the garment, so what it
+      // already carries is shown for that garment, beside the line's total.
       ...(plan.committedVnd === null
         ? []
-        : [["Dòng này đã ghi đền", money(plan.committedVnd), { span: true }]]),
+        : Number.isInteger(plan.garments) && plan.garments > 1
+          ? [
+              [`Món thứ ${plan.garmentIndex} đã ghi đền`, money(plan.committedVnd), { span: true }],
+              ["Cả dòng đã ghi đền", money(plan.lineCommittedVnd), { span: true }],
+            ]
+          : [["Dòng này đã ghi đền", money(plan.committedVnd), { span: true }]]),
       ["Cửa sổ thời gian", windowCell, { span: true }],
       ["Cần chủ tiệm duyệt?", ownerCell, { span: true }],
       ["Khách nhận đồ lúc", dateTime(options?.goods_returned_at), { span: true }],
@@ -371,6 +385,9 @@ function proposalCard(result) {
       ["Trạng thái", result.status, { mono: true }],
       ["Kết luận của máy chủ", result.outcome, { mono: true }],
       ["Số tiền", money(result.amount_vnd), { span: true }],
+      ...(Number.isInteger(result.garment_index)
+        ? [["Món thứ", String(result.garment_index), { span: true }]]
+        : []),
       ["Trần máy chủ tính", money(result.ceiling_vnd), { span: true }],
       ["Cửa sổ đóng lúc", dateTime(result.window_closes_at), { span: true }],
       [
@@ -505,11 +522,13 @@ export function render_() {
   const executeSubmission = new Submission("remedy-execute");
   const redeemSubmission = new Submission("remedy-redeem");
 
-  /** @type {{incidentId: string, kind: string, lineId: string, amount: string, lateness: string, fault: boolean}} */
+  /** @type {{incidentId: string, kind: string, lineId: string, garment: string, amount: string, lateness: string, fault: boolean}} */
   const draft = {
     incidentId: "",
     kind: REMEDY_KIND.FREE_REWASH,
     lineId: "",
+    // "Món thứ mấy" on a line of several garments (REMEDY-GARMENT-001), as the select holds it.
+    garment: "",
     amount: "",
     lateness: "",
     fault: false,
@@ -565,6 +584,7 @@ export function render_() {
       onChange: (event) => {
         draft.kind = event.target.value;
         draft.lineId = "";
+        draft.garment = "";
         draft.amount = "";
         draft.lateness = "";
         proposeSubmission.reset();
@@ -598,6 +618,7 @@ export function render_() {
       ceilingSummary(plan, options),
       planNotice(plan),
       plan.needsLine ? lineField() : null,
+      plan.needsGarment ? garmentField(plan) : null,
       plan.needsAmount ? amountField() : null,
       plan.needsLateness ? latenessField() : null,
       faultField(),
@@ -642,6 +663,7 @@ export function render_() {
       kind: draft.kind,
       storeFaultAttested: draft.fault,
       lineId: draft.lineId,
+      garmentIndex: draft.garment,
       typedAmount: draft.amount,
       typedLateness: draft.lateness,
     });
@@ -677,6 +699,12 @@ export function render_() {
     if (plan.state === PLAN.ABOVE_CEILING && plan.ceilingBreached === "LINE") {
       return (
         `Vượt trần cả dòng: tối đa ${money(plan.lineCeilingVnd)}, ` +
+        `đã ghi ${money(plan.lineCommittedVnd)}`
+      );
+    }
+    if (plan.state === PLAN.ABOVE_CEILING && plan.ceilingBreached === "GARMENT") {
+      return (
+        `Vượt trần món thứ ${plan.garmentIndex}: tối đa ${money(plan.ceilingVnd)}, ` +
         `đã ghi ${money(plan.committedVnd)}`
       );
     }
@@ -694,6 +722,7 @@ export function render_() {
     if (plan.state === PLAN.LINE_NOT_CHOSEN) {
       return plan.kind === REMEDY_KIND.LOST_ITEM ? "Chưa chọn món bị mất" : "Chưa chọn món bị hỏng";
     }
+    if (plan.state === PLAN.GARMENT_NOT_CHOSEN) return "Chưa chọn món thứ mấy trên dòng này";
     if (plan.state === PLAN.NOT_AN_AMOUNT) return "Chưa đọc được số tiền";
     if (plan.state === PLAN.BELOW_LATENESS_THRESHOLD) return "Chưa tới ngưỡng giao trễ";
     if (plan.state === PLAN.FAULT_NOT_ATTESTED) return "Chưa xác định lỗi thuộc về tiệm";
@@ -709,6 +738,8 @@ export function render_() {
         name: "remedy-line",
         onChange: (event) => {
           draft.lineId = event.target.value;
+          // Another line's garment numbers are not this line's; the choice starts over.
+          draft.garment = "";
           proposeSubmission.reset();
           redrawForm();
         },
@@ -736,6 +767,53 @@ export function render_() {
         "Trần là 5 lần phí giặt của một món: đồ tính theo cái lấy giá một cái, đồ tính theo ký " +
         "lấy tiền cả túi. “Đã ghi” là số các đề nghị trước đã giữ cho dòng đó. Không có dòng nào " +
         "ở đây nghĩa là máy chủ chưa gửi điều kiện từng món.",
+      control: select,
+    });
+  }
+
+  /**
+   * "Món thứ mấy": which garment on a line of several priced per piece. REMEDY-GARMENT-001.
+   *
+   * Each garment has its own 100.000 ₫ staff limit and its own 5× ceiling, so the picker shows what
+   * each already carries — the server's figure, line-level claims included — before one is chosen.
+   * A line of one garment never shows this: it is garment 1. No default is preselected on a line
+   * of several, because picking garment 1 for somebody spends garment 1's limit.
+   *
+   * @param {ReturnType<typeof remedyPlan>} plan
+   * @returns {HTMLElement}
+   */
+  function garmentField(plan) {
+    const line = damageLines(options).find((candidate) => candidate.lineId === draft.lineId);
+    const count = Number.isInteger(plan.garments) ? plan.garments : 0;
+    const held = line && Array.isArray(line.garmentCommitted) ? line.garmentCommitted : null;
+    const select = h(
+      "select",
+      {
+        name: "remedy-garment",
+        onChange: (event) => {
+          draft.garment = event.target.value;
+          proposeSubmission.reset();
+          redrawForm();
+        },
+      },
+      h("option", { value: "", selected: !draft.garment }, "— chọn món thứ mấy —"),
+      Array.from({ length: count }, (_, offset) => {
+        const position = offset + 1;
+        const carried = held ? held[offset] : null;
+        return h(
+          "option",
+          { value: String(position), selected: draft.garment === String(position) },
+          carried ? `Món thứ ${position} · đã ghi ${money(carried)}` : `Món thứ ${position}`,
+        );
+      }),
+    );
+    return labelled({
+      id: "remedy-garment",
+      label: "Món thứ mấy",
+      hint:
+        `Dòng này có ${count} món tính giá theo cái. Mỗi món có mức nhân viên duyệt và trần 5 lần ` +
+        "riêng; đề nghị thứ hai cho cùng một món được cộng dồn với đề nghị trước. “Đã ghi” gồm cả " +
+        "các đề nghị ghi cho cả dòng từ trước khi chọn được từng món.",
       control: select,
     });
   }

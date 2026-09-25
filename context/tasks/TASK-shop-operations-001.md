@@ -15,7 +15,7 @@ what is theirs to publish, and is filmed and reviewed like round 6.
 `business_truth`
 
 **Stable work items:** `CUSTOMER-001`, `PAYMENT-001`, `PAYMENT-002`, `PROMISE-001`,
-`UNCLAIMED-001`, `SHOP-CAPTURE-001`, `DAILY-SUMMARY-001`, `SHOP-FILMED-REVIEW-004`.
+`UNCLAIMED-001`, `SHOP-CAPTURE-001`, `DAILY-SUMMARY-001`, `EXPORT-PAYMENTS-001`, `SHOP-FILMED-REVIEW-004`.
 
 **Stage:** PRODUCTION_HARDENING
 **Risk:** HIGH for `CUSTOMER-001` (personal data), `PAYMENT-001`/`PAYMENT-002` (money and when goods

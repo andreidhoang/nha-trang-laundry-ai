@@ -5649,3 +5649,33 @@ items:
   - no_capability_authorisation_changed
   - rollback_assessment
   blocked_by_decisions: []
+- id: EXPORT-PAYMENTS-001
+  phase: PRODUCTION_HARDENING
+  title: The sanitized export carries part payments and says truthfully which ledger its money comes from
+  status: PENDING
+  priority: 338
+  depends_on:
+  - PAYMENT-001
+  - EXPORT-RANGE-001
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/SHOP_OPERATIONS_SPEC_V1.md
+  - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-shop-operations-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_partly_paid_order_exports_what_was_paid_by_method
+  - an_envelope_approved_before_the_change_is_not_released_as_the_new_shape
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []

@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 382
+  DESCRIPTIVE: 391
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 410
+total: 419
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1532,6 +1532,75 @@ disclosures:
   key: notice
   text: Phiếu này xin cho một tin nhắn được gửi tay tới khách. Chừng nào chưa đọc được đúng chữ của tin
     đó thì nút Duyệt vẫn khoá. Máy chủ nêu lý do bên dưới, nguyên văn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice__title:6e920c122ceb
+  module: screens/approvals.js
+  key: notice__title
+  text: Khoản bồi hoàn bạn đang được đề nghị duyệt
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#hint:122e82a26387
+  module: screens/approvals.js
+  key: hint
+  text: Mô tả sự cố không còn được lưu (đã quá hạn giữ) hoặc chưa từng được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#hint:4780a629228c
+  module: screens/approvals.js
+  key: hint
+  text: 'Bấm Duyệt là cho phép trả đúng số tiền này cho đúng món này. Duyệt chưa trả gì cả: một nhân viên
+    phải bấm “Thực hiện bồi hoàn” ở màn hình Bồi hoàn trước khi phiếu duyệt hết hạn.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:6f0c3d3d47ed
+  module: screens/approvals.js
+  key: notice
+  text: Tải lại hàng chờ. Chưa đọc được số tiền thì chưa quyết.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice__title:0b9d70e43714
+  module: screens/approvals.js
+  key: notice__title
+  text: Không biết khoản bồi hoàn thuộc cửa hàng nào
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:f55440a5613a
+  module: screens/approvals.js
+  key: notice
+  text: Bản giá của đơn hoặc chính đề nghị không còn là thứ mà phiếu này niêm phong, nên màn hình không
+    hiện số tiền để bạn khỏi đọc bản này mà ký bản kia; máy chủ cũng từ chối duyệt. Từ chối phiếu này,
+    rồi nhờ nhân viên đề nghị lại từ sự cố.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:49d5558020a4
+  module: screens/approvals.js
+  key: notice
+  text: Không có đề nghị nào chờ chủ tiệm khớp với phiếu này ở cửa hàng của phiếu. Máy chủ cũng từ chối
+    duyệt. Từ chối phiếu này để gỡ nó khỏi hàng chờ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:7c63cb95e6ac
+  module: screens/approvals.js
+  key: notice
+  text: Chừng nào chưa đọc được loại, số tiền, trần và món bị hỏng hay mất thì nút Duyệt vẫn khoá. Máy
+    chủ nêu lý do bên dưới, nguyên văn.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3238,11 +3307,21 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/remedies.js#hint:b5cda40d0a94
+- slot_id: screens/remedies.js#hint:0f649cc43855
   module: screens/remedies.js
   key: hint
   text: 'Danh sách của máy chủ, cũ nhất trước: mọi đề nghị đã ghi cho sự cố, của ai và lúc nào, kể cả
-    vụ mất đồ ghi trước DEC-031 không có số tiền. Đề nghị đang chờ chủ tiệm được duyệt ở màn hình Duyệt.'
+    vụ mất đồ ghi trước DEC-031 không có số tiền. Đề nghị đang chờ chủ tiệm được duyệt ở màn hình Duyệt.
+    Đề nghị nào đã được duyệt mà chưa thực hiện thì có nút thực hiện ngay trên dòng của nó, kể cả khi
+    chủ tiệm duyệt từ hôm qua hay trên máy khác.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/remedies.js#hint:794816c38e7c
+  module: screens/remedies.js
+  key: hint
+  text: 'Muốn bồi hoàn thì đề nghị lại ở biểu mẫu bên dưới: máy chủ tính lại trần và mở phiếu duyệt mới.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

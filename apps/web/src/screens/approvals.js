@@ -42,6 +42,14 @@
  *     traded that for blind approval of a digest, so the card fetches the export's own business
  *     date, column list and exclusions and prints them above the buttons, and blocks when it
  *     cannot.
+ *
+ *     `REMEDY_PROPOSAL` was the same dead end again, and on money. `DEC-031` sends every loss,
+ *     every compensation on a refunded order and anything above the staff limit to the owner as
+ *     an `APPROVE_REMEDY` envelope, and the type had no entry below, so the owner could not
+ *     approve a lost-item claim from the console at all. `REMEDY-OWNER-DECIDE-001` gave the card
+ *     `GET /internal/v1/stores/{store}/remedy-proposals/{proposal}/approval-binding`, and the card
+ *     is built like the `MESSAGE_DRAFT` one: the envelope's own store, the binding compared with
+ *     the envelope, the figures above the buttons, and only "Từ chối" when they do not match.
  *   - **The server is the authority, not this list.** `_require_exact_binding` re-checks the
  *     version and both digests at decision time, `_authorize_decision` re-checks store membership,
  *     role, MFA and maker-checker separation. A stale card cannot approve anything: the decision is
@@ -80,6 +88,8 @@ import {
 import { enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
+import { ticketLabel } from "./orders.js";
+import { KIND_LABEL as REMEDY_KIND_LABEL, ownerReasonText } from "./remedies.js";
 import {
   badge,
   dimensionBadge,
@@ -183,6 +193,12 @@ const VIEWABLE_RESOURCES = {
   // envelope binds are fetched and printed on the card, and no other screen renders one draft's
   // current sendable text. The card stays shut until that text is on screen.
   MESSAGE_DRAFT: () => null,
+  // `REMEDY-OWNER-DECIDE-001`. Since `DEC-031` every loss, every compensation on a refunded order
+  // and anything above the staff limit waits here for the owner, and until this entry the queue
+  // showed such an envelope and let nobody decide it — the dead end `EXPORT_REQUEST` above once
+  // was. `null` for the same reason: the card reads the proposal's own figures and prints them
+  // above the buttons, and stays shut until they are on screen and match the envelope.
+  REMEDY_PROPOSAL: () => null,
 };
 
 /**
@@ -227,6 +243,16 @@ const EXPORT_REQUEST = "EXPORT_REQUEST";
  * text nodes, never markup, because a customer or a model wrote it.
  */
 const MESSAGE_DRAFT = "MESSAGE_DRAFT";
+
+/**
+ * The resource type of an `APPROVE_REMEDY` envelope, whose figures this card fetches and prints.
+ *
+ * `REMEDY-OWNER-DECIDE-001`. The approval is the owner's statement that the shop may pay this
+ * customer this amount for this item. So the card reads the proposal's server-resolved binding,
+ * compares it with the envelope, and shows the kind, the amount, the ceiling, the item and why the
+ * owner is needed above the buttons — or withholds all of it and offers only a refusal.
+ */
+const REMEDY_PROPOSAL = "REMEDY_PROPOSAL";
 
 /** What this console records as its reason; the server only constrains the shape. */
 const DECISION_REASONS = {
@@ -869,6 +895,231 @@ async function loadMessageDraft(item, contentHost, controlsHost, onDecided, verd
 }
 
 /**
+ * What one `APPROVE_REMEDY` envelope asks the owner to authorise, laid out as the server sent it.
+ *
+ * `REMEDY-OWNER-DECIDE-001`. Every figure is the server's and is only formatted here: the amount
+ * the staff member proposed, the ceiling the server checked it against, and the staff limit of the
+ * policy version it was checked under. Why the owner is needed is the list the domain recorded
+ * with the proposal, glossed in the counter's words — never inferred from the amount, because a
+ * 20.000 ₫ loss waits for the owner too. A missing list is said as missing, not guessed.
+ *
+ * The incident summary is what a staff member typed while a customer described the problem, so it
+ * is untrusted text and goes through `h()` — text nodes, never markup — like a message draft.
+ *
+ * @param {any} read the `RemedyApprovalBindingResponse` body
+ * @returns {HTMLElement}
+ */
+function remedyContents(read) {
+  const reasons = Array.isArray(read.owner_reasons) ? read.owner_reasons : null;
+  const ticket = ticketLabel(read);
+  const service = read.service_code
+    ? read.service_name
+      ? `${read.service_name} (${read.service_code})`
+      : String(read.service_code)
+    : null;
+  const summary = typeof read.incident_summary === "string" ? read.incident_summary : "";
+  return h(
+    "div",
+    { class: "notice", dataState: "warn", dataRemedyBinding: String(read.resource_id || "") },
+    h("p", { class: "notice__title" }, "Khoản bồi hoàn bạn đang được đề nghị duyệt"),
+    facts([
+      [
+        "Loại",
+        h(
+          "span",
+          { dataField: "remedy-kind" },
+          `${REMEDY_KIND_LABEL[read.kind] || String(read.kind || UNKNOWN)} (${String(read.kind || UNKNOWN)})`,
+        ),
+        { span: true },
+      ],
+      ["Số tiền đề nghị", h("span", { dataField: "remedy-amount" }, money(read.amount_vnd))],
+      [
+        "Trần máy chủ đã kiểm",
+        h("span", { dataField: "remedy-ceiling" }, money(read.ceiling_vnd)),
+      ],
+      [
+        "Mức nhân viên được tự duyệt",
+        h("span", { dataField: "remedy-staff-limit" }, money(read.staff_approval_ceiling_vnd)),
+      ],
+      [
+        "Vì sao cần chủ tiệm",
+        h(
+          "span",
+          { dataField: "remedy-why" },
+          reasons && reasons.length
+            ? `${ownerReasonText(reasons)}.`
+            : "Máy chủ không có lý do đã ghi cho đề nghị này — hỏi người đề nghị trước khi quyết.",
+        ),
+        { span: true },
+      ],
+      [
+        "Đơn",
+        h(
+          "span",
+          { class: "row", dataField: "remedy-order" },
+          ticket ? h("span", null, ticket) : h("span", null, "Đơn không gắn phiếu giấy"),
+          h(
+            "a",
+            {
+              href: `#/orders/${encodeURIComponent(String(read.order_id || ""))}`,
+              title: String(read.order_id || ""),
+            },
+            `mở đơn ${shortId(read.order_id)}`,
+          ),
+        ),
+        { span: true },
+      ],
+      [
+        "Món",
+        h(
+          "span",
+          { dataField: "remedy-item" },
+          service ? `${service} · dòng ${String(read.order_line_id)}` : "Không ghi dòng nào",
+          " · ",
+          Number.isInteger(read.garment_index)
+            ? `món thứ ${String(read.garment_index)}`
+            : "cả dòng, không chọn món",
+        ),
+        { span: true },
+      ],
+      [
+        "Khách phản ánh",
+        summary
+          ? h("span", { dataField: "remedy-summary" }, summary)
+          : h(
+              "span",
+              { class: "hint", dataField: "remedy-summary" },
+              "Mô tả sự cố không còn được lưu (đã quá hạn giữ) hoặc chưa từng được ghi.",
+            ),
+        { span: true },
+      ],
+      [
+        "Người đề nghị",
+        `${String(read.proposed_by_name || UNKNOWN)} · ${dateTime(read.proposed_at)}`,
+        { span: true },
+      ],
+    ]),
+    h(
+      "p",
+      { class: "hint" },
+      "Bấm Duyệt là cho phép trả đúng số tiền này cho đúng món này. Duyệt chưa trả gì cả: một " +
+        "nhân viên phải bấm “Thực hiện bồi hoàn” ở màn hình Bồi hoàn trước khi phiếu duyệt hết hạn.",
+    ),
+  );
+}
+
+/**
+ * Fetch what one `APPROVE_REMEDY` envelope binds, and unblock its controls — or not.
+ *
+ * `REMEDY-OWNER-DECIDE-001`, built the way `loadMessageDraft` is and for the same reasons. The
+ * store in the URL is the envelope's own, from the queue row, never the one selected in the top
+ * bar; a row without one is refused. The read's proposal, approval, version and both digests are
+ * compared with the envelope's, and the server's own `envelope_matches` must agree. Any mismatch
+ * withholds the figures — the owner must not read today's order and sign the envelope's — and
+ * leaves only "Từ chối", which authorises nothing and takes the dead envelope out of the queue.
+ *
+ * @param {any} item
+ * @param {HTMLElement} contentHost
+ * @param {HTMLElement} controlsHost
+ * @param {(message: string) => Promise<void>} onDecided
+ * @param {{allowed: boolean, reason: string}} verdict
+ * @returns {Promise<void>}
+ */
+async function loadRemedyProposal(item, contentHost, controlsHost, onDecided, verdict) {
+  /** @param {string} reason @param {HTMLElement} explanation @param {boolean} [refuseOnly] */
+  const block = (reason, explanation, refuseOnly = false) => {
+    render(contentHost, explanation);
+    render(controlsHost, decisionControls(item, onDecided, verdict, reason, { refuseOnly }));
+  };
+  const envelopeStore = typeof item.store_id === "string" ? item.store_id : "";
+  if (!envelopeStore) {
+    block(
+      "Không bấm được: phiếu này không mang mã cửa hàng, nên không đọc được khoản bồi hoàn của nó.",
+      h(
+        "div",
+        { class: "notice", dataState: "danger" },
+        h("p", { class: "notice__title" }, "Không biết khoản bồi hoàn thuộc cửa hàng nào"),
+        h("p", null, "Tải lại hàng chờ. Chưa đọc được số tiền thì chưa quyết."),
+      ),
+    );
+    return;
+  }
+  const storePart = encodeURIComponent(envelopeStore);
+  const proposalPart = encodeURIComponent(String(item.resource_id));
+  try {
+    const read = await request(
+      `/internal/v1/stores/${storePart}/remedy-proposals/${proposalPart}/approval-binding`,
+    );
+    if (
+      read.resource_id !== item.resource_id ||
+      read.approval_id !== item.approval_request_id ||
+      read.resource_version !== item.resource_version ||
+      read.snapshot_hash !== item.snapshot_hash ||
+      read.rendered_hash !== item.rendered_hash ||
+      read.envelope_matches !== true
+    ) {
+      block(
+        "Không bấm Duyệt được: đơn hoặc đề nghị bồi hoàn đã đổi sau khi phiếu này được mở.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger", dataRemedyStale: "true" },
+          h("p", { class: "notice__title" }, "Khoản bồi hoàn đã đổi so với phiếu"),
+          h(
+            "p",
+            null,
+            "Bản giá của đơn hoặc chính đề nghị không còn là thứ mà phiếu này niêm phong, nên màn " +
+              "hình không hiện số tiền để bạn khỏi đọc bản này mà ký bản kia; máy chủ cũng từ chối " +
+              "duyệt. Từ chối phiếu này, rồi nhờ nhân viên đề nghị lại từ sự cố.",
+          ),
+        ),
+        true,
+      );
+      return;
+    }
+    render(contentHost, remedyContents(read));
+    render(controlsHost, decisionControls(item, onDecided, verdict));
+  } catch (error) {
+    if (error && error.kind === "MISSING") {
+      block(
+        "Không bấm Duyệt được: máy chủ không tìm thấy khoản bồi hoàn mà phiếu này nói tới.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger" },
+          h("p", { class: "notice__title" }, "Không tìm thấy đề nghị bồi hoàn"),
+          h(
+            "p",
+            null,
+            "Không có đề nghị nào chờ chủ tiệm khớp với phiếu này ở cửa hàng của phiếu. Máy chủ " +
+              "cũng từ chối duyệt. Từ chối phiếu này để gỡ nó khỏi hàng chờ.",
+          ),
+        ),
+        true,
+      );
+      return;
+    }
+    block(
+      "Không bấm được: chưa đọc được khoản bồi hoàn. Chưa thấy số tiền thì chưa quyết.",
+      h(
+        "div",
+        { class: "stack stack--tight" },
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Chưa xem được khoản bồi hoàn cần duyệt"),
+          h(
+            "p",
+            null,
+            "Chừng nào chưa đọc được loại, số tiền, trần và món bị hỏng hay mất thì nút Duyệt vẫn " +
+              "khoá. Máy chủ nêu lý do bên dưới, nguyên văn.",
+          ),
+        ),
+        errorNotice(error),
+      ),
+    );
+  }
+}
+
+/**
  * One pending envelope.
  *
  * @param {any} item
@@ -928,6 +1179,20 @@ function approvalCard(item, registerClock, onDecided, verdict) {
     );
     render(contentHost, h("p", { class: "hint" }, "Đang tải tin nhắn sẽ gửi…"));
     void loadMessageDraft(item, contentHost, controlsHost, onDecided, verdict);
+  } else if (String(item.resource_type) === REMEDY_PROPOSAL) {
+    // `REMEDY-OWNER-DECIDE-001`. Keyed on the resource type like the two branches above:
+    // `APPROVE_REMEDY` is the only action that maps to it.
+    render(
+      controlsHost,
+      decisionControls(
+        item,
+        onDecided,
+        verdict,
+        "Không bấm được: đang tải khoản bồi hoàn. Chưa thấy số tiền thì chưa quyết.",
+      ),
+    );
+    render(contentHost, h("p", { class: "hint" }, "Đang tải khoản bồi hoàn cần duyệt…"));
+    void loadRemedyProposal(item, contentHost, controlsHost, onDecided, verdict);
   } else {
     render(controlsHost, decisionControls(item, onDecided, verdict));
   }
@@ -1180,6 +1445,18 @@ function limitsPanel() {
           h(
             "p",
             null,
+            // REMEDY-OWNER-DECIDE-001. Before it, an APPROVE_REMEDY envelope reached this queue and
+            // nobody could decide it here: the type had no entry in the viewable table.
+            "Phiếu duyệt bồi hoàn (REMEDY_PROPOSAL) — mất đồ, đền trên đơn đã hoàn tiền, hoặc vượt " +
+              "mức nhân viên được tự duyệt — cũng vậy: thẻ phiếu tự đọc loại, số tiền, trần máy " +
+              "chủ đã kiểm, món nào, vì sao cần chủ tiệm và khách đã phản ánh gì, đối chiếu với " +
+              "phiếu, rồi in ngay trên hai nút. Đơn hoặc đề nghị đổi sau khi phiếu được mở thì " +
+              "thẻ không hiện số, nút Duyệt khoá và chỉ còn Từ chối. Duyệt xong vẫn chưa trả gì: " +
+              "nhân viên bấm thực hiện ở màn hình Bồi hoàn.",
+          ),
+          h(
+            "p",
+            null,
             "Loại nào bảng vận hành chưa mở ra xem được thì nút vẫn khoá, và đó là cố ý — ví dụ " +
               "khung giờ hay phí giao đề xuất. Bấm duyệt một nội dung chưa ai đọc được chính là " +
               "duyệt mù, có đủ ba mã cũng không làm điều đó thành an toàn.",
@@ -1238,8 +1515,9 @@ function limitsPanel() {
             h(
               "dd",
               null,
-              "10, 15 hoặc 30 phút tuỳ hành động, và hết hạn thì không bao giờ được gia hạn ngầm. " +
-                "Hết giờ nghĩa là phải tạo lại yêu cầu mới, không phải xin thêm thời gian.",
+              "10, 15 hoặc 30 phút tuỳ hành động; riêng phiếu duyệt bồi hoàn mở tới hết ngày làm " +
+                "việc hôm sau (giờ Việt Nam). Hết hạn thì không bao giờ được gia hạn ngầm: hết giờ " +
+                "nghĩa là phải tạo lại yêu cầu mới, không phải xin thêm thời gian.",
             ),
           ),
           h(

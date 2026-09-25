@@ -596,6 +596,13 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         # `DEC-031` retired "Mất đồ — chưa có chính sách để áp dụng": loss is proposable now and
         # always waits for the owner, and this is the sentence the screen shows for it.
         "Mất đồ — luôn chờ chủ tiệm duyệt",
+        # REMEDY-OWNER-DECIDE-001: what the owner reads on the approvals card, the refusal it shows
+        # when the claim moved underneath the phiếu, and where the counter pays an approved claim
+        # later -- the list, not the session that proposed it.
+        "Khoản bồi hoàn bạn đang được đề nghị duyệt",
+        "Khoản bồi hoàn đã đổi so với phiếu",
+        "Đề nghị đã ghi cho sự cố này",
+        "Khoản giảm trừ của đơn này",
         "Đã duyệt lịch",
         "Ghi nhận tất toán",
         "Khách đã tự lấy đồ",

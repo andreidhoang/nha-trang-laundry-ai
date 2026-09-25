@@ -146,6 +146,14 @@ const GROUPS = [
       // `GET …/incidents/{incident}/remedy-proposals` lists every proposal on an incident,
       // including a pre-DEC-031 loss with no figure, and `#/remedies` shows it for the incident it
       // reads. Neither creates a customer record, so DEC-015 is untouched.
+      //
+      // REMEDY-OWNER-DECIDE-001 closed a gap this register never listed, and it is recorded here so
+      // nobody re-adds it: an `APPROVE_REMEDY` envelope (every loss since DEC-031, every claim on a
+      // refunded order, anything above the staff limit) reached #/approvals undecidable, and an
+      // approved claim could be paid only from the browser session that proposed it. The approvals
+      // card now reads `GET …/stores/{store}/remedy-proposals/{proposal}/approval-binding`, and the
+      // incident's proposal list on #/remedies offers "Thực hiện bồi hoàn" on every row the server
+      // marks `next_step: EXECUTE`.
     ],
   },
   {

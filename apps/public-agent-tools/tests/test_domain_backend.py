@@ -501,24 +501,38 @@ def test_record_customer_facts_bumps_version_under_if_match_and_stores_types_onl
     )
     assert status == 200
     data = payload["data"]
-    assert data["row_version"] == 2 and data["accepted_fact_count"] == 2
+    # Corrected by AGENT-SHADOW-DEFECTS-001 F10. This asserted `accepted_fact_count == 2`: the
+    # answer told the model both facts were recorded while only their types were, and the address
+    # and service text were stored nowhere. Storing that text would open a retention class DEC-008
+    # does not schedule, so the answer now says what happened: no fact's content was accepted, and
+    # both types remain unresolved for staff to capture from the conversation.
+    assert data["row_version"] == 2
+    assert data["accepted_fact_count"] == 0
+    assert data["unresolved_fact_types"] == ["CUSTOMER_ADDRESS_TEXT", "SERVICE_TEXT"]
 
     with connection.cursor() as cursor:
         cursor.execute("SELECT row_version FROM order_requests WHERE id = %s", (request_id,))
         assert int(cursor.fetchone()[0]) == 2
         cursor.execute(
             """
-            SELECT payload::text FROM domain_events
+            SELECT payload::text, payload FROM domain_events
             WHERE aggregate_type = 'ORDER_REQUEST' AND aggregate_id = %s
                 AND event_type = 'ORDER_REQUEST_CUSTOMER_FACTS_RECORDED'
             """,
             (request_id,),
         )
-        event_payload = str(cursor.fetchone()[0])
+        event_text, event = cursor.fetchone()
+        event_payload = str(event_text)
         assert FREE_TEXT_MARKER not in event_payload
         assert "service_text" not in event_payload
         assert "address_text" not in event_payload
         assert "CUSTOMER_ADDRESS_TEXT" in event_payload
+        # The ledger says the same thing the answer does: mentioned, not accepted.
+        assert event == {
+            "mentioned_fact_count": 2,
+            "fact_types": ["CUSTOMER_ADDRESS_TEXT", "SERVICE_TEXT"],
+            "fact_text_recorded": False,
+        }
 
     # A stale If-Match is refused and moves nothing.
     with pytest.raises(AgentToolRefusal) as refusal:

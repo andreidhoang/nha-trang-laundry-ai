@@ -98,8 +98,10 @@ class _BoundFactBackend(AgentToolBackend):
             "data": {
                 "order_request_id": str(call.claims.order_request_id),
                 "row_version": 2,
-                "accepted_fact_count": len(facts),
-                "unresolved_fact_types": [],
+                # The same honest shape as the domain backend (F10): the synthetic backend
+                # stores no fact text either, so it accepts none and leaves every type open.
+                "accepted_fact_count": 0,
+                "unresolved_fact_types": sorted({str(fact["fact_type"]) for fact in facts}),
             },
         }
 

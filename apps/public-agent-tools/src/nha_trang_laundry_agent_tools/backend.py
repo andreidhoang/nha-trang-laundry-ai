@@ -415,11 +415,18 @@ class DomainAgentToolBackend:
                     occurred_at=recorded_at,
                 ),
             )
+            # AGENT-SHADOW-DEFECTS-001 F10: say what was stored. This answered
+            # `accepted_fact_count = len(facts)` and no unresolved types, telling the model the
+            # customer's facts were recorded when only their types were. The text is not stored,
+            # deliberately: an address or service description in the intake aggregate would be a
+            # retention class DEC-008 does not schedule, and that is the owner's to add, not this
+            # boundary's. So no fact's content is accepted, and every mentioned type stays
+            # unresolved -- staff capture it from the conversation it arrived in.
             return {
                 "order_request_id": str(stored.order_request_id),
                 "row_version": stored.row_version,
-                "accepted_fact_count": len(facts),
-                "unresolved_fact_types": [],
+                "accepted_fact_count": 0,
+                "unresolved_fact_types": list(fact_types),
             }
 
         with self._connect() as connection:

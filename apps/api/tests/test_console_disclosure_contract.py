@@ -756,7 +756,17 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     body (the server checks again at the lock and at the attestation), and the no-evidence
     #     notice's title and body (a release rests only on the customer's own later message).
     #   419 + 11 = 430, predicted from the registry diff before pinning.
-    assert sum(counts.values()) == _registry()["total"] == 430
+    # 437 after CONSOLE-REDESIGN-006 (430 + 7) (Nhân sự, Hệ thống, Xuất dữ liệu, Việc chưa hỗ trợ on the V2
+    # kit): +7 net, all DESCRIPTIVE, all in those four modules. Long V1 guardrails/ledes moved
+    # verbatim behind ⓘ as `hint` (re-keyed, not reworded: exports guardrail + lede, system lede,
+    # staff store guardrail, staff disable-confirm body); new tier-1 one-liners beside the control
+    # (staff: create, role, disable; exports: separation of duties; system: observe-only, sign-out
+    # scope; gaps: "not listed is not supported"). Retired: the staff eyebrow, the create card's
+    # "chép lại mã này" hint and the three 204 notices (nobody copies an id any more; their facts
+    # are in the role/store/disable ⓘ), and the wrong-role notice title (now an inline alert).
+    # One staff sentence corrected, not only moved: a taken OIDC subject is a 409 refusal now,
+    # not the "lỗi máy chủ" the V1 field hint claimed.
+    assert sum(counts.values()) == _registry()["total"] == 437
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

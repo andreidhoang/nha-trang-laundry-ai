@@ -122,17 +122,17 @@ DECLARED_CONTROLS = (
     "orderDetail.settlement-amount",
     "orderDetail.settlement-collected",
     "orderDetail.settlement-submit",
+    # CONSOLE-REDESIGN-006: the staff controls are the person sheet's, not four id-typed forms.
+    "staff.create-open",
     "staff.create-subject",
     "staff.create-name",
     "staff.create-email",
     "staff.create-submit",
-    "staff.role-id",
-    "staff.role-role",
+    "staff.person-open",
+    "staff.role-pick",
     "staff.role-submit",
-    "staff.store-staff",
-    "staff.store-store",
     "staff.store-submit",
-    "staff.disable-id",
+    "staff.store-manual",
     "staff.disable-submit",
     "assistant.question",
     "assistant.submit",
@@ -995,7 +995,31 @@ def scenario_roles(console: Console) -> None:
 
 
 def scenario_hiring(console: Console) -> None:
-    """Everything an owner must do before a new person can work a shift."""
+    """Everything an owner must do before a new person can work a shift.
+
+    CONSOLE-REDESIGN-006 rebuilt #/staff around the person: "Thêm nhân sự" opens a sheet, the
+    new person's own sheet opens the moment they exist, and role, store and disable are presses on
+    that sheet. So this scenario no longer types a staff id anywhere -- which is itself the thing
+    it now proves -- and still proves everything it proved before: create, duplicate refusal, role
+    grant, store assign and revoke, disable with a confirm, the directory, and no refusal screen.
+    """
+
+    page = console.page
+
+    def sheet_person() -> str:
+        node = page.locator("dialog#staff-person[open]")
+        return (node.get_attribute("data-staff-id") or "") if node.count() else ""
+
+    def open_person(staff_id: str) -> None:
+        page.locator(f"#staff-directory [data-staff-id='{staff_id}']").first.click()
+        page.wait_for_timeout(500)
+        touched("staff.person-open")
+
+    def click(selector: str, control: str = "", settle: int = 1600) -> None:
+        page.locator(selector).first.click()
+        page.wait_for_timeout(settle)
+        if control:
+            touched(control)
 
     head("5", "NHÂN SỰ — hiring somebody, from nothing to able to work")
     console.sign_in("demo-owner")
@@ -1004,25 +1028,24 @@ def scenario_hiring(console: Console) -> None:
     touched("shell.nav.staff")
     ok("the staff screen opens for the owner", "KHÔNG ĐỦ QUYỀN" not in console.text(), "")
 
+    click("#staff-create-open", "staff.create-open", settle=400)
     console.type_into("#staff-create-subject", subject, "staff.create-subject")
     console.type_into("#staff-create-name", "Nhân viên mới", "staff.create-name")
     console.type_into("#staff-create-email", f"{subject}@example.com", "staff.create-email")
-    console.page.locator("button[type=submit]").first.click()
-    console.page.wait_for_timeout(1800)
-    touched("staff.create-submit")
+    click("#staff-create-submit", "staff.create-submit", settle=1800)
     staff_id = sql(f"select id from staff_users where oidc_subject='{subject}'")
     if READS_DATABASE:
         ok("the person exists", len(staff_id) == 36, staff_id)
         ok(
-            "and their identifier is on the screen, because the next two forms need it",
-            staff_id in console.page.content(),
-            "",
+            "and their own sheet is open at once, so role and store need no copied identifier",
+            sheet_person() == staff_id,
+            sheet_person(),
         )
 
     if staff_id:
-        console.type_into("#staff-role-id", staff_id, "staff.role-id")
-        console.choose("#staff-role-role", "OPERATOR", "staff.role-role")
-        console.press("Gán vai trò", "staff.role-submit", within="#staff-role-id")
+        page.locator("#staff-role-pick [data-value='OPERATOR']").click()
+        touched("staff.role-pick")
+        click("#staff-role-submit", "staff.role-submit")
         ok(
             "the role is recorded",
             "OPERATOR"
@@ -1033,9 +1056,7 @@ def scenario_hiring(console: Console) -> None:
             console.results()[:120],
         )
 
-        console.type_into("#staff-store-staff", staff_id, "staff.store-staff")
-        console.type_into("#staff-store-store", STORE, "staff.store-store")
-        console.press("Gán cửa hàng", "staff.store-submit", within="#staff-store-staff")
+        click("#staff-store-submit", "staff.store-submit", settle=1800)
         ok(
             "the store assignment is recorded — without it the person can do nothing",
             # `revoked_at` comes first on purpose.
@@ -1051,11 +1072,14 @@ def scenario_hiring(console: Console) -> None:
             == "1",
             console.results()[:120],
         )
+        ok(
+            "and the sheet re-read the list: the new person now shows their role",
+            "vận hành" in (page.locator("dialog#staff-person").inner_text() or "").lower(),
+            "",
+        )
 
         head("5aa", "THU HỒI CỬA HÀNG — and the person loses the shop immediately")
-        console.page.locator("button", has_text="Thu hồi").first.click()
-        console.page.wait_for_timeout(1600)
-        touched("staff.store-revoke")
+        click("#staff-store-revoke", "staff.store-revoke", settle=1800)
         revoked = eventually(
             "select count(*) from staff_store_assignments where revoked_at is not null"
             f" and staff_user_id='{staff_id}' and store_id='{STORE}'",
@@ -1066,36 +1090,46 @@ def scenario_hiring(console: Console) -> None:
             revoked == "1",
             console.results()[:140],
         )
-        # Put it back: the rest of this scenario, and the next run, expect a member.
-        console.type_into("#staff-store-staff", staff_id)
-        console.type_into("#staff-store-store", STORE)
-        console.press("Gán cửa hàng", within="#staff-store-staff")
+        # Put it back through the manual-code path -- the one place a store id may be typed, for a
+        # store the owner does not belong to -- so that path is driven too. The rest of this
+        # scenario, and the next run, expect a member.
+        page.locator("details.manual-entry > summary").first.click()
+        page.wait_for_timeout(200)
+        console.type_into("#staff-store-manual", STORE, "staff.store-manual")
+        click("#staff-store-submit", settle=1800)
+        ok(
+            "a store code typed under 'Nhập mã thủ công' assigns the same way",
+            sql(
+                "select count(*) from staff_store_assignments where revoked_at is null"
+                f" and staff_user_id='{staff_id}' and store_id='{STORE}'"
+            )
+            == "1",
+            console.results()[:140],
+        )
 
         head("5a", "DANH SÁCH NHÂN SỰ — the owner sees who works here (READ-PATHS-001)")
         console.open("#/staff", settle=1800)
-        person = console.page.locator(f"#staff-directory li[data-staff-id='{staff_id}']")
+        person = page.locator(f"#staff-directory [data-staff-id='{staff_id}']")
         ok(
             "the new person is on the shop's staff list, with their role",
             person.count() == 1
             and any(role in person.first.inner_text().lower() for role in ("operator", "vận hành")),
             person.first.inner_text()[:120] if person.count() else "not listed",
         )
-        prefill = person.locator("[data-prefill=role]")
-        if prefill.count():
-            prefill.first.click()
-            console.page.wait_for_timeout(400)
+        if person.count():
+            open_person(staff_id)
         ok(
-            "and one press fills their id into the role form -- no UUID copied by hand",
-            console.page.locator("#staff-role-id").input_value() == staff_id,
-            "",
+            "and one press opens their sheet -- no UUID copied by hand",
+            sheet_person() == staff_id,
+            sheet_person(),
         )
 
         head("5b", "TRÙNG DANH TÍNH — the same person cannot be created twice")
         console.open("#/staff")
+        click("#staff-create-open", settle=400)
         console.type_into("#staff-create-subject", subject)
         console.type_into("#staff-create-name", "Người trùng")
-        console.page.locator("button[type=submit]").first.click()
-        console.page.wait_for_timeout(1600)
+        click("#staff-create-submit")
         ok(
             "a duplicate subject does not create a second record",
             sql(f"select count(*) from staff_users where oidc_subject='{subject}'") == "1",
@@ -1108,27 +1142,32 @@ def scenario_hiring(console: Console) -> None:
         )
 
         head("5c", "VÔ HIỆU HOÁ — and the shop cannot be left without an owner")
-        console.open("#/staff")
-        console.type_into("#staff-disable-id", staff_id, "staff.disable-id")
-        console.press("Vô hiệu hoá", "staff.disable-submit", within="#staff-disable-id")
-        confirm = console.page.locator("button", has_text="Vô hiệu hoá")
-        if confirm.count():
-            confirm.last.click()
-            console.page.wait_for_timeout(1600)
+        console.open("#/staff", settle=1800)
+        open_person(staff_id)
+        click("#staff-disable-submit", settle=300)
+        ok(
+            "the first press only arms it",
+            sql(f"select status from staff_users where id='{staff_id}'") == "ACTIVE",
+            page.locator("#staff-disable-submit").inner_text()[:60],
+        )
+        click("#staff-disable-submit", "staff.disable-submit")
         disabled = eventually(f"select status from staff_users where id='{staff_id}'", "DISABLED")
         ok("the person is disabled", disabled == "DISABLED", disabled)
 
         owner_id = sql("select id from staff_users where oidc_subject='demo-owner'")
-        console.open("#/staff")
-        console.type_into("#staff-disable-id", owner_id)
-        console.press("Vô hiệu hoá", within="#staff-disable-id")
-        confirm = console.page.locator("button", has_text="Vô hiệu hoá")
-        if confirm.count():
-            confirm.last.click()
-            console.page.wait_for_timeout(1600)
+        console.open("#/staff", settle=1800)
+        open_person(owner_id)
+        click("#staff-disable-submit", settle=300)
+        click("#staff-disable-submit")
         ok(
             "the last active owner cannot disable themselves",
             sql(f"select status from staff_users where id='{owner_id}'") == "ACTIVE",
+            console.results()[:150],
+        )
+        ok(
+            "and the refusal is said at the button",
+            "chủ đang hoạt động cuối cùng" in console.results()
+            or "Không vô hiệu hoá được" in console.results(),
             console.results()[:150],
         )
 

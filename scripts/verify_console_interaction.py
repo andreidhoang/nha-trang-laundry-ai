@@ -438,6 +438,8 @@ def executable_recorded_proposals() -> dict[str, object]:
 
 STAFF_ACTIVE_ID = "a1a1a1a1-1111-4333-8444-555555555555"
 STAFF_DISABLED_ID = "b2b2b2b2-2222-4333-8444-555555555555"
+#: The id `POST /internal/v1/staff` answers with in section 17 -- a person in no store yet.
+STAFF_NEW_ID = "c3c3c3c3-3333-4333-8444-555555555555"
 #: Markup as a display name. The owner typed it; the directory must print it, never parse it.
 HOSTILE_NAME = '<img src=x onerror="window.__staffInjected=1">Bình'
 STAFF_DIRECTORY = {
@@ -1444,6 +1446,26 @@ with sync_playwright() as playwright:
         elif "/orders/" in url and "/remedy-credits" in url:
             state.setdefault("credit_reads", []).append(url)
             body = ORDER_CREDITS
+        elif "/internal/v1/staff" in url and route.request.method != "GET":
+            # CONSOLE-REDESIGN-006: the person sheet's writes, captured with their keys so section
+            # 17 can prove each carries an Idempotency-Key and names the person the owner tapped.
+            state.setdefault("staff_writes", []).append(
+                (
+                    route.request.method,
+                    url.split("/internal/v1/")[1],
+                    route.request.post_data,
+                    route.request.headers.get("idempotency-key"),
+                )
+            )
+            if url.split("?")[0].endswith("/internal/v1/staff"):
+                route.fulfill(
+                    status=201,
+                    content_type="application/json",
+                    body=json.dumps({"staff_user_id": STAFF_NEW_ID}),
+                )
+            else:
+                route.fulfill(status=204, content_type="application/json", body="")
+            return
         elif "/stores/" in url and url.split("?")[0].endswith("/staff"):
             state.setdefault("staff_reads", []).append(url)
             body = STAFF_DIRECTORY
@@ -3560,16 +3582,21 @@ with sync_playwright() as playwright:
     )
     state["recorded_listed"] = False
 
+    # CONSOLE-REDESIGN-006 rebuilt #/staff around the person: a row opens that person's sheet, and
+    # the sheet carries every command, so nothing below types or pastes a staff id. What these
+    # checks prove is unchanged from the V1 form-per-endpoint screen: the list is read only with a
+    # store, untrusted names stay text, status and roles are on the row, a disabled account is not
+    # offered disable, opening a person sends nothing, and each write carries its own key.
     page.evaluate("location.hash = '#/staff'")
     page.wait_for_timeout(1200)
-    rows = page.locator("#staff-directory li[data-staff-id]")
+    rows = page.locator("#staff-directory [data-staff-id]")
     check(
         "the owner sees who works in the selected store",
         rows.count() == 2 and bool(state.get("staff_reads")),
         f"{rows.count()} rows",
     )
-    active_row = page.locator(f"#staff-directory li[data-staff-id='{STAFF_ACTIVE_ID}']")
-    disabled_row = page.locator(f"#staff-directory li[data-staff-id='{STAFF_DISABLED_ID}']")
+    active_row = page.locator(f"#staff-directory [data-staff-id='{STAFF_ACTIVE_ID}']")
+    disabled_row = page.locator(f"#staff-directory [data-staff-id='{STAFF_DISABLED_ID}']")
     check(
         "a display name that is markup is printed as text and never parsed",
         HOSTILE_NAME in (active_row.text_content() or "")
@@ -3577,37 +3604,90 @@ with sync_playwright() as playwright:
         and page.evaluate("window.__staffInjected") is None,
     )
     check(
-        "each person's roles and status are on the row",
-        "OPS_APPROVER" in (active_row.text_content() or "")
-        and "DISABLED" in (disabled_row.text_content() or "")
+        "each person's roles and status are on the row (gloss shown, token kept on the pill)",
+        "Người duyệt vận hành" in (active_row.text_content() or "")
+        and active_row.locator("[data-token='OPS_APPROVER']").count() == 1
+        and "Đã vô hiệu hoá" in (disabled_row.text_content() or "")
+        and disabled_row.locator("[data-token='DISABLED']").count() == 1
         and "Thu hồi lúc" in (disabled_row.text_content() or ""),
     )
+    writes_before = len(state.get("staff_writes", []))
+    disabled_row.click()
+    page.wait_for_timeout(400)
+    sheet_node = page.locator("dialog#staff-person")
     check(
-        "a disabled account is not offered to the disable form",
-        disabled_row.locator("[data-prefill=disable]").count() == 0
-        and active_row.locator("[data-prefill=disable]").count() == 1,
+        "a disabled account's sheet offers no disable, and says it cannot be switched back on",
+        sheet_node.get_attribute("open") is not None
+        and sheet_node.get_attribute("data-staff-id") == STAFF_DISABLED_ID
+        and page.locator("#staff-disable-submit").count() == 0
+        and "Tài khoản đã vô hiệu hoá" in (sheet_node.text_content() or ""),
     )
-    active_row.locator("[data-prefill=role]").click()
+    page.keyboard.press("Escape")
     page.wait_for_timeout(300)
+    active_row.click()
+    page.wait_for_timeout(400)
     check(
-        "'Điền vào Gán vai trò' fills the existing role form with that person's id",
-        page.locator("#staff-role-id").input_value() == STAFF_ACTIVE_ID,
-        repr(page.locator("#staff-role-id").input_value()),
-    )
-    active_row.locator("[data-prefill=store]").click()
-    active_row.locator("[data-prefill=disable]").click()
-    page.wait_for_timeout(300)
-    check(
-        "and the store and disable forms the same way, without sending anything",
-        page.locator("#staff-store-staff").input_value() == STAFF_ACTIVE_ID
-        and page.locator("#staff-disable-id").input_value() == STAFF_ACTIVE_ID
+        "one tap on a person opens their sheet, with every command on it and nothing sent",
+        sheet_node.get_attribute("data-staff-id") == STAFF_ACTIVE_ID
+        and page.locator("#staff-role-submit").count() == 1
+        and page.locator("#staff-store-submit").count() == 1
+        and page.locator("#staff-store-revoke").count() == 1
+        and page.locator("#staff-disable-submit").count() == 1
+        and len(state.get("staff_writes", [])) == writes_before
         and "Bấm lần nữa" not in rendered_text(),
     )
     check(
-        "the forms are still there, including creating somebody who belongs to no store yet",
-        page.locator("#staff-create-subject").count() == 1
-        and "không có danh sách" not in rendered_text(),
+        "no staff id is typed for a listed person: the only id field is the store's manual entry",
+        page.locator("#staff-role-id, #staff-store-staff, #staff-disable-id").count() == 0
+        and page.locator("#staff-store-manual").count() == 1,
     )
+    page.locator("#staff-disable-submit").click()
+    page.wait_for_timeout(300)
+    check(
+        "disabling is two-press: the first press arms it and sends nothing",
+        len(state.get("staff_writes", [])) == writes_before
+        and "Bấm lần nữa" in (page.locator("#staff-disable-submit").text_content() or ""),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    page.locator("#staff-create-open").click()
+    page.wait_for_timeout(300)
+    page.locator("#staff-create-subject").fill("stub|new-person")
+    page.locator("#staff-create-name").fill("Phạm Văn Mới")
+    page.locator("#staff-create-submit").click()
+    page.wait_for_timeout(800)
+    writes = state.get("staff_writes", [])[writes_before:]
+    check(
+        "creating somebody who belongs to no store yet opens their sheet straight away",
+        bool(writes)
+        and writes[0][1] == "staff"
+        and json.loads(writes[0][2] or "{}")
+        == {"oidc_subject": "stub|new-person", "display_name": "Phạm Văn Mới", "email": None}
+        and sheet_node.get_attribute("open") is not None
+        and sheet_node.get_attribute("data-staff-id") == STAFF_NEW_ID,
+        repr(writes[:1]),
+    )
+    page.locator("#staff-role-pick [data-value='DRIVER']").click()
+    page.locator("#staff-role-submit").click()
+    page.wait_for_timeout(800)
+    page.locator("#staff-store-submit").click()
+    page.wait_for_timeout(800)
+    writes = state.get("staff_writes", [])[writes_before:]
+    check(
+        "role and store land on the new person, from their sheet, each with its own key",
+        len(writes) == 3
+        and writes[1][:2] == ("POST", f"staff/{STAFF_NEW_ID}/roles")
+        and json.loads(writes[1][2] or "{}") == {"role": "DRIVER"}
+        and writes[2][:2] == ("POST", f"staff/{STAFF_NEW_ID}/stores/{STORE}")
+        and all(write[3] for write in writes)
+        and len({write[3] for write in writes}) == 3,
+        repr([write[:2] for write in writes]),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
 
     print()
     print("=" * 74)

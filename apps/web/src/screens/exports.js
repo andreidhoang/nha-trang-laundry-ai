@@ -5,23 +5,22 @@
  * migration with nothing behind it. This screen is the front of what is now behind it, and its
  * shape is the point rather than its convenience.
  *
- * **Three steps, deliberately not one button.** An export moves the shop's records out of every
- * control this system has. `APPROVAL_POLICIES` maps the action to the owner-financial policy —
- * owner role, MFA, separation of duty, a ten-minute window — and that is owner policy, not a
- * setting this console may collapse. So the screen shows the act as what it is: ask for a named
- * day, raise the envelope, and only then, after somebody who is not the requester has approved it,
- * release the file. A single "Xuất" button would have to either skip the approval or hide it, and
- * both are the same lie.
+ * **Three steps, deliberately not one button** — drawn as a stepper (Chọn ngày → Xin chủ tiệm
+ * duyệt → Xuất tệp, spec V2 §5.8). An export moves the shop's records out of every control this
+ * system has. `APPROVAL_POLICIES` maps the action to the owner-financial policy — owner role, MFA,
+ * separation of duty, a ten-minute window — and that is owner policy, not a setting this console
+ * may collapse. A single "Xuất" button would have to either skip the approval or hide it, and both
+ * are the same lie. The one button in the action bar is always the *current* step's.
  *
- * **The requester cannot be the approver, and the screen says so before the refusal does.** The
- * server refuses a decision from the staff member who raised the request. In a shop with one owner
- * that means the owner cannot both ask and approve — which is the separation of duty working, and
- * is far kinder to learn here than at the moment the approval is rejected.
+ * **The requester cannot be the approver, and the screen says so before the refusal does**, on
+ * the line beside "Xin chủ tiệm duyệt". In a shop with one owner that means the owner cannot both
+ * ask and approve — the separation of duty working, and far kinder to learn here than at the
+ * moment the approval is rejected.
  *
  * **"Sanitized" is shown as a list, not claimed as a word.** The server returns the exact columns
- * the file will carry and the exact things it withholds, and both are rendered before anything is
- * requested. They are also what the owner's approval binds: widen the column list and the rendered
- * digest moves, so an approval already granted stops matching instead of quietly authorising more.
+ * the file will carry and the exact things it withholds; both are rendered at step 2, uncollapsed,
+ * before anything is requested. They are also what the owner's approval binds: widen the column
+ * list and the rendered digest moves, so an approval already granted stops matching.
  *
  * **The date has no default.** A day nobody chose is a day nobody is accountable for having
  * exported, and "unknown means stop" is not only about prices.
@@ -37,15 +36,24 @@ import { can } from "../core/rbac.js";
 import { principal, storeId, subscribe } from "../core/session.js";
 import {
   errorNotice,
-  facts,
   gated,
   gatedFields,
   labelled,
-  panel,
   resultLine,
-  revealError,
   setResult,
 } from "../ui/components.js";
+import {
+  actionBar,
+  button,
+  infoButton,
+  keyValues,
+  page,
+  progress,
+  section,
+  show,
+  techDetails,
+  toast,
+} from "../ui/kit.js";
 
 /** `ApprovalAction.EXPORT_SANITIZED_DATA`, the one action this screen ever raises. */
 const EXPORT_ACTION = "EXPORT_SANITIZED_DATA";
@@ -59,11 +67,10 @@ const EXPORT_ACTION = "EXPORT_SANITIZED_DATA";
  * second request and a second envelope for the same day.
  *
  * Module state, in memory only -- invariant 3 of the UX refactor spec allows nothing else on a
- * shared counter phone, and `incidents.js` carries its order hand-off the same way. It survives
- * moving between screens, which is the round trip the instructions describe; it does not survive a
- * reload, and the screen says so rather than pretending otherwise. Keyed by staff user and store,
- * so a different person signing in on the same tab -- or the same person switching store -- never
- * inherits someone else's half-finished export.
+ * shared counter phone. It survives moving between screens, which is the round trip the
+ * instructions describe; it does not survive a reload, and the screen says so rather than
+ * pretending otherwise. Keyed by staff user and store, so a different person signing in on the
+ * same tab -- or the same person switching store -- never inherits someone else's export.
  *
  * @type {Map<string, {businessDate: string, created: any, approvalId: string}>}
  */
@@ -123,16 +130,16 @@ function refusalNote(error) {
  * What the file will and will not carry, from the server rather than from this file's memory.
  *
  * Rendered from the request's own answer, so it cannot drift from what the export actually does:
- * the same two lists are hashed into the document the owner approves.
+ * the same two lists are hashed into the document the owner approves. It stays on screen (tier 1)
+ * at step 2, beside "Xin chủ tiệm duyệt", because it is exactly what the requester is asking
+ * somebody to release.
  *
- * The day boundary is here for a narrower and sharper reason. This console shows two numbers under
+ * The day boundary matters for a narrower and sharper reason. This console shows two numbers under
  * the words *tiền đã thu*: the takings box on `#/today`, summed over when money was taken, and the
- * money columns in this file, which belong to the orders OPENED on the named day. An order opened
- * yesterday and paid this morning is in one and not the other, and the two figures diverge most on
- * exactly the busy day somebody would try to reconcile them. Neither is wrong; shipping both under
- * one label with no statement of the difference would be. `statement_vi` is the server's own
- * sentence — the string hashed into `rendered_hash` — and is printed verbatim rather than
- * paraphrased, because a paraphrase is a description of a document nobody signed.
+ * money columns in this file, which belong to the orders OPENED on the named day. `statement_vi`
+ * is the server's own sentence — the string hashed into `rendered_hash` — and is printed verbatim
+ * rather than paraphrased, because a paraphrase is a description of a document nobody signed. The
+ * raw boundary column and the query version sit in the technical drawer below it.
  *
  * @param {any} created
  * @returns {HTMLElement}
@@ -158,14 +165,6 @@ function contentsNotice(created) {
         "sao mang ra ngoài sẽ không còn được lịch đó bảo vệ, nên nó không được mang ra.",
     ),
     h("p", null, created.statement_vi || UNKNOWN),
-    h(
-      "p",
-      { class: "hint" },
-      "Cắt ngày theo: ",
-      h("span", { class: "mono" }, created.day_boundary || UNKNOWN),
-      " · Truy vấn: ",
-      h("span", { class: "mono" }, created.query_version),
-    ),
   );
 }
 
@@ -206,17 +205,17 @@ export function render_() {
   const draft = { businessDate: saved?.businessDate || "" };
 
   /**
-   * The request this screen is working on, and the envelope raised for it. In memory only: an
-   * export request identifier is a step in a conversation, not something to persist on a device.
-   * Restored from `inProgress` so the conversation survives the trip to `#/approvals` and back.
+   * The request this screen is working on, the envelope raised for it, and the file once made.
+   * In memory only. Restored from `inProgress` so the conversation survives the trip to
+   * `#/approvals` and back; the produced file is deliberately not restored.
    *
-   * @type {{created: any, approvalId: string}}
+   * @type {{created: any, approvalId: string, produced: any}}
    */
-  const stage = { created: saved?.created || null, approvalId: saved?.approvalId || "" };
+  const stage = { created: saved?.created || null, approvalId: saved?.approvalId || "", produced: null };
 
   /** Record where this viewer is, or forget it once there is nothing in progress. */
   function remember() {
-    if (stage.created) {
+    if (stage.created && !stage.produced) {
       inProgress.set(key, {
         businessDate: draft.businessDate,
         created: stage.created,
@@ -228,8 +227,10 @@ export function render_() {
   }
 
   const result = resultLine();
+  const errorHost = h("div", { class: "stack" });
+  const stepsHost = h("div");
   const stageHost = h("div", { class: "stack" });
-  const producedHost = h("div", { class: "stack" });
+  const barHost = actionBar();
 
   const dateInput = h("input", {
     type: "date",
@@ -243,16 +244,28 @@ export function render_() {
       // approved.
       stage.created = null;
       stage.approvalId = "";
+      stage.produced = null;
       remember();
-      render(stageHost);
-      render(producedHost);
+      render(errorHost);
+      setResult(result, null, null);
+      paint();
     },
   });
+
+  /**
+   * @param {unknown} error
+   * @param {string} title
+   */
+  function refused(error, title) {
+    setResult(result, "danger", title);
+    show(errorHost, errorNotice(error), refusalNote(error));
+  }
 
   /**
    * Step 1. Record what is wanted. Nothing leaves the system on this call.
    */
   async function createRequest() {
+    render(errorHost);
     if (!draft.businessDate) {
       setResult(result, "danger", "Chưa chọn ngày. Bản xuất luôn thuộc về một ngày làm việc cụ thể.");
       return;
@@ -267,20 +280,17 @@ export function render_() {
       requestSubmission.reset();
       stage.created = created;
       stage.approvalId = "";
+      stage.produced = null;
       remember();
-      setResult(
-        result,
-        "ok",
+      setResult(result, null, null);
+      toast(
         created.replayed
-          ? `Yêu cầu này đã được ghi trước đó (${shortId(created.export_request_id)}). Không có yêu cầu mới nào được tạo.`
-          : `Đã ghi yêu cầu xuất ${shortId(created.export_request_id)}. Chưa có dữ liệu nào ra khỏi hệ thống.`,
+          ? "Yêu cầu cho ngày này đã được ghi trước đó; không có yêu cầu mới nào được tạo."
+          : "Đã ghi yêu cầu xuất. Chưa có dữ liệu nào ra khỏi hệ thống.",
       );
-      renderStage();
+      paint();
     } catch (error) {
-      setResult(result, "danger", "Không ghi được yêu cầu xuất.");
-      const notice = errorNotice(error);
-      render(stageHost, notice, refusalNote(error));
-      revealError(notice);
+      refused(error, "Không ghi được yêu cầu xuất.");
     }
   }
 
@@ -294,6 +304,7 @@ export function render_() {
   async function raiseApproval() {
     const created = stage.created;
     if (!created) return;
+    render(errorHost);
     setResult(result, "warn", "Đang tạo phong bì duyệt…");
     try {
       const approval = await request("/internal/v1/approvals", {
@@ -313,18 +324,11 @@ export function render_() {
       approvalSubmission.reset();
       stage.approvalId = approval.approval_request_id;
       remember();
-      setResult(
-        result,
-        "ok",
-        `Đã tạo phong bì duyệt ${shortId(approval.approval_request_id)}. Chủ tiệm — một người khác ` +
-          "với người đã tạo yêu cầu xuất — mở màn hình Duyệt để quyết định.",
-      );
-      renderStage();
+      setResult(result, null, null);
+      toast("Đã xin duyệt. Chờ một chủ tiệm khác bấm Duyệt.");
+      paint();
     } catch (error) {
-      setResult(result, "danger", "Không tạo được phong bì duyệt.");
-      const notice = errorNotice(error);
-      render(producedHost, notice, refusalNote(error));
-      revealError(notice);
+      refused(error, "Không tạo được phong bì duyệt.");
     }
   }
 
@@ -338,6 +342,7 @@ export function render_() {
   async function produce() {
     const created = stage.created;
     if (!created || !stage.approvalId) return;
+    render(errorHost);
     setResult(result, "warn", "Đang xuất…");
     try {
       const produced = await request(
@@ -351,134 +356,173 @@ export function render_() {
       executeSubmission.reset();
       // One approval releases one file, and this one has. Nothing is in progress any more, so a
       // later visit starts clean instead of offering "Xuất tệp" for an envelope already spent.
-      inProgress.delete(key);
-      setResult(
-        result,
-        "ok",
+      stage.produced = produced;
+      remember();
+      setResult(result, null, null);
+      toast(
         `Đã xuất ${produced.row_count} dòng cho ngày ${produced.business_date}. Bản ghi việc xuất ` +
           "này đã vào sổ kiểm toán kèm phong bì duyệt.",
       );
-      render(
-        producedHost,
-        h(
-          "div",
-          { class: "card stack" },
-          h("h3", null, "Đã xuất"),
-          facts([
-            ["Số dòng", integer(produced.row_count)],
-            ["Ngày làm việc", String(produced.business_date)],
-            [
-              "Phong bì duyệt",
-              h("span", { title: produced.approval_request_id }, shortId(produced.approval_request_id)),
-              { mono: true },
-            ],
-            ["Vân tay nội dung", shortHash(produced.content_hash), { mono: true, span: true }],
-            ["Truy vấn", produced.query_version, { mono: true, span: true }],
-            ["Xuất lúc", dateTime(produced.produced_at)],
-          ]),
-          h(
-            "div",
-            { class: "action-bar" },
-            h(
-              "button",
-              { type: "button", dataVariant: "primary", onClick: () => download(produced) },
-              "Tải tệp CSV",
-            ),
-          ),
-          h(
-            "p",
-            { class: "hint" },
-            "Hệ thống không giữ lại nội dung tệp — chỉ giữ vân tay, số dòng và phong bì duyệt. " +
-              "Tệp đã tải về nằm ngoài mọi lịch xoá dữ liệu của hệ thống; giữ nó ở đâu là trách " +
-              "nhiệm của người đã tải.",
-          ),
-        ),
-      );
+      paint();
     } catch (error) {
       setResult(result, "warn", "Máy chủ chưa cho xuất bản này.");
-      const notice = errorNotice(error);
-      render(producedHost, notice, refusalNote(error));
-      revealError(notice);
+      show(errorHost, errorNotice(error), refusalNote(error));
     }
   }
 
-  /**
-   * What has been staged so far, and the one control that is next.
-   */
-  function renderStage() {
-    const created = stage.created;
-    if (!created) {
-      render(stageHost);
-      return;
-    }
+  /** @returns {number} 0 choose a day · 1 ask for approval · 2 produce · 3 done */
+  function currentStep() {
+    if (stage.produced) return 3;
+    if (stage.approvalId) return 2;
+    if (stage.created) return 1;
+    return 0;
+  }
+
+  /** The stepper, the staged content, and the one button that is next. */
+  function paint() {
+    const step = currentStep();
+    const labels = ["Chọn ngày", "Xin chủ tiệm duyệt", "Xuất tệp"];
     render(
-      stageHost,
-      h(
-        "div",
-        { class: "card stack" },
-        h("h3", null, "Yêu cầu xuất đã ghi"),
-        facts([
-          [
-            "Mã yêu cầu",
-            h("span", { title: created.export_request_id }, shortId(created.export_request_id)),
-            { mono: true },
-          ],
-          ["Ngày làm việc", String(created.business_date)],
-          ["Bộ dữ liệu", created.dataset, { mono: true }],
-          ["Vân tay nội dung được duyệt", shortHash(created.rendered_hash), { mono: true, span: true }],
-          [
-            "Phong bì duyệt",
-            stage.approvalId
-              ? h("span", { title: stage.approvalId }, shortId(stage.approvalId))
-              : h("span", null, `${UNKNOWN} chưa tạo`),
-            { mono: true },
-          ],
-        ]),
-        contentsNotice(created),
-        stage.approvalId
-          ? h(
-              "div",
-              { class: "notice", dataState: "warn" },
-              h("p", { class: "notice__title" }, "Chờ chủ tiệm duyệt"),
-              h(
-                "p",
-                null,
-                "Phong bì có hiệu lực 10 phút và phải do một chủ tiệm khác với người đã tạo " +
-                  "yêu cầu xuất này quyết định. Mở ",
-                h("a", { href: "#/approvals" }, "màn hình Duyệt"),
-                " để chủ tiệm xử lý, rồi quay lại bấm Xuất tệp.",
-              ),
-              h(
-                "p",
-                { class: "hint" },
-                "Màn hình này nhớ yêu cầu và phong bì khi bạn chuyển sang màn hình khác rồi quay " +
-                  "lại. Tải lại trang hoặc đăng xuất thì không còn nhớ.",
-              ),
-            )
-          : null,
-        h(
-          "div",
-          { class: "action-bar" },
-          stage.approvalId
-            ? gated(
-                h(
-                  "button",
-                  { type: "button", dataVariant: "primary", dataRequiresNetwork: "true", onClick: () => void produce() },
-                  "Xuất tệp",
-                ),
-                verdict,
-              )
-            : gated(
-                h(
-                  "button",
-                  { type: "button", dataVariant: "primary", dataRequiresNetwork: "true", onClick: () => void raiseApproval() },
-                  "Xin chủ tiệm duyệt",
-                ),
-                verdict,
-              ),
-        ),
+      stepsHost,
+      progress(
+        labels.map((label, index) => ({
+          label,
+          state: index < step ? "done" : index === step ? "current" : "todo",
+        })),
+        { label: "Các bước xuất dữ liệu" },
       ),
     );
+
+    const created = stage.created;
+    const produced = stage.produced;
+    render(
+      stageHost,
+      created
+        ? section({
+            title: `Ngày ${String(created.business_date)}`,
+            children: h(
+              "div",
+              { class: "stack" },
+              stage.approvalId && !produced
+                ? h(
+                    "div",
+                    { class: "notice", dataState: "warn" },
+                    h("p", { class: "notice__title" }, "Chờ chủ tiệm duyệt"),
+                    h(
+                      "p",
+                      null,
+                      "Phong bì có hiệu lực 10 phút và phải do một chủ tiệm khác với người đã tạo " +
+                        "yêu cầu xuất này quyết định. Mở ",
+                      h("a", { href: "#/approvals" }, "màn hình Duyệt"),
+                      " để chủ tiệm xử lý, rồi quay lại bấm Xuất tệp.",
+                    ),
+                    h(
+                      "p",
+                      { class: "hint" },
+                      "Màn hình này nhớ yêu cầu và phong bì khi bạn chuyển sang màn hình khác rồi quay " +
+                        "lại. Tải lại trang hoặc đăng xuất thì không còn nhớ.",
+                    ),
+                  )
+                : null,
+              contentsNotice(created),
+              step === 1
+                ? h(
+                    "p",
+                    { class: "hint", dataState: "danger" },
+                    "Người tạo yêu cầu không tự duyệt được — cần một chủ tiệm khác bấm Duyệt.",
+                  )
+                : null,
+              produced
+                ? h(
+                    "div",
+                    { class: "stack stack--tight" },
+                    keyValues([
+                      ["Số dòng", integer(produced.row_count)],
+                      ["Ngày làm việc", String(produced.business_date)],
+                      ["Xuất lúc", dateTime(produced.produced_at)],
+                    ]),
+                    h(
+                      "p",
+                      { class: "hint" },
+                      "Hệ thống không giữ lại nội dung tệp — chỉ giữ vân tay, số dòng và phong bì duyệt. " +
+                        "Tệp đã tải về nằm ngoài mọi lịch xoá dữ liệu của hệ thống; giữ nó ở đâu là trách " +
+                        "nhiệm của người đã tải.",
+                    ),
+                  )
+                : null,
+              techDetails([
+                ["Mã yêu cầu", created.export_request_id, { copy: String(created.export_request_id) }],
+                ["Bộ dữ liệu", created.dataset],
+                ["Vân tay nội dung được duyệt", shortHash(created.rendered_hash)],
+                ["Cắt ngày theo", created.day_boundary || UNKNOWN],
+                ["Truy vấn", created.query_version],
+                stage.approvalId
+                  ? ["Phong bì duyệt", stage.approvalId, { copy: stage.approvalId }]
+                  : ["Phong bì duyệt", `${UNKNOWN} chưa tạo`],
+                produced ? ["Vân tay tệp", shortHash(produced.content_hash)] : null,
+              ]),
+            ),
+          })
+        : null,
+    );
+
+    /** @type {HTMLElement[]} */
+    const next = [];
+    if (step === 0) {
+      next.push(
+        gated(
+          button({
+            label: "Tạo yêu cầu xuất",
+            variant: "primary",
+            network: true,
+            block: true,
+            id: "export-create",
+            onClick: () => void createRequest(),
+          }),
+          verdict,
+        ),
+      );
+    } else if (step === 1) {
+      next.push(
+        gated(
+          button({
+            label: "Xin chủ tiệm duyệt",
+            variant: "primary",
+            network: true,
+            block: true,
+            id: "export-approval",
+            onClick: () => void raiseApproval(),
+          }),
+          verdict,
+        ),
+      );
+    } else if (step === 2) {
+      next.push(
+        gated(
+          button({
+            label: "Xuất tệp",
+            variant: "primary",
+            network: true,
+            block: true,
+            id: "export-execute",
+            onClick: () => void produce(),
+          }),
+          verdict,
+        ),
+      );
+    } else if (produced) {
+      next.push(
+        button({
+          label: "Tải tệp CSV",
+          variant: "primary",
+          block: true,
+          icon: "download",
+          id: "export-download",
+          onClick: () => download(produced),
+        }),
+      );
+    }
+    render(barHost, ...next);
   }
 
   const form = gatedFields(
@@ -494,66 +538,55 @@ export function render_() {
       labelled({
         id: "export-date",
         label: "Ngày làm việc cần xuất",
-        hint:
-          "Bắt buộc, và không có giá trị mặc định. Ngày tính theo giờ Việt Nam, đúng ngày nhân " +
-          "viên đi làm, không phải theo giờ UTC.",
+        hint: "Theo giờ Việt Nam. Không có ngày mặc định — bạn chọn ngày nào thì bạn chịu trách nhiệm ngày đó.",
         control: dateInput,
       }),
-      h(
-        "div",
-        { class: "action-bar" },
-        gated(
-          h(
-            "button",
-            { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
-            "Tạo yêu cầu xuất",
-          ),
-          verdict,
-        ),
-      ),
-      result,
     ),
     verdict,
   );
 
   // Coming back from `#/approvals`: put the viewer exactly where they left off.
   if (stage.created) {
-    renderStage();
     setResult(
       result,
       "ok",
-      `Đang tiếp tục yêu cầu xuất ${shortId(stage.created.export_request_id)} cho ngày ` +
-        `${String(stage.created.business_date)}` +
-        (stage.approvalId ? ` · phong bì duyệt ${shortId(stage.approvalId)}.` : "."),
+      `Đang tiếp tục yêu cầu xuất cho ngày ${String(stage.created.business_date)}` +
+        (stage.approvalId ? " · đã xin duyệt." : "."),
     );
   }
+  paint();
 
   return h(
     "section",
     { class: "screen" },
-    h(
-      "div",
-      { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "Chủ tiệm duyệt · Có ghi sổ kiểm toán"),
-      h("h1", null, "Xuất dữ liệu"),
-      h(
-        "p",
-        { class: "screen__lede" },
-        "Lấy bản sao hồ sơ của chính cửa hàng cho một ngày: mã đơn, trạng thái, mốc thời gian và " +
-          "số tiền đã thu của những đơn mở trong ngày đó. Ngày cắt theo lúc mở đơn, nên tổng tiền " +
-          "trong tệp không bằng ô “tiền đã thu hôm nay” ở màn hình Hôm nay — ô đó cộng theo lúc " +
-          "thu. Mỗi lần xuất đều cần chủ tiệm duyệt và đều được ghi lại.",
+    page({
+      title: "Xuất dữ liệu",
+      subtitle: "Một ngày của cửa hàng · chủ tiệm duyệt",
+      info: infoButton(
+        "Bản xuất này là gì?",
+        h(
+          "p",
+          { class: "hint" },
+          "Lấy bản sao hồ sơ của chính cửa hàng cho một ngày: mã đơn, trạng thái, mốc thời gian và " +
+            "số tiền đã thu của những đơn mở trong ngày đó. Ngày cắt theo lúc mở đơn, nên tổng tiền " +
+            "trong tệp không bằng ô “tiền đã thu hôm nay” ở màn hình Hôm nay — ô đó cộng theo lúc " +
+            "thu. Mỗi lần xuất đều cần chủ tiệm duyệt và đều được ghi lại.",
+        ),
+        h(
+          "p",
+          { class: "hint" },
+          "Người tạo yêu cầu xuất không được tự duyệt yêu cầu của mình — kể cả khi phong bì duyệt " +
+            "do người khác mở. Quy tắc tính theo người đã chọn dữ liệu nào rời khỏi hệ thống, và máy " +
+            "chủ từ chối; đó là tách trách nhiệm chứ không phải lỗi. Một lần duyệt cho đúng một tệp.",
+        ),
       ),
-    ),
-    panel({
-      eyebrow: "Lệnh",
-      title: "Ba bước cho một lần xuất",
-      guardrail:
-        "Người tạo yêu cầu xuất không được tự duyệt yêu cầu của mình — kể cả khi phong bì duyệt " +
-        "do người khác mở. Quy tắc tính theo người đã chọn dữ liệu nào rời khỏi hệ thống, và máy " +
-        "chủ từ chối; đó là tách trách nhiệm chứ không phải lỗi. Một lần duyệt cho đúng một tệp.",
-      children: h("div", { class: "stack" }, form, stageHost, producedHost),
     }),
+    stepsHost,
+    section({ children: form }),
+    stageHost,
+    result,
+    errorHost,
+    barHost,
   );
 }
 

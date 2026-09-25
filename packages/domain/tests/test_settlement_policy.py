@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import pytest
-from nha_trang_laundry_domain.catalog import FulfillmentMode
+from nha_trang_laundry_domain.catalog import (
+    CommercialOrderStatus,
+    FulfillmentMode,
+    OrderBalanceStatus,
+    ProductionStatus,
+)
 from nha_trang_laundry_domain.settlement import (
+    CollectionRefusal,
     QuotedTotal,
     SettlementAccepted,
     SettlementNotSupported,
     SettlementRefusal,
     SettlementShape,
+    evaluate_collection,
     evaluate_settlement,
+    handover_refusal,
 )
 
 TOTAL = 110_000
@@ -80,7 +88,11 @@ def test_a_range_quote_cannot_be_settled() -> None:
 
 
 def test_goods_not_collected_by_the_customer_are_refused() -> None:
-    outcome = evaluate(collected=False)
+    # Changed 2026-09-25 under `DEC-032`: this used the default mode, a walk-in, where "nobody
+    # collected" is now a customer paying at drop-off. The refusal still stands for the one
+    # self-collect mode `DEC-032` does not reach -- the shop's courier fetched the laundry, so there
+    # was no drop-off to pay at -- and that is where it is measured now.
+    outcome = evaluate(collected=False, mode=FulfillmentMode.PICKUP_ONLY)
     assert isinstance(outcome, SettlementNotSupported)
     assert outcome.refusal is SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER
     assert outcome.decision == "DEC-003"
@@ -117,6 +129,7 @@ def test_every_shape_traces_to_a_signed_decision() -> None:
     assert [shape.value for shape in SettlementShape] == [
         "EXACT_PAYMENT_SELF_COLLECTION",  # the original, DEC-010
         "EXACT_PAYMENT_PREPAID_DELIVERY",  # DEC-023, 2026-08-26
+        "EXACT_PAYMENT_PREPAID_SELF_COLLECTION",  # DEC-032, 2026-09-25
     ]
 
 
@@ -132,12 +145,30 @@ def test_a_delivery_order_paid_in_full_at_the_counter_is_a_supported_shape() -> 
     assert outcome.shape is SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY
 
 
-def test_a_walk_in_that_nobody_collected_is_still_refused() -> None:
-    """Nothing travelled and nobody took it, so no settlement can attest anything."""
+def test_a_walk_in_that_has_not_collected_yet_is_a_prepayment_at_drop_off() -> None:
+    """Changed 2026-09-25 under `DEC-032`, from "a walk-in that nobody collected is refused".
+
+    The old reasoning was that nothing travelled and nobody took it, so a settlement had nothing to
+    attest. `DEC-032` answers it: the settlement attests the money, which did change hands, and the
+    handover gets its own record later at pickup. So this is accepted as its own shape -- the same
+    exact total as every other -- and it is not the self-collection shape, because nobody took
+    anything.
+    """
 
     outcome = evaluate(collected=False, mode=FulfillmentMode.SELF_DROP_SELF_COLLECT)
+    assert isinstance(outcome, SettlementAccepted)
+    assert outcome.shape is SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION
+    assert outcome.expected_total_vnd == TOTAL
+
+
+@pytest.mark.parametrize("paid", [TOTAL - 1, TOTAL + 1, 0, TOTAL // 2, TOTAL * 2])
+def test_a_deposit_at_drop_off_is_still_refused_and_named_dec_010(paid: int) -> None:
+    """`DEC-032` moved *when* the exact total may be paid, not *what* may be paid."""
+
+    outcome = evaluate(paid=paid, collected=False, mode=FulfillmentMode.SELF_DROP_SELF_COLLECT)
     assert isinstance(outcome, SettlementNotSupported)
-    assert outcome.refusal is SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER
+    assert outcome.refusal is SettlementRefusal.AMOUNT_IS_NOT_THE_EXACT_TOTAL
+    assert outcome.decision == "DEC-010"
 
 
 def test_a_delivery_order_collected_at_the_counter_is_refused_as_contradictory() -> None:
@@ -158,10 +189,11 @@ def test_a_delivery_order_collected_at_the_counter_is_refused_as_contradictory()
 #: behaviour, pinned so the next mode added has to argue with a failing test.
 MODE_TRUTH_TABLE = (
     (FulfillmentMode.SELF_DROP_SELF_COLLECT, True, SettlementShape.EXACT_PAYMENT_SELF_COLLECTION),
+    # `DEC-032` (2026-09-25): was COLLECTION_WAS_NOT_BY_THE_CUSTOMER. A walk-in paying at drop-off.
     (
         FulfillmentMode.SELF_DROP_SELF_COLLECT,
         False,
-        SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER,
+        SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION,
     ),
     (FulfillmentMode.PICKUP_ONLY, True, SettlementShape.EXACT_PAYMENT_SELF_COLLECTION),
     (FulfillmentMode.PICKUP_ONLY, False, SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER),
@@ -176,7 +208,12 @@ MODE_TRUTH_TABLE = (
 def test_every_mode_and_collection_pair_has_one_settled_answer(
     mode: FulfillmentMode, collected: bool, expected: object
 ) -> None:
-    """Eight cases, no gaps. A mode is accepted for exactly one side of the counter."""
+    """Eight cases, no gaps.
+
+    Until `DEC-032` every mode was accepted for exactly one side of the counter. A walk-in is now
+    accepted on both, as two different shapes: paid and taken at pickup, or paid at drop-off with
+    the handover still to be recorded. No mode is accepted twice as the same shape.
+    """
 
     outcome = evaluate(collected=collected, mode=mode)
     if isinstance(expected, SettlementShape):
@@ -227,3 +264,67 @@ def test_a_delivery_order_still_cannot_be_part_paid() -> None:
     outcome = evaluate(paid=TOTAL - 1, collected=False, mode=FulfillmentMode.PICKUP_AND_RETURN)
     assert isinstance(outcome, SettlementNotSupported)
     assert outcome.refusal is SettlementRefusal.AMOUNT_IS_NOT_THE_EXACT_TOTAL
+
+
+# --- DEC-032: who may be handed laundry, and when -------------------------------------------------
+
+
+@pytest.mark.parametrize("stage", list(ProductionStatus))
+def test_only_finished_laundry_can_be_handed_over(stage: ProductionStatus) -> None:
+    """The staging review's finding: "collected" was accepted for shirts still in the machine.
+
+    Finished means washed, checked and waiting, or released. Every other state -- including a hold
+    or an exception somebody raised on purpose -- is laundry the shop still has work to do on.
+    """
+
+    finished = stage in {ProductionStatus.READY_AT_STORE, ProductionStatus.RELEASED}
+    assert (handover_refusal(stage) is None) is finished
+    if not finished:
+        assert handover_refusal(stage) == "GOODS_NOT_READY_FOR_HANDOVER"
+
+
+def _collection(**overrides: object) -> CollectionRefusal | None:
+    facts: dict[str, object] = {
+        "commercial": CommercialOrderStatus.ACTIVE,
+        "production": ProductionStatus.RELEASED,
+        "balance": OrderBalanceStatus.PAID,
+        "settlement_shape": SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION,
+        "self_collection_recorded": False,
+    }
+    facts.update(overrides)
+    return evaluate_collection(**facts)  # type: ignore[arg-type]
+
+
+def test_a_paid_finished_walk_in_order_may_be_collected() -> None:
+    assert _collection() is None
+    assert _collection(production=ProductionStatus.READY_AT_STORE) is None
+
+
+@pytest.mark.parametrize(
+    ("overrides", "refusal"),
+    [
+        ({"commercial": CommercialOrderStatus.CANCELLED}, CollectionRefusal.ORDER_NOT_ACTIVE),
+        ({"commercial": CommercialOrderStatus.COMPLETED}, CollectionRefusal.ORDER_NOT_ACTIVE),
+        ({"self_collection_recorded": True}, CollectionRefusal.ALREADY_COLLECTED),
+        (
+            {"balance": OrderBalanceStatus.UNPAID, "settlement_shape": None},
+            CollectionRefusal.COLLECTION_REQUIRES_PAYMENT,
+        ),
+        (
+            {"settlement_shape": SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY},
+            CollectionRefusal.NOT_A_PREPAID_SELF_COLLECTION,
+        ),
+        (
+            {"production": ProductionStatus.QUALITY_CHECK},
+            CollectionRefusal.GOODS_NOT_READY_FOR_HANDOVER,
+        ),
+        (
+            {"production": ProductionStatus.NOT_STARTED},
+            CollectionRefusal.GOODS_NOT_READY_FOR_HANDOVER,
+        ),
+    ],
+)
+def test_a_pickup_is_refused_until_it_is_true(
+    overrides: dict[str, object], refusal: CollectionRefusal
+) -> None:
+    assert _collection(**overrides) is refusal

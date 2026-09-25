@@ -55,6 +55,7 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         # No 0045: it was reserved for the remedy fixes, which turned out to need no schema change.
         ("0046", "order_refunds"),
         ("0047", "order_lookup"),
+        ("0048", "prepaid_dropoff"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

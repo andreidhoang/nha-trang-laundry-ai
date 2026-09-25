@@ -28,17 +28,24 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
-from nha_trang_laundry_domain.catalog import MODES_EXPECTING_RETURN, FulfillmentMode
+from nha_trang_laundry_domain.catalog import (
+    MODES_EXPECTING_RETURN,
+    CommercialOrderStatus,
+    FulfillmentMode,
+    OrderBalanceStatus,
+    ProductionStatus,
+)
 
 MAX_SETTLEMENT_VND: Final = 9_007_199_254_740_991
 
 
 class SettlementShape(StrEnum):
-    """The supported shapes. Adding one is a visible decision, and the second was `DEC-023`.
+    """The supported shapes. Adding one is a visible decision: the second was `DEC-023`, the third
+    `DEC-032`.
 
-    Both are the same money: the exact quoted total, in full, in one payment. They differ only in
-    where the laundry goes afterwards, which is why `DEC-010` -- partial payment, deposits,
-    instalments, credit -- is untouched by the second.
+    All three are the same money: the exact quoted total, in full, in one payment. They differ only
+    in when it is paid and where the laundry goes afterwards, which is why `DEC-010` -- partial
+    payment, deposits, instalments, credit -- is untouched by the second and the third.
     """
 
     #: Paid at the counter and carried home by the customer. The original and the common case.
@@ -47,6 +54,11 @@ class SettlementShape(StrEnum):
     #: (2026-08-26): the shop is never owed money by somebody holding its laundry, and no driver
     #: carries cash. Arrival is attested by a delivery leg, not by this settlement.
     EXACT_PAYMENT_PREPAID_DELIVERY = "EXACT_PAYMENT_PREPAID_DELIVERY"
+    #: Paid at the counter when a walk-in customer dropped the laundry off, to be collected by them
+    #: later. `DEC-032` (2026-09-25, delegated): as `DEC-023` allows for delivery, and for the same
+    #: reason -- the alternative was ticking "collected" for shirts still in the machine. Pickup is
+    #: attested separately, by the staff member who hands the goods over (`evaluate_collection`).
+    EXACT_PAYMENT_PREPAID_SELF_COLLECTION = "EXACT_PAYMENT_PREPAID_SELF_COLLECTION"
 
 
 class SettlementRefusal(StrEnum):
@@ -146,15 +158,93 @@ def evaluate_settlement(
             # the two is wrong and this module will not guess which.
             return _refuse(SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER)
         return SettlementAccepted(SettlementShape.EXACT_PAYMENT_SELF_COLLECTION, quoted.minimum_vnd)
+    if fulfillment_mode is FulfillmentMode.SELF_DROP_SELF_COLLECT:
+        # `DEC-032`: a walk-in paying at drop-off. The money is the attested fact; the handover is
+        # recorded later, at pickup, and `transition_commercial` refuses to complete the order
+        # until it is -- `self_collection_recorded` does not move for this shape.
+        return SettlementAccepted(
+            SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION, quoted.minimum_vnd
+        )
     if fulfillment_mode not in MODES_EXPECTING_RETURN:
-        # Nobody collected, and no return leg is expected either -- so nothing has happened that a
-        # settlement could attest, and nothing ever will. Taking the money here is what stranded
-        # `PICKUP_ONLY`: paid in full, and no leg this system permits could close it.
+        # `PICKUP_ONLY`. `DEC-032` speaks of a customer who drops laundry off, and this one did
+        # not: the shop's courier fetched it, and no driver carries money (`DEC-023`). There is no
+        # drop-off moment to pay at, so this stays refused until somebody decides otherwise.
+        # Before `DEC-032` the reason was also that no record could ever close it: taking the money
+        # here is what once stranded `PICKUP_ONLY`, paid in full with no leg permitted to finish it.
         return _refuse(SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER)
     # `DEC-023`: paid in full at the counter, laundry still to travel. Arrival is a delivery leg's
     # fact, not this one's, and `transition_commercial` still refuses to complete the order until a
     # leg says the customer has their laundry.
     return SettlementAccepted(SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY, quoted.minimum_vnd)
+
+
+#: Production states in which the laundry is finished and may be put in the customer's hands.
+#:
+#: `READY_AT_STORE` is washed, checked and waiting; `RELEASED` is let go from production. Every
+#: earlier state is laundry still being worked on, and `ON_HOLD` and `EXCEPTION` are laundry
+#: somebody stopped on purpose. The staging review found `collected_by_customer = true` accepted at
+#: any of them -- a handover recorded for shirts still in the machine -- and `DEC-032` makes the
+#: same question the precondition of the pickup command. One rule for both, stated once.
+HANDOVER_READY_PRODUCTION: Final = frozenset(
+    {ProductionStatus.READY_AT_STORE, ProductionStatus.RELEASED}
+)
+
+#: The refusal for handing over laundry that is not finished. A state, not an open decision, so it
+#: is not a `SettlementRefusal` and names no `DEC-`: the next step is to finish the washing.
+GOODS_NOT_READY_FOR_HANDOVER: Final = "GOODS_NOT_READY_FOR_HANDOVER"
+
+
+def handover_refusal(production: ProductionStatus) -> str | None:
+    """`GOODS_NOT_READY_FOR_HANDOVER` unless the laundry is finished; otherwise `None`."""
+
+    return None if production in HANDOVER_READY_PRODUCTION else GOODS_NOT_READY_FOR_HANDOVER
+
+
+class CollectionRefusal(StrEnum):
+    """Why the counter may not yet record that a prepaid walk-in customer took their laundry.
+
+    States, not open decisions: each says what has to happen first, and none is a policy question
+    somebody has yet to answer -- which is why, unlike `SettlementRefusal`, none names a `DEC-`.
+    """
+
+    #: Only a running order hands anything over. A cancelled one returns goods under `DEC-024`.
+    ORDER_NOT_ACTIVE = "ORDER_NOT_ACTIVE"
+    #: Already recorded -- by an earlier pickup, or by a customer who paid at pickup, whose
+    #: settlement records the handover in the same step.
+    ALREADY_COLLECTED = "ALREADY_COLLECTED"
+    #: Not paid. A customer who pays at pickup is recorded by the settlement, in one step.
+    COLLECTION_REQUIRES_PAYMENT = "COLLECTION_REQUIRES_PAYMENT"
+    #: Paid, but not by a walk-in at drop-off: a delivery reaches its customer by a leg (`DEC-023`).
+    NOT_A_PREPAID_SELF_COLLECTION = "NOT_A_PREPAID_SELF_COLLECTION"
+    #: The laundry is not finished, so there is nothing to hand over yet.
+    GOODS_NOT_READY_FOR_HANDOVER = GOODS_NOT_READY_FOR_HANDOVER
+
+
+def evaluate_collection(
+    *,
+    commercial: CommercialOrderStatus,
+    production: ProductionStatus,
+    balance: OrderBalanceStatus,
+    settlement_shape: SettlementShape | None,
+    self_collection_recorded: bool,
+) -> CollectionRefusal | None:
+    """Decide whether a pickup may be recorded now. `None` means it may. `DEC-032`.
+
+    Every input is a stored fact about the order, read under its row lock by the caller. The person
+    at the counter supplies nothing but the fact that they are the one handing the goods over.
+    """
+
+    if commercial is not CommercialOrderStatus.ACTIVE:
+        return CollectionRefusal.ORDER_NOT_ACTIVE
+    if self_collection_recorded:
+        return CollectionRefusal.ALREADY_COLLECTED
+    if balance is not OrderBalanceStatus.PAID:
+        return CollectionRefusal.COLLECTION_REQUIRES_PAYMENT
+    if settlement_shape is not SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION:
+        return CollectionRefusal.NOT_A_PREPAID_SELF_COLLECTION
+    if handover_refusal(production) is not None:
+        return CollectionRefusal.GOODS_NOT_READY_FOR_HANDOVER
+    return None
 
 
 def _refuse(refusal: SettlementRefusal) -> SettlementNotSupported:
@@ -170,12 +260,17 @@ def _valid_amount(value: int) -> bool:
 
 
 __all__ = [
+    "GOODS_NOT_READY_FOR_HANDOVER",
+    "HANDOVER_READY_PRODUCTION",
     "REFUSAL_DECISIONS",
+    "CollectionRefusal",
     "QuotedTotal",
     "SettlementAccepted",
     "SettlementNotSupported",
     "SettlementOutcome",
     "SettlementRefusal",
     "SettlementShape",
+    "evaluate_collection",
     "evaluate_settlement",
+    "handover_refusal",
 ]

@@ -595,6 +595,9 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Đã duyệt lịch",
         "Ghi nhận tất toán",
         "Khách đã tự lấy đồ",
+        # PREPAID-DROPOFF-001 (`DEC-032`): paying at drop-off, and the pickup recorded on its own.
+        "Khách trả trước khi gửi đồ",
+        "Khách đã nhận đồ",
         "Đã thu tại quầy",
         "Đang ngoại tuyến",
         "Chưa biết lệnh có tới máy chủ hay không",

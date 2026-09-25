@@ -497,6 +497,10 @@ class OrderViewResponse(OrderResponse):
     payable_total_vnd: int | None
     ticket_number: int | None
     ticket_issued_on: date | None
+    #: `DEC-032`: whether the customer is recorded as having taken the goods. A walk-in who paid at
+    #: drop-off reads `balance` PAID with this false until the pickup is recorded, and the counter
+    #: needs the difference to know which of the two actions to offer.
+    self_collection_recorded: bool
 
 
 class ApprovalResponse(BaseModel):
@@ -543,6 +547,20 @@ class SettlementRequest(StrictRequest):
     # Explicit rather than defaulted. "The customer took their goods" is the fact being attested,
     # and a default true would let a staff member attest to it by not mentioning it.
     collected_by_customer: StrictBool
+
+
+class CollectionResponse(BaseModel):
+    """The pickup of a walk-in order paid at drop-off (`DEC-032`), as recorded."""
+
+    collection_id: UUID
+    order_id: UUID
+    settlement_id: UUID
+    #: The staff member who handed the goods over -- the session's, never the request's.
+    collected_by_staff_id: UUID
+    collected_at: datetime
+    self_collection_recorded: bool
+    row_version: int
+    replayed: bool
 
 
 class SettlementResponse(BaseModel):
@@ -1502,14 +1520,16 @@ def record_settlement(
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> SettlementResponse:
-    """Attest that the customer paid the quoted total and collected their goods.
+    """Attest that the customer paid the quoted total -- and, if ticked, collected their goods.
 
     The staff member records what they witnessed at the counter; the amount is checked against the
     immutable quote revision the order is bound to. Nothing here computes or adjusts money.
 
-    Only one settlement shape exists. Anything else — a part payment, a deposit, an overpayment,
-    credit terms, or goods that left by a delivery leg — is refused with the reason and the open
-    decision that owns it, because those are the business owner's to make and `DEC-010` holds them.
+    Every supported shape is the exact total in one payment: paid and collected at pickup, paid
+    before a delivery (`DEC-023`), or paid by a walk-in at drop-off with the pickup recorded later
+    on `/collection` (`DEC-032`). Ticking "collected" for laundry that is not finished is refused.
+    Anything else — a part payment, a deposit, an overpayment, credit terms — is refused with the
+    reason and the decision that owns it, because `DEC-010` holds them.
     """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
@@ -1549,6 +1569,63 @@ def record_settlement(
         paid_amount_vnd=stored.paid_amount_vnd,
         settlement_shape=stored.settlement_shape,
         balance_status=stored.balance_status,
+        self_collection_recorded=stored.self_collection_recorded,
+        row_version=stored.row_version,
+        replayed=stored.replayed,
+    )
+
+
+@app.post(
+    "/internal/v1/orders/{order_id}/collection",
+    response_model=CollectionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_collection(
+    order_id: UUID,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> CollectionResponse:
+    """Record that a walk-in customer who paid at drop-off has taken their laundry. `DEC-032`.
+
+    No body. The staff member handing the goods over is the session's, the store is the order
+    row's, and `If-Match` is the order version the counter read before handing the bag over. The
+    order must be paid at drop-off, running, and its laundry finished; each refusal comes back with
+    its reason code and writes nothing. No money moves here -- it moved at drop-off.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    expected = _parse_if_match(if_match)
+    try:
+        stored = service.record_collection(
+            order_id=order_id,
+            expected_row_version=expected,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (SettlementAuthorizationError, StoreAccessError) as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    except SettlementStateError as error:
+        if error.reason_code == "STALE_VERSION":
+            # The same answer a stale transition gets, so the console's "tải lại" path applies.
+            raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "outcome": "NOT_SUPPORTED",
+                "reason_code": error.reason_code,
+                "decision": error.decision,
+            },
+        ) from error
+    except IdempotencyConflictError as error:
+        _raise_operations_error(error)
+    return CollectionResponse(
+        collection_id=stored.collection_id,
+        order_id=stored.order_id,
+        settlement_id=stored.settlement_id,
+        collected_by_staff_id=stored.collected_by_staff_id,
+        collected_at=stored.collected_at,
         self_collection_recorded=stored.self_collection_recorded,
         row_version=stored.row_version,
         replayed=stored.replayed,
@@ -2818,6 +2895,7 @@ def _order_view_response(view: OrderView) -> OrderViewResponse:
         payable_total_vnd=view.payable_total_vnd,
         ticket_number=view.ticket_number,
         ticket_issued_on=view.ticket_issued_on,
+        self_collection_recorded=view.self_collection_recorded,
     )
 
 

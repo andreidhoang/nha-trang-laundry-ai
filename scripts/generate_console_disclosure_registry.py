@@ -183,7 +183,12 @@ POLICY_BOUND: dict[str, str] = {
     # as unbuilt under DEC-003, both false since DEC-023 was ratified on 2026-08-26 and
     # FULFILMENT-001 shipped the second settlement shape. Slot ids are content digests, so the
     # correction moves the key -- which is the mechanism working, not fighting it.
-    "screens/orderDetail.js#guardrail:e7cdc1e5010d": "DEC-010",
+    #
+    # Re-keyed 2026-09-25 by PREPAID-DROPOFF-001: the guardrail now names three moments the exact
+    # total may be paid, the third being `DEC-032` (at drop-off). The claim this binding guards is
+    # still the refusal of everything else, which is `DEC-010`; the drop-off clause cites DEC-032
+    # by id in the sentence itself, so a reader can check both against the register.
+    "screens/orderDetail.js#guardrail:b2daddbe89d3": "DEC-010",
 }
 
 

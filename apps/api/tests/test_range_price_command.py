@@ -45,6 +45,7 @@ from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     FulfillmentMode,
     IntakeStatus,
+    ProductionStatus,
     QuantityBasis,
     Unit,
 )
@@ -429,6 +430,23 @@ def test_an_ao_dai_is_banded_priced_approved_accepted_ordered_and_settled(
         {"commercial_target": CommercialOrderStatus.ACTIVE},
     ):
         version = _advance(service, order.order_id, staff, version, step)
+    # Added 2026-09-25 (PREPAID-DROPOFF-001): this settled "collected by the customer" for an áo
+    # dài that had never been washed, which the staging review found the server accepted and which
+    # is now refused (GOODS_NOT_READY_FOR_HANDOVER). The garment is finished first, as at a real
+    # counter; nothing about the range price or the amount changes.
+    for production in (
+        ProductionStatus.QUEUED,
+        ProductionStatus.IN_PROCESS,
+        ProductionStatus.QUALITY_CHECK,
+        ProductionStatus.READY_AT_STORE,
+    ):
+        version = service.transition_production(
+            order_id=order.order_id,
+            target=production,
+            expected_row_version=version,
+            idempotency_key=f"step-{uuid4().hex}",
+            principal=staff,
+        ).row_version
 
     settlement = service.record_settlement(
         order_id=order.order_id,

@@ -97,8 +97,10 @@ from nha_trang_laundry_db.remedies import (
 )
 from nha_trang_laundry_db.settlement import (
     CollectedToday,
+    CollectionCommand,
     SettlementCommand,
     SettlementRepository,
+    StoredCollection,
     StoredSettlement,
 )
 from nha_trang_laundry_db.shadow_console import (
@@ -308,6 +310,20 @@ class StoredSettlementResult:
     paid_amount_vnd: int
     settlement_shape: str
     balance_status: str
+    self_collection_recorded: bool
+    row_version: int
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StoredCollectionResult:
+    """A recorded pickup (`DEC-032`), as the idempotency ledger stored and replays it."""
+
+    collection_id: UUID
+    order_id: UUID
+    settlement_id: UUID
+    collected_by_staff_id: UUID
+    collected_at: datetime
     self_collection_recorded: bool
     row_version: int
     replayed: bool
@@ -2183,6 +2199,53 @@ class OperationsService:
             )
         return _stored_settlement_result(result.response, replayed=result.replayed)
 
+    # --- PREPAID-DROPOFF-001 (DEC-032) -------------------------------------------------------
+
+    def record_collection(
+        self,
+        *,
+        order_id: UUID,
+        expected_row_version: int,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> StoredCollectionResult:
+        """Record that the walk-in customer who paid at drop-off has taken their laundry.
+
+        Idempotent on the caller's key, with `expected_row_version` in the payload: the same key
+        and the same `If-Match` replay the recorded pickup, and the same key with a different one
+        is a conflict rather than a replay of something the caller did not ask for.
+        """
+        collected_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            # Before the idempotency lookup, as on settlement: a replay answers without running
+            # anything inside the executor, and a revoked member must not replay a held key.
+            _require_order_store_membership(connection, order_id, principal)
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-collection:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={
+                        "order_id": str(order_id),
+                        "expected_row_version": expected_row_version,
+                    },
+                    occurred_at=collected_at,
+                ),
+                lambda: _collection_mapping(
+                    SettlementRepository().record_collection(
+                        connection,
+                        CollectionCommand(
+                            order_id=order_id,
+                            expected_row_version=expected_row_version,
+                            principal=principal,
+                            correlation_id=uuid4(),
+                            collected_at=collected_at,
+                        ),
+                    )
+                ),
+            )
+        return _stored_collection_result(result.response, replayed=result.replayed)
+
     # --- STORE-ASSIGNMENT-001 ---------------------------------------------------------------
     #
     # The first routes in this system that *grant* an authorization rather than check one, so the
@@ -2675,6 +2738,33 @@ def _stored_settlement_result(
         paid_amount_vnd=int(str(value["paid_amount_vnd"])),
         settlement_shape=str(value["settlement_shape"]),
         balance_status=str(value["balance_status"]),
+        self_collection_recorded=bool(value["self_collection_recorded"]),
+        row_version=int(str(value["row_version"])),
+        replayed=replayed,
+    )
+
+
+def _collection_mapping(value: StoredCollection) -> dict[str, object]:
+    return {
+        "collection_id": str(value.collection_id),
+        "order_id": str(value.order_id),
+        "settlement_id": str(value.settlement_id),
+        "collected_by_staff_id": str(value.collected_by_staff_id),
+        "collected_at": value.collected_at.isoformat(),
+        "self_collection_recorded": value.self_collection_recorded,
+        "row_version": value.row_version,
+    }
+
+
+def _stored_collection_result(
+    value: dict[str, object], *, replayed: bool
+) -> StoredCollectionResult:
+    return StoredCollectionResult(
+        collection_id=UUID(str(value["collection_id"])),
+        order_id=UUID(str(value["order_id"])),
+        settlement_id=UUID(str(value["settlement_id"])),
+        collected_by_staff_id=UUID(str(value["collected_by_staff_id"])),
+        collected_at=datetime.fromisoformat(str(value["collected_at"])),
         self_collection_recorded=bool(value["self_collection_recorded"]),
         row_version=int(str(value["row_version"])),
         replayed=replayed,

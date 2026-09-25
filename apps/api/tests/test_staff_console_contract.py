@@ -121,6 +121,9 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/orders/{}/intake-transition",
         "/internal/v1/orders/{}/production-transition",
         "/internal/v1/orders/{}/settlement",
+        # PREPAID-DROPOFF-001 (`DEC-032`). Without it a walk-in who paid at drop-off can never be
+        # recorded as having taken the goods, and so their order can never complete.
+        "/internal/v1/orders/{}/collection",
         "/internal/v1/orders/{}/delivery-legs",
         # ORDER-LOOKUP-001. The only read that reaches an order older than the board's newest page,
         # and the only one that hands back its row version for `If-Match`. Order detail and the

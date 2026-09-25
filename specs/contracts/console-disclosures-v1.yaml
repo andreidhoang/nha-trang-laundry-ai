@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 355
+  DESCRIPTIVE: 360
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 5
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 382
+total: 387
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -619,6 +619,40 @@ disclosures:
   module: core/i18n.js
   key: REASON_NOTE.STALE_VERSION
   text: Có người vừa đổi đơn này trong lúc bạn đang xem. Tải lại đơn rồi ghi nhận theo số mới.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.GOODS_NOT_READY_FOR_HANDOVER:1977b40d36f9
+  module: core/i18n.js
+  key: REASON_NOTE.GOODS_NOT_READY_FOR_HANDOVER
+  text: Đồ chưa giặt xong nên chưa đưa cho khách được. Khách trả tiền lúc gửi đồ thì bấm “Khách trả trước
+    khi gửi đồ”, không tích ô đã lấy đồ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.COLLECTION_REQUIRES_PAYMENT:fb8336b0e9a2
+  module: core/i18n.js
+  key: REASON_NOTE.COLLECTION_REQUIRES_PAYMENT
+  text: Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì nhập số tiền, tích “Khách đã tự lấy đồ về” rồi
+    bấm “Ghi nhận tất toán”.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.NOT_A_PREPAID_SELF_COLLECTION:c1e83158fc41
+  module: core/i18n.js
+  key: REASON_NOTE.NOT_A_PREPAID_SELF_COLLECTION
+  text: Đơn này không phải khách tự mang đồ tới rồi tự lấy. Đơn giao tận nơi thì ghi chuyến giao.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.ALREADY_COLLECTED:7af3a41b1217
+  module: core/i18n.js
+  key: REASON_NOTE.ALREADY_COLLECTED
+  text: Đơn này đã ghi nhận khách nhận đồ rồi. Không ghi lần nữa.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2271,14 +2305,13 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#guardrail:e7cdc1e5010d
+- slot_id: screens/orderDetail.js#guardrail:b2daddbe89d3
   module: screens/orderDetail.js
   key: guardrail
-  text: 'Hai trường hợp được hỗ trợ, và cả hai là cùng một khoản tiền: khách trả đúng tổng đã báo, đủ
-    một lần, tại quầy. Khác nhau ở chỗ đồ đi đâu sau đó — khách tự lấy về, hoặc tiệm giao tận nơi và đã
-    thu tiền trước khi đồ rời quầy (chủ tiệm chốt ngày 26/08/2026). Trả thiếu, trả thừa, đặt cọc, trả
-    góp và ghi nợ đều bị từ chối kèm mã quyết định — chủ tiệm đã chốt ngày 18/08/2026 là tạm thời không
-    nhận các hình thức này — không làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.'
+  text: 'Mọi trường hợp là cùng một khoản tiền: khách trả đúng tổng đã báo, đủ một lần, tại quầy — lúc
+    lấy đồ, lúc gửi đồ (quyết định DEC-032), hoặc trước khi tiệm giao tận nơi. Trả thiếu, trả thừa, đặt
+    cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định — không làm tròn và không ghi nhận một phần.
+    Bản ghi tất toán không sửa được.'
   binding:
     kind: POLICY_BOUND
     decision: DEC-010
@@ -2404,6 +2437,14 @@ disclosures:
   key: notice
   text: 'Chủ tiệm đã chốt: khách vãng lai chỉ được ghi bằng số phiếu, tiệm không lưu tên, số điện thoại
     hay địa chỉ (DEC-013). Tìm đơn bằng số phiếu ở ô “Tìm theo số phiếu”.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orders.js#hint:279ffab96bc8
+  module: screens/orders.js
+  key: hint
+  text: Khách đã trả trước, chưa nhận đồ — mở đơn và bấm “Khách đã nhận đồ” khi đưa đồ.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

@@ -29,6 +29,16 @@
  *   - **A refunded order.** Every compensation on it needs the owner; the server lists that in each
  *     line's `owner_always` (`ORDER_REFUNDED`).
  *
+ * The DEC-031 addendum (`REMEDY-GARMENT-001`, 2026-09-25) made the item a **garment**. On a line
+ * priced per piece the claim names "món thứ mấy" (1..N), and the 100.000 ₫ staff limit and the 5×
+ * ceiling are that garment's running total — shirt #2 has its own, whatever shirt #1 holds. The
+ * server sends, per line, how many garments it holds (`garments`, null for a bag or a fee never
+ * recorded) and what already counts against each (`garment_committed_vnd`, with the claims made
+ * before garments could be named counted against every one of them). A line of one garment is
+ * garment 1 without asking. A server that sends a garment count without the per-garment figures is
+ * read the conservative way: the whole line's total counts against the garment, as the server
+ * itself does for a caller that did not attribute.
+ *
  * Two rules keep their teeth:
  *
  *   - **A missing figure is never a zero and never a default.** No published policy is
@@ -93,6 +103,8 @@ export const PLAN = {
   CREDIT_UNAVAILABLE: "CREDIT_UNAVAILABLE",
   /** Damage or loss names a priced line and none is chosen yet. */
   LINE_NOT_CHOSEN: "LINE_NOT_CHOSEN",
+  /** The line holds several garments with a fee each, and which one is not chosen yet. */
+  GARMENT_NOT_CHOSEN: "GARMENT_NOT_CHOSEN",
   /** A kind a person chooses a figure for, with no figure yet. */
   AMOUNT_MISSING: "AMOUNT_MISSING",
   /** Typed, but not an integer number of đồng. */
@@ -147,7 +159,8 @@ export function remedyWindow(kind, options) {
  *   lineId: string, serviceCode: string, serviceName: string|null, label: string,
  *   unit: string|null, quantity: string|null, basis: string|null, itemFee: number|null,
  *   ceiling: number|null, pieces: number|null, lineCeiling: number|null,
- *   committed: number|null, ownerAlways: string[],
+ *   committed: number|null, ownerAlways: string[], garments: number|null,
+ *   garmentCommitted: number[]|null, lineLevelCommitted: number|null,
  * }>}
  */
 export function damageLines(options) {
@@ -175,6 +188,21 @@ export function damageLines(options) {
         lineCeiling: Number.isInteger(line.line_ceiling_vnd) ? line.line_ceiling_vnd : null,
         committed: Number.isInteger(line.committed_vnd) ? line.committed_vnd : null,
         ownerAlways: Array.isArray(line.owner_always) ? line.owner_always.map(String) : [],
+        // `REMEDY-GARMENT-001`. A count only when it is a real one; anything else is "no garment
+        // identity", which is also what the server means by null.
+        garments: Number.isInteger(line.garments) && line.garments >= 1 ? line.garments : null,
+        // Per garment 1..N, or null when the server did not send one integer per garment — which
+        // `remedyPlan` then reads the conservative way rather than as zeroes.
+        garmentCommitted:
+          Number.isInteger(line.garments) &&
+          Array.isArray(line.garment_committed_vnd) &&
+          line.garment_committed_vnd.length === line.garments &&
+          line.garment_committed_vnd.every((value) => Number.isInteger(value) && value >= 0)
+            ? line.garment_committed_vnd.slice()
+            : null,
+        lineLevelCommitted: Number.isInteger(line.line_level_committed_vnd)
+          ? line.line_level_committed_vnd
+          : null,
       };
     })
     .sort((a, b) => (a.lineId < b.lineId ? -1 : a.lineId > b.lineId ? 1 : 0));
@@ -188,6 +216,7 @@ export function damageLines(options) {
  * @param {string} draft.kind
  * @param {boolean} [draft.storeFaultAttested]
  * @param {string} [draft.lineId] the priced line a damage or loss proposal names
+ * @param {number|string} [draft.garmentIndex] "món thứ mấy" on a line of several garments
  * @param {string} [draft.typedAmount] what is in the money box, exactly as typed
  * @param {string} [draft.typedLateness] what is in the lateness box, exactly as typed
  * @returns {{
@@ -197,8 +226,12 @@ export function damageLines(options) {
  *   ceilingVnd: number|null,
  *   lineCeilingVnd: number|null,
  *   pieces: number|null,
- *   ceilingBreached: "ITEM"|"LINE"|null,
+ *   ceilingBreached: "ITEM"|"GARMENT"|"LINE"|null,
  *   committedVnd: number|null,
+ *   lineCommittedVnd: number|null,
+ *   garments: number|null,
+ *   garmentIndex: number|null,
+ *   needsGarment: boolean,
  *   itemFeeVnd: number|null,
  *   itemFeeBasis: string|null,
  *   hasCeiling: boolean,
@@ -234,7 +267,13 @@ export function remedyPlan(draft) {
     lineCeilingVnd: null,
     pieces: null,
     ceilingBreached: null,
+    // What already counts against the item this claim is about: the garment on a line of several
+    // with a fee each (`REMEDY-GARMENT-001`), the line otherwise. `lineCommittedVnd` is the line's.
     committedVnd: null,
+    lineCommittedVnd: null,
+    garments: null,
+    garmentIndex: null,
+    needsGarment: false,
     itemFeeVnd: null,
     itemFeeBasis: null,
     hasCeiling: false,
@@ -322,31 +361,64 @@ export function remedyPlan(draft) {
   // or a single piece.
   const cap = line.ceiling;
   const lineCap = line.lineCeiling;
-  const committed = line.committed;
+  const lineCommitted = line.committed;
   // Before an amount exists: which reasons already apply whatever it will be. The server's order.
   const standing = [
     ...(isLoss ? [OWNER_REASON.LOSS_CLAIM] : []),
     ...line.ownerAlways.filter((reason) => reason !== OWNER_REASON.LOSS_CLAIM),
   ];
-  const bound = {
+  // Which garment (`REMEDY-GARMENT-001`). Several with a fee each: the claim names one, and until
+  // it does there is no running total to compare — so no money box, exactly as with no line. One
+  // garment: it is garment 1. No garment identity: the line is the item, as before.
+  const garments = line.garments;
+  const perGarment = garments !== null && garments > 1;
+  const garmentIndex = perGarment
+    ? readGarment(draft.garmentIndex, garments)
+    : garments === 1
+      ? 1
+      : null;
+  const common = {
     ceilingVnd: cap,
     lineCeilingVnd: lineCap,
     pieces: line.pieces,
-    committedVnd: committed,
+    lineCommittedVnd: lineCommitted,
+    garments,
+    garmentIndex,
+    needsGarment: perGarment,
     itemFeeVnd: line.itemFee,
     itemFeeBasis: line.basis,
     hasCeiling: true,
-    // The cap is known, so the money box may exist. This is the only place it is switched on.
-    needsAmount: true,
-    // Before a single digit is typed: either something already sends every amount on this line
-    // to the owner, or the most the line can still reach -- what it carries plus the largest
-    // claim both ceilings allow -- is above what a staff member may approve, so some amounts on
-    // it will. That is the sentence the packet asks for.
-    ownerPossible:
-      standing.length > 0 ||
-      (threshold !== null && committed + Math.min(cap, lineCap - committed) > threshold),
     requiresOwner: standing.length > 0 ? true : null,
     ownerReasons: standing,
+  };
+  if (perGarment && garmentIndex === null) {
+    // Whether some amount on some garment here would need the owner: yes when a reason already
+    // applies, or when one garment's own ceiling is above what staff may approve.
+    return plan(PLAN.GARMENT_NOT_CHOSEN, {
+      ...common,
+      ownerPossible: standing.length > 0 || (threshold !== null && cap > threshold),
+    });
+  }
+  // What already counts against this item. A garment's figure when the server sent one per
+  // garment; otherwise the whole line's, which is the conservative reading and never less.
+  const committed =
+    perGarment && line.garmentCommitted !== null
+      ? line.garmentCommitted[/** @type {number} */ (garmentIndex) - 1]
+      : lineCommitted;
+  const bound = {
+    ...common,
+    committedVnd: committed,
+    // The cap is known, so the money box may exist. This is the only place it is switched on.
+    needsAmount: true,
+    // Before a single digit is typed: either something already sends every amount on this item
+    // to the owner, or the most the item can still reach -- what it carries plus the largest
+    // claim both ceilings still allow -- is above what a staff member may approve, so some amounts
+    // on it will. That is the sentence the packet asks for.
+    ownerPossible:
+      standing.length > 0 ||
+      (threshold !== null &&
+        committed + Math.min(cap - (perGarment ? committed : 0), lineCap - lineCommitted) >
+          threshold),
   };
 
   const typed = String(draft.typedAmount ?? "").trim();
@@ -355,8 +427,10 @@ export function remedyPlan(draft) {
   if (amount === null) return plan(PLAN.NOT_AN_AMOUNT, bound);
   // The same sum `evaluate_remedy` makes: what the item already carries plus what is asked now.
   // Both limits are about the item, so both are compared against it — comparing the typed amount
-  // alone is how the form said "staff" where the server said "owner".
+  // alone is how the form said "staff" where the server said "owner". The item is the garment on
+  // a line of several; the line's own total is compared against the line's ceiling below.
   const total = committed + amount;
+  const lineTotal = lineCommitted + amount;
   const overStaff = threshold !== null && total > threshold;
   const reasons = overStaff ? [...standing, OWNER_REASON.ABOVE_STAFF_LIMIT] : standing;
   // Read once, and carried onto every state below it, including the ones that refuse. What the
@@ -367,11 +441,32 @@ export function remedyPlan(draft) {
     requiresOwner: reasons.length > 0,
     ownerReasons: reasons,
   };
-  // One claim, one item; then the line's running total. The server's order, and its two answers.
+  // One claim, one item; then the garment's running total; then the line's. The server's order.
   if (amount > cap) return plan(PLAN.ABOVE_CEILING, { ...read, ceilingBreached: "ITEM" });
-  if (total > lineCap) return plan(PLAN.ABOVE_CEILING, { ...read, ceilingBreached: "LINE" });
+  if (perGarment && total > cap) {
+    return plan(PLAN.ABOVE_CEILING, { ...read, ceilingBreached: "GARMENT" });
+  }
+  if (lineTotal > lineCap) return plan(PLAN.ABOVE_CEILING, { ...read, ceilingBreached: "LINE" });
   if (draft.storeFaultAttested !== true) return plan(PLAN.FAULT_NOT_ATTESTED, read);
   return plan(PLAN.READY, read);
+}
+
+/**
+ * Read "món thứ mấy" as a position on a line of `garments` garments, or null.
+ *
+ * Whole numbers 1..N only. A select sends a string, a test sends a number; anything else — 0, a
+ * number past the line, "2.5" — is "not chosen", never rounded onto a garment somebody did not
+ * pick, because picking a garment spends that garment's staff limit.
+ *
+ * @param {unknown} value
+ * @param {number} garments
+ * @returns {number|null}
+ */
+export function readGarment(value, garments) {
+  const text = String(value ?? "").trim();
+  if (!/^\d{1,4}$/.test(text)) return null;
+  const parsed = Number.parseInt(text, 10);
+  return parsed >= 1 && parsed <= garments ? parsed : null;
 }
 
 /**
@@ -410,6 +505,10 @@ export function remedyProposalBody(plan, draft) {
       store_fault_attested: true,
       order_line_id: draft.lineId,
       amount_vnd: plan.amountVnd,
+      // Named whenever the line has garments, including garment 1 of one, so the record says which
+      // garment it was rather than leaving the server to infer it. Absent on a bag, where the
+      // server refuses the key.
+      ...(plan.garmentIndex === null ? {} : { garment_index: plan.garmentIndex }),
     };
   }
   if (plan.kind === REMEDY_KIND.LATE_DELIVERY_CREDIT) {

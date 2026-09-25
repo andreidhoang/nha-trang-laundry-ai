@@ -123,16 +123,30 @@ def claim(
     amount: int,
     facts: RemedyOrderFacts | None = None,
     committed: int = 0,
+    *,
+    garment: int | None = None,
+    garment_committed: int | None = None,
 ) -> object:
+    """One claim. `garment` names the shirt (`REMEDY-GARMENT-001`); `garment_committed` is what
+    already counts against it, and `None` leaves the line's total counting against it."""
+
     return evaluate_remedy(
         policy=POLICY,
         facts=facts or order(),
         request=RemedyRequest(
-            kind=kind, store_fault_attested=True, order_line_id=line_id, amount_vnd=amount
+            kind=kind,
+            store_fault_attested=True,
+            order_line_id=line_id,
+            amount_vnd=amount,
+            garment_index=garment,
         ),
         requested_at=NOW,
-        committed=RemedyCommitments(line_committed_vnd=committed, late_delivery_credits=0)
-        if committed
+        committed=RemedyCommitments(
+            line_committed_vnd=committed,
+            late_delivery_credits=0,
+            garment_committed_vnd=garment_committed,
+        )
+        if committed or garment_committed is not None
         else NO_PRIOR_COMMITMENTS,
     )
 
@@ -150,10 +164,10 @@ def test_a_per_piece_line_caps_each_item_at_five_times_its_unit_price() -> None:
         50_000,
         250_000,
     )
-    at = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 250_000)
+    at = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 250_000, garment=1)
     assert isinstance(at, RemedyAuthorized) and at.ceiling_vnd == 250_000
     assert at.item_fee_basis is ItemFeeBasis.UNIT and at.item_fee_vnd == 50_000
-    over = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 250_001)
+    over = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 250_001, garment=1)
     assert isinstance(over, RemedyRefused)
     assert over.refusal is RemedyRefusal.REMEDY_CEILING_EXCEEDED
     # Refused with the per-piece ceiling named, never the line's 750.000 d.
@@ -305,52 +319,98 @@ def test_a_banded_line_has_no_item_fee_at_all() -> None:
 # --- 1b. several pieces on one line --------------------------------------------------------------
 #
 # The founder's clarification of DEC-031 rule 1 (2026-09-25, relayed by the lead): the ceiling is
-# per ITEM. A line of N pieces carries 5 x unit fee x N in total, one proposal stays capped at one
-# item's 5 x unit fee, and the 100.000 d staff limit stays cumulative per LINE -- so a claim split
-# across "pieces" goes to the owner rather than past it, and is never refused for the split alone.
+# per ITEM. A line of N pieces carries 5 x unit fee x N in total and one proposal stays capped at
+# one item's 5 x unit fee. The DEC-031 addendum (`REMEDY-GARMENT-001`) then made the 100.000 d staff
+# limit and the ceiling cumulative per GARMENT rather than per line: each claim names its shirt,
+# and a second claim on the same shirt adds to the first. `test_remedy_garment.py` pins the
+# garment rules themselves; the tests here were updated to name the shirt they claim for.
 
 
 def test_a_line_of_several_pieces_carries_one_ceiling_per_piece() -> None:
-    """Three shirts at 50.000 d: 250.000 d per claim, 750.000 d for the line."""
+    """Three shirts at 50.000 d: 250.000 d per shirt, 750.000 d for the line."""
 
     terms = item_compensation_terms(POLICY, order(), "shirts")
     assert terms is not None
     assert (terms.pieces, terms.ceiling_vnd, terms.line_ceiling_vnd) == (3, 250_000, 750_000)
+    assert terms.garments == 3
 
-    first = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 250_000)
+    first = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 250_000, garment=1)
     assert isinstance(first, RemedyAuthorized)
     assert first.owner_reasons == (OwnerReason.ABOVE_STAFF_LIMIT,)
     assert (first.ceiling_vnd, first.line_ceiling_vnd) == (250_000, 750_000)
-    # A second shirt's full claim on the same line: to the owner, not refused.
-    second = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 250_000, committed=250_000)
+    # The second shirt's full claim: to the owner, not refused -- it has its own 250.000 d.
+    second = claim(
+        RemedyKind.DAMAGE_COMPENSATION,
+        "shirts",
+        250_000,
+        committed=250_000,
+        garment=2,
+        garment_committed=0,
+    )
     assert isinstance(second, RemedyAuthorized) and second.requires_owner_approval
     # The third reaches the line's 750.000 d exactly, inclusive.
-    third = claim(RemedyKind.LOST_ITEM, "shirts", 250_000, committed=500_000)
+    third = claim(
+        RemedyKind.LOST_ITEM,
+        "shirts",
+        250_000,
+        committed=500_000,
+        garment=3,
+        garment_committed=0,
+    )
     assert isinstance(third, RemedyAuthorized) and third.requires_owner_approval
-    # One dong past the line is refused with the line's ceiling and what it already carries.
-    past = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 1, committed=750_000)
+    # One dong more on a full shirt is refused with that shirt's ceiling and what it carries.
+    past = claim(
+        RemedyKind.DAMAGE_COMPENSATION,
+        "shirts",
+        1,
+        committed=750_000,
+        garment=3,
+        garment_committed=250_000,
+    )
     assert isinstance(past, RemedyRefused)
     assert past.refusal is RemedyRefusal.REMEDY_CEILING_EXCEEDED
-    assert (past.ceiling_vnd, past.committed_vnd) == (750_000, 750_000)
+    assert (past.ceiling_vnd, past.committed_vnd) == (250_000, 250_000)
 
 
 def test_one_claim_is_still_capped_at_one_item() -> None:
     """300.000 d in one claim is more than one shirt can be owed, whatever the line holds."""
 
-    single = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 300_000)
+    single = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 300_000, garment=2)
     assert isinstance(single, RemedyRefused)
     assert single.refusal is RemedyRefusal.REMEDY_CEILING_EXCEEDED
     assert single.ceiling_vnd == 250_000
 
 
-def test_the_staff_limit_stays_per_line_across_pieces() -> None:
-    """60.000 d on one shirt, then 50.000 d on another: 110.000 d on the line is the owner's."""
+def test_the_staff_limit_is_per_garment_not_per_line() -> None:
+    """60.000 d on shirt #1, then 50.000 d on shirt #2: two items, so both are staff's.
 
-    staff = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 60_000)
+    Was `test_the_staff_limit_stays_per_line_across_pieces`, asserting the second went to the
+    owner. The DEC-031 addendum reversed that rule; the half that survives -- a second claim on the
+    *same* shirt is cumulative with the first -- is asserted here and in `test_remedy_garment.py`.
+    """
+
+    staff = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 60_000, garment=1)
     assert isinstance(staff, RemedyAuthorized) and not staff.requires_owner_approval
-    split = claim(RemedyKind.DAMAGE_COMPENSATION, "shirts", 50_000, committed=60_000)
-    assert isinstance(split, RemedyAuthorized)
-    assert split.owner_reasons == (OwnerReason.ABOVE_STAFF_LIMIT,)
+    other = claim(
+        RemedyKind.DAMAGE_COMPENSATION,
+        "shirts",
+        50_000,
+        committed=60_000,
+        garment=2,
+        garment_committed=0,
+    )
+    assert isinstance(other, RemedyAuthorized) and not other.requires_owner_approval
+    assert other.garment_index == 2
+    same = claim(
+        RemedyKind.DAMAGE_COMPENSATION,
+        "shirts",
+        50_000,
+        committed=110_000,
+        garment=1,
+        garment_committed=60_000,
+    )
+    assert isinstance(same, RemedyAuthorized)
+    assert same.owner_reasons == (OwnerReason.ABOVE_STAFF_LIMIT,)
 
 
 def test_a_bag_and_an_unrecorded_fee_keep_a_single_ceiling() -> None:
@@ -380,6 +440,21 @@ def test_a_discounted_line_of_pieces_is_never_capped_above_what_the_line_was_cha
     terms = item_compensation_terms(POLICY, order({"shirts": discounted}), "shirts")
     assert terms is not None
     assert (terms.ceiling_vnd, terms.line_ceiling_vnd) == (250_000, 600_000)
+    # So the line binds before the shirts do: two shirts full and 100.000 d on the third fill
+    # the 600.000 d line, and one dong more on the third -- well inside its own 250.000 d -- is
+    # refused with the line's ceiling and what the line already carries.
+    past = claim(
+        RemedyKind.DAMAGE_COMPENSATION,
+        "shirts",
+        1,
+        order({"shirts": discounted}),
+        committed=600_000,
+        garment=3,
+        garment_committed=100_000,
+    )
+    assert isinstance(past, RemedyRefused)
+    assert past.refusal is RemedyRefusal.REMEDY_CEILING_EXCEEDED
+    assert (past.ceiling_vnd, past.committed_vnd) == (600_000, 600_000)
 
 
 # --- 2. loss -------------------------------------------------------------------------------------
@@ -388,13 +463,16 @@ def test_a_discounted_line_of_pieces_is_never_capped_above_what_the_line_was_cha
 def test_every_loss_claim_needs_the_owner() -> None:
     """Loss uses the same item fee as damage, and is never staff-authorised at any amount."""
 
-    for line_id, amount, ceiling in (("shirts", 1, 250_000), ("bag", 80_000, 650_000)):
-        outcome = claim(RemedyKind.LOST_ITEM, line_id, amount)
+    for line_id, amount, ceiling, garment in (
+        ("shirts", 1, 250_000, 1),
+        ("bag", 80_000, 650_000, None),
+    ):
+        outcome = claim(RemedyKind.LOST_ITEM, line_id, amount, garment=garment)
         assert isinstance(outcome, RemedyAuthorized)
         assert outcome.requires_owner_approval is True
         assert outcome.owner_reasons[0] is OwnerReason.LOSS_CLAIM
         assert outcome.ceiling_vnd == ceiling
-    over = claim(RemedyKind.LOST_ITEM, "shirts", 250_001)
+    over = claim(RemedyKind.LOST_ITEM, "shirts", 250_001, garment=1)
     assert isinstance(over, RemedyRefused) and over.ceiling_vnd == 250_000
 
 
@@ -470,19 +548,41 @@ def _lines(draw: st.DrawFn) -> RemedyLineFacts:
     amount=st.integers(min_value=0, max_value=30_000_000),
     committed=st.integers(min_value=0, max_value=3_000_000),
     refunded=st.booleans(),
+    garment_share=st.integers(min_value=0, max_value=3_000_000),
+    garment_pick=st.integers(min_value=1, max_value=40),
 )
 @settings(max_examples=500, deadline=None)
 def test_no_item_is_ever_capped_above_the_old_line_rule_or_paid_without_the_owner_it_needs(
-    line: RemedyLineFacts, kind: RemedyKind, amount: int, committed: int, refunded: bool
+    line: RemedyLineFacts,
+    kind: RemedyKind,
+    amount: int,
+    committed: int,
+    refunded: bool,
+    garment_share: int,
+    garment_pick: int,
 ) -> None:
     """Over every line shape: DEC-031 only ever lowers the cap, and never lets staff pay what it
-    sends to the owner."""
+    sends to the owner. Since `REMEDY-GARMENT-001` a line of several garments with a fee each is
+    claimed per garment -- a valid position and what already counts against it, never more than
+    the line holds -- and the item whose total is compared is that garment."""
 
     facts = order({"it": line}, refunded=refunded)
-    outcome = claim(kind, "it", amount, facts, committed)
-    ceiling_by_line = line.net_amount_vnd * POLICY.damage_compensation_multiple
     terms = item_compensation_terms(POLICY, facts, "it")
     assert terms is not None
+    garment = None if terms.garments is None else 1 + (garment_pick - 1) % terms.garments
+    garment_committed = min(garment_share, committed) if garment is not None else None
+    outcome = claim(
+        kind,
+        "it",
+        amount,
+        facts,
+        committed,
+        garment=garment,
+        garment_committed=garment_committed,
+    )
+    ceiling_by_line = line.net_amount_vnd * POLICY.damage_compensation_multiple
+    per_garment = terms.garments is not None and terms.garments > 1
+    item_prior = garment_committed if per_garment and garment_committed is not None else committed
     # Per piece and per line, since the founder's clarification of DEC-031 rule 1: one proposal is
     # capped at one item's ceiling, and everything on the line at the sum of its items' ceilings --
     # which is never above the old line-wide cap (5x what the line was charged).
@@ -490,20 +590,26 @@ def test_no_item_is_ever_capped_above_the_old_line_rule_or_paid_without_the_owne
     if isinstance(outcome, RemedyRefused):
         assert outcome.refusal is RemedyRefusal.REMEDY_CEILING_EXCEEDED
         assert outcome.ceiling_vnd in {terms.ceiling_vnd, terms.line_ceiling_vnd}
-        assert amount > terms.ceiling_vnd or committed + amount > terms.line_ceiling_vnd
+        assert (
+            amount > terms.ceiling_vnd
+            or item_prior + amount > terms.ceiling_vnd
+            or committed + amount > terms.line_ceiling_vnd
+        )
         return
     assert isinstance(outcome, RemedyAuthorized)
     assert outcome.ceiling_vnd is not None and outcome.line_ceiling_vnd is not None
     assert isinstance(outcome.ceiling_vnd, int) and outcome.ceiling_vnd >= 0
     assert amount <= outcome.ceiling_vnd
+    assert item_prior + amount <= outcome.ceiling_vnd
     assert committed + amount <= outcome.line_ceiling_vnd <= ceiling_by_line
+    assert outcome.garment_index == garment
     if line.unit_price_vnd is not None and line.unit in _COUNT_UNITS:
         assert outcome.ceiling_vnd <= line.unit_price_vnd * POLICY.damage_compensation_multiple
     must_ask_owner = (
         kind is RemedyKind.LOST_ITEM
         or refunded
         or outcome.item_fee_basis is ItemFeeBasis.NOT_RECORDED
-        or committed + amount > POLICY.staff_approval_ceiling_vnd
+        or item_prior + amount > POLICY.staff_approval_ceiling_vnd
     )
     assert outcome.requires_owner_approval is must_ask_owner
     assert outcome.requires_owner_approval is bool(outcome.owner_reasons)

@@ -697,7 +697,21 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   * 2 `REASON_NOTE` glosses in `core/i18n.js`, one per 503 reason code, saying what happened:
     #     the timed-out transaction rolled back whole; the connection was never opened.
     #   The registry diff adds exactly those five slot ids and removes none.
-    assert sum(counts.values()) == _registry()["total"] == 406
+    # 400 after REMEDY-GARMENT-001 (the DEC-031 addendum): +4 added, 0 retired, 4 re-keyed.
+    #   * +3 `REASON_NOTE` glosses in `core/i18n.js`, one per new `RemedyRefusal` the counter can
+    #     meet and `test_every_remedy_refusal_the_counter_can_meet_is_glossed_for_them` requires:
+    #     `REMEDY_GARMENT_REQUIRED`, `REMEDY_GARMENT_NOT_APPLICABLE`, `REMEDY_GARMENT_OUT_OF_RANGE`.
+    #   * +1 `PLAN_NOTE.GARMENT_NOT_CHOSEN` in `screens/remedies.js`: the form stops at "món thứ
+    #     mấy" on a line of several garments, and says why before a money box exists.
+    #   * 4 re-keyed because the ruling made them false: `REMEDY_CEILING_EXCEEDED` and
+    #     `PLAN_NOTE.ABOVE_CEILING` (the ceiling is cumulative per garment, line-level claims
+    #     counted against each), `OWNER_REASON_NOTE.ABOVE_STAFF_LIMIT` (the staff limit is the
+    #     garment's, not the line's), and `REMEDY_APPROVAL_EXPIRED` (a remedy envelope is open
+    #     to the end of the next business day, not "a short time"). The garment picker's own hint
+    #     and the per-garment owner sentence are template literals the scanner does not register.
+    # 396 + 4 = 400, predicted before regenerating.
+    # 410 with REMEDY-GARMENT-001 merged on top of the two above: disjoint slots, 406 + 4.
+    assert sum(counts.values()) == _registry()["total"] == 410
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

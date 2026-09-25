@@ -105,9 +105,10 @@ from quote_test_data import FixtureLine, accepted_quote, counter_ticket, make_qu
 ROOT = Path(__file__).resolve().parents[3]
 POLICY = json.loads((ROOT / "templates" / "remedy-policy-dec-004.json").read_text(encoding="utf-8"))
 
-#: Now, not a fixed calendar date. The approval envelope for `APPROVE_REMEDY` lives ten minutes
-#: (`_OWNER_FINANCIAL`), so a fixture pinned to 2026-08-01 would raise envelopes that were already
-#: expired before the owner could decide them -- the defect `quote_test_data.PRICED_AT` records.
+#: Now, not a fixed calendar date. The approval envelope for `APPROVE_REMEDY` lives until the end of
+#: the next business day (`_OWNER_REMEDY`; ten minutes before the DEC-031 addendum), so a fixture
+#: pinned to 2026-08-01 would raise envelopes that were already expired before the owner could
+#: decide them -- the defect `quote_test_data.PRICED_AT` records.
 NOW = datetime.now(UTC).replace(microsecond=0)
 READY = IntakeReadiness(True, True, True, True, True, True)
 #: `make_quote_snapshot` bills 100.000 d of service on `line-1` and adds a 10.000 d delivery fee.

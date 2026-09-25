@@ -359,6 +359,13 @@ Default maximum TTLs unless a stricter policy applies:
 | Capacity/slot confirmation | 15 minutes |
 | Payment/refund/credit execution | 10 minutes |
 | Pricebook/promotion/policy publish | 10 minutes |
+| Owner approval of a remedy proposal (`APPROVE_REMEDY`) | until 24:00 Asia/Ho_Chi_Minh at the end of the next business day (24–48 hours) |
+
+The remedy row is the `DEC-031` addendum (2026-09-25, delegated): every loss and every
+compensation on a refunded order needs the owner, the customer is not waiting at the counter, and the
+envelope binds the proposal's exact rendered hash, so a longer window cannot approve changed
+content. Executing the approved remedy is still bounded by the same expiry. Every other action keeps
+the window above.
 
 Expiry never extends implicitly. A retry after expiry creates a new request and re-runs policy.
 

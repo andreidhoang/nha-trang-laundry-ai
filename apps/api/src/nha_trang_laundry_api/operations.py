@@ -379,6 +379,9 @@ class StoredRemedyProposalResult:
     #: `OwnerReason` values; empty when staff may authorise. A replay of a proposal recorded before
     #: this field existed reads as empty, which is only ever shown, never decided on.
     owner_reasons: tuple[str, ...] = ()
+    #: `REMEDY-GARMENT-001`: the garment recorded. A replay of a proposal recorded before the field
+    #: existed reads as `None`, which is what those rows hold.
+    garment_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2125,10 +2128,18 @@ class OperationsService:
         attested_late_by_minutes: int | None,
         idempotency_key: str,
         principal: StaffPrincipal,
+        garment_index: int | None = None,
     ) -> StoredRemedyProposalResult:
         """Record what a staff member proposed, after the server checked it against `DEC-004`."""
 
         proposed_at = datetime.now(UTC)
+        # The same key with a different garment is a different claim, so the garment is part of the
+        # payload. Only when named: a request that names none hashes exactly as it did before
+        # `REMEDY-GARMENT-001`, so a retry of a request made then still replays instead of
+        # conflicting with itself.
+        garment_payload: dict[str, object] = (
+            {} if garment_index is None else {"garment_index": garment_index}
+        )
         with self._connection_factory(self._database_url) as connection:
             result = self._idempotency.execute(
                 connection,
@@ -2145,6 +2156,7 @@ class OperationsService:
                         "order_line_id": order_line_id,
                         "amount_vnd": amount_vnd,
                         "attested_late_by_minutes": attested_late_by_minutes,
+                        **garment_payload,
                     },
                     occurred_at=proposed_at,
                 ),
@@ -2162,6 +2174,7 @@ class OperationsService:
                             amount_vnd=amount_vnd,
                             attested_late_by_minutes=attested_late_by_minutes,
                             proposed_at=proposed_at,
+                            garment_index=garment_index,
                         ),
                     )
                 ),
@@ -2704,6 +2717,7 @@ def _remedy_proposal_mapping(value: Any) -> dict[str, object]:
         "approval_id": None if value.approval_id is None else str(value.approval_id),
         "reason_code": value.reason_code,
         "owner_reasons": list(value.owner_reasons),
+        "garment_index": value.garment_index,
     }
 
 
@@ -2727,7 +2741,16 @@ def _stored_remedy_proposal_result(
         reason_code=_optional_text(value["reason_code"]),
         replayed=replayed,
         owner_reasons=_text_tuple(value.get("owner_reasons")),
+        garment_index=_optional_position(value.get("garment_index")),
     )
+
+
+def _optional_position(value: object) -> int | None:
+    """A stored garment position, or `None` for a record written before it existed."""
+
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return None
 
 
 def _text_tuple(value: object) -> tuple[str, ...]:

@@ -3227,19 +3227,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/remedies.js#hint:32728a27a8f8
+- slot_id: screens/remedies.js#hint:002bb5789184
   module: screens/remedies.js
   key: hint
-  text: 'Giặt lại không sinh khoản giảm trừ nào: không có đồng nào chuyển đi. Máy chủ ghi lệnh giặt lại
-    và đóng sự cố; việc giặt lại là việc mới ở xưởng, đơn cũ không quay lại dây chuyền.'
+  text: 'Giặt lại không sinh khoản giảm trừ nào: không có đồng nào chuyển đi. Máy chủ ghi lệnh giặt lại;
+    việc giặt lại là việc mới ở xưởng, đơn cũ không quay lại dây chuyền.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/remedies.js#hint:cf4fa492e6ab
+- slot_id: screens/remedies.js#hint:c8e6c66696d0
   module: screens/remedies.js
   key: hint
-  text: Sự cố gắn với đề nghị này đã chuyển sang CLOSED và cột bồi hoàn đã là “đã quyết định”.
+  text: Sự cố chỉ đóng khi mọi đề nghị trên nó đã có kết cục. Còn đề nghị đang chờ chủ tiệm hoặc chưa
+    thực hiện thì sự cố vẫn mở, và ghi tiếp được món khác của cùng lời phàn nàn.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

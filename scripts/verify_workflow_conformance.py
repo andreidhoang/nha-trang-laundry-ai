@@ -1830,6 +1830,87 @@ def scenario_remedy(console: Console) -> None:
         said[:200],
     )
 
+    head("12e", "CHỦ DUYỆT — the owner reads the lost suit on Duyệt and decides it")
+    lost_id = sql(
+        f"select id from remedy_proposals where incident_id='{incident}' and kind='LOST_ITEM'"
+    )
+    over_id = sql(
+        f"select id from remedy_proposals where incident_id='{incident}' and garment_index = 2 "
+        "and approval_id is not null"
+    )
+    console.sign_in("demo-owner")
+    console.open("#/approvals", settle=2500)
+
+    def remedy_card(proposal_id: str) -> Any:
+        return console.page.locator(
+            "article.card", has=console.page.locator(f"[data-remedy-binding='{proposal_id}']")
+        )
+
+    card = remedy_card(lost_id)
+    shown = card.first.inner_text() if card.count() else ""
+    ok(
+        "the owner sees the claim itself: a lost suit, 50.000 ₫, the ceiling and why it is theirs",
+        card.count() == 1 and "50.000" in shown and "150.000" in shown,
+        shown.replace("\n", " | ")[:260],
+    )
+    if card.count():
+        card.first.locator("button", has_text="Duyệt").first.click()
+        console.page.wait_for_timeout(2200)
+    ok(
+        "and approves it in the console",
+        sql(
+            "select s.status from remedy_proposals p join approval_request_states s "
+            f"on s.approval_request_id = p.approval_id where p.id='{lost_id}'"
+        )
+        == "APPROVED",
+        console.said()[:160],
+    )
+    over = remedy_card(over_id)
+    if over.count():
+        over.first.locator("button", has_text="Từ chối").first.click()
+        console.page.wait_for_timeout(2200)
+    ok(
+        "the second 50.000 ₫ on the faded suit, past the staff limit, the owner refuses",
+        sql(
+            "select s.status from remedy_proposals p join approval_request_states s "
+            f"on s.approval_request_id = p.approval_id where p.id='{over_id}'"
+        )
+        == "REJECTED",
+        console.said()[:160],
+    )
+
+    head("12f", "TRẢ SAU — back at the counter, the approved loss is carried out from the list")
+    console.sign_in("demo-operations")
+    console.open(f"#/remedies?incident={incident}", settle=1500)
+    if console.page.locator("#remedy-recorded-proposals li").count() == 0:
+        console.type_into("#remedy-incident", incident)
+        read = console.page.locator("button", has_text="Đọc mức trần và thời hạn")
+        if read.count():
+            read.first.click()
+            console.page.wait_for_timeout(2200)
+    third_id = sql(
+        f"select id from remedy_proposals where incident_id='{incident}' and garment_index = 3"
+    )
+    for proposal_id, label in ((lost_id, "lost suit"), (third_id, "third suit")):
+        press = console.page.locator(f"button[data-remedy-execute='{proposal_id}']")
+        if press.count():
+            press.first.click()
+            console.page.wait_for_timeout(2500)
+        ok(
+            f"the {label} is paid out from the list, in a later session, as a credit",
+            sql(
+                "select count(*) from remedy_credits c join remedy_proposals p "
+                f"on p.id = c.remedy_proposal_id where p.id='{proposal_id}'"
+            )
+            == "1",
+            console.said()[:140],
+        )
+    ok(
+        "and with every claim decided, the complaint closes",
+        sql(f"select status from customer_incidents where id='{incident}'") == "CLOSED",
+        sql(f"select status from customer_incidents where id='{incident}'"),
+    )
+
     head("12d", "ĐỌC LẠI — the complaint's claims, the order's credit, the customer's source")
     console.open(f"#/remedies?incident={incident}", settle=1500)
     if console.page.locator("#remedy-recorded-proposals li").count() == 0:
@@ -1848,10 +1929,12 @@ def scenario_remedy(console: Console) -> None:
     )
     console.open(f"#/orders/{order_id}", settle=1800)
     credit = console.page.locator("#order-remedy-credits li[data-credit-status=UNUSED]")
+    texts = " | ".join(credit.all_inner_texts())
     ok(
-        "the order shows its unused 60.000 ₫ credit, so a customer who lost the code keeps it",
-        credit.count() == 1 and "60.000" in credit.first.inner_text(),
-        credit.first.inner_text()[:120] if credit.count() else "none",
+        "the order shows its three unused credits (60.000, 50.000 and 60.000 ₫), so a customer "
+        "who lost a code keeps it",
+        credit.count() == 3 and "50.000" in texts and "60.000" in texts,
+        texts[:200] or "none",
     )
     source = console.page.locator("[data-field=acquisition-source]")
     ok(

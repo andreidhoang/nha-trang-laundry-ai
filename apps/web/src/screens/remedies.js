@@ -495,14 +495,18 @@ function executionCard(result, options = {}) {
           "p",
           { class: "hint" },
           "Giặt lại không sinh khoản giảm trừ nào: không có đồng nào chuyển đi. Máy chủ ghi lệnh " +
-            "giặt lại và đóng sự cố; việc giặt lại là việc mới ở xưởng, đơn cũ không quay lại dây " +
+            "giặt lại; việc giặt lại là việc mới ở xưởng, đơn cũ không quay lại dây " +
             "chuyền.",
         ),
+    // `REMEDY-INCIDENT-OUTCOME-001`: this said the incident had moved to CLOSED, true only when
+    // this was the incident's last open claim. The response does not say which, so the card
+    // states the rule instead of a fact it cannot know.
     incidentNote
       ? h(
           "p",
           { class: "hint" },
-          "Sự cố gắn với đề nghị này đã chuyển sang CLOSED và cột bồi hoàn đã là “đã quyết định”.",
+          "Sự cố chỉ đóng khi mọi đề nghị trên nó đã có kết cục. Còn đề nghị đang chờ chủ tiệm " +
+            "hoặc chưa thực hiện thì sự cố vẫn mở, và ghi tiếp được món khác của cùng lời phàn nàn.",
         )
       : null,
   );

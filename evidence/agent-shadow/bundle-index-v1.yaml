@@ -13,10 +13,25 @@ rules:
   - This index is deliberately not hash-pinned by any bundle. A pointer inside the thing it points
     at cannot be updated without invalidating itself.
 current:
-  path: evidence/agent-shadow/local-synthetic-suite-v3.json
+  path: evidence/agent-shadow/local-synthetic-suite-v4.json
   derived_by: scripts/capture_local_agent_evidence.py
   release_effect: NONE
 superseded:
+  - path: evidence/agent-shadow/local-synthetic-suite-v3.json
+    sha256: sha256:ca51d935e4eb862e936e1cb562e1c54d17f0f91d1aea118e2def051249ef2670
+    superseded_on: '2026-09-25'
+    superseded_by: evidence/agent-shadow/local-synthetic-suite-v4.json
+    work_item: AGENT-SHADOW-DEFECTS-001
+    reason: >-
+      A review of the agent runtime reproduced defects in three files this bundle pins.
+      `agent_runner.py` filed every deterministic handoff as a model draft, dropped the release
+      pins a run was queued for, and ran to a deadline equal to its claim's lease; `graders.py`
+      let an unmeasured negative fact pass a safety assertion; `runner.py` reported "consent
+      projection unchanged" as a constant. Fixing them moved those pins, so the bundle was
+      re-derived rather than hand-edited, per this index's own rules, and
+      `scripts/capture_local_agent_evidence.py` moved with it so a bare re-run cannot overwrite
+      this record. Every case status (32 SKIP), the release-blocker list and the
+      DETERMINISTIC_DEGRADED runtime path are unchanged; no case reports a missing observation.
   - path: evidence/agent-shadow/local-synthetic-suite-v2.json
     sha256: sha256:753cbd1ce293a3b1cda59f5f2ab897ed01d44feff66f6eab591138577f5f5fe7
     superseded_on: '2026-09-09'

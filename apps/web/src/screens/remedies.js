@@ -1606,7 +1606,6 @@ export function render_(context) {
         : 0;
       return listRow({
         href: `#/incidents/${encodeURIComponent(item.incident_id)}`,
-        leading: "incident",
         title: Number.isInteger(item.ticket_number) ? `Phiếu ${item.ticket_number}` : "Khiếu nại",
         // Untrusted text, as a text node, one line.
         meta:

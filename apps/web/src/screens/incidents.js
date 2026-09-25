@@ -194,12 +194,19 @@ function incidentRow(item) {
   const hasSummary = typeof item.evidence_summary === "string" && item.evidence_summary.trim();
   return listRow({
     href: `#/incidents/${encodeURIComponent(String(item.incident_id || ""))}`,
-    leading: "incident",
-    title: ticketTitle(item),
-    // Untrusted text: `listRow` places it as a text node, one line, clipped by CSS.
-    meta: h("span", { class: ["row-item__clip", !hasSummary && "muted"] }, summaryLine(item.evidence_summary)),
-    trailing: statusPill({ state: statusState(item.status), text: enumVi(item.status), token: item.status }),
-    trailingMeta: ago(item.opened_at),
+    // The status rides on the title line so the customer's words get the row's full width.
+    title: [
+      ticketTitle(item),
+      statusPill({ state: statusState(item.status), text: enumVi(item.status), token: item.status }),
+    ],
+    // Untrusted text: `listRow` places it as a text node, one line, clipped by CSS. The age leads
+    // the line rather than taking a trailing column the customer's words would lose width to.
+    meta: h(
+      "span",
+      { class: "row-item__clip" },
+      `${ago(item.opened_at)} · `,
+      h("span", { class: hasSummary ? null : "muted" }, summaryLine(item.evidence_summary)),
+    ),
     data: { incidentId: String(item.incident_id || ""), incidentStatus: String(item.status || "") },
   });
 }

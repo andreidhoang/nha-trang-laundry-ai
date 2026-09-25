@@ -1476,3 +1476,15 @@ p.hint:empty {
 .remedy-summary .kv__row dt {
   flex: initial;
 }
+
+/* A screen's single grid column is the viewport's, never its widest child's: without this a
+ * list toolbar (filter + stamp + "Tải lại") sized the track to its one-line width and pushed a
+ * 390 px phone to 616 px of horizontal scroll, so the toolbar's own flex-wrap never engaged. */
+.screen {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* The same for a row: its text column never grows past the row, so a clipped line ellipsizes. */
+.row-item__main {
+  grid-template-columns: minmax(0, 1fr);
+}

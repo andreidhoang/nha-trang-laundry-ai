@@ -23,9 +23,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 from nha_trang_laundry_agent_tools.auth import AgentAuthSettings, AgentRunnerTokenVerifier
-from nha_trang_laundry_agent_tools.backend import DomainAgentToolBackend
+from nha_trang_laundry_agent_tools.backend import build_domain_facade_service
 from nha_trang_laundry_agent_tools.facade import (
-    AgentFacadeService,
     get_agent_facade_service,
     get_agent_verifier,
 )
@@ -80,7 +79,10 @@ def postgres_connection() -> Generator[psycopg.Connection[Any], None, None]:
     database_url = os.environ.get("DATABASE_URL")
     if database_url is None:
         pytest.skip("DATABASE_URL is required for PostgreSQL integration tests")
-    with psycopg.connect(database_url) as connection:
+    # Autocommit, as the worker's own connection is in production: every `transaction()` block
+    # commits, and a bare read never leaves an implicit transaction open that turns later writes
+    # into savepoints invisible to the Tool Facade's own connection (AGENT-SHADOW-DEFECTS-001 F7).
+    with psycopg.connect(database_url, autocommit=True) as connection:
         apply_migrations(connection)
         yield connection
 
@@ -231,7 +233,11 @@ def enqueue(
 
 
 def _before_pending(connection: psycopg.Connection[Any]) -> datetime:
-    with connection.cursor() as cursor:
+    # Inside a transaction block, so it ends. A bare SELECT here opened an implicit transaction that
+    # nothing ever committed, which turned every later `connection.transaction()` in the test into a
+    # savepoint: the enqueued, claimed run was invisible to any other connection. The facade's
+    # admission ledger (F7) is another connection and must see the run live.
+    with connection.transaction(), connection.cursor() as cursor:
         cursor.execute("SELECT now() - interval '1 minute'")
         row = cursor.fetchone()
     assert row is not None
@@ -700,9 +706,10 @@ def _domain_wired_runner_and_transport(
         )
     )
     facade_app.dependency_overrides[get_agent_verifier] = lambda: verifier
-    facade_app.dependency_overrides[get_agent_facade_service] = lambda: AgentFacadeService(
-        DomainAgentToolBackend(database_url=database_url)
-    )
+    # One service for the test, as a deployment holds one, with the admission ledger in the same
+    # database the runs live in (F7): every bridged call is admitted once, against a live run.
+    service = build_domain_facade_service(database_url=database_url)
+    facade_app.dependency_overrides[get_agent_facade_service] = lambda: service
     return runner, LoopbackFacadeTransport(TestClient(facade_app))
 
 
@@ -938,6 +945,18 @@ def test_a_backend_backed_run_records_only_redacted_tool_ledger_and_pure_artifac
     assert result.agent_run_id == str(command.agent_run_id)
     rows = _tool_call_rows(postgres_connection, result.agent_run_id or "")
     assert [row[0] for row in rows] == ["catalogResolve", "orderRequestCreate"]
+    # Both calls were answered, not refused: this test passed before F7 while every call it made
+    # came back 403, because only operation names were asserted.
+    assert [row[2] for row in rows] == [200, 201]
+    with postgres_connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT operation_id FROM agent_facade_invocations
+            WHERE agent_run_id = %s ORDER BY admitted_at
+            """,
+            (result.agent_run_id,),
+        )
+        assert [row[0] for row in cursor.fetchall()] == ["catalogResolve", "orderRequestCreate"]
     for _operation, fingerprint, status_code, result_code, safe_summary in rows:
         # The arguments live only inside a one-way fingerprint; the summary is exactly the
         # three bounded fields `_DatabaseToolCallObserver` is allowed to write.

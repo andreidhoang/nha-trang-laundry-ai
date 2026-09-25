@@ -89,10 +89,12 @@ from nha_trang_laundry_policy import PolicyDecision, PolicyDecisionPoint
 
 from nha_trang_laundry_agent_tools.auth import AgentAuthorizationError
 from nha_trang_laundry_agent_tools.facade import (
+    AgentFacadeService,
     AgentToolBackend,
     AgentToolCall,
     AgentToolRefusal,
     AgentToolUnavailable,
+    PostgresAgentCallLedger,
     UnavailableAgentToolBackend,
 )
 
@@ -822,6 +824,27 @@ def build_domain_backend(
     )
 
 
+def build_domain_facade_service(
+    *,
+    database_url: str,
+    connection_factory: Callable[[str], Any] = psycopg.connect,
+    now: Callable[[], datetime] | None = None,
+) -> AgentFacadeService:
+    """The domain backend with the admission ledger every facade process shares.
+
+    `AgentFacadeService` alone defaults to a process-local ledger, which is correct only for one
+    process. A deployment that opts into the domain backend has a database, so it gets the ledger
+    in it: replay refusal and per-run limits then hold across facade processes and restarts.
+    Selecting this remains a deployment's explicit dependency override (F7).
+    """
+    return AgentFacadeService(
+        DomainAgentToolBackend(
+            database_url=database_url, connection_factory=connection_factory, now=now
+        ),
+        call_ledger=PostgresAgentCallLedger(database_url, connection_factory=connection_factory),
+    )
+
+
 def _quote_estimate_mapping(
     snapshot: ImmutableQuoteSnapshot, pricebook: PricebookProvenance
 ) -> dict[str, object]:
@@ -972,4 +995,5 @@ __all__ = [
     "QUOTE_REVISION_ID_NAMESPACE",
     "DomainAgentToolBackend",
     "build_domain_backend",
+    "build_domain_facade_service",
 ]

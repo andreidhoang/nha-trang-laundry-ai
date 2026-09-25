@@ -4454,3 +4454,93 @@ items:
   - unknown_send_receipts_are_store_scoped
   - rollback_assessment
   blocked_by_decisions: []
+- id: REMEDY-ITEM-FEE-001
+  phase: PRODUCTION_HARDENING
+  title: "DEC-031: the item fee per piece, loss to the owner, compensation on a refunded order"
+  status: PENDING
+  priority: 297
+  depends_on:
+  - REMEDY-CUMULATIVE-001
+  - CANCEL-REFUND-001
+  context_domains:
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-founder-decisions-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_per_piece_line_caps_each_item_at_five_times_its_unit_price
+  - every_loss_claim_needs_the_owner
+  - compensation_on_a_refunded_order_needs_the_owner
+  - the_counter_sees_the_item_and_what_it_already_carries
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: RANGE-COUNTER-ATTEST-001
+  phase: PRODUCTION_HARDENING
+  title: "DEC-029: the staff member on duty chooses inside a published band"
+  status: PENDING
+  priority: 298
+  depends_on:
+  - RANGE-APPROVAL-VISIBILITY-001
+  context_domains:
+  - pricing
+  - orders_audit
+  normative_sources:
+  - docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+  - docs/DECISION_REQUEST_RANGE_PRICE_AUTHORITY_2026-09.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-founder-decisions-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_price_inside_the_band_needs_no_owner
+  - a_price_outside_the_band_is_still_refused
+  - the_choosing_staff_member_is_on_the_immutable_record
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: PREPAID-DROPOFF-001
+  phase: PRODUCTION_HARDENING
+  title: "DEC-032: a counter customer pays the exact total at drop-off; pickup is recorded separately"
+  status: PENDING
+  priority: 299
+  depends_on:
+  - CANCEL-REFUND-001
+  context_domains:
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+  - docs/DECISION_REQUEST_ORDER_EXIT_2026-08.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-founder-decisions-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - exact_prepayment_at_dropoff_is_recorded_without_a_false_handover
+  - pickup_is_recorded_by_a_named_staff_member
+  - an_order_completes_only_when_paid_released_and_collected
+  - partial_payment_is_still_refused
+  - rollback_assessment
+  blocked_by_decisions: []

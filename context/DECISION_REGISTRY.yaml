@@ -1,5 +1,5 @@
 schema_version: 1
-last_reviewed: 2026-09-18
+last_reviewed: 2026-09-25
 decisions:
   - id: DEC-001
     title: Weight precision and rounding policy
@@ -958,3 +958,107 @@ decisions:
       SHOP_FAULT_NO_CHARGE exit is the case that column was added for.
 
       Implemented by INCIDENT-INTAKE-001.
+  - id: DEC-029
+    title: Who may choose the exact price inside a published price band
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, QUOTE_ESTIMATE]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_REQUEST_RANGE_PRICE_AUTHORITY_2026-09.md
+    opened_at: '2026-09-18'
+    question: >-
+      20 of the 44 published services are price ranges. SET_RANGE_PRICE required OWNER_ADMIN with
+      MFA inside a ten-minute window per garment, so a range-priced item could not be sold on the
+      machine whenever the owner was away.
+    resolved_at: '2026-09-25'
+    decision_record: docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+    decided_under: >-
+      Delegated authority, not an owner ratification, recorded as such so the registry stays true.
+      The business owner wrote on 2026-09-25: "continue with the remaining follow-up items and make
+      decisions as real founder of the business and lead engineer", extending the delegation
+      recorded under DEC-028. Boundary kept: where no ratified figure exists, the ruling routes
+      money to the owner's approval rather than letting it move by rule.
+    resolution: >-
+      Option B. The staff member on duty chooses inside the band the owner published, under the
+      counter attestation DEC-021 uses: attributed, immutable, no MFA, owner-reviewable. The server
+      refuses any figure outside the band. Reverse by mapping SET_RANGE_PRICE back to
+      _OWNER_FINANCIAL; upgrade to a threshold (option C) if owner review shows careless pricing.
+  - id: DEC-030
+    title: When a remedy credit and a non-stacking promotion meet on one order
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, QUOTE_ESTIMATE]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_REQUEST_CREDIT_VS_PROMOTION_2026-09.md
+    opened_at: '2026-09-18'
+    question: >-
+      The promotion engine answered PROMOTION_STACKING_REQUIRES_HUMAN with no rule behind it: a
+      DEC-004 credit is a debt, a stacking_allowed:false programme is an offer, and nothing said
+      which applies.
+    resolved_at: '2026-09-25'
+    decision_record: docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+    decided_under: >-
+      Delegated authority, not an owner ratification, recorded as such so the registry stays true.
+      The business owner wrote on 2026-09-25: "continue with the remaining follow-up items and make
+      decisions as real founder of the business and lead engineer", extending the delegation
+      recorded under DEC-028. Boundary kept: where no ratified figure exists, the ruling routes
+      money to the owner's approval rather than letting it move by rule.
+    resolution: >-
+      Option A. The promotion applies; the credit is not spent and waits for a later order. It is
+      the lower bill in every published programme and cancels no debt; option B would make a
+      customer who spends a credit pay more. No code change: this is the behaviour the system
+      already has.
+  - id: DEC-031
+    title: "Reading DEC-004 where its words stop: item fee, loss, refunded orders"
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, INCIDENT_RECEIPT]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+    opened_at: '2026-09-18'
+    question: >-
+      DEC-004 caps loss/damage at 5x the item's cleaning fee but lines priced by weight have no per-
+      item fee, the code applied the cap per line even to per-piece lines, loss defaulted to case-
+      by-case negotiation with no path in the system, and nothing said whether a fully refunded
+      order may still be compensated. DEC-004 itself is unchanged.
+    resolved_at: '2026-09-25'
+    decision_record: docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+    decided_under: >-
+      Delegated authority, not an owner ratification, recorded as such so the registry stays true.
+      The business owner wrote on 2026-09-25: "continue with the remaining follow-up items and make
+      decisions as real founder of the business and lead engineer", extending the delegation
+      recorded under DEC-028. Boundary kept: where no ratified figure exists, the ruling routes
+      money to the owner's approval rather than letting it move by rule.
+    resolution: >-
+      (1) Item fee: per-piece services use the unit price (line divided by quantity); weight-priced
+      services use the fee charged for the bag, the only number that exists. (2) Loss: the ratified
+      5x ceiling applies and every loss claim needs the owner's approval whatever the amount; staff
+      record and propose, never authorise; report window 24 hours from handover. (3) A refunded
+      order may still be compensated for a damaged or lost garment, capped against the quoted fee,
+      and always with the owner's approval; no late-delivery credit on a refunded bill. (4) Staff
+      limit and ceiling remain cumulative per item.
+  - id: DEC-032
+    title: May a self-collect customer pay the exact total at drop-off
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, BOOKING]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+    opened_at: '2026-09-18'
+    question: >-
+      A self-collect order could only be recorded as paid by ticking 'customer collected', so a
+      customer paying at drop-off forced staff to record a handover that had not happened, or to
+      refuse the money.
+    resolved_at: '2026-09-25'
+    decision_record: docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+    decided_under: >-
+      Delegated authority, not an owner ratification, recorded as such so the registry stays true.
+      The business owner wrote on 2026-09-25: "continue with the remaining follow-up items and make
+      decisions as real founder of the business and lead engineer", extending the delegation
+      recorded under DEC-028. Boundary kept: where no ratified figure exists, the ruling routes
+      money to the owner's approval rather than letting it move by rule.
+    resolution: >-
+      Yes, the exact quoted total and nothing else, as DEC-023 already allows for delivery.
+      Collection is recorded separately at pickup by the named staff member who hands the goods
+      over; an order completes only when paid, released and collected. DEC-010 is not reopened:
+      partial payment, deposits, instalments and account credit stay NOT_SUPPORTED.

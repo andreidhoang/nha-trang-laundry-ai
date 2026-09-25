@@ -93,6 +93,7 @@ domains:
     - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
     - docs/DECISION_REQUEST_RANGE_PRICE_AUTHORITY_2026-09.md
     - docs/DECISION_REQUEST_QUOTE_APPROVAL_2026-08.md
+    - docs/DECISION_RECORD_FOUNDER_2026-09-25.md
     contracts:
     - specs/contracts/canonical-enums-v1.json
     - specs/contracts/pricebook-import-manifest-v1.json
@@ -125,6 +126,7 @@ domains:
     - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
     - CUSTOMER_SERVICE_POLICY_DRAFT.md
     - docs/DECISION_REQUEST_PRICING_POLICY_2026-08.md
+    - docs/DECISION_RECORD_FOUNDER_2026-09-25.md
     contracts:
     - specs/contracts/canonical-enums-v1.json
     prohibitions:
@@ -198,6 +200,7 @@ domains:
     - docs/DECISION_REQUEST_ACQUISITION_2026-08.md
     - docs/CLIENT_ACQUISITION_EXECUTION_2026-08.md
     - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+    - docs/DECISION_RECORD_FOUNDER_2026-09-25.md
     contracts:
     - specs/contracts/pricebook-import-manifest-v1.json
     prohibitions:

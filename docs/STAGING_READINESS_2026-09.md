@@ -1,4 +1,4 @@
-# Staging readiness — measured 2026-09-24, updated 2026-09-25 (twice)
+# Staging readiness — measured 2026-09-24, updated 2026-09-25 (three times)
 
 **Question:** can real counter staff use this application for staging and feature testing in daily
 operation?
@@ -31,14 +31,23 @@ built by six engineers and merged by the lead (`context/tasks/TASK-followups-002
 core workflow was driven in a real browser against the real API **on video**, on a database created
 empty, so the owner could watch it rather than read a log (`--video` on both real-API scripts).
 
-| Gate | `9287596` (before) | 2026-09-24 | 2026-09-25 | 2026-09-25 evening |
-|---|---|---|---|---|
-| `pytest --require-postgres-integration` | 1574 passed | 1749 passed, 0 failed | 2105 passed, 0 failed | **2274 passed, 0 failed** |
-| `mypy apps packages` | 249 files | 257 files | 290 files, clean | 304 files, clean |
-| `verify_contracts.py` | 57 ops, 348 disclosures | 58 ops, 381 | 61 ops, 396 | 66 ops, 419 |
-| Real API, shop day (`verify_daily_operations.py`) | 70 / 0 | 71 / 0 | 71 / 0 | 72 / 0, filmed; 72 / 0 again |
-| Real API, every other workflow | 86 / 1 | 86 / 1 | 86 / 1 (coverage line only) | **159 / 0**, all 49 controls |
-| Stubbed API, console interaction | 170 / 0 | 170 / 0 | 171 / 0 | 251 / 0 |
+**2026-09-25, night — the console redesign.** The owner judged the console "complicated, a lot of
+text, not user-centric". Every screen was rebuilt around the staff task instead of the server
+command (`docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md`, `context/tasks/TASK-console-redesign-v2.md`),
+with two server additions a task-first console needs (the order's next step decided by the domain;
+the reads the screens lacked), the consent checks (`DEC-033`) and the last two API follow-ups. Every
+workflow was then filmed **at phone size** against the real API and reviewed as a user and as an
+engineer; every finding was fixed and filmed again.
+
+| Gate | `9287596` (before) | 2026-09-24 | 2026-09-25 | 2026-09-25 evening | 2026-09-25 night |
+|---|---|---|---|---|---|
+| `pytest --require-postgres-integration` | 1574 passed | 1749 passed, 0 failed | 2105 passed, 0 failed | 2274 passed, 0 failed | **PYTEST_FINAL** |
+| `mypy apps packages` | 249 files | 257 files | 290 files, clean | 304 files, clean | 316 files, clean |
+| `verify_contracts.py` | 57 ops, 348 disclosures | 58 ops, 381 | 61 ops, 396 | 66 ops, 419 | 71 ops, 457 |
+| Real API, shop day (`verify_daily_operations.py`) | 70 / 0 | 71 / 0 | 71 / 0 | 72 / 0, filmed | **78 / 0 at desk and at phone size, filmed** |
+| Real API, every other workflow | 86 / 1 | 86 / 1 | 86 / 1 (coverage line only) | 159 / 0, all 49 controls | **187 / 0 at desk and at phone size**, all 66 controls |
+| Real API, consent walk (`verify_consent_walk.py`) | — | — | — | — | **38 / 0, filmed** |
+| Stubbed API, console interaction | 170 / 0 | 170 / 0 | 171 / 0 | 251 / 0 | STUB_FINAL |
 
 Every real-API run starts from a database created empty and migrated to the latest migration
 (`0052` in the evening), with the remedy and promotion policies published. The "every other
@@ -64,6 +73,27 @@ green. On both days the real-API browser run on the merged tree caught problems 
 passing tests and the stubbed browser suite did not.
 
 ## What changed for the person at the counter
+
+**The night redesign, measured on a 390 px phone against the real API:**
+
+- **One flow for a customer handing over laundry.** ＋ Nhận đồ (the raised middle tab): *Khách
+  vãng lai — phát phiếu* shows "Phiếu 17"; pick the service, type the weight, *Tính giá* shows a
+  receipt with the total large; *Khách đồng ý — tạo đơn*. **8 taps plus the weight, nothing
+  pasted** — V1 was 12 taps over three screens with a contact id, quote id, revision and a
+  78-character hash copied by hand.
+- **One button for the next thing that happens.** The order page shows where the bag is (Nhận đồ →
+  Đang giặt → Sẵn sàng → Đã trả), what is owed, and one large button the server chose: *Nhận đồ*,
+  *Bắt đầu giặt*, *Giặt xong, kiểm tra đồ*, *Báo đồ đã sẵn sàng*, *Thu tiền*, *Giao đồ & đóng đơn*.
+  Walk-in from created to completed: **9 taps plus the amount** (V1 ≈ 47 over three dropdown
+  forms). A delivery order: 17 (V1 ≈ 57 and a pasted order id).
+- **Less to read.** Order page 6 005 → 1 495 px and 809 → 110 words; staff 850 → 57 words; the
+  gaps page 1 800 → 334. Rules sit behind an ⓘ; ids and hashes behind *Chi tiết kỹ thuật*.
+- **Complaints** are recorded by ticket number and settled on the complaint's own page, the limits
+  shown before any amount is typed. **Hiring** is create → role → store in one sheet.
+- **A customer who wrote STOP** is not messaged by the shop on that channel — not even a service
+  message — until the customer writes again and the owner lifts the block on that message.
+
+**Earlier the same day:**
 
 - **"Phiếu 17".** The orders screen opens on *Tìm theo số phiếu*; the order appears with
   **Phải thu: 132.000 ₫**. Open orders never fall off the board by age.
@@ -100,7 +130,11 @@ passing tests and the stubbed browser suite did not.
    and are proven against a local stand-in for Telegram, but nobody has watched one arrive on the
    owner's phone. `SHOP-ALERT-DELIVERY-001` is recorded **BLOCKED** on exactly that step.
 3. **Publish the remedy and promotion policies at setup** (`shop-till-mac.md` §4).
-4. **No agent capability is switched on.** All 13 are `NOT_AUTHORIZED`. The runtime defects that
+4. **Publish the messaging policy before any service message is sent**
+   (`scripts/publish_messaging_policy.py`, `docs/POLICY_TRANSACTIONAL_MESSAGING_V1.md`). Publishing
+   it is the owner's own confirmation of the legal basis for messaging customers; until then every
+   service send is refused, by design.
+5. **No agent capability is switched on.** All 13 are `NOT_AUTHORIZED`. The runtime defects that
    blocked internal Shadow are fixed; Telegram sandbox contacts count as real customers and are
    refused a model call until Shadow is authorised through its gate.
 
@@ -117,6 +151,8 @@ owner's approval rather than out by rule.
 | `DEC-031` | Per-piece item fee is the unit price; loss and refunded-order compensation always to the owner. |
 | `DEC-032` | Exact prepayment at drop-off; pickup recorded separately. A courier-fetched (`PICKUP_ONLY`) customer may do the same at the counter; the courier never takes money. |
 | `DEC-031` addendum | The staff limit and ceiling are per garment; the owner has until the end of the next day to decide; a complaint closes when every claim on it has an outcome. |
+| `DEC-033` | A STOP blocks service messages too; only the customer's own later message lets an owner or approver lift it; a service send needs the owner's published policy and a basis the server can show. |
+| Order steps | Washing starts on an active order only; an unpaid counter order leaves the shop only by taking the payment. |
 
 ## Still the owner's, and why
 
@@ -131,12 +167,12 @@ owner's approval rather than out by rule.
 | Item | Reason |
 |---|---|
 | `SHOP-ALERT-DELIVERY-001` | Blocked on the owner's phone test (condition 2). |
-| A message-draft decision on film | No draft exists without an authorised agent run, and all 13 capabilities are `NOT_AUTHORIZED`. It is proven over HTTP against PostgreSQL and in the stubbed browser suite. Consent and suppression checks for manual sends are still to be built before any send. |
-| Deadlocks answer 500 | Timeouts and an unopenable database answer 503 with a safe retry; a deadlock is rarer and outside that item. |
-| The worker's execution claim | Still compares the echoed hash; decisions and attestations re-resolve the resource. |
+| Publishing the messaging policy | The owner's legal confirmation (condition 4); nothing sends until then. |
+| A real customer channel | No channel adapter or inbound webhook route exists; the consent walk's customer messages are recorded through the same ingress code, by the harness, and the film says so. |
+| Contact search, a customer's unused credits | No read exists for either; the channel code and a credit code are the only values still typed, each under "Nhập mã thủ công" and stated in an ⓘ. |
+| Marking a rewash or rejecting goods at intake as a step | Not in the step vocabulary yet; listed on `#/gaps` with the workaround. |
 | apk `-rN` pins | Assessed, left, with a recovery step in §8. |
 | Remote branch cleanup | Deleting remote refs is refused in this environment; `archive/…` and `codex/…` hold the only copy of the original lineage (ADR-0004). |
 
-Closed since the morning: a timed-out statement (now 503), decision-time approval checks, reading a
-message draft's binding, per-shirt identity, the ten-minute owner window (now to the end of the
-next day), `PICKUP_ONLY` prepayment, and the four read paths the console's gap register listed.
+Closed tonight: deadlocks (now 503 with a safe retry), the worker's claim (re-resolves its resource),
+consent and suppression for service messages (`DEC-033`), and a message-draft decision on film.

@@ -1,8 +1,28 @@
 # Production continuation brief
 
 **Last reconciled:** 2026-09-25 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **154 queue items.** Migrations run `0001`–`0052`.
+**Active work item:** none. **166 queue items.** Migrations run `0001`–`0053`.
 Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
+
+## The console redesigned, consent built, every workflow filmed at phone size, 2026-09-25 (night)
+
+`context/tasks/TASK-console-redesign-v2.md`, twelve items; the contract is
+`docs/STAFF_CONSOLE_REDESIGN_SPEC_V2.md`. The owner judged V1 "complicated, a lot of text, not
+user-centric": it was designed around the server command (a form per endpoint, pasted UUIDs and
+hashes, axis/target dropdowns, ~16 state commands per walk-in). V2 is task-first — a list, a page,
+one next step the **server** decides (`ORDER-STEPS-001`: `next_steps` dry-run from the domain,
+composite steps executed atomically with the per-transition audit unchanged) — with zero paste in
+daily work, rules behind ⓘ and ids behind *Chi tiết kỹ thuật* (honesty tiers, spec §4; every
+disclosure accounted in the registry). The kit is `apps/web/src/ui/kit.js` + `styles/kit.css`; the
+nav table is `src/core/nav.js`; the order status mapping is `src/core/orderStatus.js`.
+`CONSENT-TRANSACTIONAL-001` (`DEC-033`, delegated): a STOP blocks service messages too, lifted
+only on the customer's later message by an owner or approver; a service send needs the owner's
+published policy (their legal confirmation) and a provable basis — nothing sends until the owner
+publishes. `API-INTEGRITY-004`: deadlocks answer 503; the worker's claim re-resolves its resource.
+Every browser walk runs at phone size with `CONSOLE_VIEWPORT=phone`; the consent walk is
+`scripts/verify_consent_walk.py` (needs the API's `NTL_HASH_KEY`). **Lessons worth keeping:** a
+three-way merge of appended CSS blocks silently unbalanced braces (now a contract test); merging
+parallel console slices is real work — give it an owner and re-run every suite after.
 
 ## Follow-ups closed and every workflow filmed, 2026-09-25 (evening)
 

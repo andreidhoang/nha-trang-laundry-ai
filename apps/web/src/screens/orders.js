@@ -140,6 +140,11 @@ export function amountDue(item) {
   const known = item.payable_total_vnd !== null && item.payable_total_vnd !== undefined;
   // A cancelled order that was never paid owes nothing: "Phải thu" beside it would be false.
   const cancelled = item.commercial === "CANCELLED";
+  // PAYMENT-001 (DEC-035): a deposit was taken, so what the counter reads at pickup is what remains
+  // -- the server's `remaining_vnd`, never the total less anything computed here.
+  if (item.balance === "PARTIALLY_PAID" && !cancelled) {
+    return { label: "Còn lại", text: money(item.remaining_vnd, "Chưa có tổng"), known };
+  }
   const label =
     item.balance === "UNPAID"
       ? cancelled

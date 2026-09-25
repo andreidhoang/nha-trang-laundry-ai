@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 445
+  DESCRIPTIVE: 453
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 7
   SERVER_GATE: 15
-total: 475
+total: 483
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -415,6 +415,15 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.OVERPAYMENT_REFUSED:10ac2b9d79be
+  module: core/errors.js
+  key: REFUSAL.OVERPAYMENT_REFUSED
+  text: 'Máy chủ không ghi nhận khoản này: số tiền lớn hơn số còn lại — trả lại tiền thừa cho khách rồi
+    ghi đúng số tiệm giữ lại.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: core/errors.js#REFUSAL.SERVICE_SUPPRESSED:22f1c5c0f8b1
   module: core/errors.js
   key: REFUSAL.SERVICE_SUPPRESSED
@@ -676,13 +685,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.AMOUNT_IS_NOT_THE_EXACT_TOTAL:f40e115e8676
+- slot_id: core/i18n.js#REASON_NOTE.AMOUNT_IS_NOT_THE_EXACT_TOTAL:8e844a553914
   module: core/i18n.js
   key: REASON_NOTE.AMOUNT_IS_NOT_THE_EXACT_TOTAL
-  text: 'Số tiền phải đúng bằng tổng của đơn, thu đủ một lần. Gõ nhầm một chữ số (ví dụ 13.200 thay vì
-    132.000) cũng bị từ chối như vậy: kiểm tra lại số rồi nhập lại. Trả thiếu, trả thừa, đặt cọc hay trả
-    góp không được nhận — chủ tiệm đã quyết định như vậy (DEC-010). Nếu tổng khách phải trả đã đổi thì
-    báo giá lại.'
+  text: 'Đường tất toán này chỉ nhận đúng tổng của đơn, đủ một lần (DEC-010). Gõ nhầm một chữ số (ví dụ
+    13.200 thay vì 132.000) cũng bị từ chối: kiểm tra lại số rồi nhập lại. Đặt cọc hoặc trả một phần thì
+    bấm “Thu tiền” (DEC-035). Nếu tổng khách phải trả đã đổi thì báo giá lại.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -747,20 +755,80 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.GOODS_NOT_READY_FOR_HANDOVER:77e620e6381c
+- slot_id: core/i18n.js#REASON_NOTE.GOODS_NOT_READY_FOR_HANDOVER:b1debd3716fb
   module: core/i18n.js
   key: REASON_NOTE.GOODS_NOT_READY_FOR_HANDOVER
   text: Đồ chưa giặt xong nên chưa đưa cho khách được. Làm xong đơn tới “sẵn sàng tại cửa hàng” rồi mới
-    ghi nhận khách nhận đồ. Nếu khách đang trả tiền lúc gửi đồ thì bấm “Khách trả trước”.
+    ghi nhận khách nhận đồ. Nếu khách chỉ trả tiền lúc gửi đồ thì bỏ tích “Khách lấy đồ luôn”.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.COLLECTION_REQUIRES_PAYMENT:0cddf6bce34d
+- slot_id: core/i18n.js#REASON_NOTE.COLLECTION_REQUIRES_PAYMENT:a08dd5561ddc
   module: core/i18n.js
   key: REASON_NOTE.COLLECTION_REQUIRES_PAYMENT
-  text: Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì bấm “Thu tiền”, gõ đúng số khách đưa rồi bấm “Ghi
-    nhận đã thu tiền”.
+  text: Đơn này chưa trả đủ tiền nên chưa giao đồ được. Bấm “Thu tiền”, thu phần còn lại rồi mới giao
+    đồ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.OVERPAYMENT_REFUSED:902e8bcd828a
+  module: core/i18n.js
+  key: REASON_NOTE.OVERPAYMENT_REFUSED
+  text: Số tiền lớn hơn số còn lại — trả lại tiền thừa cho khách. Chỉ ghi số tiền tiệm giữ lại, không
+    lớn hơn số còn lại. Không có gì được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.NOTHING_OWED:56e451f1706e
+  module: core/i18n.js
+  key: REASON_NOTE.NOTHING_OWED
+  text: Đơn này không còn tiền phải thu. Tải lại đơn để xem các lần đã thu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PAYMENT_AMOUNT_INVALID:a23cfc3f25b9
+  module: core/i18n.js
+  key: REASON_NOTE.PAYMENT_AMOUNT_INVALID
+  text: Số tiền phải là số nguyên đồng, ít nhất 1 ₫. Kiểm tra lại số vừa gõ rồi nhập lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.TRANSFER_NOT_SEEN:91a54d1d6d01
+  module: core/i18n.js
+  key: REASON_NOTE.TRANSFER_NOT_SEEN
+  text: Chỉ ghi chuyển khoản khi đã thấy tiền vào tài khoản của tiệm. Mở app ngân hàng kiểm tra, rồi tích
+    “Đã thấy tiền vào tài khoản”. Không có gì được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.BANK_REF_INVALID:ea4797034351
+  module: core/i18n.js
+  key: REASON_NOTE.BANK_REF_INVALID
+  text: Mã giao dịch chỉ gồm 2 tới 12 chữ hoặc số, và chỉ ghi cho chuyển khoản. Sửa lại hoặc để trống
+    — ô này không bắt buộc.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.HANDOVER_REQUIRES_FULL_PAYMENT:e0118254ca21
+  module: core/i18n.js
+  key: REASON_NOTE.HANDOVER_REQUIRES_FULL_PAYMENT
+  text: Khách chưa trả đủ nên chưa giao đồ được. Bỏ tích “Khách lấy đồ luôn” để ghi khoản này, hoặc thu
+    đủ phần còn lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.ORDER_PARTLY_PAID:6da2b1d81e09
+  module: core/i18n.js
+  key: REASON_NOTE.ORDER_PARTLY_PAID
+  text: Đơn này đã có khoản đặt cọc. Bấm “Thu tiền” để thu phần còn lại — số còn lại đã điền sẵn.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2271,25 +2339,24 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:9834ff94fcd7
+- slot_id: screens/gaps.js#missing:09965b16428a
   module: screens/gaps.js
   key: missing
-  text: 'Trả đủ đúng số khi khách tự lấy đã có: khối tất toán trong màn hình chi tiết đơn (SETTLEMENT-001,
-    đã hoàn thành). Còn thiếu charges, payments và payment_allocations tổng quát, nên trả một phần, trả
-    thừa và ghi nợ vẫn không biểu diễn được.'
+  text: 'Đặt cọc, trả nhiều lần, tiền mặt hay chuyển khoản đã có trên trang chi tiết đơn (PAYMENT-001).
+    Còn thiếu khách công nợ: customer_accounts, account_statements và payment_allocations — hạn mức, sao
+    kê tháng và phân bổ một khoản thu vào nhiều đơn.'
   binding:
     kind: ABSENT_TABLE
     tables:
-    - charges
-    - payments
+    - customer_accounts
+    - account_statements
     - payment_allocations
     why: Named literally in the sentence and structurally identical to the four gap notices already bound.
       It was parked DESCRIPTIVE, which is the misclassification this item exists to correct.
-- slot_id: screens/gaps.js#blockedBy:14cdea2233dd
+- slot_id: screens/gaps.js#blockedBy:939381d5d4c8
   module: screens/gaps.js
   key: blockedBy
-  text: DEC-010 (đã quyết, hoãn có chủ đích) — trả một phần, đặt cọc, trả góp và ghi nợ không được hỗ
-    trợ vì chủ tiệm quyết như vậy, không phải vì còn thiếu. Trả đủ đúng số không bị chặn.
+  text: PAYMENT-002 — DEC-035 đã quyết; xây sau hồ sơ khách hàng (CUSTOMER-001).
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2929,16 +2996,17 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#guardrail:0341c82d18a7
+- slot_id: screens/orderDetail.js#guardrail:238563bcf2f6
   module: screens/orderDetail.js
   key: guardrail
-  text: 'Mọi trường hợp là cùng một khoản tiền: khách trả đúng tổng đã báo, đủ một lần, tại quầy — lúc
-    lấy đồ, lúc gửi đồ hoặc ghé quầy trả trước khi đồ xong (quyết định DEC-032), hoặc trước khi tiệm giao
-    tận nơi. Người giao không thu tiền. Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối
-    kèm mã quyết định — không làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.'
+  text: 'Khách trả bằng tiền mặt hoặc chuyển khoản vào tài khoản của tiệm, một lần hay nhiều lần (đặt
+    cọc), mỗi lần từ 1 ₫ tới số còn lại (quyết định DEC-035). Khách đưa dư thì trả lại tiền thừa: số lớn
+    hơn số còn lại bị từ chối. Chuyển khoản chỉ ghi khi đã thấy tiền vào tài khoản; máy không tự kiểm
+    tra ngân hàng. Đồ chỉ giao khi đã trả đủ. Người giao không thu tiền. Mỗi lần thu là một dòng không
+    sửa được.'
   binding:
     kind: POLICY_BOUND
-    decision: DEC-010
+    decision: DEC-035
     decision_status: RESOLVED
     why: True because a registered decision says so, not because of a code fact. The recorded status is
       regenerated from context/DECISION_REGISTRY.yaml, so a decision resolving after the sentence was
@@ -2996,10 +3064,10 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#hint:79006dedc5b6
+- slot_id: screens/orderDetail.js#hint:e6c9c01ab66c
   module: screens/orderDetail.js
   key: hint
-  text: Thu đúng tổng, đủ một lần. Ghi rồi không sửa được.
+  text: Khách đưa dư thì trả lại tiền thừa. Ghi rồi không sửa được.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

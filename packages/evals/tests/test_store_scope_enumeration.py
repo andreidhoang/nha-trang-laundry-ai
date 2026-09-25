@@ -101,6 +101,11 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/orders/{order_id}/collection"): store_scoped(
         "settlement", "SettlementRepository.record_collection"
     ),
+    # PAYMENT-001 (`DEC-035`). Keyed by order_id like the settlement: the store is read from the
+    # locked order row and membership required on that cursor, inside the repository.
+    ("POST", "/internal/v1/orders/{order_id}/payments"): store_scoped(
+        "payments", "PaymentRepository.record"
+    ),
     ("GET", "/internal/v1/stores/{store_id}/settlements/today"): store_scoped(
         "settlement", "SettlementRepository.collected_today"
     ),

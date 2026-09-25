@@ -27,6 +27,7 @@ from nha_trang_laundry_domain.order_steps import (
     StepRequiresHuman,
     derive_intake_readiness,
     next_steps,
+    payment_may_hand_over,
     plan_step,
 )
 from nha_trang_laundry_domain.orders import (
@@ -37,10 +38,17 @@ from nha_trang_laundry_domain.orders import (
     transition_intake,
     transition_production,
 )
+from nha_trang_laundry_domain.payments import (
+    ChargeKind,
+    OrderCharge,
+    owed_charges,
+    payment_position,
+)
 from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
 
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.payments import PAYMENT_VIEW_COLUMNS, PaymentView, payment_views
 from nha_trang_laundry_db.quotes import PRICED_FULFILLMENT_MODE_SQL
 from nha_trang_laundry_db.remedies import RemedyStateError, spend_reserved_remedy_credits
 from nha_trang_laundry_db.store_access import require_store_membership
@@ -251,6 +259,23 @@ class OrderView:
     #: `ORDER-STEPS-001`. The legal next steps, computed by `order_steps.next_steps` from the stored
     #: facts this row was read with -- the one computed field, and computed only by the domain.
     next_steps: tuple[NextStep, ...] = ()
+    # --- `PAYMENT-001` (`DEC-035`): Tổng · Đã trả · Còn lại -------------------------------------
+    #: What is owed, as a list of charges: today the bound quote's presentable total alone
+    #: (`QUOTED_TOTAL`); `UNCLAIMED-001` adds the storage fee here. Empty when the quote presents
+    #: no single total. `owed_vnd` is their sum and `remaining_vnd` what is still owed, both
+    #: computed by the domain (`payments.payment_position`), and both null in that case, never 0.
+    charges: tuple[OrderCharge, ...] = ()
+    owed_vnd: int | None = None
+    #: The payment ledger's sum, by PostgreSQL. Null only in a step reply stored before this field
+    #: existed (an idempotent replay repeats what it said then).
+    paid_vnd: int | None = None
+    remaining_vnd: int | None = None
+    #: The ledger's rows, oldest first, at most `PAYMENT_READ_LIMIT`; `payments_truncated` says so.
+    payments: tuple[PaymentView, ...] = ()
+    payments_truncated: bool = False
+    #: Whether the payment that settles the order may also record that the customer takes the
+    #: goods now (`order_steps.payment_may_hand_over`), so the console knows to offer that tick.
+    payment_may_hand_over: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,6 +357,8 @@ _ORDER_VIEW_SELECT: Final = (
            ) AS delivery_legs,
     """
     + _QUOTE_READINESS_COLUMNS
+    # `PAYMENT-001`: row[27] the ledger's sum, row[28] its first rows (`payments.py`).
+    + PAYMENT_VIEW_COLUMNS
     + """
     FROM orders o
     JOIN quote_revisions r
@@ -906,9 +933,12 @@ class OrderRepository:
         # impossible for the row to say anything else.
         refund = (
             _refund_for_cancellation(
-                connection, order_id=command.order_id, resolution=command.custody_resolution
+                connection,
+                order_id=command.order_id,
+                resolution=command.custody_resolution,
+                partly_paid=current.balance is OrderBalanceStatus.PARTIALLY_PAID,
             )
-            if current.balance is OrderBalanceStatus.PAID
+            if current.balance in {OrderBalanceStatus.PAID, OrderBalanceStatus.PARTIALLY_PAID}
             and next_state.balance is OrderBalanceStatus.REFUNDED
             else None
         )
@@ -1371,7 +1401,9 @@ class _CancellationRefund:
     """The whole settled amount going back to the customer, as `DEC-024` resolves it."""
 
     refund_id: UUID
-    settlement_id: UUID
+    #: `None` for a deposit refunded before the order was paid in full (`DEC-035`): there is no
+    #: settlement to name, and `0056` binds the amount to the payment ledger instead.
+    settlement_id: UUID | None
     store_id: UUID
     amount_vnd: int
     resolution: CustodyResolution
@@ -1379,7 +1411,7 @@ class _CancellationRefund:
     def document(self) -> dict[str, object]:
         return {
             "refund_id": str(self.refund_id),
-            "settlement_id": str(self.settlement_id),
+            "settlement_id": None if self.settlement_id is None else str(self.settlement_id),
             "refunded_amount_vnd": self.amount_vnd,
             "direction": "TO_CUSTOMER",
             "custody_resolution": self.resolution.value,
@@ -1387,7 +1419,11 @@ class _CancellationRefund:
 
 
 def _refund_for_cancellation(
-    connection: Any, *, order_id: UUID, resolution: CustodyResolution | None
+    connection: Any,
+    *,
+    order_id: UUID,
+    resolution: CustodyResolution | None,
+    partly_paid: bool = False,
 ) -> _CancellationRefund:
     """Read the settlement a refunding cancellation reverses, or refuse.
 
@@ -1395,10 +1431,38 @@ def _refund_for_cancellation(
     `CUSTOMER_NOT_CHARGED_RESOLUTIONS` -- so both refusals here are states no command writes. An
     order that reads `PAID` with no settlement row means the books already disagree, and refunding
     against a guess would make that worse rather than visible.
+
+    `partly_paid` (`DEC-035`): a deposit goes back through the same path, "up to what was paid" --
+    exactly the payment ledger's sum, computed by PostgreSQL under the order lock the caller holds.
+    There is no settlement to name; `0056` checks at commit that the refund equals the ledger.
     """
 
     if resolution is None:
         raise OrderStateError("HUMAN_APPROVAL_REQUIRED: a refund needs a custody resolution")
+    if partly_paid:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT o.store_id, coalesce(sum(p.amount_vnd), 0)
+                FROM orders o
+                LEFT JOIN order_payments p ON p.order_id = o.id
+                WHERE o.id = %s
+                GROUP BY o.store_id
+                """,
+                (order_id,),
+            )
+            ledger = cursor.fetchone()
+        if ledger is None or int(ledger[1]) <= 0:
+            raise OrderStateError(
+                "the order reads partly paid but no payment is recorded; nothing can be refunded"
+            )
+        return _CancellationRefund(
+            refund_id=uuid4(),
+            settlement_id=None,
+            store_id=_uuid(ledger[0]),
+            amount_vnd=int(ledger[1]),
+            resolution=resolution,
+        )
     with connection.cursor() as cursor:
         cursor.execute(
             "SELECT id, store_id, paid_amount_vnd FROM order_settlements WHERE order_id = %s",
@@ -1489,6 +1553,7 @@ def _stored_order(response: dict[str, object], replayed: bool) -> StoredOrder:
 
 
 def _order_view_row(row: tuple[object, ...]) -> OrderView:
+    facts = _step_facts(row)
     return OrderView(
         order_id=_uuid(row[0]),
         store_id=_uuid(row[1]),
@@ -1509,8 +1574,28 @@ def _order_view_row(row: tuple[object, ...]) -> OrderView:
         delivery_legs=_delivery_legs(row[22]),
         required_delivery_legs_succeeded=bool(row[16]),
         settlement_shape=None if row[21] is None else str(row[21]),
-        next_steps=next_steps(_step_facts(row)),
+        next_steps=next_steps(facts),
+        **_money_fields(row, facts),
     )
+
+
+def _money_fields(row: tuple[object, ...], facts: StepFacts) -> dict[str, Any]:
+    """`PAYMENT-001`: Tổng · Đã trả · Còn lại. The sum is SQL's; the rest is the domain's."""
+
+    position = payment_position(owed_charges(facts.quoted_total), int(str(row[27])))
+    try:
+        payments, truncated = payment_views(row[28])
+    except (KeyError, ValueError) as error:
+        raise OrderStateError("stored payments are invalid") from error
+    return {
+        "charges": position.charges,
+        "owed_vnd": position.owed_vnd,
+        "paid_vnd": position.paid_vnd,
+        "remaining_vnd": position.remaining_vnd,
+        "payments": payments,
+        "payments_truncated": truncated,
+        "payment_may_hand_over": payment_may_hand_over(facts),
+    }
 
 
 def _read_view_row(connection: Any, order_id: UUID) -> tuple[object, ...]:
@@ -1616,6 +1701,27 @@ def _order_view_document(view: OrderView) -> dict[str, object]:
             }
             for item in view.next_steps
         ],
+        "charges": [
+            {"kind": charge.kind.value, "amount_vnd": charge.amount_vnd} for charge in view.charges
+        ],
+        "owed_vnd": view.owed_vnd,
+        "paid_vnd": view.paid_vnd,
+        "remaining_vnd": view.remaining_vnd,
+        "payments": [
+            {
+                "payment_id": str(item.payment_id),
+                "amount_vnd": item.amount_vnd,
+                "method": item.method,
+                "bank_ref_last": item.bank_ref_last,
+                "legacy": item.legacy,
+                "recorded_at": item.recorded_at.isoformat(),
+                "recorded_by_staff_id": str(item.recorded_by_staff_id),
+                "recorded_by_name": item.recorded_by_name,
+            }
+            for item in view.payments
+        ],
+        "payments_truncated": view.payments_truncated,
+        "payment_may_hand_over": view.payment_may_hand_over,
     }
 
 
@@ -1668,7 +1774,35 @@ def _order_view_from_document(document: dict[str, object]) -> OrderView:
             )
             for item in steps
         ),
+        # `PAYMENT-001`. Absent from a result stored before it; such a reply said nothing about
+        # payments, so it replays with nothing (null figures, no rows) rather than an invented 0.
+        **_money_fields_from_document(document),
     )
+
+
+def _money_fields_from_document(document: dict[str, object]) -> dict[str, Any]:
+    charges = document.get("charges", [])
+    payments = document.get("payments", [])
+    if not isinstance(charges, list) or not isinstance(payments, list):
+        raise ValueError("stored payment fields are invalid")
+    views, _ = payment_views(payments)
+
+    def optional_int(key: str) -> int | None:
+        value = document.get(key)
+        return None if value is None else int(str(value))
+
+    return {
+        "charges": tuple(
+            OrderCharge(ChargeKind(str(item["kind"])), int(str(item["amount_vnd"])))
+            for item in charges
+        ),
+        "owed_vnd": optional_int("owed_vnd"),
+        "paid_vnd": optional_int("paid_vnd"),
+        "remaining_vnd": optional_int("remaining_vnd"),
+        "payments": views,
+        "payments_truncated": document.get("payments_truncated") is True,
+        "payment_may_hand_over": document.get("payment_may_hand_over") is True,
+    }
 
 
 def _optional_date(value: object) -> date | None:

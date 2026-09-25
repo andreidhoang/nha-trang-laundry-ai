@@ -127,18 +127,17 @@ const GROUPS = [
         ref: "M3 · MÀN 10",
         title: "Thanh toán / tất toán",
         what: "Ghi khoản phải thu, ghi khoản đã thu, phân bổ tiền thu vào từng khoản, và tất toán đơn.",
+        // PAYMENT-001 (DEC-035, 2026-09-25) built the counter half: deposits and part payments
+        // with a method, on the `order_payments` ledger, shown on the order page, the receipt and
+        // Hôm nay. What is still absent is the account half (PAYMENT-002), named by its tables so
+        // the ABSENT_TABLE binding fails the day they exist.
         missing:
-          "Trả đủ đúng số khi khách tự lấy đã có: khối tất toán trong màn hình chi tiết đơn " +
-          "(SETTLEMENT-001, đã hoàn thành). Còn thiếu charges, payments và payment_allocations " +
-          "tổng quát, nên trả một phần, trả thừa và ghi nợ vẫn không biểu diễn được.",
-        // DEC-010 is RESOLVED, not open: the owner deliberately deferred partial payment,
-        // deposits, instalments and ON_ACCOUNT credit on 18/08 rather than leaving them unanswered.
-        // Calling it open told staff a decision was still coming when the answer is "not yet, on
-        // purpose" — which is a different thing to plan around.
-        blockedBy:
-          "DEC-010 (đã quyết, hoãn có chủ đích) — trả một phần, đặt cọc, trả góp và ghi nợ không " +
-          "được hỗ trợ vì chủ tiệm quyết như vậy, không phải vì còn thiếu. Trả đủ đúng số không " +
-          "bị chặn.",
+          "Đặt cọc, trả nhiều lần, tiền mặt hay chuyển khoản đã có trên trang chi tiết đơn " +
+          "(PAYMENT-001). Còn thiếu khách công nợ: customer_accounts, account_statements và " +
+          "payment_allocations — hạn mức, sao kê tháng và phân bổ một khoản thu vào nhiều đơn.",
+        // DEC-035 decided account customers; PAYMENT-002 builds them after CUSTOMER-001, because an
+        // account belongs to a BUSINESS customer record.
+        blockedBy: "PAYMENT-002 — DEC-035 đã quyết; xây sau hồ sơ khách hàng (CUSTOMER-001).",
       },
       {
         ref: "M3",

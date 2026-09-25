@@ -152,9 +152,13 @@ BINDINGS: dict[str, dict[str, Any]] = {
         "operational data and that what the assistant does not know, it says it does not know. The "
         "same one-line brain swap falsifies it.",
     },
-    "screens/gaps.js#missing:9834ff94fcd7": {
+    # Re-keyed by PAYMENT-001 (`DEC-035`) from `9834ff94fcd7`. The counter half of payments now
+    # exists (`order_payments`, `0056`), so the sentence no longer says payments are missing; it
+    # names the account half's tables (PAYMENT-002), which are still absent. The binding moves with
+    # it and keeps its purpose: the day those tables exist, this fails and the sentence is reworded.
+    "screens/gaps.js#missing:09965b16428a": {
         "kind": "ABSENT_TABLE",
-        "tables": ["charges", "payments", "payment_allocations"],
+        "tables": ["customer_accounts", "account_statements", "payment_allocations"],
         "why": "Named literally in the sentence and structurally identical to the four gap notices "
         "already bound. It was parked DESCRIPTIVE, which is the misclassification this item exists "
         "to correct.",
@@ -205,7 +209,12 @@ POLICY_BOUND: dict[str, str] = {
     # Re-keyed 2026-09-25 by PICKUP-ONLY-SETTLE-001: the `DEC-032` addendum adds paying at the
     # counter before the laundry is finished (a `PICKUP_ONLY` customer) and the sentence now says no
     # courier takes money (`DEC-023`). Still a refusal of every other amount, still `DEC-010`.
-    "screens/orderDetail.js#guardrail:0341c82d18a7": "DEC-010",
+    #
+    # Re-keyed 2026-09-25 by PAYMENT-001 and re-bound from `DEC-010` to `DEC-035`: the owner's
+    # decision superseded the deferral the sentence stated ("đặt cọc … bị từ chối"). It now says
+    # what `DEC-035` makes true -- cash or transfer, one or several payments up to what remains,
+    # change given back, goods leave only when paid -- and cites DEC-035 by id in the sentence.
+    "screens/orderDetail.js#guardrail:238563bcf2f6": "DEC-035",
 }
 
 

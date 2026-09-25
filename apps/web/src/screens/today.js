@@ -31,7 +31,7 @@
 import { isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { TIMEZONE, UNKNOWN, count, money } from "../core/format.js";
-import { enumVi } from "../core/i18n.js";
+import { PAYMENT_METHOD_VI, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { snapshot } from "../core/session.js";
 import { errorNotice, gated, icon, markUpdated } from "../ui/components.js";
@@ -39,6 +39,7 @@ import {
   button,
   infoButton,
   inlineAlert,
+  keyValues,
   linkButton,
   list,
   listRow,
@@ -159,12 +160,13 @@ function drawerLine(amount, direction) {
  * "Con số này gồm những gì…" — the V1 takings card's explanation, verbatim, now behind the ⓘ beside
  * the figure (tier 2).
  *
- * The reason a figure may be shown here at all is what it is a sum *of*. `order_settlements` is an
- * append-only ledger with one row per order, and the database itself constrains
- * `paid_amount_vnd = expected_total_vnd`, so every row is a customer who paid the quoted total in
- * full at the counter. Postgres does the addition over a BIGINT column; nothing in this console
- * adds, rounds or converts, and no model is involved at any point. What it is not — doanh thu — is
- * the last sentence of the explanation and the reason the hero is labelled "Đã thu tại quầy".
+ * The reason a figure may be shown here at all is what it is a sum *of*. Since `PAYMENT-001`
+ * (`DEC-035`) that is `order_payments`, an append-only ledger with one row per amount taken at the
+ * counter -- a deposit, a part payment or the rest -- each with its method, and the database keeps
+ * every order's payments equal to what it settled. Postgres does the addition over a BIGINT column;
+ * nothing in this console adds, rounds or converts, and no model is involved at any point. What it
+ * is not — doanh thu — is the last sentence of the explanation and the reason the hero is labelled
+ * "Đã thu tại quầy".
  *
  * @returns {HTMLElement}
  */
@@ -174,13 +176,11 @@ function takingsInfo() {
     h(
       "p",
       null,
-      "Gồm: các đơn đã tất toán tại quầy hôm nay — khách trả đủ số tiền trên báo giá, một lần, " +
-        // DEC-032 (2026-09-25) added the third case: paid at drop-off, collected later. Still
-        // the exact total in one payment, counted on the day it was taken.
-        "tại quầy. Có ba trường hợp và cả ba đều đã trả đủ: khách trả lúc lấy đồ, khách trả " +
-        "trước khi gửi đồ rồi lấy sau, hoặc trả trước rồi tiệm giao tận nơi. Nên tiền đã thu " +
-        "không có nghĩa là đồ đã ra khỏi tiệm. " +
-        "Máy chủ cộng trực tiếp từ sổ ghi tất toán; màn hình này không tự cộng.",
+      // PAYMENT-001 (DEC-035): every amount taken today, deposits included, split by method.
+      "Gồm: mọi khoản khách trả tại quầy hôm nay — trả đủ một lần, tiền đặt cọc hay phần còn " +
+        "lại — bằng tiền mặt hoặc chuyển khoản, tách riêng từng cách. Mỗi khoản tính vào ngày " +
+        "khách trả, nên tiền đã thu không có nghĩa là đồ đã ra khỏi tiệm. " +
+        "Máy chủ cộng trực tiếp từ sổ thu tiền; màn hình này không tự cộng.",
     ),
     h(
       "p",
@@ -194,12 +194,10 @@ function takingsInfo() {
     h(
       "p",
       null,
-      // Both supported settlements are paid IN FULL at the counter, and what differs is only
-      // where the goods go afterwards. What is refused is a part payment -- a deposit,
-      // instalments, or shop credit -- in the same words the settlement panel itself uses.
-      "Không gồm: đơn đang giặt, đơn đã giao nhưng chưa thu tiền, và mọi hình thức đặt cọc, " +
-        "trả thiếu, trả thừa, trả góp hay ghi nợ doanh nghiệp — hệ thống chưa hỗ trợ những " +
-        "hình thức đó. Vì vậy đây không phải doanh thu.",
+      // DEC-035: overpayment is refused (the counter gives change) and account customers are
+      // PAYMENT-002, not built yet -- so neither can be in the figure.
+      "Không gồm: phần khách còn nợ trên đơn đang giặt, tiền thừa đã trả lại khách, và ghi nợ " +
+        "doanh nghiệp — hệ thống chưa hỗ trợ khách công nợ. Vì vậy đây không phải doanh thu.",
     ),
     h("p", null, h("a", { href: "#/gaps" }, "Xem danh sách năng lực chưa hỗ trợ")),
   );
@@ -281,6 +279,22 @@ export function render_() {
               ? "Chưa có đơn nào tất toán hôm nay."
               : `${result.settlement_count} đơn đã tất toán hôm nay (giờ Việt Nam).`,
         }),
+        // `collected-today-v3` (PAYMENT-001, DEC-035): the same money split by how it came -- the
+        // drawer and the bank -- each figure summed by the server. Shown once anything was taken,
+        // deposits included; nothing here adds the two.
+        result.payment_count > 0
+          ? h(
+              "div",
+              { class: "today__methods", dataMethods: "true" },
+              keyValues([
+                [`${PAYMENT_METHOD_VI.TIEN_MAT} (${result.cash_count})`, money(result.cash_vnd)],
+                [
+                  `${PAYMENT_METHOD_VI.CHUYEN_KHOAN} (${result.transfer_count})`,
+                  money(result.transfer_vnd),
+                ],
+              ]),
+            )
+          : null,
         // `collected-today-v2` (DEC-024): the headline stays what was collected. When money also
         // went back, the refund and the drawer's movement are shown in words, both exactly as the
         // server computed them -- every amount non-negative, the direction a word, and no

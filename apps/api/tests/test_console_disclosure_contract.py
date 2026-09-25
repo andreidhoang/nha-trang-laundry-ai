@@ -898,7 +898,14 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   Added: their true replacements (margin entry missing/today, both ledes, AI summary on
     #   DEC-006, per-order SLA), the REPORTS_READ `why`, and two reports.js lines.
     # 475 with all six round-6 slices merged: 473 + 10 - 8 = 475.
-    assert sum(counts.values()) == _registry()["total"] == 475
+    # 483 after PAYMENT-001 (`DEC-035`): +8. Seven `REASON_NOTE` entries in `core/i18n.js`, one per
+    # refusal the payment sheet can meet (OVERPAYMENT_REFUSED, NOTHING_OWED, PAYMENT_AMOUNT_INVALID,
+    # TRANSFER_NOT_SEEN, BANK_REF_INVALID, HANDOVER_REQUIRES_FULL_PAYMENT, ORDER_PARTLY_PAID), and
+    # `REFUSAL.OVERPAYMENT_REFUSED` in `core/errors.js`. Re-keyed, none retired: the settlement
+    # guardrail (POLICY_BOUND, now DEC-035), the payments gap's `missing` (ABSENT_TABLE, now the
+    # account tables) and `blockedBy`, the payment sheet's hint, and three REASON_NOTE entries whose
+    # advice named buttons that no longer exist ("Khách trả trước") or a refusal that no longer holds.
+    assert sum(counts.values()) == _registry()["total"] == 483
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

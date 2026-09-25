@@ -243,8 +243,16 @@ def _takings(
         "refunded_vnd",
         "refund_count",
         "net_vnd",
+        # `collected-today-v3` (`PAYMENT-001`): the same money in, split by method.
+        "payment_count",
+        "cash_vnd",
+        "cash_count",
+        "transfer_vnd",
+        "transfer_count",
     }
     assert all(value >= 0 for value in numeric.values()), numeric
+    assert takings.cash_vnd + takings.transfer_vnd == takings.collected_vnd
+    assert takings.cash_count + takings.transfer_count == takings.payment_count
     assert takings.net_direction in ("IN", "OUT")
     return takings
 

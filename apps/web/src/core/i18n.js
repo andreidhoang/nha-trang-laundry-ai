@@ -249,10 +249,9 @@ export const REASON_NOTE = {
   // DEC-010 is resolved: exact payment in full, once. The commonest way to meet this code is a
   // slipped keystroke -- "13.200" for 132.000 -- so the note says to check and retype first.
   AMOUNT_IS_NOT_THE_EXACT_TOTAL:
-    "Số tiền phải đúng bằng tổng của đơn, thu đủ một lần. Gõ nhầm một chữ số (ví dụ 13.200 thay " +
-    "vì 132.000) cũng bị từ chối như vậy: kiểm tra lại số rồi nhập lại. Trả thiếu, trả thừa, đặt " +
-    "cọc hay trả góp không được nhận — chủ tiệm đã quyết định như vậy (DEC-010). Nếu tổng khách " +
-    "phải trả đã đổi thì báo giá lại.",
+    "Đường tất toán này chỉ nhận đúng tổng của đơn, đủ một lần (DEC-010). Gõ nhầm một chữ số (ví " +
+    "dụ 13.200 thay vì 132.000) cũng bị từ chối: kiểm tra lại số rồi nhập lại. Đặt cọc hoặc trả " +
+    "một phần thì bấm “Thu tiền” (DEC-035). Nếu tổng khách phải trả đã đổi thì báo giá lại.",
   COLLECTION_WAS_NOT_BY_THE_CUSTOMER:
     "Ô “khách đã tự lấy đồ” phải khớp với hình thức của đơn: khách tự lấy thì tích, đơn giao tận " +
     "nơi thì để trống và chặng giao mới là thứ đóng đơn.",
@@ -281,11 +280,30 @@ export const REASON_NOTE = {
   // given to a staff member who had already taken it and was trying to hand the laundry over.
   GOODS_NOT_READY_FOR_HANDOVER:
     "Đồ chưa giặt xong nên chưa đưa cho khách được. Làm xong đơn tới “sẵn sàng tại cửa hàng” " +
-    "rồi mới ghi nhận khách nhận đồ. Nếu khách đang trả tiền lúc gửi đồ thì bấm “Khách trả " +
-    "trước”.",
+    "rồi mới ghi nhận khách nhận đồ. Nếu khách chỉ trả tiền lúc gửi đồ thì bỏ tích “Khách lấy " +
+    "đồ luôn”.",
   COLLECTION_REQUIRES_PAYMENT:
-    "Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì bấm “Thu tiền”, gõ đúng số khách đưa rồi " +
-    "bấm “Ghi nhận đã thu tiền”.",
+    "Đơn này chưa trả đủ tiền nên chưa giao đồ được. Bấm “Thu tiền”, thu phần còn lại rồi mới " +
+    "giao đồ.",
+  // PAYMENT-001 (DEC-035): `PaymentRefusal`, exactly as packages/domain/.../payments.py names
+  // them, and the one state the exact-total route adds. Each says what to do at the counter now.
+  OVERPAYMENT_REFUSED:
+    "Số tiền lớn hơn số còn lại — trả lại tiền thừa cho khách. Chỉ ghi số tiền tiệm giữ lại, " +
+    "không lớn hơn số còn lại. Không có gì được ghi.",
+  NOTHING_OWED: "Đơn này không còn tiền phải thu. Tải lại đơn để xem các lần đã thu.",
+  PAYMENT_AMOUNT_INVALID:
+    "Số tiền phải là số nguyên đồng, ít nhất 1 ₫. Kiểm tra lại số vừa gõ rồi nhập lại.",
+  TRANSFER_NOT_SEEN:
+    "Chỉ ghi chuyển khoản khi đã thấy tiền vào tài khoản của tiệm. Mở app ngân hàng kiểm tra, " +
+    "rồi tích “Đã thấy tiền vào tài khoản”. Không có gì được ghi.",
+  BANK_REF_INVALID:
+    "Mã giao dịch chỉ gồm 2 tới 12 chữ hoặc số, và chỉ ghi cho chuyển khoản. Sửa lại hoặc để " +
+    "trống — ô này không bắt buộc.",
+  HANDOVER_REQUIRES_FULL_PAYMENT:
+    "Khách chưa trả đủ nên chưa giao đồ được. Bỏ tích “Khách lấy đồ luôn” để ghi khoản này, " +
+    "hoặc thu đủ phần còn lại.",
+  ORDER_PARTLY_PAID:
+    "Đơn này đã có khoản đặt cọc. Bấm “Thu tiền” để thu phần còn lại — số còn lại đã điền sẵn.",
   NOT_A_PREPAID_SELF_COLLECTION:
     "Đơn này không phải khách tự mang đồ tới rồi tự lấy. Đơn giao tận nơi thì ghi chuyến giao.",
   ALREADY_COLLECTED: "Đơn này đã ghi nhận khách nhận đồ rồi. Không ghi lần nữa.",
@@ -531,11 +549,21 @@ export const ORDER_STEP_VI = {
   CANCEL: "Huỷ đơn",
   REJECT_INTAKE: "Không nhận đồ",
   REOPEN: "Không huỷ nữa, làm tiếp",
-  SETTLE: "Thu tiền",
-  PREPAY: "Khách trả trước",
+  // PAYMENT-001 (DEC-035): one step for a deposit, a part payment or the rest. It replaced
+  // SETTLE ("Thu tiền") and PREPAY ("Khách trả trước"), which were both the exact total.
+  TAKE_PAYMENT: "Thu tiền",
   COLLECT: "Khách đã nhận đồ",
   DELIVERY_PICKUP: "Đã lấy đồ tại nhà khách",
   DELIVERY_RETURN: "Đã giao đồ cho khách",
+};
+
+/**
+ * `PaymentMethod` (`PAYMENT-001`, `DEC-035`) as the counter's buttons and payment rows say it.
+ * Scoped, capitalised for a control label; `ENUM_GLOSS` holds the lower-case gloss for prose.
+ */
+export const PAYMENT_METHOD_VI = {
+  TIEN_MAT: "Tiền mặt",
+  CHUYEN_KHOAN: "Chuyển khoản",
 };
 
 /** The toast after a step landed: what is now true, in the past tense. */
@@ -553,8 +581,7 @@ export const ORDER_STEP_DONE_VI = {
   CANCEL: "Đã huỷ đơn",
   REJECT_INTAKE: "Đã trả đồ, huỷ đơn",
   REOPEN: "Đơn tiếp tục làm",
-  SETTLE: "Đã thu tiền",
-  PREPAY: "Đã thu tiền trả trước",
+  TAKE_PAYMENT: "Đã thu tiền",
   COLLECT: "Đã ghi khách nhận đồ",
   DELIVERY_PICKUP: "Đã ghi chuyến lấy đồ",
   DELIVERY_RETURN: "Đã ghi chuyến giao đồ",
@@ -618,6 +645,9 @@ export const ENUM_GLOSS = {
   OVERPAID: "thu thừa",
   ON_ACCOUNT: "ghi nợ",
   REFUNDED: "đã hoàn tiền",
+  // PAYMENT-001 (DEC-035). `PaymentMethod`: how the money reached the shop.
+  TIEN_MAT: "tiền mặt",
+  CHUYEN_KHOAN: "chuyển khoản",
   // OrderRequestStatus — `order_requests.status CHECK (status IN ('DRAFT','SUBMITTED','CANCELLED'))`;
   // DRAFT and CANCELLED share the glosses declared above with the same meaning here
   SUBMITTED: "đã gửi",
@@ -723,6 +753,7 @@ export const ENUM_GLOSS = {
   ORDER_CREATE_FROM_FINAL_QUOTE: "tạo đơn từ báo giá đã chốt",
   ORDER_STATE_TRANSITION: "chuyển trạng thái đơn",
   ORDER_SETTLEMENT_RECORD: "ghi nhận tất toán",
+  ORDER_PAYMENT_RECORD: "ghi nhận thu tiền",
   ORDER_COLLECTION_RECORD: "ghi nhận khách nhận đồ",
   // `ApprovalAction` — what an approval envelope asks a person to authorise. `#/approvals` titles
   // each card with this gloss (spec V2 §5.5) and keeps the token in the card's technical record.

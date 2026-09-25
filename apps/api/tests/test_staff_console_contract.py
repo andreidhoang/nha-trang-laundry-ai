@@ -125,7 +125,10 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         # per-axis routes stay served for compatibility and audit tooling; the console's whole
         # lifecycle now depends on this one, so this one is what must never be dropped.
         "/internal/v1/orders/{}/steps",
-        "/internal/v1/orders/{}/settlement",
+        # PAYMENT-001 (`DEC-035`): every amount the counter takes -- a deposit, a part payment or the
+        # rest -- goes through the payments route. The exact-total `/settlement` route stays served
+        # for older clients; the console no longer calls it.
+        "/internal/v1/orders/{}/payments",
         # READ-ENRICH-001: the order page's "Khiếu nại" section. Without it the page cannot say
         # which complaints an order already has, and remedies start from a guess.
         "/internal/v1/stores/{}/orders/{}/incidents",

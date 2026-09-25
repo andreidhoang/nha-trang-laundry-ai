@@ -215,6 +215,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}/payments:
+    post:
+      operationId: record_payment
+      summary: Take a deposit, a part payment or the rest, in cash or by bank transfer.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/orders/{order_id}/production-transition:
     post:
       operationId: transition_order_production

@@ -77,6 +77,7 @@ from nha_trang_laundry_db.orders import (
     StoredOrder,
     TicketReference,
 )
+from nha_trang_laundry_db.payments import PaymentCommand, PaymentRepository, StoredPayment
 from nha_trang_laundry_db.promotions import read_published_promotion_program
 from nha_trang_laundry_db.quotes import (
     QuoteAcceptanceCommand,
@@ -157,6 +158,7 @@ from nha_trang_laundry_domain.catalog import (
 )
 from nha_trang_laundry_domain.order_steps import OrderStep
 from nha_trang_laundry_domain.orders import IntakeReadiness
+from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.pricebook_import import PricebookImportError, published_price_rules
 from nha_trang_laundry_domain.quote_composition import (
     PricebookProvenance,
@@ -367,6 +369,27 @@ class StoredSettlementResult:
     paid_amount_vnd: int
     settlement_shape: str
     balance_status: str
+    self_collection_recorded: bool
+    row_version: int
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StoredPaymentResult:
+    """A recorded payment (`PAYMENT-001`), as the idempotency ledger stored and replays it."""
+
+    payment_id: UUID | None
+    order_id: UUID
+    amount_vnd: int
+    method: str
+    bank_ref_last: str | None
+    recorded_at: datetime
+    balance_status: str
+    owed_vnd: int
+    paid_vnd: int
+    remaining_vnd: int
+    settlement_id: UUID | None
+    settlement_shape: str | None
     self_collection_recorded: bool
     row_version: int
     replayed: bool
@@ -2459,6 +2482,68 @@ class OperationsService:
             )
         return _stored_settlement_result(result.response, replayed=result.replayed)
 
+    # --- PAYMENT-001 (DEC-035) ---------------------------------------------------------------
+
+    def record_payment(
+        self,
+        *,
+        order_id: UUID,
+        expected_row_version: int,
+        amount_vnd: int,
+        method: PaymentMethod,
+        transfer_seen: bool,
+        bank_ref_last: str | None,
+        collected_by_customer: bool,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> StoredPaymentResult:
+        """Take a deposit, a part payment or the rest.
+
+        Idempotent on the caller's key over everything the counter said, `If-Match` included: the
+        same key with the same payment replays the first answer; the same key with a changed
+        amount, method, reference or version is a conflict, never a second payment.
+        """
+        recorded_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            # Before the idempotency lookup, as on settlement: a replay answers without running
+            # anything inside the executor, and this route moves money.
+            _require_order_store_membership(connection, order_id, principal)
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-payment:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={
+                        "order_id": str(order_id),
+                        "expected_row_version": expected_row_version,
+                        "amount_vnd": amount_vnd,
+                        "method": method.value,
+                        "transfer_seen": transfer_seen,
+                        "bank_ref_last": bank_ref_last,
+                        "collected_by_customer": collected_by_customer,
+                    },
+                    occurred_at=recorded_at,
+                ),
+                lambda: _payment_mapping(
+                    PaymentRepository().record(
+                        connection,
+                        PaymentCommand(
+                            order_id=order_id,
+                            expected_row_version=expected_row_version,
+                            amount_vnd=amount_vnd,
+                            method=method,
+                            transfer_seen=transfer_seen,
+                            bank_ref_last=bank_ref_last,
+                            collected_by_customer=collected_by_customer,
+                            principal=principal,
+                            correlation_id=uuid4(),
+                            recorded_at=recorded_at,
+                        ),
+                    )
+                ),
+            )
+        return _stored_payment_result(result.response, replayed=result.replayed)
+
     # --- PREPAID-DROPOFF-001 (DEC-032) -------------------------------------------------------
 
     def record_collection(
@@ -3157,6 +3242,51 @@ def _stored_settlement_result(
         paid_amount_vnd=int(str(value["paid_amount_vnd"])),
         settlement_shape=str(value["settlement_shape"]),
         balance_status=str(value["balance_status"]),
+        self_collection_recorded=bool(value["self_collection_recorded"]),
+        row_version=int(str(value["row_version"])),
+        replayed=replayed,
+    )
+
+
+def _payment_mapping(value: StoredPayment) -> dict[str, object]:
+    return {
+        "payment_id": None if value.payment_id is None else str(value.payment_id),
+        "order_id": str(value.order_id),
+        "amount_vnd": value.amount_vnd,
+        "method": value.method,
+        "bank_ref_last": value.bank_ref_last,
+        "recorded_at": value.recorded_at.isoformat(),
+        "balance_status": value.balance_status,
+        "owed_vnd": value.owed_vnd,
+        "paid_vnd": value.paid_vnd,
+        "remaining_vnd": value.remaining_vnd,
+        "settlement_id": None if value.settlement_id is None else str(value.settlement_id),
+        "settlement_shape": value.settlement_shape,
+        "self_collection_recorded": value.self_collection_recorded,
+        "row_version": value.row_version,
+    }
+
+
+def _stored_payment_result(value: dict[str, object], *, replayed: bool) -> StoredPaymentResult:
+    def optional_uuid(key: str) -> UUID | None:
+        found = value.get(key)
+        return None if found is None else UUID(str(found))
+
+    reference = value.get("bank_ref_last")
+    shape = value.get("settlement_shape")
+    return StoredPaymentResult(
+        payment_id=optional_uuid("payment_id"),
+        order_id=UUID(str(value["order_id"])),
+        amount_vnd=int(str(value["amount_vnd"])),
+        method=str(value["method"]),
+        bank_ref_last=None if reference is None else str(reference),
+        recorded_at=datetime.fromisoformat(str(value["recorded_at"])),
+        balance_status=str(value["balance_status"]),
+        owed_vnd=int(str(value["owed_vnd"])),
+        paid_vnd=int(str(value["paid_vnd"])),
+        remaining_vnd=int(str(value["remaining_vnd"])),
+        settlement_id=optional_uuid("settlement_id"),
+        settlement_shape=None if shape is None else str(shape),
         self_collection_recorded=bool(value["self_collection_recorded"]),
         row_version=int(str(value["row_version"])),
         replayed=replayed,

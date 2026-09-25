@@ -550,7 +550,7 @@ def test_a_day_with_nothing_on_it_is_a_row_of_zeros_not_a_missing_row(
 def test_the_money_over_one_day_is_the_takings_figure_the_counter_sees(
     connection: psycopg.Connection[Any],
 ) -> None:
-    """One rule, two widths: a one-day report reads exactly what `collected-today-v2` reads."""
+    """One rule, two widths: a one-day report reads exactly what `collected-today-v3` reads."""
     shop = _seeded_shop(connection)
     operator = _person(connection, shop.store_id, frozenset({StaffRole.OPERATOR}))
     for day in (DAY, NEXT):
@@ -560,7 +560,11 @@ def test_the_money_over_one_day_is_the_takings_figure_the_counter_sees(
                 cursor, store_id=shop.store_id, principal=operator, as_of=local(day, 12)
             )
         assert figures[ReportKey.MONEY_COLLECTED].numerator == takings.collected_vnd
-        assert figures[ReportKey.MONEY_COLLECTED].entries == takings.settlement_count
+        assert figures[ReportKey.MONEY_COLLECTED].entries == takings.payment_count
+        assert figures[ReportKey.MONEY_COLLECTED].by_kind == (
+            ("TIEN_MAT", takings.cash_count, takings.cash_vnd),
+            ("CHUYEN_KHOAN", takings.transfer_count, takings.transfer_vnd),
+        )
         assert figures[ReportKey.MONEY_REFUNDED].numerator == takings.refunded_vnd
         assert figures[ReportKey.MONEY_REFUNDED].entries == takings.refund_count
         assert figures[ReportKey.MONEY_NET].numerator == takings.net_vnd
@@ -607,8 +611,10 @@ def test_on_time_is_the_boards_rule_at_exactly_the_mark_and_one_microsecond_past
 def test_the_report_version_is_pinned_and_moves_with_the_boards_rule() -> None:
     """Invariant 18. Editing either statement, the day boundary, or the board's rule fails this."""
     version = report_query_version(STANDARD_WASH_SLA)
-    assert version.identifier == "report-v1"
-    assert version.digest == "2e30b2c5fdd366f2"
+    # v2 (`PAYMENT-001`): money in is the payment ledger, split by method. v1 was
+    # `2e30b2c5fdd366f2`, summing settlements.
+    assert version.identifier == "report-v2"
+    assert version.digest == "d91e5f4abde87847"
     stricter = ProductionSlaPolicy(
         policy_id="SLA_STANDARD_CLOTHES",
         policy_type=SlaPolicyType.COMMITMENT,

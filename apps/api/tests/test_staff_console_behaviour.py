@@ -178,11 +178,35 @@ def test_every_settlement_refusal_the_counter_can_meet_is_glossed_for_them() -> 
     raised = re.findall(r'reason_code="([A-Z][A-Z0-9_]+)"', repository)
     assert raised, "no literal reason codes found; this test is reading the wrong file"
 
+    # PAYMENT-001 (`DEC-035`): the payment sheet meets `PaymentRefusal` and the codes
+    # `PaymentRepository` raises, through the same panel. Read from source, like the two above.
+    payments = (ROOT / "packages/domain/src/nha_trang_laundry_domain/payments.py").read_text(
+        encoding="utf-8"
+    )
+    payment_block = payments.split("class PaymentRefusal(StrEnum):", 1)[1].split("\n\n\n", 1)[0]
+    payment_members = [
+        value
+        for _name, value in re.findall(
+            r'^\s{4}([A-Z][A-Z0-9_]+) = "([A-Z0-9_]+)"', payment_block, re.MULTILINE
+        )
+    ]
+    assert "OVERPAYMENT_REFUSED" in payment_members
+    payment_raised = re.findall(
+        r'reason_code="([A-Z][A-Z0-9_]+)"',
+        (ROOT / "packages/db/src/nha_trang_laundry_db/payments.py").read_text(encoding="utf-8"),
+    )
+
     glossed = _run(
         "import { REASON_NOTE } from './src/core/i18n.js';\n"
         "console.log(JSON.stringify(Object.keys(REASON_NOTE)));\n"
     )
-    missing = sorted({code for code in [*members, *raised] if code not in glossed})
+    missing = sorted(
+        {
+            code
+            for code in [*members, *raised, *payment_members, *payment_raised]
+            if code not in glossed
+        }
+    )
     assert not missing, f"settlement refusals with no Vietnamese note in i18n.js: {missing}"
 
 
@@ -595,7 +619,6 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Báo đồ đã sẵn sàng",
         "Thu tiền",
         "Giao đồ & đóng đơn",
-        "Phải thu",
         # REMEDY-001. The presses that take an incident to an outcome, plus the sentences the
         # guide tells staff to react to. Pinned for the same reason as the band procedure: this one
         # is new to every staff member, it is performed with an unhappy customer at the counter,
@@ -627,12 +650,20 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Khoản bồi hoàn đã đổi so với phiếu",
         "Đề nghị đã ghi cho sự cố này",
         "Khoản giảm trừ của đơn này",
-        "Ghi nhận đã thu tiền",
-        # PREPAID-DROPOFF-001 (`DEC-032`): paying at drop-off, and the pickup recorded on its own.
-        "Khách trả trước",
-        "Ghi nhận khách trả trước",
+        # PAYMENT-001 (`DEC-035`) replaced "Phải thu"/"Ghi nhận đã thu tiền" (the exact total,
+        # typed) and "Khách trả trước"/"Ghi nhận khách trả trước" (the same total at drop-off) with
+        # one sheet: the remaining amount prefilled, a deposit on request, the method, the transfer
+        # attestation and the handover tick. "Đóng đơn" went with them: a prepaid pickup now ends on
+        # "Giao đồ & đóng đơn" like every other.
+        "Còn lại",
+        "Khách trả một phần (đặt cọc)",
+        "Tiền mặt",
+        "Chuyển khoản",
+        "Đã thấy tiền vào tài khoản",
+        "Khách lấy đồ luôn",
+        "Ghi nhận đã thu",
+        # PREPAID-DROPOFF-001 (`DEC-032`): the pickup recorded on its own.
         "Khách đã nhận đồ",
-        "Đóng đơn",
         "Đã thu tại quầy",
         # CONSOLE-REDESIGN-003: the morning screen's list of waiting work, its all-clear line, the
         # pickup shortcut, and the owner's range-price review on Duyệt.

@@ -32,9 +32,12 @@ is shown at all, is the console formatting this fraction -- never a figure this 
   the day the board's rule moves, this identifier moves with it. The per-order SLA rule is an
   undecided business question, so this figure is published `RULE_ASSUMED`, never `COMPLETE`.
 * Complaints: `customer_incidents.opened_at`, every category.
-* Money: `order_settlements` in, `order_refunds` out, each on its own local day -- the two ledgers
-  and the two predicates of `collected-today-v2`, widened from one day to a range. Summed by
-  PostgreSQL over BIGINT columns; Python never adds an amount.
+* Money: `order_payments` in (`PAYMENT-001`, `DEC-035`), `order_refunds` out, each on its own local
+  day -- the two ledgers and the two predicates of `collected-today-v3`, widened from one day to a
+  range. Money in is split by method (`TIEN_MAT`, `CHUYEN_KHOAN`) as `MONEY_COLLECTED.by_kind`; a
+  deposit is money in on the day it was taken. `0056` gave every earlier settlement the one payment
+  it was, on its attestation day, so no past day's figure moves. Summed by PostgreSQL over BIGINT
+  columns; Python never adds an amount.
 * Remedies: `remedy_proposals` that reached `EXECUTED`, dated by `executed_at`, by kind, with the
   credit value the database sums. A free rewash carries no money, so its amount is `None`, not 0.
 
@@ -79,7 +82,7 @@ REPORT_READ_ROLES: Final = frozenset(
 REPORT_MAX_DAYS: Final = 92
 
 #: The published identifier. `report-v1:<digest>` travels with every figure (invariant 18).
-REPORT_QUERY_IDENTIFIER: Final = "report-v1"
+REPORT_QUERY_IDENTIFIER: Final = "report-v2"
 
 #: The production sequence the rewash rule compares positions in, as the SQL receives it.
 _SEQUENCE: Final = tuple(status.value for status in PRODUCTION_SEQUENCE)
@@ -107,6 +110,10 @@ class ReportKey(StrEnum):
     MONEY_NET = "MONEY_NET"
     REMEDIES_EXECUTED = "REMEDIES_EXECUTED"
 
+
+#: `PAYMENT-001`: the payment methods, in the order `MONEY_COLLECTED.by_kind` lists them. The
+#: schema's CHECK on `order_payments.method` is the authority, as for the remedy kinds below.
+PAYMENT_METHODS: Final = ("TIEN_MAT", "CHUYEN_KHOAN")
 
 #: Remedy kinds in the order the report lists them. The schema's CHECK is the authority; a kind
 #: added there and not here is reported under nothing, which the pinned digest makes visible.
@@ -169,9 +176,9 @@ _REPORT_SQL = """
         FROM customer_incidents i
         WHERE i.store_id = %(store)s
         UNION ALL
-        SELECT 'MONEY_COLLECTED', s.attested_at, s.id, s.paid_amount_vnd
-        FROM order_settlements s
-        WHERE s.store_id = %(store)s
+        SELECT 'MONEY_COLLECTED_' || p.method, p.recorded_at, p.id, p.amount_vnd
+        FROM order_payments p
+        WHERE p.store_id = %(store)s
         UNION ALL
         SELECT 'MONEY_REFUNDED', r.refunded_at, r.id, r.refunded_amount_vnd
         FROM order_refunds r
@@ -195,9 +202,9 @@ _REPORT_SQL = """
                    AS reached_quality_check,
                count(DISTINCT w.subject) FILTER (WHERE w.fact = 'ORDERS_REWASHED') AS rewashed,
                count(DISTINCT w.subject) FILTER (WHERE w.fact = 'INCIDENTS_OPENED') AS incidents,
-               count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_COLLECTED')
+               count(DISTINCT w.subject) FILTER (WHERE left(w.fact, 16) = 'MONEY_COLLECTED_')
                    AS settlement_count,
-               coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_COLLECTED'), 0)
+               coalesce(sum(w.amount) FILTER (WHERE left(w.fact, 16) = 'MONEY_COLLECTED_'), 0)
                    AS collected_vnd,
                count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_REFUNDED') AS refund_count,
                coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_REFUNDED'), 0)
@@ -218,7 +225,15 @@ _REPORT_SQL = """
                    AS remedy_lost_vnd,
                count(DISTINCT w.subject) FILTER (WHERE left(w.fact, 7) = 'REMEDY_') AS remedies,
                coalesce(sum(w.amount) FILTER (WHERE left(w.fact, 7) = 'REMEDY_'), 0)
-                   AS remedies_vnd
+                   AS remedies_vnd,
+               count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_COLLECTED_TIEN_MAT')
+                   AS cash_count,
+               coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_COLLECTED_TIEN_MAT'), 0)
+                   AS cash_vnd,
+               count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_COLLECTED_CHUYEN_KHOAN')
+                   AS transfer_count,
+               coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_COLLECTED_CHUYEN_KHOAN'), 0)
+                   AS transfer_vnd
         FROM days d
         LEFT JOIN windowed w ON w.day = d.day
         GROUP BY GROUPING SETS ((d.day), ())
@@ -228,7 +243,8 @@ _REPORT_SQL = """
            abs(collected_vnd - refunded_vnd) AS net_vnd,
            CASE WHEN collected_vnd >= refunded_vnd THEN 'IN' ELSE 'OUT' END AS net_direction,
            remedy_free_rewash, remedy_damage, remedy_damage_vnd, remedy_late, remedy_late_vnd,
-           remedy_lost, remedy_lost_vnd, remedies, remedies_vnd
+           remedy_lost, remedy_lost_vnd, remedies, remedies_vnd,
+           cash_count, cash_vnd, transfer_count, transfer_vnd
     FROM counted
     ORDER BY is_window, day
 """
@@ -264,6 +280,7 @@ def report_query_version(policy: ProductionSlaPolicy) -> QueryVersion:
         BUSINESS_TIMEZONE,
         "|".join(_SEQUENCE),
         "|".join(REMEDY_KINDS),
+        "|".join(PAYMENT_METHODS),
         str(REPORT_MAX_DAYS),
         sla_board_query_version(policy).label,
     )
@@ -310,10 +327,12 @@ class ReportFigure:
     data_quality: DataQuality
     #: `MONEY_NET` only: the drawer's direction, `IN` (including no change) or `OUT`.
     direction: str | None = None
-    #: `REMEDIES_EXECUTED` only: counts and credit value per kind (`None` value = the kind moves
-    #: no money, which is not the same as zero).
+    #: `REMEDIES_EXECUTED`: counts and credit value per kind (`None` value = the kind moves no
+    #: money, which is not the same as zero). `MONEY_COLLECTED` (`PAYMENT-001`): count and amount
+    #: per payment method, `TIEN_MAT` then `CHUYEN_KHOAN`.
     by_kind: tuple[tuple[str, int, int | None], ...] | None = None
-    #: `MONEY_COLLECTED` / `MONEY_REFUNDED`: how many ledger rows the amount sums.
+    #: `MONEY_COLLECTED` / `MONEY_REFUNDED`: how many ledger rows the amount sums -- payments since
+    #: `PAYMENT-001` (a deposit and the rest are two), settlements before it.
     entries: int | None = None
     #: `REMEDIES_EXECUTED`: the total credit value the executed remedies carried.
     amount_vnd: int | None = None
@@ -520,6 +539,10 @@ def _period(row: Any, from_date: date, to_date: date, on_time: tuple[int, int]) 
             "VND",
             DataQuality.COMPLETE,
             entries=int(row[8]),
+            by_kind=(
+                ("TIEN_MAT", int(row[23]), int(row[24])),
+                ("CHUYEN_KHOAN", int(row[25]), int(row[26])),
+            ),
         ),
         ReportFigure(
             ReportKey.MONEY_REFUNDED,

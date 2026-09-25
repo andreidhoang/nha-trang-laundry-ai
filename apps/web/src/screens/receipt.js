@@ -16,7 +16,9 @@
  *   - **Every figure is a server integer through `money()`.** The lines print at their list amount
  *     and the adjustments (promotion, credit, delivery fee) under them, all read off the stored
  *     revision (`GET …/quotes/{id}?revision=`); the total is the order's own `payable_total_vnd`.
- *     Nothing here adds, subtracts or checks one against another.
+ *     Once a payment exists (`PAYMENT-001`, `DEC-035`) the paper adds *Đã trả* and *Còn lại*, the
+ *     server's `paid_vnd` and `remaining_vnd`. Nothing here adds, subtracts or checks one against
+ *     another.
  *   - **Deterministic first paint.** The order read paints the header, the total and the footer at
  *     once; the lines are the second paint. "In phiếu" stays off, with its reason, until they are
  *     in — a receipt without its lines is not one to hand over.
@@ -153,6 +155,7 @@ function lineAmount(line) {
  * @property {Array<{name: string, quantity: string, amount: string, code: string}>|null} lines
  * @property {Array<{label: string, amount: string, kind: string}>} adjustments
  * @property {string} total
+ * @property {{paid: string, remaining: string}|null} paid Đã trả / Còn lại, once anything is paid
  * @property {string} closing
  *
  * @param {any} order an `OrderViewResponse`
@@ -186,6 +189,11 @@ function receiptModel(order, detail, catalog) {
         }))
       : [],
     total: money(order.payable_total_vnd, "Chưa có tổng"),
+    // PAYMENT-001: a deposit or a part payment is printed, so the customer's slip says what is left.
+    paid:
+      Array.isArray(order.payments) && order.payments.length
+        ? { paid: money(order.paid_vnd), remaining: money(order.remaining_vnd, "Chưa có tổng") }
+        : null,
     closing: closingLine(order),
   };
 }
@@ -203,6 +211,8 @@ export function receiptText(model) {
     ...(model.lines || []).map((line) => `${line.name} — ${line.quantity}: ${line.amount}`),
     ...model.adjustments.map((item) => `${item.label}: ${item.amount}`),
     `Tổng cộng: ${model.total}`,
+    model.paid ? `Đã trả: ${model.paid.paid}` : null,
+    model.paid ? `Còn lại: ${model.paid.remaining}` : null,
     `Nhận đơn: ${model.taken}`,
     `Mã đơn: ${model.reference}`,
     model.closing,
@@ -280,6 +290,14 @@ function paper(model, linesFallback) {
       h("span", null, "Tổng cộng"),
       h("span", { class: "receipt-paper__total-amount", dataTotal: "true" }, model.total),
     ),
+    model.paid
+      ? h(
+          "div",
+          { class: "receipt-paper__adjustments", dataPaid: "true" },
+          row("Đã trả", model.paid.paid, { field: "paid" }),
+          row("Còn lại", model.paid.remaining, { field: "remaining" }),
+        )
+      : null,
     h(
       "div",
       { class: "receipt-paper__meta" },

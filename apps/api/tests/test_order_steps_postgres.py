@@ -177,12 +177,19 @@ class _Counter:
         assert response.status_code == 200, response.text
         return dict(response.json())
 
-    def settle(self, order: dict[str, Any], collected: bool) -> dict[str, Any]:
-        self.calls.append("SETTLE" if collected else "PREPAY")
+    def pay(self, order: dict[str, Any], collected: bool) -> dict[str, Any]:
+        """`TAKE_PAYMENT` (`PAYMENT-001`): the remaining amount, in cash, prefilled as the console
+        prefills it -- read off the order, never computed here."""
+
+        self.calls.append("TAKE_PAYMENT")
         response = self.client.post(
-            f"/internal/v1/orders/{order['order_id']}/settlement",
-            headers=_headers(),
-            json={"paid_amount_vnd": TOTAL_VND, "collected_by_customer": collected},
+            f"/internal/v1/orders/{order['order_id']}/payments",
+            headers=_headers(order["row_version"]),
+            json={
+                "amount_vnd": order["remaining_vnd"],
+                "method": "TIEN_MAT",
+                "collected_by_customer": collected,
+            },
         )
         assert response.status_code == 201, response.text
         return dict(self.client.get(f"/internal/v1/orders/{order['order_id']}").json())
@@ -208,8 +215,9 @@ def test_a_walk_in_from_creation_to_completed_in_six_calls(
     order = counter.step(order, "QUALITY_CHECK")
     assert _primary(order) == "MARK_READY"
     order = counter.step(order, "MARK_READY")
-    assert _primary(order) == "SETTLE"
-    order = counter.settle(order, collected=True)
+    assert _primary(order) == "TAKE_PAYMENT"
+    assert order["remaining_vnd"] == TOTAL_VND and order["payment_may_hand_over"] is True
+    order = counter.pay(order, collected=True)
     assert order["settlement_shape"] == "EXACT_PAYMENT_SELF_COLLECTION"
     assert _primary(order) == "HAND_OVER"
     order = counter.step(order, "HAND_OVER")
@@ -225,7 +233,7 @@ def test_a_walk_in_from_creation_to_completed_in_six_calls(
         "START_WASH",
         "QUALITY_CHECK",
         "MARK_READY",
-        "SETTLE",
+        "TAKE_PAYMENT",
         "HAND_OVER",
     ]
     # Six calls, and not one audited transition skipped: 5 (receive) + 2 (queue, wash) + 1 + 1
@@ -264,8 +272,8 @@ def test_a_pickup_and_return_order_is_driven_by_its_next_steps(
     assert [leg["leg_kind"] for leg in order["delivery_legs"]] == ["PICKUP"]
     for step in ("START_WASH", "QUALITY_CHECK", "MARK_READY"):
         order = counter.step(order, step)
-    assert _primary(order) == "PREPAY"
-    order = counter.settle(order, collected=False)
+    assert _primary(order) == "TAKE_PAYMENT"
+    order = counter.pay(order, collected=False)
     assert _primary(order) == "RELEASE"
     order = counter.step(order, "RELEASE")
     assert _primary(order) == "DELIVERY_RETURN"
@@ -338,7 +346,7 @@ def test_money_steps_are_not_accepted_on_the_step_route(
 ) -> None:
     store_id, staff = _shop(connection)
     order = _create_order(client, connection, store_id, staff)
-    for step in ("SETTLE", "PREPAY", "COLLECT", "DELIVERY_RETURN", "NOT_A_STEP"):
+    for step in ("TAKE_PAYMENT", "SETTLE", "PREPAY", "COLLECT", "DELIVERY_RETURN", "NOT_A_STEP"):
         response = client.post(
             f"/internal/v1/orders/{order['order_id']}/steps",
             headers=_headers(1),

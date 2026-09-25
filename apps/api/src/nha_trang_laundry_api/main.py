@@ -60,6 +60,7 @@ from nha_trang_laundry_db.orders import (
     OrderView,
     StoredOrder,
 )
+from nha_trang_laundry_db.payments import PaymentStateError
 from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
 from nha_trang_laundry_db.range_prices import RangePriceProposalIntegrityError
 from nha_trang_laundry_db.recent_contacts import (
@@ -113,6 +114,7 @@ from nha_trang_laundry_domain.catalog import (
     Unit,
 )
 from nha_trang_laundry_domain.order_steps import COMPOSITE_STEPS, OrderStep
+from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.quote_composition import RequestedLine
 from nha_trang_laundry_domain.range_prices import RangePriceChoice
 from nha_trang_laundry_domain.remedies import RemedyKind
@@ -662,14 +664,15 @@ class NextStepResponse(BaseModel):
 
     `step` is one of: `RECEIVE`, `START_WASH`, `QUALITY_CHECK`, `MARK_READY`, `HOLD`, `RESUME`,
     `REWASH`, `RELEASE`, `HAND_OVER`, `COMPLETE`, `CANCEL`, `REJECT_INTAKE`, `REOPEN` (executed by
-    `POST /internal/v1/orders/{order_id}/steps`); `SETTLE` (`POST .../settlement` with
-    `collected_by_customer=true`), `PREPAY` (`POST .../settlement` with
-    `collected_by_customer=false`), `COLLECT` (`POST .../collection`), `DELIVERY_PICKUP` /
+    `POST /internal/v1/orders/{order_id}/steps`); `TAKE_PAYMENT` (`POST .../payments`, `DEC-035`: a
+    deposit, a part payment or the rest -- it replaced `SETTLE` and `PREPAY`), `COLLECT`
+    (`POST .../collection`), `DELIVERY_PICKUP` /
     `DELIVERY_RETURN` (`POST .../delivery-legs` with that `leg_kind`). At most one entry has
     `primary=true`: the natural next real-world event. `REWASH` and `REJECT_INTAKE` are never
     primary (`ORDER-STEPS-002`), so a list holding only them has no primary entry.
 
-    `requires` names request fields the step needs: `slot_approved` (RECEIVE),
+    `requires` names request fields the step needs: `amount_vnd` and `method` (TAKE_PAYMENT),
+    `slot_approved` (RECEIVE),
     `custody_resolution` (a cancellation through review), `rewash_reason` (REWASH) or
     `rejection_reason` (REJECT_INTAKE). `custody_resolutions`, `rewash_reasons` and
     `rejection_reasons` list the answers the domain would accept for this order, each dry-run;
@@ -690,6 +693,31 @@ class DeliveryLegViewResponse(BaseModel):
     leg_kind: str
     outcome: str
     recorded_at: datetime
+
+
+class OrderChargeResponse(BaseModel):
+    """One amount the customer owes (`PAYMENT-001`). Today only `QUOTED_TOTAL`; `UNCLAIMED-001`
+    adds the storage fee to the same list."""
+
+    kind: str
+    amount_vnd: int = Field(ge=0)
+
+
+class PaymentViewResponse(BaseModel):
+    """One row of the order's payment ledger (`PAYMENT-001`, `DEC-035`)."""
+
+    payment_id: UUID
+    amount_vnd: int = Field(ge=1)
+    #: `TIEN_MAT` or `CHUYEN_KHOAN`.
+    method: str
+    #: The last characters of the bank reference, as the staff member read them; null for cash.
+    bank_ref_last: str | None
+    #: Recorded by a path that did not ask how the customer paid (every settlement before
+    #: `PAYMENT-001`, and the exact-total settlement route); counted as `TIEN_MAT`.
+    legacy: bool
+    recorded_at: datetime
+    recorded_by_staff_id: UUID
+    recorded_by_name: str | None
 
 
 class OrderViewResponse(OrderResponse):
@@ -735,6 +763,20 @@ class OrderViewResponse(OrderResponse):
     #: and settlement rules against the order's stored facts. The console holds no transition
     #: table of its own; this list is the only source of which action to offer.
     next_steps: list[NextStepResponse]
+    #: `PAYMENT-001` (`DEC-035`): Tổng · Đã trả · Còn lại, every figure the server's. `charges` is
+    #: what is owed, as a list (today the quoted total alone); `owed_vnd` is their sum and
+    #: `remaining_vnd` what is still owed -- both computed by the domain, both null when the quote
+    #: presents no single total, never 0 in that case. `paid_vnd` is the ledger's sum by SQL; null
+    #: only on a step reply stored before this field existed. `payments` is the ledger, oldest
+    #: first, bounded; `payments_truncated` says when it stopped. `payment_may_hand_over` says the
+    #: payment that settles the order may also record that the customer takes the goods now.
+    charges: list[OrderChargeResponse] = Field(default_factory=list)
+    owed_vnd: int | None = None
+    paid_vnd: int | None = None
+    remaining_vnd: int | None = None
+    payments: list[PaymentViewResponse] = Field(default_factory=list)
+    payments_truncated: bool = False
+    payment_may_hand_over: bool = False
 
 
 class ApprovalResponse(BaseModel):
@@ -907,6 +949,44 @@ class SettlementRequest(StrictRequest):
     # Explicit rather than defaulted. "The customer took their goods" is the fact being attested,
     # and a default true would let a staff member attest to it by not mentioning it.
     collected_by_customer: StrictBool
+
+
+class PaymentRequest(StrictRequest):
+    """One amount taken at the counter (`PAYMENT-001`, `DEC-035`)."""
+
+    # An integer of đồng, as on the settlement: VND has no minor unit.
+    amount_vnd: StrictInt = Field(ge=0, le=MAX_CANONICAL_INT)
+    method: Literal["TIEN_MAT", "CHUYEN_KHOAN"]
+    # "Đã thấy tiền vào tài khoản": a transfer is recorded only once the staff member saw it
+    # arrive. Required true for `CHUYEN_KHOAN`; the domain refuses `TRANSFER_NOT_SEEN` otherwise.
+    transfer_seen: StrictBool = False
+    # Optional, 2-12 letters or digits once spaces are removed; only on a transfer.
+    bank_ref_last: str | None = Field(default=None, max_length=40)
+    # The staff member's word that the customer takes the goods now. Accepted only with the payment
+    # that settles the order, on finished laundry the customer collects -- as the old `SETTLE`.
+    collected_by_customer: StrictBool = False
+
+
+class PaymentResponse(BaseModel):
+    """What the payment did. `payment_id` is null only for a 0 đồng settlement of a bill a credit
+    covered in full, which moves no money and writes no ledger row."""
+
+    payment_id: UUID | None
+    order_id: UUID
+    amount_vnd: int
+    method: str
+    bank_ref_last: str | None
+    recorded_at: datetime
+    balance_status: str
+    owed_vnd: int
+    paid_vnd: int
+    remaining_vnd: int
+    #: Set when this payment settled the order in full: the settlement row it wrote, and its shape.
+    settlement_id: UUID | None
+    settlement_shape: str | None
+    self_collection_recorded: bool
+    row_version: int
+    replayed: bool
 
 
 class CollectionResponse(BaseModel):
@@ -2300,6 +2380,78 @@ def record_settlement(
 
 
 @app.post(
+    "/internal/v1/orders/{order_id}/payments",
+    response_model=PaymentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_payment(
+    order_id: UUID,
+    request: PaymentRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> PaymentResponse:
+    """Take a deposit, a part payment or the rest, in cash or by bank transfer.
+
+    `PAYMENT-001` (`DEC-035`). Any amount from 1 đồng up to what is still owed; more is refused
+    `OVERPAYMENT_REFUSED` (the counter gives change). A transfer needs `transfer_seen=true`. The
+    payment that settles the order writes the settlement row the exact-total route writes, and with
+    `collected_by_customer=true` records that the customer took the finished goods -- refused
+    `HANDOVER_REQUIRES_FULL_PAYMENT` on any payment that leaves money owed. `If-Match` is the order
+    version the counter read (428 absent, 409 stale); `Idempotency-Key` replays the first answer.
+    Refusals are 422 `{"outcome": "NOT_SUPPORTED", "reason_code", "decision"}` and write nothing.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    expected = _parse_if_match(if_match)
+    try:
+        stored = service.record_payment(
+            order_id=order_id,
+            expected_row_version=expected,
+            amount_vnd=request.amount_vnd,
+            method=PaymentMethod(request.method),
+            transfer_seen=request.transfer_seen,
+            bank_ref_last=request.bank_ref_last,
+            collected_by_customer=request.collected_by_customer,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (SettlementAuthorizationError, StoreAccessError) as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    except PaymentStateError as error:
+        if error.reason_code == "STALE_VERSION":
+            raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "outcome": "NOT_SUPPORTED",
+                "reason_code": error.reason_code,
+                "decision": error.decision,
+            },
+        ) from error
+    except IdempotencyConflictError as error:
+        _raise_operations_error(error)
+    return PaymentResponse(
+        payment_id=stored.payment_id,
+        order_id=stored.order_id,
+        amount_vnd=stored.amount_vnd,
+        method=stored.method,
+        bank_ref_last=stored.bank_ref_last,
+        recorded_at=stored.recorded_at,
+        balance_status=stored.balance_status,
+        owed_vnd=stored.owed_vnd,
+        paid_vnd=stored.paid_vnd,
+        remaining_vnd=stored.remaining_vnd,
+        settlement_id=stored.settlement_id,
+        settlement_shape=stored.settlement_shape,
+        self_collection_recorded=stored.self_collection_recorded,
+        row_version=stored.row_version,
+        replayed=stored.replayed,
+    )
+
+
+@app.post(
     "/internal/v1/orders/{order_id}/collection",
     response_model=CollectionResponse,
     status_code=status.HTTP_201_CREATED,
@@ -3148,6 +3300,15 @@ class CollectedTodayResponse(BaseModel):
     refund_count: int = Field(ge=0)
     net_vnd: int = Field(ge=0)
     net_direction: Literal["IN", "OUT"]
+    #: `collected-today-v3` (`PAYMENT-001`, `DEC-035`): money in is the payment ledger, so a deposit
+    #: counts the day it was taken, and it is split by method -- `cash_vnd` in the drawer,
+    #: `transfer_vnd` in the bank -- each summed by the database. `collected_vnd` is their gross;
+    #: `settlement_count` is now the orders paid in full today, `payment_count` the payments.
+    payment_count: int = Field(ge=0)
+    cash_vnd: int = Field(ge=0)
+    cash_count: int = Field(ge=0)
+    transfer_vnd: int = Field(ge=0)
+    transfer_count: int = Field(ge=0)
     business_timezone: str
     #: `OPS-BOARD-001`, invariant 18: the identifier of the rule that produced the figure travels
     #: with the figure. This is the only money the console shows, so it is the one where "which
@@ -3182,6 +3343,11 @@ def collected_today(
         refund_count=collected.refund_count,
         net_vnd=collected.net_vnd,
         net_direction=collected.net_direction,
+        payment_count=collected.payment_count,
+        cash_vnd=collected.cash_vnd,
+        cash_count=collected.cash_count,
+        transfer_vnd=collected.transfer_vnd,
+        transfer_count=collected.transfer_count,
         business_timezone=BUSINESS_TIMEZONE,
         query_version=COLLECTED_TODAY_QUERY.label,
     )
@@ -4561,6 +4727,28 @@ def _order_view_response(view: OrderView, *, replayed: bool = False) -> OrderVie
             )
             for item in view.next_steps
         ],
+        charges=[
+            OrderChargeResponse(kind=charge.kind.value, amount_vnd=charge.amount_vnd)
+            for charge in view.charges
+        ],
+        owed_vnd=view.owed_vnd,
+        paid_vnd=view.paid_vnd,
+        remaining_vnd=view.remaining_vnd,
+        payments=[
+            PaymentViewResponse(
+                payment_id=item.payment_id,
+                amount_vnd=item.amount_vnd,
+                method=item.method,
+                bank_ref_last=item.bank_ref_last,
+                legacy=item.legacy,
+                recorded_at=item.recorded_at,
+                recorded_by_staff_id=item.recorded_by_staff_id,
+                recorded_by_name=item.recorded_by_name,
+            )
+            for item in view.payments
+        ],
+        payments_truncated=view.payments_truncated,
+        payment_may_hand_over=view.payment_may_hand_over,
     )
 
 
@@ -5435,6 +5623,8 @@ class ReportFigureResponse(BaseModel):
     direction: Literal["IN", "OUT"] | None = None
     entries: int | None = Field(default=None, ge=0)
     amount_vnd: int | None = Field(default=None, ge=0)
+    #: `REMEDIES_EXECUTED`: per remedy kind. `MONEY_COLLECTED` (`PAYMENT-001`, `DEC-035`): per
+    #: payment method, `TIEN_MAT` then `CHUYEN_KHOAN`, each count and amount summed by SQL.
     by_kind: list[ReportRemedyKindResponse] | None = None
 
 

@@ -417,9 +417,20 @@ def test_a_paid_order_is_never_cancelled_with_the_money_still_counted() -> None:
         _reviewed_cancel(OrderBalanceStatus.PAID, CustodyResolution.NOT_RECEIVED)
 
 
+def test_a_deposit_goes_back_through_the_refund_path_and_is_never_kept_silently() -> None:
+    """`DEC-035`: a cancellation after a deposit refunds what was paid, by the existing path."""
+    for resolution in (
+        CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        CustodyResolution.SHOP_FAULT_NO_CHARGE,
+    ):
+        cancelled = _reviewed_cancel(OrderBalanceStatus.PARTIALLY_PAID, resolution)
+        assert cancelled.balance is OrderBalanceStatus.REFUNDED
+    with pytest.raises(OrderTransitionError, match="HUMAN_APPROVAL_REQUIRED"):
+        _reviewed_cancel(OrderBalanceStatus.PARTIALLY_PAID, None)
+
+
 def test_a_balance_shape_dec_010_does_not_support_is_refused_rather_than_guessed() -> None:
     for balance in (
-        OrderBalanceStatus.PARTIALLY_PAID,
         OrderBalanceStatus.OVERPAID,
         OrderBalanceStatus.ON_ACCOUNT,
     ):

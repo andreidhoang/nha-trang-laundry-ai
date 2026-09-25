@@ -61,6 +61,7 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0051", "remedy_loss_to_owner"),
         ("0052", "remedy_garment_identity"),
         ("0053", "transactional_suppression"),
+        ("0054", "export_range"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

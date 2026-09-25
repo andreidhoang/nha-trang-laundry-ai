@@ -177,6 +177,27 @@ function businessDay(value) {
 }
 
 /**
+ * The days an export envelope releases, in human form (`EXPORT-RANGE-001`).
+ *
+ * One day reads as that day; a window as both ends and the server's own day count —
+ * `01/09/2026 → 07/09/2026 · 7 ngày`. The count is `window_days` as served, never recomputed here:
+ * the two dates are what the approver signs, and a console doing its own calendar arithmetic
+ * beside them would be a second opinion on the document. A response without `business_date_to`
+ * (a server from before windows) is one day.
+ *
+ * @param {any} record the `ExportRequestContentResponse` body
+ * @returns {string}
+ */
+function exportWindow(record) {
+  const to = record.business_date_to || record.business_date;
+  if (!to || to === record.business_date) return businessDay(record.business_date);
+  return (
+    `${businessDay(record.business_date)} → ${businessDay(to)}` +
+    (record.window_days ? ` · ${record.window_days} ngày` : "")
+  );
+}
+
+/**
  * Resource types whose content this console can put in front of an approver before they decide.
  *
  * The key is the server's `resource_type`; the value builds the route that shows it. A type absent
@@ -603,7 +624,9 @@ function proposedAmounts(proposal, lines) {
  * What one export envelope actually releases, in the owner's own language.
  *
  * Four things, and the order is the argument. The day first, because an export is chosen by day
- * and the wrong day is the commonest mistake. Then the exact columns, then the exclusions — a
+ * and the wrong day is the commonest mistake. Since `EXPORT-RANGE-001` it is the window — both
+ * ends, in human form, with the server's day count — because both ends are inside the digest the
+ * approver signs: approving the first week of a month cannot release the second. Then the exact columns, then the exclusions — a
  * reader told only what a file contains cannot tell "the complaint text is not here" from "no
  * complaint was recorded", which is the difference the word *sanitized* is claiming. Then the
  * sentence the server hashed into `rendered_hash`, verbatim: that string is the document, and a
@@ -622,12 +645,15 @@ function proposedAmounts(proposal, lines) {
 function exportContents(record) {
   const columns = Array.isArray(record.columns) ? record.columns : [];
   const excludes = Array.isArray(record.excludes) ? record.excludes : [];
+  // `EXPORT-RANGE-001`: a window names both ends; one day is the card it always was.
+  const several =
+    Boolean(record.business_date_to) && record.business_date_to !== record.business_date;
   return h(
     "div",
     { class: "notice", dataState: "warn" },
     h("p", { class: "notice__title" }, "Dữ liệu bạn đang được đề nghị cho rời khỏi hệ thống"),
     facts([
-      ["Ngày làm việc", String(record.business_date)],
+      [several ? "Khoảng ngày" : "Ngày làm việc", exportWindow(record), { span: several }],
       ["Múi giờ", record.business_timezone || UNKNOWN, { mono: true }],
       ["Bộ dữ liệu", record.dataset || UNKNOWN, { mono: true }],
       ["Cắt ngày theo", record.day_boundary || UNKNOWN, { mono: true, span: true }],
@@ -636,12 +662,20 @@ function exportContents(record) {
       ["Truy vấn", record.query_version || UNKNOWN, { mono: true, span: true }],
     ]),
     h("p", null, record.statement_vi || UNKNOWN),
-    h(
-      "p",
-      { class: "hint" },
-      "Bấm Duyệt là cho đúng danh sách cột này, của đúng ngày này, rời khỏi hệ thống. Tệp tải về " +
-        "nằm ngoài mọi lịch xoá dữ liệu và không thu hồi lại được.",
-    ),
+    several
+      ? h(
+          "p",
+          { class: "hint" },
+          "Bấm Duyệt là cho đúng danh sách cột này, của đúng các ngày từ ngày đầu tới ngày cuối " +
+            "đã nêu, rời khỏi hệ thống — không ngày nào khác. Tệp tải về nằm ngoài mọi lịch xoá dữ " +
+            "liệu và không thu hồi lại được.",
+        )
+      : h(
+          "p",
+          { class: "hint" },
+          "Bấm Duyệt là cho đúng danh sách cột này, của đúng ngày này, rời khỏi hệ thống. Tệp tải về " +
+            "nằm ngoài mọi lịch xoá dữ liệu và không thu hồi lại được.",
+        ),
   );
 }
 
@@ -718,7 +752,11 @@ async function loadExportRequest(item, contentHost, controlsHost, onDecided, ver
       return;
     }
     render(contentHost, exportContents(record));
-    retitle?.(`ngày ${businessDay(record.business_date)}`);
+    retitle?.(
+      record.business_date_to && record.business_date_to !== record.business_date
+        ? exportWindow(record)
+        : `ngày ${businessDay(record.business_date)}`,
+    );
     if (record.requested_by_you === true) {
       render(
         controlsHost,

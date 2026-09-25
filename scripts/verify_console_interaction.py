@@ -45,7 +45,7 @@ import socketserver
 import sys
 import threading
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from playwright.sync_api import Route, sync_playwright
@@ -1072,6 +1072,9 @@ EXPORT_REQUEST_CONTENT = {
     "export_request_id": EXPORT_REQUEST_ID,
     "dataset": "STORE_DAY_ORDERS_V1",
     "business_date": EXPORT_BUSINESS_DATE,
+    # `EXPORT-RANGE-001`: one day is first == last and a count of one, as the server now answers.
+    "business_date_to": EXPORT_BUSINESS_DATE,
+    "window_days": 1,
     "business_timezone": "Asia/Ho_Chi_Minh",
     "day_boundary": "orders.created_at",
     "columns": [
@@ -3873,8 +3876,8 @@ with sync_playwright() as playwright:
         "EXPORT_SANITIZED_DATA" in content and "EXPORT_REQUEST" in content,
     )
     check(
-        "the business day the file is about is on the card",
-        EXPORT_BUSINESS_DATE in text,
+        "the business day the file is about is on the card, as a person reads a date",
+        "16/09/2026" in text,
     )
     check(
         "so is the exact column list the file will carry",
@@ -4029,7 +4032,87 @@ with sync_playwright() as playwright:
         "Nội dung không khớp phiếu" in content,
     )
     EXPORT_REQUEST_CONTENT["rendered_hash"] = EXPORT_RENDERED
+
+    # `EXPORT-RANGE-001`: a window. Both ends are inside what the owner signs, so both ends -- and
+    # the server's day count -- are on the card in human form, above the control, and the card's
+    # title names the window rather than one day.
+    EXPORT_REQUEST_CONTENT["business_date_to"] = "2026-09-22"
+    EXPORT_REQUEST_CONTENT["window_days"] = 7
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    text = rendered_text()
+    check(
+        "a window is on the export card as both ends and its day count",
+        "16/09/2026 → 22/09/2026 · 7 ngày" in text and "Khoảng ngày" in text,
+        text[:200],
+    )
+    card_text = page.evaluate(
+        """() => (document.querySelector("article.card") || {innerText: ""}).innerText"""
+    )
+    heading = str(card_text).split("Dữ liệu bạn đang được đề nghị")[0]
+    check(
+        "and the card's title names the window, not only its first day",
+        "22/09/2026" in heading,
+        heading[:120],
+    )
+    check(
+        "the approve sentence says no other day is released",
+        "không ngày nào khác" in text,
+    )
+    window_ordering = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          const approve = card && [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          const window = card && [...card.querySelectorAll("dd, .fields *")]
+            .find((n) => n.textContent.includes("22/09/2026"));
+          if (!approve || !window) return "missing";
+          const after = window.compareDocumentPosition(approve);
+          return Boolean(after & Node.DOCUMENT_POSITION_FOLLOWING);
+        }"""
+    )
+    check(
+        "the window precedes the approve control in the document",
+        window_ordering is True,
+        repr(window_ordering),
+    )
+    EXPORT_REQUEST_CONTENT["business_date_to"] = EXPORT_BUSINESS_DATE
+    EXPORT_REQUEST_CONTENT["window_days"] = 1
     state["export_listed"] = False
+
+    # `EXPORT-RANGE-001`: the picker on #/exports. No window is chosen on arrival (a window nobody
+    # chose is a window nobody answers for); "7 ngày" is today and the six days before it, cut in
+    # the shop's timezone rather than the device's; "Tự chọn" offers the two ends as date fields.
+    page.evaluate("location.hash = '#/exports'")
+    page.wait_for_timeout(900)
+    pressed = page.evaluate(
+        """() => [...document.querySelectorAll("#export-range [aria-pressed='true']")].length"""
+    )
+    check("no range preset is pressed when the export screen opens", pressed == 0, repr(pressed))
+    shop_today = datetime.now(UTC).astimezone(timezone(timedelta(hours=7))).date()
+    week_start = shop_today - timedelta(days=6)
+    page.locator("#export-range [data-value='7d']").click()
+    page.wait_for_timeout(200)
+    chosen = page.evaluate("() => document.querySelector('#export-window')?.textContent || ''")
+    check(
+        "'7 ngày' names today and the six days before it, in the shop's own days",
+        chosen == f"{week_start:%d/%m/%Y} → {shop_today:%d/%m/%Y}",
+        repr(chosen),
+    )
+    check(
+        "and the picker keeps saying which event cuts the day",
+        "ngày mở đơn" in rendered_text() and "không theo lúc thu tiền" in rendered_text(),
+    )
+    page.locator("#export-range [data-value='custom']").click()
+    page.wait_for_timeout(200)
+    check(
+        "'Tự chọn' offers both ends as date fields, starting from the days already chosen",
+        page.locator("#export-from").input_value() == week_start.isoformat()
+        and page.locator("#export-to").input_value() == shop_today.isoformat(),
+        page.locator("#export-from").input_value(),
+    )
 
     print()
     print("=" * 74)

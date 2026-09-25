@@ -859,7 +859,14 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 461 after ORDER-STEPS-002 merged on top (round 6 slice A): -3 the retired gaps.js entry
     # "Sự cố sản xuất và từ chối nhận đồ" (missing, blockedBy, today), +2 the Giặt lại / Không nhận
     # đồ sheet notes in orderDetail.js; the gaps lede is reworded (same slot count). 462 - 3 + 2.
-    assert sum(counts.values()) == _registry()["total"] == 461
+    # 462 with EXPORT-RANGE-001 (+6 -1): the range picker's tier-1 boundary line and a tier-2
+    # "no default window / both ends approved" paragraph in exports.js, the window-shaped "Bấm
+    # Duyệt là…" line on the approvals export card, and REASON_NOTE for EXPORT_WINDOW_TOO_LONG /
+    # EXPORT_WINDOW_REVERSED. Removed: the single date field's hint ("Không có ngày mặc định…"),
+    # the field no longer exists and its fact moved into the tier-2 paragraph. Re-keyed (reworded
+    # to the window): the exports info paragraph and gaps.js's FR-RPT-003 missing/blockedBy/today.
+    # 466 when merged after both: 461 + 6 - 1 = 466.
+    assert sum(counts.values()) == _registry()["total"] == 466
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

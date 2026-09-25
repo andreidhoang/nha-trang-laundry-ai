@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 432
+  DESCRIPTIVE: 437
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 14
-total: 461
+total: 466
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1241,6 +1241,22 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.EXPORT_WINDOW_TOO_LONG:d129c3e1a065
+  module: core/i18n.js
+  key: REASON_NOTE.EXPORT_WINDOW_TOO_LONG
+  text: Một lần xuất tối đa 92 ngày. Chọn khoảng ngắn hơn, hoặc chia thành nhiều lần xuất.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.EXPORT_WINDOW_REVERSED:99fbcb5f48f6
+  module: core/i18n.js
+  key: REASON_NOTE.EXPORT_WINDOW_REVERSED
+  text: Ngày bắt đầu đang sau ngày kết thúc. Đổi lại hai ngày rồi tạo yêu cầu lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: core/i18n.js#REASON_NOTE.EXPORT_ALREADY_PRODUCED:a2c868291a10
   module: core/i18n.js
   key: REASON_NOTE.EXPORT_ALREADY_PRODUCED
@@ -1603,6 +1619,16 @@ disclosures:
   module: screens/approvals.js
   key: notice__title
   text: Dữ liệu bạn đang được đề nghị cho rời khỏi hệ thống
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#hint:11db2398a749
+  module: screens/approvals.js
+  key: hint
+  text: Bấm Duyệt là cho đúng danh sách cột này, của đúng các ngày từ ngày đầu tới ngày cuối đã nêu, rời
+    khỏi hệ thống — không ngày nào khác. Tệp tải về nằm ngoài mọi lịch xoá dữ liệu và không thu hồi lại
+    được.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2067,13 +2093,30 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/exports.js#hint:168b80092bec
+- slot_id: screens/exports.js#hint:f6e4938857ba
   module: screens/exports.js
   key: hint
-  text: 'Lấy bản sao hồ sơ của chính cửa hàng cho một ngày: mã đơn, trạng thái, mốc thời gian và số tiền
-    đã thu của những đơn mở trong ngày đó. Ngày cắt theo lúc mở đơn, nên tổng tiền trong tệp không bằng
-    ô “tiền đã thu hôm nay” ở màn hình Hôm nay — ô đó cộng theo lúc thu. Mỗi lần xuất đều cần chủ tiệm
-    duyệt và đều được ghi lại.'
+  text: Đơn tính theo ngày mở đơn, giờ Việt Nam — không theo lúc thu tiền. Tối đa 92 ngày.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/exports.js#hint:7c1e1759d39a
+  module: screens/exports.js
+  key: hint
+  text: 'Lấy bản sao hồ sơ của chính cửa hàng cho một ngày hoặc một khoảng ngày (tối đa 92 ngày): mã đơn,
+    trạng thái, mốc thời gian và số tiền đã thu của những đơn mở trong những ngày đó. Ngày cắt theo lúc
+    mở đơn, nên tổng tiền trong tệp không bằng các ô “tiền đã thu hôm nay” ở màn hình Hôm nay — ô đó cộng
+    theo lúc thu. Mỗi lần xuất đều cần chủ tiệm duyệt và đều được ghi lại.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/exports.js#hint:44035b0eef7a
+  module: screens/exports.js
+  key: hint
+  text: Không có khoảng ngày mặc định — bạn chọn khoảng nào thì bạn chịu trách nhiệm khoảng đó. Chủ tiệm
+    duyệt đúng hai ngày đầu và cuối đã chọn; duyệt khoảng này không xuất được khoảng khác.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2248,29 +2291,29 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:70d2c31a9afd
+- slot_id: screens/gaps.js#missing:cd70a188e046
   module: screens/gaps.js
   key: missing
-  text: 'Chỉ xuất được đúng hồ sơ thô của một ngày làm việc, ở màn hình Xuất dữ liệu: mã đơn, trạng thái,
-    mốc thời gian và tiền đã thu. Không chọn được khoảng ngày, và không có chỉ số nào — vì chưa có read
-    model nào tính chúng.'
+  text: 'Khoảng ngày thì đã chọn được (tối đa 92 ngày), nhưng tệp chỉ mang hồ sơ thô của từng đơn: mã
+    đơn, trạng thái, mốc thời gian, tiền đã thu và đã hoàn. Tệp không kèm chỉ số nào — không đơn mới,
+    không tỉ lệ đúng hẹn, không giặt lại.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:052d730d29bc
+- slot_id: screens/gaps.js#blockedBy:0467e19f6f96
   module: screens/gaps.js
   key: blockedBy
-  text: Chưa có read model báo cáo có phiên bản (mục Bảng điều hành hằng ngày)
+  text: 'Chưa làm: tệp xuất chỉ có một bộ dữ liệu (hồ sơ đơn); bộ mang chỉ số chưa được xây'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:818474d166f7
+- slot_id: screens/gaps.js#today:429290613c1e
   module: screens/gaps.js
   key: today
-  text: Xuất một ngày thì được, và mỗi lần xuất đều cần chủ tiệm duyệt rồi mới có tệp. Tệp đó không kèm
-    lời khách phàn nàn và không kèm mô tả bằng chứng.
+  text: Xuất hồ sơ đơn của một ngày hoặc một khoảng tới 92 ngày; mỗi lần xuất cần chủ tiệm duyệt đúng
+    khoảng đó rồi mới có tệp. Tệp không kèm lời khách phàn nàn và mô tả bằng chứng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

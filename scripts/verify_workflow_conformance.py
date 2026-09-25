@@ -174,6 +174,15 @@ DECLARED_CONTROLS = (
     "orderDetail.receipt-offer",
     "orderDetail.receipt-more",
     "receipt.print",
+    # EXPORT-RANGE-001: the range picker, the three export steps, and the owner's approval of an
+    # export envelope read off its window.
+    "exports.range-custom",
+    "exports.range-preset",
+    "exports.create",
+    "exports.request-approval",
+    "approvals.export-approve",
+    "exports.execute",
+    "exports.download",
 )
 
 PASS: list[str] = []
@@ -2700,6 +2709,184 @@ def scenario_rework(console: Console) -> None:
     )
 
 
+def scenario_export_range(console: Console) -> None:
+    """`EXPORT-RANGE-001`: seven days of the shop's orders leave once, with two people accountable.
+
+    FR-RPT-003. One person defines the export -- the window is theirs -- and a different person
+    approves it, reading both ends of the window on the approval card before the control. The seed
+    has one `OWNER_ADMIN`, and owner policy (`_OWNER_FINANCIAL`) lets only an owner decide an
+    export, so the definer is the approver-role account (`demo-approver`, in `EXPORT_ROLES`) and the
+    decider is the owner. The definer's screen stays open in its own browser context while the owner
+    decides -- the in-progress export is page memory, exactly as on two real phones -- and then
+    releases the file. What is proved: an over-long window is refused by name and writes nothing;
+    the 7-day preset sends a 7-day window; the card names it; the file releases once; its row count
+    is the number of orders opened in those seven shop-local days, counted independently here.
+    """
+
+    head("13", "XUẤT THEO KHOẢNG — 7 ngày, người khác duyệt, xuất đúng một lần")
+    browser = console.context.browser
+    context = browser.new_context(viewport=viewport())
+    requester = Console(context.new_page(), context)
+    requester.sign_in("demo-approver")
+    requester.open("#/exports", settle=1500)
+    page = requester.page
+    ok(
+        "no window is chosen for the person: every preset is off on arrival",
+        page.locator("#export-range [aria-pressed='true']").count() == 0,
+        "",
+    )
+    ok(
+        "the screen says which event cuts the day before anything is chosen",
+        "ngày mở đơn" in requester.text() and "không theo lúc thu tiền" in requester.text(),
+        requester.text()[:160],
+    )
+
+    def requests_by_requester() -> str:
+        return sql(
+            "select count(*) from export_requests e join staff_users s "
+            "on s.id = e.requested_by_staff_id where s.oidc_subject = 'demo-approver'"
+        )
+
+    before = requests_by_requester()
+    # A custom window of 101 days: the server's bound, met by name, with nothing written.
+    page.locator("#export-range [data-value='custom']").click()
+    page.wait_for_timeout(300)
+    touched("exports.range-custom")
+    page.locator("#export-from").fill("2026-01-01")
+    page.locator("#export-to").fill("2026-04-11")
+    page.locator("#export-create").click()
+    page.wait_for_timeout(1500)
+    touched("exports.create")
+    ok(
+        "a window longer than 92 days is refused by name",
+        "EXPORT_WINDOW_TOO_LONG" in requester.reason_codes(),
+        requester.said()[:160],
+    )
+    ok(
+        "and is said in Vietnamese beside the control",
+        "tối đa 92 ngày" in requester.said(),
+        requester.said()[:160],
+    )
+    if READS_DATABASE:
+        ok("and wrote no export request", requests_by_requester() == before, before)
+
+    page.locator("#export-range [data-value='7d']").click()
+    page.wait_for_timeout(300)
+    touched("exports.range-preset")
+    chosen = page.locator("#export-window").inner_text()
+    ok("the 7-day preset shows the two days it names", "→" in chosen, chosen)
+    page.locator("#export-create").click()
+    page.wait_for_timeout(1600)
+    request_row = sql(
+        "select e.id || '|' || e.business_date || '|' || coalesce(e.business_date_to::text, '') "
+        "from export_requests e join staff_users s on s.id = e.requested_by_staff_id "
+        "where s.oidc_subject = 'demo-approver' order by e.requested_at desc limit 1"
+    )
+    request_id, first, last = ([*request_row.split("|"), "", ""])[:3]
+    if READS_DATABASE:
+        ok(
+            "the request stored a seven-day window, first day to last",
+            bool(first and last) and sql(f"select date '{last}' - date '{first}'") == "6",
+            request_row,
+        )
+    page.locator("#export-approval").click()
+    page.wait_for_timeout(1600)
+    touched("exports.request-approval")
+    approval_id = sql(
+        f"select id from approval_requests where resource_id = '{request_id}'"
+        if request_id
+        else "select ''"
+    )
+    ok(
+        "the envelope is raised and the screen waits for an owner",
+        "Chờ chủ tiệm duyệt" in requester.text(),
+        requester.said()[:140],
+    )
+
+    console.sign_in("demo-owner")
+    console.open("#/approvals", settle=2500)
+    card = console.page.locator("article.card", has_text="Khoảng ngày")
+    shown = card.first.inner_text() if card.count() else ""
+    day = lambda iso: f"{iso[8:10]}/{iso[5:7]}/{iso[0:4]}"  # noqa: E731
+    ok(
+        "the owner reads both ends of the window and its length on the card",
+        bool(first and last) and f"{day(first)} → {day(last)} · 7 ngày" in shown,
+        shown.replace("\n", " | ")[:200],
+    )
+    if card.count():
+        card.first.locator("button", has_text="Duyệt").first.click()
+        console.page.wait_for_timeout(2200)
+        touched("approvals.export-approve")
+    if READS_DATABASE:
+        ok(
+            "and approves it: a different person from the one who chose the window",
+            eventually(
+                f"select status from approval_request_states where approval_request_id = "
+                f"'{approval_id}'",
+                "APPROVED",
+            )
+            == "APPROVED",
+            console.said()[:160],
+        )
+
+    page.locator("#export-execute").click()
+    page.wait_for_timeout(2200)
+    touched("exports.execute")
+    released = sql(
+        f"select row_count from data_exports where export_request_id = '{request_id}'"
+        if request_id
+        else "select ''"
+    )
+    expected = sql(
+        f"select count(*) from orders where store_id = '{STORE}' and "
+        f"(created_at at time zone 'Asia/Ho_Chi_Minh')::date between '{first}' and '{last}'"
+        if first and last
+        else "select ''"
+    )
+    if READS_DATABASE:
+        ok(
+            "the file is released, its row count the orders opened in those seven days",
+            released != "" and released == expected,
+            f"released {released}, opened in window {expected}",
+        )
+        if not arguments.only:
+            # In a whole run the scenarios above opened orders today, so an empty file here would
+            # make the equality above vacuous rather than proved.
+            ok(
+                "and the window is not empty: the orders this run opened are in it",
+                expected not in ("", "0"),
+                expected,
+            )
+        rows_shown = page.evaluate(
+            """() => [...document.querySelectorAll("dl.kv .kv__row")]
+                .filter((r) => r.querySelector("dt")?.textContent === "Số dòng")
+                .map((r) => r.querySelector("dd")?.textContent || "")[0] || ''"""
+        )
+        ok(
+            "and the number is on the screen the requester is holding",
+            str(rows_shown).replace(".", "") == released,
+            repr(rows_shown),
+        )
+    download = page.locator("#export-download")
+    if download.count():
+        with page.expect_download() as caught:
+            download.click()
+        touched("exports.download")
+        ok(
+            "the downloaded file is named for both days",
+            bool(first and last) and f"ntl-{first}_{last}-" in caught.value.suggested_filename,
+            caught.value.suggested_filename,
+        )
+    if READS_DATABASE:
+        ok(
+            "one approval released one file",
+            sql(f"select count(*) from data_exports where export_request_id = '{request_id}'")
+            == "1",
+            "",
+        )
+    context.close()
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -2715,6 +2902,7 @@ SCENARIOS = {
     "remedy": scenario_remedy,
     "receipt": scenario_receipt,
     "rework": scenario_rework,
+    "export_range": scenario_export_range,
 }
 
 

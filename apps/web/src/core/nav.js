@@ -127,7 +127,7 @@ export const NAV_ITEMS = [
     capability: "EXPORT_DATA",
     icon: "download",
     group: "Quản trị",
-    hint: "Xuất số liệu một ngày",
+    hint: "Hồ sơ đơn theo ngày hoặc khoảng ngày",
   },
   {
     path: "/system",

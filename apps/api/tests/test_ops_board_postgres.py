@@ -462,7 +462,17 @@ def test_an_export_cannot_be_approved_by_the_person_who_defined_it_and_can_by_an
     released = produced.json()
     assert released["approval_request_id"] == approval_id
     # And the header is the column list the owner was shown, with no always-false incident column.
-    assert released["content_csv"].splitlines()[0] == ",".join(request_body["columns"])
+    # It sits below the five `key,value` rows naming the query version and the window
+    # (`EXPORT-RANGE-001`), which for a one-day export name the one day twice.
+    lines = released["content_csv"].splitlines()
+    assert lines[:5] == [
+        f"export_query_version,{request_body['query_version']}",
+        f"business_date_from,{now.date().isoformat()}",
+        f"business_date_to,{now.date().isoformat()}",
+        "business_timezone,Asia/Ho_Chi_Minh",
+        "day_boundary,orders.created_at",
+    ]
+    assert lines[5] == ",".join(request_body["columns"])
     assert "incident_open" not in released["content_csv"]
 
 
@@ -583,3 +593,207 @@ def test_the_export_read_is_refused_for_a_store_the_caller_is_not_assigned_to(
     assert refused.status_code == 403
     assert "columns" not in refused.text
     assert "statement_vi" not in refused.text
+
+
+# --- EXPORT-RANGE-001: a window of days, over HTTP ----------------------------------------------
+
+
+def _envelope_body(store_id: UUID, request_body: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "store_id": str(store_id),
+        "action": "EXPORT_SANITIZED_DATA",
+        "resource_type": request_body["resource_type"],
+        "resource_id": request_body["export_request_id"],
+        "resource_version": request_body["resource_version"],
+        "snapshot_hash": request_body["snapshot_hash"],
+        "rendered_hash": request_body["rendered_hash"],
+        "policy_version": request_body["policy_version"],
+    }
+
+
+def _decision_body(request_body: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "decision": "APPROVED",
+        "reason_code": "APPROVED_AFTER_CONSOLE_REVIEW",
+        "resource_version": request_body["resource_version"],
+        "snapshot_hash": request_body["snapshot_hash"],
+        "rendered_hash": request_body["rendered_hash"],
+    }
+
+
+def test_an_export_window_approved_for_one_week_releases_that_week_and_no_other(
+    connection: psycopg.Connection[Any], client: TestClient
+) -> None:
+    """`EXPORT-RANGE-001` end to end: the window is what the approver reads, signs and releases.
+
+    The approver defines two windows; the owner reads the first one's window on the approval read
+    and approves it. The second window's request cannot be released under that approval (422
+    `REQUIRE_HUMAN` / `EXPORT_APPROVAL_NOT_BOUND`, nothing written), and cannot even have an
+    envelope raised with the first window's digests. The first releases once, with both days in
+    its header rows.
+    """
+    now = datetime.now(UTC)
+    store_id, owner, approver = _store_with_member(
+        connection, now, roles=frozenset({StaffRole.OPS_APPROVER})
+    )
+
+    _as(approver)
+    week = _post(
+        client,
+        f"/internal/v1/stores/{store_id}/exports",
+        {"business_date": "2026-09-01", "business_date_to": "2026-09-07"},
+    )
+    assert week.status_code == 201, week.text
+    week_body = week.json()
+    assert (week_body["business_date"], week_body["business_date_to"]) == (
+        "2026-09-01",
+        "2026-09-07",
+    )
+    assert week_body["window_days"] == 7
+    assert week_body["query_version"].startswith("store-window-orders-export-v1:")
+    assert "từ 2026-09-01 đến hết 2026-09-07 (7 ngày" in week_body["statement_vi"]
+    next_week = _post(
+        client,
+        f"/internal/v1/stores/{store_id}/exports",
+        {"business_date": "2026-09-08", "business_date_to": "2026-09-14"},
+    ).json()
+    assert next_week["snapshot_hash"] != week_body["snapshot_hash"]
+    assert next_week["rendered_hash"] != week_body["rendered_hash"]
+
+    envelope = _post(client, "/internal/v1/approvals", _envelope_body(store_id, week_body))
+    assert envelope.status_code in (200, 201), envelope.text
+    approval_id = envelope.json()["approval_request_id"]
+
+    # An envelope naming next week's request with this week's digests is refused outright.
+    forged = _envelope_body(store_id, next_week)
+    forged["snapshot_hash"] = week_body["snapshot_hash"]
+    forged["rendered_hash"] = week_body["rendered_hash"]
+    assert _post(client, "/internal/v1/approvals", forged).status_code not in (200, 201)
+
+    _as(owner)
+    disclosed = client.get(f"/internal/v1/approvals/{approval_id}/export-request")
+    assert disclosed.status_code == 200, disclosed.text
+    content = disclosed.json()
+    assert (content["business_date"], content["business_date_to"], content["window_days"]) == (
+        "2026-09-01",
+        "2026-09-07",
+        7,
+    )
+    assert content["rendered_hash"] == week_body["rendered_hash"]
+    approved = _post(
+        client, f"/internal/v1/approvals/{approval_id}/decisions", _decision_body(week_body)
+    )
+    assert approved.status_code == 200, approved.text
+
+    _as(approver)
+    wrong = _post(
+        client,
+        f"/internal/v1/stores/{store_id}/exports/{next_week['export_request_id']}/execution",
+        {"approval_id": approval_id},
+    )
+    assert wrong.status_code == 422, wrong.text
+    assert wrong.json()["detail"] == {
+        "outcome": "REQUIRE_HUMAN",
+        "reason_code": "EXPORT_APPROVAL_NOT_BOUND",
+    }
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM data_exports WHERE store_id = %s", (store_id,))
+        assert cursor.fetchone() == (0,)
+    connection.commit()
+
+    released = _post(
+        client,
+        f"/internal/v1/stores/{store_id}/exports/{week_body['export_request_id']}/execution",
+        {"approval_id": approval_id},
+    )
+    assert released.status_code == 200, released.text
+    produced = released.json()
+    assert (produced["business_date"], produced["business_date_to"]) == (
+        "2026-09-01",
+        "2026-09-07",
+    )
+    assert produced["query_version"] == week_body["query_version"]
+    lines = produced["content_csv"].splitlines()
+    assert lines[:3] == [
+        f"export_query_version,{week_body['query_version']}",
+        "business_date_from,2026-09-01",
+        "business_date_to,2026-09-07",
+    ]
+    again = _post(
+        client,
+        f"/internal/v1/stores/{store_id}/exports/{week_body['export_request_id']}/execution",
+        {"approval_id": approval_id},
+    )
+    assert again.status_code == 409
+    assert again.json()["detail"] == "EXPORT_ALREADY_PRODUCED"
+
+
+def test_an_export_window_is_at_most_92_days_and_never_reversed(
+    connection: psycopg.Connection[Any], client: TestClient
+) -> None:
+    """422 with the reason named, and nothing written; 92 days exactly is accepted."""
+    now = datetime.now(UTC)
+    store_id, _, approver = _store_with_member(
+        connection, now, roles=frozenset({StaffRole.OPS_APPROVER})
+    )
+    _as(approver)
+    path = f"/internal/v1/stores/{store_id}/exports"
+
+    too_long = _post(
+        client, path, {"business_date": "2026-01-01", "business_date_to": "2026-04-03"}
+    )
+    assert too_long.status_code == 422, too_long.text
+    assert too_long.json()["detail"] == {
+        "outcome": "INVALID",
+        "reason_code": "EXPORT_WINDOW_TOO_LONG",
+    }
+    reversed_ = _post(
+        client, path, {"business_date": "2026-01-02", "business_date_to": "2026-01-01"}
+    )
+    assert reversed_.status_code == 422, reversed_.text
+    assert reversed_.json()["detail"]["reason_code"] == "EXPORT_WINDOW_REVERSED"
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM export_requests WHERE store_id = %s", (store_id,))
+        assert cursor.fetchone() == (0,)
+    connection.commit()
+
+    quarter = _post(client, path, {"business_date": "2026-01-01", "business_date_to": "2026-04-02"})
+    assert quarter.status_code == 201, quarter.text
+    assert quarter.json()["window_days"] == 92
+
+
+def test_a_one_day_export_request_answers_exactly_as_before(
+    connection: psycopg.Connection[Any], client: TestClient
+) -> None:
+    """Omitting `business_date_to` and sending it equal to `business_date` are the same one-day
+    request, bound by the same digests and the one-day rule, and the approval read says one day."""
+    now = datetime.now(UTC)
+    store_id, owner, approver = _store_with_member(
+        connection, now, roles=frozenset({StaffRole.OPS_APPROVER})
+    )
+    _as(approver)
+    path = f"/internal/v1/stores/{store_id}/exports"
+    omitted = _post(client, path, {"business_date": "2026-09-16"}).json()
+    explicit = _post(
+        client, path, {"business_date": "2026-09-16", "business_date_to": "2026-09-16"}
+    ).json()
+
+    for body in (omitted, explicit):
+        assert body["business_date"] == body["business_date_to"] == "2026-09-16"
+        assert body["window_days"] == 1
+        assert body["query_version"] == "store-day-orders-export-v2:3f884e227d6a2d05"
+        assert body["statement_vi"].startswith(
+            "Xuất bản sao hồ sơ của chính cửa hàng cho ngày 2026-09-16 "
+        )
+    assert explicit["snapshot_hash"] == omitted["snapshot_hash"]
+    assert explicit["rendered_hash"] == omitted["rendered_hash"]
+
+    envelope = _post(client, "/internal/v1/approvals", _envelope_body(store_id, omitted))
+    approval_id = envelope.json()["approval_request_id"]
+    _as(owner)
+    content = client.get(f"/internal/v1/approvals/{approval_id}/export-request").json()
+    assert (content["business_date"], content["business_date_to"], content["window_days"]) == (
+        "2026-09-16",
+        "2026-09-16",
+        1,
+    )

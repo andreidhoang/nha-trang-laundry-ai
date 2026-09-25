@@ -196,8 +196,13 @@ class OpsBoardService:
         principal: StaffPrincipal,
         business_date: date,
         idempotency_key: str,
+        business_date_to: date | None = None,
     ) -> StoredExportRequest:
-        """Record what somebody wants exported. Nothing leaves the system on this call."""
+        """Record what somebody wants exported. Nothing leaves the system on this call.
+
+        `business_date_to` absent or equal to `business_date` is a one-day export, exactly as it
+        was before windows existed (`EXPORT-RANGE-001`).
+        """
         with self._connection_factory(self._database_url) as connection:
             return self._exports.request(
                 connection,
@@ -205,6 +210,7 @@ class OpsBoardService:
                     store_id=store_id,
                     dataset=ExportDataset.STORE_DAY_ORDERS_V1,
                     business_date=business_date,
+                    business_date_to=business_date_to,
                     principal=principal,
                     correlation_id=_correlation_id(),
                     idempotency_key=idempotency_key,

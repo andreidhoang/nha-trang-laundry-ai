@@ -1,5 +1,5 @@
 /**
- * Xuất dữ liệu: the owner taking a copy of the shop's own day, with somebody accountable for it.
+ * Xuất dữ liệu: the owner taking a copy of the shop's own days, with somebody accountable for it.
  *
  * `OPS-BOARD-001`. `ApprovalAction.EXPORT_SANITIZED_DATA` has existed since the first approval
  * migration with nothing behind it. This screen is the front of what is now behind it, and its
@@ -12,6 +12,18 @@
  * may collapse. A single "Xuất" button would have to either skip the approval or hide it, and both
  * are the same lie. The one button in the action bar is always the *current* step's.
  *
+ * **A window of days, since `EXPORT-RANGE-001`** (FR-RPT-003). The owner and the accountant close
+ * a week or a month, not a day, so step 1 is a range picker — Hôm nay · 7 ngày · 30 ngày · Tháng
+ * trước · Tự chọn — and the request carries `business_date` (first day) and `business_date_to`
+ * (last day). Both are inside what the owner approves, so the server refuses to release one window
+ * under another's approval; this screen only chooses. One day is sent as first == last, which the
+ * server treats exactly as the one-day export it always was.
+ *
+ * The presets compute two calendar dates in the shop's timezone (`TIMEZONE`), never the device's:
+ * a phone set to another zone must not export a different "today" from the one the server cuts on.
+ * They are shown as the two dates before anything is sent, so what the person chose is what they
+ * see. The 92-day bound is the server's: a longer custom window is sent and refused by name.
+ *
  * **The requester cannot be the approver, and the screen says so before the refusal does**, on
  * the line beside "Xin chủ tiệm duyệt". In a shop with one owner that means the owner cannot both
  * ask and approve — the separation of duty working, and far kinder to learn here than at the
@@ -22,15 +34,15 @@
  * before anything is requested. They are also what the owner's approval binds: widen the column
  * list and the rendered digest moves, so an approval already granted stops matching.
  *
- * **The date has no default.** A day nobody chose is a day nobody is accountable for having
- * exported, and "unknown means stop" is not only about prices.
+ * **The window has no default.** A range nobody chose is a range nobody is accountable for having
+ * exported, and "unknown means stop" is not only about prices: no preset is pressed on arrival.
  *
  * @module screens/exports
  */
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UNKNOWN, dateTime, integer, shortHash, shortId } from "../core/format.js";
+import { TIMEZONE, UNKNOWN, dateTime, integer, shortHash } from "../core/format.js";
 import { REASON_NOTE } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId, subscribe } from "../core/session.js";
@@ -50,6 +62,7 @@ import {
   page,
   progress,
   section,
+  segmented,
   show,
   techDetails,
   toast,
@@ -58,13 +71,22 @@ import {
 /** `ApprovalAction.EXPORT_SANITIZED_DATA`, the one action this screen ever raises. */
 const EXPORT_ACTION = "EXPORT_SANITIZED_DATA";
 
+/** The range presets, in the order the owner reads them. */
+const PRESETS = [
+  { value: "today", label: "Hôm nay" },
+  { value: "7d", label: "7 ngày" },
+  { value: "30d", label: "30 ngày" },
+  { value: "last-month", label: "Tháng trước" },
+  { value: "custom", label: "Tự chọn" },
+];
+
 /**
  * The export in progress, per viewer and store, kept for the life of the page.
  *
  * Step 2 tells the owner to open `#/approvals` and come back, and until this existed coming back
- * rebuilt the screen from nothing: the date, the request and the approval id were gone, so the
+ * rebuilt the screen from nothing: the window, the request and the approval id were gone, so the
  * "Xuất tệp" the instructions pointed at was not there, and the only way forward was to raise a
- * second request and a second envelope for the same day.
+ * second request and a second envelope for the same days.
  *
  * Module state, in memory only -- invariant 3 of the UX refactor spec allows nothing else on a
  * shared counter phone. It survives moving between screens, which is the round trip the
@@ -72,7 +94,7 @@ const EXPORT_ACTION = "EXPORT_SANITIZED_DATA";
  * pretending otherwise. Keyed by staff user and store, so a different person signing in on the
  * same tab -- or the same person switching store -- never inherits someone else's export.
  *
- * @type {Map<string, {businessDate: string, created: any, approvalId: string}>}
+ * @type {Map<string, {preset: string, from: string, to: string, created: any, approvalId: string}>}
  */
 const inProgress = new Map();
 
@@ -90,6 +112,99 @@ subscribe(() => {
  */
 function progressKey(me, store) {
   return `${me?.staffUserId || ""}|${store || ""}`;
+}
+
+/**
+ * Today's date in the shop's timezone, as `YYYY-MM-DD`.
+ *
+ * Read from the device clock but cut in `TIMEZONE`, the zone the server's `orders.created_at`
+ * boundary uses. A device clock that is wrong shows a wrong window on screen before anything is
+ * sent — the two dates are printed — rather than silently exporting other days.
+ *
+ * @param {Date} [now]
+ * @returns {string}
+ */
+export function shopToday(now = new Date()) {
+  /** @type {Record<string, string>} */
+  const parts = {};
+  for (const part of new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now)) {
+    parts[part.type] = part.value;
+  }
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/**
+ * A calendar date moved by whole days. Pure calendar arithmetic on the date, no clock and no zone:
+ * `YYYY-MM-DD` in, `YYYY-MM-DD` out.
+ *
+ * @param {string} iso
+ * @param {number} days
+ * @returns {string}
+ */
+function shiftDays(iso, days) {
+  const [year, month, day] = iso.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * The first and last day a preset names, counted back from `today` (inclusive of today).
+ *
+ * @param {string} preset
+ * @param {string} today `YYYY-MM-DD` in the shop's timezone
+ * @returns {{from: string, to: string} | null} null for "Tự chọn", whose days the person types
+ */
+export function presetWindow(preset, today) {
+  if (preset === "today") return { from: today, to: today };
+  if (preset === "7d") return { from: shiftDays(today, -6), to: today };
+  if (preset === "30d") return { from: shiftDays(today, -29), to: today };
+  if (preset === "last-month") {
+    const [year, month] = today.split("-").map(Number);
+    const first = new Date(Date.UTC(year, month - 2, 1)).toISOString().slice(0, 10);
+    const last = new Date(Date.UTC(year, month - 1, 0)).toISOString().slice(0, 10);
+    return { from: first, to: last };
+  }
+  return null;
+}
+
+/**
+ * `YYYY-MM-DD` as the day a person reads: `16/09/2026`.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function dayVi(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : String(value ?? UNKNOWN);
+}
+
+/**
+ * A window in human form: one day as that day, several as `01/09/2026 → 07/09/2026`.
+ *
+ * @param {unknown} from
+ * @param {unknown} to
+ * @returns {string}
+ */
+function windowVi(from, to) {
+  return !to || to === from ? dayVi(from) : `${dayVi(from)} → ${dayVi(to)}`;
+}
+
+/**
+ * The window a server answer names, with its day count from the server (never recomputed here).
+ *
+ * @param {any} record a request, disclosure or production response
+ * @returns {string}
+ */
+function servedWindow(record) {
+  const to = record.business_date_to || record.business_date;
+  const days = Number(record.window_days || 1);
+  return days > 1
+    ? `${windowVi(record.business_date, to)} · ${integer(days)} ngày`
+    : `Ngày ${dayVi(record.business_date)}`;
 }
 
 /**
@@ -136,7 +251,7 @@ function refusalNote(error) {
  *
  * The day boundary matters for a narrower and sharper reason. This console shows two numbers under
  * the words *tiền đã thu*: the takings box on `#/today`, summed over when money was taken, and the
- * money columns in this file, which belong to the orders OPENED on the named day. `statement_vi`
+ * money columns in this file, which belong to the orders OPENED on the named days. `statement_vi`
  * is the server's own sentence — the string hashed into `rendered_hash` — and is printed verbatim
  * rather than paraphrased, because a paraphrase is a description of a document nobody signed. The
  * raw boundary column and the query version sit in the technical drawer below it.
@@ -180,9 +295,11 @@ function contentsNotice(created) {
 function download(produced) {
   const blob = new Blob([produced.content_csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
+  const to = produced.business_date_to || produced.business_date;
+  const days = to === produced.business_date ? produced.business_date : `${produced.business_date}_${to}`;
   const anchor = h("a", {
     href: url,
-    download: `ntl-${produced.business_date}-${String(produced.export_id).slice(0, 8)}.csv`,
+    download: `ntl-${days}-${String(produced.export_id).slice(0, 8)}.csv`,
   });
   anchor.click();
   URL.revokeObjectURL(url);
@@ -201,8 +318,8 @@ export function render_() {
   const key = progressKey(me, store);
   const saved = inProgress.get(key) || null;
 
-  /** @type {{businessDate: string}} */
-  const draft = { businessDate: saved?.businessDate || "" };
+  /** @type {{preset: string, from: string, to: string}} */
+  const draft = { preset: saved?.preset || "", from: saved?.from || "", to: saved?.to || "" };
 
   /**
    * The request this screen is working on, the envelope raised for it, and the file once made.
@@ -217,7 +334,9 @@ export function render_() {
   function remember() {
     if (stage.created && !stage.produced) {
       inProgress.set(key, {
-        businessDate: draft.businessDate,
+        preset: draft.preset,
+        from: draft.from,
+        to: draft.to,
         created: stage.created,
         approvalId: stage.approvalId,
       });
@@ -230,25 +349,82 @@ export function render_() {
   const errorHost = h("div", { class: "stack" });
   const stepsHost = h("div");
   const stageHost = h("div", { class: "stack" });
+  const customHost = h("div");
+  const chosenHost = h("p", { class: "export-range__chosen", id: "export-window", "aria-live": "polite" });
   const barHost = actionBar();
 
-  const dateInput = h("input", {
-    type: "date",
-    autocomplete: "off",
-    value: draft.businessDate,
-    onInput: (event) => {
-      draft.businessDate = event.target.value;
-      requestSubmission.reset();
-      // Changing the day invalidates everything staged for the previous one, envelope included.
-      // Leaving the old approval on screen beside a new date is how somebody exports a day nobody
-      // approved.
-      stage.created = null;
-      stage.approvalId = "";
-      stage.produced = null;
-      remember();
-      render(errorHost);
-      setResult(result, null, null);
-      paint();
+  /**
+   * The window changed. Everything staged for the previous one goes, envelope included: leaving
+   * the old approval on screen beside a new window is how somebody exports days nobody approved.
+   */
+  function windowChanged() {
+    // Every key belongs to the intent it was minted for. A new window is a new request, so an
+    // envelope or release key left over from a failed attempt on the old one must not be reused.
+    requestSubmission.reset();
+    approvalSubmission.reset();
+    executeSubmission.reset();
+    stage.created = null;
+    stage.approvalId = "";
+    stage.produced = null;
+    remember();
+    render(errorHost);
+    setResult(result, null, null);
+    paintChosen();
+    paint();
+  }
+
+  /** @param {"from"|"to"} end @param {string} id @param {string} label */
+  function dateField(end, id, label) {
+    return labelled({
+      id,
+      label,
+      control: h("input", {
+        type: "date",
+        autocomplete: "off",
+        value: draft[end],
+        onInput: (/** @type {any} */ event) => {
+          draft[end] = event.target.value;
+          windowChanged();
+        },
+      }),
+    });
+  }
+
+  function paintCustom() {
+    render(
+      customHost,
+      draft.preset === "custom"
+        ? h(
+            "div",
+            { class: "export-range__custom" },
+            dateField("from", "export-from", "Từ ngày"),
+            dateField("to", "export-to", "Đến hết ngày"),
+          )
+        : null,
+    );
+  }
+
+  function paintChosen() {
+    render(chosenHost, draft.from && draft.to ? windowVi(draft.from, draft.to) : null);
+  }
+
+  const picker = segmented({
+    label: "Khoảng ngày cần xuất",
+    id: "export-range",
+    wrap: true,
+    value: draft.preset,
+    options: PRESETS,
+    onChange: (value) => {
+      draft.preset = value;
+      const chosen = presetWindow(value, shopToday());
+      // "Tự chọn" keeps whatever the two fields already hold, so switching to it from a preset
+      // lets the person adjust the preset's days rather than start again from nothing.
+      if (chosen) {
+        draft.from = chosen.from;
+        draft.to = chosen.to;
+      }
+      paintCustom();
+      windowChanged();
     },
   });
 
@@ -266,15 +442,15 @@ export function render_() {
    */
   async function createRequest() {
     render(errorHost);
-    if (!draft.businessDate) {
-      setResult(result, "danger", "Chưa chọn ngày. Bản xuất luôn thuộc về một ngày làm việc cụ thể.");
+    if (!draft.from || !draft.to) {
+      setResult(result, "danger", "Chưa chọn khoảng ngày. Bản xuất luôn thuộc về những ngày cụ thể.");
       return;
     }
     setResult(result, "warn", "Đang ghi yêu cầu xuất…");
     try {
       const created = await request(`/internal/v1/stores/${encodeURIComponent(store)}/exports`, {
         method: "POST",
-        body: { business_date: draft.businessDate },
+        body: { business_date: draft.from, business_date_to: draft.to },
         idempotencyKey: requestSubmission.key(),
       });
       requestSubmission.reset();
@@ -285,7 +461,7 @@ export function render_() {
       setResult(result, null, null);
       toast(
         created.replayed
-          ? "Yêu cầu cho ngày này đã được ghi trước đó; không có yêu cầu mới nào được tạo."
+          ? "Yêu cầu cho khoảng này đã được ghi trước đó; không có yêu cầu mới nào được tạo."
           : "Đã ghi yêu cầu xuất. Chưa có dữ liệu nào ra khỏi hệ thống.",
       );
       paint();
@@ -360,8 +536,8 @@ export function render_() {
       remember();
       setResult(result, null, null);
       toast(
-        `Đã xuất ${produced.row_count} dòng cho ngày ${produced.business_date}. Bản ghi việc xuất ` +
-          "này đã vào sổ kiểm toán kèm phong bì duyệt.",
+        `Đã xuất ${produced.row_count} dòng cho ${windowVi(produced.business_date, produced.business_date_to)}. ` +
+          "Bản ghi việc xuất này đã vào sổ kiểm toán kèm phong bì duyệt.",
       );
       paint();
     } catch (error) {
@@ -370,7 +546,7 @@ export function render_() {
     }
   }
 
-  /** @returns {number} 0 choose a day · 1 ask for approval · 2 produce · 3 done */
+  /** @returns {number} 0 choose the days · 1 ask for approval · 2 produce · 3 done */
   function currentStep() {
     if (stage.produced) return 3;
     if (stage.approvalId) return 2;
@@ -399,7 +575,7 @@ export function render_() {
       stageHost,
       created
         ? section({
-            title: `Ngày ${String(created.business_date)}`,
+            title: servedWindow(created),
             children: h(
               "div",
               { class: "stack" },
@@ -438,7 +614,7 @@ export function render_() {
                     { class: "stack stack--tight" },
                     keyValues([
                       ["Số dòng", integer(produced.row_count)],
-                      ["Ngày làm việc", String(produced.business_date)],
+                      ["Khoảng ngày", windowVi(produced.business_date, produced.business_date_to)],
                       ["Xuất lúc", dateTime(produced.produced_at)],
                     ]),
                     h(
@@ -453,6 +629,10 @@ export function render_() {
               techDetails([
                 ["Mã yêu cầu", created.export_request_id, { copy: String(created.export_request_id) }],
                 ["Bộ dữ liệu", created.dataset],
+                [
+                  "Khoảng ngày",
+                  `${created.business_date} … ${created.business_date_to || created.business_date}`,
+                ],
                 ["Vân tay nội dung được duyệt", shortHash(created.rendered_hash)],
                 ["Cắt ngày theo", created.day_boundary || UNKNOWN],
                 ["Truy vấn", created.query_version],
@@ -529,18 +709,20 @@ export function render_() {
     h(
       "form",
       {
-        class: "form",
-        onSubmit: (event) => {
+        class: "form export-range",
+        onSubmit: (/** @type {Event} */ event) => {
           event.preventDefault();
           void createRequest();
         },
       },
-      labelled({
-        id: "export-date",
-        label: "Ngày làm việc cần xuất",
-        hint: "Theo giờ Việt Nam. Không có ngày mặc định — bạn chọn ngày nào thì bạn chịu trách nhiệm ngày đó.",
-        control: dateInput,
-      }),
+      picker,
+      customHost,
+      chosenHost,
+      h(
+        "p",
+        { class: "hint" },
+        "Đơn tính theo ngày mở đơn, giờ Việt Nam — không theo lúc thu tiền. Tối đa 92 ngày.",
+      ),
     ),
     verdict,
   );
@@ -550,10 +732,12 @@ export function render_() {
     setResult(
       result,
       "ok",
-      `Đang tiếp tục yêu cầu xuất cho ngày ${String(stage.created.business_date)}` +
+      `Đang tiếp tục yêu cầu xuất cho ${windowVi(stage.created.business_date, stage.created.business_date_to)}` +
         (stage.approvalId ? " · đã xin duyệt." : "."),
     );
   }
+  paintCustom();
+  paintChosen();
   paint();
 
   return h(
@@ -561,16 +745,24 @@ export function render_() {
     { class: "screen" },
     page({
       title: "Xuất dữ liệu",
-      subtitle: "Một ngày của cửa hàng · chủ tiệm duyệt",
+      subtitle: "Hồ sơ đơn theo ngày · chủ tiệm duyệt",
       info: infoButton(
         "Bản xuất này là gì?",
         h(
           "p",
           { class: "hint" },
-          "Lấy bản sao hồ sơ của chính cửa hàng cho một ngày: mã đơn, trạng thái, mốc thời gian và " +
-            "số tiền đã thu của những đơn mở trong ngày đó. Ngày cắt theo lúc mở đơn, nên tổng tiền " +
-            "trong tệp không bằng ô “tiền đã thu hôm nay” ở màn hình Hôm nay — ô đó cộng theo lúc " +
-            "thu. Mỗi lần xuất đều cần chủ tiệm duyệt và đều được ghi lại.",
+          "Lấy bản sao hồ sơ của chính cửa hàng cho một ngày hoặc một khoảng ngày (tối đa 92 ngày): " +
+            "mã đơn, trạng thái, mốc thời gian và số tiền đã thu của những đơn mở trong những ngày đó. " +
+            "Ngày cắt theo lúc mở đơn, nên tổng tiền trong tệp không bằng các ô “tiền đã thu hôm nay” " +
+            "ở màn hình Hôm nay — ô đó cộng theo lúc thu. Mỗi lần xuất đều cần chủ tiệm duyệt và đều " +
+            "được ghi lại.",
+        ),
+        h(
+          "p",
+          { class: "hint" },
+          "Không có khoảng ngày mặc định — bạn chọn khoảng nào thì bạn chịu trách nhiệm khoảng đó. " +
+            "Chủ tiệm duyệt đúng hai ngày đầu và cuối đã chọn; duyệt khoảng này không xuất được " +
+            "khoảng khác.",
         ),
         h(
           "p",
@@ -582,7 +774,7 @@ export function render_() {
       ),
     }),
     stepsHost,
-    section({ children: form }),
+    section({ title: "Khoảng ngày", children: form }),
     stageHost,
     result,
     errorHost,

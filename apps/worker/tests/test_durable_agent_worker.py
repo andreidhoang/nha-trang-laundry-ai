@@ -11,7 +11,6 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from nha_trang_laundry_contracts import (
-    AgentDataClassification,
     AgentDeploymentStage,
     AgentToolOperation,
     ReleaseCapability,
@@ -130,7 +129,6 @@ def enqueue_command(*, created_at: datetime | None = None) -> AgentRunEnqueueCom
         contact_binding_id=uuid4(),
         capability=ReleaseCapability.INTERNAL_SHADOW,
         deployment_stage=AgentDeploymentStage.SHADOW,
-        data_classification=AgentDataClassification.SYNTHETIC,
         runtime_registry_version="1.0.0-eval",
         runtime_registry_hash=f"sha256:{'a' * 64}",
         prompt_bundle_version="1.0.0-eval",
@@ -199,6 +197,9 @@ def test_durable_worker_claims_runs_persists_safe_tool_ledger_and_requires_human
             "terminal_code": "SYNTHETIC_SCRIPTED_DRAFT",
             "draft_character_count": len(draft_text),
             "tool_call_count": 1,
+            # F5: the policy decision that admitted the run to a model, recorded with it.
+            "policy_version": "synthetic-internal-v1",
+            "policy_reason_codes": ["SYNTHETIC_INTERNAL_ONLY"],
         },
     )
     assert tool_row is not None
@@ -232,7 +233,12 @@ def test_durable_worker_records_fail_closed_provider_rejection(
             (command.agent_run_id,),
         )
         row = cursor.fetchone()
-    assert row == ("FAILED", False, "POLICY_DENIED")
+    # AGENT-SHADOW-DEFECTS-001 F5 moved the refusal earlier. This read POLICY_DENIED, the runner's
+    # own release-gate refusal; the policy point now decides first, before the runner is reached,
+    # and a provider-backed runtime is never local synthetic Shadow, so it meets the conjunctive
+    # policy -- and no kill-switch row exists for the capability. Still FAILED, still fail-closed,
+    # one gate sooner and with the reason named.
+    assert row == ("FAILED", False, "POLICY_STORE_UNAVAILABLE")
 
 
 def test_durable_worker_preserves_timeout_run_for_human_recovery(

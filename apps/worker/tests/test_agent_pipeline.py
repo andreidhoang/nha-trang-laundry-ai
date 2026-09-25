@@ -31,7 +31,6 @@ from nha_trang_laundry_agent_tools.facade import (
 )
 from nha_trang_laundry_agent_tools.main import app as facade_app
 from nha_trang_laundry_contracts import (
-    AgentDataClassification,
     AgentDeploymentStage,
     ReleaseCapability,
 )
@@ -217,7 +216,6 @@ def enqueue(
         contact_binding_id=contact_binding_id or uuid4(),
         capability=ReleaseCapability.INTERNAL_SHADOW,
         deployment_stage=AgentDeploymentStage.SHADOW,
-        data_classification=AgentDataClassification.SYNTHETIC,
         runtime_registry_version=PINNED.pins.runtime_registry_version,
         runtime_registry_hash=REGISTRY_HASH,
         prompt_bundle_version=PINNED.pins.prompt_bundle_version,

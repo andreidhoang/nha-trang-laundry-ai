@@ -116,6 +116,63 @@ class ObligationState:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentRunPolicyRequest:
+    """Server-read facts about one claimed agent run. Nothing here is a model argument.
+
+    `data_classification` is the value the database derived from the run's input source
+    (migration 0050), not a label an enqueuer chose.
+    """
+
+    capability: ReleaseCapability
+    stage: AgentDeploymentStage
+    data_classification: AgentDataClassification
+    provider_backed: bool
+
+
+#: Version reported for the local synthetic Shadow boundary, shared with `evaluate_synthetic_tool`.
+SYNTHETIC_AGENT_RUN_POLICY_VERSION = "synthetic-internal-v1"
+
+#: The release gates each stage requires before any non-synthetic agent run may use a model.
+STAGE_REQUIRED_GATES: dict[AgentDeploymentStage, tuple[str, ...]] = {
+    AgentDeploymentStage.MANUAL_TRUTH: ("G1_INTERNAL_SHADOW_READY",),
+    AgentDeploymentStage.SHADOW: ("G1_INTERNAL_SHADOW_READY",),
+    AgentDeploymentStage.ASSISTED: ("G1_INTERNAL_SHADOW_READY", "G2_PUBLIC_ASSISTED_ENTRY"),
+    AgentDeploymentStage.BOUNDED: (
+        "G1_INTERNAL_SHADOW_READY",
+        "G2_PUBLIC_ASSISTED_ENTRY",
+        "G3_ASSISTED_EVIDENCE_COMPLETE",
+        "G4_BOUNDED_CAPABILITY_ENTRY",
+    ),
+}
+
+
+def _unavailable_snapshot(request: AgentRunPolicyRequest) -> CapabilityPolicySnapshot:
+    """What a missing policy row is: unavailable, and therefore denied."""
+
+    return CapabilityPolicySnapshot(
+        available=False,
+        malformed=False,
+        policy_version=None,
+        expected_policy_version="unavailable",
+        expires_at=None,
+        all_automation_enabled=None,
+        agent_processing_enabled=None,
+        agent_outbound_enabled=None,
+        channel_ingress_enabled=None,
+        enabled_capabilities=frozenset(),
+        capability=request.capability,
+        stage=request.stage,
+        required_gates=STAGE_REQUIRED_GATES[request.stage],
+        verified_gates=frozenset(),
+        release_authorized=False,
+        release_capability=None,
+        release_stage=None,
+        release_commit_sha=None,
+        deployed_commit_sha=None,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class PolicyDecision:
     outcome: PolicyOutcome
     reason_codes: tuple[PolicyReason, ...]
@@ -260,6 +317,119 @@ class PolicyDecisionPoint:
             PolicyOutcome.ALLOW,
             (PolicyReason.ALL_CONTROLS_VERIFIED,),
             snapshot.policy_version,
+            request.capability,
+            request.stage,
+        )
+
+    def evaluate_agent_run(
+        self,
+        request: AgentRunPolicyRequest,
+        snapshot: CapabilityPolicySnapshot | None,
+        authority: AuthorityBinding,
+        suppression: SuppressionState,
+        *,
+        now: datetime,
+    ) -> PolicyDecision:
+        """Decide, before any model call, whether one claimed agent run may use a model at all.
+
+        Before AGENT-SHADOW-DEFECTS-001 the conjunctive `evaluate` had no production caller and
+        nothing on the agent-run path read suppression (invariant #10). This is that caller:
+
+        - suppression is evaluated first and for every run; SUPPRESSED denies, UNKNOWN hands off;
+        - a local synthetic Shadow run -- synthetic data, SHADOW stage, INTERNAL_SHADOW, no
+          provider-backed runtime -- is decided on its obligations and authority binding alone,
+          exactly the boundary `evaluate_synthetic_tool` already permits at the Tool Facade;
+        - every other run (real-customer data, a provider-backed runtime, any other capability or
+          stage) goes through the full conjunctive `evaluate`: kill switches, stale or missing
+          policy, verified gates and a signed release manifest. None of those exists today, so
+          every such run is denied, which is the fail-closed reading.
+        """
+        try:
+            if (
+                not isinstance(request.capability, ReleaseCapability)
+                or not isinstance(request.stage, AgentDeploymentStage)
+                or not isinstance(request.data_classification, AgentDataClassification)
+                or not isinstance(request.provider_backed, bool)
+                or not isinstance(suppression, SuppressionState)
+                or now.tzinfo is None
+            ):
+                raise TypeError("invalid agent-run policy request")
+            if suppression is SuppressionState.SUPPRESSED:
+                return PolicyDecision(
+                    PolicyOutcome.DENY,
+                    (PolicyReason.SUPPRESSED,),
+                    None,
+                    request.capability,
+                    request.stage,
+                )
+            if not (
+                request.data_classification is AgentDataClassification.SYNTHETIC
+                and request.stage is AgentDeploymentStage.SHADOW
+                and request.capability is ReleaseCapability.INTERNAL_SHADOW
+                and request.provider_backed is False
+            ):
+                return self.evaluate(
+                    CapabilityPolicyRequest(request.capability, request.stage, False),
+                    snapshot if snapshot is not None else _unavailable_snapshot(request),
+                    authority,
+                    ObligationState(suppression, ApprovalState.NOT_REQUIRED),
+                    now=now,
+                )
+            return self._synthetic_shadow_run(request, authority, suppression)
+        except (AttributeError, TypeError, ValueError):
+            return PolicyDecision(
+                PolicyOutcome.DENY,
+                (PolicyReason.POLICY_INPUT_MALFORMED,),
+                None,
+                ReleaseCapability.INTERNAL_SHADOW,
+                AgentDeploymentStage.MANUAL_TRUTH,
+            )
+
+    @staticmethod
+    def _synthetic_shadow_run(
+        request: AgentRunPolicyRequest,
+        authority: AuthorityBinding,
+        suppression: SuppressionState,
+    ) -> PolicyDecision:
+        if not isinstance(authority.identity_authorized, bool) or not all(
+            isinstance(value, UUID)
+            for value in (
+                authority.tenant_id,
+                authority.authorized_tenant_id,
+                authority.contact_binding_id,
+                authority.authorized_contact_binding_id,
+            )
+        ):
+            raise TypeError("invalid authority binding")
+        denial: list[PolicyReason] = []
+        if not authority.identity_authorized:
+            denial.append(PolicyReason.IDENTITY_UNAUTHORIZED)
+        if authority.tenant_id != authority.authorized_tenant_id:
+            denial.append(PolicyReason.TENANT_MISMATCH)
+        if authority.contact_binding_id != authority.authorized_contact_binding_id:
+            denial.append(PolicyReason.CONTACT_BINDING_MISMATCH)
+        if authority.authorized_capability is not request.capability:
+            denial.append(PolicyReason.CAPABILITY_MISMATCH)
+        if denial:
+            return PolicyDecision(
+                PolicyOutcome.DENY,
+                tuple(denial),
+                SYNTHETIC_AGENT_RUN_POLICY_VERSION,
+                request.capability,
+                request.stage,
+            )
+        if suppression is SuppressionState.UNKNOWN:
+            return PolicyDecision(
+                PolicyOutcome.REQUIRE_HUMAN,
+                (PolicyReason.SUPPRESSION_UNKNOWN,),
+                SYNTHETIC_AGENT_RUN_POLICY_VERSION,
+                request.capability,
+                request.stage,
+            )
+        return PolicyDecision(
+            PolicyOutcome.ALLOW,
+            (PolicyReason.SYNTHETIC_INTERNAL_ONLY,),
+            SYNTHETIC_AGENT_RUN_POLICY_VERSION,
             request.capability,
             request.stage,
         )

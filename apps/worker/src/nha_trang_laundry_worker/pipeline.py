@@ -38,6 +38,7 @@ from nha_trang_laundry_db.agent_runs import AgentRunRepository
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_observability import EventSeverity, SafeStructuredLogger
 
+from .agent_run_policy import AgentRunPolicyGate
 from .agent_runner import (
     ROOT as REPOSITORY_ROOT,
 )
@@ -202,6 +203,7 @@ def build_agent_pipeline(
     evidence_sink: CapturingEvidenceSink | None = None,
     draft_recorder: DraftRecorder | None = None,
     now: Callable[[], datetime] | None = None,
+    policy_gate: AgentRunPolicyGate | None = None,
 ) -> AgentPipeline:
     """Compose existing parts into a runnable pipeline. This function creates no new authority."""
 
@@ -231,6 +233,7 @@ def build_agent_pipeline(
         logger=logger,
         terminal_evidence=lambda run_id: _safe_evidence(sink.take(run_id)),
         draft_recorder=draft_recorder if draft_recorder is not None else _record_draft_for_review,
+        policy_gate=policy_gate,
     )
     return AgentPipeline(
         runtime=runtime, worker=worker, transport=tool_transport, evidence_sink=sink

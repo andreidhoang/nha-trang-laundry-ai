@@ -38,6 +38,13 @@ class AgentRunAuthorizationError(PermissionError):
 
 @dataclass(frozen=True)
 class AgentRunEnqueueCommand:
+    """What an enqueuer may say about a run. Its data classification is not among it.
+
+    The database derives `data_classification` from the run's input source on insert
+    (0050_agent_run_authority.sql). It was accepted from the enqueuer before
+    AGENT-SHADOW-DEFECTS-001, and three gates trusted the label.
+    """
+
     agent_run_id: UUID
     source_webhook_event_id: UUID | None
     organization_id: UUID
@@ -47,7 +54,6 @@ class AgentRunEnqueueCommand:
     contact_binding_id: UUID
     capability: ReleaseCapability
     deployment_stage: AgentDeploymentStage
-    data_classification: AgentDataClassification
     runtime_registry_version: str
     runtime_registry_hash: str
     prompt_bundle_version: str
@@ -106,6 +112,11 @@ class AgentRunRepository:
     def enqueue(self, connection: Any, command: AgentRunEnqueueCommand) -> None:
         _validate_enqueue(command)
         occurred_at = command.created_at or datetime.now(UTC)
+        # Filled from the row the database wrote: the classification is derived, not supplied.
+        event_payload: dict[str, object] = {
+            "capability": command.capability.value,
+            "stage": command.deployment_stage.value,
+        }
 
         def mutation(cursor: Any) -> None:
             cursor.execute(
@@ -113,13 +124,14 @@ class AgentRunRepository:
                 INSERT INTO agent_runs (
                     id, source_webhook_event_id, organization_id, store_id, channel,
                     conversation_binding_id, contact_binding_id, capability, deployment_stage,
-                    data_classification, runtime_registry_version, runtime_registry_hash,
+                    runtime_registry_version, runtime_registry_hash,
                     prompt_bundle_version, prompt_bundle_hash, tool_contract_hash, status,
                     order_request_id, public_code, bound_row_version, created_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING',
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING',
                     %s, %s, %s, %s
                 )
+                RETURNING data_classification
                 """,
                 (
                     command.agent_run_id,
@@ -131,7 +143,6 @@ class AgentRunRepository:
                     command.contact_binding_id,
                     command.capability.value,
                     command.deployment_stage.value,
-                    command.data_classification.value,
                     command.runtime_registry_version,
                     command.runtime_registry_hash,
                     command.prompt_bundle_version,
@@ -143,6 +154,10 @@ class AgentRunRepository:
                     occurred_at,
                 ),
             )
+            row = cursor.fetchone()
+            if row is None:
+                raise AgentRunStateError("agent run was not recorded")
+            event_payload["data_classification"] = AgentDataClassification(str(row[0])).value
 
         commit_material_change(
             connection,
@@ -151,11 +166,7 @@ class AgentRunRepository:
                 aggregate_id=command.agent_run_id,
                 aggregate_version=1,
                 event_type="AGENT_RUN_ENQUEUED",
-                event_payload={
-                    "capability": command.capability.value,
-                    "stage": command.deployment_stage.value,
-                    "data_classification": command.data_classification.value,
-                },
+                event_payload=event_payload,
                 audit_action="AGENT_RUN_ENQUEUE",
                 actor_type="AGENT_RUNNER",
                 actor_id=None,
@@ -479,6 +490,84 @@ class AgentRunRepository:
         return agent_run_id
 
 
+@dataclass(frozen=True)
+class AgentRunPolicyFacts:
+    """Server-read facts the agent-run policy decision needs, read before any model call.
+
+    `suppression_states` holds every suppression state recorded for the run's contact, on any
+    channel and for any purpose; the worker folds them into one obligation.
+    `source_contact_binding_id` is the contact the run's source inbound event was bound to, if the
+    run has one. `gate` is the capability's row in `automation_execution_gates`, or `None` when no
+    row exists -- which the policy point treats as unavailable policy and denies.
+    """
+
+    data_classification: AgentDataClassification
+    suppression_states: tuple[str, ...]
+    has_source_event: bool
+    source_contact_binding_id: UUID | None
+    gate: dict[str, object] | None
+
+
+def read_agent_run_policy_facts(connection: Any, claimed: ClaimedAgentRun) -> AgentRunPolicyFacts:
+    """Read, in one transaction, what the policy point decides a claimed run on. Never a model."""
+
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT run.data_classification, run.source_webhook_event_id IS NOT NULL,
+                   inbound.contact_binding_id
+            FROM agent_runs AS run
+            LEFT JOIN webhook_events AS inbound ON inbound.id = run.source_webhook_event_id
+            WHERE run.id = %s
+            """,
+            (claimed.agent_run_id,),
+        )
+        run = cursor.fetchone()
+        if run is None:
+            raise AgentRunStateError("claimed agent run is unavailable")
+        cursor.execute(
+            "SELECT state FROM suppression_entries WHERE contact_binding_id = %s ORDER BY state",
+            (claimed.contact_binding_id,),
+        )
+        states = tuple(str(row[0]) for row in cursor.fetchall())
+        cursor.execute(
+            """
+            SELECT global_automation_enabled, agent_processing_enabled, agent_outbound_enabled,
+                   channel_ingress_enabled, capability_enabled, stage_policy_allows, pdp_allows,
+                   version, expires_at
+            FROM automation_execution_gates WHERE capability = %s
+            """,
+            (claimed.capability.value,),
+        )
+        gate_row = cursor.fetchone()
+    gate: dict[str, object] | None = None
+    if gate_row is not None:
+        gate = dict(
+            zip(
+                (
+                    "global_automation_enabled",
+                    "agent_processing_enabled",
+                    "agent_outbound_enabled",
+                    "channel_ingress_enabled",
+                    "capability_enabled",
+                    "stage_policy_allows",
+                    "pdp_allows",
+                    "version",
+                    "expires_at",
+                ),
+                gate_row,
+                strict=True,
+            )
+        )
+    return AgentRunPolicyFacts(
+        data_classification=AgentDataClassification(str(run[0])),
+        suppression_states=states,
+        has_source_event=bool(run[1]),
+        source_contact_binding_id=None if run[2] is None else _uuid(run[2]),
+        gate=gate,
+    )
+
+
 def _validate_enqueue(command: AgentRunEnqueueCommand) -> None:
     if command.deployment_stage is not AgentDeploymentStage.SHADOW:
         raise AgentRunStateError("only shadow-stage runs may be enqueued")
@@ -582,10 +671,12 @@ def request_fingerprint(arguments: dict[str, object]) -> str:
 __all__ = [
     "AgentRunAuthorizationError",
     "AgentRunEnqueueCommand",
+    "AgentRunPolicyFacts",
     "AgentRunRepository",
     "AgentRunStateError",
     "AgentRunStatus",
     "AgentToolCallLedgerEntry",
     "ClaimedAgentRun",
+    "read_agent_run_policy_facts",
     "request_fingerprint",
 ]

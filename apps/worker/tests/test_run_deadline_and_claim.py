@@ -36,12 +36,14 @@ from nha_trang_laundry_contracts import (
 )
 from nha_trang_laundry_db.agent_runs import (
     AgentRunEnqueueCommand,
+    AgentRunPolicyFacts,
     AgentRunRepository,
     AgentRunStateError,
     ClaimedAgentRun,
 )
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.stores import StoreRepository
+from nha_trang_laundry_worker.agent_run_policy import AgentRunPolicyGate
 from nha_trang_laundry_worker.agent_runner import (
     AgentRunJob,
     AgentRunner,
@@ -107,6 +109,22 @@ def _config() -> ResponsesRuntimeConfig:
             cached_input_cost_per_million_usd="0.25",
             output_cost_per_million_usd="2",
         ),
+    )
+
+
+def _synthetic_run_gate() -> AgentRunPolicyGate:
+    """The real policy point, fed what a synthetic run with no consent record reads as.
+
+    These tests use a fake repository and no database; the gate still decides (F5).
+    """
+    return AgentRunPolicyGate(
+        facts_reader=lambda _connection, claimed: AgentRunPolicyFacts(
+            data_classification=claimed.data_classification,
+            suppression_states=(),
+            has_source_event=False,
+            source_contact_binding_id=None,
+            gate=None,
+        )
     )
 
 
@@ -271,7 +289,11 @@ class _HangingRuntime:
 def test_a_timed_out_run_records_model_timeout_before_its_lease_expires() -> None:
     lease = RECORDING_MARGIN + timedelta(seconds=2)
     repository = _LeaseEnforcingRepository(lease=lease)
-    worker = DurableAgentRunWorker(AgentRunner(_issuer()), repository=repository)  # type: ignore[arg-type]
+    worker = DurableAgentRunWorker(
+        AgentRunner(_issuer()),
+        repository=repository,  # type: ignore[arg-type]
+        policy_gate=_synthetic_run_gate(),
+    )
     runtime = _HangingRuntime()
     try:
         result = worker.run_once(
@@ -304,7 +326,11 @@ def test_a_lost_claim_is_a_named_terminal_status_not_an_escaping_exception() -> 
             raise RuntimeError("boom")
 
     repository = _AlreadyRecovered(lease=timedelta(seconds=20))
-    worker = DurableAgentRunWorker(AgentRunner(_issuer()), repository=repository)  # type: ignore[arg-type]
+    worker = DurableAgentRunWorker(
+        AgentRunner(_issuer()),
+        repository=repository,  # type: ignore[arg-type]
+        policy_gate=_synthetic_run_gate(),
+    )
 
     result = worker.run_once(
         _NullConnection(),
@@ -327,7 +353,11 @@ def test_the_job_deadline_leaves_the_recording_margin_before_the_lease() -> None
             raise AssertionError("stop here")
 
     repository = _LeaseEnforcingRepository(lease=timedelta(seconds=20))
-    worker = DurableAgentRunWorker(_SpyRunner(_issuer()), repository=repository)  # type: ignore[arg-type]
+    worker = DurableAgentRunWorker(
+        _SpyRunner(_issuer()),
+        repository=repository,  # type: ignore[arg-type]
+        policy_gate=_synthetic_run_gate(),
+    )
     started = datetime.now(UTC)
     worker.run_once(
         _NullConnection(),
@@ -364,6 +394,7 @@ def test_the_provider_is_never_granted_more_time_than_the_job_has() -> None:
         input_text_for=lambda _: "khách hỏi",
         repository=repository,  # type: ignore[arg-type]
         draft_recorder=lambda *_: None,
+        policy_gate=_synthetic_run_gate(),
     )
 
     result = assembled.run_cycle(_NullConnection(), lambda: True)
@@ -618,7 +649,6 @@ def _enqueue(connection: psycopg.Connection[Any]) -> AgentRunEnqueueCommand:
         contact_binding_id=uuid4(),
         capability=ReleaseCapability.INTERNAL_SHADOW,
         deployment_stage=AgentDeploymentStage.SHADOW,
-        data_classification=AgentDataClassification.SYNTHETIC,
         runtime_registry_version="1.0.0-eval",
         runtime_registry_hash=config.runtime_registry_hash,
         prompt_bundle_version=config.prompt_bundle_version,
@@ -721,6 +751,7 @@ def test_a_hanging_runtime_thread_is_not_left_calling_the_provider() -> None:
         input_text_for=lambda _: "khách hỏi",
         repository=repository,  # type: ignore[arg-type]
         draft_recorder=lambda *_: None,
+        policy_gate=_synthetic_run_gate(),
     )
 
     result = assembled.run_cycle(_NullConnection(), lambda: True)

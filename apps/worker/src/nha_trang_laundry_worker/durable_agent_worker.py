@@ -25,6 +25,7 @@ from nha_trang_laundry_observability import (
     correlation_scope,
 )
 
+from .agent_run_policy import AgentRunPolicyGate
 from .agent_runner import (
     AgentRunJob,
     AgentRunner,
@@ -141,8 +142,11 @@ class DurableAgentRunWorker:
         logger: SafeStructuredLogger | None = None,
         terminal_evidence: Callable[[UUID], Mapping[str, Any] | None] | None = None,
         draft_recorder: DraftRecorder | None = None,
+        policy_gate: AgentRunPolicyGate | None = None,
     ) -> None:
         self._runner = runner
+        # Always present: the default reads PostgreSQL and fails closed on anything it cannot read.
+        self._policy_gate = policy_gate or AgentRunPolicyGate()
         self._repository = repository or AgentRunRepository()
         self._logger = logger or SafeStructuredLogger()
         # Supplied by the assembled pipeline so the run's redacted runtime evidence lands in the
@@ -169,6 +173,21 @@ class DurableAgentRunWorker:
         if claimed is None:
             return DurableAgentRunWorkerResult(None, "IDLE")
         with correlation_scope(context):
+            # Before the runner, before any model call: suppression, the derived classification, the
+            # kill switches and the release manifest (AGENT-SHADOW-DEFECTS-001 F5). A handoff is a
+            # refusal here too -- with no model call there is nothing for a human to review.
+            decision = self._policy_gate.decide(
+                connection, claimed, provider_backed=runtime.provider_backed, now=timestamp
+            )
+            if not decision.allowed:
+                return self._record_failure(
+                    connection,
+                    claimed,
+                    decision.reason_codes[0].value,
+                    correlation_id,
+                    timestamp,
+                    context,
+                )
             observer = _DatabaseToolCallObserver(
                 connection, self._repository, claimed, correlation_id
             )
@@ -199,6 +218,9 @@ class DurableAgentRunWorker:
                 "terminal_code": result.terminal_code,
                 "draft_character_count": len(result.draft_text),
                 "tool_call_count": result.tool_call_count,
+                # Which policy admitted the run to a model, and why.
+                "policy_version": decision.policy_version,
+                "policy_reason_codes": [reason.value for reason in decision.reason_codes],
             }
             runtime_evidence = self._drain_terminal_evidence(claimed.agent_run_id)
             if runtime_evidence is not None:

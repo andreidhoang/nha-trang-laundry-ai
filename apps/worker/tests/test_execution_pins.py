@@ -29,11 +29,13 @@ from nha_trang_laundry_contracts import (
 )
 from nha_trang_laundry_db.agent_runs import (
     AgentRunEnqueueCommand,
+    AgentRunPolicyFacts,
     AgentRunRepository,
     ClaimedAgentRun,
 )
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.stores import StoreRepository
+from nha_trang_laundry_worker.agent_run_policy import AgentRunPolicyGate
 from nha_trang_laundry_worker.agent_runner import (
     AgentRunJob,
     AgentRunner,
@@ -89,6 +91,22 @@ def _config(**overrides: Any) -> ResponsesRuntimeConfig:
     }
     values.update(overrides)
     return ResponsesRuntimeConfig(**values)
+
+
+def _synthetic_run_gate() -> AgentRunPolicyGate:
+    """The real policy point, fed what a synthetic run with no consent record reads as.
+
+    These tests use a fake repository and no database; the gate still decides (F5).
+    """
+    return AgentRunPolicyGate(
+        facts_reader=lambda _connection, claimed: AgentRunPolicyFacts(
+            data_classification=claimed.data_classification,
+            suppression_states=(),
+            has_source_event=False,
+            source_contact_binding_id=None,
+            gate=None,
+        )
+    )
 
 
 def _runner() -> AgentRunner:
@@ -210,6 +228,7 @@ def test_a_run_queued_for_another_release_fails_before_any_model_call(
         input_text_for=lambda _: "khách hỏi",
         repository=repository,  # type: ignore[arg-type]
         draft_recorder=lambda *_: None,
+        policy_gate=_synthetic_run_gate(),
     )
 
     result = assembled.run_cycle(_NullConnection(), lambda: True)
@@ -232,6 +251,7 @@ def test_a_run_queued_for_the_executing_release_proceeds_and_records_what_ran() 
         input_text_for=lambda _: "khách hỏi",
         repository=repository,  # type: ignore[arg-type]
         draft_recorder=lambda *_: None,
+        policy_gate=_synthetic_run_gate(),
     )
 
     result = assembled.run_cycle(_NullConnection(), lambda: True)
@@ -361,7 +381,6 @@ def _enqueue(connection: psycopg.Connection[Any], pins: ExecutionPins) -> AgentR
         contact_binding_id=uuid4(),
         capability=ReleaseCapability.INTERNAL_SHADOW,
         deployment_stage=AgentDeploymentStage.SHADOW,
-        data_classification=AgentDataClassification.SYNTHETIC,
         runtime_registry_version=pins.runtime_registry_version,
         runtime_registry_hash=pins.runtime_registry_hash,
         prompt_bundle_version=pins.prompt_bundle_version,

@@ -280,6 +280,12 @@ def test_every_board_figure_carries_the_version_of_the_query_that_produced_it(
         "refunded_vnd",
         "refund_count",
         "net_vnd",
+        # `collected-today-v3` (PAYMENT-001): the same money in, split by method.
+        "payment_count",
+        "cash_vnd",
+        "cash_count",
+        "transfer_vnd",
+        "transfer_count",
     }
     assert all(value >= 0 for value in numeric.values())
     assert takings["net_direction"] in ("IN", "OUT")

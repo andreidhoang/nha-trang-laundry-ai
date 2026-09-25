@@ -1257,6 +1257,7 @@ details.accordion[open] .accordion__meta {
 /* A text link in a group header ("Xem tất cả"). */
 .link-action {
   align-items: center;
+  white-space: nowrap;
   color: var(--brand-700);
   display: inline-flex;
   font-size: var(--text-sm);

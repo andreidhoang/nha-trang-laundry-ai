@@ -46,6 +46,16 @@ column list below is orders, timestamps, statuses and integer VND. `bound_contac
 though it is only an identifier: an export is the one artefact that leaves the system's own access
 controls behind, and a customer key in it is a customer key in a file nobody governs.
 
+**A window of days, since `EXPORT-RANGE-001`.** The owner and the accountant close a month, not a
+day, so a request names `[business_date, business_date_to]` -- at most 92 shop-local days, first
+day not after last. The window is a fact of the request row, so it is inside `snapshot_hash`, inside
+the statement the owner signs and inside the digests the release re-derives: an approval of the
+first week of January cannot release the second, because the second week has a different document.
+A one-day export (`business_date_to` absent or equal) is the pre-window shape exactly -- same facts,
+same sentence, same SQL, same query version -- so the digests of every request and envelope written
+before the window existed re-derive unchanged and still release. A window uses its own SQL and its
+own query version, cut on the same `orders.created_at` in the same timezone.
+
 The bytes are produced here and never stored. What is stored is `data_exports`: the approval that
 authorised the release, the versioned query that produced its columns, the row count and a digest of
 the bytes — written with its domain event, audit event and outbox record in one transaction under
@@ -198,6 +208,61 @@ EXPORT_QUERY = query_version(
     ",".join(EXPORT_EXCLUSIONS),
 )
 
+#: `EXPORT-RANGE-001`. The same rows as `_EXPORT_SQL`, for every shop-local day from the window's
+#: first to its last, inclusive -- the same boundary expression, the same timezone, the same joins
+#: and the same order, so a window is exactly the concatenation of its days' one-day files.
+#:
+#: A second statement rather than `_EXPORT_SQL` rewritten as a range, and that is a compatibility
+#: decision rather than an oversight. `EXPORT_QUERY` is hashed into the statement every one-day
+#: approval signs; rewriting its SQL would move that label and with it the rendered digest of every
+#: one-day request already written, so an envelope raised the minute before a deploy would stop
+#: releasing. Keeping the one-day rule byte-identical keeps one-day exports exactly as they were;
+#: a window is a new rule and gets a new identifier.
+_EXPORT_WINDOW_SQL = """
+    SELECT o.id, o.created_at, o.commercial_status, o.intake_status, o.production_status,
+           o.production_accepted_at, o.production_ready_at, o.production_released_at,
+           o.closed_at,
+           s.expected_total_vnd, s.paid_amount_vnd, s.attested_at,
+           o.balance_status, rf.refunded_amount_vnd, rf.refunded_at
+    FROM orders o
+    LEFT JOIN order_settlements s ON s.order_id = o.id
+    LEFT JOIN order_refunds rf ON rf.order_id = o.id
+    WHERE o.store_id = %(store)s
+      AND (o.created_at AT TIME ZONE %(zone)s)::date
+          BETWEEN %(business_date)s AND %(business_date_to)s
+    ORDER BY o.created_at, o.id
+"""
+
+#: The published version of the window rule. Same hashed inputs as `EXPORT_QUERY`, so widening the
+#: columns or moving the boundary moves both.
+EXPORT_WINDOW_QUERY = query_version(
+    "store-window-orders-export-v1",
+    _EXPORT_WINDOW_SQL,
+    BUSINESS_TIMEZONE,
+    EXPORT_DAY_BOUNDARY,
+    ",".join(EXPORT_COLUMNS),
+    ",".join(EXPORT_EXCLUSIONS),
+)
+
+#: The longest window, in shop-local days counted inclusively (spec `EXPORT-RANGE-001`: "at most 92
+#: days" -- a quarter). Repeated as a CHECK in migration `0054` so no path around this module can
+#: store a longer one.
+EXPORT_MAX_WINDOW_DAYS = 92
+
+#: The rows above the column header, in order: what a file on somebody's laptop needs to be traced
+#: back to the rule and the days that produced it. The same keys in every file -- one day or many --
+#: so a reader never has to guess where the column header is: it is always row
+#: `len(EXPORT_HEADER_KEYS) + 1`. They carry nothing the owner did not already sign (the query
+#: version, the window, the timezone and the boundary are all in the approved statement), which is
+#: why they are formatting and not part of the rendered digest.
+EXPORT_HEADER_KEYS: tuple[str, ...] = (
+    "export_query_version",
+    "business_date_from",
+    "business_date_to",
+    "business_timezone",
+    "day_boundary",
+)
+
 
 class ExportAuthorizationError(PermissionError):
     """Raised when a principal may not request or carry out an export for this store."""
@@ -211,13 +276,82 @@ class ExportStateError(ValueError):
         super().__init__(message)
 
 
+class ExportWindowError(ValueError):
+    """Raised when a requested window is reversed or longer than `EXPORT_MAX_WINDOW_DAYS`.
+
+    Bad input rather than state: nothing was written, and the person picks another window.
+    """
+
+    def __init__(self, message: str, *, reason_code: str) -> None:
+        self.reason_code = reason_code
+        super().__init__(message)
+
+
+def export_window(first: date, last: date | None) -> tuple[date, date | None]:
+    """The window a request stores: `(first, None)` for one day, `(first, last)` for more.
+
+    Pure. `last` absent or equal to `first` is one day and is normalised to `None`, so there is one
+    spelling of "one day" and it is the pre-window one (migration `0054` refuses the other). A last
+    day before the first, or a window longer than `EXPORT_MAX_WINDOW_DAYS` counted inclusively, is
+    refused by name; nothing is clipped, because a window the person did not choose is a window
+    nobody is accountable for having exported.
+    """
+    if last is None or last == first:
+        return first, None
+    if last < first:
+        raise ExportWindowError(
+            "the window's last day is before its first day", reason_code="EXPORT_WINDOW_REVERSED"
+        )
+    if (last - first).days + 1 > EXPORT_MAX_WINDOW_DAYS:
+        raise ExportWindowError(
+            f"an export window is at most {EXPORT_MAX_WINDOW_DAYS} days",
+            reason_code="EXPORT_WINDOW_TOO_LONG",
+        )
+    return first, last
+
+
 @dataclass(frozen=True, slots=True)
 class ExportRequestFacts:
-    """What the approval's `snapshot_hash` covers: which records, from which shop, for which day."""
+    """What the approval's `snapshot_hash` covers: which records, from which shop, for which day.
+
+    The one-day shape, unchanged since `OPS-BOARD-001`. Its three fields are exactly what every
+    one-day digest ever written was taken over, which is why a window does not add a nullable
+    fourth field here: `canonical_document` serialises every field, so even a `None` would move the
+    hash of every one-day request and orphan the envelopes already raised for them.
+    """
 
     dataset: str
     store_id: UUID
     business_date: str
+
+
+@dataclass(frozen=True, slots=True)
+class ExportWindowFacts:
+    """What a window's `snapshot_hash` covers: the one-day facts plus the window's last day.
+
+    `EXPORT-RANGE-001`. Both dates are inside the digest the envelope binds, so approving one window
+    can never release another -- not a later one, not a longer one, not the same first day alone.
+    """
+
+    dataset: str
+    store_id: UUID
+    business_date: str
+    business_date_to: str
+
+
+def _facts(
+    dataset: str, store_id: UUID, first: date, last: date | None
+) -> ExportRequestFacts | ExportWindowFacts:
+    if last is None:
+        return ExportRequestFacts(
+            dataset=dataset, store_id=store_id, business_date=first.isoformat()
+        )
+    return ExportWindowFacts(
+        dataset=dataset,
+        store_id=store_id,
+        business_date=first.isoformat(),
+        business_date_to=last.isoformat(),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,7 +364,7 @@ class ExportStatement:
     old wording cannot authorise the new one.
     """
 
-    facts: ExportRequestFacts
+    facts: ExportRequestFacts | ExportWindowFacts
     business_timezone: str
     #: Which event puts an order on the named day. In the hashed document because two figures in
     #: this system are called *tiền đã thu* and are cut differently; see `EXPORT_DAY_BOUNDARY`.
@@ -246,12 +380,15 @@ class ExportRequestCommand:
     store_id: UUID
     dataset: ExportDataset
     #: Named by the requester. There is deliberately no default: a day nobody chose is a day nobody
-    #: is accountable for having exported.
+    #: is accountable for having exported. Since `EXPORT-RANGE-001` it is the window's first day.
     business_date: date
     principal: StaffPrincipal
     correlation_id: UUID
     idempotency_key: str
     requested_at: datetime | None = None
+    #: The window's last day, inclusive. Absent, or equal to `business_date`, means one day -- the
+    #: pre-window request exactly, digests included.
+    business_date_to: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,6 +399,11 @@ class StoredExportRequest:
     store_id: UUID
     dataset: str
     business_date: date
+    #: The window's last day; equal to `business_date` for a one-day export. Always filled on the
+    #: way out so a reader never has to know that the row stores NULL for "the same day".
+    business_date_to: date
+    #: Shop-local days in the window, counted inclusively (1 for a one-day export).
+    window_days: int
     resource_type: str
     resource_version: int
     snapshot_hash: str
@@ -312,6 +454,8 @@ class ExportApprovalDisclosure:
     store_id: UUID
     dataset: str
     business_date: date
+    business_date_to: date
+    window_days: int
     business_timezone: str
     day_boundary: str
     columns: tuple[str, ...]
@@ -332,6 +476,7 @@ class ProducedExport:
     store_id: UUID
     approval_request_id: UUID
     business_date: date
+    business_date_to: date
     row_count: int
     content_hash: str
     query_version: str
@@ -362,16 +507,18 @@ class SanitizedExportRepository:
             raise ExportAuthorizationError(
                 "requesting an export requires an owner or approver role with MFA"
             )
+        # Validated before anything is written or keyed: a refused window leaves no idempotency
+        # record behind, so the corrected window can be sent under the same key.
+        first, last = export_window(command.business_date, command.business_date_to)
         requested_at = command.requested_at or datetime.now(UTC)
-        business_date = command.business_date.isoformat()
+        business_date = first.isoformat()
+        window_payload: dict[str, object] = (
+            {} if last is None else {"business_date_to": last.isoformat()}
+        )
 
         def create() -> dict[str, object]:
             export_request_id = uuid4()
-            facts = ExportRequestFacts(
-                dataset=command.dataset.value,
-                store_id=command.store_id,
-                business_date=business_date,
-            )
+            facts = _facts(command.dataset.value, command.store_id, first, last)
             snapshot = canonical_document(facts)
             statement = _statement(facts)
             rendered = canonical_document(statement)
@@ -386,15 +533,16 @@ class SanitizedExportRepository:
                 cursor.execute(
                     """
                     INSERT INTO export_requests (
-                        id, store_id, dataset, business_date, row_version,
+                        id, store_id, dataset, business_date, business_date_to, row_version,
                         snapshot_hash, rendered_hash, requested_by_staff_id, requested_at
-                    ) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, 1, %s, %s, %s, %s)
                     """,
                     (
                         export_request_id,
                         command.store_id,
                         command.dataset.value,
-                        command.business_date,
+                        first,
+                        last,
                         snapshot.snapshot_hash,
                         rendered.snapshot_hash,
                         command.principal.staff_user_id,
@@ -413,6 +561,7 @@ class SanitizedExportRepository:
                         "store_id": str(command.store_id),
                         "dataset": command.dataset.value,
                         "business_date": business_date,
+                        **window_payload,
                         "rendered_hash": rendered.snapshot_hash,
                     },
                     audit_action="EXPORT_REQUEST",
@@ -433,6 +582,7 @@ class SanitizedExportRepository:
                     audit_details={
                         "dataset": command.dataset.value,
                         "business_date": business_date,
+                        **window_payload,
                     },
                 ),
                 mutation,
@@ -444,7 +594,7 @@ class SanitizedExportRepository:
                 "requested_at": requested_at,
                 "columns": list(EXPORT_COLUMNS),
                 "excludes": list(EXPORT_EXCLUSIONS),
-                "query_version": EXPORT_QUERY.label,
+                "query_version": statement.query_version,
                 "day_boundary": statement.day_boundary,
                 "statement_vi": statement.statement_vi,
             }
@@ -454,10 +604,14 @@ class SanitizedExportRepository:
             IdempotentCommand(
                 scope=f"export-request:{command.store_id}",
                 key=command.idempotency_key,
+                # One day keeps the pre-window payload exactly, so a key first used before the
+                # window existed still replays; a window adds its last day, so reusing a key for a
+                # different window is a conflict rather than a replay of the other one.
                 payload={
                     "store_id": str(command.store_id),
                     "dataset": command.dataset.value,
                     "business_date": business_date,
+                    **window_payload,
                 },
                 occurred_at=requested_at,
             ),
@@ -468,7 +622,9 @@ class SanitizedExportRepository:
             export_request_id=UUID(str(response["export_request_id"])),
             store_id=command.store_id,
             dataset=command.dataset.value,
-            business_date=command.business_date,
+            business_date=first,
+            business_date_to=last or first,
+            window_days=_window_days(first, last),
             resource_type=APPROVAL_RESOURCE_TYPES[ApprovalAction.EXPORT_SANITIZED_DATA],
             resource_version=1,
             snapshot_hash=str(response["snapshot_hash"]),
@@ -506,7 +662,7 @@ class SanitizedExportRepository:
         cursor.execute(
             """
             SELECT e.id, e.store_id, e.dataset, e.business_date, e.requested_by_staff_id,
-                   e.requested_at
+                   e.requested_at, e.business_date_to
             FROM approval_requests r
             JOIN export_requests e ON e.id = r.resource_id
             WHERE r.id = %s AND r.action = %s AND r.resource_type = %s
@@ -528,19 +684,16 @@ class SanitizedExportRepository:
             error=ExportAuthorizationError,
         )
         business_date = row[3]
-        statement = _statement(
-            ExportRequestFacts(
-                dataset=str(row[2]),
-                store_id=store_id,
-                business_date=business_date.isoformat(),
-            )
-        )
+        last = row[6]
+        statement = _statement(_facts(str(row[2]), store_id, business_date, last))
         return ExportApprovalDisclosure(
             approval_request_id=approval_id,
             export_request_id=_uuid(row[0]),
             store_id=store_id,
             dataset=statement.facts.dataset,
             business_date=business_date,
+            business_date_to=last or business_date,
+            window_days=_window_days(business_date, last),
             business_timezone=statement.business_timezone,
             day_boundary=statement.day_boundary,
             columns=statement.columns,
@@ -563,7 +716,7 @@ class SanitizedExportRepository:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT store_id, dataset, business_date, requested_by_staff_id
+                SELECT store_id, dataset, business_date, requested_by_staff_id, business_date_to
                 FROM export_requests
                 WHERE id = %s
                 FOR UPDATE
@@ -599,6 +752,7 @@ class SanitizedExportRepository:
                 )
             binding = read_approval_binding(cursor, command.approval_request_id)
             business_date = row[2]
+            last = row[4]
             # The digests the approval is checked against are re-derived here, from the request's
             # own facts and from `EXPORT_COLUMNS`/`EXPORT_EXCLUSIONS` as they are *at release*.
             #
@@ -612,13 +766,7 @@ class SanitizedExportRepository:
             # signed now fails `EXPORT_APPROVAL_NOT_BOUND` instead of shipping. The stored pair
             # stays where it is, for display and for replaying the request -- storing rendered
             # content is fine, deciding from it is not.
-            released = _statement(
-                ExportRequestFacts(
-                    dataset=str(row[1]),
-                    store_id=store_id,
-                    business_date=business_date.isoformat(),
-                )
-            )
+            released = _statement(_facts(str(row[1]), store_id, business_date, last))
             _require_export_approval(
                 binding,
                 store_id=store_id,
@@ -638,17 +786,30 @@ class SanitizedExportRepository:
                 approval_request_id=command.approval_request_id,
                 defined_by=defined_by,
             )
+            # One day runs the one-day statement, byte for byte what it always ran; a window runs
+            # the window statement. The label written below is the one hashed into what was signed.
             cursor.execute(
-                _EXPORT_SQL,
+                _EXPORT_SQL if last is None else _EXPORT_WINDOW_SQL,
                 {
                     "store": store_id,
                     "zone": BUSINESS_TIMEZONE,
                     "business_date": business_date,
+                    "business_date_to": last or business_date,
                 },
             )
             rows = cursor.fetchall()
 
-        content = _csv_bytes(rows)
+        label = released.query_version
+        content = _csv_bytes(
+            rows,
+            header=(
+                label,
+                business_date.isoformat(),
+                (last or business_date).isoformat(),
+                BUSINESS_TIMEZONE,
+                EXPORT_DAY_BOUNDARY,
+            ),
+        )
         content_hash = f"sha256:{sha256(content.encode('utf-8')).hexdigest()}"
         export_id = uuid4()
 
@@ -665,7 +826,7 @@ class SanitizedExportRepository:
                     command.export_request_id,
                     store_id,
                     command.approval_request_id,
-                    EXPORT_QUERY.label,
+                    label,
                     len(rows),
                     content_hash,
                     command.principal.staff_user_id,
@@ -687,7 +848,7 @@ class SanitizedExportRepository:
                         "approval_request_id": str(command.approval_request_id),
                         "row_count": len(rows),
                         "content_hash": content_hash,
-                        "query_version": EXPORT_QUERY.label,
+                        "query_version": label,
                     },
                     audit_action="EXPORT_PRODUCE",
                     actor_type="STAFF",
@@ -713,7 +874,7 @@ class SanitizedExportRepository:
                         "export_request_id": str(command.export_request_id),
                         "row_count": len(rows),
                         "content_hash": content_hash,
-                        "query_version": EXPORT_QUERY.label,
+                        "query_version": label,
                     },
                 ),
                 mutation,
@@ -733,15 +894,16 @@ class SanitizedExportRepository:
             store_id=store_id,
             approval_request_id=command.approval_request_id,
             business_date=business_date,
+            business_date_to=last or business_date,
             row_count=len(rows),
             content_hash=content_hash,
-            query_version=EXPORT_QUERY.label,
+            query_version=label,
             content_csv=content,
             produced_at=executed_at,
         )
 
 
-def _statement(facts: ExportRequestFacts) -> ExportStatement:
+def _statement(facts: ExportRequestFacts | ExportWindowFacts) -> ExportStatement:
     """The document an owner approves, in the words they will read it in.
 
     The second sentence is the day boundary, and it is in the signed document rather than only in
@@ -750,7 +912,13 @@ def _statement(facts: ExportRequestFacts) -> ExportStatement:
     figure is cut on `order_settlements.attested_at`, and the two disagree by every order that was
     opened on one day and paid on another. Saying which one this is costs a sentence. Discovering
     it by subtracting two spreadsheets costs an afternoon and an argument about who is right.
+
+    A window (`EXPORT-RANGE-001`) is signed in its own words -- both days named, and how many -- and
+    under its own query version. The one-day document below is untouched, character for character:
+    it is what every one-day digest already written was taken over.
     """
+    if isinstance(facts, ExportWindowFacts):
+        return _window_statement(facts)
     return ExportStatement(
         facts=facts,
         business_timezone=BUSINESS_TIMEZONE,
@@ -785,6 +953,42 @@ class ExportRequestBinding:
     rendered_hash: str
 
 
+def _window_statement(facts: ExportWindowFacts) -> ExportStatement:
+    """The document an owner approves for a window of days: the one-day wording, window-shaped."""
+    days = _window_days(
+        date.fromisoformat(facts.business_date), date.fromisoformat(facts.business_date_to)
+    )
+    return ExportStatement(
+        facts=facts,
+        business_timezone=BUSINESS_TIMEZONE,
+        day_boundary=EXPORT_DAY_BOUNDARY,
+        columns=EXPORT_COLUMNS,
+        excludes=EXPORT_EXCLUSIONS,
+        query_version=EXPORT_WINDOW_QUERY.label,
+        statement_vi=(
+            "Xuất bản sao hồ sơ của chính cửa hàng cho các ngày từ "
+            f"{facts.business_date} đến hết {facts.business_date_to} ({days} ngày, theo giờ "
+            "Việt Nam): mã đơn, trạng thái, mốc thời gian, số tiền đã thu và số tiền đã hoàn lại "
+            "cho khách của những đơn MỞ trong các ngày đó. "
+            "Đơn đã thu tiền rồi bị huỷ và hoàn tiền vẫn hiện số tiền đã thu, kèm số tiền đã "
+            "hoàn và lúc hoàn trên cùng dòng — cả hai việc đều đã xảy ra. "
+            "Ngày được cắt theo lúc mở đơn, không phải theo lúc thu tiền: đơn mở hôm trước mà "
+            "thu tiền hôm sau vẫn nằm ở ngày mở, và đơn mở trước ngày đầu hay sau ngày cuối "
+            "không có trong tệp dù được thu tiền trong khoảng này. Vì vậy tổng tiền trong tệp "
+            "này không bằng tổng các ô “tiền đã thu hôm nay” trên màn hình Hôm nay — ô đó cộng "
+            "theo lúc thu. Hai con số trả lời hai câu hỏi khác nhau, không phải một con số sai. "
+            "Bản xuất không kèm lời khách phàn nàn, không kèm mô tả bằng chứng "
+            "và không kèm mã liên hệ của khách — những phần đó nằm trong lịch xoá dữ liệu, và một "
+            "bản sao mang ra ngoài sẽ không còn được lịch đó bảo vệ."
+        ),
+    )
+
+
+def _window_days(first: date, last: date | None) -> int:
+    """Shop-local days in a stored window, counted inclusively. Pure date arithmetic."""
+    return 1 if last is None else (last - first).days + 1
+
+
 def read_export_request_binding(
     cursor: Any, export_request_id: UUID
 ) -> ExportRequestBinding | None:
@@ -805,7 +1009,7 @@ def read_export_request_binding(
 
     cursor.execute(
         """
-        SELECT store_id, dataset, business_date, row_version
+        SELECT store_id, dataset, business_date, row_version, business_date_to
         FROM export_requests
         WHERE id = %s
         """,
@@ -814,13 +1018,7 @@ def read_export_request_binding(
     row = cursor.fetchone()
     if row is None:
         return None
-    statement = _statement(
-        ExportRequestFacts(
-            dataset=str(row[1]),
-            store_id=_uuid(row[0]),
-            business_date=row[2].isoformat(),
-        )
-    )
+    statement = _statement(_facts(str(row[1]), _uuid(row[0]), row[2], row[4]))
     return ExportRequestBinding(
         store_id=_uuid(row[0]),
         resource_version=int(row[3]),
@@ -948,8 +1146,14 @@ def _text(response: dict[str, object], key: str) -> str:
     return value
 
 
-def _csv_bytes(rows: list[tuple[Any, ...]]) -> str:
+def _csv_bytes(rows: list[tuple[Any, ...]], *, header: tuple[str, ...]) -> str:
     """Render the fetched rows as CSV, converting nothing and computing nothing.
+
+    `EXPORT-RANGE-001`: the file opens with one `key,value` row per `EXPORT_HEADER_KEYS` -- the
+    query version, the window's first and last day, the timezone and the day boundary -- then the
+    column header, then the orders. A file on somebody's laptop names the rule and the days that
+    produced it without the database beside it. Header values go through `_cell` like every other
+    cell: the file is sanitised as a whole, not only its body.
 
     Two rendering rules, both house style rather than taste. A null money cell is written empty and
     never as `0`: an order with no settlement has not been paid nothing, it has not been settled,
@@ -962,6 +1166,8 @@ def _csv_bytes(rows: list[tuple[Any, ...]]) -> str:
     """
     buffer = io.StringIO()
     writer = csv.writer(buffer)
+    for key, value in zip(EXPORT_HEADER_KEYS, header, strict=True):
+        writer.writerow([key, _cell(value)])
     writer.writerow(EXPORT_COLUMNS)
     for row in rows:
         writer.writerow([_cell(value) for value in row])
@@ -1030,9 +1236,12 @@ __all__ = [
     "EXPORT_COLUMNS",
     "EXPORT_DAY_BOUNDARY",
     "EXPORT_EXCLUSIONS",
+    "EXPORT_HEADER_KEYS",
+    "EXPORT_MAX_WINDOW_DAYS",
     "EXPORT_POLICY_VERSION",
     "EXPORT_QUERY",
     "EXPORT_ROLES",
+    "EXPORT_WINDOW_QUERY",
     "ExportApprovalDisclosure",
     "ExportAuthorizationError",
     "ExportDataset",
@@ -1040,8 +1249,11 @@ __all__ = [
     "ExportRequestBinding",
     "ExportRequestCommand",
     "ExportStateError",
+    "ExportWindowError",
+    "ExportWindowFacts",
     "ProducedExport",
     "SanitizedExportRepository",
     "StoredExportRequest",
+    "export_window",
     "read_export_request_binding",
 ]

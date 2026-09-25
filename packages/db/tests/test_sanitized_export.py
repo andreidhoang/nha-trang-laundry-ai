@@ -36,6 +36,7 @@ from nha_trang_laundry_db.approvals import (
 from nha_trang_laundry_db.exports import (
     EXPORT_COLUMNS,
     EXPORT_EXCLUSIONS,
+    EXPORT_HEADER_KEYS,
     EXPORT_QUERY,
     ExportAuthorizationError,
     ExportDataset,
@@ -313,6 +314,19 @@ def _local_date(moment: datetime) -> Any:
     from nha_trang_laundry_db.exports import BUSINESS_TIMEZONE
 
     return moment.astimezone(ZoneInfo(BUSINESS_TIMEZONE)).date()
+
+
+def _file_parts(content: str) -> tuple[dict[str, str], str, list[str]]:
+    """Split a produced file into its `key,value` header rows, its column header and its body.
+
+    `EXPORT-RANGE-001` put the query version and the window above the column header, in every file,
+    so the column header is always the line after `EXPORT_HEADER_KEYS` rather than the first line.
+    """
+    lines = content.splitlines()
+    count = len(EXPORT_HEADER_KEYS)
+    header_rows = dict(line.split(",", 1) for line in lines[:count])
+    assert list(header_rows) == list(EXPORT_HEADER_KEYS)
+    return header_rows, lines[count], lines[count + 1 :]
 
 
 def test_the_export_query_version_is_pinned_to_the_rule_it_names() -> None:
@@ -663,7 +677,12 @@ def test_an_approved_export_carries_the_order_facts_and_no_incident_free_text(
 
     content = produced.content_csv
     assert produced.row_count == 1
-    assert content.splitlines()[0] == ",".join(EXPORT_COLUMNS)
+    header_rows, columns, _ = _file_parts(content)
+    assert columns == ",".join(EXPORT_COLUMNS)
+    # A one-day file names its one day as both ends of the window, and the one-day rule.
+    assert header_rows["export_query_version"] == EXPORT_QUERY.label
+    assert header_rows["business_date_from"] == _local_date(shop.now).isoformat()
+    assert header_rows["business_date_to"] == _local_date(shop.now).isoformat()
     assert str(order_id) in content
     assert produced.query_version == EXPORT_QUERY.label
 
@@ -1039,11 +1058,10 @@ def test_the_export_does_not_publish_a_field_nothing_in_this_system_sets(
     )
 
     assert "incident_open" not in EXPORT_COLUMNS
-    header = produced.content_csv.splitlines()[0]
+    _, header, body = _file_parts(produced.content_csv)
     assert "incident_open" not in header
     assert header == ",".join(EXPORT_COLUMNS)
     # No bare `false` anywhere in the body either, which is the shape the old column took.
-    body = produced.content_csv.splitlines()[1:]
     assert body and all("false" not in line for line in body)
 
     # The incident really exists, so the column would have lied about this order specifically.
@@ -1243,7 +1261,7 @@ def test_a_paid_order_cancelled_with_a_refund_shows_the_refund_in_the_export(
         ),
     )
 
-    header, *body = produced.content_csv.splitlines()
+    _, header, body = _file_parts(produced.content_csv)
     assert header == ",".join(EXPORT_COLUMNS)
     assert len(body) == 1
     row = dict(zip(EXPORT_COLUMNS, body[0].split(","), strict=True))

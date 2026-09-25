@@ -32,7 +32,11 @@ from nha_trang_laundry_db.delivery_legs import (
     DeliveryLegKind,
     DeliveryLegOutcome,
 )
-from nha_trang_laundry_db.exports import ExportAuthorizationError, ExportStateError
+from nha_trang_laundry_db.exports import (
+    ExportAuthorizationError,
+    ExportStateError,
+    ExportWindowError,
+)
 from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import (
     IdentityStateError,
@@ -4752,8 +4756,14 @@ class DaySummaryResponse(BaseModel):
 class ExportRequestBody(StrictRequest):
     #: Named by the requester, with no default. A day nobody chose is a day nobody is accountable
     #: for having exported, and "unknown means stop" applies to a date exactly as it applies to a
-    #: price.
+    #: price. Since `EXPORT-RANGE-001` it is the window's first day.
     business_date: date
+    #: The window's last shop-local day, inclusive (`EXPORT-RANGE-001`, FR-RPT-003). Omitted, or
+    #: equal to `business_date`, is a one-day export exactly as before -- same digests, same file
+    #: rows. Before `business_date`, or more than 92 days in all, is refused with 422 by the
+    #: repository's `export_window`, never clipped: a window nobody chose is a window nobody is
+    #: accountable for.
+    business_date_to: date | None = None
 
 
 class ExportRequestResponse(BaseModel):
@@ -4763,6 +4773,10 @@ class ExportRequestResponse(BaseModel):
     store_id: UUID
     dataset: str
     business_date: date
+    #: The window's last day; equal to `business_date` for a one-day export. `window_days` is the
+    #: inclusive count, served so no console does calendar arithmetic on what the owner signs.
+    business_date_to: date
+    window_days: int
     #: What the caller takes to `POST /internal/v1/approvals` to raise the envelope. Handed back
     #: rather than recomputed by the client: the digests are what the owner approves, and a client
     #: that derived its own would be approving a document the server never stored.
@@ -4807,6 +4821,11 @@ class ExportRequestContentResponse(BaseModel):
     export_request_id: UUID
     dataset: str
     business_date: date
+    #: `EXPORT-RANGE-001`: both ends of the window the approver is signing, and how many days that
+    #: is. A row written before windows existed is one day, and reads back `business_date_to ==
+    #: business_date`, `window_days == 1`.
+    business_date_to: date
+    window_days: int
     business_timezone: str
     day_boundary: str
     columns: list[str]
@@ -4832,6 +4851,7 @@ class ExportExecutionResponse(BaseModel):
     store_id: UUID
     approval_request_id: UUID
     business_date: date
+    business_date_to: date
     row_count: int
     content_hash: str
     query_version: str
@@ -4976,6 +4996,7 @@ def request_export(
             store_id=store_id,
             principal=principal,
             business_date=request.business_date,
+            business_date_to=request.business_date_to,
             idempotency_key=idempotency_key,
         )
     except ExportAuthorizationError as error:
@@ -4989,6 +5010,8 @@ def request_export(
         store_id=stored.store_id,
         dataset=stored.dataset,
         business_date=stored.business_date,
+        business_date_to=stored.business_date_to,
+        window_days=stored.window_days,
         resource_type=stored.resource_type,
         resource_version=stored.resource_version,
         snapshot_hash=stored.snapshot_hash,
@@ -5046,6 +5069,8 @@ def read_export_request_for_approval(
         export_request_id=record.export_request_id,
         dataset=record.dataset,
         business_date=record.business_date,
+        business_date_to=record.business_date_to,
+        window_days=record.window_days,
         business_timezone=record.business_timezone,
         day_boundary=record.day_boundary,
         columns=list(record.columns),
@@ -5105,6 +5130,7 @@ def execute_export(
         store_id=produced.store_id,
         approval_request_id=produced.approval_request_id,
         business_date=produced.business_date,
+        business_date_to=produced.business_date_to,
         row_count=produced.row_count,
         content_hash=produced.content_hash,
         query_version=produced.query_version,
@@ -5136,6 +5162,13 @@ def _raise_export_error(error: Exception) -> NoReturn:
     """One refusal shape for the export surface, keeping the reason code the caller can act on."""
     if isinstance(error, (ExportAuthorizationError, StoreAccessError)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    if isinstance(error, ExportWindowError):
+        # `EXPORT-RANGE-001`: a reversed or over-long window is the person's input, and nothing
+        # was written. `INVALID` with the code, so the console says which of the two it was.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "INVALID", "reason_code": error.reason_code},
+        ) from error
     if isinstance(error, ExportStateError):
         if error.reason_code in _EXPORT_REQUIRES_HUMAN:
             raise HTTPException(

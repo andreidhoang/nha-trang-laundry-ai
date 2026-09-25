@@ -1,0 +1,70 @@
+schema_version: 1
+work_item: CONSENT-TRANSACTIONAL-001
+recorded_at: '2026-09-25T23:30:00+07:00'
+requirement_contract: 'DEC-033 (delegated): an exact STOP suppresses MARKETING and TRANSACTIONAL on its
+  channel; release only by OWNER/OPS_APPROVER with MFA on the customer''s own later inbound message; a
+  transactional send needs no suppression, a published policy and a CUSTOMER_INITIATED or OPEN_ORDER basis.'
+rollback_impact: Migration 0053 is forward-only and additive; the guards revert as code, leaving TRANSACTIONAL
+  rows inert. Publishing a new policy version changes the windows. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: Only provider event type MESSAGE with disposition NONE counts as a customer message
+  (no adapter exists to confirm). The customer-initiated basis is not store-scoped. The owner's publication
+  is the legal confirmation and is not done by this change.
+evidence:
+  a_stop_blocks_service_messages_on_that_channel: 'test_transactional_consent.py (40) and test_transactional_consent_postgres.py
+    (19); filmed: 38 ok, 0 failed'
+  a_block_lifts_only_on_the_customers_later_message: 'Release refused without a later inbound message,
+    for an operator, or across stores; marketing untouched. Filmed: the owner picks the message by its
+    time.'
+  a_service_send_needs_a_published_policy_and_a_provable_basis: Unpublished policy refuses MESSAGING_POLICY_UNPUBLISHED;
+    filmed with the owner's publish script.
+  enforced_at_prepare_attest_and_approval_raise: 'Two-connection race tests: a STOP during a prepare blocks
+    the attest; refused prepare writes nothing; 13 mutations each caught.'
+  walked_in_a_real_browser_against_the_real_api: 'scripts/verify_consent_walk.py, phone size: 38 ok, 0
+    failed; the draft and inbound messages are placed by the harness (AI off, no channel adapter) and
+    the film says so.'
+  rollback_assessment: Migration 0053 is forward-only and additive; the guards revert as code, leaving
+    TRANSACTIONAL rows inert. Publishing a new policy version changes the windows. Rolling data back is
+    docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before every
+    upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 643 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 316 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2472 passed, 4 skipped in 575.19s (0:09:35)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 71 served
+    internal API operations against their contract. Validated 457 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 147 source references, 33 decisions, 4 gates, 9 phases, 166 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 358 ok, 0 failed
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 78 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 187 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 187 ok, 0 failed
+- command: every workflow filmed at phone size on a database migrated from empty
+  status: PASSED
+  result: 'daily: 78 ok, 0 failed; money: 16 ok, 0 failed; exit: 22 ok, 0 failed; pricing: 23 ok, 0 failed;
+    band: 16 ok, 0 failed; prepaid: 19 ok, 0 failed; pickup_only: 19 ok, 0 failed; busy: 10 ok, 0 failed;
+    remedy: 29 ok, 0 failed; roles: 43 ok, 0 failed; hiring: 23 ok, 0 failed; resilience: 22 ok, 0 failed;
+    ai: 21 ok, 0 failed; consent: 38 ok, 0 failed'

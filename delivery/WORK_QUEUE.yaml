@@ -4801,9 +4801,9 @@ items:
   blocked_by_decisions: []
 - id: API-INTEGRITY-004
   phase: PRODUCTION_HARDENING
-  title: Deadlocks and serialization failures answer 503 DATABASE_BUSY; the worker's execution claim re-resolves
-    its resource
-  status: PENDING
+  title: Deadlocks and serialization failures answer 503 DATABASE_BUSY; the worker's
+    execution claim re-resolves its resource
+  status: COMPLETE
   priority: 308
   depends_on: []
   context_domains:
@@ -4829,9 +4829,10 @@ items:
   blocked_by_decisions: []
 - id: CONSENT-TRANSACTIONAL-001
   phase: PRODUCTION_HARDENING
-  title: A STOP blocks service messages on its channel; a block lifts only on the customer's later message;
-    a service send needs a published policy and a provable basis (DEC-033)
-  status: PENDING
+  title: A STOP blocks service messages on its channel; a block lifts only on the
+    customer's later message; a service send needs a published policy and a provable
+    basis (DEC-033)
+  status: COMPLETE
   priority: 309
   depends_on: []
   context_domains:
@@ -4861,7 +4862,7 @@ items:
 - id: ORDER-STEPS-001
   phase: PRODUCTION_HARDENING
   title: Server-derived next steps and composite business steps for orders
-  status: PENDING
+  status: COMPLETE
   priority: 310
   depends_on: []
   context_domains:
@@ -4888,9 +4889,9 @@ items:
   blocked_by_decisions: []
 - id: READ-ENRICH-001
   phase: PRODUCTION_HARDENING
-  title: 'Reads a task-first console needs: quote request/contact/mode, ticket numbers on lists, an order''s
-    legs and incidents'
-  status: PENDING
+  title: 'Reads a task-first console needs: quote request/contact/mode, ticket numbers
+    on lists, an order''s legs and incidents'
+  status: COMPLETE
   priority: 311
   depends_on: []
   context_domains:
@@ -4917,9 +4918,9 @@ items:
   blocked_by_decisions: []
 - id: CONSOLE-REDESIGN-000
   phase: PRODUCTION_HARDENING
-  title: 'Staff console V2 foundation: design tokens, component kit, light shell, five-slot tab bar, Thêm
-    screen'
-  status: PENDING
+  title: 'Staff console V2 foundation: design tokens, component kit, light shell,
+    five-slot tab bar, Thêm screen'
+  status: COMPLETE
   priority: 312
   depends_on: []
   context_domains:
@@ -4945,7 +4946,7 @@ items:
 - id: CONSOLE-REDESIGN-001
   phase: PRODUCTION_HARDENING
   title: ＋ Nhận đồ in three steps; Tiếp nhận and Báo giá as lists
-  status: PENDING
+  status: COMPLETE
   priority: 313
   depends_on:
   - CONSOLE-REDESIGN-000
@@ -4975,7 +4976,7 @@ items:
 - id: CONSOLE-REDESIGN-002
   phase: PRODUCTION_HARDENING
   title: Đơn hàng and the order page driven by the server's next steps
-  status: PENDING
+  status: COMPLETE
   priority: 314
   depends_on:
   - CONSOLE-REDESIGN-000
@@ -5006,7 +5007,7 @@ items:
 - id: CONSOLE-REDESIGN-003
   phase: PRODUCTION_HARDENING
   title: Hôm nay, Duyệt and Bảng trễ hạn on the V2 kit
-  status: PENDING
+  status: COMPLETE
   priority: 315
   depends_on:
   - CONSOLE-REDESIGN-000
@@ -5034,7 +5035,7 @@ items:
 - id: CONSOLE-REDESIGN-004
   phase: PRODUCTION_HARDENING
   title: Khiếu nại list and detail with the remedy flow inline
-  status: PENDING
+  status: COMPLETE
   priority: 316
   depends_on:
   - CONSOLE-REDESIGN-000
@@ -5063,8 +5064,9 @@ items:
   blocked_by_decisions: []
 - id: CONSOLE-REDESIGN-005
   phase: PRODUCTION_HARDENING
-  title: Bản nháp AI, Trợ lý AI, Ngoại lệ & gửi tay (with the DEC-033 consent card) on the V2 kit
-  status: PENDING
+  title: Bản nháp AI, Trợ lý AI, Ngoại lệ & gửi tay (with the DEC-033 consent card)
+    on the V2 kit
+  status: COMPLETE
   priority: 317
   depends_on:
   - CONSOLE-REDESIGN-000
@@ -5094,7 +5096,7 @@ items:
 - id: CONSOLE-REDESIGN-006
   phase: PRODUCTION_HARDENING
   title: Nhân sự, Hệ thống, Xuất dữ liệu, Việc chưa hỗ trợ on the V2 kit
-  status: PENDING
+  status: COMPLETE
   priority: 318
   depends_on:
   - CONSOLE-REDESIGN-000
@@ -5121,9 +5123,9 @@ items:
   blocked_by_decisions: []
 - id: CONSOLE-FILMED-REVIEW-002
   phase: PRODUCTION_HARDENING
-  title: Every workflow of the redesigned console filmed at phone size against the real API, reviewed
-    as a user and as an engineer, and every finding fixed
-  status: PENDING
+  title: Every workflow of the redesigned console filmed at phone size against the
+    real API, reviewed as a user and as an engineer, and every finding fixed
+  status: COMPLETE
   priority: 319
   depends_on:
   - CONSOLE-REDESIGN-001

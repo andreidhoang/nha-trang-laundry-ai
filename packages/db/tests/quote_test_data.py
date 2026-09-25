@@ -313,6 +313,7 @@ def accepted_quote(
     ticket_issued_at: datetime | None = None,
     lines: tuple[FixtureLine, ...] | None = None,
     pricebook: ConfigurationSnapshotReference | None = None,
+    customer_id: UUID | None = None,
 ) -> tuple[UUID, int, ImmutableQuoteSnapshot, UUID]:
     """Price a revision and accept it the way production does, returning the orderable revision.
 
@@ -333,15 +334,21 @@ def accepted_quote(
         connection, store_id=store_id, principal=principal, issued_at=ticket_issued_at
     )
     request_id = uuid4()
+    # `CUSTOMER-001`: an intake opened for a customer record, whose order inherits it. The column
+    # is named only when asked for, so the fixture still builds on a database migrated to before
+    # 0055 -- the populated-migration tests use it there.
+    customer_column, customer_value = (
+        ("", ()) if customer_id is None else (", customer_id", (customer_id,))
+    )
     with connection.cursor() as cursor:
         cursor.execute(
-            """
+            f"""
             INSERT INTO order_requests (
                 id, store_id, contact_binding_id, conversation_binding_id, status, row_version,
-                created_at
-            ) VALUES (%s, %s, %s, %s, 'SUBMITTED', 1, %s)
+                created_at{customer_column}
+            ) VALUES (%s, %s, %s, %s, 'SUBMITTED', 1, %s{", %s" if customer_value else ""})
             """,
-            (request_id, store_id, contact_id, uuid4(), PRICED_AT),
+            (request_id, store_id, contact_id, uuid4(), PRICED_AT, *customer_value),
         )
     estimate = make_quote_snapshot(identifier, 1, lines=lines, pricebook=pricebook)
     priced = build_quote_snapshot(

@@ -226,6 +226,40 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "predicate and the proposals selected WHERE store_id = %s AND incident_id = %s, so "
         "another store's incident is indistinguishable from one that does not exist.",
     ),
+    # --- CUSTOMER-001 (DEC-034) -----------------------------------------------------------------
+    # Role and MFA, then membership of the named store, before anything is read or written; every
+    # row is then selected WHERE store_id = the path's store, so another store's customer is
+    # indistinguishable from one that does not exist (404, not 403). The notice is global
+    # configuration, but the route is still gated on membership of the store it is read for.
+    ("GET", "/internal/v1/stores/{store_id}/customer-privacy-notice"): RouteScope(
+        "STORE_SCOPED",
+        ("customers", "CustomerRepository.authorize_read"),
+        "role and MFA, then membership of the named store, before the published notice is read.",
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/customers"): RouteScope(
+        "STORE_SCOPED",
+        ("customers", "CustomerRepository.search"),
+        "membership first; every mode selects WHERE c.store_id = %(store)s AND erased_at IS NULL, "
+        "the open-order count joined through the customer's own store.",
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/customers"): store_scoped(
+        "customers", "CustomerRepository.create"
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/customers/{customer_id}"): RouteScope(
+        "STORE_SCOPED",
+        ("customers", "CustomerRepository.detail"),
+        "membership first; the profile WHERE id AND store_id, orders WHERE o.store_id and "
+        "customer or linked reference of that store, credits WHERE c.store_id.",
+    ),
+    ("PATCH", "/internal/v1/stores/{store_id}/customers/{customer_id}"): store_scoped(
+        "customers", "CustomerRepository.update"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/customers/{customer_id}/erase"): store_scoped(
+        "customers", "CustomerRepository.erase"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/customers/{customer_id}/links"): store_scoped(
+        "customers", "CustomerRepository.link"
+    ),
     # --- CREDIT-PICK-001 / CONTACT-PICK-001 ----------------------------------------------------
     ("GET", "/internal/v1/stores/{store_id}/remedy-credits"): RouteScope(
         "STORE_SCOPED",

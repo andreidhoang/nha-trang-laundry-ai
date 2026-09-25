@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from nha_trang_laundry_domain.catalog import ActorRole
 
+from .customers import CustomerRepository
 from .identity import StaffPrincipal
 from .store_access import StoreAccessError, require_store_membership
 from .transactions import MaterialChange, OutboxEvent, commit_material_change
@@ -25,6 +26,9 @@ class CreateOrderRequestCommand:
     # The agent tool path audits as AGENT_RUNNER; the staff command path audits as STAFF, and
     # neither may impersonate the other. Same split as QuoteRevisionCommand.actor_type.
     actor_type: str = ActorRole.AGENT_RUNNER.value
+    #: `CUSTOMER-001`: the customer record the intake is opened for, when the counter picked one.
+    #: The order converted from it inherits the same record. `None` for a walk-in or a binding.
+    customer_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +80,10 @@ class OrderRequestSummary:
     #: The order this request became, once its quote was converted; null until then. A request has
     #: one quote and a quote converts into at most one order, so there is at most one.
     order_id: UUID | None = None
+    #: `CUSTOMER-001`: the customer record the intake was opened for, and the name they gave --
+    #: null when none, or once the record was erased. Read live, never copied into a ledger.
+    customer_id: UUID | None = None
+    customer_name: str | None = None
 
 
 #: The summary columns, one statement for the list and the read by id. The ticket is joined through
@@ -89,10 +97,13 @@ _SUMMARY_SELECT = """
                WHERE q.bound_order_request_id = req.id AND o.store_id = req.store_id
                ORDER BY o.created_at, o.id
                LIMIT 1
-           ) AS order_id
+           ) AS order_id,
+           req.customer_id, customer.display_name
     FROM order_requests req
     LEFT JOIN counter_tickets ticket
       ON ticket.id = req.contact_binding_id AND ticket.store_id = req.store_id
+    LEFT JOIN customers customer
+      ON customer.id = req.customer_id AND customer.store_id = req.store_id
 """
 
 
@@ -111,12 +122,25 @@ class OrderRequestRepository:
         request_id = uuid4()
 
         def mutation(cursor: Any) -> None:
+            if command.customer_id is not None:
+                # Same transaction: the customer's activity moves with the intake, or neither
+                # happens. An erased record or another store's is refused as not found, before
+                # anything is written.
+                CustomerRepository.touch_for_intake(
+                    cursor,
+                    store_id=command.store_id,
+                    customer_id=command.customer_id,
+                    at=command.created_at,
+                )
+            # The customer column is named only for an intake that has one, so an intake for a
+            # ticket or a binding is the same statement it was before 0055.
+            customer = () if command.customer_id is None else (command.customer_id,)
             cursor.execute(
-                """
+                f"""
                 INSERT INTO order_requests (
                     id, store_id, contact_binding_id, conversation_binding_id,
-                    status, row_version, created_at
-                ) VALUES (%s, %s, %s, %s, 'DRAFT', 1, %s)
+                    status, row_version, created_at{", customer_id" if customer else ""}
+                ) VALUES (%s, %s, %s, %s, 'DRAFT', 1, %s{", %s" if customer else ""})
                 """,
                 (
                     request_id,
@@ -124,6 +148,7 @@ class OrderRequestRepository:
                     command.contact_binding_id,
                     command.conversation_binding_id,
                     command.created_at,
+                    *customer,
                 ),
             )
 
@@ -134,7 +159,12 @@ class OrderRequestRepository:
                 aggregate_id=request_id,
                 aggregate_version=1,
                 event_type="ORDER_REQUEST_DRAFT_CREATED",
-                event_payload={"status": "DRAFT"},
+                # The customer's id when there is one -- an opaque key, never a name or a number.
+                event_payload=(
+                    {"status": "DRAFT"}
+                    if command.customer_id is None
+                    else {"status": "DRAFT", "customer_id": str(command.customer_id)}
+                ),
                 audit_action="ORDER_REQUEST_CREATE",
                 actor_type=command.actor_type,
                 actor_id=command.actor_id,
@@ -324,6 +354,10 @@ def _summary(row: Any) -> OrderRequestSummary:
         order_id=None
         if row[8] is None
         else (row[8] if isinstance(row[8], UUID) else UUID(str(row[8]))),
+        customer_id=None
+        if row[9] is None
+        else (row[9] if isinstance(row[9], UUID) else UUID(str(row[9]))),
+        customer_name=None if row[10] is None else str(row[10]),
     )
 
 

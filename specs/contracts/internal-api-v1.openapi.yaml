@@ -643,6 +643,145 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/customer-privacy-notice:
+    get:
+      operationId: read_customer_privacy_notice
+      summary: 'The customer privacy notice in force, or `published: false` until the owner publishes
+        one.'
+      x-authorization-dependencies:
+      - require_customer_reader
+      - get_customer_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/customers:
+    get:
+      operationId: search_customers
+      summary: Search this store's customers by full phone, last four digits, or name; newest first.
+      x-authorization-dependencies:
+      - require_customer_reader
+      - get_customer_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: create_customer
+      summary: Record a customer with consent. Refused `PRIVACY_NOTICE_UNPUBLISHED` until the notice is
+        out.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_customer_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/customers/{customer_id}:
+    get:
+      operationId: read_customer
+      summary: 'A customer''s page: profile, open orders, the last ten orders, unused credits, links.'
+      x-authorization-dependencies:
+      - require_customer_reader
+      - get_customer_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: update_customer
+      summary: Correct a record under `If-Match`; a marketing-consent change is a consent event.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_customer_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/customers/{customer_id}/erase:
+    post:
+      operationId: erase_customer
+      summary: Erase a customer's personal data (owner or approver, MFA). The orders stay.
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_customer_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/customers/{customer_id}/links:
+    post:
+      operationId: link_customer
+      summary: Attach a counter ticket or a channel binding this store served to the customer.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_customer_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/day-summary:
     get:
       operationId: day_summary

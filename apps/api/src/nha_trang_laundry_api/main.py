@@ -7,13 +7,15 @@ from hashlib import sha256
 from pathlib import Path
 from secrets import token_urlsafe
 from time import perf_counter
-from typing import Annotated, Literal, NoReturn, Self
+from typing import Annotated, Any, Literal, NoReturn, Self
 from urllib.parse import urlencode
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
 from nha_trang_laundry_db.approvals import (
@@ -27,6 +29,15 @@ from nha_trang_laundry_db.channel import ChannelBindingError
 from nha_trang_laundry_db.connection import DatabaseUnavailableError
 from nha_trang_laundry_db.consent_egress import EgressRefusedError
 from nha_trang_laundry_db.counter_tickets import CounterTicketError
+from nha_trang_laundry_db.customers import (
+    CUSTOMER_READ_ROLES,
+    CustomerChanges,
+    CustomerDetail,
+    CustomerNotFoundError,
+    CustomerPhoneExistsError,
+    CustomerProfile,
+    CustomerStateError,
+)
 from nha_trang_laundry_db.delivery_legs import (
     DeliveryLegError,
     DeliveryLegKind,
@@ -47,6 +58,7 @@ from nha_trang_laundry_db.identity import (
     StaffSubjectTakenError,
 )
 from nha_trang_laundry_db.intake import OrderRequestSummary
+from nha_trang_laundry_db.keyed_digest import HashKeyUnavailable
 from nha_trang_laundry_db.manual_sends import (
     ManualSendAuthorizationError,
     ManualSendStateError,
@@ -60,6 +72,7 @@ from nha_trang_laundry_db.orders import (
     OrderView,
     StoredOrder,
 )
+from nha_trang_laundry_db.personal_data import PersonalDataError
 from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
 from nha_trang_laundry_db.range_prices import RangePriceProposalIntegrityError
 from nha_trang_laundry_db.recent_contacts import (
@@ -112,6 +125,16 @@ from nha_trang_laundry_domain.catalog import (
     RewashReason,
     Unit,
 )
+from nha_trang_laundry_domain.customers import (
+    CUSTOMER_DECISION,
+    SEARCH_LIMIT,
+    CustomerKind,
+    CustomerRefusal,
+    CustomerRuleError,
+    ErasureReason,
+    LinkKind,
+    QueryMode,
+)
 from nha_trang_laundry_domain.order_steps import COMPOSITE_STEPS, OrderStep
 from nha_trang_laundry_domain.quote_composition import RequestedLine
 from nha_trang_laundry_domain.range_prices import RangePriceChoice
@@ -152,6 +175,12 @@ from nha_trang_laundry_api.auth import (
     AuthSettings,
     StaffIdentityService,
 )
+from nha_trang_laundry_api.customers import (
+    CUSTOMER_PATH_MARKER,
+    CustomerService,
+    CustomersUnavailable,
+    install_access_log_redaction,
+)
 from nha_trang_laundry_api.operations import (
     OperationsService,
     OperationsUnavailable,
@@ -173,6 +202,9 @@ from nha_trang_laundry_api.security import BrowserSecurityMiddleware, RequestSiz
 # nowhere. It is configured at import, before the first request can be served, because the browser
 # security boundary logs rejections during startup traffic too.
 configure_structured_logging()
+# CUSTOMER-001: a phone searched for travels in a query string, and uvicorn's access log prints the
+# request line verbatim. The filter drops the query string of every customer path from that log.
+install_access_log_redaction()
 
 _AUTH_SETTINGS = AuthSettings()
 app = FastAPI(
@@ -735,6 +767,12 @@ class OrderViewResponse(OrderResponse):
     #: and settlement rules against the order's stored facts. The console holds no transition
     #: table of its own; this list is the only source of which action to offer.
     next_steps: list[NextStepResponse]
+    #: `CUSTOMER-001`: the customer record the order was taken for, the name they gave, and
+    #: whether a phone is on record -- read live, so an erasure shows at once. A replayed step
+    #: result answers all three empty: the idempotency ledger never stores a name.
+    customer_id: UUID | None = None
+    customer_name: str | None = None
+    customer_has_phone: bool = False
 
 
 class ApprovalResponse(BaseModel):
@@ -3245,7 +3283,16 @@ class OrderRequestCreateRequest(StrictRequest):
     # source of contact bindings is the verified channel envelope, and this surface creates none.
     # There is deliberately no free-text field: the aggregate has no column for customer words,
     # and an intake request body is not a place to smuggle them.
-    contact_binding_id: UUID
+    contact_binding_id: UUID | None = None
+    #: `CUSTOMER-001`: the alternative to a binding or a ticket -- a customer record of this store.
+    #: The server issues the counter ticket for it in the same transaction. Exactly one of the two.
+    customer_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_reference(self) -> Self:
+        if (self.contact_binding_id is None) == (self.customer_id is None):
+            raise ValueError("name exactly one of contact_binding_id or customer_id")
+        return self
 
 
 class OrderRequestResponse(BaseModel):
@@ -3258,6 +3305,11 @@ class OrderRequestResponse(BaseModel):
     row_version: int
     created_at: datetime
     replayed: bool
+    #: `CUSTOMER-001`: set when the intake was opened for a customer record, with the ticket the
+    #: server issued for it.
+    customer_id: UUID | None = None
+    ticket_number: int | None = None
+    ticket_issued_on: date | None = None
 
 
 class OrderRequestSummaryResponse(BaseModel):
@@ -3273,6 +3325,9 @@ class OrderRequestSummaryResponse(BaseModel):
     ticket_number: int | None = None
     ticket_issued_on: date | None = None
     order_id: UUID | None = None
+    #: `CUSTOMER-001`: the customer record the intake was opened for, and their name, read live.
+    customer_id: UUID | None = None
+    customer_name: str | None = None
 
 
 @app.post(
@@ -3302,7 +3357,14 @@ def create_order_request(
             contact_binding_id=request.contact_binding_id,
             idempotency_key=idempotency_key,
             principal=principal,
+            customer_id=request.customer_id,
         )
+    except CustomerNotFoundError as error:
+        # An erased record, another store's, or none: the same refusal as an unknown binding.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "REQUIRE_HUMAN", "reason_codes": ["CUSTOMER_UNKNOWN"]},
+        ) from error
     except ChannelBindingError as error:
         # Same shape as the quote engine's refusal: the domain cannot proceed and a person must,
         # with the reason code intact rather than paraphrased.
@@ -3320,6 +3382,9 @@ def create_order_request(
         row_version=stored.row_version,
         created_at=stored.created_at,
         replayed=stored.replayed,
+        customer_id=stored.customer_id,
+        ticket_number=stored.ticket_number,
+        ticket_issued_on=stored.ticket_issued_on,
     )
 
 
@@ -3381,6 +3446,8 @@ def _order_request_summary_response(item: OrderRequestSummary) -> OrderRequestSu
         ticket_number=item.ticket_number,
         ticket_issued_on=item.ticket_issued_on,
         order_id=item.order_id,
+        customer_id=item.customer_id,
+        customer_name=item.customer_name,
     )
 
 
@@ -3486,6 +3553,593 @@ def list_recent_contacts(
             )
             for item in result.contacts
         ],
+    )
+
+
+# --- CUSTOMER-001: the shop's customer list, with consent (DEC-034) ----------------------------
+#
+# Search by full phone, last four digits or name; a customer's page with open orders, history,
+# unused credits and links; correct under If-Match; erase (owner or approver, MFA); link a ticket
+# or a binding this store served. Creating a record is refused `PRIVACY_NOTICE_UNPUBLISHED` until
+# the owner publishes the notice with `scripts/publish_privacy_notice.py`.
+#
+# No phone value in any error: every refusal is a code, a duplicate names the existing record's id,
+# and a validation failure on a customer path is answered without the `input` echo FastAPI would
+# otherwise put in it (`_customer_validation_failed`).
+
+
+def get_customer_service() -> CustomerService:
+    try:
+        return CustomerService(AuthSettings())
+    except CustomersUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="customer records unavailable"
+        ) from error
+
+
+def require_customer_reader(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """`DEC-034`: the operations roles and the auditor, with MFA. The auditor reads masked."""
+    if not principal.roles & CUSTOMER_READ_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("CUSTOMER_READ_ROLE_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+@app.exception_handler(RequestValidationError)
+async def _customer_validation_failed(request: Request, error: Exception) -> Response:
+    """A malformed customer request is answered without echoing what was sent.
+
+    FastAPI's default 422 carries each failing value as `input` -- and for a missing field the
+    `input` is the whole body, phone number included. On a customer path the location and the
+    message stay (the console attaches them to the field) and the values go. Every other path keeps
+    the framework's answer unchanged.
+    """
+    if not isinstance(error, RequestValidationError):
+        raise error
+    if CUSTOMER_PATH_MARKER not in request.url.path:
+        return await request_validation_exception_handler(request, error)
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        content={
+            "detail": [
+                {
+                    "type": str(item.get("type", "")),
+                    "loc": list(item.get("loc", ())),
+                    "msg": str(item.get("msg", "")),
+                }
+                for item in error.errors()
+            ]
+        },
+    )
+
+
+def _raise_customer_error(error: Exception) -> NoReturn:
+    if isinstance(error, StoreAccessError):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    if isinstance(error, CustomerNotFoundError):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found") from error
+    if isinstance(error, CustomerPhoneExistsError):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "reason_code": CustomerRefusal.CUSTOMER_PHONE_EXISTS.value,
+                "decision": CUSTOMER_DECISION,
+                "customer_id": str(error.customer_id),
+            },
+        ) from error
+    if isinstance(error, CustomerRuleError):
+        if error.code is CustomerRefusal.CUSTOMER_PHONE_EXISTS:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={"reason_code": error.code.value, "decision": CUSTOMER_DECISION},
+            ) from error
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "outcome": "NOT_SUPPORTED",
+                "reason_code": error.code.value,
+                "decision": CUSTOMER_DECISION,
+            },
+        ) from error
+    if isinstance(error, CustomerStateError):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
+    if isinstance(error, IdempotencyConflictError):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
+    if isinstance(error, (HashKeyUnavailable, PersonalDataError)):
+        # Fail closed: no key, no record -- and nothing about why that would help anyone guess.
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="customer records unavailable"
+        ) from error
+    raise error
+
+
+_CUSTOMER_ERRORS = (
+    StoreAccessError,
+    CustomerNotFoundError,
+    CustomerRuleError,
+    CustomerStateError,
+    IdempotencyConflictError,
+    HashKeyUnavailable,
+    PersonalDataError,
+)
+
+
+class CustomerCreateRequest(StrictRequest):
+    #: Any written form `normalize_phone` accepts (`0905 123 456`, `+84905123456`, `84…`, a
+    #: landline with its area code). Validated by the domain; refused `PHONE_INVALID`, never echoed.
+    phone: str = Field(max_length=40)
+    display_name: str | None = Field(default=None, max_length=200)
+    delivery_address: str | None = Field(default=None, max_length=600)
+    #: Laundry preferences only (≤ 200); the screen says not to write anything sensitive.
+    note: str | None = Field(default=None, max_length=400)
+    kind: CustomerKind = CustomerKind.RETAIL
+    #: The staff member's attestation that the customer heard the notice and agreed. Required true.
+    service_consent: StrictBool
+    #: Promotions, separately and off unless the customer asked (`DEC-034`).
+    marketing_consent: StrictBool = False
+
+
+class CustomerUpdateRequest(StrictRequest):
+    """A correction: only the fields present are applied; a present `null` clears it."""
+
+    phone: str | None = Field(default=None, max_length=40)
+    display_name: str | None = Field(default=None, max_length=200)
+    delivery_address: str | None = Field(default=None, max_length=600)
+    note: str | None = Field(default=None, max_length=400)
+    kind: CustomerKind | None = None
+    marketing_consent: StrictBool | None = None
+
+
+class CustomerEraseRequest(StrictRequest):
+    reason: ErasureReason
+
+
+class CustomerLinkRequest(StrictRequest):
+    link_kind: LinkKind
+    ref_id: UUID
+
+
+class PrivacyNoticeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: False until the owner runs `scripts/publish_privacy_notice.py`; then every field is set.
+    published: bool
+    version: int | None = None
+    notice_version: str | None = None
+    title: str | None = None
+    text: str | None = None
+    consent_sentence: str | None = None
+    service_consent_label: str | None = None
+    marketing_consent_label: str | None = None
+    retention_months: int | None = None
+    legal_entity: str | None = None
+
+
+class CustomerProfileResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer_id: UUID
+    store_id: UUID
+    display_name: str | None
+    #: National form for the roles that call customers; null for an auditor and once erased.
+    phone: str | None
+    phone_last4: str | None
+    phone_visible: bool
+    kind: CustomerKind
+    #: Null for an auditor (masked by role) and once erased.
+    delivery_address: str | None
+    note: str | None
+    marketing_consent: bool
+    marketing_consent_at: datetime | None
+    marketing_withdrawn_at: datetime | None
+    service_consent_at: datetime
+    service_consent_notice_version: int
+    last_activity_at: datetime
+    created_at: datetime
+    erased_at: datetime | None
+    erasure_reason: str | None
+    row_version: int
+
+
+class CustomerCommandResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The record as it is now -- never the idempotency ledger's copy, which holds no personal data.
+    customer: CustomerProfileResponse
+    replayed: bool
+
+
+class CustomerSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer_id: UUID
+    display_name: str | None
+    phone: str | None
+    phone_last4: str | None
+    phone_visible: bool
+    kind: CustomerKind
+    marketing_consent: bool
+    last_activity_at: datetime
+    open_order_count: int
+
+
+class CustomerSearchResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    #: Which search the query asked for: `PHONE`, `LAST4`, `NAME`, `EMPTY` (newest activity), or
+    #: `PHONE_INCOMPLETE` / `PHONE_INVALID` / `TOO_SHORT`, which search nothing.
+    mode: QueryMode
+    limit: int
+    truncated: bool
+    customers: list[CustomerSummaryResponse]
+
+
+class CustomerOrderResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    created_at: datetime
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    commercial: CommercialOrderStatus
+    intake: IntakeStatus
+    production: ProductionStatus
+    balance: str
+    fulfillment_mode: FulfillmentMode
+    self_collection_recorded: bool
+    required_delivery_legs_succeeded: bool
+    payable_total_vnd: int | None
+
+
+class CustomerCreditResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    credit_id: UUID
+    kind: str
+    amount_vnd: int
+    issued_at: datetime
+    issued_from_order_id: UUID
+    ticket_number: int | None
+    ticket_issued_on: date | None
+
+
+class CustomerLinkResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    link_id: UUID
+    link_kind: LinkKind
+    ref_id: UUID
+    linked_at: datetime
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    channels: list[str]
+
+
+class CustomerDetailResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer: CustomerProfileResponse
+    open_orders: list[CustomerOrderResponse]
+    open_orders_truncated: bool
+    #: The last ten orders, any state, newest first.
+    recent_orders: list[CustomerOrderResponse]
+    credits: list[CustomerCreditResponse]
+    credits_truncated: bool
+    links: list[CustomerLinkResponse]
+
+
+class CustomerLinkCommandResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    link_id: UUID
+    customer_id: UUID
+    replayed: bool
+
+
+def _customer_profile_response(profile: CustomerProfile) -> CustomerProfileResponse:
+    return CustomerProfileResponse(
+        customer_id=profile.customer_id,
+        store_id=profile.store_id,
+        display_name=profile.display_name,
+        phone=profile.phone,
+        phone_last4=profile.phone_last4,
+        phone_visible=profile.phone_visible,
+        kind=profile.kind,
+        delivery_address=profile.delivery_address,
+        note=profile.note,
+        marketing_consent=profile.marketing_consent,
+        marketing_consent_at=profile.marketing_consent_at,
+        marketing_withdrawn_at=profile.marketing_withdrawn_at,
+        service_consent_at=profile.service_consent_at,
+        service_consent_notice_version=profile.service_consent_notice_version,
+        last_activity_at=profile.last_activity_at,
+        created_at=profile.created_at,
+        erased_at=profile.erased_at,
+        erasure_reason=profile.erasure_reason,
+        row_version=profile.row_version,
+    )
+
+
+def _customer_detail_response(detail: CustomerDetail) -> CustomerDetailResponse:
+    def order(item: Any) -> CustomerOrderResponse:
+        return CustomerOrderResponse(
+            order_id=item.order_id,
+            created_at=item.created_at,
+            ticket_number=item.ticket_number,
+            ticket_issued_on=item.ticket_issued_on,
+            commercial=CommercialOrderStatus(item.commercial),
+            intake=IntakeStatus(item.intake),
+            production=ProductionStatus(item.production),
+            balance=item.balance,
+            fulfillment_mode=FulfillmentMode(item.fulfillment_mode),
+            self_collection_recorded=item.self_collection_recorded,
+            required_delivery_legs_succeeded=item.required_delivery_legs_succeeded,
+            payable_total_vnd=item.payable_total_vnd,
+        )
+
+    return CustomerDetailResponse(
+        customer=_customer_profile_response(detail.profile),
+        open_orders=[order(item) for item in detail.open_orders],
+        open_orders_truncated=detail.open_orders_truncated,
+        recent_orders=[order(item) for item in detail.recent_orders],
+        credits=[
+            CustomerCreditResponse(
+                credit_id=item.credit_id,
+                kind=item.kind,
+                amount_vnd=item.amount_vnd,
+                issued_at=item.issued_at,
+                issued_from_order_id=item.issued_from_order_id,
+                ticket_number=item.ticket_number,
+                ticket_issued_on=item.ticket_issued_on,
+            )
+            for item in detail.credits
+        ],
+        credits_truncated=detail.credits_truncated,
+        links=[
+            CustomerLinkResponse(
+                link_id=item.link_id,
+                link_kind=item.link_kind,
+                ref_id=item.ref_id,
+                linked_at=item.linked_at,
+                ticket_number=item.ticket_number,
+                ticket_issued_on=item.ticket_issued_on,
+                channels=list(item.channels),
+            )
+            for item in detail.links
+        ],
+    )
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/customer-privacy-notice",
+    response_model=PrivacyNoticeResponse,
+)
+def read_customer_privacy_notice(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_customer_reader)],
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+) -> PrivacyNoticeResponse:
+    """The customer privacy notice in force, or `published: false` until the owner publishes one."""
+    try:
+        published = service.notice(store_id=store_id, principal=principal)
+    except _CUSTOMER_ERRORS as error:
+        _raise_customer_error(error)
+    if published is None:
+        return PrivacyNoticeResponse(published=False)
+    notice = published.notice
+    return PrivacyNoticeResponse(
+        published=True,
+        version=published.version,
+        notice_version=notice.notice_version,
+        title=notice.title_vi,
+        text=notice.text_vi,
+        consent_sentence=notice.consent_sentence_vi,
+        service_consent_label=notice.service_consent_label_vi,
+        marketing_consent_label=notice.marketing_consent_label_vi,
+        retention_months=notice.retention_months,
+        legal_entity=notice.legal_entity,
+    )
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/customers",
+    response_model=CustomerSearchResponse,
+)
+def search_customers(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_customer_reader)],
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+    q: Annotated[str, Query(max_length=80)] = "",
+    limit: Annotated[int, Query(ge=1, le=100)] = SEARCH_LIMIT,
+) -> CustomerSearchResponse:
+    """Search this store's customers by full phone, last four digits, or name; newest first."""
+    try:
+        result = service.search(store_id=store_id, principal=principal, query=q, limit=limit)
+    except _CUSTOMER_ERRORS as error:
+        _raise_customer_error(error)
+    return CustomerSearchResponse(
+        store_id=result.store_id,
+        mode=result.mode,
+        limit=result.limit,
+        truncated=result.truncated,
+        customers=[
+            CustomerSummaryResponse(
+                customer_id=item.customer_id,
+                display_name=item.display_name,
+                phone=item.phone,
+                phone_last4=item.phone_last4,
+                phone_visible=item.phone_visible,
+                kind=item.kind,
+                marketing_consent=item.marketing_consent,
+                last_activity_at=item.last_activity_at,
+                open_order_count=item.open_order_count,
+            )
+            for item in result.customers
+        ],
+    )
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/customers",
+    response_model=CustomerCommandResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_customer(
+    store_id: UUID,
+    request: CustomerCreateRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+) -> CustomerCommandResponse:
+    """Record a customer with consent. Refused `PRIVACY_NOTICE_UNPUBLISHED` until the notice is out.
+
+    Other refusals, each a code: `SERVICE_CONSENT_REQUIRED`, `PHONE_INVALID`, the field bounds, and
+    409 `CUSTOMER_PHONE_EXISTS` with the existing record's id.
+    """
+    try:
+        result = service.create(
+            store_id=store_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            phone=request.phone,
+            display_name=request.display_name,
+            delivery_address=request.delivery_address,
+            note=request.note,
+            kind=request.kind,
+            service_consent=request.service_consent,
+            marketing_consent=request.marketing_consent,
+        )
+        profile = service.profile(
+            store_id=store_id, customer_id=result.customer_id, principal=principal
+        )
+    except _CUSTOMER_ERRORS as error:
+        _raise_customer_error(error)
+    return CustomerCommandResponse(
+        customer=_customer_profile_response(profile), replayed=result.replayed
+    )
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}",
+    response_model=CustomerDetailResponse,
+)
+def read_customer(
+    store_id: UUID,
+    customer_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_customer_reader)],
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+) -> CustomerDetailResponse:
+    """A customer's page: profile, open orders, the last ten orders, unused credits, links."""
+    try:
+        detail = service.detail(store_id=store_id, customer_id=customer_id, principal=principal)
+    except _CUSTOMER_ERRORS as error:
+        _raise_customer_error(error)
+    return _customer_detail_response(detail)
+
+
+@app.patch(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}",
+    response_model=CustomerCommandResponse,
+)
+def update_customer(
+    store_id: UUID,
+    customer_id: UUID,
+    request: CustomerUpdateRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> CustomerCommandResponse:
+    """Correct a record under `If-Match`; a marketing-consent change is a consent event."""
+    expected = _parse_if_match(if_match)
+    provided = frozenset(request.model_fields_set)
+    try:
+        result = service.update(
+            store_id=store_id,
+            customer_id=customer_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            expected_row_version=expected,
+            changes=CustomerChanges(
+                provided=provided,
+                phone=request.phone,
+                display_name=request.display_name,
+                delivery_address=request.delivery_address,
+                note=request.note,
+                kind=request.kind,
+                marketing_consent=request.marketing_consent,
+            ),
+        )
+        profile = service.profile(store_id=store_id, customer_id=customer_id, principal=principal)
+    except _CUSTOMER_ERRORS as error:
+        _raise_customer_error(error)
+    return CustomerCommandResponse(
+        customer=_customer_profile_response(profile), replayed=result.replayed
+    )
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}/erase",
+    response_model=CustomerCommandResponse,
+)
+def erase_customer(
+    store_id: UUID,
+    customer_id: UUID,
+    request: CustomerEraseRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> CustomerCommandResponse:
+    """Erase a customer's personal data (owner or approver, MFA). The orders stay."""
+    expected = _parse_if_match(if_match)
+    try:
+        result = service.erase(
+            store_id=store_id,
+            customer_id=customer_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            expected_row_version=expected,
+            reason=request.reason,
+        )
+        profile = service.profile(store_id=store_id, customer_id=customer_id, principal=principal)
+    except _CUSTOMER_ERRORS as error:
+        _raise_customer_error(error)
+    return CustomerCommandResponse(
+        customer=_customer_profile_response(profile), replayed=result.replayed
+    )
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}/links",
+    response_model=CustomerLinkCommandResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def link_customer(
+    store_id: UUID,
+    customer_id: UUID,
+    request: CustomerLinkRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+) -> CustomerLinkCommandResponse:
+    """Attach a counter ticket or a channel binding this store served to the customer."""
+    try:
+        result = service.link(
+            store_id=store_id,
+            customer_id=customer_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            link_kind=request.link_kind,
+            ref_id=request.ref_id,
+        )
+    except _CUSTOMER_ERRORS as error:
+        _raise_customer_error(error)
+    return CustomerLinkCommandResponse(
+        link_id=result.link_id, customer_id=result.customer_id, replayed=result.replayed
     )
 
 
@@ -4561,6 +5215,9 @@ def _order_view_response(view: OrderView, *, replayed: bool = False) -> OrderVie
             )
             for item in view.next_steps
         ],
+        customer_id=view.customer_id,
+        customer_name=view.customer_name,
+        customer_has_phone=view.customer_has_phone,
     )
 
 

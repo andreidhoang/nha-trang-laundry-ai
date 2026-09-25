@@ -251,6 +251,13 @@ class OrderView:
     #: `ORDER-STEPS-001`. The legal next steps, computed by `order_steps.next_steps` from the stored
     #: facts this row was read with -- the one computed field, and computed only by the domain.
     next_steps: tuple[NextStep, ...] = ()
+    #: `CUSTOMER-001`. The customer record the order was taken for (null for a walk-in ticket or a
+    #: channel binding with no record), the name they gave, and whether a phone is on record. Read
+    #: live on every read; a replayed step result, which the idempotency ledger stored, carries
+    #: none of the three -- a ledger row is append-only and a name must be erasable.
+    customer_id: UUID | None = None
+    customer_name: str | None = None
+    customer_has_phone: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,12 +339,17 @@ _ORDER_VIEW_SELECT: Final = (
            ) AS delivery_legs,
     """
     + _QUOTE_READINESS_COLUMNS
-    + """
+    + """,
+    -- CUSTOMER-001 (columns 27-29): the customer the order was taken for, read live. The name is
+    -- personal data an erasure removes, so it is never copied into a stored step result.
+    o.customer_id, cu.display_name, (cu.phone_digest IS NOT NULL) AS customer_has_phone
     FROM orders o
     JOIN quote_revisions r
       ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
     LEFT JOIN counter_tickets t
       ON t.id = o.bound_contact_id AND t.store_id = o.store_id
+    LEFT JOIN customers cu
+      ON cu.id = o.customer_id AND cu.store_id = o.store_id
 """
 )
 
@@ -1510,6 +1522,9 @@ def _order_view_row(row: tuple[object, ...]) -> OrderView:
         required_delivery_legs_succeeded=bool(row[16]),
         settlement_shape=None if row[21] is None else str(row[21]),
         next_steps=next_steps(_step_facts(row)),
+        customer_id=_uuid_or_none(row[27]),
+        customer_name=None if row[28] is None else str(row[28]),
+        customer_has_phone=bool(row[29]),
     )
 
 

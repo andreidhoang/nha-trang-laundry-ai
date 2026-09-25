@@ -36,6 +36,7 @@ from nha_trang_laundry_db.counter_tickets import (
     IssuedTicket,
     ticket_business_date,
 )
+from nha_trang_laundry_db.customers import CustomerNotFoundError, CustomerRepository
 from nha_trang_laundry_db.delivery_legs import (
     DeliveryLegKind,
     DeliveryLegOutcome,
@@ -487,6 +488,11 @@ class StoredOrderRequestResult:
     row_version: int
     created_at: datetime
     replayed: bool
+    #: `CUSTOMER-001`: set when the intake was opened for a customer record, together with the
+    #: counter ticket issued for it in the same transaction.
+    customer_id: UUID | None = None
+    ticket_number: int | None = None
+    ticket_issued_on: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2788,9 +2794,10 @@ class OperationsService:
         self,
         *,
         store_id: UUID,
-        contact_binding_id: UUID,
+        contact_binding_id: UUID | None,
         idempotency_key: str,
         principal: StaffPrincipal,
+        customer_id: UUID | None = None,
     ) -> StoredOrderRequestResult:
         """Open an intake draft bound to a contact the server already knows.
 
@@ -2821,6 +2828,15 @@ class OperationsService:
         Neither source is ever hard-deleted, so the existence answer cannot change between the
         preflight and the commit.
         """
+        if customer_id is not None:
+            return self._create_customer_order_request(
+                store_id=store_id,
+                customer_id=customer_id,
+                idempotency_key=idempotency_key,
+                principal=principal,
+            )
+        if contact_binding_id is None:
+            raise ValueError("an intake names a contact binding, a ticket or a customer")
         created_at = datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
             with connection.cursor() as cursor:
@@ -2869,6 +2885,82 @@ class OperationsService:
                         "store_id": str(store_id),
                         "contact_binding_id": str(contact_binding_id),
                     },
+                    occurred_at=created_at,
+                ),
+                commit,
+            )
+        return _stored_order_request_result(result.response, replayed=result.replayed)
+
+    def _create_customer_order_request(
+        self,
+        *,
+        store_id: UUID,
+        customer_id: UUID,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> StoredOrderRequestResult:
+        """`CUSTOMER-001`: open an intake for a customer record, with its paper ticket.
+
+        The customer still takes a numbered slip home -- pickup, the receipt and the order board's
+        ticket search all work on the ticket (`DEC-013`) -- so the counter ticket is issued here,
+        inside the same idempotent transaction as the intake, and the intake names both: the ticket
+        as its contact reference and the record as its customer. One press, one key; a replay
+        answers the same ticket and the same intake.
+        """
+
+        created_at = datetime.now(UTC)
+        with self._connection_factory(self._database_url) as connection:
+            with connection.cursor() as cursor:
+                require_store_membership(
+                    cursor,
+                    staff_user_id=principal.staff_user_id,
+                    store_id=store_id,
+                    error=StoreAccessError,
+                )
+                if not CustomerRepository.exists_active(
+                    cursor, store_id=store_id, customer_id=customer_id
+                ):
+                    raise CustomerNotFoundError("customer is not in this store")
+
+            def commit() -> dict[str, object]:
+                ticket = CounterTicketRepository().issue(
+                    connection,
+                    store_id=store_id,
+                    principal=principal,
+                    correlation_id=uuid4(),
+                    issued_at=created_at,
+                )
+                stored = OrderRequestRepository().create(
+                    connection,
+                    CreateOrderRequestCommand(
+                        store_id=store_id,
+                        contact_binding_id=ticket.ticket_id,
+                        conversation_binding_id=uuid4(),
+                        actor_id=principal.staff_user_id,
+                        correlation_id=uuid4(),
+                        created_at=created_at,
+                        actor_type="STAFF",
+                        customer_id=customer_id,
+                    ),
+                )
+                return {
+                    "order_request_id": str(stored.order_request_id),
+                    "store_id": str(store_id),
+                    "contact_binding_id": str(ticket.ticket_id),
+                    "status": stored.status,
+                    "row_version": stored.row_version,
+                    "created_at": created_at.isoformat(),
+                    "customer_id": str(customer_id),
+                    "ticket_number": ticket.ticket_number,
+                    "ticket_issued_on": ticket.issued_on.isoformat(),
+                }
+
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-order-request-create:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={"store_id": str(store_id), "customer_id": str(customer_id)},
                     occurred_at=created_at,
                 ),
                 commit,
@@ -3131,6 +3223,15 @@ def _stored_order_request_result(
         row_version=int(str(value["row_version"])),
         created_at=datetime.fromisoformat(str(value["created_at"])),
         replayed=replayed,
+        customer_id=None if value.get("customer_id") is None else UUID(str(value["customer_id"])),
+        ticket_number=(
+            None if value.get("ticket_number") is None else int(str(value["ticket_number"]))
+        ),
+        ticket_issued_on=(
+            None
+            if value.get("ticket_issued_on") is None
+            else date.fromisoformat(str(value["ticket_issued_on"]))
+        ),
     )
 
 

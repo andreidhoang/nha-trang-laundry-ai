@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "SQL-first PostgreSQL migrations and transactional control-plane primitives."
 requires-python = ">=3.12,<3.14"
 dependencies = [
+  "cryptography>=50.0.0,<51",
   "nha-trang-laundry-contracts",
   "nha-trang-laundry-domain",
   "opentelemetry-api>=1.36,<2",

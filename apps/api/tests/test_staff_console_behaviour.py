@@ -584,15 +584,20 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Mở đơn",
         "Chuyển trạng thái đơn này",
         "Phải thu",
-        # REMEDY-001. The five presses that take an incident to an outcome, plus the three
-        # sentences the guide tells staff to react to. Pinned for the same reason as the band
-        # procedure: this one is new to every staff member, it is performed with an unhappy
-        # customer at the counter, and it is the one place where reading the screen a step early
-        # -- the ceiling and the owner requirement, before speaking -- is the whole procedure. If
-        # the words on the taped page and the words on the screen drift apart they will go back to
-        # settling it verbally, which is the state this item ended.
-        "Đề xuất bồi hoàn",
-        "Đọc mức trần và thời hạn",
+        # REMEDY-001. The presses that take an incident to an outcome, plus the sentences the
+        # guide tells staff to react to. Pinned for the same reason as the band procedure: this one
+        # is new to every staff member, it is performed with an unhappy customer at the counter,
+        # and it is the one place where reading the screen a step early -- the ceiling and the
+        # owner requirement, before speaking -- is the whole procedure. If the words on the taped
+        # page and the words on the screen drift apart they will go back to settling it verbally,
+        # which is the state this item ended.
+        # CONSOLE-REDESIGN-004 retired "Đề xuất bồi hoàn" and "Đọc mức trần và thời hạn": the flow
+        # is on the complaint's own page and its figures are read without a press. What the guide
+        # now tells staff to press to record a complaint, choose the kind, and re-propose a claim
+        # that can no longer be paid is pinned instead.
+        "Ghi khiếu nại",
+        "Khách được gì?",
+        "Đề xuất lại",
         "Gửi đề nghị bồi hoàn",
         # REMEDY-GARMENT-001: which shirt, on a line of several priced per piece.
         "Món thứ mấy",

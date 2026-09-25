@@ -808,7 +808,24 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # one-liners and ⓘ bodies of the flow (no PII kept, no contact search, delivery fee rules,
     # credit use, source question).
     # 448 after merging the concurrent slices above (lead, at integration).
-    assert sum(counts.values()) == _registry()["total"] == 448
+    # 432 after CONSOLE-REDESIGN-004 (437 - 5) (Khiếu nại + bồi hoàn on the V2 kit; the remedy flow
+    # moved onto the incident page): -5 net, all DESCRIPTIVE, all in incidents.js / remedies.js.
+    # Re-keyed verbatim behind ⓘ as `hint` (not reworded): the record-only notice body, the
+    # SERVICE_QUALITY guardrail, the remedies lede and "never type a ceiling" guardrail, the loss,
+    # refunded-order, owner-envelope, bearer-credit and both replay notices. New: the tier-1
+    # "chưa quyết ai lỗi" line, the fault-attestation one-liner and its ⓘ, the /remedies ⓘ.
+    # Reworded because the behaviour changed: the category note (no picker, said without tokens),
+    # "remedy is a separate command on the Bồi hoàn screen" (it is on the complaint's own page),
+    # "re-read by pressing" (there is no read button) and "propose again below" (the form is above).
+    # Retired: the "read an incident above" placeholder and the options card's null-credit hint
+    # (the thing no longer exists; the fact stays in PLAN_NOTE.CREDIT_UNAVAILABLE), the options
+    # guardrail (merged into the figures' ⓘ hint, same fact), the incident replay notice (its fact
+    # is the toast), and the notice titles now rendered as alert titles / ⓘ topics.
+    # 430 after CONSOLE-REDESIGN-004's second step (432 - 2): the transitional credit-redemption
+    # panel left `#/remedies` (spending a credit moves onto the quote receipt in `#/new`,
+    # CONSOLE-REDESIGN-001), taking its guardrail and its "phiếu đã dùng xong" hint with it.
+    # 441 after merging the concurrent slices above (lead, at integration).
+    assert sum(counts.values()) == _registry()["total"] == 441
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

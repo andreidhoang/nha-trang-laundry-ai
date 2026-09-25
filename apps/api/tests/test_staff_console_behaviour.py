@@ -553,7 +553,7 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
 
     # Every control the guide tells staff to press, and every message it tells them how to react to.
     quoted = [
-        # CONSOLE-REDESIGN-001: the counter's intake is one flow on ＋ Nhận đồ now -- the walk-in
+        # CONSOLE-REDESIGN-001: the counter's intake is one flow on Nhận đồ now -- the walk-in
         # press, the channel customer's manual code, resuming a waiting ticket, and the one press
         # that records the customer's agreement and creates the order.
         "Khách vãng lai — phát phiếu",

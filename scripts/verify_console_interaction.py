@@ -815,7 +815,7 @@ CLOSED_REVISION = {
 }
 
 
-#: CONSOLE-REDESIGN-001. The ordinary quote ＋ Nhận đồ prices in sections 1-3 and 7: a weight-priced
+#: CONSOLE-REDESIGN-001. The ordinary quote Nhận đồ prices in sections 1-3 and 7: a weight-priced
 #: service, an estimate nobody has agreed to yet, then the revision `accept_quote` derives from it.
 #: The accepted read carries `customer_accepted_at`, which is the only value the order create takes
 #: that the create response does not -- so the check in section 7 is that the console sends exactly
@@ -854,10 +854,20 @@ def exact_detail(revision: int) -> dict[str, object]:
 
     source = ACCEPTED_REVISION if revision == 2 else EXACT_REVISION
     return {
-        **{key: source[key] for key in (
-            "quote_id", "revision", "row_version", "finality", "status", "snapshot_hash",
-            "display_total_min_vnd", "display_total_max_vnd", "reason_codes",
-        )},
+        **{
+            key: source[key]
+            for key in (
+                "quote_id",
+                "revision",
+                "row_version",
+                "finality",
+                "status",
+                "snapshot_hash",
+                "display_total_min_vnd",
+                "display_total_max_vnd",
+                "reason_codes",
+            )
+        },
         "valid_until": "2026-09-26T03:00:00+00:00",
         "lines": [
             {
@@ -1617,7 +1627,12 @@ with sync_playwright() as playwright:
                     status=422,
                     content_type="application/json",
                     body=json.dumps(
-                        {"detail": {"outcome": "REQUIRE_HUMAN", "reason_codes": ["CAPACITY_UNVERIFIED"]}}
+                        {
+                            "detail": {
+                                "outcome": "REQUIRE_HUMAN",
+                                "reason_codes": ["CAPACITY_UNVERIFIED"],
+                            }
+                        }
                     ),
                 )
                 return
@@ -1686,10 +1701,18 @@ with sync_playwright() as playwright:
             elif "revision=2" in url:
                 body = {
                     **BAND_DETAIL,
-                    **{key: CLOSED_REVISION[key] for key in (
-                        "revision", "row_version", "finality", "status", "snapshot_hash",
-                        "display_total_min_vnd", "display_total_max_vnd",
-                    )},
+                    **{
+                        key: CLOSED_REVISION[key]
+                        for key in (
+                            "revision",
+                            "row_version",
+                            "finality",
+                            "status",
+                            "snapshot_hash",
+                            "display_total_min_vnd",
+                            "display_total_max_vnd",
+                        )
+                    },
                     "lines": [
                         {
                             **BAND_DETAIL["lines"][0],  # type: ignore[index]
@@ -1706,7 +1729,8 @@ with sync_playwright() as playwright:
             sent = json.loads(route.request.post_data or "{}")
             state.setdefault("quote_posts", []).append(sent)
             banded = any(
-                line.get("service_code") == "DC_AO_DAI_TRADITIONAL" for line in sent.get("lines", [])
+                line.get("service_code") == "DC_AO_DAI_TRADITIONAL"
+                for line in sent.get("lines", [])
             )
             if not banded:
                 # An ordinary weight-priced line: the engine prices it.
@@ -1758,7 +1782,7 @@ with sync_playwright() as playwright:
     page.route("**/internal/**", route_api)
     page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
     page.wait_for_timeout(1200)
-    # CONSOLE-REDESIGN-001: pricing happens inside ＋ Nhận đồ. One press issues the ticket and opens
+    # CONSOLE-REDESIGN-001: pricing happens inside Nhận đồ. One press issues the ticket and opens
     # the intake; the service is then picked from a sheet by its published name.
     page.locator("#new-walk-in").click()
     page.wait_for_timeout(1200)
@@ -1770,7 +1794,9 @@ with sync_playwright() as playwright:
     check(
         "one press issued the ticket and bound the intake, and the number is on screen",
         "Phiếu 1" in (page.locator("#new-ticket").text_content() or ""),
-        page.locator("#new-ticket").text_content() if page.locator("#new-ticket").count() else "absent",
+        page.locator("#new-ticket").text_content()
+        if page.locator("#new-ticket").count()
+        else "absent",
     )
     check(
         "there is no field to type a service code into",
@@ -2085,7 +2111,7 @@ with sync_playwright() as playwright:
         row.first.text_content() if row.count() else "no row",
     )
     check(
-        "and its row resumes ＋ Nhận đồ carrying the request id, not a form to fill in",
+        "and its row resumes Nhận đồ carrying the request id, not a form to fill in",
         row.count() == 1
         and (row.first.get_attribute("href") or "")
         == f"#/new?request={ORDER_REQUEST['order_request_id']}",
@@ -2093,7 +2119,8 @@ with sync_playwright() as playwright:
     )
     check(
         "no identifier is printed on the row",
-        row.count() == 1 and ORDER_REQUEST["order_request_id"][:8] not in (row.first.inner_text() or ""),
+        row.count() == 1
+        and ORDER_REQUEST["order_request_id"][:8] not in (row.first.inner_text() or ""),
     )
 
     row.first.click()
@@ -2247,13 +2274,17 @@ with sync_playwright() as playwright:
         "one press records the customer's acceptance first, of the revision on screen",
         len(state["accept_posts"]) == 1
         and state["accept_posts"][0]["body"]
-        == {"expected_current_revision": 1, "expected_snapshot_hash": EXACT_REVISION["snapshot_hash"]},
+        == {
+            "expected_current_revision": 1,
+            "expected_snapshot_hash": EXACT_REVISION["snapshot_hash"],
+        },
         repr(state["accept_posts"][:1]),
     )
     check(
         "a refused order stops the flow there and says why, at the button",
         len(state["order_posts"]) == 1
-        and "Cần người quyết định trước khi tạo đơn" in (page.locator("#new-confirm-result").inner_text() or "")
+        and "Cần người quyết định trước khi tạo đơn"
+        in (page.locator("#new-confirm-result").inner_text() or "")
         and "#/new" in page.url,
         page.locator("#new-confirm-result").inner_text()[:160],
     )

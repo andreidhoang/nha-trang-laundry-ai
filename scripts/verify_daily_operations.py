@@ -48,6 +48,7 @@ Point it at a shop that is meant to receive real orders and it will add them.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import pathlib
@@ -161,6 +162,17 @@ with sync_playwright() as pw:
             )
 
     page.on("response", _record)
+    #: What the console *sent* on each write, so the walk can show that the order was built from
+    #: the server's own answers and not from anything typed or pasted.
+    sent_bodies: list[tuple[str, str, str]] = []
+    page.on(
+        "request",
+        lambda req: (
+            sent_bodies.append((req.method, req.url.split("/internal")[-1], req.post_data or ""))
+            if "/internal/v1/" in req.url and req.method != "GET"
+            else None
+        ),
+    )
     page.on(
         "console",
         lambda m: errors.append(f"console.{m.type}: {m.text}") if m.type == "error" else None,
@@ -244,235 +256,197 @@ with sync_playwright() as pw:
         if line.strip():
             print(f"      {line.strip()[:110]}")
 
-    head(4, "TIẾP NHẬN — a walk-in arrives with a bag of laundry")
-    page.goto(f"{CONSOLE}#/order-requests", wait_until="networkidle")
-    page.wait_for_timeout(1200)
+    def last_call(method: str, suffix: str):
+        """The latest API response for a write whose path ends with `suffix`."""
+        hits = [c for c in api_calls if c[0] == method and c[2].split("?")[0].endswith(suffix)]
+        return hits[-1] if hits else None
+
+    def response_json(call) -> dict:
+        try:
+            return json.loads(call[3]) if call else {}
+        except (ValueError, TypeError):
+            return {}
+
+    def press(locator, *suffixes: str) -> list[dict]:
+        """Click, and return what the server answered to each write the press caused, in order.
+
+        The response listener above cannot read a body once the page has navigated away -- and
+        the flow's last press navigates to the new order -- so the answers are awaited here.
+        """
+        with contextlib.ExitStack() as stack:
+            waits = [
+                stack.enter_context(
+                    page.expect_response(
+                        lambda r, sfx=sfx: (
+                            r.request.method == "POST" and r.url.split("?")[0].endswith(sfx)
+                        ),
+                        timeout=20000,
+                    )
+                )
+                for sfx in suffixes
+            ]
+            locator.click()
+        answers = []
+        for wait in waits:
+            try:
+                response = wait.value
+                answers.append({"status": response.status, "json": response.json()})
+            except Exception as error:  # a refusal body or a timeout: reported, not raised
+                answers.append({"status": 0, "json": {}, "error": str(error)[:120]})
+        return answers
+
+    head(4, "NHẬN ĐỒ — a walk-in arrives with a bag of laundry")
+    page.goto(f"{CONSOLE}#/", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    page.locator("a[href='#/new']").locator("visible=true").first.click()
+    page.wait_for_timeout(1500)
     shot(page, "04-intake-empty.png")
 
-    ticket_btn = page.locator("button", has_text="Phát phiếu")
+    ticket_btn = page.locator("#new-walk-in")
     ok(
         "the counter can issue a ticket without typing anything about the customer",
-        ticket_btn.count() == 1,
+        ticket_btn.count() == 1
+        and "Khách vãng lai — phát phiếu" in (ticket_btn.inner_text() or ""),
     )
-    ticket_btn.first.click()
-    page.wait_for_timeout(1500)
-    contact = page.locator("#intake-contact")
-    ticket_ref = contact.input_value()
-    ok(
-        "issuing a ticket fills the customer reference by itself",
-        len(ticket_ref) == 36,
-        repr(ticket_ref),
-    )
-    row_text = page.locator(
-        "div.row", has=page.locator("button", has_text="Phát phiếu")
-    ).first.inner_text()
-    print(f"      counter says: {row_text.strip()[:120]}")
-    ok(
-        "and the counter is told a number to say out loud",
-        any(ch.isdigit() for ch in row_text),
-        repr(row_text.strip()[:80]),
-    )
-    shot(page, "05-ticket-issued.png")
-
-    page.locator("button[type=submit]", has_text="Ghi nhận tiếp nhận").first.click()
-    # Wait for the card the server's answer produces, not for a stopwatch. 1.500 ms is plenty on an
-    # idle laptop and not on a busy one: this step failed twice while a test suite was running
-    # beside it, and a verification script that reports a defect because the machine was busy is
-    # worse than no script. The rest of this walk still paces itself; this is the step that showed
-    # it mattered.
+    ticket_answer, intake_answer = press(ticket_btn.first, "/counter-tickets", "/order-requests")
     try:
-        page.wait_for_selector("text=Đã tiếp nhận", timeout=15000)
+        page.wait_for_selector("#new-ticket", timeout=15000)
     except Exception:
         page.wait_for_timeout(1500)
-    ok("the intake is recorded", "Đã tiếp nhận" in page.content())
-    shot(page, "06-intake-recorded.png")
-    quote_now = page.locator("#intake-quote-now")
-    ok("and offers a one-tap path to pricing", quote_now.count() == 1)
+    ticket = ticket_answer["json"]
+    intake = intake_answer["json"]
+    ticket_ref = str(ticket.get("ticket_id", ""))
+    hero = (
+        (page.locator("#new-ticket").inner_text() or "").strip()
+        if page.locator("#new-ticket").count()
+        else ""
+    )
+    print(f"      counter says: {hero[:120]!r}")
+    ok(
+        "one press issued the ticket and opened the intake for it",
+        len(ticket_ref) == 36 and intake.get("contact_binding_id") == ticket_ref,
+        f"ticket {ticket_ref} intake bound to {intake.get('contact_binding_id')}",
+    )
+    ok(
+        "and the counter is told the number to say out loud, big",
+        f"Phiếu {ticket.get('ticket_number')}" in hero.replace("\n", " "),
+        repr(hero[:80]),
+    )
+    ok("and no identifier is printed for the counter to copy", ticket_ref[:8] not in hero)
+    shot(page, "05-ticket-issued.png")
 
     head(5, "BÁO GIÁ — pricing the bag, including the 6 kg cliff")
-    quote_now.first.click()
-    page.wait_for_timeout(2000)
-    shot(page, "07-quote-prefilled.png")
-    ok(
-        "the quote screen prefills from the intake with no typing",
-        "Đang báo giá cho yêu cầu" in page.content(),
-    )
-
-    code = page.locator("#quote-line-0-code")
-    ok("the service is picked from the published pricebook, not typed", code.count() == 1)
-    options = code.locator("option").all_text_contents()
+    page.locator("#new-add-line").click()
+    page.wait_for_timeout(600)
+    services = page.locator("#new-picker [data-code]")
+    names = [n.strip() for n in services.all_inner_texts()]
+    ok("the service is picked from the published pricebook, not typed", services.count() > 10)
     print(
-        f"      pricebook offers {len(options)} services: "
-        + ", ".join(o.strip()[:28] for o in options[:4])
+        f"      pricebook offers {services.count()} services: "
+        + ", ".join(n.splitlines()[0][:28] for n in names[:4])
         + "…"
     )
-    code.select_option(index=1 if len(options) > 1 else 0)
-    page.wait_for_timeout(300)
-    qty = page.locator("#quote-line-0-qty")
-    qty.click()
+    wash = next((i for i, n in enumerate(names) if "Giặt sấy" in n), 0)
+    wash_code = services.nth(wash).get_attribute("data-code")
+    services.nth(wash).click()
+    page.wait_for_timeout(600)
+    shot(page, "07-quote-line.png")
+    ok(
+        "picking the service leaves the cursor in its quantity: no tap to type the weight",
+        page.evaluate("document.activeElement?.id") == "new-line-0-qty",
+        page.evaluate("document.activeElement?.id"),
+    )
     page.keyboard.type("5.9", delay=8)
     page.wait_for_timeout(600)
     ok(
         "typing a weight below 6 kg raises the cliff warning",
-        "Gần ngưỡng 6kg" in page.content() or "6kg" in page.content(),
+        "Gần ngưỡng 6kg" in page.content(),
         "the confirmed pricing rule is surfaced at the counter",
     )
     shot(page, "08-quote-cliff.png")
 
-    # Price it properly: clear the item line and use the by-weight service the shop actually sells.
-    labels = [o.strip() for o in options]
-    wash = next((i for i, o in enumerate(labels) if "Giặt sấy" in o or "giặt sấy" in o), 1)
-    code.select_option(index=wash)
-    page.wait_for_timeout(400)
+    qty = page.locator("#new-line-0-qty")
     qty.fill("")
     qty.click()
     page.keyboard.type("6.4", delay=8)
     page.wait_for_timeout(500)
-    print(f"      pricing '{labels[wash][:40]}' at 6.4 kg")
-    page.locator("button[type=submit]", has_text="Tính giá").first.click()
-    page.wait_for_timeout(2500)
+    print(f"      pricing '{names[wash].splitlines()[0][:40]}' ({wash_code}) at 6.4 kg")
+    (priced_answer,) = press(page.locator("#new-price"), "/quotes")
+    try:
+        page.wait_for_selector("#new-receipt .receipt", timeout=15000)
+    except Exception:
+        page.wait_for_timeout(2500)
+    page.wait_for_timeout(800)
     shot(page, "09-quote-result.png")
-    result_text = page.locator("main").first.inner_text()
-    ok(
-        "the server returns a price",
-        "₫" in result_text or "VND" in result_text.upper(),
-        [line_ for line_ in result_text.splitlines() if "₫" in line_][:2],
+    result_text = (
+        page.locator("#new-receipt").inner_text() if page.locator("#new-receipt").count() else ""
     )
-    print("\n  --- the quote as the counter reads it ---")
+    ok(
+        "the server returns a price, and the receipt shows it",
+        "128.000" in result_text.replace("\u00a0", " "),
+        [line_ for line_ in result_text.splitlines() if "₫" in line_][:3],
+    )
+    priced = priced_answer["json"]
+    quote_id = str(priced.get("quote_id", ""))
+    print("\n  --- the receipt as the counter reads it ---")
     for line in result_text.splitlines():
-        s = line.strip()
-        if s and any(k in s for k in ("₫", "Mã báo giá", "Bản", "ƯỚC TÍNH", "ĐÃ DUYỆT")):
-            print(f"      {s[:110]}")
+        if line.strip():
+            print(f"      {line.strip()[:110]}")
 
-    head(6, "CHỐT GIÁ — the customer agrees, and that becomes the only orderable price")
-    accept = page.locator("button", has_text="Khách đã chốt giá")
-    ok("the counter can attest that the customer agreed", accept.count() >= 1)
-    if accept.count():
-        accept.first.click()
-        page.wait_for_timeout(2000)
-        page.wait_for_timeout(1200)
-        heads = page.locator("h3").all_text_contents()
-        rev_heads = [h for h in heads if "Bản sửa đổi" in h]
-        m = None
-        accepted_revision = rev_heads[0].split()[-1] if rev_heads else "1"
-        print(f"      after accepting, the card heading reads: {rev_heads[:1]}")
-        ok(
-            "the card names the revision the counter must type into the order form",
-            accepted_revision == "2",
-            f"shows r{accepted_revision}; the accepted final is r2",
-        )
-        ok(
-            "the acceptance is recorded as the final price",
-            "Đã chốt" in page.content(),
-            [
-                line_.strip()
-                for line_ in page.locator("main").first.inner_text().splitlines()
-                if "chốt" in line_
-            ][:2],
-        )
-        shot(page, "10-quote-accepted.png")
-
-        # What the counter must carry to the order screen. The card renders shortened forms with the
-        # full value in a title/copy affordance, which is what an operator taps.
-        probe = page.evaluate("""() => {
-            const out = {ids: [], hashes: [], reasons: []};
-            document.querySelectorAll('[title]').forEach(el => {
-                const v = el.getAttribute('title') || '';
-                if (/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(v)) out.ids.push(v);
-                if (v.startsWith('JCS-SHA256-V1:')) out.hashes.push(v);
-            });
-            document.querySelectorAll('[data-copy-value],[data-value]').forEach(el => {
-                const v = el.getAttribute('data-copy-value') || el.getAttribute('data-value') || '';
-                if (v.startsWith('JCS-SHA256-V1:')) out.hashes.push(v);
-                if (/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(v)) out.ids.push(v);
-            });
-            document.querySelectorAll('.notice, .badge, [data-state]').forEach(el => {
-                const s = (el.innerText||'').trim();
-                if (s && s.length < 160) out.reasons.push(s);
-            });
-            return out;
-        }""")
-        print(f"      ids found on the card: {sorted(set(probe['ids']))[:4]}")
-        print(f"      hashes found: {[h[:34] + '…' for h in sorted(set(probe['hashes']))[:2]]}")
-        print("      why the price is still an estimate, as the screen explains it:")
-        for r in dict.fromkeys(probe["reasons"]):
-            if any(
-                k in r
-                for k in (
-                    "ƯỚC",
-                    "HUMAN",
-                    "CAPACITY",
-                    "TAX",
-                    "PROMOTION",
-                    "DELIVERY",
-                    "duyệt",
-                    "chưa",
-                )
-            ):
-                print(f"        · {r[:120]}")
-
-    head(7, "MANG SANG MÀN ĐƠN — the counter copies the quote's seal, as it must")
-    copyables = page.locator("span.copyable")
-    print(f"      {copyables.count()} copyable values on the quote card")
-    carried = {}
-    for i in range(copyables.count()):
-        item = copyables.nth(i)
-        shown = (item.locator("span.copyable__text").inner_text() or "").strip()
-        item.locator("button", has_text="Sao chép").click()
-        page.wait_for_timeout(300)
-        value = page.evaluate("() => navigator.clipboard.readText()")
-        carried[shown] = value
-        print(f"      copied {shown!r} -> {value[:46]}{'…' if len(value) > 46 else ''}")
-    quote_id = next((v for v in carried.values() if len(v) == 36 and v.count("-") == 4), "")
-    seal = next((v for v in carried.values() if v.startswith("JCS-SHA256-V1:")), "")
-    ok("the quote id can be carried to the order screen", bool(quote_id), str(quote_id))
-    ok("the quote's seal can be carried to the order screen", bool(seal), seal[:30])
-
-    head(8, "TẠO ĐƠN — the order, with where the customer came from")
-    page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
+    head(6, "XÁC NHẬN — where they heard of us, then one press: agreed, and the order exists")
+    page.locator("#new-next").click()
+    page.wait_for_timeout(900)
+    ok(
+        "the confirmation rests on 'Chưa biết' until somebody asks",
+        page.locator("#new-source button[aria-pressed='true']").get_attribute("data-value")
+        == "UNKNOWN",
+    )
+    page.locator("#new-source button[data-value='WALK_IN']").click()
+    shot(page, "10-confirm.png")
+    accept_answer, order_answer = press(page.locator("#new-confirm"), "/acceptance", "/orders")
+    try:
+        page.wait_for_url("**/#/orders/*", timeout=15000)
+    except Exception:
+        page.wait_for_timeout(2500)
     page.wait_for_timeout(1500)
-    page.locator("#order-contact").fill(ticket_ref)
-    if quote_id:
-        page.locator("#order-quote").fill(quote_id)
-    page.locator("#order-revision").fill(accepted_revision)
-    if seal:
-        page.locator("#order-hash").fill(seal)
-    page.locator("#order-source").select_option("WALK_IN")
-    page.locator("#order-accepted").fill("2026-09-09T09:00")
-    page.wait_for_timeout(300)
-    shot(page, "11-order-form.png")
-    form = page.locator("form.form").filter(has=page.locator("#order-source"))
-    form.locator("button[type=submit]").first.click()
-    page.wait_for_timeout(2500)
     shot(page, "12-order-created.png")
-    said = (form.locator("p.result, .notice, [data-state]").first.inner_text() or "").strip()
-    created = "Đã tạo đơn" in page.content()
-    for call in api_calls:
-        if call[0] == "POST" and call[2].endswith("/orders") and 200 <= call[1] < 300:
-            try:
-                order_id = json.loads(call[3]).get("order_id", "")
-            except (ValueError, TypeError):
-                order_id = ""
+    accepted = accept_answer["json"]
+    created = order_answer["json"]
+    order_id = str(created.get("order_id", ""))
+    seal = str(accepted.get("snapshot_hash", ""))
+    accepted_revision = str(accepted.get("revision", ""))
     print(f"      this walk's order: {order_id or '(not captured)'}")
-    ok("the order is created from the accepted quote", created, said[:160])
-    if not created:
-        print("      the refusal notice, as the counter reads it:")
-        for n in range(page.locator("div.notice").count()):
-            txt = (page.locator("div.notice").nth(n).inner_text() or "").strip()
-            if txt and (
-                "chối" in txt or "không" in txt.lower() or "Mã" in txt or "lỗi" in txt.lower()
-            ):
-                for line in txt.splitlines():
-                    if line.strip():
-                        print(f"        | {line.strip()[:150]}")
-        print(
-            f"      carried: quote={quote_id} rev={accepted_revision} "
-            f"seal={(seal or '')[:26]}… contact={ticket_ref}"
-        )
-        for m, s, u, b in api_calls:
-            if m == "POST" and "/orders" in u:
-                print(f"      API {m} {u} -> {s}")
-                print(f"      body: {b}")
+    ok(
+        "the customer's agreement is recorded as the final price, before the order",
+        accepted.get("status") == "ACCEPTED_FINAL",
+        f"r{accepted_revision} {accepted.get('status')}",
+    )
+    ok(
+        "the order is created from the accepted quote and opens by itself",
+        bool(order_id) and page.url.endswith(f"#/orders/{order_id}"),
+        page.url,
+    )
+    order_sent = next(
+        (
+            json.loads(b)
+            for m, u, b in reversed(sent_bodies)
+            if m == "POST" and u.endswith("/orders")
+        ),
+        {},
+    )
+    ok(
+        "every value the order needs came from the server's answers — nothing typed or pasted",
+        order_sent.get("bound_contact_id") == ticket_ref
+        and order_sent.get("quote_id") == quote_id
+        and str(order_sent.get("quote_revision")) == accepted_revision
+        and order_sent.get("quote_snapshot_hash") == seal
+        and order_sent.get("acquisition_source") == "WALK_IN"
+        and bool(order_sent.get("customer_final_quote_accepted_at")),
+        json.dumps(order_sent)[:200],
+    )
+    if not order_id:
+        for m, s_, u, b in api_calls[-8:]:
+            print(f"      API {m} {u} -> {s_} {b[:160]}")
 
     def move(dimension, target, label, slot=False):
         """Pick *this walk's* order off the board and move one dimension, as staff do.
@@ -592,46 +566,75 @@ with sync_playwright() as pw:
 
     head(15, "NHỮNG LẦN PHẢI TỪ CHỐI — what must not be possible at a counter")
 
-    # 1. An unknown customer code is refused, never quietly turned into a customer.
-    page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
+    # The console no longer has a form where somebody could paste a customer code, a quote id or a
+    # seal: Nhận đồ carries them. What these refusals prove is the server's, so they are asked of
+    # the server directly, through the same session and CSRF as the console.
+    def api_post(path: str, body: dict) -> dict:
+        return page.evaluate(
+            """async ({path, body}) => {
+            const jar = document.cookie.split('; ');
+            const csrf = jar.find(c => c.startsWith('staff_csrf='))?.split('=')[1];
+            const r = await fetch(path, {method: 'POST', credentials: 'include',
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf || '',
+                          'Idempotency-Key': 'daily-' + Math.random(), 'Origin': location.origin},
+                body: JSON.stringify(body)});
+            return {status: r.status, body: (await r.text()).slice(0, 200)};
+        }""",
+            {"path": path, "body": body},
+        )
+
+    # 1. An unknown customer code is refused, never quietly turned into a customer -- typed where a
+    # person really would type it, under "Nhập mã thủ công".
+    page.goto(f"{CONSOLE}#/new", wait_until="networkidle")
     page.wait_for_timeout(1200)
-    page.locator("#order-contact").fill("00000000-0000-4000-8000-000000000999")
-    page.locator("#order-quote").fill(quote_id or "00000000-0000-4000-8000-000000000001")
-    page.locator("#order-revision").fill("2")
-    page.locator("#order-hash").fill(seal or ("JCS-SHA256-V1:" + "0" * 64))
-    page.locator("#order-source").select_option("WALK_IN")
-    page.locator("#order-accepted").fill("2026-09-09T09:00")
-    f = page.locator("form.form").filter(has=page.locator("#order-source"))
-    f.locator("button[type=submit]").first.click()
+    page.locator("#new-channel-toggle").click()
+    page.locator("#new-contact").fill("00000000-0000-4000-8000-000000000999")
+    page.locator("#new-contact-submit").click()
     page.wait_for_timeout(1800)
-    last = [c for c in api_calls if c[0] == "POST" and c[2].endswith("/orders")][-1]
+    last = last_call("POST", "/order-requests")
     ok(
         "a customer code the shop never issued is refused, not created",
-        last[1] >= 400,
-        f"HTTP {last[1]} {last[3][:110]}",
+        bool(last) and last[1] >= 400 and "CONTACT_BINDING_UNKNOWN" in last[3],
+        f"HTTP {last[1]} {last[3][:110]}" if last else "no call",
+    )
+    unknown_order = api_post(
+        f"/internal/v1/stores/{STORE}/orders",
+        {
+            "bound_contact_id": "00000000-0000-4000-8000-000000000999",
+            "quote_id": quote_id or "00000000-0000-4000-8000-000000000001",
+            "quote_revision": 2,
+            "quote_snapshot_hash": seal or ("JCS-SHA256-V1:" + "0" * 64),
+            "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
+            "customer_final_quote_accepted_at": "2026-09-09T02:00:00+00:00",
+            "acquisition_source": "WALK_IN",
+        },
+    )
+    ok(
+        "and an order naming a customer the quote was not written for is refused too",
+        unknown_order["status"] >= 400,
+        f"HTTP {unknown_order['status']} {unknown_order['body'][:110]}",
     )
 
     # 2. The agreement this morning's order spent cannot be spent again, whatever seal is
-    # offered. This used to claim it proved the seal comparison; it never did, because the
-    # quote is already CONVERTED and the single-shot guard refuses first. The seal guard is
-    # proven on an OPEN quote by test_an_order_citing_a_seal_the_customer_never_agreed_is_refused
-    # in packages/db/tests/test_order_transition_scoping.py.
-    page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
-    page.wait_for_timeout(1200)
-    page.locator("#order-contact").fill(ticket_ref)
-    page.locator("#order-quote").fill(quote_id)
-    page.locator("#order-revision").fill("2")
-    page.locator("#order-hash").fill("JCS-SHA256-V1:" + "b" * 64)
-    page.locator("#order-source").select_option("WALK_IN")
-    page.locator("#order-accepted").fill("2026-09-09T09:00")
-    f = page.locator("form.form").filter(has=page.locator("#order-source"))
-    f.locator("button[type=submit]").first.click()
-    page.wait_for_timeout(1800)
-    last = [c for c in api_calls if c[0] == "POST" and c[2].endswith("/orders")][-1]
+    # offered. The quote is already CONVERTED and the single-shot guard refuses first; the seal
+    # guard is proven on an OPEN quote by
+    # test_an_order_citing_a_seal_the_customer_never_agreed_is_refused.
+    again = api_post(
+        f"/internal/v1/stores/{STORE}/orders",
+        {
+            "bound_contact_id": ticket_ref,
+            "quote_id": quote_id,
+            "quote_revision": int(accepted_revision or 2),
+            "quote_snapshot_hash": "JCS-SHA256-V1:" + "b" * 64,
+            "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
+            "customer_final_quote_accepted_at": "2026-09-09T02:00:00+00:00",
+            "acquisition_source": "WALK_IN",
+        },
+    )
     ok(
         "an agreement already turned into an order cannot be ordered twice, even re-sealed",
-        last[1] == 409 and "already been converted" in last[3],
-        f"HTTP {last[1]} {last[3][:110]}",
+        again["status"] == 409 and "already been converted" in again["body"],
+        f"HTTP {again['status']} {again['body'][:110]}",
     )
 
     # 3. A stale row version is refused — two staff on one order at the same time.
@@ -751,10 +754,11 @@ with sync_playwright() as pw:
     for line in atext.splitlines()[:14]:
         if line.strip():
             print(f"        | {line.strip()[:120]}")
+    explained = len([h for h in hints if "Vai trò được phép" in h])
     ok(
         "and the screen says why rather than just hiding the controls",
-        len([h for h in hints if "Vai trò được phép" in h]) >= 3,
-        f"{len([h for h in hints if 'Vai trò được phép' in h])} of 3 explain the refusal",
+        submits.count() > 0 and explained >= submits.count(),
+        f"{explained} of {submits.count()} write controls explain the refusal",
     )
     actx.close()
 
@@ -763,89 +767,145 @@ with sync_playwright() as pw:
     # homestays, and it exercises what that one cannot: a delivery fee inside the quoted total, a
     # fulfilment mode the price is bound to, delivery legs, and a completion that turns on a
     # successful leg rather than on self-collection.
-    page.goto(f"{CONSOLE}#/order-requests", wait_until="networkidle")
+    page.goto(f"{CONSOLE}#/new", wait_until="networkidle")
     page.wait_for_timeout(1200)
-    page.locator("button", has_text="Phát phiếu").first.click()
+    (d_ticket_answer,) = press(page.locator("#new-walk-in"), "/counter-tickets")
     page.wait_for_timeout(1500)
-    d_ticket = page.locator("#intake-contact").input_value()
-    page.locator("button[type=submit]", has_text="Ghi nhận tiếp nhận").first.click()
-    page.wait_for_timeout(1500)
-    page.locator("#intake-quote-now").first.click()
-    page.wait_for_timeout(2000)
+    d_ticket = str(d_ticket_answer["json"].get("ticket_id", ""))
 
-    d_code = page.locator("#quote-line-0-code")
-    d_labels = [o.strip() for o in d_code.locator("option").all_text_contents()]
-    d_wash = next((i for i, o in enumerate(d_labels) if "Giặt sấy" in o), 1)
-    d_code.select_option(index=d_wash)
-    page.wait_for_timeout(300)
-    page.locator("#quote-line-0-qty").fill("")
-    page.locator("#quote-line-0-qty").click()
-    page.keyboard.type("8", delay=8)
-    page.wait_for_timeout(400)
-    page.locator("#quote-fulfillment").select_option("PICKUP_AND_RETURN")
-    page.wait_for_timeout(600)
-    distance = page.locator("#quote-distance")
+    page.locator("#new-mode [data-value='PICKUP_AND_RETURN']").click()
+    page.wait_for_timeout(500)
+    distance = page.locator("#new-distance")
     ok("choosing delivery reveals the measured-distance field", distance.is_visible())
     distance.fill("3500")
-    page.wait_for_timeout(400)
-    page.locator("button[type=submit]", has_text="Tính giá").first.click()
-    page.wait_for_timeout(2500)
+    page.locator("#new-add-line").click()
+    page.wait_for_timeout(500)
+    d_services = page.locator("#new-picker [data-code]")
+    d_names = [n.strip() for n in d_services.all_inner_texts()]
+    d_wash = next((i for i, n in enumerate(d_names) if "Giặt sấy" in n), 0)
+    d_services.nth(d_wash).click()
+    page.wait_for_timeout(500)
+    page.keyboard.type("8", delay=8)
+    page.wait_for_timeout(300)
+    (d_priced,) = press(page.locator("#new-price"), "/quotes")
+    try:
+        page.wait_for_selector("#new-receipt .receipt", timeout=15000)
+    except Exception:
+        page.wait_for_timeout(2500)
+    page.wait_for_timeout(800)
     shot(page, "20-delivery-quote.png")
-    d_text = page.locator("main").first.inner_text()
+    d_text = (
+        page.locator("#new-receipt").inner_text() if page.locator("#new-receipt").count() else ""
+    )
     # 8 kg at the 6 kg-and-over tier is 160.000, and 3.5 km is the flat 10.000 band.
     ok(
         "the total is the service price plus the published 2-6km fee, computed by the server",
         "170.000" in d_text.replace("\u00a0", " "),
         [line_.strip() for line_ in d_text.splitlines() if "₫" in line_][:3],
     )
-    d_accept = page.locator("button", has_text="Khách đã chốt giá")
-    if d_accept.count():
-        d_accept.first.click()
-        page.wait_for_timeout(2000)
-    d_heads = [h for h in page.locator("h3").all_text_contents() if "Bản sửa đổi" in h]
-    d_revision = d_heads[0].split()[-1] if d_heads else "1"
-    d_carried = {}
-    d_copies = page.locator("span.copyable")
-    for index in range(min(d_copies.count(), 4)):
-        item = d_copies.nth(index)
-        shown = (item.locator("span.copyable__text").inner_text() or "").strip()
-        item.locator("button", has_text="Sao chép").click()
-        page.wait_for_timeout(250)
-        d_carried[shown] = page.evaluate("() => navigator.clipboard.readText()")
-    d_quote = next((v for v in d_carried.values() if len(v) == 36 and v.count("-") == 4), "")
-    d_seal = next((v for v in d_carried.values() if v.startswith("JCS-SHA256-V1:")), "")
-
-    def create_delivery_order(mode, source):
-        page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")
-        page.wait_for_timeout(1400)
-        page.locator("#order-contact").fill(d_ticket)
-        page.locator("#order-quote").fill(d_quote)
-        page.locator("#order-revision").fill(d_revision)
-        page.locator("#order-hash").fill(d_seal)
-        page.locator("#order-mode").select_option(mode)
-        page.locator("#order-source").select_option(source)
-        page.locator("#order-accepted").fill("2026-09-09T09:00")
-        form_ = page.locator("form.form").filter(has=page.locator("#order-source"))
-        form_.locator("button[type=submit]").first.click()
-        page.wait_for_timeout(2300)
-        return [c for c in api_calls if c[0] == "POST" and c[2].endswith("/orders")][-1]
+    d_quote_id = str(d_priced["json"].get("quote_id", ""))
 
     head(18, "GIÁ NÀO THÌ ĐƠN ẤY — a price computed for delivery cannot become a walk-in order")
-    mismatch = create_delivery_order("SELF_DROP_SELF_COLLECT", "WALK_IN")
-    ok(
-        "an order whose fulfilment mode contradicts the price it cites is refused",
-        mismatch[1] >= 400,
-        f"HTTP {mismatch[1]} {mismatch[3][:140]}",
+    # The flow sends the mode the quote was priced under, read back from the quote itself
+    # (READ-ENRICH-001), so the console cannot produce this mismatch any more. The server's refusal
+    # is what makes that safe, so it is still proven -- directly, after the acceptance is recorded.
+    d_accept = page.evaluate(
+        """async ({store, quote}) => {
+        const q = await (await fetch(`/internal/v1/stores/${store}/quotes/${quote}`,
+            {credentials: 'include'})).json();
+        return q;
+    }""",
+        {"store": STORE, "quote": d_quote_id},
     )
 
-    made = create_delivery_order("PICKUP_AND_RETURN", "PARTNER_FRONT_DESK")
-    ok("and the matching order is created", 200 <= made[1] < 300, f"HTTP {made[1]}")
-    delivery_id = ""
-    if 200 <= made[1] < 300:
-        try:
-            delivery_id = json.loads(made[3])["order_id"]
-        except (ValueError, TypeError, KeyError):
-            delivery_id = ""
+    def api_post_delivery(body: dict) -> dict:
+        return page.evaluate(
+            """async ({path, body}) => {
+            const jar = document.cookie.split('; ');
+            const csrf = jar.find(c => c.startsWith('staff_csrf='))?.split('=')[1];
+            const r = await fetch(path, {method: 'POST', credentials: 'include',
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf || '',
+                          'Idempotency-Key': 'daily-' + Math.random(), 'Origin': location.origin},
+                body: JSON.stringify(body)});
+            const text = await r.text();
+            let parsed = null;
+            try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+            return {status: r.status, body: text.slice(0, 300), json: parsed};
+        }""",
+            {"path": f"/internal/v1/stores/{STORE}/{body.pop('_route')}", "body": body},
+        )
+
+    accepted_d = api_post_delivery(
+        {
+            "_route": f"quotes/{d_quote_id}/acceptance",
+            "expected_current_revision": d_accept.get("revision"),
+            "expected_snapshot_hash": d_accept.get("snapshot_hash"),
+        }
+    )
+    accepted_d_body = (accepted_d["json"] or {}) if accepted_d["status"] < 300 else {}
+    accepted_read = page.evaluate(
+        """async ({store, quote, rev}) => (await (await fetch(
+            `/internal/v1/stores/${store}/quotes/${quote}?revision=${rev}`,
+            {credentials: 'include'})).json())""",
+        {"store": STORE, "quote": d_quote_id, "rev": accepted_d_body.get("revision", 0)},
+    )
+    mismatch = api_post_delivery(
+        {
+            "_route": "orders",
+            "bound_contact_id": d_ticket,
+            "quote_id": d_quote_id,
+            "quote_revision": accepted_d_body.get("revision"),
+            "quote_snapshot_hash": accepted_d_body.get("snapshot_hash"),
+            "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
+            "customer_final_quote_accepted_at": accepted_read.get("customer_accepted_at"),
+            "acquisition_source": "WALK_IN",
+        }
+    )
+    ok(
+        "an order whose fulfilment mode contradicts the price it cites is refused",
+        mismatch["status"] >= 400,
+        f"HTTP {mismatch['status']} {mismatch['body'][:140]}",
+    )
+    ok(
+        "the quote read names the mode it was priced under, so the console never has to ask",
+        accepted_read.get("fulfillment_mode") == "PICKUP_AND_RETURN",
+        accepted_read.get("fulfillment_mode"),
+    )
+
+    # And the matching order, from the screen. The acceptance above is recorded, so this is also
+    # the resume path Báo giá's "Tiếp tục" takes: the flow reads the quote back (contact, intake and
+    # mode from READ-ENRICH-001), lands on the confirmation, and only the order is left to press.
+    page.goto("about:blank")
+    page.goto(f"{CONSOLE}#/new?quote={d_quote_id}", wait_until="networkidle")
+    page.wait_for_timeout(2000)
+    ok(
+        "a quote accepted earlier resumes at the confirmation with nothing to retype",
+        page.locator("#new-confirm").count() == 1
+        and (page.locator("#new-confirm").inner_text() or "").strip() == "Tạo đơn",
+        page.locator("#new-confirm").inner_text()
+        if page.locator("#new-confirm").count()
+        else page.url,
+    )
+    page.locator("#new-source button[data-value='PARTNER_FRONT_DESK']").click()
+    (made,) = press(page.locator("#new-confirm"), "/orders")
+    try:
+        page.wait_for_url("**/#/orders/*", timeout=15000)
+    except Exception:
+        page.wait_for_timeout(2500)
+    ok(
+        "and the matching order is created, with no second acceptance",
+        200 <= made["status"] < 300
+        and len(
+            [
+                m
+                for m, u, _b in sent_bodies
+                if m == "POST" and u.endswith(f"{d_quote_id}/acceptance")
+            ]
+        )
+        == 1,  # the one recorded above; the flow did not send its own
+        f"HTTP {made['status']} {json.dumps(made['json'])[:160]}",
+    )
+    delivery_id = str(made["json"].get("order_id", "")) if 200 <= made["status"] < 300 else ""
 
     def move_delivery(dimension, target, label, slot=False):
         page.goto(f"{CONSOLE}#/orders", wait_until="networkidle")

@@ -779,7 +779,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # (the thing no longer exists; the fact stays in PLAN_NOTE.CREDIT_UNAVAILABLE), the options
     # guardrail (merged into the figures' ⓘ hint, same fact), the incident replay notice (its fact
     # is the toast), and the notice titles now rendered as alert titles / ⓘ topics.
-    assert sum(counts.values()) == _registry()["total"] == 432
+    # 430 after CONSOLE-REDESIGN-004's second step (432 - 2): the transitional credit-redemption
+    # panel left `#/remedies` (spending a credit moves onto the quote receipt in `#/new`,
+    # CONSOLE-REDESIGN-001), taking its guardrail and its "phiếu đã dùng xong" hint with it.
+    assert sum(counts.values()) == _registry()["total"] == 430
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

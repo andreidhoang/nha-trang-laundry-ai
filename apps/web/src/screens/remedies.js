@@ -62,14 +62,11 @@ import { principal, storeId } from "../core/session.js";
 import {
   copyable,
   errorNotice,
-  facts,
   gated,
   gatedFields,
   labelled,
   listView,
-  panel,
   resultLine,
-  revealError,
   setResult,
 } from "../ui/components.js";
 import {
@@ -1650,175 +1647,7 @@ export function render_(context) {
     view.bar.node,
     disclosure,
     view.host,
-    redemptionPanel(store, new Submission("remedy-redeem"), can(principal(), "INCIDENTS_WRITE")),
   );
-}
-
-// --- Transitional: credit redemption, until CONSOLE-REDESIGN-001 puts it on the quote receipt ---
-
-/**
- * Spending one credit on the next bill.
- *
- * This panel asks for four values and that is the honest shape of the thing today: a credit is
- * applied by its identifier (found again, if lost, on the detail of the order that issued it), and
- * the revision and digest are the caller's evidence that it read the quote it is spending on before
- * it changed the total.
- *
- * @param {string} store
- * @param {import("../core/api.js").Submission} submission
- * @param {{allowed: boolean, reason: string}} verdict
- * @returns {HTMLElement}
- */
-function redemptionPanel(store, submission, verdict) {
-  const draft = { quoteId: "", creditId: "", revision: "", snapshotHash: "" };
-  const result = resultLine();
-  const host = h("div", { class: "stack" });
-
-  /** @param {string} key @param {string} placeholder @param {RegExp} pattern */
-  const field = (key, placeholder, pattern) =>
-    h("input", {
-      type: "text",
-      autocomplete: "off",
-      spellcheck: "false",
-      dataFormat: key === "snapshotHash" ? "hash" : "id",
-      placeholder,
-      onInput: (event) => {
-        const raw = event.target.value.trim();
-        if (raw !== event.target.value) event.target.value = raw;
-        draft[key] = raw;
-        submission.reset();
-        event.target.setAttribute("aria-invalid", raw && !pattern.test(raw) ? "true" : "false");
-      },
-    });
-
-  const HASH = /^JCS-SHA256-V1:[0-9a-f]{64}$/;
-  const REVISION = /^[1-9]\d{0,8}$/;
-
-  const button = h(
-    "button",
-    { type: "submit", dataVariant: "primary", dataRequiresNetwork: "true" },
-    "Áp dụng khoản giảm trừ",
-  );
-
-  /** @param {SubmitEvent} event */
-  async function submit(event) {
-    event.preventDefault();
-    if (!UUID.test(draft.quoteId) || !UUID.test(draft.creditId)) {
-      setResult(result, "danger", "Mã báo giá và mã giảm trừ đều phải là UUID đủ 36 ký tự.");
-      return;
-    }
-    if (!REVISION.test(draft.revision)) {
-      setResult(result, "danger", "Số bản sửa đổi phải là số nguyên dương, lấy đúng trên bản báo giá.");
-      return;
-    }
-    if (!HASH.test(draft.snapshotHash)) {
-      setResult(result, "danger", "Dấu vân bản báo giá phải đúng dạng JCS-SHA256-V1:… — chép nguyên văn.");
-      return;
-    }
-    setResult(result, "warn", "Đang áp dụng…");
-    try {
-      const applied = await request(
-        `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${encodeURIComponent(draft.quoteId)}/remedy-credits`,
-        {
-          method: "POST",
-          body: {
-            credit_id: draft.creditId,
-            expected_current_revision: Number.parseInt(draft.revision, 10),
-            expected_snapshot_hash: draft.snapshotHash,
-          },
-          idempotencyKey: submission.key(),
-        },
-      );
-      submission.reset();
-      setResult(result, "ok", `Đã áp dụng vào bản sửa đổi ${applied.revision}.`);
-      render(
-        host,
-        h(
-          "div",
-          { class: "card stack" },
-          h("h3", null, "Đã trừ vào hoá đơn lần này"),
-          facts([
-            ["Bản sửa đổi mới", String(applied.revision), { mono: true }],
-            ["Khoản đã trừ", money(applied.credit_vnd), { span: true }],
-            ["Tiền dịch vụ sau giảm trừ", money(applied.net_service_subtotal_vnd), { span: true }],
-            ["Tổng hiển thị", money(applied.display_total_vnd), { span: true }],
-            [
-              "Dấu vân bản mới",
-              copyable({
-                value: applied.snapshot_hash || "",
-                display: String(applied.snapshot_hash || UNKNOWN).slice(0, 26),
-              }),
-              { span: true },
-            ],
-          ]),
-          h(
-            "p",
-            { class: "hint" },
-            "Phiếu này đã dùng xong và không dùng lại được: bấm lần nữa máy chủ trả " +
-              "REMEDY_CREDIT_ALREADY_REDEEMED. Đọc lại tổng mới cho khách nghe trước khi thu tiền.",
-          ),
-        ),
-      );
-    } catch (error) {
-      const refused = error.kind === "DENIED" || error.status === 422 || error.kind === "STALE";
-      setResult(
-        result,
-        refused ? "warn" : "danger",
-        refused
-          ? "Máy chủ từ chối áp dụng khoản này. Không có gì được ghi — đọc mã lý do bên dưới."
-          : "Không áp dụng được.",
-      );
-      const notice = errorNotice(error);
-      render(host, notice);
-      revealError(notice);
-    }
-  }
-
-  const form = gatedFields(
-    h(
-      "form",
-      { class: "form", onSubmit: submit },
-      labelled({
-        id: "credit-id",
-        label: "Mã khoản giảm trừ (credit_id)",
-        hint:
-          "Chép từ lúc phát hành, hoặc từ phiếu giấy của khách. Khách quên mã thì tìm đơn đã phát " +
-          "hành khoản đó theo số phiếu ở màn hình Đơn hàng: mã nằm ở mục “Khoản giảm trừ của đơn này”.",
-        control: field("creditId", "00000000-0000-0000-0000-000000000000", UUID),
-      }),
-      labelled({
-        id: "credit-quote",
-        label: "Mã báo giá sẽ trừ vào (quote_id)",
-        hint: "Báo giá của lần này, đang còn mở. Bản đã chốt giá với khách thì không trừ vào được nữa.",
-        control: field("quoteId", "00000000-0000-0000-0000-000000000000", UUID),
-      }),
-      labelled({
-        id: "credit-revision",
-        label: "Bản sửa đổi hiện tại",
-        hint: "Số bản sửa đổi bạn vừa đọc trên màn hình Báo giá. Sai số thì máy chủ từ chối chứ không đoán.",
-        control: field("revision", "1", REVISION),
-      }),
-      labelled({
-        id: "credit-hash",
-        label: "Dấu vân của bản sửa đổi đó",
-        hint: "Chép nguyên văn, đủ cả tiền tố JCS-SHA256-V1:. Chép thiếu là một dấu vân khác.",
-        control: field("snapshotHash", "JCS-SHA256-V1:…", HASH),
-      }),
-      h("div", { class: "action-bar" }, gated(button, verdict)),
-      result,
-    ),
-    verdict,
-  );
-
-  return panel({
-    eyebrow: "Lệnh",
-    title: "Dùng một khoản giảm trừ cho hoá đơn lần sau",
-    guardrail:
-      "Khoản giảm trừ là phiếu cầm tay, dùng đúng một lần, và trừ vào tổng trước khi báo cho " +
-      "khách — không phải trừ vào số khách đã đồng ý trả. Đường tất toán vẫn chỉ nhận đúng tổng " +
-      "đã báo, đủ một lần.",
-    children: h("div", { class: "stack" }, form, host),
-  });
 }
 
 export const screen = {

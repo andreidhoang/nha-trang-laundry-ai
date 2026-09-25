@@ -906,7 +906,7 @@ export function render_(context) {
         h(
           "p",
           null,
-          h("a", { href: "#/remedies" }, "Dùng một khoản cho hoá đơn lần sau ở màn hình Bồi hoàn"),
+          h("a", { href: "#/new" }, "Dùng một khoản cho hoá đơn lần sau: khi tính giá ở Nhận đồ"),
         ),
       ),
     }),

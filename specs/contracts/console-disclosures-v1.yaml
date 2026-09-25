@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 403
+  DESCRIPTIVE: 401
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 14
-total: 432
+total: 430
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -3400,24 +3400,6 @@ disclosures:
   key: hint
   text: 'Bồi hoàn làm ngay trên trang của từng khiếu nại: mở khiếu nại, chọn loại, gửi đề nghị, rồi thực
     hiện trên dòng của nó. Danh sách này chỉ gom các khiếu nại đang mở đã có đề nghị.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/remedies.js#hint:d5c4dfadd726
-  module: screens/remedies.js
-  key: hint
-  text: 'Phiếu này đã dùng xong và không dùng lại được: bấm lần nữa máy chủ trả REMEDY_CREDIT_ALREADY_REDEEMED.
-    Đọc lại tổng mới cho khách nghe trước khi thu tiền.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/remedies.js#guardrail:c796512ada13
-  module: screens/remedies.js
-  key: guardrail
-  text: Khoản giảm trừ là phiếu cầm tay, dùng đúng một lần, và trừ vào tổng trước khi báo cho khách —
-    không phải trừ vào số khách đã đồng ý trả. Đường tất toán vẫn chỉ nhận đúng tổng đã báo, đủ một lần.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

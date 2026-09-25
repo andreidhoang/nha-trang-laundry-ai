@@ -1239,3 +1239,352 @@ details.accordion[open] .accordion__meta {
     white-space: normal;
   }
 }
+
+/* ================================================================================================
+ * CONSOLE-REDESIGN-002 — generic pieces (moneyInput, choiceChips), then the order list and the
+ * order page. Kept in one block so the lead can fold it into the kit proper.
+ * ============================================================================================== */
+
+/* moneyInput: a big, typed-on-purpose amount with its unit and a live echo. */
+.money-input {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.money-input__box {
+  align-items: center;
+  display: flex;
+  position: relative;
+}
+
+input.money-input__field {
+  font-size: var(--text-2xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-heavy);
+  min-height: 3.5rem;
+  padding-right: 2.75rem;
+}
+
+.money-input__suffix {
+  color: var(--text-secondary);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  pointer-events: none;
+  position: absolute;
+  right: var(--space-4);
+}
+
+.money-input__echo {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+  min-height: 1.25rem;
+}
+
+/* choiceChips: one answer among a few, as large radio chips. */
+.choice-chips {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.choice-chip {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: flex;
+  font-weight: var(--weight-bold);
+  gap: var(--space-3);
+  min-height: var(--tap-primary);
+  padding: var(--space-2) var(--space-3);
+}
+
+.choice-chip:has(input:checked) {
+  background: var(--brand-050);
+  border-color: var(--brand-600);
+  color: var(--brand-800);
+}
+
+.choice-chip input {
+  accent-color: var(--brand-700);
+  height: 1.25rem;
+  margin: 0;
+  width: 1.25rem;
+}
+
+/* A checkbox with its sentence, the whole row tappable. */
+.check-row {
+  align-items: flex-start;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: flex;
+  font-weight: var(--weight-bold);
+  gap: var(--space-3);
+  min-height: var(--tap-primary);
+  padding: var(--space-3);
+}
+
+.check-row input {
+  accent-color: var(--brand-700);
+  flex: none;
+  height: 1.4rem;
+  margin: 0;
+  width: 1.4rem;
+}
+
+.field-label {
+  font-weight: var(--weight-bold);
+  margin: 0;
+  padding-top: 0.7rem;
+}
+
+/* A list row's second line when it carries a pill and a time. */
+.order-row__meta {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.row-item__leading > .row-item__icon {
+  margin: 0;
+}
+
+/* --- Đơn hàng ---------------------------------------------------------------------------------- */
+
+.orders__lookup {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.orders__lookup-row {
+  align-items: stretch;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.orders__lookup-row > .search {
+  flex: 1 1 auto;
+}
+
+.orders__lookup-row > button[type="submit"] {
+  flex: none;
+  min-height: var(--tap-primary);
+  min-width: 5rem;
+}
+
+.orders__lookup-row--meta {
+  align-items: center;
+}
+
+.orders__date-chip {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--space-1);
+  min-height: var(--tap-min);
+}
+
+.orders__date-chip .icon {
+  height: 1rem;
+  width: 1rem;
+}
+
+.orders__date-row {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.orders__date-row[hidden] {
+  display: none;
+}
+
+.orders__date-input {
+  max-width: 12rem;
+}
+
+.orders__lookup-head {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  margin: var(--space-2) 0 0;
+}
+
+.orders__status-chip {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.orders__meta {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  font-size: var(--text-sm);
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.screen.orders > details.manual-entry {
+  margin-top: var(--space-4);
+}
+
+/* --- Chi tiết đơn ------------------------------------------------------------------------------ */
+
+.order__subtitle {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.order__mode {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.order__mode .icon {
+  height: 1rem;
+  width: 1rem;
+}
+
+.order__money {
+  padding: var(--space-4);
+}
+
+.order__source {
+  align-items: center;
+  display: inline-flex;
+  gap: 0;
+  justify-content: flex-end;
+}
+
+.order__empty,
+.order__closed {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.order__closed {
+  text-align: center;
+}
+
+.screen.order .action-bar--v2 {
+  grid-auto-flow: row;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.screen.order .action-bar--v2 > :only-child,
+.screen.order .action-bar--v2 > .order__action-alert + :last-child {
+  grid-column: 1 / -1;
+}
+
+.order__action-alert {
+  grid-column: 1 / -1;
+}
+
+.order__action-alert:empty {
+  display: none;
+}
+
+.order__action-alert > .notice {
+  margin: 0;
+}
+
+.credit-row {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+}
+
+.credit-row__head {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.credit-row__meta {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.credit-row__code .copyable__text {
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.incident-summary {
+  color: var(--text-secondary);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 64rem) {
+  .screen.order .action-bar--v2 {
+    grid-template-columns: minmax(12rem, auto) auto;
+    justify-content: end;
+  }
+}
+
+.screen.orders > div:empty,
+.screen.orders .hint:empty,
+.orders__meta > :empty {
+  display: none;
+}
+
+.orders__meta > .filter-status {
+  margin: 0 auto 0 0;
+}
+
+.orders__lookup-row > .orders__date-chip {
+  flex: none;
+  padding: 0 var(--space-3);
+}
+
+.orders__lookup-row > .search {
+  min-width: 0;
+}
+
+.orders__lookup-row input.search__input {
+  min-width: 0;
+  width: 100%;
+}
+
+.order__actions {
+  display: contents;
+}
+
+/* Grid children default to min-width: auto, so the tab strip's min-content widened the screen. */
+.screen.orders > *,
+.orders__tabs {
+  min-width: 0;
+}
+
+.order-row__age {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-normal);
+  margin-left: 0;
+}
+
+.orders__lookup-row--meta {
+  flex-wrap: wrap;
+  margin-top: calc(-1 * var(--space-1));
+}
+
+.orders__lookup-row--meta .orders__date-chip {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  padding: 0 var(--space-2);
+}

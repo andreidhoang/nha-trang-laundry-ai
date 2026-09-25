@@ -118,10 +118,17 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         # dead-end on `409 INVALID_STATE_TRANSITION: intake is not accepted` -- while the gap
         # register told them the console covered "việc nhận đồ". The walk that proves the shop can
         # run on this software is the walk that needs all three.
-        "/internal/v1/orders/{}/transition",
-        "/internal/v1/orders/{}/intake-transition",
-        "/internal/v1/orders/{}/production-transition",
+        #
+        # CONSOLE-REDESIGN-002 moved all three onto one route: `ORDER-STEPS-001`'s composite steps
+        # (RECEIVE, START_WASH, ... HAND_OVER, CANCEL) execute exactly those per-axis transitions in
+        # one transaction, and the order page offers only the steps the server lists as legal. The
+        # per-axis routes stay served for compatibility and audit tooling; the console's whole
+        # lifecycle now depends on this one, so this one is what must never be dropped.
+        "/internal/v1/orders/{}/steps",
         "/internal/v1/orders/{}/settlement",
+        # READ-ENRICH-001: the order page's "Khiếu nại" section. Without it the page cannot say
+        # which complaints an order already has, and remedies start from a guess.
+        "/internal/v1/stores/{}/orders/{}/incidents",
         # PREPAID-DROPOFF-001 (`DEC-032`). Without it a walk-in who paid at drop-off can never be
         # recorded as having taken the goods, and so their order can never complete.
         "/internal/v1/orders/{}/collection",

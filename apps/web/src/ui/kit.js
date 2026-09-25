@@ -827,3 +827,88 @@ export function show(host, content) {
     alert.focus({ preventScroll: false });
   }
 }
+
+// =============================================================================================
+// CONSOLE-REDESIGN-002 — generic pieces the order page needed. Kept generic so the lead can fold
+// them into the kit proper.
+// =============================================================================================
+
+/**
+ * An amount typed on purpose: the number pad on a phone, a "₫" after the field, and a live echo of
+ * how the typed text reads ("= 128.000 ₫"), so "12800" for "128000" is caught before the press.
+ *
+ * The kit still never touches a money integer: the caller supplies `echo`, which parses and
+ * formats with `core/format` (`parseDong` + `money`) and returns the line to show, or "" for
+ * nothing. The value stays the string the person typed; the caller parses it when sending.
+ *
+ * @param {object} spec
+ * @param {string} spec.id
+ * @param {string} spec.label accessible name
+ * @param {string} [spec.placeholder]
+ * @param {(text: string) => string} [spec.echo]
+ * @param {(text: string) => void} [spec.onInput]
+ * @returns {{node: HTMLElement, input: HTMLInputElement}}
+ */
+export function moneyInput(spec) {
+  const echo = h("p", { class: "money-input__echo", "aria-live": "polite" });
+  const input = /** @type {HTMLInputElement} */ (
+    h("input", {
+      id: spec.id,
+      type: "text",
+      class: "money-input__field",
+      inputmode: "numeric",
+      autocomplete: "off",
+      enterkeyhint: "done",
+      placeholder: spec.placeholder || "0",
+      "aria-label": spec.label,
+      onInput: (event) => {
+        const text = /** @type {HTMLInputElement} */ (event.target).value;
+        echo.textContent = spec.echo ? spec.echo(text) : "";
+        spec.onInput?.(text);
+      },
+    })
+  );
+  const node = h(
+    "div",
+    { class: "money-input" },
+    h(
+      "div",
+      { class: "money-input__box" },
+      input,
+      h("span", { class: "money-input__suffix", "aria-hidden": "true" }, "₫"),
+    ),
+    echo,
+  );
+  return { node, input };
+}
+
+/**
+ * A single choice among a few answers, as large tappable chips (radio semantics). Used where the
+ * server lists exactly which answers it will take (a cancellation's custody resolution).
+ *
+ * @param {object} spec
+ * @param {string} spec.label accessible name of the group
+ * @param {string} spec.name
+ * @param {Array<{value: string, label: string, title?: string}>} spec.options
+ * @param {(value: string) => void} spec.onChange
+ * @returns {HTMLElement}
+ */
+export function choiceChips(spec) {
+  return h(
+    "div",
+    { class: "choice-chips", role: "radiogroup", "aria-label": spec.label },
+    spec.options.map((option) =>
+      h(
+        "label",
+        { class: "choice-chip", title: option.title || null },
+        h("input", {
+          type: "radio",
+          name: spec.name,
+          value: option.value,
+          onChange: () => spec.onChange(option.value),
+        }),
+        h("span", null, option.label),
+      ),
+    ),
+  );
+}

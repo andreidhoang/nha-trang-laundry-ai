@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 408
+  DESCRIPTIVE: 421
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 14
-total: 437
+total: 450
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -198,10 +198,10 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/errors.js#REFUSAL.BALANCE_NOT_SETTLED:89728bf5f343
+- slot_id: core/errors.js#REFUSAL.BALANCE_NOT_SETTLED:7582a148b9a8
   module: core/errors.js
   key: REFUSAL.BALANCE_NOT_SETTLED
-  text: 'Chưa hoàn tất được: đơn chưa thu tiền. Ghi nhận tất toán trước.'
+  text: 'Chưa hoàn tất được: đơn chưa thu tiền. Bấm “Thu tiền” trước.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -310,6 +310,41 @@ disclosures:
   module: core/errors.js
   key: REFUSAL.INVALID_STATE_TRANSITION
   text: Đơn đang ở trạng thái không cho phép bước này. Tải lại đơn để xem trạng thái hiện tại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.STEP_NOTHING_TO_DO:251dc6d457e5
+  module: core/errors.js
+  key: REFUSAL.STEP_NOTHING_TO_DO
+  text: Bước này không còn việc gì để làm cho đơn lúc này — có thể người khác vừa làm rồi. Tải lại đơn
+    để xem bước tiếp theo.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.WASH_NEEDS_ACTIVE_ORDER:9e16a1968559
+  module: core/errors.js
+  key: REFUSAL.WASH_NEEDS_ACTIVE_ORDER
+  text: 'Chỉ bắt đầu giặt khi đơn đang chạy: đã nhận đồ và không đang xét huỷ. Tải lại đơn để xem bước
+    tiếp theo.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.RELEASE_BY_PAYMENT:f2f795f7818a
+  module: core/errors.js
+  key: REFUSAL.RELEASE_BY_PAYMENT
+  text: 'Khách tự tới lấy mà chưa trả tiền thì không giao đồ riêng được: bấm “Thu tiền” — thu xong là
+    giao đồ và đóng đơn.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.INTAKE_BLOCKERS:ee7f1ce76b5c
+  module: core/errors.js
+  key: REFUSAL.INTAKE_BLOCKERS
+  text: 'Chưa nhận đồ được: còn thiếu điều kiện bên dưới. Không có gì được ghi.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -687,11 +722,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.ORDER_NOT_ACTIVE:374a72b4a66b
+- slot_id: core/i18n.js#REASON_NOTE.ORDER_NOT_ACTIVE:f81a0b280e1b
   module: core/i18n.js
   key: REASON_NOTE.ORDER_NOT_ACTIVE
-  text: Chỉ đơn đang chạy mới tất toán được. Đơn chưa xác nhận thì xác nhận trước; đơn đã đóng hoặc đã
-    huỷ thì không thu tiền qua màn hình này.
+  text: Chỉ đơn đang chạy mới tất toán được. Đơn chưa nhận đồ thì bấm “Nhận đồ” trước; đơn đã đóng hoặc
+    đã huỷ thì không thu tiền qua màn hình này.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -713,21 +748,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.GOODS_NOT_READY_FOR_HANDOVER:4f762e31c796
+- slot_id: core/i18n.js#REASON_NOTE.GOODS_NOT_READY_FOR_HANDOVER:77e620e6381c
   module: core/i18n.js
   key: REASON_NOTE.GOODS_NOT_READY_FOR_HANDOVER
   text: Đồ chưa giặt xong nên chưa đưa cho khách được. Làm xong đơn tới “sẵn sàng tại cửa hàng” rồi mới
-    ghi nhận khách nhận đồ. Nếu khách đang trả tiền lúc gửi đồ thì bấm “Khách trả trước khi gửi đồ”, không
-    tích ô đã lấy đồ.
+    ghi nhận khách nhận đồ. Nếu khách đang trả tiền lúc gửi đồ thì bấm “Khách trả trước”.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.COLLECTION_REQUIRES_PAYMENT:fb8336b0e9a2
+- slot_id: core/i18n.js#REASON_NOTE.COLLECTION_REQUIRES_PAYMENT:0cddf6bce34d
   module: core/i18n.js
   key: REASON_NOTE.COLLECTION_REQUIRES_PAYMENT
-  text: Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì nhập số tiền, tích “Khách đã tự lấy đồ về” rồi
-    bấm “Ghi nhận tất toán”.
+  text: Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì bấm “Thu tiền”, gõ đúng số khách đưa rồi bấm “Ghi
+    nhận đã thu tiền”.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1248,6 +1282,57 @@ disclosures:
   text: 'Bản ghi của yêu cầu xuất này không đọc lại được, nên máy chủ không dựng lại được đúng văn bản
     mà chủ tiệm đã ký. Máy chủ không tự viết lại nội dung ấy: viết lại là đưa chủ tiệm duyệt một văn bản
     khác với văn bản đã niêm phong. Tạo một yêu cầu xuất mới; chưa có dữ liệu nào ra khỏi hệ thống.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.SLOT_APPROVAL_REQUIRED:4dc0b574a579
+  module: core/i18n.js
+  key: REASON_NOTE.SLOT_APPROVAL_REQUIRED
+  text: Chưa tích “tiệm làm kịp đơn này”. Máy không tự biết tiệm còn chỗ hay không — đó là lời của người
+    nhận đồ, được ghi kèm tên bạn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.QUANTITY_NOT_MEASURED:d2557c29edbe
+  module: core/i18n.js
+  key: REASON_NOTE.QUANTITY_NOT_MEASURED
+  text: Báo giá còn dòng dùng số lượng khách tự ước, chưa do nhân viên cân hoặc đếm. Cân lại, sửa báo
+    giá rồi mới nhận đồ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.SERVICE_NOT_CLASSIFIED:f6e96e7058f5
+  module: core/i18n.js
+  key: REASON_NOTE.SERVICE_NOT_CLASSIFIED
+  text: Báo giá còn dòng chưa có dịch vụ trong bảng giá. Sửa báo giá cho đúng dịch vụ rồi mới nhận đồ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.EXACT_PRICE_NOT_APPROVED:8dd527ec08a1
+  module: core/i18n.js
+  key: REASON_NOTE.EXACT_PRICE_NOT_APPROVED
+  text: Giá trên báo giá chưa phải giá chính xác đã duyệt (còn ước tính hoặc còn khoảng giá). Chốt giá
+    trước rồi mới nhận đồ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.CUSTOMER_AGREEMENT_MISSING:c283a9e889a7
+  module: core/i18n.js
+  key: REASON_NOTE.CUSTOMER_AGREEMENT_MISSING
+  text: Khách chưa đồng ý bản giá mà đơn này gắn vào. Đọc lại giá cho khách và chốt, rồi mới nhận đồ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.CUSTODY_NOT_RECORDED:ee14c1627cb4
+  module: core/i18n.js
+  key: REASON_NOTE.CUSTODY_NOT_RECORDED
+  text: Chưa ghi nhận tiệm đã cầm đồ của khách. Chỉ nhận đồ khi túi đồ đã ở trên quầy.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2004,12 +2089,40 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#lede:aeb0a6a9de39
+- slot_id: screens/gaps.js#lede:a7fad0bb8bf8
   module: screens/gaps.js
   key: lede
   text: 'Bảng vận hành hôm nay bao được cả bốn chiều của một đơn tại quầy: thương mại, nhận đồ, sản xuất
-    và tất toán, cùng chặng giao. Ba chiều trạng thái nằm chung ở lệnh “Chuyển trạng thái đơn” trên màn
-    hình Đơn hàng — chọn chiều trước, rồi chọn đích.'
+    và tất toán, cùng chặng giao. Mỗi việc là một nút trên trang của đơn: nút lớn là bước tiếp theo máy
+    chủ cho phép, các bước khác nằm ở “Khác”. Hai việc chưa có nút — xem mục “Sự cố sản xuất và từ chối
+    nhận đồ” bên dưới.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:39a05239e3ab
+  module: screens/gaps.js
+  key: missing
+  text: Trang đơn chỉ hiện các bước máy chủ tính ra, và danh sách bước chưa có “ghi sự cố để giặt lại”
+    (sản xuất sang EXCEPTION rồi giặt lại) hay “từ chối nhận đồ” (nhận đồ sang REJECTED). Hai đường chuyển
+    trạng thái riêng vẫn còn ở máy chủ nhưng bảng vận hành không còn biểu mẫu nào gọi chúng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#blockedBy:341c44ea053c
+  module: screens/gaps.js
+  key: blockedBy
+  text: Chưa có bước REWASH hay REJECT_INTAKE trong danh sách bước của ORDER-STEPS
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:6007fa3d7509
+  module: screens/gaps.js
+  key: today
+  text: 'Đồ cần giặt lại: bấm “Tạm dừng”, giặt lại, rồi “Làm tiếp”. Không nhận đồ: đừng bấm “Nhận đồ”
+    — huỷ đơn khi khách mang đồ về.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2579,10 +2692,30 @@ disclosures:
     why: True because a registered decision says so, not because of a code fact. The recorded status is
       regenerated from context/DECISION_REGISTRY.yaml, so a decision resolving after the sentence was
       written shows up here as a registry diff.
-- slot_id: screens/orderDetail.js#hint:80b50bcbf320
+- slot_id: screens/orderDetail.js#guardrail:f9986e40a9fa
   module: screens/orderDetail.js
-  key: hint
-  text: Bốn trục chuyển động độc lập với nhau; đừng đọc chúng như một chuỗi tuần tự.
+  key: guardrail
+  text: Đây là bản ghi kiểm toán theo định danh, không phải lịch sử đơn hàng được biên tập. Thứ tự do
+    máy chủ quyết định (occurred_at, id) — cũ nhất trước — và màn hình này không sắp xếp lại. Định danh
+    không tồn tại cũng trả về danh sách rỗng chứ không phải lỗi 404.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#guardrail:e14089d6d5db
+  module: screens/orderDetail.js
+  key: guardrail
+  text: Khách đã trả đủ tại quầy trước khi đồ rời tiệm, nên ghi nhận ở đây không có tiền — chỉ ghi đồ
+    đã đến tay khách hay chưa. Giao hụt thì ghi thất bại, không tính thêm phí, và lần giao sau là một
+    dòng mới. Chỉ chuyến TRẢ ĐỒ thành công mới cho phép đóng đơn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#notice:8e31f46ac341
+  module: screens/orderDetail.js
+  key: notice
+  text: Mã đơn sai, hoặc đơn thuộc cửa hàng bạn không làm. Tìm lại bằng số phiếu ở màn hình Đơn hàng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2596,10 +2729,43 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#notice:8e31f46ac341
+- slot_id: screens/orderDetail.js#hint:80b50bcbf320
   module: screens/orderDetail.js
-  key: notice
-  text: Mã đơn sai, hoặc đơn thuộc cửa hàng bạn không làm. Tìm lại bằng số phiếu ở màn hình Đơn hàng.
+  key: hint
+  text: Bốn trục chuyển động độc lập với nhau; đừng đọc chúng như một chuỗi tuần tự.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#hint:68248fb7a249
+  module: screens/orderDetail.js
+  key: hint
+  text: Máy không tự biết tiệm còn chỗ hay không; dấu tích này là lời của bạn, ghi kèm tên bạn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#hint:79006dedc5b6
+  module: screens/orderDetail.js
+  key: hint
+  text: Thu đúng tổng, đủ một lần. Ghi rồi không sửa được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#hint:25d6d060f2c9
+  module: screens/orderDetail.js
+  key: hint
+  text: Người giao không thu tiền. Không giao được thì ghi lại — không tính thêm phí.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#hint:6bde29897b27
+  module: screens/orderDetail.js
+  key: hint
+  text: 'Không có mục “đã giặt rồi khách bỏ đi không trả tiền”: đồ đã giặt thì khách trả tiền và lấy về,
+    hoặc đồ ở lại tiệm (DEC-024).'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2620,18 +2786,18 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#notice:3723193c7b25
-  module: screens/orderDetail.js
-  key: notice
-  text: Mã đơn phải là một UUID. Không có yêu cầu nào được gửi đi.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/orderDetail.js#notice__title:42895aeff8a2
   module: screens/orderDetail.js
   key: notice__title
   text: Vai trò này không đọc được dòng thời gian
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/orderDetail.js#notice:3723193c7b25
+  module: screens/orderDetail.js
+  key: notice
+  text: Mã đơn phải là một UUID. Không có yêu cầu nào được gửi đi.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2644,12 +2810,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#hint:03770ff31bf3
+- slot_id: screens/orderDetail.js#hint:cda3657ae5ec
   module: screens/orderDetail.js
   key: hint
-  text: 'Bồi hoàn gắn với sự cố, không gắn thẳng với đơn: mở màn hình Sự cố, tìm đúng lời khách phàn nàn,
-    rồi bấm “Đề xuất bồi hoàn” trên chính dòng đó. API này không có đường nào liệt kê sự cố của riêng
-    một đơn, nên màn hình này không chọn hộ được.'
+  text: 'Bồi hoàn gắn với khiếu nại, không gắn thẳng với đơn: mở một khiếu nại trong danh sách này rồi
+    bấm “Đề xuất bồi hoàn” trên chính khiếu nại đó.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2660,16 +2825,6 @@ disclosures:
   text: 'Khoản giảm trừ là phiếu cầm tay: ai đọc đúng mã thì dùng được, đúng một lần, ở cửa hàng này,
     cho hoá đơn lần sau. Khách quên mã thì tìm lại đơn theo số phiếu rồi đọc mã ở đây. Máy chủ không ghi
     hạn dùng cho khoản giảm trừ.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#guardrail:f9986e40a9fa
-  module: screens/orderDetail.js
-  key: guardrail
-  text: Đây là bản ghi kiểm toán theo định danh, không phải lịch sử đơn hàng được biên tập. Thứ tự do
-    máy chủ quyết định (occurred_at, id) — cũ nhất trước — và màn hình này không sắp xếp lại. Định danh
-    không tồn tại cũng trả về danh sách rỗng chứ không phải lỗi 404.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2727,23 +2882,6 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#notice:b050b9f1628d
-  module: screens/orders.js
-  key: notice
-  text: 'Chủ tiệm đã chốt: khách vãng lai chỉ được ghi bằng số phiếu, tiệm không lưu tên, số điện thoại
-    hay địa chỉ (DEC-013). Tìm đơn bằng số phiếu ở ô “Tìm theo số phiếu”.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#hint:279ffab96bc8
-  module: screens/orders.js
-  key: hint
-  text: Khách đã trả trước, chưa nhận đồ — mở đơn và bấm “Khách đã nhận đồ” khi đưa đồ.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/orders.js#guardrail:3f18d87de043
   module: screens/orders.js
   key: guardrail
@@ -2753,42 +2891,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#screen__lede:9c4d5677d901
+- slot_id: screens/orders.js#hint:715b1734989f
   module: screens/orders.js
-  key: screen__lede
-  text: Đơn nào đang ở đâu. Mỗi đơn có bốn phần chạy riêng — bán hàng, nhận đồ, làm đồ, tiền — nên hãy
-    đọc từng phần một.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#guardrail:fbf408806822
-  module: screens/orders.js
-  key: guardrail
-  text: Bốn phần của một đơn — bán hàng, nhận đồ, làm đồ, tiền — chạy riêng với nhau. Đơn đã xác nhận
-    vẫn có thể chưa bắt đầu giặt và chưa thu tiền. Đọc bốn nhãn như bốn câu trả lời riêng, không phải
-    một chuỗi nối tiếp.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#guardrail:eb70f036d508
-  module: screens/orders.js
-  key: guardrail
-  text: 'Một đơn có ba chiều chạy độc lập: thương mại, nhận đồ, sản xuất. Chọn chiều trước, rồi chọn đích.
-    Màn hình này cố ý không biết bước nào là hợp lệ — quy tắc đó thuộc về máy chủ, và chép nó sang trình
-    duyệt là tạo bản thứ hai không ai giữ cho khớp được. Mọi đích của chiều đang chọn đều được chào; máy
-    chủ từ chối cái nào không hợp lệ và nói rõ vướng ở đâu.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#guardrail:e14089d6d5db
-  module: screens/orders.js
-  key: guardrail
-  text: Khách đã trả đủ tại quầy trước khi đồ rời tiệm, nên ghi nhận ở đây không có tiền — chỉ ghi đồ
-    đã đến tay khách hay chưa. Giao hụt thì ghi thất bại, không tính thêm phí, và lần giao sau là một
-    dòng mới. Chỉ chuyến TRẢ ĐỒ thành công mới cho phép đóng đơn.
+  key: hint
+  text: 'Chủ tiệm đã chốt: khách vãng lai chỉ được ghi bằng số phiếu, tiệm không lưu tên, số điện thoại
+    hay địa chỉ (DEC-013). Tìm đơn bằng số phiếu ở ô “Số phiếu…”.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

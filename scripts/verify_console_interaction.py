@@ -235,7 +235,13 @@ ORDER_VIEW = {
     "ticket_issued_on": "2026-09-20",
     "self_collection_recorded": True,
     "acquisition_source": "GOOGLE_MAPS",
+    "delivery_legs": [],
+    "required_delivery_legs_succeeded": False,
+    "settlement_shape": "EXACT_PAYMENT_AT_PICKUP",
+    "next_steps": [],
 }
+#: The complaint on ORDER_VIEW, as the counter typed it -- markup on purpose (section 17).
+ORDER_INCIDENT_SUMMARY = "Cổ áo bị ố <img src=x onerror=alert(1)>"
 UNUSED_CREDIT_ID = "abababab-1111-4333-8444-555555555555"
 SPENT_CREDIT_ID = "cdcdcdcd-2222-4333-8444-555555555555"
 ORDER_CREDITS = {
@@ -514,9 +520,27 @@ ORDER_CREATED = {
 PICKUP_ORDER_ID = "77777777-8888-4333-8444-999999999999"
 
 
-def order_view(mode: str, *, balance: str, collected: bool) -> dict[str, object]:
+def step(name: str, primary: bool = False, **extra: object) -> dict[str, object]:
+    """One `NextStepResponse` (ORDER-STEPS-001)."""
+
+    return {
+        "step": name,
+        "primary": primary,
+        "requires": list(extra.get("requires", [])),  # type: ignore[call-overload]
+        "custody_resolutions": list(extra.get("custody_resolutions", [])),  # type: ignore[call-overload]
+    }
+
+
+def order_view(
+    mode: str, *, balance: str, collected: bool, steps: list[dict[str, object]] | None = None
+) -> dict[str, object]:
     """One `OrderViewResponse`, as `GET /internal/v1/orders/{id}` sends it, at the counter's
-    pickup moment: running, washed and released, the total known."""
+    pickup moment: running, washed and released, the total known.
+
+    `steps` is the server's `next_steps` for that order, written out as the domain computes it
+    (`order_steps.next_steps`): the console holds no transition table, so what it offers is
+    exactly this list and the checks in section 15 are about rendering it faithfully.
+    """
 
     return {
         "order_id": PICKUP_ORDER_ID,
@@ -535,6 +559,13 @@ def order_view(mode: str, *, balance: str, collected: bool) -> dict[str, object]
         "ticket_number": 12,
         "ticket_issued_on": "2026-09-25",
         "self_collection_recorded": collected,
+        "acquisition_source": "WALK_IN",
+        "delivery_legs": [],
+        "required_delivery_legs_succeeded": False,
+        "settlement_shape": None
+        if balance == "UNPAID"
+        else "EXACT_PAYMENT_PREPAID_SELF_COLLECTION",
+        "next_steps": steps or [],
     }
 
 
@@ -1443,6 +1474,55 @@ with sync_playwright() as playwright:
                 if state.get("recorded_listed")
                 else {**RECORDED_PROPOSALS, "proposals": []}
             )
+        elif "/orders/" in url and url.split("?")[0].endswith("/incidents"):
+            # READ-ENRICH-001: the order page's "Khiếu nại" section, read from the order's store.
+            # The summary is hostile on purpose: it is customer-reported text and must stay text.
+            state.setdefault("order_incident_reads", []).append(url)
+            body = [
+                {
+                    **INCIDENTS[0],
+                    "order_id": ORDER_VIEW_ID,
+                    "evidence_summary": ORDER_INCIDENT_SUMMARY,
+                }
+            ]
+        elif "/internal/v1/orders/" in url and route.request.method == "POST":
+            # CONSOLE-REDESIGN-002: every write the order page makes, with the headers that make it
+            # safe -- an Idempotency-Key on each, a strong-quoted If-Match where the route is CAS.
+            path = url.split("?")[0]
+            state.setdefault("order_writes", []).append(
+                {
+                    "path": path.split("/internal/v1/orders/")[1],
+                    "body": route.request.post_data,
+                    "if_match": route.request.headers.get("if-match"),
+                    "key": route.request.headers.get("idempotency-key"),
+                }
+            )
+            reply = state.get("order_write_reply")
+            if reply is not None:
+                route.fulfill(
+                    status=reply[0], content_type="application/json", body=json.dumps(reply[1])
+                )
+                return
+            if path.endswith("/collection"):
+                route.fulfill(
+                    status=201,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "collection_id": "12121212-3434-4333-8444-565656565656",
+                            "order_id": PICKUP_ORDER_ID,
+                            "settlement_id": "78787878-9090-4333-8444-121212121212",
+                            "collected_by_staff_id": "11111111-aaaa-4333-8444-555555555555",
+                            "collected_at": "2026-09-25T09:00:00+00:00",
+                            "self_collection_recorded": True,
+                            "row_version": 15,
+                            "replayed": False,
+                        }
+                    ),
+                )
+                return
+            route.fulfill(status=200, content_type="application/json", body="{}")
+            return
         elif "/orders/" in url and "/remedy-credits" in url:
             state.setdefault("credit_reads", []).append(url)
             body = ORDER_CREDITS
@@ -2055,6 +2135,13 @@ with sync_playwright() as playwright:
     # claim about styling and default state, which no source-text test can make.
     page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
     page.wait_for_timeout(1200)
+    # CONSOLE-REDESIGN-002: without a quote hand-off in the address the create form sits under
+    # "Nhập mã thủ công" (spec V2 §2.2 -- a paste field only for a value no route supplies), so a
+    # person opens it first. What is checked below is unchanged.
+    manual = page.locator("details.manual-entry > summary", has_text="Nhập mã thủ công")
+    check("the create form is reachable under 'Nhập mã thủ công'", manual.count() == 1)
+    manual.first.click()
+    page.wait_for_timeout(200)
 
     source = page.locator("#order-source")
     check(
@@ -3196,8 +3283,12 @@ with sync_playwright() as playwright:
     # customer came by the counter and paid the exact total before it was finished. The server
     # records that as the walk-in's prepayment and closes the order only once the handover is
     # recorded -- so if the console offers "Khách đã nhận đồ" to walk-ins alone, this customer's
-    # order is paid, released and impossible to close from the screen. Only a browser can see
-    # which button a real order view produces; the server tests cannot.
+    # order is paid, released and impossible to close from the screen.
+    #
+    # CONSOLE-REDESIGN-002: the order page no longer decides which button to offer. It renders the
+    # server's `next_steps` (ORDER-STEPS-001, computed by the domain), so the property checked is
+    # that it renders that list faithfully -- the pickup press exactly when the server lists
+    # COLLECT, never otherwise -- and that each press carries the headers that make it safe.
 
     def pickup_button() -> int:
         return page.get_by_role("button", name="Khách đã nhận đồ").count()
@@ -3209,53 +3300,222 @@ with sync_playwright() as playwright:
         page.evaluate(f"location.hash = '#/orders/{PICKUP_ORDER_ID}'")
         page.wait_for_timeout(900)
 
-    open_order(order_view("PICKUP_ONLY", balance="PAID", collected=False))
+    def open_dialog_text() -> str:
+        return str(page.evaluate("() => document.querySelector('dialog[open]')?.textContent || ''"))
+
+    prepaid_pickup = order_view(
+        "PICKUP_ONLY", balance="PAID", collected=False, steps=[step("COLLECT", True)]
+    )
+    open_order(prepaid_pickup)
     check(
         "a courier-fetched order paid in advance offers the pickup press",
         pickup_button() == 1,
         f"{pickup_button()} buttons",
     )
     check(
-        "and says the customer has paid and is still to be handed the bag",
-        "Khách đã trả trước. Khi đưa đồ cho khách" in rendered_text(),
+        "once paid, no payment is offered and the screen says the money is taken",
+        page.locator("button[data-step=SETTLE], button[data-step=PREPAY]").count() == 0
+        and "Đã thu đủ tiền" in rendered_text()
+        and "Khách chưa nhận đồ" in rendered_text(),
+    )
+    state["order_writes"] = []
+    page.get_by_role("button", name="Khách đã nhận đồ").first.click()
+    page.wait_for_timeout(400)
+    check(
+        "the press opens a confirmation that says the customer paid and is to be handed the bag",
+        "Khách đã trả trước. Khi đưa đồ cho khách" in open_dialog_text(),
+        open_dialog_text()[:120],
+    )
+    page.locator("dialog[open] #collection-submit").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "the handover is recorded on the collection route, against the version read",
+        len(writes) == 1
+        and writes[0]["path"] == f"{PICKUP_ORDER_ID}/collection"
+        and writes[0]["if_match"] == '"14"'
+        and bool(writes[0]["key"]),
+        repr(writes),
     )
     check(
-        "once paid, the settlement form is gone and the screen says the money is taken",
-        page.locator("#settlement-amount").count() == 0 and "Đã thu đủ tiền" in rendered_text(),
+        "and the success is said where the press was, not as a silent redraw",
+        "Đã ghi nhận khách nhận đồ" in open_dialog_text(),
+        open_dialog_text()[:120],
     )
-    # The guardrail belongs to the form, and the form is shown only while the order owes money
-    # (a paid order used to keep it live, offering to take the money twice).
-    open_order(order_view("PICKUP_ONLY", balance="UNPAID", collected=False))
-    check(
-        "the settlement guardrail says no courier takes money",
-        "Người giao không thu tiền" in rendered_text(),
-    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
 
-    open_order(order_view("SELF_DROP_SELF_COLLECT", balance="PAID", collected=False))
+    # The payment sheet, and its guardrail: the finality line beside the field and the DEC-010 /
+    # DEC-032 policy (POLICY_BOUND) one tap away in the same sheet.
+    unpaid_pickup = order_view(
+        "PICKUP_ONLY",
+        balance="UNPAID",
+        collected=False,
+        steps=[step("SETTLE", True), step("PREPAY")],
+    )
+    open_order(unpaid_pickup)
+    check("an unpaid order offers no pickup press", pickup_button() == 0)
+    page.locator(".action-bar--v2 button[data-step=SETTLE]").click()
+    page.wait_for_timeout(400)
+    sheet_text = open_dialog_text()
+    check(
+        "Thu tiền shows the amount due large, and the field is empty -- typed on purpose",
+        "110.000" in sheet_text and page.locator("#settlement-amount").input_value() == "",
+        sheet_text[:120],
+    )
+    check(
+        "the settlement guardrail says no courier takes money, and that the record is final",
+        "Người giao không thu tiền" in sheet_text and "Ghi rồi không sửa được" in sheet_text,
+    )
+    state["order_writes"] = []
+    page.locator("#settlement-amount").type("110.000", delay=15)
+    check(
+        "the typed amount is echoed as the server will read it",
+        "= 110.000" in open_dialog_text(),
+    )
+    page.locator("dialog[open] #settlement-submit").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    sent = json.loads(writes[0]["body"]) if writes else {}
+    check(
+        "the payment posts the typed figure with collected_by_customer, and an Idempotency-Key",
+        len(writes) == 1
+        and writes[0]["path"] == f"{PICKUP_ORDER_ID}/settlement"
+        and sent == {"paid_amount_vnd": 110000, "collected_by_customer": True}
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    open_order(
+        order_view(
+            "SELF_DROP_SELF_COLLECT", balance="PAID", collected=False, steps=[step("COLLECT", True)]
+        )
+    )
     check("a walk-in paid at drop-off still offers it", pickup_button() == 1)
 
     # The refusal direction. A delivery reaches its customer by a leg (`DEC-023`), a customer who
-    # paid at pickup was recorded by that settlement, and an unpaid customer pays first.
-    for mode, balance, collected, why in (
-        ("PICKUP_AND_RETURN", "PAID", False, "a prepaid delivery"),
-        ("RETURN_ONLY", "PAID", False, "a prepaid return-only delivery"),
-        ("PICKUP_ONLY", "PAID", True, "a courier-fetched order already collected"),
-        ("PICKUP_ONLY", "UNPAID", False, "a courier-fetched order not yet paid"),
+    # paid at pickup was recorded by that settlement, and an unpaid customer pays first. The server
+    # lists no COLLECT for any of them, and the page must not invent one.
+    for mode, balance, collected, steps, why in (
+        ("PICKUP_AND_RETURN", "PAID", False, [step("DELIVERY_RETURN", True)], "a prepaid delivery"),
+        ("RETURN_ONLY", "PAID", False, [step("DELIVERY_RETURN", True)], "a prepaid return-only"),
+        ("PICKUP_ONLY", "PAID", True, [step("COMPLETE", True)], "an order already collected"),
     ):
-        open_order(order_view(mode, balance=balance, collected=collected))
+        open_order(order_view(mode, balance=balance, collected=collected, steps=steps))
         check(f"{why} offers no pickup press", pickup_button() == 0, f"{pickup_button()} buttons")
 
-    # The list the counter searches at pickup says the same thing on the card.
-    state["order_view"] = order_view("PICKUP_ONLY", balance="PAID", collected=False)
+    # A stale version: never retried, the way out is a reload.
+    state["order_writes"] = []
+    open_order(
+        order_view(
+            "SELF_DROP_SELF_COLLECT",
+            balance="UNPAID",
+            collected=False,
+            steps=[
+                step("HAND_OVER", True),
+                step(
+                    "CANCEL",
+                    requires=["custody_resolution"],
+                    custody_resolutions=["SHOP_FAULT_NO_CHARGE"],
+                ),
+            ],
+        )
+    )
+    state["order_write_reply"] = (409, {"detail": "STALE_VERSION: order changed"})
+    page.locator(".action-bar--v2 button[data-step=HAND_OVER]").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "a composite step posts to /steps with the step, If-Match and an Idempotency-Key",
+        len(writes) == 1
+        and writes[0]["path"] == f"{PICKUP_ORDER_ID}/steps"
+        and json.loads(writes[0]["body"] or "{}") == {"step": "HAND_OVER"}
+        and writes[0]["if_match"] == '"14"'
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    check(
+        "a stale refusal is shown at the button with 'Đơn vừa đổi — tải lại', and nothing retried",
+        "người khác đổi" in rendered_text()
+        and page.get_by_role("button", name="Đơn vừa đổi — tải lại").count() == 1
+        and len(state.get("order_writes") or []) == 1,
+    )
+    # A cancellation through review offers only the custody answers the server listed.
+    state["order_write_reply"] = None
+    page.locator("button[data-more-steps]").click()
+    page.wait_for_timeout(300)
+    page.locator("dialog[open] button[data-step=CANCEL]").click()
+    page.wait_for_timeout(300)
+    radios = page.locator("dialog[open] input[name=custody_resolution]")
+    check(
+        "Huỷ đơn offers exactly the custody answers the server listed, and needs one first",
+        radios.count() == 1
+        and radios.first.get_attribute("value") == "SHOP_FAULT_NO_CHARGE"
+        and page.locator("dialog[open] .sheet__actions button").first.is_disabled(),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # RECEIVE refused for a readiness fact the server derives itself: the reason is said in
+    # Vietnamese at the button, with the code, and nothing is claimed to have happened.
+    open_order(
+        order_view(
+            "SELF_DROP_SELF_COLLECT",
+            balance="UNPAID",
+            collected=False,
+            steps=[step("RECEIVE", True, requires=["slot_approved"])],
+        )
+    )
+    state["order_writes"] = []
+    state["order_write_reply"] = (
+        422,
+        {"detail": {"outcome": "REQUIRE_HUMAN", "reason_codes": ["QUANTITY_NOT_MEASURED"]}},
+    )
+    page.locator(".action-bar--v2 button[data-step=RECEIVE]").click()
+    page.wait_for_timeout(400)
+    receive_shut = page.locator("#receive-submit").is_disabled()
+    page.locator("#receive-slot").check()
+    page.locator("#receive-submit").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "Nhận đồ is shut until the slot is attested, and then sends it as the operator's word",
+        receive_shut
+        and len(writes) == 1
+        and json.loads(writes[0]["body"] or "{}") == {"step": "RECEIVE", "slot_approved": True},
+        repr(writes),
+    )
+    check(
+        "a readiness refusal is said in Vietnamese at the button, with its code, nothing recorded",
+        "Chưa nhận đồ được" in open_dialog_text()
+        and "QUANTITY_NOT_MEASURED" in open_dialog_text()
+        and "khách tự ước" in open_dialog_text(),
+        open_dialog_text()[:160],
+    )
+    state["order_write_reply"] = None
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # The list the counter searches at pickup says the same thing on the row.
+    state["order_view"] = prepaid_pickup
     page.evaluate("location.hash = '#/'")
     page.wait_for_timeout(400)
     page.evaluate("location.hash = '#/orders'")
     page.wait_for_timeout(1200)
+    page.locator("#order-tabs button[data-value=ready]").click()
+    page.wait_for_timeout(300)
     check(
         "the order list marks a courier-fetched order as paid and waiting for the customer",
         "Khách đã trả trước, chưa nhận đồ" in rendered_text(),
     )
+    check(
+        "the row is 'Phiếu 12' with one status word and the money, no identifier",
+        "Phiếu 12" in rendered_text() and PICKUP_ORDER_ID not in page.inner_text("main"),
+    )
     state["order_view"] = None
+    state["order_writes"] = []
 
     print()
     print("=" * 74)
@@ -3499,9 +3759,13 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(1200)
     text = rendered_text()
     source = page.locator("[data-field=acquisition-source]")
+    # Spec V2 §4.1: an operator surface shows the gloss; the token stays on the element (title)
+    # and in "Chi tiết kỹ thuật".
     check(
-        "the order detail shows the recorded acquisition source, glossed with its token",
-        source.count() == 1 and (source.text_content() or "") == "Tìm trên Google (GOOGLE_MAPS)",
+        "the order detail shows the recorded acquisition source, glossed, its token kept",
+        source.count() == 1
+        and (source.text_content() or "") == "Tìm trên Google"
+        and source.get_attribute("title") == "GOOGLE_MAPS",
         repr(source.text_content()) if source.count() else "absent",
     )
     check(
@@ -3519,8 +3783,8 @@ with sync_playwright() as playwright:
     unused = page.locator(f"#order-remedy-credits li[data-credit-id='{UNUSED_CREDIT_ID}']")
     spent = page.locator(f"#order-remedy-credits li[data-credit-id='{SPENT_CREDIT_ID}']")
     check(
-        "the panel is headed for the counter and lists both credits",
-        "Khoản giảm trừ của đơn này" in text and unused.count() == 1 and spent.count() == 1,
+        "the section is headed for the counter and lists both credits",
+        "Khoản giảm trừ" in text and unused.count() == 1 and spent.count() == 1,
     )
     check(
         "an unused code is printed in full with a copy control",
@@ -3538,6 +3802,35 @@ with sync_playwright() as playwright:
     check(
         "the amounts are the server's integers, formatted and not rounded",
         "13.200" in (unused.text_content() or "") and "80.000" in (spent.text_content() or ""),
+    )
+    # READ-ENRICH-001: the order's own complaints, from the order's store, the customer's words as
+    # text (never markup), each opening the complaint it names.
+    check(
+        "the order's complaints are read from the order's own store, by the order's id",
+        any(
+            f"/stores/{STORE}/orders/{ORDER_VIEW_ID}/incidents" in url
+            for url in state.get("order_incident_reads", [])
+        ),
+        repr(state.get("order_incident_reads")),
+    )
+    complaint = page.locator("a[data-incident-id]")
+    check(
+        "each complaint opens its incident, and the customer's words stay text",
+        complaint.count() == 1
+        and INCIDENTS[0]["incident_id"] in (complaint.first.get_attribute("href") or "")
+        and ORDER_INCIDENT_SUMMARY in (complaint.first.text_content() or "")
+        and page.locator("main img").count() == 0,
+    )
+    check(
+        "a closed order offers no next step and says so",
+        page.locator("button[data-step]").count() == 0 and "Đơn đã đóng" in text,
+    )
+    check(
+        "the four raw axes and the row version are only in 'Chi tiết kỹ thuật'",
+        "RELEASED" not in page.inner_text("main")
+        and ORDER_VIEW_ID not in page.inner_text("main")
+        and "v14" in (page.locator("details.tech").text_content() or "")
+        and "RELEASED" in (page.locator("details.tech").text_content() or ""),
     )
     check(
         "no expiry is invented for a credit",

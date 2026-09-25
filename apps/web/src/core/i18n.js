@@ -267,7 +267,7 @@ export const REASON_NOTE = {
   ORDER_NOT_FOUND:
     "Không có đơn nào mang mã này ở cửa hàng đang chọn. Kiểm tra lại mã đơn trên bảng đơn.",
   ORDER_NOT_ACTIVE:
-    "Chỉ đơn đang chạy mới tất toán được. Đơn chưa xác nhận thì xác nhận trước; đơn đã đóng hoặc " +
+    "Chỉ đơn đang chạy mới tất toán được. Đơn chưa nhận đồ thì bấm “Nhận đồ” trước; đơn đã đóng hoặc " +
     "đã huỷ thì không thu tiền qua màn hình này.",
   ALREADY_SETTLED:
     "Đơn này đã được tất toán rồi — không phải lỗi của bạn, và không thu thêm lần nữa. Mở lại đơn " +
@@ -281,11 +281,11 @@ export const REASON_NOTE = {
   // given to a staff member who had already taken it and was trying to hand the laundry over.
   GOODS_NOT_READY_FOR_HANDOVER:
     "Đồ chưa giặt xong nên chưa đưa cho khách được. Làm xong đơn tới “sẵn sàng tại cửa hàng” " +
-    "rồi mới ghi nhận khách nhận đồ. Nếu khách đang trả tiền lúc gửi đồ thì bấm “Khách trả trước " +
-    "khi gửi đồ”, không tích ô đã lấy đồ.",
+    "rồi mới ghi nhận khách nhận đồ. Nếu khách đang trả tiền lúc gửi đồ thì bấm “Khách trả " +
+    "trước”.",
   COLLECTION_REQUIRES_PAYMENT:
-    "Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì nhập số tiền, tích “Khách đã tự lấy đồ về” " +
-    "rồi bấm “Ghi nhận tất toán”.",
+    "Đơn này chưa trả tiền. Khách trả lúc lấy đồ thì bấm “Thu tiền”, gõ đúng số khách đưa rồi " +
+    "bấm “Ghi nhận đã thu tiền”.",
   NOT_A_PREPAID_SELF_COLLECTION:
     "Đơn này không phải khách tự mang đồ tới rồi tự lấy. Đơn giao tận nơi thì ghi chuyến giao.",
   ALREADY_COLLECTED: "Đơn này đã ghi nhận khách nhận đồ rồi. Không ghi lần nữa.",
@@ -486,7 +486,81 @@ export const REASON_NOTE = {
     "bản mà chủ tiệm đã ký. Máy chủ không tự viết lại nội dung ấy: viết lại là đưa chủ tiệm duyệt " +
     "một văn bản khác với văn bản đã niêm phong. Tạo một yêu cầu xuất mới; chưa có dữ liệu nào ra " +
     "khỏi hệ thống.",
+  // ORDER-STEPS-001: why "Nhận đồ" was refused. `RECEIVE` checks six readiness facts in one go and
+  // refuses the whole step if any is missing -- nothing is half-applied -- and names each missing
+  // one. Five are read by the server off the order and its quote; only the slot is the operator's.
+  SLOT_APPROVAL_REQUIRED:
+    "Chưa tích “tiệm làm kịp đơn này”. Máy không tự biết tiệm còn chỗ hay không — đó là lời của " +
+    "người nhận đồ, được ghi kèm tên bạn.",
+  QUANTITY_NOT_MEASURED:
+    "Báo giá còn dòng dùng số lượng khách tự ước, chưa do nhân viên cân hoặc đếm. Cân lại, sửa " +
+    "báo giá rồi mới nhận đồ.",
+  SERVICE_NOT_CLASSIFIED:
+    "Báo giá còn dòng chưa có dịch vụ trong bảng giá. Sửa báo giá cho đúng dịch vụ rồi mới nhận đồ.",
+  EXACT_PRICE_NOT_APPROVED:
+    "Giá trên báo giá chưa phải giá chính xác đã duyệt (còn ước tính hoặc còn khoảng giá). Chốt giá " +
+    "trước rồi mới nhận đồ.",
+  CUSTOMER_AGREEMENT_MISSING:
+    "Khách chưa đồng ý bản giá mà đơn này gắn vào. Đọc lại giá cho khách và chốt, rồi mới nhận đồ.",
+  CUSTODY_NOT_RECORDED:
+    "Chưa ghi nhận tiệm đã cầm đồ của khách. Chỉ nhận đồ khi túi đồ đã ở trên quầy.",
 };
+
+/**
+ * `OrderStep` (ORDER-STEPS-001) as the button a counter worker presses: a business verb, not a
+ * state name. Scoped, not in `ENUM_GLOSS`, because `QUALITY_CHECK` is also a `ProductionStatus`
+ * member there ("đang kiểm tra" — a state), and one flat map cannot hold both the verb and the
+ * state for one token (the `ACQUISITION_SOURCE_VI` collision, again).
+ */
+export const ORDER_STEP_VI = {
+  RECEIVE: "Nhận đồ",
+  START_WASH: "Bắt đầu giặt",
+  QUALITY_CHECK: "Giặt xong, kiểm tra đồ",
+  MARK_READY: "Báo đồ đã sẵn sàng",
+  HOLD: "Tạm dừng",
+  RESUME: "Làm tiếp",
+  RELEASE: "Đưa đồ đi giao",
+  HAND_OVER: "Giao đồ & đóng đơn",
+  COMPLETE: "Đóng đơn",
+  CANCEL: "Huỷ đơn",
+  REOPEN: "Không huỷ nữa, làm tiếp",
+  SETTLE: "Thu tiền",
+  PREPAY: "Khách trả trước",
+  COLLECT: "Khách đã nhận đồ",
+  DELIVERY_PICKUP: "Đã lấy đồ tại nhà khách",
+  DELIVERY_RETURN: "Đã giao đồ cho khách",
+};
+
+/** The toast after a step landed: what is now true, in the past tense. */
+export const ORDER_STEP_DONE_VI = {
+  RECEIVE: "Đã nhận đồ",
+  START_WASH: "Đã bắt đầu giặt",
+  QUALITY_CHECK: "Đang kiểm tra đồ",
+  MARK_READY: "Đồ đã sẵn sàng",
+  HOLD: "Đã tạm dừng",
+  RESUME: "Đã làm tiếp",
+  RELEASE: "Đồ đã đưa đi giao",
+  HAND_OVER: "Đã giao đồ và đóng đơn",
+  COMPLETE: "Đã đóng đơn",
+  CANCEL: "Đã huỷ đơn",
+  REOPEN: "Đơn tiếp tục làm",
+  SETTLE: "Đã thu tiền",
+  PREPAY: "Đã thu tiền trả trước",
+  COLLECT: "Đã ghi khách nhận đồ",
+  DELIVERY_PICKUP: "Đã ghi chuyến lấy đồ",
+  DELIVERY_RETURN: "Đã ghi chuyến giao đồ",
+};
+
+/**
+ * A step's label, or its raw token when this console does not know it yet -- a new server step
+ * must look unfamiliar, never be silently dropped or renamed.
+ *
+ * @param {string} step
+ * @returns {string}
+ */
+export function stepVi(step) {
+  return ORDER_STEP_VI[step] || String(step);
+}
 
 /** Server enum values, glossed. The value itself is always displayed too. */
 export const ENUM_GLOSS = {

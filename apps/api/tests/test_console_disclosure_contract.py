@@ -756,17 +756,32 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     body (the server checks again at the lock and at the attestation), and the no-evidence
     #     notice's title and body (a release rests only on the customer's own later message).
     #   419 + 11 = 430, predicted from the registry diff before pinning.
-    # 437 after CONSOLE-REDESIGN-006 (430 + 7) (Nhân sự, Hệ thống, Xuất dữ liệu, Việc chưa hỗ trợ on the V2
-    # kit): +7 net, all DESCRIPTIVE, all in those four modules. Long V1 guardrails/ledes moved
-    # verbatim behind ⓘ as `hint` (re-keyed, not reworded: exports guardrail + lede, system lede,
-    # staff store guardrail, staff disable-confirm body); new tier-1 one-liners beside the control
-    # (staff: create, role, disable; exports: separation of duties; system: observe-only, sign-out
-    # scope; gaps: "not listed is not supported"). Retired: the staff eyebrow, the create card's
-    # "chép lại mã này" hint and the three 204 notices (nobody copies an id any more; their facts
-    # are in the role/store/disable ⓘ), and the wrong-role notice title (now an inline alert).
-    # One staff sentence corrected, not only moved: a taken OIDC subject is a 409 refusal now,
-    # not the "lỗi máy chủ" the V1 field hint claimed.
-    assert sum(counts.values()) == _registry()["total"] == 437
+    # 437 after CONSOLE-REDESIGN-006 (430 + 7) (Nhân sự, Hệ thống, Xuất dữ liệu, Việc chưa hỗ trợ on
+    # the V2 kit): +7 net, all DESCRIPTIVE, all in those four modules. Long V1 guardrails/ledes
+    # moved verbatim behind ⓘ as `hint` (re-keyed, not reworded: exports guardrail + lede, system
+    # lede, staff store guardrail, staff disable-confirm body); new tier-1 one-liners beside the
+    # control (staff: create, role, disable; exports: separation of duties; system: observe-only,
+    # sign-out scope; gaps: "not listed is not supported"). Retired: the staff eyebrow, the create
+    # card's "chép lại mã này" hint and the three 204 notices (nobody copies an id any more; their
+    # facts are in the role/store/disable ⓘ), and the wrong-role notice title (now an inline alert).
+    # One staff sentence corrected, not only moved: a taken OIDC subject is a 409 refusal now, not
+    # the "lỗi máy chủ" the V1 field hint claimed.
+    # 450 after CONSOLE-REDESIGN-002 (437 + 13) (Đơn hàng, Chi tiết đơn on the V2 kit, driven by
+    # ORDER-STEPS-001 `next_steps`): 21 added, 8 retired, all DESCRIPTIVE; POLICY_BOUND unchanged.
+    #   * Retired with the thing they explained: the generic three-axis transition form's guardrail
+    #     and the board's "four parts" lede + guardrail (the list now shows one status word; the
+    #     four raw axes and their "independent" hint live in the order page's tech drawer), and
+    #     the gaps lede that pointed at that form (rewritten to point at the order page's button).
+    #   * Re-keyed, same fact: the delivery-leg guardrail moved from orders.js to orderDetail.js
+    #     with the capability; the DEC-013 note is an ⓘ `hint` instead of a `notice`.
+    #   * Stale and corrected: "API này không có đường nào liệt kê sự cố của riêng một đơn" --
+    #     READ-ENRICH-001 serves that route and the order page lists the incidents now.
+    #   * Shortened below the registry's 40-character floor: the list's prepaid line ("Khách đã
+    #     trả trước, chưa nhận đồ."); its "bấm Khách đã nhận đồ" half is the order page's button.
+    #   * Added: 6 `REASON_NOTE` for the RECEIVE readiness codes, 4 `REFUSAL` for the step refusals,
+    #     5 tier-1 lines at the step sheets (slot attestation, finality, courier, custody, where a
+    #     remedy starts), and the gaps entry for the two targets no step reaches yet (+4 slots).
+    assert sum(counts.values()) == _registry()["total"] == 450
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

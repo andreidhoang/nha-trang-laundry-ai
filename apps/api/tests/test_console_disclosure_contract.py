@@ -900,7 +900,15 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 475 with all six round-6 slices merged: 473 + 10 - 8 = 475.
     # PROMISE-001 (round 7): 475 + 15 = 490 -- 14 refusal notes for the promise codes in
     # REASON_NOTE and 1 hint in ui/promise.js; 9 slots reworded in place to the new facts.
-    assert sum(counts.values()) == _registry()["total"] == 490
+    # SHOP-CAPTURE-001 (round 7, DEC-038) on its own branch: 475 + 24 - 7 = 492. Added: eight
+    #   REASON_NOTE sentences for the machine, trip and expense refusals; four SERVER_GATE `why`
+    #   (MACHINES_READ/_WRITE, EXPENSES_READ/_WRITE); two Sổ thu chi hints; the three gaps entries'
+    #   true replacements (missing, blockedBy, today) and the measurement lede. Retired with the
+    #   facts they stated: reports.js's "why margin is empty" (margin now shows when the month is
+    #   complete), the three entries' "nothing records machines / trip costs / cost" missing, the
+    #   machine entry's blockedBy, the margin entry's today, and the old measurement lede.
+    # Merged (round 7 wave 1, PROMISE-001 + SHOP-CAPTURE-001): 490 + 24 - 7 = 507, as regenerated.
+    assert sum(counts.values()) == _registry()["total"] == 507
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

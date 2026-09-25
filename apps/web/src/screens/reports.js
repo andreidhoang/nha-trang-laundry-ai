@@ -16,9 +16,11 @@
  *     owner published the turnaround rules is still measured against the SLA board's internal
  *     mark. The server says which: `COMPLETE` when every order had a promise, `RULE_ASSUMED` with
  *     `rule_assumed` counting the rest, and the ⓘ carries the board's own sentence verbatim.
- *   - **Margin is shown as not computed**, with the reason, rather than left out: cost is not
- *     captured anywhere (`SHOP-INSTRUMENT-001`), and a margin without cost would be the rest of the
- *     price called profit, which `FR-RPT-002` forbids.
+ *   - **Margin only when the month is complete** (`SHOP-CAPTURE-001`, `DEC-038`): the server
+ *     sends each month the window touches with its Sổ thu chi totals, and a margin figure only when
+ *     that month has electricity, water, chemicals, wages and rent recorded. Otherwise the tile
+ *     says "Chưa đủ số liệu" and names what is missing -- never the rest of the price called
+ *     profit, which `FR-RPT-002` forbids. The capture tiles and sections are `ui/shopReport.js`.
  *
  * Windows are shop-local calendar days (`Asia/Ho_Chi_Minh`) whatever the phone's own time zone,
  * at most 92, and never past today. The screen checks that before asking, only to save a round
@@ -59,6 +61,7 @@ import {
   statusPill,
   techDetails,
 } from "../ui/kit.js";
+import { captureTiles, machineSection, marginTile, monthSection } from "../ui/shopReport.js";
 import { KIND_LABEL } from "./remedies.js";
 
 /**
@@ -119,16 +122,6 @@ const KPI = {
       "Số bồi hoàn đã thực hiện trong khoảng ngày, theo loại, và tổng giá trị khoản giảm trừ đã " +
       "cấp cho khách. Giặt lại miễn phí không có tiền nên không có giá trị.",
   },
-};
-
-/** Margin (`FR-RPT-002`): why it is not a number here. Tier 1 on its tile, the rest behind ⓘ. */
-const MARGIN = {
-  short: "Chưa tính được: chưa ghi chi phí.",
-  why:
-    "Biên lợi nhuận cần chi phí thật của từng đơn: phút máy, hoá chất, công người làm và chi phí " +
-    "giao hàng. Hệ thống chưa ghi những thứ đó (SHOP-INSTRUMENT-001). Lấy tiền đã thu trừ đi một " +
-    "con số đoán rồi gọi phần còn lại là lợi nhuận là điều FR-RPT-002 cấm, nên ô này để trống có " +
-    "lý do.",
 };
 
 /**
@@ -292,27 +285,6 @@ function remediesTile(kpi) {
 }
 
 /**
- * Margin, as a tile that says why it has no number.
- *
- * @param {any} margin the server's `{shown, reason_code, blocked_by}`
- * @returns {HTMLElement}
- */
-function marginTile(margin) {
-  return tile({
-    key: "MARGIN",
-    label: "Biên lợi nhuận",
-    value: UNKNOWN,
-    state: "muted",
-    note: h(
-      "p",
-      { class: "hint", title: `${margin?.reason_code || ""} · ${margin?.blocked_by || ""}` },
-      MARGIN.short,
-    ),
-    info: infoButton("Vì sao chưa có biên lợi nhuận?", h("p", null, MARGIN.why)),
-  });
-}
-
-/**
  * The tiles for one summary, in the order an owner reads a day: money, volume, then quality.
  *
  * @param {any} summary
@@ -321,6 +293,7 @@ function marginTile(margin) {
 function tiles(summary) {
   const kpis = Object.fromEntries(summary.kpis.map((kpi) => [kpi.key, kpi]));
   const onTime = kpis.ON_TIME_INTERNAL;
+  const months = Array.isArray(summary.months) ? summary.months : [];
   return h(
     "div",
     { class: "stack" },
@@ -361,8 +334,13 @@ function tiles(summary) {
       ratioTile(kpis.REWASH, "đơn vào kiểm tra"),
       ratioTile(kpis.COMPLAINTS, "đơn hoàn tất"),
       remediesTile(kpis.REMEDIES_EXECUTED),
-      marginTile(summary.margin),
+      // SHOP-CAPTURE-001: what the shop measured, and the latest month's margin (or why not).
+      ...captureTiles(summary.capture),
+      months.length ? marginTile(months[months.length - 1]) : null,
     ),
+    machineSection(summary.capture),
+    // Newest month first; each whole calendar month the window touches.
+    [...months].reverse().map((month) => monthSection(month)),
   );
 }
 

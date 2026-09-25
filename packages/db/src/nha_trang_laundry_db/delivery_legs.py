@@ -22,9 +22,11 @@ from nha_trang_laundry_domain.catalog import (
     MODES_EXPECTING_RETURN,
     FulfillmentMode,
 )
+from nha_trang_laundry_domain.shop_capture import TripCost
 from psycopg.errors import UniqueViolation
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.shop_capture import insert_trip_cost, trip_audit_details
 from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -56,6 +58,9 @@ class RecordDeliveryLegCommand:
     principal: StaffPrincipal
     correlation_id: UUID
     recorded_at: datetime | None = None
+    #: `SHOP-CAPTURE-001` (`DEC-038`): what the trip cost -- vehicle, kilometres, money, a note --
+    #: recorded on the same press. Optional in every field; an empty one writes nothing.
+    trip: TripCost | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +88,9 @@ class DeliveryLegRepository:
         moment = command.recorded_at or datetime.now(UTC)
         leg_id = uuid4()
         completes: list[bool] = []
+        # SHOP-CAPTURE-001: an all-empty trip is no trip, so the leg's rows are exactly what they
+        # were before trip costs existed.
+        trip = command.trip if command.trip is not None and not command.trip.empty else None
 
         def mutation(cursor: Any) -> None:
             cursor.execute(
@@ -144,6 +152,16 @@ class DeliveryLegRepository:
                     "this delivery was already recorded as successful"
                 ) from error
             cursor.execute("RELEASE SAVEPOINT record_leg")
+            if trip is not None:
+                insert_trip_cost(
+                    cursor,
+                    leg_id=leg_id,
+                    store_id=store_id,
+                    order_id=command.order_id,
+                    trip=trip,
+                    actor_id=command.principal.staff_user_id,
+                    recorded_at=moment,
+                )
             # The flag moves only on a succeeded return, and only once. `order_projection_guard`
             # requires row_version to advance by exactly one, so a leg that changes nothing must not
             # touch the order row at all.
@@ -182,8 +200,11 @@ class DeliveryLegRepository:
                     "leg_id": str(leg_id),
                     "leg_kind": command.leg_kind.value,
                     "outcome": command.outcome.value,
+                    # SHOP-CAPTURE-001: whether a trip cost rides on this leg; never the note.
+                    **({} if trip is None else {"trip_recorded": True}),
                 },
                 audit_action="DELIVERY_LEG_RECORD",
+                audit_details=None if trip is None else trip_audit_details(trip),
                 actor_type="STAFF",
                 actor_id=command.principal.staff_user_id,
                 correlation_id=command.correlation_id,

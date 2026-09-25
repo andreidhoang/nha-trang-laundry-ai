@@ -84,3 +84,24 @@ def test_the_client_registers_no_background_sync() -> None:
         assert "sync.register" not in text, source
         assert "SyncManager" not in text, source
         assert "periodicSync" not in text, source
+
+
+def test_shop_capture_notes_stay_off_the_device_and_warn_against_a_customer_phone() -> None:
+    """SHOP-CAPTURE-001. Sổ thu chi and trip-cost notes are the shop's books, not a contact list.
+
+    The server refuses a note that looks like a phone number (`NOTE_LOOKS_LIKE_PHONE`) and never
+    copies a note into an event, audit or outbox payload (`packages/db/tests/test_shop_capture.py`).
+    Here, the console's half: every note field says, beside it, not to type a customer's phone, and
+    none of the modules that hold a note writes anything to device storage.
+    """
+
+    warnings = {
+        "src/ui/shopCapture.js": "Không ghi số điện thoại khách",
+        "src/screens/expenses.js": "Không ghi số điện thoại của khách",
+    }
+    for relative, warning in warnings.items():
+        assert warning in (WEB / relative).read_text(encoding="utf-8"), relative
+    for relative in (*warnings, "src/screens/machines.js", "src/ui/shopReport.js"):
+        text = (WEB / relative).read_text(encoding="utf-8")
+        for sink in ("localStorage", "sessionStorage", "indexedDB", "document.cookie"):
+            assert sink not in text, (relative, sink)

@@ -812,7 +812,147 @@ SLA_BOARD_POLICY_NOTICE = (
 #: fraction that does not round to a whole percent, a denominator of zero (no order reached quality
 #: check), and a window whose refunds exceeded its takings, so the drawer went OUT. The screen must
 #: print every one as the server sent it and compute none of them.
-REPORT_VERSION = "report-v3:b09f715c3a0cb3e2"
+REPORT_VERSION = "report-v3:b65625ff9f50cbe7"
+
+#: SHOP-CAPTURE-001 (DEC-038). The machines a load goes into, in the server's order (the last one
+#: used first): the console must offer exactly these, in this order, and never re-sort them.
+STUB_WASH_MACHINES = [
+    {
+        "machine_id": "abababab-0000-4000-8000-000000000002",
+        "code": "WASH-02",
+        "display_name": "Máy giặt LG 13 kg",
+        "category": "washer",
+        "starts_cycle": True,
+        "source": "MACHINE_MASTER",
+        "retired_at": None,
+        "row_version": 1,
+        "last_used_at": "2026-09-25T02:00:00+00:00",
+        "cycles": 4,
+        "replayed": False,
+    },
+    {
+        "machine_id": "abababab-0000-4000-8000-000000000001",
+        "code": "WASH-01",
+        "display_name": "Máy giặt SPINZ 32 kg",
+        "category": "washer",
+        "starts_cycle": True,
+        "source": "MACHINE_MASTER",
+        "retired_at": None,
+        "row_version": 1,
+        "last_used_at": None,
+        "cycles": 0,
+        "replayed": False,
+    },
+]
+
+#: The order page's capture read: a closed cycle on WASH-02, and a costed pickup trip. The weight
+#: is 22 kg, so the owner's rule suggests a car -- which the leg sheet may say, never pick.
+STUB_CAPTURE = {
+    "order_id": "77777777-8888-4333-8444-999999999999",
+    "store_id": "11111111-2222-4333-8444-555555555555",
+    "weight_kg": "22",
+    "weight_basis": "MEASURED",
+    "suggested_vehicle": "O_TO",
+    "cycles": [
+        {
+            "cycle_id": "cdcdcdcd-0000-4000-8000-000000000001",
+            "kind": "WASH",
+            "machine_id": "abababab-0000-4000-8000-000000000002",
+            "machine_code": "WASH-02",
+            "machine_name": "Máy giặt LG 13 kg",
+            "started_at": "2026-09-25T02:00:00+00:00",
+            "ended_at": "2026-09-25T02:47:00+00:00",
+            "minutes": 47,
+        }
+    ],
+    "legs": [
+        {
+            "leg_id": "efefefef-0000-4000-8000-000000000001",
+            "leg_kind": "PICKUP",
+            "outcome": "SUCCEEDED",
+            "recorded_at": "2026-09-25T01:00:00+00:00",
+            "vehicle": "O_TO",
+            "km": "6.5",
+            "cost_vnd": 45_000,
+            "note": "gửi xe",
+        }
+    ],
+}
+
+
+def expense_month(month: str) -> dict[str, object]:
+    """One month of Sổ thu chi as the server sums it. Totals are deliberately not the sum of the
+    listed amounts (a voided line is listed and not counted), so a screen that added up its own
+    rows would print the wrong figure."""
+
+    categories = [
+        "DIEN",
+        "NUOC",
+        "HOA_CHAT",
+        "TUI_NHAN",
+        "LUONG",
+        "MAT_BANG",
+        "SUA_CHUA",
+        "XANG_XE",
+        "KHAC",
+    ]
+    amounts = {"DIEN": (1_250_000, 1), "HOA_CHAT": (800_000, 1)}
+    line = {
+        "recorded_by": "11111111-aaaa-4333-8444-555555555555",
+        "recorded_by_name": "Chủ tiệm",
+        "recorded_at": "2026-09-25T03:00:00+00:00",
+        "row_version": 1,
+        "replayed": False,
+    }
+    return {
+        "store_id": STORE,
+        "month": month,
+        "from_date": f"{month}-01",
+        "to_date": f"{month}-30",
+        "truncated": False,
+        "lines": [
+            {
+                **line,
+                "expense_id": "e1e1e1e1-0000-4000-8000-000000000003",
+                "spent_on": f"{month}-20",
+                "category": "KHAC",
+                "amount_vnd": 9_900_000,
+                "note": None,
+                "voided_at": "2026-09-25T03:05:00+00:00",
+                "row_version": 2,
+            },
+            {
+                **line,
+                "expense_id": "e1e1e1e1-0000-4000-8000-000000000002",
+                "spent_on": f"{month}-18",
+                "category": "HOA_CHAT",
+                "amount_vnd": 800_000,
+                "note": "<b>nước giặt</b>",
+                "voided_at": None,
+            },
+            {
+                **line,
+                "expense_id": "e1e1e1e1-0000-4000-8000-000000000001",
+                "spent_on": f"{month}-05",
+                "category": "DIEN",
+                "amount_vnd": 1_250_000,
+                "note": "tiền điện",
+                "voided_at": None,
+            },
+        ],
+        "totals": [
+            {
+                "category": c,
+                "amount_vnd": amounts.get(c, (0, 0))[0],
+                "entries": amounts.get(c, (0, 0))[1],
+            }
+            for c in categories
+        ],
+        "total_vnd": 2_050_000,
+        "entries": 2,
+        "voided_entries": 1,
+        "core_missing": ["NUOC", "LUONG", "MAT_BANG"],
+    }
 
 
 def report_kpis(start: str, end: str) -> list[dict[str, object]]:
@@ -892,15 +1032,82 @@ def report_body(url: str, *, daily: bool) -> dict[str, object]:
                 {"date": end, "kpis": report_kpis(end, end)},
             ],
         }
+    spending = [
+        {"category": c, "amount_vnd": a, "entries": 1 if a else 0}
+        for c, a in (
+            ("DIEN", 1_250_000),
+            ("NUOC", 0),
+            ("HOA_CHAT", 800_000),
+            ("TUI_NHAN", 0),
+            ("LUONG", 0),
+            ("MAT_BANG", 0),
+            ("SUA_CHUA", 0),
+            ("XANG_XE", 0),
+            ("KHAC", 0),
+        )
+    ]
+    complete = bool(REPORT_STATE.get("margin_complete"))
     return {
         **base,
         "kpis": report_kpis(start, end),
-        "margin": {
-            "shown": False,
-            "reason_code": "COST_NOT_CAPTURED",
-            "blocked_by": "SHOP-INSTRUMENT-001",
+        # SHOP-CAPTURE-001: 3 of 4 cycles named a machine; one delivered order fully costed.
+        "capture": {
+            "cycles": 4,
+            "cycles_captured": 3,
+            "machines": [
+                {
+                    "machine_id": "abababab-0000-4000-8000-000000000002",
+                    "code": "WASH-02",
+                    "display_name": "Máy giặt LG 13 kg",
+                    "closed_cycles": 3,
+                    "average_minutes": 47,
+                }
+            ],
+            "delivered_orders": 2,
+            "costed_orders": 1,
+            "legs": 4,
+            "costed_legs": 3,
+            "trip_cost_vnd": 85_000,
+            "cost_per_delivered_order_vnd": 85_000,
+            "labour_minutes_captured": False,
+            "query_version": REPORT_VERSION,
         },
+        "months": [
+            {
+                "month": start[:7],
+                "from_date": f"{start[:7]}-01",
+                "to_date": f"{start[:7]}-30",
+                "in_progress": True,
+                "spending": spending,
+                "spending_vnd": 2_050_000,
+                "spending_entries": 2,
+                "collected_vnd": 90_000,
+                "refunded_vnd": 240_000,
+                "margin": (
+                    {
+                        "status": "COMPLETE",
+                        "missing": [],
+                        "amount_vnd": 2_200_000,
+                        "direction": "OUT",
+                        "excludes_trip_costs": True,
+                    }
+                    if complete
+                    else {
+                        "status": "INCOMPLETE",
+                        "missing": ["NUOC", "LUONG", "MAT_BANG"],
+                        "amount_vnd": None,
+                        "direction": None,
+                        "excludes_trip_costs": True,
+                    }
+                ),
+                "query_version": REPORT_VERSION,
+            }
+        ],
     }
+
+
+#: Toggled by section 19 to show a complete month (whose spending exceeded its takings).
+REPORT_STATE: dict[str, object] = {}
 
 
 SLA_BOARD_FIRST_PAGE = {
@@ -1634,6 +1841,41 @@ with sync_playwright() as playwright:
             return
         if url.endswith("/internal/v1/session"):
             body = SESSION_OK
+        elif url.split("?")[0].endswith("/machines") and route.request.method == "GET":
+            # SHOP-CAPTURE-001: empty unless a section asks for machines, so every earlier press
+            # of Bắt đầu giặt still runs the step directly, as it did before the chooser existed.
+            state.setdefault("machine_reads", []).append(url)
+            body = {"store_id": STORE, "truncated": False, "machines": state.get("machines") or []}
+        elif url.split("?")[0].endswith("/capture") and route.request.method == "GET":
+            body = state.get("capture") or {
+                **STUB_CAPTURE,
+                "cycles": [],
+                "legs": [],
+                "suggested_vehicle": None,
+                "weight_kg": None,
+                "weight_basis": "UNKNOWN",
+            }
+        elif "/expenses" in url and route.request.method == "POST":
+            state.setdefault("expense_writes", []).append(
+                {
+                    "path": url.split("?")[0],
+                    "body": route.request.post_data,
+                    "if_match": route.request.headers.get("if-match"),
+                    "key": route.request.headers.get("idempotency-key"),
+                }
+            )
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(expense_month("2026-09")["lines"][2]),
+            )
+            return
+        elif url.split("?")[0].endswith("/expenses") and route.request.method == "GET":
+            from urllib.parse import parse_qs, urlsplit
+
+            asked = parse_qs(urlsplit(url).query).get("month", ["2026-09"])[0]
+            state.setdefault("expense_reads", []).append(asked)
+            body = expense_month(asked)
         elif url.endswith("/internal/v1/stores"):
             body = {"store_ids": [STORE]}
         elif "/contacts/recent" in url:
@@ -5030,6 +5272,134 @@ with sync_playwright() as playwright:
         "the row is 'Phiếu 12' with one status word and the money, no identifier",
         "Phiếu 12" in rendered_text() and PICKUP_ORDER_ID not in page.inner_text("main"),
     )
+    print()
+    print("=" * 74)
+    print("15b. MÁY NÀO? VÀ CHI PHÍ CHUYẾN — measured inside the taps staff already make")
+    print("=" * 74)
+    # SHOP-CAPTURE-001 (DEC-038). The machines are the server's list in the server's order; the
+    # console offers exactly those plus "Bỏ qua", and sends the machine picked as the step's own
+    # field. With no machine listed, the step runs as before.
+    state["machines"] = STUB_WASH_MACHINES
+    wash_view = {
+        **order_view("SELF_DROP_SELF_COLLECT", balance="UNPAID", collected=False),
+        "production": "NOT_STARTED",
+        "next_steps": [step("START_WASH", True), step("HOLD")],
+    }
+    open_order(wash_view)
+    state["order_writes"] = []
+    page.locator(".action-bar--v2 button[data-step=START_WASH]").click()
+    page.wait_for_timeout(700)
+    offered = [
+        str(node.get_attribute("data-machine-code"))
+        for node in page.locator("dialog[open] button[data-machine-code]").all()
+    ]
+    check(
+        "Bắt đầu giặt asks Máy nào? with the server's machines in its order, and Bỏ qua",
+        offered == ["WASH-02", "WASH-01"]
+        and page.locator("dialog[open] button[data-machine-skip]").count() == 1
+        and "Vừa dùng" in open_dialog_text()
+        and not state.get("order_writes"),
+        f"{offered} writes={state.get('order_writes')}",
+    )
+    page.locator("dialog[open] button[data-machine-code=WASH-01]").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "picking a machine posts the step with that machine, If-Match and an Idempotency-Key",
+        len(writes) == 1
+        and json.loads(writes[0]["body"] or "{}")
+        == {"step": "START_WASH", "machine_id": STUB_WASH_MACHINES[1]["machine_id"]}
+        and writes[0]["if_match"] == '"14"'
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    open_order(wash_view)
+    state["order_writes"] = []
+    page.locator(".action-bar--v2 button[data-step=START_WASH]").click()
+    page.wait_for_timeout(700)
+    page.locator("dialog[open] button[data-machine-skip]").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "Bỏ qua posts the step with no machine at all",
+        len(writes) == 1 and json.loads(writes[0]["body"] or "{}") == {"step": "START_WASH"},
+        repr(writes),
+    )
+    # The order page shows what was recorded, as the server read it.
+    state["capture"] = STUB_CAPTURE
+    delivery_view = {
+        **order_view("PICKUP_AND_RETURN", balance="UNPAID", collected=False),
+        "production": "NOT_STARTED",
+        "next_steps": [step("DELIVERY_PICKUP", True)],
+    }
+    open_order(delivery_view)
+    page.wait_for_timeout(500)
+    capture_text = page.locator("#order-capture").inner_text()
+    check(
+        "the order page lists the cycle's machine and minutes and the trip's cost, as sent",
+        "WASH-02" in capture_text
+        and "47 phút" in capture_text
+        and "45.000" in capture_text
+        and "6,5 km" in capture_text,
+        capture_text[:160],
+    )
+    state["order_writes"] = []
+    page.locator(".action-bar--v2 button[data-step=DELIVERY_PICKUP]").click()
+    page.wait_for_timeout(800)
+    hint = page.locator("dialog[open] [data-suggested-vehicle]")
+    pressed = page.locator("dialog[open] #trip-vehicle [aria-pressed=true]").count()
+    check(
+        "the leg sheet says the owner's rule for 22 kg and picks no vehicle for the driver",
+        hint.count() == 1
+        and hint.first.get_attribute("data-suggested-vehicle") == "O_TO"
+        and "22 kg" in (hint.first.text_content() or "")
+        and pressed == 0,
+        f"{hint.first.text_content() if hint.count() else 'absent'} pressed={pressed}",
+    )
+    page.locator("dialog[open] details[data-trip-fields] summary").click()
+    page.locator("dialog[open] #trip-vehicle [data-value=O_TO]").click()
+    page.locator("#trip-km").fill("6,5")
+    page.locator("#trip-cost").fill("45.000")
+    page.locator("#trip-note").fill("gửi xe")
+    page.locator("dialog[open] button[data-leg-outcome=SUCCEEDED]").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "Lấy được đồ sends the trip as typed: vehicle, km as text, the amount as an integer",
+        len(writes) == 1
+        and writes[0]["path"].endswith("/delivery-legs")
+        and json.loads(writes[0]["body"] or "{}")
+        == {
+            "leg_kind": "PICKUP",
+            "outcome": "SUCCEEDED",
+            "vehicle": "O_TO",
+            "km": "6,5",
+            "cost_vnd": 45000,
+            "note": "gửi xe",
+        }
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    open_order(delivery_view)
+    state["order_writes"] = []
+    page.locator(".action-bar--v2 button[data-step=DELIVERY_PICKUP]").click()
+    page.wait_for_timeout(600)
+    page.locator("dialog[open] details[data-trip-fields] summary").click()
+    page.locator("#trip-km").fill("4,55")
+    page.locator("dialog[open] button[data-leg-outcome=SUCCEEDED]").click()
+    page.wait_for_timeout(600)
+    check(
+        "a kilometre figure that cannot be read is refused in words, and nothing is sent",
+        not state.get("order_writes") and "Số km là một số" in open_dialog_text(),
+        open_dialog_text()[:120],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    state["machines"] = []
+    state["capture"] = None
+
     state["order_view"] = None
     state["order_writes"] = []
 
@@ -6860,11 +7230,49 @@ with sync_playwright() as playwright:
         "90.000" in money_tile and "240.000" in money_tile,
         money_tile[:120],
     )
+    # SHOP-CAPTURE-001: margin is the month's, and the server sends no figure until the month's
+    # Sổ thu chi has all five core categories. The tile says so and names what is missing.
     check(
-        "margin is shown as not computed, with the reason, rather than left out",
-        "Chưa tính được" in tile("MARGIN"),
-        tile("MARGIN")[:80],
+        "margin for an incomplete month says Chưa đủ số liệu and names the missing categories",
+        "Chưa đủ số liệu" in tile("MARGIN")
+        and "nước, lương, mặt bằng" in tile("MARGIN")
+        and "₫" not in tile("MARGIN"),
+        tile("MARGIN")[:160],
     )
+    check(
+        "the capture tiles print the server's integers: 3 / 4 cycles, 85.000 ₫ per delivered order",
+        "3 / 4 mẻ" in tile("CYCLES_CAPTURED")
+        and "75%" in tile("CYCLES_CAPTURED")
+        and "85.000" in tile("TRIP_COST_PER_ORDER")
+        and "1 / 2 đơn giao" in tile("TRIP_COST_PER_ORDER"),
+        f"{tile('CYCLES_CAPTURED')[:60]} | {tile('TRIP_COST_PER_ORDER')[:60]}",
+    )
+    month_text = (
+        page.locator("[data-report-month]").first.inner_text()
+        if page.locator("[data-report-month]").count()
+        else ""
+    )
+    check(
+        "the month's spending is listed by category with the server's total, never re-added",
+        "Điện" in month_text
+        and "1.250.000" in month_text
+        and "2.050.000" in month_text
+        and "Nước" not in month_text,
+        month_text[:160],
+    )
+    REPORT_STATE["margin_complete"] = True
+    page.locator("[aria-label='Khoảng ngày'] [data-value='30d']").click()
+    page.wait_for_timeout(900)
+    check(
+        "a complete month whose spending exceeded its takings is said in words, never with a minus",
+        "Chi nhiều hơn thu" in tile("MARGIN")
+        and "2.200.000" in tile("MARGIN")
+        and "-2" not in tile("MARGIN")
+        and "\u2212" not in tile("MARGIN")
+        and "lợi nhuận" not in tile("MARGIN").lower(),
+        tile("MARGIN")[:160],
+    )
+    REPORT_STATE["margin_complete"] = False
     check(
         "the remedies tile names the kinds that happened, in the counter's words",
         "Giặt lại miễn phí: 1" in tile("REMEDIES_EXECUTED")
@@ -6921,6 +7329,95 @@ with sync_playwright() as playwright:
         "and opening it anyway shows the rule and makes no report request",
         "Kế toán" in rendered_text() and not state["report_reads"],
         repr(state["report_reads"]),
+    )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+
+    print()
+    print("=" * 74)
+    print("21. SỔ THU CHI — the month as the server summed it, one line added, a wrong one voided")
+    print("=" * 74)
+    state["expense_writes"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/expenses?month=2026-09", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    hero = page.locator(".money-hero__amount").first.inner_text()
+    check(
+        "the month's total is the server's, not the sum of the rows on screen",
+        "2.050.000" in hero and "11.950.000" not in rendered_text(),
+        hero,
+    )
+    missing_line = page.locator("[data-core-missing]").first
+    check(
+        "one line names what margin still waits for, from the server's core_missing",
+        missing_line.get_attribute("data-core-missing") == "NUOC LUONG MAT_BANG"
+        and "nước, lương, mặt bằng" in missing_line.inner_text(),
+        missing_line.inner_text(),
+    )
+    check(
+        "a voided line is still listed, marked, and a hostile note stays text",
+        page.locator("[data-expense-id='e1e1e1e1-0000-4000-8000-000000000003']").count() == 1
+        and "Đã huỷ" in rendered_text()
+        and "<b>nước giặt</b>" in rendered_text(),
+    )
+    page.locator("button[data-expense-add]").click()
+    page.wait_for_timeout(400)
+    page.locator("#expense-save").click()
+    page.wait_for_timeout(300)
+    check(
+        "Ghi vào sổ with no category says what is missing and sends nothing",
+        not state["expense_writes"] and "Chọn mục chi" in open_dialog_text(),
+    )
+    page.locator("#expense-category [data-value=LUONG]").click()
+    page.locator("#expense-amount").fill("7.000.000")
+    page.locator("#expense-note").fill("lương tháng 9")
+    page.locator("#expense-save").click()
+    page.wait_for_timeout(900)
+    writes = state["expense_writes"]
+    sent = json.loads(writes[0]["body"] or "{}") if writes else {}
+    check(
+        "the expense is sent as typed: category, an integer amount, the day, the note, with a key",
+        len(writes) == 1
+        and sent.get("category") == "LUONG"
+        and sent.get("amount_vnd") == 7_000_000
+        and bool(sent.get("spent_on"))
+        and sent.get("note") == "lương tháng 9"
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    state["expense_writes"] = []
+    page.locator("[data-expense-id='e1e1e1e1-0000-4000-8000-000000000001']").click()
+    page.wait_for_timeout(400)
+    page.locator("#expense-void").click()
+    page.wait_for_timeout(150)
+    armed = not state["expense_writes"]
+    page.locator("#expense-void").click()
+    page.wait_for_timeout(900)
+    writes = state["expense_writes"]
+    check(
+        "Huỷ dòng này takes two presses and sends If-Match with the line's version",
+        armed
+        and len(writes) == 1
+        and writes[0]["path"].endswith("/expenses/e1e1e1e1-0000-4000-8000-000000000001/void")
+        and writes[0]["if_match"] == '"1"',
+        repr(writes),
+    )
+    page.keyboard.press("Escape")
+    SESSION_OK["roles"] = ["AUDITOR"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/expenses", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    add = page.locator("button[data-expense-add]")
+    check(
+        "an auditor reads the book, and Ghi khoản chi stays visible, shut, with who may write",
+        "2.050.000" in rendered_text() and add.count() == 1 and add.first.is_disabled(),
+    )
+    SESSION_OK["roles"] = ["OPERATOR"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/more", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    check(
+        "an operator sees Sổ thu chi under Thêm, disabled, naming who may open it",
+        page.locator("[data-nav-denied='/expenses']").count() == 1,
     )
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
 

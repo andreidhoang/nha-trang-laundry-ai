@@ -91,6 +91,20 @@ from nha_trang_laundry_db.shadow_console import (
     ShadowAuthorizationError,
     ShadowStateError,
 )
+from nha_trang_laundry_db.shop_capture import (
+    EXPENSE_READ_ROLES,
+    EXPENSE_WRITE_ROLES,
+    MACHINE_READ_ROLES,
+    MACHINE_WRITE_ROLES,
+    ExpenseMonth,
+    ExpenseView,
+    MachineUnavailableError,
+    MachineView,
+    OrderCapture,
+    ShopCaptureAuthorizationError,
+    ShopCaptureNotFound,
+    ShopCaptureRefusal,
+)
 from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_db.transactional_consent import (
     ServiceMessagingState,
@@ -123,6 +137,13 @@ from nha_trang_laundry_domain.promise import (
 from nha_trang_laundry_domain.quote_composition import RequestedLine
 from nha_trang_laundry_domain.range_prices import RangePriceChoice
 from nha_trang_laundry_domain.remedies import RemedyKind
+from nha_trang_laundry_domain.shop_capture import (
+    ExpenseCategory,
+    MachineCategory,
+    ShopCaptureError,
+    Vehicle,
+    trip_cost,
+)
 from nha_trang_laundry_observability import (
     CORRELATION_HEADER,
     CorrelationContext,
@@ -174,6 +195,7 @@ from nha_trang_laundry_api.ops_board import OpsBoardService, OpsBoardUnavailable
 from nha_trang_laundry_api.promises import PromiseService, PromiseServiceUnavailable
 from nha_trang_laundry_api.readiness import readyz
 from nha_trang_laundry_api.security import BrowserSecurityMiddleware, RequestSizeLimitMiddleware
+from nha_trang_laundry_api.shop_capture import ShopCaptureService, ShopCaptureUnavailable
 
 # SHOP-OBSERVABILITY-001. Before this call, every `_LOGGER.record(...)` below was a no-op in the
 # container: uvicorn's default LOGGING_CONFIG leaves this logger at WARNING with no handler
@@ -378,6 +400,9 @@ class OrderStepRequest(StrictRequest):
     #: check, `CUSTOM` with `custom_at` for a time they set. Absent is the published rule.
     promise_choice: PromiseChoice | None = None
     custom_at: datetime | None = None
+    #: `START_WASH` / `REWASH` only, and optional (`SHOP-CAPTURE-001`, `DEC-038`): the machine the
+    #: load went into. Absent is "Bỏ qua" -- the wash cycle is recorded as not captured.
+    machine_id: UUID | None = None
 
     @field_validator("step")
     @classmethod
@@ -417,6 +442,8 @@ class OrderStepRequest(StrictRequest):
             raise ValueError("custom_at is required by, and only by, promise_choice CUSTOM")
         if self.custom_at is not None and self.custom_at.tzinfo is None:
             raise ValueError("custom_at must carry its timezone")
+        if self.machine_id is not None and not (rewash or self.step is OrderStep.START_WASH):
+            raise ValueError("machine_id is taken only by START_WASH and REWASH")
         return self
 
 
@@ -2254,7 +2281,14 @@ def execute_order_step(
             rejection_reason=request.rejection_reason,
             promise_choice=request.promise_choice,
             custom_promise_at=request.custom_at,
+            machine_id=request.machine_id,
         )
+    except MachineUnavailableError as error:
+        # SHOP-CAPTURE-001: another store's machine, a retired one, or one a load does not go into.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "NOT_SUPPORTED", "reason_code": error.reason_code},
+        ) from error
     except OrderStepRequiresHuman as error:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -3006,10 +3040,19 @@ def issue_counter_ticket(
 
 
 class DeliveryLegRequest(StrictRequest):
-    """One delivery attempt. There is no amount field: the customer already paid at the counter."""
+    """One delivery attempt. No amount is taken from the customer: they paid at the counter.
+
+    `SHOP-CAPTURE-001` (`DEC-038`): what the trip cost the shop, every field optional --
+    `templates/delivery-cost-log.csv`'s columns, captured where the event already happens. `km` is a
+    string ("4,5" or "4.5", one decimal) so a distance never becomes a float on the way in.
+    """
 
     leg_kind: DeliveryLegKind
     outcome: DeliveryLegOutcome
+    vehicle: Vehicle | None = None
+    km: str | None = Field(default=None, max_length=8)
+    cost_vnd: StrictInt | None = Field(default=None, ge=0, le=MAX_CANONICAL_INT)
+    note: str | None = Field(default=None, max_length=200)
 
 
 class DeliveryLegResponse(BaseModel):
@@ -3041,12 +3084,21 @@ def record_delivery_leg(
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
     try:
+        trip = trip_cost(
+            vehicle=request.vehicle, km=request.km, cost_vnd=request.cost_vnd, note=request.note
+        )
+    except ShopCaptureError as error:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail={"reason_code": error.reason_code}
+        ) from error
+    try:
         stored = service.record_delivery_leg(
             order_id=order_id,
             leg_kind=request.leg_kind,
             outcome=request.outcome,
             idempotency_key=idempotency_key,
             principal=principal,
+            trip=trip,
         )
     except (StoreAccessError, DeliveryLegError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
@@ -5728,14 +5780,76 @@ class ReportSlaRuleResponse(BaseModel):
     notice_vi: str
 
 
-class ReportMarginResponse(BaseModel):
-    """`FR-RPT-002`: margin is not computed, and the report says why instead of omitting it."""
+class ReportMachineCyclesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    machine_id: UUID
+    code: str
+    display_name: str
+    closed_cycles: int = Field(ge=0)
+    #: Whole minutes, rounded half up by PostgreSQL over the closed cycles.
+    average_minutes: int = Field(ge=0)
+
+
+class ReportCaptureResponse(BaseModel):
+    """`SHOP-CAPTURE-001`: what the shop measured over the window. Integers, never a rate."""
 
     model_config = ConfigDict(extra="forbid")
 
-    shown: Literal[False] = False
-    reason_code: Literal["COST_NOT_CAPTURED"] = "COST_NOT_CAPTURED"
-    blocked_by: str
+    cycles: int = Field(ge=0)
+    cycles_captured: int = Field(ge=0)
+    machines: list[ReportMachineCyclesResponse]
+    delivered_orders: int = Field(ge=0)
+    costed_orders: int = Field(ge=0)
+    legs: int = Field(ge=0)
+    costed_legs: int = Field(ge=0)
+    trip_cost_vnd: int = Field(ge=0)
+    cost_per_delivered_order_vnd: int | None = Field(ge=0)
+    #: `DEC-038`: labour minutes per order are not captured, by decision.
+    labour_minutes_captured: Literal[False] = False
+    query_version: str
+
+
+class ReportSpendingResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: ExpenseCategory
+    amount_vnd: int = Field(ge=0)
+    entries: int = Field(ge=0)
+
+
+class ReportMarginResponse(BaseModel):
+    """`FR-RPT-002` / `DEC-038`: a month's margin, only when its spending is complete.
+
+    `INCOMPLETE` carries the missing core categories and no amount at all. `COMPLETE` carries the
+    size of net takings minus recorded spending and its direction, never a signed figure, and is
+    never called profit: depreciation, tax and the owner's own time are not in it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["COMPLETE", "INCOMPLETE"]
+    missing: list[ExpenseCategory]
+    amount_vnd: int | None = Field(ge=0)
+    direction: Literal["IN", "OUT"] | None
+    #: Trip costs recorded on delivery legs are not subtracted (fuel is also in Sổ thu chi).
+    excludes_trip_costs: Literal[True] = True
+
+
+class ReportMonthResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    month: str = Field(pattern=r"^\d{4}-\d{2}$")
+    from_date: date
+    to_date: date
+    in_progress: bool
+    spending: list[ReportSpendingResponse]
+    spending_vnd: int = Field(ge=0)
+    spending_entries: int = Field(ge=0)
+    collected_vnd: int = Field(ge=0)
+    refunded_vnd: int = Field(ge=0)
+    margin: ReportMarginResponse
+    query_version: str
 
 
 class ReportSummaryResponse(BaseModel):
@@ -5747,7 +5861,10 @@ class ReportSummaryResponse(BaseModel):
     query_version: str
     evaluated_at: datetime
     sla_rule: ReportSlaRuleResponse
-    margin: ReportMarginResponse
+    #: `SHOP-CAPTURE-001`: machines, cycles and trips over the window.
+    capture: ReportCaptureResponse
+    #: Every calendar month the window touches: spending by category, takings and margin.
+    months: list[ReportMonthResponse]
 
 
 class ReportDayResponse(BaseModel):
@@ -5797,6 +5914,60 @@ def _report_figures(period: ReportPeriod, query_version: str) -> list[ReportFigu
             }
         )
         for figure in period.figures
+    ]
+
+
+def _report_capture(report: StoreReport) -> ReportCaptureResponse:
+    capture = report.capture
+    return ReportCaptureResponse(
+        cycles=capture.cycles,
+        cycles_captured=capture.cycles_captured,
+        machines=[
+            ReportMachineCyclesResponse(
+                machine_id=machine.machine_id,
+                code=machine.code,
+                display_name=machine.display_name,
+                closed_cycles=machine.closed_cycles,
+                average_minutes=machine.average_minutes,
+            )
+            for machine in capture.machines
+        ],
+        delivered_orders=capture.delivered_orders,
+        costed_orders=capture.costed_orders,
+        legs=capture.legs,
+        costed_legs=capture.costed_legs,
+        trip_cost_vnd=capture.trip_cost_vnd,
+        cost_per_delivered_order_vnd=capture.cost_per_delivered_order_vnd,
+        query_version=report.query_version,
+    )
+
+
+def _report_months(report: StoreReport) -> list[ReportMonthResponse]:
+    return [
+        ReportMonthResponse(
+            month=month.month,
+            from_date=month.from_date,
+            to_date=month.to_date,
+            in_progress=month.in_progress,
+            spending=[
+                ReportSpendingResponse(
+                    category=total.category, amount_vnd=total.amount_vnd, entries=total.entries
+                )
+                for total in month.spending
+            ],
+            spending_vnd=month.spending_vnd,
+            spending_entries=month.spending_entries,
+            collected_vnd=month.collected_vnd,
+            refunded_vnd=month.refunded_vnd,
+            margin=ReportMarginResponse(
+                status=month.margin.status.value,
+                missing=list(month.margin.missing),
+                amount_vnd=month.margin.amount_vnd,
+                direction=month.margin.direction,  # type: ignore[arg-type]
+            ),
+            query_version=report.query_version,
+        )
+        for month in report.months
     ]
 
 
@@ -5869,7 +6040,8 @@ def report_summary(
         query_version=report.query_version,
         evaluated_at=report.evaluated_at,
         sla_rule=_report_sla_rule(report),
-        margin=ReportMarginResponse(blocked_by="SHOP-INSTRUMENT-001"),
+        capture=_report_capture(report),
+        months=_report_months(report),
     )
 
 
@@ -6112,6 +6284,497 @@ def _raise_export_error(error: Exception) -> NoReturn:
         # into a conflict the screen glosses from `REASON_NOTE`.
         raise HTTPException(status.HTTP_409_CONFLICT, detail=error.reason_code) from error
     raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+
+
+# --- SHOP-CAPTURE-001 (DEC-038): machines, Sổ thu chi, the order page's capture read -------------
+#
+# Measuring the shop inside taps staff already make. The wash cycle has no route of its own: the
+# `START_WASH` / `QUALITY_CHECK` / `REWASH` steps open and close it in their own transaction. Trip
+# costs ride on the delivery-leg route. What is here is the machine list the chooser reads, the
+# owner's edits to it, Sổ thu chi, and one read of an order's cycles and trips. Money arrives as
+# integers summed by PostgreSQL; no route adds, subtracts or divides an amount.
+
+
+def get_shop_capture_service() -> ShopCaptureService:
+    try:
+        return ShopCaptureService(AuthSettings())
+    except ShopCaptureUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="shop capture unavailable"
+        ) from error
+
+
+def require_machine_reader(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """The counter picks a machine; the owner, approver and auditor read the list too. MFA."""
+    if not principal.roles & MACHINE_READ_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("MACHINE_READ_ROLE_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+def require_machine_owner(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """`DEC-038`: the owner adds, renames or retires a machine. MFA."""
+    if not principal.roles & MACHINE_WRITE_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("MACHINE_OWNER_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+def require_expense_reader(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """Sổ thu chi is read by the owner, the accountant and the auditor. MFA."""
+    if not principal.roles & EXPENSE_READ_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("EXPENSE_READ_ROLE_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+def require_expense_writer(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """Sổ thu chi is written by the owner and the accountant. MFA."""
+    if not principal.roles & EXPENSE_WRITE_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("EXPENSE_WRITE_ROLE_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+#: Everything a shop-capture repository refuses with, mapped by `_raise_shop_capture_error`.
+_SHOP_CAPTURE_ERRORS = (
+    ShopCaptureAuthorizationError,
+    StoreAccessError,
+    ShopCaptureNotFound,
+    IdempotencyConflictError,
+    ShopCaptureRefusal,
+)
+
+
+def _raise_shop_capture_error(error: Exception) -> NoReturn:
+    """One refusal shape: 403 opaque, 404 for a row outside the caller's stores, 409 for a stale
+    version or a reused key, 422 `{reason_code}` for a value the shop's rules refuse."""
+    if isinstance(error, (ShopCaptureAuthorizationError, StoreAccessError)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    if isinstance(error, ShopCaptureNotFound):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="not found") from error
+    if isinstance(error, IdempotencyConflictError):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
+    if isinstance(error, ShopCaptureRefusal):
+        if error.reason_code == "STALE_VERSION":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, detail=f"STALE_VERSION: {error}"
+            ) from error
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail={"reason_code": error.reason_code}
+        ) from error
+    raise error
+
+
+class MachineResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    machine_id: UUID
+    code: str
+    display_name: str
+    category: MachineCategory
+    #: Whether a load goes into it at *Bắt đầu giặt* (the domain's rule, not the console's).
+    starts_cycle: bool
+    source: Literal["MACHINE_MASTER", "OWNER"]
+    retired_at: datetime | None
+    row_version: int = Field(ge=1)
+    last_used_at: datetime | None
+    cycles: int = Field(ge=0)
+    replayed: bool = False
+
+
+class MachineListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    truncated: bool
+    machines: list[MachineResponse]
+
+
+def _machine_response(machine: MachineView, *, replayed: bool = False) -> MachineResponse:
+    return MachineResponse(
+        machine_id=machine.machine_id,
+        code=machine.code,
+        display_name=machine.display_name,
+        category=machine.category,
+        starts_cycle=machine.starts_cycle,
+        source=machine.source,  # type: ignore[arg-type]
+        retired_at=machine.retired_at,
+        row_version=machine.row_version,
+        last_used_at=machine.last_used_at,
+        cycles=machine.cycles,
+        replayed=replayed,
+    )
+
+
+@app.get("/internal/v1/stores/{store_id}/machines", response_model=MachineListResponse)
+def list_machines(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_machine_reader)],
+    purpose: Literal["WASH", "ALL"] = "ALL",
+    include_retired: bool = False,
+    service: Annotated[ShopCaptureService | None, Depends(get_shop_capture_service)] = None,
+) -> MachineListResponse:
+    """The store's machines, the most recently used first. `purpose=WASH` keeps the machines a load
+    goes into at *Bắt đầu giặt* (never a retired one); `include_retired` lists retired ones last."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="shop capture unavailable")
+    try:
+        listed = service.list_machines(
+            store_id=store_id,
+            principal=principal,
+            cycle_only=purpose == "WASH",
+            include_retired=include_retired,
+        )
+    except _SHOP_CAPTURE_ERRORS as error:
+        _raise_shop_capture_error(error)
+    return MachineListResponse(
+        store_id=listed.store_id,
+        truncated=listed.truncated,
+        machines=[_machine_response(machine) for machine in listed.machines],
+    )
+
+
+class MachineCreateRequest(StrictRequest):
+    code: str = Field(min_length=1, max_length=32)
+    display_name: str = Field(min_length=1, max_length=120)
+    category: MachineCategory
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/machines",
+    response_model=MachineResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_machine(
+    store_id: UUID,
+    request: MachineCreateRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_machine_owner)],
+    service: Annotated[ShopCaptureService | None, Depends(get_shop_capture_service)] = None,
+) -> MachineResponse:
+    """The owner adds a machine. A code the store already uses is refused `MACHINE_CODE_TAKEN`."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="shop capture unavailable")
+    try:
+        machine, replayed = service.create_machine(
+            store_id=store_id,
+            code=request.code,
+            display_name=request.display_name,
+            category=request.category,
+            principal=principal,
+            idempotency_key=idempotency_key,
+        )
+    except _SHOP_CAPTURE_ERRORS as error:
+        _raise_shop_capture_error(error)
+    return _machine_response(machine, replayed=replayed)
+
+
+class MachineUpdateRequest(StrictRequest):
+    """Rename, retire, or both. Retiring is one-way."""
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    retire: StrictBool = False
+
+
+@app.patch("/internal/v1/stores/{store_id}/machines/{machine_id}", response_model=MachineResponse)
+def update_machine(
+    store_id: UUID,
+    machine_id: UUID,
+    request: MachineUpdateRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_machine_owner)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[ShopCaptureService | None, Depends(get_shop_capture_service)] = None,
+) -> MachineResponse:
+    """The owner renames or retires a machine, with the row version read (`If-Match`)."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="shop capture unavailable")
+    expected = _parse_if_match(if_match)
+    try:
+        machine, replayed = service.update_machine(
+            store_id=store_id,
+            machine_id=machine_id,
+            expected_row_version=expected,
+            display_name=request.display_name,
+            retire=request.retire,
+            principal=principal,
+            idempotency_key=idempotency_key,
+        )
+    except _SHOP_CAPTURE_ERRORS as error:
+        _raise_shop_capture_error(error)
+    return _machine_response(machine, replayed=replayed)
+
+
+class ExpenseResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expense_id: UUID
+    spent_on: date
+    category: ExpenseCategory
+    amount_vnd: int = Field(gt=0)
+    note: str | None
+    recorded_by: UUID
+    recorded_by_name: str | None
+    recorded_at: datetime
+    voided_at: datetime | None
+    row_version: int = Field(ge=1)
+    replayed: bool = False
+
+
+class ExpenseCategoryTotalResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: ExpenseCategory
+    amount_vnd: int = Field(ge=0)
+    entries: int = Field(ge=0)
+
+
+class ExpenseMonthResponse(BaseModel):
+    """One month of Sổ thu chi. Totals are PostgreSQL's sums; voided lines are listed only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    month: str
+    from_date: date
+    to_date: date
+    truncated: bool
+    lines: list[ExpenseResponse]
+    totals: list[ExpenseCategoryTotalResponse]
+    total_vnd: int = Field(ge=0)
+    entries: int = Field(ge=0)
+    voided_entries: int = Field(ge=0)
+    #: `DEC-038`: the core categories with no line this month; the month's margin waits for them.
+    core_missing: list[ExpenseCategory]
+
+
+def _expense_response(line: ExpenseView, *, replayed: bool = False) -> ExpenseResponse:
+    return ExpenseResponse(
+        expense_id=line.expense_id,
+        spent_on=line.spent_on,
+        category=line.category,
+        amount_vnd=line.amount_vnd,
+        note=line.note,
+        recorded_by=line.recorded_by,
+        recorded_by_name=line.recorded_by_name,
+        recorded_at=line.recorded_at,
+        voided_at=line.voided_at,
+        row_version=line.row_version,
+        replayed=replayed,
+    )
+
+
+def _expense_month_response(month: ExpenseMonth) -> ExpenseMonthResponse:
+    return ExpenseMonthResponse(
+        store_id=month.store_id,
+        month=month.month,
+        from_date=month.from_date,
+        to_date=month.to_date,
+        truncated=month.truncated,
+        lines=[_expense_response(line) for line in month.lines],
+        totals=[
+            ExpenseCategoryTotalResponse(
+                category=total.category, amount_vnd=total.amount_vnd, entries=total.entries
+            )
+            for total in month.totals
+        ],
+        total_vnd=month.total_vnd,
+        entries=month.entries,
+        voided_entries=month.voided_entries,
+        core_missing=list(month.core_missing),
+    )
+
+
+@app.get("/internal/v1/stores/{store_id}/expenses", response_model=ExpenseMonthResponse)
+def list_expenses(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_expense_reader)],
+    month: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
+    service: Annotated[ShopCaptureService | None, Depends(get_shop_capture_service)] = None,
+) -> ExpenseMonthResponse:
+    """Sổ thu chi for one calendar month: its lines (at most 200, newest day first, `truncated`
+    beyond) and its totals by category."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="shop capture unavailable")
+    try:
+        found = service.expense_month(store_id=store_id, principal=principal, month=month)
+    except _SHOP_CAPTURE_ERRORS as error:
+        _raise_shop_capture_error(error)
+    return _expense_month_response(found)
+
+
+class ExpenseCreateRequest(StrictRequest):
+    spent_on: date
+    category: ExpenseCategory
+    amount_vnd: StrictInt = Field(ge=1, le=MAX_CANONICAL_INT)
+    note: str | None = Field(default=None, max_length=200)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/expenses",
+    response_model=ExpenseResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_expense(
+    store_id: UUID,
+    request: ExpenseCreateRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_expense_writer)],
+    service: Annotated[ShopCaptureService | None, Depends(get_shop_capture_service)] = None,
+) -> ExpenseResponse:
+    """One line of Sổ thu chi. Date, category and amount are required; the note is optional,
+    at most 120 characters, and refused if it looks like a phone number."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="shop capture unavailable")
+    try:
+        line, replayed = service.record_expense(
+            store_id=store_id,
+            spent_on=request.spent_on,
+            category=request.category,
+            amount_vnd=request.amount_vnd,
+            note=request.note,
+            principal=principal,
+            idempotency_key=idempotency_key,
+        )
+    except _SHOP_CAPTURE_ERRORS as error:
+        _raise_shop_capture_error(error)
+    return _expense_response(line, replayed=replayed)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/expenses/{expense_id}/void", response_model=ExpenseResponse
+)
+def void_expense(
+    store_id: UUID,
+    expense_id: UUID,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_expense_writer)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[ShopCaptureService | None, Depends(get_shop_capture_service)] = None,
+) -> ExpenseResponse:
+    """Void a wrong line, once, with the row version read. It stays listed and stops counting;
+    the correction is a new line."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="shop capture unavailable")
+    expected = _parse_if_match(if_match)
+    try:
+        line, replayed = service.void_expense(
+            store_id=store_id,
+            expense_id=expense_id,
+            expected_row_version=expected,
+            principal=principal,
+            idempotency_key=idempotency_key,
+        )
+    except _SHOP_CAPTURE_ERRORS as error:
+        _raise_shop_capture_error(error)
+    return _expense_response(line, replayed=replayed)
+
+
+class CaptureCycleResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cycle_id: UUID
+    kind: Literal["WASH", "REWASH"]
+    machine_id: UUID | None
+    machine_code: str | None
+    machine_name: str | None
+    started_at: datetime
+    ended_at: datetime | None
+    minutes: int | None = Field(ge=0)
+
+
+class CaptureLegResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    leg_id: UUID
+    leg_kind: str
+    outcome: str
+    recorded_at: datetime
+    vehicle: Vehicle | None
+    #: Kilometres with one decimal, as text: a distance is never a float on the wire.
+    km: str | None
+    cost_vnd: int | None = Field(ge=0)
+    note: str | None
+
+
+class OrderCaptureResponse(BaseModel):
+    """An order's wash cycles and trip costs, and the vehicle the owner's rule suggests."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    store_id: UUID
+    #: The kilograms the bound quote weighs, as text, or null when a line is priced by the piece.
+    weight_kg: str | None
+    weight_basis: Literal["MEASURED", "ESTIMATED", "UNKNOWN"]
+    #: Under 20 kg a motorbike, from exactly 20 kg a car (`BUSINESS_TRUTH_INTAKE.md`); null when
+    #: the weight is not known.
+    suggested_vehicle: Vehicle | None
+    cycles: list[CaptureCycleResponse]
+    legs: list[CaptureLegResponse]
+
+
+def _order_capture_response(capture: OrderCapture) -> OrderCaptureResponse:
+    suggestion = capture.suggestion
+    return OrderCaptureResponse(
+        order_id=capture.order_id,
+        store_id=capture.store_id,
+        weight_kg=None if suggestion.weight_kg is None else str(suggestion.weight_kg),
+        weight_basis=suggestion.basis.value,
+        suggested_vehicle=suggestion.vehicle,
+        cycles=[
+            CaptureCycleResponse(
+                cycle_id=cycle.cycle_id,
+                kind=cycle.kind,  # type: ignore[arg-type]
+                machine_id=cycle.machine_id,
+                machine_code=cycle.machine_code,
+                machine_name=cycle.machine_name,
+                started_at=cycle.started_at,
+                ended_at=cycle.ended_at,
+                minutes=cycle.minutes,
+            )
+            for cycle in capture.cycles
+        ],
+        legs=[
+            CaptureLegResponse(
+                leg_id=leg.leg_id,
+                leg_kind=leg.leg_kind,
+                outcome=leg.outcome,
+                recorded_at=leg.recorded_at,
+                vehicle=leg.vehicle,
+                km=None if leg.km is None else str(leg.km),
+                cost_vnd=leg.cost_vnd,
+                note=leg.note,
+            )
+            for leg in capture.legs
+        ],
+    )
+
+
+@app.get("/internal/v1/orders/{order_id}/capture", response_model=OrderCaptureResponse)
+def read_order_capture(
+    order_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_machine_reader)],
+    service: Annotated[ShopCaptureService | None, Depends(get_shop_capture_service)] = None,
+) -> OrderCaptureResponse:
+    """An order's wash cycles (machine, minutes) and trip costs, and the owner's vehicle rule
+    applied to its weight. 404 outside the caller's stores, as the order read."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="shop capture unavailable")
+    try:
+        capture = service.order_capture(order_id=order_id, principal=principal)
+    except _SHOP_CAPTURE_ERRORS as error:
+        _raise_shop_capture_error(error)
+    return _order_capture_response(capture)
 
 
 if WEB_DIRECTORY.is_dir():

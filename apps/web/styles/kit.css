@@ -3542,3 +3542,114 @@ a.row-link {
 .order__promise-first {
   text-align: right;
 }
+
+/* === SHOP-CAPTURE-001 (DEC-038): Máy nào?, trip costs, Sổ thu chi ============================= */
+
+/* "Máy nào?": big buttons, two per row on a phone, the code large and the name under it. */
+.machine-pick {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+}
+
+.machine-pick .btn {
+  min-height: 4.5rem;
+  padding-block: var(--space-2);
+}
+
+.machine-pick__label {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.machine-pick__label strong {
+  font-size: 1.0625rem;
+}
+
+.machine-pick__name {
+  font-size: 0.8125rem;
+  font-weight: var(--weight-normal);
+  opacity: 0.85;
+}
+
+.machine-pick__last {
+  font-size: 0.75rem;
+  font-weight: var(--weight-bold);
+}
+
+/* The optional trip cost: folded under one line so the leg sheet stays one tap. */
+.trip-fields {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.trip-fields > summary {
+  cursor: pointer;
+  font-weight: var(--weight-bold);
+  min-height: var(--tap-min);
+  display: flex;
+  align-items: center;
+}
+
+.trip-fields input[type="text"] {
+  width: 100%;
+}
+
+.capture__minutes {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-bold);
+  white-space: nowrap;
+}
+
+/* Sổ thu chi. */
+.expenses__nav {
+  align-items: center;
+  display: flex;
+  gap: var(--space-1);
+  justify-content: space-between;
+  max-width: 24rem;
+}
+
+.expenses__month-label {
+  font-size: 1.0625rem;
+}
+
+.expenses__nav .btn[disabled] {
+  visibility: hidden;
+}
+
+.expenses__missing {
+  color: var(--warn-fg);
+  margin: 0;
+}
+
+.expenses__complete {
+  margin: 0;
+}
+
+.expenses__voided {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.expenses__struck {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+/* A month whose margin cannot be computed says so in words, at a size that fits a half tile. */
+.kpi[data-margin-status="INCOMPLETE"] .kpi__value {
+  font-size: 1.125rem;
+  line-height: 1.3;
+}
+
+.kpi[data-margin-status="INCOMPLETE"] .kpi__note {
+  display: grid;
+  gap: var(--space-1);
+}

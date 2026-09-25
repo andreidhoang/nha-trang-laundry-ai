@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 460
+  DESCRIPTIVE: 477
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 7
   SERVER_GATE: 15
-total: 490
+total: 507
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1466,6 +1466,71 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.MACHINE_UNAVAILABLE:5426266a126a
+  module: core/i18n.js
+  key: REASON_NOTE.MACHINE_UNAVAILABLE
+  text: Máy này không bắt đầu mẻ giặt được (đã ngưng dùng, là máy sấy, hoặc của tiệm khác). Chọn máy khác
+    hoặc bấm Bỏ qua.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.MACHINE_CODE_TAKEN:f810ee8e9128
+  module: core/i18n.js
+  key: REASON_NOTE.MACHINE_CODE_TAKEN
+  text: Tiệm đã có máy mang mã này. Đặt mã khác, ví dụ WASH-03.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.MACHINE_CODE_INVALID:11ef28adbeb2
+  module: core/i18n.js
+  key: REASON_NOTE.MACHINE_CODE_INVALID
+  text: Mã máy chỉ gồm chữ in, số và dấu gạch, ví dụ WASH-03.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.MACHINE_RETIRED:5f09609d0dfd
+  module: core/i18n.js
+  key: REASON_NOTE.MACHINE_RETIRED
+  text: Máy này đã ngưng dùng; không đổi được nữa.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.NOTE_LOOKS_LIKE_PHONE:3b805ebad124
+  module: core/i18n.js
+  key: REASON_NOTE.NOTE_LOOKS_LIKE_PHONE
+  text: Ghi chú có số giống số điện thoại. Sổ của tiệm không ghi số điện thoại khách; bỏ số đó đi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.TRIP_KM_INVALID:ae3e9b4c2ae2
+  module: core/i18n.js
+  key: REASON_NOTE.TRIP_KM_INVALID
+  text: Số km là một số, tối đa một chữ số sau dấu phẩy (ví dụ 4,5).
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.TRIP_COST_TOO_LARGE:b8ffbb8e9ba4
+  module: core/i18n.js
+  key: REASON_NOTE.TRIP_COST_TOO_LARGE
+  text: Một chuyến tối đa 10.000.000 ₫. Kiểm tra lại số tiền.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.EXPENSE_AMOUNT_TOO_LARGE:32fe0ff937e1
+  module: core/i18n.js
+  key: REASON_NOTE.EXPENSE_AMOUNT_TOO_LARGE
+  text: Một dòng tối đa 1.000.000.000 ₫. Kiểm tra lại số tiền.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: core/rbac.js#why:f1857f4fe905
   module: core/rbac.js
   key: why
@@ -1693,6 +1758,38 @@ disclosures:
     why: The route gate for this capability admits every role, so binding to it could never fail. The
       claim is really enforced by an exact role set in the repository layer, and the test asserts the
       console's list equals it.
+- slot_id: core/rbac.js#why:a8d030f21686
+  module: core/rbac.js
+  key: why
+  text: Danh sách máy dành cho vai trò vận hành và kiểm toán đã xác thực hai bước.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/rbac.js#why:8392352ac5c7
+  module: core/rbac.js
+  key: why
+  text: Chỉ chủ tiệm thêm, đổi tên hoặc ngưng dùng một máy (DEC-038).
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/rbac.js#why:8bd27137540e
+  module: core/rbac.js
+  key: why
+  text: Sổ thu chi dành cho chủ tiệm, kế toán và kiểm toán đã xác thực hai bước.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/rbac.js#why:db2e1c96bd63
+  module: core/rbac.js
+  key: why
+  text: Chỉ chủ tiệm và kế toán ghi hoặc huỷ một dòng trong sổ thu chi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: core/rbac.js#why:869bdf71cf72
   module: core/rbac.js
   key: why
@@ -2230,6 +2327,22 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/expenses.js#hint:23bd488b049f
+  module: screens/expenses.js
+  key: hint
+  text: Đã đủ các mục chính; báo cáo tính được biên của tháng này.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/expenses.js#hint:5e8103485c6a
+  module: screens/expenses.js
+  key: hint
+  text: Không ghi số điện thoại của khách vào sổ.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/exports.js#notice__title:cdc838edb260
   module: screens/exports.js
   key: notice__title
@@ -2419,53 +2532,91 @@ disclosures:
     - custody_events
     - batches
     why: 'Same shape: the custody context is measured empty and the disclosure says so.'
-- slot_id: screens/gaps.js#lede:7b732888ca4a
+- slot_id: screens/gaps.js#lede:bd19dbac89db
   module: screens/gaps.js
   key: lede
   text: 'Màn Báo cáo có số của chủ: đơn, đúng hẹn theo giờ hẹn đầu tiên với khách, giặt lại, khiếu nại,
-    tiền đã thu và bồi hoàn — mỗi số kèm tử số, mẫu số, khoảng ngày và phiên bản truy vấn. Các mục dưới
-    đây vẫn thiếu vì cần số đo thật hoặc một quyết định chưa ai đưa ra.'
+    tiền đã thu và bồi hoàn — mỗi số kèm tử số, mẫu số, khoảng ngày và phiên bản truy vấn — cùng số tiệm
+    tự đo: mẻ có ghi máy, phút mỗi mẻ, chi phí giao mỗi đơn, chi theo mục và biên của tháng khi đủ số
+    liệu. Các mục dưới đây vẫn thiếu vì cần số đo thật hoặc một quyết định chưa ai đưa ra.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:fadf099317cc
+- slot_id: screens/gaps.js#missing:710e8e5e1624
   module: screens/gaps.js
   key: missing
-  text: Không có kho dữ liệu nào ghi nhận máy, mẻ giặt hay phút công.
+  text: 'Máy và mẻ đã được ghi: chọn máy khi bấm Bắt đầu giặt, mẻ đóng khi bấm Giặt xong, phút mỗi mẻ
+    ở màn Báo cáo. Phút công theo đơn thì không ghi — DEC-038 quyết không bắt hai người bấm giờ từng việc;
+    lương vào Sổ thu chi.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:97f99313d090
+- slot_id: screens/gaps.js#blockedBy:f098aed0ff8d
   module: screens/gaps.js
   key: blockedBy
-  text: SHOP-INSTRUMENT-001 (4–6 tuần đo thật)
+  text: SHOP-INSTRUMENT-001 (cần 4–6 tuần mẻ giặt ghi thật trước khi tính công suất)
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:85d107d2368c
-  module: screens/gaps.js
-  key: missing
-  text: Không có kho dữ liệu nào ghi nhận chi phí của một chuyến giao.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:9d0e56978395
-  module: screens/gaps.js
-  key: missing
-  text: 'Không có chi phí nào được ghi: phút máy, hoá chất, công người làm, chi phí giao hàng. Màn Báo
-    cáo vì vậy để trống ô biên lợi nhuận và nói lý do.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:36362e6b6e8c
+- slot_id: screens/gaps.js#today:449e540df030
   module: screens/gaps.js
   key: today
-  text: Xem Tiền đã thu ở màn Báo cáo. Đó là tiền vào két trừ tiền hoàn lại, không phải lợi nhuận.
+  text: Chọn máy mỗi lần bấm Bắt đầu giặt; không kịp thì bấm Bỏ qua, mẻ vẫn được đếm.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:86bc2f5b662f
+  module: screens/gaps.js
+  key: missing
+  text: 'Chi phí từng chuyến đã ghi được khi bấm Lấy được đồ hoặc Giao thành công (xe, km, tiền), và Báo
+    cáo có chi phí giao mỗi đơn. Chưa có: đối chiếu chi phí đó với phí giao đã thu của từng đơn.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#blockedBy:616f40a5315a
+  module: screens/gaps.js
+  key: blockedBy
+  text: SHOP-INSTRUMENT-001 (cổng thí điểm cần 20 chuyến ghi thật)
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:43480de55c7e
+  module: screens/gaps.js
+  key: today
+  text: Mở “Chi phí chuyến” trên phiếu giao và ghi tiền mỗi chuyến, cả chuyến giao hụt.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:11048d3fecf0
+  module: screens/gaps.js
+  key: missing
+  text: 'Biên theo tháng đã có ở Báo cáo, nhưng chỉ khi Sổ thu chi của tháng có đủ điện, nước, hoá chất,
+    lương và mặt bằng; thiếu mục nào thì báo chưa đủ số liệu và nêu mục thiếu. Chưa có biên theo từng
+    đơn: chưa có quy tắc chia chi phí chung cho từng đơn.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#blockedBy:fa2dad31fffb
+  module: screens/gaps.js
+  key: blockedBy
+  text: SHOP-INSTRUMENT-001 (4–6 tuần số liệu thật)
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:8ad672aaa3f8
+  module: screens/gaps.js
+  key: today
+  text: 'Ghi mọi khoản chi vào Sổ thu chi. Biên của tháng không phải lợi nhuận: chưa tính khấu hao máy
+    và thuế.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3701,16 +3852,6 @@ disclosures:
   key: hint
   text: 'Bồi hoàn làm ngay trên trang của từng khiếu nại: mở khiếu nại, chọn loại, gửi đề nghị, rồi thực
     hiện trên dòng của nó. Danh sách này chỉ gom các khiếu nại đang mở đã có đề nghị.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/reports.js#why:8549fc3573a3
-  module: screens/reports.js
-  key: why
-  text: 'Biên lợi nhuận cần chi phí thật của từng đơn: phút máy, hoá chất, công người làm và chi phí giao
-    hàng. Hệ thống chưa ghi những thứ đó (SHOP-INSTRUMENT-001). Lấy tiền đã thu trừ đi một con số đoán
-    rồi gọi phần còn lại là lợi nhuận là điều FR-RPT-002 cấm, nên ô này để trống có lý do.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

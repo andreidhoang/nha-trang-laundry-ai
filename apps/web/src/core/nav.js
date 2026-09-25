@@ -121,6 +121,23 @@ export const NAV_ITEMS = [
     group: "Quản trị",
     hint: "Đơn, đúng hẹn, giặt lại, tiền theo ngày",
   },
+  // SHOP-CAPTURE-001 (DEC-038).
+  {
+    path: "/expenses",
+    label: NAV.expenses,
+    capability: "EXPENSES_READ",
+    icon: "cash",
+    group: "Quản trị",
+    hint: "Chi phí của tiệm theo tháng",
+  },
+  {
+    path: "/machines",
+    label: NAV.machines,
+    capability: "MACHINES_READ",
+    icon: "washer",
+    group: "Quản trị",
+    hint: "Danh sách máy; thêm, đổi tên, ngưng dùng",
+  },
   {
     path: "/staff",
     label: NAV.staff,

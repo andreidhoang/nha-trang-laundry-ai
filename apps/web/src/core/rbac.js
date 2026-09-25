@@ -160,6 +160,29 @@ export const CAPABILITIES = {
       "Báo cáo theo khoảng ngày dành cho chủ tiệm, người duyệt, kế toán và kiểm toán đã xác thực " +
       "hai bước. Nhân viên quầy xem tiền và đơn của hôm nay ở màn Hôm nay.",
   },
+  // SHOP-CAPTURE-001 (DEC-038). `MACHINE_READ_ROLES` / `MACHINE_WRITE_ROLES` and
+  // `EXPENSE_READ_ROLES` / `EXPENSE_WRITE_ROLES` in `shop_capture.py`, each with MFA and store
+  // membership re-checked by the repository; the route gates are the same sets.
+  MACHINES_READ: {
+    roles: [OWNER, APPROVER, OPERATOR, AUDITOR],
+    mfa: true,
+    why: "Danh sách máy dành cho vai trò vận hành và kiểm toán đã xác thực hai bước.",
+  },
+  MACHINES_WRITE: {
+    roles: [OWNER],
+    mfa: true,
+    why: "Chỉ chủ tiệm thêm, đổi tên hoặc ngưng dùng một máy (DEC-038).",
+  },
+  EXPENSES_READ: {
+    roles: [OWNER, "ACCOUNTANT", AUDITOR],
+    mfa: true,
+    why: "Sổ thu chi dành cho chủ tiệm, kế toán và kiểm toán đã xác thực hai bước.",
+  },
+  EXPENSES_WRITE: {
+    roles: [OWNER, "ACCOUNTANT"],
+    mfa: true,
+    why: "Chỉ chủ tiệm và kế toán ghi hoặc huỷ một dòng trong sổ thu chi.",
+  },
   EXPORT_DATA: {
     roles: [OWNER, APPROVER],
     mfa: true,

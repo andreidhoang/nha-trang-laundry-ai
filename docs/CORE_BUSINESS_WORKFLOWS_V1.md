@@ -67,7 +67,7 @@ The commonest workflow in the shop, and the one every other workflow is a variat
 | 7 | Take the bag over the counter | `#/orders` | dimension **nhận đồ** → `RECEIVED_PENDING_INSPECTION` | `POST /orders/{id}/intake-transition` | The shop now holds the goods, and cancelling is no longer a single press |
 | 8 | Accept the order for work | same | → `ACCEPTED` + **Đã duyệt lịch** | same | `production_accepted_at` is stamped: **the SLA clock starts here**. On the counter's **Nhận đồ** step (`RECEIVE`), after the owner ran `scripts/publish_turnaround_policy.py`, the same transaction stores the **promised-ready time** (`PROMISE-001`, `DEC-037`): standard clothing 8 opening hours (08:00–20:00, published closed days skipped); shoes, curtains, blankets 24 or 48 calendar hours by the staff member's choice (48 when silent), rolled into opening hours; special items and express 2 h only by the staff member's choice; the latest line wins; a promise running through an unpublished Tết needs a person. Refused `PROMISE_REQUIRED` when a person must set it and nobody did. **Hẹn lại** (`POST /orders/{id}/promise`) moves what the customer was told, with a reason; the first promise never moves |
 | 9 | Confirm the sale | same | dimension **thương mại** → `STORE_CONFIRMATION_PENDING` → `CONFIRMED` → `ACTIVE` | `POST /orders/{id}/transition` | `ACTIVE` is refused unless intake is `ACCEPTED` |
-| 10 | Wash it | same | dimension **sản xuất** → `QUEUED` → `IN_PROCESS` → `QUALITY_CHECK` → `READY_AT_STORE` | `POST /orders/{id}/production-transition` | `READY_AT_STORE` stamps `production_ready_at`: **the SLA clock stops here** |
+| 10 | Wash it | same | dimension **sản xuất** → `QUEUED` → `IN_PROCESS` → `QUALITY_CHECK` → `READY_AT_STORE` | `POST /orders/{id}/production-transition` | `READY_AT_STORE` stamps `production_ready_at`: **the SLA clock stops here**. Since `SHOP-CAPTURE-001` (`DEC-038`) the order page's **Bắt đầu giặt** first asks **Máy nào?** — the machines a load goes into (`GET …/stores/{id}/machines?purpose=WASH`, the last used first) as big buttons, and **Bỏ qua** — and sends the pick as the step's `machine_id`. The move into `IN_PROCESS` opens a `wash_cycles` row and the move into `QUALITY_CHECK` closes it, inside the step's own transaction, each as a `WASH_CYCLE` event + audit + outbox row; a skipped machine is a cycle counted as not captured. A rewash opens a second cycle (its sheet offers the machine as optional chips); a hold or an exception resumed where it stopped continues the open one |
 | 11 | Hand it back | same | → `RELEASED` | same | Production is now terminal |
 | 12 | Take the money | `#/orders/{id}` | **Số tiền khách đã trả**, **Khách đã tự lấy đồ**, **Ghi nhận tất toán** | `POST /orders/{id}/settlement` | balance `PAID`, self-collection recorded |
 | 13 | Close it | `#/orders` | dimension **thương mại** → `COMPLETED` | `POST /orders/{id}/transition` | Refused unless production is `RELEASED`, fulfilment is complete **and** the balance is settled |
@@ -135,6 +135,13 @@ The same spine with three differences:
 3. **A delivery leg closes the order, not self-collection.** A failed attempt is recorded as a
    failure, costs nothing extra, and the next attempt is a new row. Only a successful `RETURN` leg
    permits `COMPLETED`.
+4. **What the trip cost the shop** (`SHOP-CAPTURE-001`, `DEC-038`) is recorded on the same press:
+   the leg sheet's folded **Chi phí chuyến** takes a vehicle (`XE_MAY` / `O_TO` / `THUE_NGOAI`),
+   kilometres with one decimal, the money (fuel, parking, a Grab fare) and a note of at most 120
+   characters — every field optional, one `delivery_leg_costs` row per leg, append-only. The sheet
+   shows the owner's rule for this order's weight (under 20 kg a motorbike, from exactly 20 kg a car;
+   nothing when a line is priced by the piece) and picks nothing. A note that looks like a phone
+   number is refused (`NOTE_LOOKS_LIKE_PHONE`), and no note enters an event, audit or outbox row.
 
 ---
 
@@ -198,8 +205,20 @@ physical custody, and inventing a fourth code would make that rule negotiable at
   were measured by the SLA board's stated mark); rewash
   (a production move out of `EXCEPTION` to an earlier state, however it was recorded); complaints;
   money collected net of refunds; remedies executed by kind. Every figure is a numerator and a
-  denominator from `report-v3`; the screen prints both and computes no rate. Margin is shown as not
-  computed, because no cost is captured (`SHOP-INSTRUMENT-001`).
+  denominator from `report-v3`; the screen prints both and computes no rate. Since
+  `SHOP-CAPTURE-001`: wash cycles that named a machine over all cycles, each machine's closed cycles
+  and average minutes, the delivery cost per delivered order (over the delivered orders whose every
+  leg has a cost), and for each calendar month the window touches its Sổ thu chi spending by
+  category and its **margin only when complete** — takings less recorded spending when the month has
+  electricity, water, chemicals, wages and rent, otherwise `INCOMPLETE` with the missing list and no
+  figure (`FR-RPT-002`: the rest is never called profit). Trip costs on legs are not subtracted
+  (fuel is also in Sổ thu chi). Labour minutes are not captured, by decision.
+- **`#/expenses` Sổ thu chi** (`OWNER_ADMIN`, `ACCOUNTANT` write; `AUDITOR` reads): one month at a
+  time, the total and each category's total summed by PostgreSQL, one tier-1 line naming the core
+  categories margin still waits for, **Ghi khoản chi** (date, category, amount, note ≤ 120), and a
+  wrong line voided with two presses and its row version — never edited.
+- **`#/machines` Máy giặt, sấy** (under Hệ thống): the machine list `scripts/seed_machines.py`
+  registers from `templates/machine-master.csv`; the owner adds, renames or retires a machine.
 - **The network drops.** The console says so, disables every control that would write, and queues
   nothing. When the network returns, the controls it disabled come back — and only those; a control
   held busy by its own in-flight write stays busy, and one disabled by the person's role stays
@@ -294,8 +313,9 @@ Recorded so the gap is visible rather than discovered at the counter. Each is in
 | ~~Deciding an approval from the console~~ | **Built.** `list_pending` projects `resource_version`, `snapshot_hash` and `rendered_hash`, so a decision can bind exactly what it approved. `ORDER` is decidable with a link to the resource; `QUOTE_REVISION` and `MESSAGE_DRAFT` stay disabled by name, because approving what the console cannot show you is blind approval in a politer font. **Since superseded for both:** `RANGE-PRICE-001` made a quote revision readable, and `MESSAGE-DRAFT-BINDING-001` (2026-09-25) added `GET /internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding`, so a `SEND_MESSAGE` card prints the exact stored words above its buttons, refuses to approve a draft edited or rejected after the envelope was raised (the server refuses too), and `#/exceptions` raises the envelope from that read. The send itself is still a named person's manual send; nothing sends automatically. **`ORDER` since `SESSION-LIST-001`:** the card reads the order's current `row_version` and says "Đơn chưa thay đổi kể từ khi gửi duyệt", or "Đơn đã thay đổi sau khi gửi duyệt — mở đơn để xem lại" with **Duyệt** shut and only **Từ chối** live; the server refuses a moved order's approval regardless |
 | ~~An SLA board~~ | **Built, 2026-09-22.** The read model was never the missing half: `ShadowConsoleRepository.sla_risk_board` already existed with migration `0037`'s clock fix, and building a second one would have re-introduced a bug already paid for once. What was missing was a surface — `GET /internal/v1/stores/{store_id}/sla-board` and `#/sla-board`, ordered by the server, each row carrying the query version and the rule that produced it. Since `PROMISE-001` (`sla-risk-board-v2`) the board ranks by when each order is due — its own promised-ready time, or the stated 8-hour mark for an order taken before the owner published the turnaround policy — and every row says which (`rule_source`). `OPS-BOARD-001`, `PROMISE-001` |
 | Payment methods, part payments, deposits, credit | One shape only (§4) |
-| Batches, chain of custody, machine cycles, delivery cost capture | Blocked on `SHOP-INSTRUMENT-001` |
-| ~~A daily operations dashboard and CSV export~~ | **Built, 2026-09-22 and 2026-09-25.** The export exists and is versioned: `#/exports` raises an `EXPORT_SANITIZED_DATA` envelope, an owner who is not the staff member that defined it approves it, and the file is released once with its query version and a digest recorded in `data_exports`. It carries no incident free text, no evidence summary and no contact key. One day, or since `EXPORT-RANGE-001` a window of up to 92 shop-local days whose two ends are inside the digest the owner approves (an approval of one window cannot release another), cut on `orders.created_at` — which is **not** the boundary the takings figure uses, and both surfaces now say so. The file carries no KPI. The dashboard is built (`REPORT-DASHBOARD-001`): `#/reports` serves every `FR-RPT-005` figure as a numerator, a denominator, a window, a data-quality status and the `report-v3` version; margin is still not computed. `OPS-BOARD-001`, `EXPORT-FIX-001`, `EXPORT-RANGE-001`, `REPORT-DASHBOARD-001` |
+| Batches, chain of custody | Blocked on `SHOP-INSTRUMENT-001` |
+| ~~Machine cycles, delivery cost capture, spending~~ | **Built, 2026-09-25** (`SHOP-CAPTURE-001`, `DEC-038`): machine per wash cycle at **Bắt đầu giặt**, trip costs on the leg sheet, Sổ thu chi, and margin by month only when complete. Labour minutes are not captured, by decision. `SHOP-INSTRUMENT-001` stays blocked until weeks of real data exist |
+| ~~A daily operations dashboard and CSV export~~ | **Built, 2026-09-22 and 2026-09-25.** The export exists and is versioned: `#/exports` raises an `EXPORT_SANITIZED_DATA` envelope, an owner who is not the staff member that defined it approves it, and the file is released once with its query version and a digest recorded in `data_exports`. It carries no incident free text, no evidence summary and no contact key. One day, or since `EXPORT-RANGE-001` a window of up to 92 shop-local days whose two ends are inside the digest the owner approves (an approval of one window cannot release another), cut on `orders.created_at` — which is **not** the boundary the takings figure uses, and both surfaces now say so. The file carries no KPI. The dashboard is built (`REPORT-DASHBOARD-001`): `#/reports` serves every `FR-RPT-005` figure as a numerator, a denominator, a window, a data-quality status and the `report-v3` version; margin is shown for a month only when its Sổ thu chi is complete (`SHOP-CAPTURE-001`). `OPS-BOARD-001`, `EXPORT-FIX-001`, `EXPORT-RANGE-001`, `REPORT-DASHBOARD-001` |
 
 ### 9.1 Where a specification and the code disagree
 

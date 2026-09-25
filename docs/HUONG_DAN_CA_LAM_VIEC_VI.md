@@ -33,7 +33,7 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 6 | Khách đồng ý → bấm **Khách đồng ý — tạo đơn**. Máy ghi lời đồng ý, tạo đơn, rồi mở luôn trang đơn | Nhận đồ |
 | 7 | Nhận túi đồ từ khách → bấm **Nhận đồ**. Màn hình hiện giờ hẹn, ví dụ *Hẹn trả: 13:00 thứ Sáu 26/9* — đọc cho khách. Có giày, rèm, chăn: chọn **24 giờ** hoặc **48 giờ** (máy chọn sẵn 48 giờ). Có gấu bông, túi, đồ da, gối, topper…: máy ghi *Bạn chọn ngày giờ trả cho đơn này* — chọn ngày giờ trong ô *Ngày giờ trả*. Tích **Tiệm làm kịp đơn này**, bấm **Nhận đồ** lần nữa | Chi tiết đơn |
 | 7a | Khách cần phiếu → bấm **In phiếu cho khách** ngay đầu trang đơn, rồi **In phiếu** (máy in nhiệt 80 mm, 58 mm hoặc giấy A5). Máy có nút **Chia sẻ** thì gửi được phiếu qua điện thoại. In **sau** khi bấm Nhận đồ thì phiếu ghi *Hẹn trả: …*; đơn chưa có giờ hẹn (chủ tiệm chưa công bố quy tắc hẹn trả) thì phiếu ghi *Tiệm sẽ báo khi đồ sẵn sàng* | Phiếu cho khách |
-| 8 | Bỏ đồ vào máy → bấm **Bắt đầu giặt** | Chi tiết đơn |
+| 8 | Bỏ đồ vào máy → bấm **Bắt đầu giặt**, rồi bấm đúng máy vừa bỏ đồ vào (máy vừa dùng đứng đầu). Không kịp chọn thì bấm **Bỏ qua** — đơn vẫn bắt đầu giặt | Chi tiết đơn |
 | 9 | Giặt xong → **Giặt xong, kiểm tra đồ**; kiểm xong → **Báo đồ đã sẵn sàng** | Chi tiết đơn |
 | 10 | Khách tới lấy → ở **Đơn hàng** gõ số vào ô **Số phiếu…** rồi bấm **Tìm** (phiếu ngày khác thì bấm **Hôm nay** để chọn ngày), mở đơn | Đơn hàng |
 | 11 | Bấm **Thu tiền**, đọc cho khách số **Phải thu**, gõ đúng số khách đưa, bấm **Ghi nhận đã thu tiền** | Chi tiết đơn |
@@ -120,6 +120,10 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 - **Đơn giao tận nơi**: thu tiền **trước khi đồ rời tiệm** (**Khách trả trước**), bấm **Đưa đồ đi
   giao**, rồi khi khách nhận được bấm **Đã giao đồ cho khách** → **Giao thành công**. Đơn chỉ đóng
   được khi có một chuyến **TRẢ** thành công.
+- **Chi phí chuyến.** Trên phiếu lấy đồ và giao đồ, mở **Chi phí chuyến (không bắt buộc)** rồi ghi
+  xe (**Xe máy**, **Ô tô** hoặc **Thuê ngoài**), số km, và tiền xăng, gửi xe hay tiền Grab. Dưới 20 kg
+  đi xe máy, từ 20 kg đi ô tô — màn hình nhắc theo cân của đơn, nhưng bạn chọn. Ghi cả chuyến giao
+  hụt. **Không ghi số điện thoại khách vào ghi chú** — máy sẽ từ chối.
 
 ## Đóng ca
 
@@ -131,6 +135,11 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
    (ví dụ **3 / 5 đơn tạo**); **Đúng hẹn** đo theo giờ hẹn **đầu tiên** với khách (hẹn lại không
    làm số đẹp hơn); đơn nhận trước khi chủ tiệm công bố quy tắc hẹn trả thì đo theo mốc nội bộ 8
    giờ, và ô ghi rõ có bao nhiêu đơn như vậy. Nhân viên quầy thấy mục này bị khoá, có ghi lý do.
+5. Chủ tiệm (hoặc kế toán) ghi mọi khoản chi vào **Thêm → Sổ thu chi**: bấm **Ghi khoản chi**, chọn
+   mục (điện, nước, hoá chất, túi nhãn, lương, mặt bằng, sửa chữa, xăng xe, khác), gõ số tiền, bấm
+   **Ghi vào sổ**. Ghi sai thì mở dòng đó, bấm **Huỷ dòng này** hai lần rồi ghi lại dòng đúng.
+   **Báo cáo** chỉ tính biên của một tháng khi sổ tháng đó đã có đủ điện, nước, hoá chất, lương và
+   mặt bằng; thiếu thì ghi *Chưa đủ số liệu* và nêu mục còn thiếu. Biên đó không phải lợi nhuận.
 
 ---
 
@@ -294,6 +303,7 @@ hạn thì bấm **Xin duyệt lại**. *Nhập mã thủ công* chỉ dùng cho
 
 Những số này không có cách nào đo lại về sau, và chúng mở khoá phần tiếp theo của hệ thống:
 
-- **10 mẻ giặt sấy có bấm giờ** — từ lúc bắt đầu tới lúc xong, giờ thật.
-- **20 chuyến giao** — quãng đường và thời gian.
+- **10 mẻ giặt sấy có bấm giờ** — nay máy tự ghi: chọn máy khi bấm **Bắt đầu giặt**, và bấm **Giặt
+  xong, kiểm tra đồ** đúng lúc lấy đồ ra. Chủ tiệm xem phút mỗi mẻ ở **Báo cáo**.
+- **20 chuyến giao** — ghi ở **Chi phí chuyến** trên phiếu giao: xe, số km, tiền.
 - Mỗi ngày: có gì trên máy làm chậm việc ở quầy hơn là làm tay.

@@ -71,6 +71,7 @@ import {
   empty,
   errorNotice,
   gated,
+  gatedFields,
   icon,
 } from "../ui/components.js";
 import {
@@ -111,6 +112,14 @@ import {
   promisePill,
   receivePromise,
 } from "../ui/promise.js";
+// SHOP-CAPTURE-001: "Máy nào?", the trip-cost fields and the order's recorded cycles and trips.
+import {
+  captureRows,
+  loadWashMachines,
+  machineChips,
+  machinePicker,
+  tripFields,
+} from "../ui/shopCapture.js";
 
 /**
  * The server's fixed audit page size. `ShadowConsoleRepository.audit_timeline` defaults to 100 and
@@ -333,6 +342,8 @@ export function render_(context) {
   const summaryHost = h("div", { class: "stack" }, skeletonRows(2));
   const infoHost = h("div");
   const legsHost = h("div");
+  // SHOP-CAPTURE-001: the order's wash cycles and trip costs, when it has any.
+  const captureHost = h("div", { id: "order-capture" });
   const techHost = h("div");
   // `display: contents`, so the sticky bar inside sticks to the screen, not to this wrapper.
   const actionHost = h("div", { class: "order__actions" });
@@ -406,7 +417,10 @@ export function render_(context) {
   /** Re-read after a write; the side lists that a step can change are re-read too. */
   async function reread() {
     const found = await loadOrder();
-    if (found) void loadTimeline(found.store_id || storeId());
+    if (found) {
+      void loadTimeline(found.store_id || storeId());
+      void loadCapture();
+    }
     return found;
   }
 
@@ -758,6 +772,8 @@ export function render_(context) {
           else if (step === "COLLECT") openCollect();
           else if (step === "DELIVERY_PICKUP" || step === "DELIVERY_RETURN") openLeg(entry);
           else if (step === "CANCEL") openCancel(entry);
+          // SHOP-CAPTURE-001: "Máy nào?" before the wash starts; "Bỏ qua" is always offered.
+          else if (step === "START_WASH") openMachine(entry);
           else if (Object.hasOwn(REASON_STEPS, step)) openReason(entry);
           else if (COMPOSITE.has(step)) void runComposite(entry, {}, actionAlert, opener);
           else show(actionAlert, unknownStep(step));
@@ -1328,15 +1344,25 @@ export function render_(context) {
     if (!order) return;
     const kind = String(entry.step) === "DELIVERY_PICKUP" ? "PICKUP" : "RETURN";
     const alertHost = h("div");
+    // SHOP-CAPTURE-001: the trip's cost, optional, on the same press (DEC-038).
+    const trip = tripFields();
+    void loadCapture().then((capture) => trip.setCapture(capture));
     /** @param {"SUCCEEDED"|"FAILED"} outcome @param {HTMLButtonElement} control */
     async function record(outcome, control) {
       render(alertHost);
+      const cost = trip.read();
+      if (cost.problem) {
+        show(alertHost, inlineAlert({ state: "warn", title: "Chưa ghi được", body: cost.problem }));
+        return;
+      }
       await pressing(control, async () => {
         try {
           const recorded = await request(`/internal/v1/orders/${id}/delivery-legs`, {
             method: "POST",
-            body: { leg_kind: kind, outcome },
-            idempotencyKey: keyFor(`leg|${kind}|${outcome}|${order.row_version}`),
+            body: { leg_kind: kind, outcome, ...cost.fields },
+            idempotencyKey: keyFor(
+              `leg|${kind}|${outcome}|${order.row_version}|${trip.intent()}`,
+            ),
           });
           releaseKey();
           toast(`${ORDER_STEP_DONE_VI[String(entry.step)]} · ${orderName(order)}`);
@@ -1387,10 +1413,85 @@ export function render_(context) {
           ),
           infoButton("Chuyến giao ghi những gì?", h("p", null, LEG_RULE.guardrail)),
         ),
+        trip.node,
         alertHost,
       ),
       actions: h("div", { class: "btn-stack" }, gated(ok, writeVerdict), gated(failed, writeVerdict)),
     });
+  }
+
+  // --- SHOP-CAPTURE-001 (DEC-038): the machine at Bắt đầu giặt, the trip cost on a leg ------------
+
+  /** The order's wash machines, read once per page; [] when the list cannot be read. */
+  let washMachines = /** @type {Promise<any[]>|null} */ (null);
+  function machinesOnce() {
+    if (!washMachines) {
+      washMachines = loadWashMachines(String(current?.store_id || storeId())).catch(() => []);
+    }
+    return washMachines;
+  }
+
+  /**
+   * Bắt đầu giặt: "Máy nào?" as big buttons, then the step with the chosen machine, or without
+   * one on "Bỏ qua". With no machine on the list (none seeded yet, or the list could not be read)
+   * the step runs as it always did: capture is optional, never a gate on the wash.
+   *
+   * @param {any} entry
+   */
+  function openMachine(entry) {
+    const alertHost = h("div");
+    const pickHost = h("div", null, skeletonRows(2));
+    const made = openFresh({
+      id: "order-machine",
+      title: stepVi("START_WASH"),
+      body: h("div", { class: "stack" }, pickHost, alertHost),
+    });
+    void machinesOnce().then((machines) => {
+      if (!made.node.isConnected) return;
+      if (!machines.length) {
+        made.close();
+        void runComposite(entry, {}, actionAlert);
+        return;
+      }
+      render(
+        pickHost,
+        gatedFields(
+          machinePicker({
+            machines,
+            onPick: async (machineId, control) => {
+              const done = await runComposite(
+                entry,
+                machineId ? { machine_id: machineId } : {},
+                alertHost,
+                control,
+              );
+              if (done) {
+                washMachines = null;
+                made.close();
+              }
+            },
+          }),
+          writeVerdict,
+        ),
+      );
+    });
+  }
+
+  /** What the order recorded: its cycles and trip costs, re-read after every write. */
+  async function loadCapture() {
+    try {
+      const capture = await request(`/internal/v1/orders/${id}/capture`);
+      const rows = captureRows(capture);
+      render(
+        captureHost,
+        rows ? section({ title: "Máy và chi phí chuyến", card: false, children: rows }) : null,
+      );
+      return capture;
+    } catch {
+      // A side read: the order page stands without it, as it did before it existed.
+      render(captureHost);
+      return null;
+    }
   }
 
   /**
@@ -1470,9 +1571,34 @@ export function render_(context) {
     const choices = Array.isArray(entry[spec.list]) ? entry[spec.list].map(String) : [];
     const alertHost = h("div");
     let reason = "";
+    // SHOP-CAPTURE-001: a rewash opens a new wash cycle; the machine is asked, never required.
+    let machine = "";
+    const machineHost = h("div");
+    if (step === "REWASH") {
+      void machinesOnce().then((machines) => {
+        if (!machines.length) return;
+        render(
+          machineHost,
+          machineChips({
+            machines,
+            onChange: (value) => {
+              machine = value;
+            },
+          }),
+        );
+      });
+    }
     const send = async () => {
-      const done = await runComposite(entry, { [spec.field]: reason }, alertHost, confirm);
-      if (done) made.close();
+      const done = await runComposite(
+        entry,
+        { [spec.field]: reason, ...(machine ? { machine_id: machine } : {}) },
+        alertHost,
+        confirm,
+      );
+      if (done) {
+        washMachines = null;
+        made.close();
+      }
     };
     const confirm = DESTRUCTIVE.has(step)
       ? confirmButton({
@@ -1509,6 +1635,7 @@ export function render_(context) {
           },
         }),
         h("p", { class: "hint" }, spec.note),
+        machineHost,
         alertHost,
       ),
       actions: gated(confirm, writeVerdict),
@@ -1758,6 +1885,7 @@ export function render_(context) {
       void loadIncidents(store);
       void loadCredits(store);
       void loadTimeline(store);
+      void loadCapture();
       return;
     }
     render(incidentsHost, empty("Chưa đọc khiếu nại vì chưa đọc được đơn."));
@@ -1808,6 +1936,7 @@ export function render_(context) {
     summaryHost,
     infoHost,
     legsHost,
+    captureHost,
     section({
       title: "Khiếu nại",
       card: false,

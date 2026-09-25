@@ -178,10 +178,14 @@ const GROUPS = [
     // the lede now says what is still missing: the figures that need a measurement nobody has
     // taken yet, or a decision nobody has made.
     // PROMISE-001: the on-time figure now counts against each order's first promise.
+    // SHOP-CAPTURE-001 (DEC-038) added the shop's own measurements to it -- machines and cycles,
+    // trip costs, Sổ thu chi, margin when complete.
     lede:
       "Màn Báo cáo có số của chủ: đơn, đúng hẹn theo giờ hẹn đầu tiên với khách, giặt lại, khiếu " +
-      "nại, tiền đã thu và bồi hoàn — mỗi số kèm tử số, mẫu số, khoảng ngày và phiên bản truy vấn. " +
-      "Các mục dưới đây vẫn thiếu vì cần số đo thật hoặc một quyết định chưa ai đưa ra.",
+      "nại, tiền đã thu và bồi hoàn — mỗi số kèm tử số, mẫu số, khoảng ngày và phiên bản truy vấn " +
+      "— cùng số tiệm tự đo: mẻ có ghi máy, phút mỗi mẻ, chi phí giao mỗi đơn, chi theo mục và " +
+      "biên của tháng khi đủ số liệu. Các mục dưới đây vẫn thiếu vì cần số đo thật hoặc một quyết " +
+      "định chưa ai đưa ra.",
     entries: [
       // "Xem lại nguồn khách đã ghi trên một đơn" (ACQUISITION-ATTRIBUTION-001) was here until
       // READ-PATHS-001 put `acquisition_source` on the order read model, and is deleted rather than
@@ -189,19 +193,35 @@ const GROUPS = [
       // is still immutable -- a mis-tap is now visible and still cannot be corrected, which the
       // detail says beside the value and the order form says before it is chosen. The channel
       // report remains scripts/report_acquisition_sources.py.
+      // SHOP-CAPTURE-001 (DEC-038) built the machine and cycle half: "Máy nào?" at Bắt đầu giặt, the
+      // cycle closed at Giặt xong, the owner's machine list, and per-machine minutes on Báo cáo. The
+      // entry stays for what is still true: labour minutes are not recorded, by decision, and the
+      // capacity figures need weeks of real cycles before SHOP-INSTRUMENT-001 can use them.
       {
         ref: "M3 · MÀN 12",
         title: "Ghi nhận máy / mẻ / phút công",
         what: "Ghi lại máy nào chạy mẻ nào, trong bao lâu, và tốn bao nhiêu phút công của ai.",
-        missing: "Không có kho dữ liệu nào ghi nhận máy, mẻ giặt hay phút công.",
-        blockedBy: "SHOP-INSTRUMENT-001 (4–6 tuần đo thật)",
+        missing:
+          "Máy và mẻ đã được ghi: chọn máy khi bấm Bắt đầu giặt, mẻ đóng khi bấm Giặt xong, phút " +
+          "mỗi mẻ ở màn Báo cáo. Phút công theo đơn thì không ghi — DEC-038 quyết không bắt hai " +
+          "người bấm giờ từng việc; lương vào Sổ thu chi.",
+        blockedBy: "SHOP-INSTRUMENT-001 (cần 4–6 tuần mẻ giặt ghi thật trước khi tính công suất)",
+        today: "Chọn máy mỗi lần bấm Bắt đầu giặt; không kịp thì bấm Bỏ qua, mẻ vẫn được đếm.",
+        link: { href: "#/machines", label: "Máy giặt, sấy" },
       },
+      // SHOP-CAPTURE-001 built the capture: vehicle, km, money and a note on the leg sheet, and
+      // the delivery cost per delivered order on Báo cáo. What is still missing is the comparison
+      // this entry was written for, and the real trips the pilot gate counts.
       {
         ref: "M3 · MÀN 13",
         title: "Ghi nhận chi phí giao hàng",
         what: "Ghi chi phí thật của một chuyến giao, để đối chiếu với phí giao đã thu của khách.",
-        missing: "Không có kho dữ liệu nào ghi nhận chi phí của một chuyến giao.",
-        blockedBy: "SHOP-INSTRUMENT-001",
+        missing:
+          "Chi phí từng chuyến đã ghi được khi bấm Lấy được đồ hoặc Giao thành công (xe, km, " +
+          "tiền), và Báo cáo có chi phí giao mỗi đơn. Chưa có: đối chiếu chi phí đó với phí giao " +
+          "đã thu của từng đơn.",
+        blockedBy: "SHOP-INSTRUMENT-001 (cổng thí điểm cần 20 chuyến ghi thật)",
+        today: "Mở “Chi phí chuyến” trên phiếu giao và ghi tiền mỗi chuyến, cả chuyến giao hụt.",
       },
       // "Bảng điều hành hằng ngày" (M3 · MÀN 14, FR-RPT-001/-005) was here until
       // REPORT-DASHBOARD-001 built `report-v3` and the #/reports screen: the funnel, the on-time
@@ -209,17 +229,21 @@ const GROUPS = [
       // each as numerator / denominator / window / data quality / query version. What that entry
       // still covered and the report cannot show is margin, so the entry is narrowed to it rather
       // than deleted: the owner's dashboard exists, its margin tile does not.
+      // SHOP-CAPTURE-001 (DEC-038) built margin by month, only when the month is complete. The
+      // entry narrows to what is left: margin per order.
       {
         ref: "M3 · MÀN 14 · FR-RPT-002",
         title: "Biên lợi nhuận",
         what: "Biên lợi nhuận theo đơn và theo kỳ, kèm cờ cho biết số liệu đã đủ hay chưa.",
         missing:
-          "Không có chi phí nào được ghi: phút máy, hoá chất, công người làm, chi phí giao hàng. " +
-          "Màn Báo cáo vì vậy để trống ô biên lợi nhuận và nói lý do.",
-        blockedBy: "SHOP-INSTRUMENT-001 (4–6 tuần đo thật)",
+          "Biên theo tháng đã có ở Báo cáo, nhưng chỉ khi Sổ thu chi của tháng có đủ điện, nước, " +
+          "hoá chất, lương và mặt bằng; thiếu mục nào thì báo chưa đủ số liệu và nêu mục thiếu. " +
+          "Chưa có biên theo từng đơn: chưa có quy tắc chia chi phí chung cho từng đơn.",
+        blockedBy: "SHOP-INSTRUMENT-001 (4–6 tuần số liệu thật)",
         today:
-          "Xem Tiền đã thu ở màn Báo cáo. Đó là tiền vào két trừ tiền hoàn lại, không phải lợi " +
-          "nhuận.",
+          "Ghi mọi khoản chi vào Sổ thu chi. Biên của tháng không phải lợi nhuận: chưa tính khấu " +
+          "hao máy và thuế.",
+        link: { href: "#/expenses", label: "Sổ thu chi" },
       },
       {
         // OPS-BOARD-001 built the narrow half of this, so the sentence changed with it. What

@@ -164,6 +164,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}/capture:
+    get:
+      operationId: read_order_capture
+      summary: An order's wash cycles (machine, minutes) and trip costs, and the owner's vehicle rule
+      x-authorization-dependencies:
+      - require_machine_reader
+      - get_shop_capture_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/orders/{order_id}/collection:
     post:
       operationId: record_collection
@@ -693,6 +710,61 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/expenses:
+    get:
+      operationId: list_expenses
+      summary: 'Sổ thu chi for one calendar month: its lines (at most 200, newest day first, `truncated`'
+      x-authorization-dependencies:
+      - require_expense_reader
+      - get_shop_capture_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: record_expense
+      summary: One line of Sổ thu chi. Date, category and amount are required; the note is optional,
+      x-authorization-dependencies:
+      - require_expense_writer
+      - get_shop_capture_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/expenses/{expense_id}/void:
+    post:
+      operationId: void_expense
+      summary: Void a wrong line, once, with the row version read. It stays listed and stops counting;
+      x-authorization-dependencies:
+      - require_expense_writer
+      - get_shop_capture_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: expense_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/exports:
     post:
       operationId: request_export
@@ -843,6 +915,62 @@ paths:
           description: Success response.
       parameters:
       - name: incident_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/machines:
+    get:
+      operationId: list_machines
+      summary: The store's machines, the most recently used first. `purpose=WASH` keeps the machines a
+        load
+      x-authorization-dependencies:
+      - require_machine_reader
+      - get_shop_capture_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: create_machine
+      summary: The owner adds a machine. A code the store already uses is refused `MACHINE_CODE_TAKEN`.
+      x-authorization-dependencies:
+      - require_machine_owner
+      - get_shop_capture_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/machines/{machine_id}:
+    patch:
+      operationId: update_machine
+      summary: The owner renames or retires a machine, with the row version read (`If-Match`).
+      x-authorization-dependencies:
+      - require_machine_owner
+      - get_shop_capture_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: machine_id
         in: path
         required: true
         schema:

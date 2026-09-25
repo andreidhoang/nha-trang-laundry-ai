@@ -605,14 +605,17 @@ def test_on_time_is_the_boards_rule_at_exactly_the_mark_and_one_microsecond_past
 
 
 def test_the_report_version_is_pinned_and_moves_with_the_boards_rule() -> None:
-    """Invariant 18. Editing either statement, the day boundary, or the board's rule fails this.
+    """Invariant 18. Editing any statement, the day boundary, or the board's rule fails this.
 
     `v2` (`PROMISE-001`): the on-time statement reads the first promise and a promised order is
     judged against it, and the board's version it hashes moved to `sla-risk-board-v2`.
+    `report-v3` also carries `SHOP-CAPTURE-001`'s capture, trip and month statements, the spending
+    vocabulary, the categories margin requires and the rounding rules (that branch called it
+    `report-v2`); the digest is recomputed from the merged code.
     """
     version = report_query_version(STANDARD_WASH_SLA)
     assert version.identifier == "report-v3"
-    assert version.digest == "b09f715c3a0cb3e2"
+    assert version.digest == "b65625ff9f50cbe7"
     stricter = ProductionSlaPolicy(
         policy_id="SLA_STANDARD_CLOTHES",
         policy_type=SlaPolicyType.COMMITMENT,

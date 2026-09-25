@@ -490,14 +490,32 @@ with sync_playwright() as pw:
         found = page.locator(f"dialog[open] button[data-step={step}]")
         return found.first if found.count() else None
 
-    def press_step(step, label):
-        """A composite step with nothing to attest: one press, one `POST /steps`."""
+    def press_step(step, label, machine="first"):
+        """A composite step with nothing to attest: one press, one `POST /steps`.
+
+        SHOP-CAPTURE-001: Bắt đầu giặt first asks "Máy nào?". `machine="first"` presses the first
+        machine offered (the most recently used), `machine="skip"` presses "Bỏ qua"; either way
+        one `POST /steps` follows.
+        """
         control = step_control(step)
         if control is None:
             ok(label, False, f"the page offers no {step}; the primary step is {primary_step()}")
             return False
         before = len(api_calls)
         control.click()
+        if step == "START_WASH":
+            page.wait_for_timeout(700)
+            offered = page.locator("dialog[open] button[data-machine-code]")
+            ok(
+                "Bắt đầu giặt asks which machine, with the machines as big buttons and Bỏ qua",
+                offered.count() >= 1
+                and page.locator("dialog[open] button[data-machine-skip]").count() == 1,
+                f"{offered.count()} machines offered",
+            )
+            if machine == "skip":
+                page.locator("dialog[open] button[data-machine-skip]").first.click()
+            elif offered.count():
+                offered.first.click()
         page.wait_for_timeout(1800)
         call = last_post("/steps")
         good = call is not None and len(api_calls) > before and 200 <= call[1] < 300
@@ -1084,7 +1102,8 @@ with sync_playwright() as pw:
         ("QUALITY_CHECK", "checked"),
         ("MARK_READY", "ready"),
     ]:
-        press_step(step, f"delivery: {label}")
+        # The delivery bag goes in without a machine chosen: "Bỏ qua" is always allowed.
+        press_step(step, f"delivery: {label}", machine="skip")
 
     head(20, "TIỀN TRƯỚC KHI ĐỒ RỜI TIỆM — DEC-023, then the trip that closes the order")
     ok(

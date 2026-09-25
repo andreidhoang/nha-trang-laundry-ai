@@ -534,6 +534,63 @@ export const REASON_NOTE = {
   PROMISE_NOT_SET:
     "Đơn này không có giờ hẹn (nhận trước khi chủ tiệm công bố quy tắc), nên không có gì để hẹn lại.",
   PROMISE_ORDER_DONE: "Đồ đã giặt xong hoặc đơn đã đóng — không cần hẹn lại nữa.",
+  // SHOP-CAPTURE-001 (DEC-038): machines, trip costs and Sổ thu chi.
+  MACHINE_UNAVAILABLE:
+    "Máy này không bắt đầu mẻ giặt được (đã ngưng dùng, là máy sấy, hoặc của tiệm khác). Chọn máy " +
+    "khác hoặc bấm Bỏ qua.",
+  MACHINE_CODE_TAKEN: "Tiệm đã có máy mang mã này. Đặt mã khác, ví dụ WASH-03.",
+  MACHINE_CODE_INVALID: "Mã máy chỉ gồm chữ in, số và dấu gạch, ví dụ WASH-03.",
+  MACHINE_NAME_INVALID: "Tên máy từ 1 đến 60 ký tự.",
+  MACHINE_RETIRED: "Máy này đã ngưng dùng; không đổi được nữa.",
+  NOTE_LOOKS_LIKE_PHONE:
+    "Ghi chú có số giống số điện thoại. Sổ của tiệm không ghi số điện thoại khách; bỏ số đó đi.",
+  NOTE_INVALID: "Ghi chú tối đa 120 ký tự.",
+  TRIP_KM_INVALID: "Số km là một số, tối đa một chữ số sau dấu phẩy (ví dụ 4,5).",
+  TRIP_COST_TOO_LARGE: "Một chuyến tối đa 10.000.000 ₫. Kiểm tra lại số tiền.",
+  EXPENSE_AMOUNT_REQUIRED: "Số tiền phải lớn hơn 0.",
+  EXPENSE_AMOUNT_TOO_LARGE: "Một dòng tối đa 1.000.000.000 ₫. Kiểm tra lại số tiền.",
+  EXPENSE_DATE_IN_FUTURE: "Ngày chi là hôm nay hoặc trước đó.",
+  EXPENSE_DATE_TOO_OLD: "Ngày chi trong vòng 366 ngày gần đây.",
+  EXPENSE_ALREADY_VOIDED: "Dòng này đã bị huỷ trước đó.",
+  MONTH_INVALID: "Tháng không hợp lệ.",
+};
+
+/**
+ * SHOP-CAPTURE-001: `Vehicle` of a delivery trip. Scoped, as `ACQUISITION_SOURCE_VI` is.
+ */
+export const VEHICLE_VI = {
+  XE_MAY: "Xe máy",
+  O_TO: "Ô tô",
+  THUE_NGOAI: "Thuê ngoài",
+};
+
+/**
+ * SHOP-CAPTURE-001: Sổ thu chi's categories (`ExpenseCategory`) in the owner's words. Scoped:
+ * `KHAC` and `LUONG` are short words another enum could reuse with another meaning.
+ */
+export const EXPENSE_CATEGORY_VI = {
+  DIEN: "Điện",
+  NUOC: "Nước",
+  HOA_CHAT: "Hoá chất",
+  TUI_NHAN: "Túi, nhãn",
+  LUONG: "Lương",
+  MAT_BANG: "Mặt bằng",
+  SUA_CHUA: "Sửa chữa",
+  XANG_XE: "Xăng xe",
+  KHAC: "Khác",
+};
+
+/**
+ * SHOP-CAPTURE-001: `MachineCategory` (the machine master's `category` column) in the shop's words.
+ */
+export const MACHINE_CATEGORY_VI = {
+  washer: "Máy giặt",
+  dryer: "Máy sấy",
+  dry_cleaner: "Máy giặt khô",
+  shoe_washer_dryer: "Máy giặt giày",
+  vacuum_ironing_table: "Cầu là",
+  boiler_iron_set: "Bàn là hơi",
+  other: "Máy khác",
 };
 
 /**
@@ -903,4 +960,6 @@ export const NAV = {
   staff: "Nhân sự",
   unsupported: "Việc chưa hỗ trợ",
   reports: "Báo cáo",
+  expenses: "Sổ thu chi",
+  machines: "Máy giặt, sấy",
 };

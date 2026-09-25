@@ -64,7 +64,8 @@ from nha_trang_laundry_db.manual_sends import (
 )
 from nha_trang_laundry_db.message_drafts import (
     MessageDraftBinding,
-    read_message_draft_binding_for_store,
+    MessageDraftSendProgress,
+    read_message_draft_send_state_for_store,
 )
 from nha_trang_laundry_db.orders import (
     CreateOrderCommand,
@@ -1012,11 +1013,13 @@ class OperationsService:
 
     def read_message_draft_binding(
         self, *, store_id: UUID, agent_run_id: UUID, principal: StaffPrincipal
-    ) -> MessageDraftBinding | None:
-        """One draft's server-computed `SEND_MESSAGE` binding (`MESSAGE-DRAFT-BINDING-001`).
+    ) -> tuple[MessageDraftBinding, MessageDraftSendProgress | None] | None:
+        """One draft's server-computed `SEND_MESSAGE` binding (`MESSAGE-DRAFT-BINDING-001`), and
+        how far the latest send over it has gone (`MANUAL-SEND-RESUME`).
 
-        A pure read. Role, MFA and membership are checked inside
-        `read_message_draft_binding_for_store`, on the cursor that then reads the draft.
+        A pure read, in one transaction. Role, MFA and membership are checked inside
+        `read_message_draft_binding_for_store`, on the cursor that then reads the draft and the
+        send progress.
         """
 
         with (
@@ -1024,7 +1027,7 @@ class OperationsService:
             connection.transaction(),
             connection.cursor() as cursor,
         ):
-            return read_message_draft_binding_for_store(
+            return read_message_draft_send_state_for_store(
                 cursor, store_id=store_id, agent_run_id=agent_run_id, principal=principal
             )
 

@@ -219,6 +219,8 @@ def test_the_approver_reads_the_exact_words_and_the_server_computed_digests(
         "snapshot_hash": expected.snapshot_hash,
         "rendered_hash": expected.rendered_hash,
         "policy_version": "manual-send-policy-v1",
+        # MANUAL-SEND-RESUME: nobody has asked for approval of this draft yet.
+        "send_progress": None,
     }
 
 
@@ -409,3 +411,127 @@ def test_a_draft_rejected_after_the_envelope_was_raised_is_gone_and_cannot_be_ap
     assert gone.status_code == 404
     assert approved.status_code == 409
     assert approved.json()["detail"].startswith("RESOURCE_CHANGED_SINCE_REQUEST:")
+
+
+# --- MANUAL-SEND-RESUME: a new session resumes from the server, zero paste ----------------------
+
+
+def _progress(service: OperationsService, shop: _Shop, reader: StaffPrincipal) -> Any:
+    with _as(service, reader) as client:
+        read = client.get(shop.url)
+    assert read.status_code == 200, read.text
+    return read.json()["send_progress"]
+
+
+def test_a_new_session_locks_and_attests_from_the_binding_read_alone(
+    connection: Any, service: OperationsService
+) -> None:
+    """Spec V2 principle 2. Every value the lock and the attestation hand back comes from one GET.
+
+    The operator raises; the approver decides elsewhere; the sender -- in a session that saw none
+    of it -- reads the binding and locks, then reads it again and attests. Nothing is carried from
+    the earlier responses, and nothing is typed.
+    """
+
+    shop = _Shop(connection)
+    grant_service_basis(connection, shop.draft.contact_binding_id, received_at=NOW)
+    approval_id = _raise_envelope(service, shop, shop.operator)
+    read = current_binding(connection, shop.draft.agent_run_id)
+
+    requested = _progress(service, shop, shop.operator)
+    assert requested["approval_request_id"] == str(approval_id)
+    assert requested["status"] == "REQUESTED"
+    assert requested["past_expiry"] is False
+    assert requested["requested_by_you"] is True
+    assert requested["resource_version"] == read.resource_version
+    assert requested["snapshot_hash"] == read.snapshot_hash
+    assert requested["rendered_hash"] == read.rendered_hash
+    assert requested["envelope_id"] is None
+    assert requested["envelope_status"] is None
+    assert requested["envelope_row_version"] is None
+    assert requested["prepared_by_you"] is None
+    assert _progress(service, shop, shop.sender)["requested_by_you"] is False
+
+    with _as(service, shop.approver) as client:
+        decided = client.post(
+            f"/internal/v1/approvals/{approval_id}/decisions",
+            json=_decision(_queued(client, approval_id), "APPROVED"),
+            headers=_headers(f"d-{uuid4().hex}"),
+        )
+    assert decided.status_code == 200, decided.text
+
+    approved = _progress(service, shop, shop.sender)
+    assert approved["status"] == "APPROVED"
+    assert approved["envelope_id"] is None
+    with _as(service, shop.sender) as client:
+        locked = client.post(
+            f"/internal/v1/approvals/{approved['approval_request_id']}/manual-send",
+            json={
+                "observed_resource_version": approved["resource_version"],
+                "observed_snapshot_hash": approved["snapshot_hash"],
+                "observed_rendered_hash": approved["rendered_hash"],
+                "channel": "INTERNAL_TEST",
+            },
+            headers=_headers(f"m-{uuid4().hex}"),
+        )
+    assert locked.status_code == 201, locked.text
+
+    prepared = _progress(service, shop, shop.sender)
+    assert prepared["envelope_id"] == locked.json()["manual_send_envelope_id"]
+    assert prepared["envelope_status"] == "APPROVED_FOR_MANUAL_SEND"
+    assert prepared["envelope_row_version"] == 1
+    assert prepared["prepared_by_you"] is True
+    assert _progress(service, shop, shop.operator)["prepared_by_you"] is False
+
+    with _as(service, shop.sender) as client:
+        attested = client.post(
+            f"/internal/v1/manual-sends/{prepared['envelope_id']}/attest",
+            json={
+                "observed_resource_version": prepared["resource_version"],
+                "exact_rendered_hash": prepared["rendered_hash"],
+                "sent_at": datetime.now(UTC).isoformat(),
+            },
+            headers={
+                **_headers(f"t-{uuid4().hex}"),
+                "If-Match": f'"{prepared["envelope_row_version"]}"',
+            },
+        )
+    assert attested.status_code == 200, attested.text
+
+    recorded = _progress(service, shop, shop.sender)
+    assert recorded["envelope_status"] == "MANUAL_SEND_RECORDED"
+    assert recorded["envelope_row_version"] == 2
+
+
+def test_progress_is_stale_when_the_draft_moved_past_the_approval(
+    connection: Any, service: OperationsService
+) -> None:
+    shop = _Shop(connection)
+    approval_id = _raise_envelope(service, shop, shop.operator)
+    shop.review(connection, "EDIT", edited_text=EDITED)
+
+    with _as(service, shop.operator) as client:
+        read = client.get(shop.url).json()
+
+    assert read["resource_version"] == 2
+    assert read["send_progress"]["approval_request_id"] == str(approval_id)
+    # What the console compares to say "xin duyệt lại": the approval bound revision 1.
+    assert read["send_progress"]["resource_version"] == 1
+
+
+def test_another_stores_member_never_reads_this_stores_progress(
+    connection: Any, service: OperationsService
+) -> None:
+    ours, theirs = _Shop(connection), _Shop(connection)
+    _raise_envelope(service, theirs, theirs.operator)
+
+    with _as(service, ours.operator) as client:
+        foreign = client.get(theirs.url)
+        through_ours = client.get(binding_url(ours.store_id, theirs.draft.agent_run_id))
+        own = client.get(ours.url)
+
+    assert foreign.status_code == 403
+    assert through_ours.status_code == 404
+    assert "send_progress" not in foreign.text + through_ours.text
+    assert own.status_code == 200
+    assert own.json()["send_progress"] is None

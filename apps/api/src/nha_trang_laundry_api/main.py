@@ -698,6 +698,37 @@ class ApprovalResponse(BaseModel):
     store_id: UUID | None = None
 
 
+class MessageDraftSendProgressResponse(BaseModel):
+    """The latest `SEND_MESSAGE` over one draft, as stored, so a new session resumes without paste.
+
+    `MANUAL-SEND-RESUME` (spec V2 principle 2). Every value is a stored column: the approval's id,
+    its state row verbatim, its expiry, and the version and digests it bound -- exactly what
+    locking the envelope must hand back -- and, once an envelope was locked over it, the envelope's
+    id, state and row version -- exactly what attesting must hand back. `past_expiry` is the
+    database clock against `expires_at`, because a lapsed `REQUESTED` or `APPROVED` row keeps its
+    stored status. Advice for the console's next step; every write still re-checks all of it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    approval_request_id: UUID
+    #: The approval's state as stored: REQUESTED, APPROVED, REJECTED, EXPIRED, ...
+    status: str
+    expires_at: datetime
+    past_expiry: bool
+    #: The draft revision and digests the approval bound. A draft revision newer than this one
+    #: means the approval is stale and a new one must be requested.
+    resource_version: int
+    snapshot_hash: str
+    rendered_hash: str
+    requested_by_you: bool
+    envelope_id: UUID | None
+    #: APPROVED_FOR_MANUAL_SEND or MANUAL_SEND_RECORDED; null when no envelope was locked.
+    envelope_status: str | None
+    envelope_row_version: int | None
+    prepared_by_you: bool | None
+
+
 class MessageDraftBindingResponse(BaseModel):
     """What a `SEND_MESSAGE` envelope over one draft binds, as the server computes it.
 
@@ -725,6 +756,9 @@ class MessageDraftBindingResponse(BaseModel):
     snapshot_hash: str
     rendered_hash: str
     policy_version: str
+    #: How far the latest `SEND_MESSAGE` over this draft in this store has gone, or null when
+    #: nobody has asked for one (`MANUAL-SEND-RESUME`). Additive; see `MessageDraftSendProgress`.
+    send_progress: MessageDraftSendProgressResponse | None = None
 
 
 class ServiceEgressResponse(BaseModel):
@@ -2355,13 +2389,14 @@ def read_message_draft_binding(
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
     try:
-        binding = service.read_message_draft_binding(
+        read = service.read_message_draft_binding(
             store_id=store_id, agent_run_id=agent_run_id, principal=principal
         )
     except (StoreAccessError, ValueError) as error:
         _raise_operations_error(error)
-    if binding is None:
+    if read is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no sendable message draft")
+    binding, progress = read
     return MessageDraftBindingResponse(
         store_id=binding.store_id,
         action="SEND_MESSAGE",
@@ -2373,6 +2408,24 @@ def read_message_draft_binding(
         snapshot_hash=binding.snapshot_hash,
         rendered_hash=binding.rendered_hash,
         policy_version=SEND_MESSAGE_POLICY_VERSION,
+        send_progress=(
+            None
+            if progress is None
+            else MessageDraftSendProgressResponse(
+                approval_request_id=progress.approval_request_id,
+                status=progress.status,
+                expires_at=progress.expires_at,
+                past_expiry=progress.past_expiry,
+                resource_version=progress.resource_version,
+                snapshot_hash=progress.snapshot_hash,
+                rendered_hash=progress.rendered_hash,
+                requested_by_you=progress.requested_by_you,
+                envelope_id=progress.envelope_id,
+                envelope_status=progress.envelope_status,
+                envelope_row_version=progress.envelope_row_version,
+                prepared_by_you=progress.prepared_by_you,
+            )
+        ),
     )
 
 

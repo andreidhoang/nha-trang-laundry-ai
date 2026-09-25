@@ -36,12 +36,13 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 8 | Bỏ đồ vào máy → bấm **Bắt đầu giặt**, rồi bấm đúng máy vừa bỏ đồ vào (máy vừa dùng đứng đầu). Không kịp chọn thì bấm **Bỏ qua** — đơn vẫn bắt đầu giặt | Chi tiết đơn |
 | 9 | Giặt xong → **Giặt xong, kiểm tra đồ**; kiểm xong → **Báo đồ đã sẵn sàng** | Chi tiết đơn |
 | 10 | Khách tới lấy → ở **Đơn hàng** gõ số vào ô **Số phiếu…** rồi bấm **Tìm** (phiếu ngày khác thì bấm **Hôm nay** để chọn ngày), mở đơn | Đơn hàng |
-| 11 | Bấm **Thu tiền**, đọc cho khách số **Phải thu**, gõ đúng số khách đưa, bấm **Ghi nhận đã thu tiền** | Chi tiết đơn |
+| 11 | Bấm **Thu tiền**. Đọc cho khách số **Còn lại** (máy đã điền sẵn), chọn **Tiền mặt** hoặc **Chuyển khoản**, để nguyên dấu tích **Khách lấy đồ luôn**, bấm **Ghi nhận đã thu** | Chi tiết đơn |
 | 12 | Đưa đồ cho khách, bấm **Giao đồ & đóng đơn** (nút hiện ngay sau khi thu tiền) | Chi tiết đơn |
 
 Trên trang của một đơn, **nút lớn ở cuối màn hình luôn là việc tiếp theo** — máy chủ tính ra, không
-phải đoán. Các việc khác (tạm dừng, giặt lại, không nhận đồ, huỷ đơn, khách trả trước, **in lại phiếu**…)
-nằm ở nút **Khác**.
+phải đoán. Các việc khác (tạm dừng, giặt lại, không nhận đồ, huỷ đơn, **in lại phiếu**…) nằm ở nút
+**Khác**. Khi đơn còn nợ tiền mà việc tiếp theo chưa phải thu tiền (ví dụ đặt cọc lúc gửi đồ), nút
+**Thu tiền** nằm ngay trong ô tiền của đơn, cạnh **Tổng**, **Đã trả**, **Còn lại** và từng lần thu.
 
 ### Đồ chưa sạch, hoặc tiệm không nhận đồ
 
@@ -92,22 +93,28 @@ Chủ tiệm đã quyết cho tiệm giữ danh sách khách (quyết định DE
 - Số đã có trong danh sách thì máy báo và cho **Chọn khách này** — không tạo trùng.
 - Khách không đồng ý cũng không sao: bấm **Khách vãng lai — phát phiếu**.
 
-### Khách muốn trả tiền ngay lúc gửi đồ
+### Khách trả trước, đặt cọc, hoặc trả nhiều lần
 
-Được, nhưng chỉ **đúng tổng đã báo** (quyết định DEC-032, 25/09/2026). Đặt cọc hay trả một phần
-vẫn bị từ chối.
+Được (quyết định DEC-035, 25/09/2026): khách trả **đủ một lần** hoặc **nhiều lần** (đặt cọc rồi trả
+phần còn lại), mỗi lần bằng **Tiền mặt** hoặc **Chuyển khoản**. **Đồ chỉ giao khi đã trả đủ.**
 
 | | Làm gì | Ở màn hình |
 |---|---|---|
-| 7a | Sau bước 7 (đã nhận đồ): bấm **Khác** → **Khách trả trước**, gõ đúng số **Phải thu**, bấm **Ghi nhận khách trả trước** | Chi tiết đơn |
-| 10a | Khách tới lấy: tìm phiếu ở ô **Số phiếu…**, mở đơn, đưa đồ rồi bấm **Khách đã nhận đồ** (tên bạn được ghi), rồi **Đóng đơn** | Chi tiết đơn |
+| 7a | Sau bước 7 (đã nhận đồ): bấm **Thu tiền** trong ô tiền của đơn. Trả đủ: để nguyên số **Còn lại**. Đặt cọc: bấm **Khách trả một phần (đặt cọc)** rồi gõ số khách trả. Chọn **Tiền mặt** hoặc **Chuyển khoản**, bấm **Ghi nhận đã thu** | Chi tiết đơn |
+| 7b | Khách chuyển khoản: mở app ngân hàng của tiệm, **thấy tiền vào rồi** mới tích **Đã thấy tiền vào tài khoản**. Ô mã giao dịch (vài số cuối) không bắt buộc | Chi tiết đơn |
+| 10a | Khách tới lấy: tìm phiếu, mở đơn. Còn nợ thì nút lớn là **Thu tiền** — thu **Còn lại** như bước 11. Đã trả đủ từ trước thì đưa đồ rồi bấm **Khách đã nhận đồ** (tên bạn được ghi), rồi **Giao đồ & đóng đơn** | Chi tiết đơn |
 
-- Tiền tính vào **Đã thu tại quầy** của **ngày khách trả**, không phải ngày lấy đồ.
-- Đồ chưa giặt xong thì chưa có nút **Khách đã nhận đồ**, và nút **Thu tiền** (trả lúc lấy) cũng
-  chỉ hiện khi đồ đã sẵn sàng.
-- **Đơn tiệm tới lấy đồ** (giao nhận *chỉ lấy*): khách chỉ trả **tại quầy**, đúng tổng đã báo — hoặc
-  lúc tới lấy (bước 11, như khách tự mang tới), hoặc ghé quầy trả trước khi đồ giặt xong (bước 7a
-  rồi 10a). **Người giao không nhận và không đưa tiền.**
+- **Khách đưa dư thì trả lại tiền thừa.** Máy không nhận số lớn hơn số **Còn lại** — ghi đúng số
+  tiệm giữ lại.
+- Mỗi lần thu tính vào **Đã thu tại quầy** của **ngày khách trả**, tách **Tiền mặt** và
+  **Chuyển khoản** — đối chiếu tiền mặt với ngăn kéo, chuyển khoản với app ngân hàng.
+- Phiếu in cho khách ghi **Đã trả** và **Còn lại** khi đơn đã có một lần thu.
+- Đồ chưa giặt xong thì chưa có nút **Khách đã nhận đồ**, và dấu tích **Khách lấy đồ luôn** chỉ
+  hiện khi đồ đã sẵn sàng và khách tự lấy.
+- **Đơn tiệm tới lấy đồ** (giao nhận *chỉ lấy*): khách chỉ trả **tại quầy** — lúc tới lấy (bước 11),
+  hoặc ghé quầy trả trước (bước 7a rồi 10a). **Người giao không nhận và không đưa tiền.**
+- Huỷ đơn đã đặt cọc: **Khác** → **Huỷ đơn**, chọn cách xử lý; máy ghi hoàn **đúng số khách đã
+  trả** — đưa lại khách số đó.
 
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
 
@@ -134,9 +141,10 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 - **Gần 6 kg.** Dưới 6 kg tính 25.000đ/kg, từ 6 kg tính 20.000đ/kg — nên **túi nhẹ hơn có thể đắt
   hơn**. Màn hình sẽ nhắc khi khối lượng gần ngưỡng. Đó là bảng giá của tiệm, không phải máy tính
   sai. Cân cho đúng, đừng làm tròn.
-- **Tiền phải đúng bằng tổng đã báo.** Trả thiếu, trả thừa, đặt cọc đều bị từ chối. Nhập số y như
-  màn hình in ra — gõ cả dấu chấm cũng được (`170.000`), nhưng **không có dấu phẩy, không số lẻ**.
-- **Đơn giao tận nơi**: thu tiền **trước khi đồ rời tiệm** (**Khách trả trước**), bấm **Đưa đồ đi
+- **Không thu quá số còn lại.** Khách đưa dư thì trả lại tiền thừa; máy từ chối số lớn hơn
+  **Còn lại**. Gõ số đặt cọc y như đọc — có dấu chấm cũng được (`50.000`), nhưng **không có dấu
+  phẩy, không số lẻ**.
+- **Đơn giao tận nơi**: thu **đủ** tiền **trước khi đồ rời tiệm** (**Thu tiền**), bấm **Đưa đồ đi
   giao**, rồi khi khách nhận được bấm **Đã giao đồ cho khách** → **Giao thành công**. Đơn chỉ đóng
   được khi có một chuyến **TRẢ** thành công.
 - **Chi phí chuyến.** Trên phiếu lấy đồ và giao đồ, mở **Chi phí chuyến (không bắt buộc)** rồi ghi
@@ -146,8 +154,9 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 
 ## Đóng ca
 
-1. Mở **Hôm nay**, đối chiếu **Đã thu tại quầy** với tiền mặt trong ngăn kéo.
-2. Lệch thì **không sửa gì trên máy** — ghi ra sổ và báo chủ tiệm. Bản ghi tất toán không sửa được.
+1. Mở **Hôm nay**, đối chiếu dòng **Tiền mặt** dưới **Đã thu tại quầy** với tiền trong ngăn kéo,
+   và dòng **Chuyển khoản** với app ngân hàng của tiệm.
+2. Lệch thì **không sửa gì trên máy** — ghi ra sổ và báo chủ tiệm. Lần thu đã ghi không sửa được.
 3. Để máy **bật qua đêm** (chỉ tắt màn hình). Bản sao lưu chạy lúc 2 giờ 30 sáng.
 4. Chủ tiệm (và người duyệt, kế toán, kiểm toán) xem số của ngày, tuần, tháng ở **Báo cáo** — bấm
    **Báo cáo** cạnh ô tiền trên **Hôm nay**, hoặc vào **Thêm → Báo cáo**. Mỗi ô ghi cả hai số

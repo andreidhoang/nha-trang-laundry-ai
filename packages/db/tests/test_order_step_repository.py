@@ -419,7 +419,7 @@ def test_a_walk_in_paid_at_pickup_from_creation_to_completed(
         (OrderStep.RECEIVE, OrderStep.START_WASH),
         (OrderStep.START_WASH, OrderStep.QUALITY_CHECK),
         (OrderStep.QUALITY_CHECK, OrderStep.MARK_READY),
-        (OrderStep.MARK_READY, OrderStep.SETTLE),
+        (OrderStep.MARK_READY, OrderStep.TAKE_PAYMENT),
     ):
         view = _step(connection, order_id, staff, view.row_version, step, slot_approved=True).view
         assert _primary(view) is expected_next, (step, view.next_steps)
@@ -444,7 +444,7 @@ def test_a_walk_in_prepaid_at_drop_off_collects_then_hands_over(
     staff = _staff(connection, store_id)
     order_id = _order(connection, store_id, staff)
     view = _step(connection, order_id, staff, 1, OrderStep.RECEIVE, slot_approved=True).view
-    assert OrderStep.PREPAY in [item.step for item in view.next_steps]
+    assert OrderStep.TAKE_PAYMENT in [item.step for item in view.next_steps]
     SettlementRepository().record(
         connection, SettlementCommand(order_id, TOTAL_VND, False, staff, uuid4())
     )
@@ -486,7 +486,7 @@ def test_a_delivery_order_pays_releases_delivers_and_completes(
         assert OrderStep.DELIVERY_PICKUP not in [item.step for item in view.next_steps]
     for step in (OrderStep.START_WASH, OrderStep.QUALITY_CHECK, OrderStep.MARK_READY):
         view = _step(connection, order_id, staff, view.row_version, step).view
-    assert _primary(view) is OrderStep.PREPAY
+    assert _primary(view) is OrderStep.TAKE_PAYMENT
     SettlementRepository().record(
         connection, SettlementCommand(order_id, TOTAL_VND, False, staff, uuid4())
     )
@@ -908,7 +908,7 @@ def test_the_rewashed_order_walks_forward_again_to_completed(
     ).view
     for step in (OrderStep.QUALITY_CHECK, OrderStep.MARK_READY):
         view = _step(connection, order_id, staff, view.row_version, step).view
-    assert _primary(view) is OrderStep.SETTLE
+    assert _primary(view) is OrderStep.TAKE_PAYMENT
     SettlementRepository().record(
         connection, SettlementCommand(order_id, TOTAL_VND, True, staff, uuid4())
     )

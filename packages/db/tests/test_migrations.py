@@ -63,7 +63,7 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0053", "transactional_suppression"),
         ("0054", "export_range"),
         ("0055", "customer_records"),
-        # 0056 is reserved for the other round-7 slice (the lead's merge adds it here).
+        ("0056", "order_payments"),
         ("0057", "order_promise"),
         ("0058", "shop_capture"),
     ]

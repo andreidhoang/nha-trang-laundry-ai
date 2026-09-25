@@ -53,6 +53,16 @@ BUSINESS_TIMEZONE = "Asia/Ho_Chi_Minh"
 
 #: The takings figure, as one statement so that one edit moves one rule (`OPS-BOARD-001`).
 #:
+#: v3 (`PAYMENT-001`, `DEC-035`): money in is the payment ledger, `order_payments`, not the
+#: settlements. A deposit taken today is money in today's drawer even though the order is not paid
+#: in full, and a settlement no longer says how the money came. `0056` gave every earlier settlement
+#: the one payment it was, dated by its attestation, so every figure v2 published for a past day is
+#: unchanged. Money in is split by method -- `TIEN_MAT` in the drawer, `CHUYEN_KHOAN` in the bank --
+#: each summed by PostgreSQL; `collected_vnd` is still the gross of both. `settlement_count` keeps
+#: its name and now means what the card says of it: orders paid in full today. Refunds are not split
+#: by method: `order_refunds` records that money went back, not how, and guessing would put a figure
+#: in the wrong column.
+#:
 #: v2 (`DEC-024`): money in and money out, each on its own local business day, and the drawer's
 #: net movement between them. v1 summed settlements alone and offered nothing else, so a paid order
 #: cancelled with the cash handed back left the only figure on the card above the drawer by exactly
@@ -67,8 +77,17 @@ BUSINESS_TIMEZONE = "Asia/Ho_Chi_Minh"
 #: The business day is a parameter rather than `now()` inside the statement, so a figure can be
 #: reproduced for a named day and a test can hold the clock still.
 _COLLECTED_TODAY_SQL = """
-    WITH settled AS (
-        SELECT coalesce(sum(paid_amount_vnd), 0) AS amount, count(*) AS entries
+    WITH taken AS (
+        SELECT coalesce(sum(amount_vnd), 0) AS amount, count(*) AS entries,
+               coalesce(sum(amount_vnd) FILTER (WHERE method = 'TIEN_MAT'), 0) AS cash,
+               count(*) FILTER (WHERE method = 'TIEN_MAT') AS cash_entries,
+               coalesce(sum(amount_vnd) FILTER (WHERE method = 'CHUYEN_KHOAN'), 0) AS transfer,
+               count(*) FILTER (WHERE method = 'CHUYEN_KHOAN') AS transfer_entries
+        FROM order_payments
+        WHERE store_id = %(store)s
+          AND (recorded_at AT TIME ZONE %(zone)s)::date = %(business_date)s
+    ), settled AS (
+        SELECT count(*) AS entries
         FROM order_settlements
         WHERE store_id = %(store)s
           AND (attested_at AT TIME ZONE %(zone)s)::date = %(business_date)s
@@ -79,10 +98,11 @@ _COLLECTED_TODAY_SQL = """
           AND direction = 'TO_CUSTOMER'
           AND (refunded_at AT TIME ZONE %(zone)s)::date = %(business_date)s
     )
-    SELECT settled.amount, settled.entries, refunded.amount, refunded.entries,
-           abs(settled.amount - refunded.amount),
-           CASE WHEN settled.amount >= refunded.amount THEN 'IN' ELSE 'OUT' END
-    FROM settled, refunded
+    SELECT taken.amount, settled.entries, refunded.amount, refunded.entries,
+           abs(taken.amount - refunded.amount),
+           CASE WHEN taken.amount >= refunded.amount THEN 'IN' ELSE 'OUT' END,
+           taken.entries, taken.cash, taken.cash_entries, taken.transfer, taken.transfer_entries
+    FROM taken, settled, refunded
 """
 
 #: The published version of the rule above, travelling with the figure under invariant 18.
@@ -90,7 +110,7 @@ _COLLECTED_TODAY_SQL = """
 #: This is the one money figure the console shows, so "which rule produced it" is not a developer
 #: convenience: the day boundary is hashed with the SQL because moving it would change the total
 #: while leaving the statement word for word identical.
-COLLECTED_TODAY_QUERY = query_version("collected-today-v2", _COLLECTED_TODAY_SQL, BUSINESS_TIMEZONE)
+COLLECTED_TODAY_QUERY = query_version("collected-today-v3", _COLLECTED_TODAY_SQL, BUSINESS_TIMEZONE)
 
 
 #: Which way the counter's drawer moved over a day: money in (including no change) or money out.
@@ -156,6 +176,16 @@ _COLLECTED_BY: dict[SettlementShape, str] = {
 }
 
 
+def collected_by_for_shape(shape: SettlementShape) -> str:
+    """The `collected_by` a settlement of this shape records (`0033`/`0048`'s CHECK pairing).
+
+    Shared with `payments.PaymentRepository`, whose settling payment writes the same row, so the two
+    writers cannot pair a shape with a different collector.
+    """
+
+    return _COLLECTED_BY[shape]
+
+
 @dataclass(frozen=True, slots=True)
 class StoredSettlement:
     settlement_id: UUID
@@ -198,6 +228,14 @@ class CollectedToday:
     refund_count: int = 0
     net_vnd: int = 0
     net_direction: DrawerDirection = "IN"
+    #: v3 (`DEC-035`): how many payments `collected_vnd` sums, and the same money split by method.
+    #: `cash_vnd + transfer_vnd` is `collected_vnd` by construction of the statement -- both are
+    #: PostgreSQL's sums over the one ledger -- and nothing in Python adds them.
+    payment_count: int = 0
+    cash_vnd: int = 0
+    cash_count: int = 0
+    transfer_vnd: int = 0
+    transfer_count: int = 0
 
 
 class SettlementRepository:
@@ -241,6 +279,13 @@ class SettlementRepository:
         if str(row[1]) != "ACTIVE":
             raise SettlementStateError(
                 "only an active order can be settled", reason_code="ORDER_NOT_ACTIVE"
+            )
+        if str(row[3]) == "PARTIALLY_PAID":
+            # `DEC-035`: a deposit is on the ledger, so the exact total is no longer what is owed.
+            # The rest is taken on the payments route, which measures it against the ledger.
+            raise SettlementStateError(
+                "the order is partly paid; take the rest as a payment",
+                reason_code="ORDER_PARTLY_PAID",
             )
         if str(row[3]) != "UNPAID":
             # Re-settling an order whose balance already moved would be a second payment record for
@@ -311,6 +356,29 @@ class SettlementRepository:
                     attested_at,
                 ),
             )
+            # `PAYMENT-001`: the money ledger. This route never asked how the customer paid, so
+            # the one payment it records is `legacy` -- counted as cash, and marked so a reader can
+            # tell that from a method somebody chose (`0056`). A zero total moved no money and
+            # records no payment; `0056` checks at commit that the ledger sums to what was settled.
+            if command.paid_amount_vnd > 0:
+                cursor.execute(
+                    """
+                    INSERT INTO order_payments (
+                        id, order_id, store_id, amount_vnd, method, bank_ref_last, legacy,
+                        settlement_id, recorded_by_staff_id, recorded_at, created_at
+                    ) VALUES (%s, %s, %s, %s, 'TIEN_MAT', NULL, TRUE, %s, %s, %s, %s)
+                    """,
+                    (
+                        uuid4(),
+                        command.order_id,
+                        store_id,
+                        command.paid_amount_vnd,
+                        settlement_id,
+                        command.principal.staff_user_id,
+                        attested_at,
+                        attested_at,
+                    ),
+                )
             # The balance and the collection fact move with the attestation, never apart from it.
             # `order_projection_guard` requires row_version to advance by exactly one.
             #
@@ -603,6 +671,11 @@ class SettlementRepository:
             refund_count=int(row[3]),
             net_vnd=int(row[4]),
             net_direction="IN" if direction == "IN" else "OUT",
+            payment_count=int(row[6]),
+            cash_vnd=int(row[7]),
+            cash_count=int(row[8]),
+            transfer_vnd=int(row[9]),
+            transfer_count=int(row[10]),
         )
 
 
@@ -627,4 +700,5 @@ __all__ = [
     "SettlementStateError",
     "StoredCollection",
     "StoredSettlement",
+    "collected_by_for_shape",
 ]

@@ -42,7 +42,7 @@ import {
   money,
   percent,
 } from "../core/format.js";
-import { enumLabel } from "../core/i18n.js";
+import { PAYMENT_METHOD_VI, enumLabel } from "../core/i18n.js";
 import { PRESETS, presetWindow, windowProblem } from "../core/reportWindow.js";
 import { storeId } from "../core/session.js";
 import { errorNotice, labelled, markUpdated } from "../ui/components.js";
@@ -51,6 +51,7 @@ import {
   emptyState,
   infoButton,
   inlineAlert,
+  keyValues,
   list,
   listRow,
   moneyHero,
@@ -113,8 +114,9 @@ const KPI = {
     definition:
       "Tiền khách trả tại quầy trong khoảng ngày, trừ tiền đã hoàn lại cho khách trong khoảng " +
       "ngày. Mỗi khoản tính vào ngày tiền thật sự vào hoặc ra két, theo giờ Việt Nam — đúng quy " +
-      "tắc của ô tiền trên màn Hôm nay. Máy chủ cộng từ sổ tất toán và sổ hoàn tiền; màn hình " +
-      "này không tự cộng. Đây không phải doanh thu, cũng không phải lợi nhuận.",
+      "tắc của ô tiền trên màn Hôm nay. Tiền đặt cọc tính vào ngày khách đặt. Máy chủ cộng từ sổ " +
+      "thu tiền (tách tiền mặt và chuyển khoản) và sổ hoàn tiền; màn hình này không tự cộng. Đây " +
+      "không phải doanh thu, cũng không phải lợi nhuận.",
   },
   REMEDIES_EXECUTED: {
     label: "Bồi hoàn đã chi",
@@ -229,11 +231,15 @@ function moneyTile(kpis) {
   const refunded = kpis.MONEY_REFUNDED;
   const out = net?.direction === "OUT";
   const inAndOut = [
-    `Thu ${money(collected?.numerator)} (${integer(collected?.entries)} đơn)`,
+    `Thu ${money(collected?.numerator)} (${integer(collected?.entries)} lần)`,
     refunded?.numerator ? `Hoàn ${money(refunded.numerator)}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
+  // PAYMENT-001 (DEC-035): money in by method, as the server summed it. Nothing is added here.
+  const methods = Array.isArray(collected?.by_kind)
+    ? collected.by_kind.filter((entry) => entry.count > 0)
+    : [];
   return h(
     "div",
     { class: "kpi kpi--hero", dataKpi: "MONEY_NET", dataDirection: String(net?.direction || "") },
@@ -248,6 +254,18 @@ function moneyTile(kpis) {
         ...definitionBody(KPI.MONEY.definition, net?.data_quality),
       ),
     }),
+    methods.length
+      ? h(
+          "div",
+          { class: "kpi__methods", dataMethods: "true" },
+          keyValues(
+            methods.map((entry) => [
+              `${PAYMENT_METHOD_VI[entry.kind] || entry.kind} (${integer(entry.count)})`,
+              money(entry.amount_vnd),
+            ]),
+          ),
+        )
+      : null,
   );
 }
 

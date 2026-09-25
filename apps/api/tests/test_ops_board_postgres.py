@@ -270,7 +270,7 @@ def test_every_board_figure_carries_the_version_of_the_query_that_produced_it(
     assert board["query_version"] == sla_board_query_version(SLA_POLICY).label
     assert summary["query_version"].startswith("today-status-counts-v1:")
     # v2 since DEC-024 refunds travel beside the takings; the digest is pinned in test_ops_board.py.
-    assert takings["query_version"].startswith("collected-today-v2:")
+    assert takings["query_version"].startswith("collected-today-v3:")
     # Invariant 2 at the wire: every number the route serves is a non-negative integer, and the
     # drawer's direction is a word. `CollectedTodayResponse` also declares `ge=0` on each.
     numeric = {key: value for key, value in takings.items() if isinstance(value, int)}
@@ -280,6 +280,12 @@ def test_every_board_figure_carries_the_version_of_the_query_that_produced_it(
         "refunded_vnd",
         "refund_count",
         "net_vnd",
+        # `collected-today-v3` (PAYMENT-001): the same money in, split by method.
+        "payment_count",
+        "cash_vnd",
+        "cash_count",
+        "transfer_vnd",
+        "transfer_count",
     }
     assert all(value >= 0 for value in numeric.values())
     assert takings["net_direction"] in ("IN", "OUT")

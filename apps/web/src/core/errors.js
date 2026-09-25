@@ -233,6 +233,11 @@ const REFUSAL = {
   AMOUNT_IS_NOT_THE_EXACT_TOTAL:
     "Máy chủ không ghi nhận khoản này: số tiền phải đúng bằng tổng của đơn. Kiểm tra lại số vừa " +
     "gõ rồi nhập lại.",
+  // PAYMENT-001 (DEC-035). The other refusal whose honest answer is a different number: the
+  // customer handed over more than remains, and the counter gives change.
+  OVERPAYMENT_REFUSED:
+    "Máy chủ không ghi nhận khoản này: số tiền lớn hơn số còn lại — trả lại tiền thừa cho khách " +
+    "rồi ghi đúng số tiệm giữ lại.",
   // `CONSENT-TRANSACTIONAL-001` (`DEC-033`). Why a service message was refused, and why a release
   // was. Each one is what the server's egress guard or release decided; none is a suggestion to
   // find another way of sending.
@@ -534,7 +539,9 @@ export function classify(status, detail, context = {}) {
           // A mistyped payment is the one refusal here whose honest answer is "type it again".
           ...(codes.includes("AMOUNT_IS_NOT_THE_EXACT_TOTAL")
             ? { message: REFUSAL.AMOUNT_IS_NOT_THE_EXACT_TOTAL }
-            : {}),
+            : codes.includes("OVERPAYMENT_REFUSED")
+              ? { message: REFUSAL.OVERPAYMENT_REFUSED }
+              : {}),
           reasonCodes: codes,
           decision: typeof detail.decision === "string" ? detail.decision : "",
         });

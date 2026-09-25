@@ -802,7 +802,15 @@ def promise_options(
 
 
 def order_view(
-    mode: str, *, balance: str, collected: bool, steps: list[dict[str, object]] | None = None
+    mode: str,
+    *,
+    balance: str,
+    collected: bool,
+    steps: list[dict[str, object]] | None = None,
+    paid: int | None = None,
+    payments: list[dict[str, object]] | None = None,
+    hand_over: bool = False,
+    production: str = "RELEASED",
 ) -> dict[str, object]:
     """One `OrderViewResponse`, as `GET /internal/v1/orders/{id}` sends it, at the counter's
     pickup moment: running, washed and released, the total known.
@@ -812,12 +820,16 @@ def order_view(
     exactly this list and the checks in section 15 are about rendering it faithfully.
     """
 
+    # PAYMENT-001 (DEC-035): Tổng · Đã trả · Còn lại as the server computes them. Written out as
+    # figures, never derived here with arithmetic the console is not allowed either.
+    settled = {"PAID": 110_000, "UNPAID": 0}.get(balance, 0) if paid is None else paid
+    remaining = {0: 110_000, 50_000: 60_000, 110_000: 0}[settled]
     return {
         "order_id": PICKUP_ORDER_ID,
         "store_id": STORE,
         "commercial": "ACTIVE",
         "intake": "ACCEPTED",
-        "production": "RELEASED",
+        "production": production,
         "balance": balance,
         "row_version": 14,
         "replayed": False,
@@ -832,11 +844,29 @@ def order_view(
         "acquisition_source": "WALK_IN",
         "delivery_legs": [],
         "required_delivery_legs_succeeded": False,
-        "settlement_shape": None
-        if balance == "UNPAID"
-        else "EXACT_PAYMENT_PREPAID_SELF_COLLECTION",
+        "settlement_shape": "EXACT_PAYMENT_PREPAID_SELF_COLLECTION" if balance == "PAID" else None,
         "next_steps": steps or [],
+        "charges": [{"kind": "QUOTED_TOTAL", "amount_vnd": 110_000}],
+        "owed_vnd": 110_000,
+        "paid_vnd": settled,
+        "remaining_vnd": remaining,
+        "payments": payments or [],
+        "payments_truncated": False,
+        "payment_may_hand_over": hand_over,
     }
+
+
+#: One `PaymentViewResponse`: the 50.000 ₫ transfer deposit the section-15 checks read back.
+DEPOSIT_PAYMENT = {
+    "payment_id": "13131313-2424-4333-8444-353535353535",
+    "amount_vnd": 50_000,
+    "method": "CHUYEN_KHOAN",
+    "bank_ref_last": "FT26",
+    "legacy": False,
+    "recorded_at": "2026-09-25T02:10:00+00:00",
+    "recorded_by_staff_id": "11111111-aaaa-4333-8444-555555555555",
+    "recorded_by_name": "Chị Lan",
+}
 
 
 #: What `GET /internal/v1/stores/{id}/settlements/today` returns. A non-round figure so a screen
@@ -851,10 +881,17 @@ SETTLEMENTS_TODAY = {
     "refund_count": 0,
     "net_vnd": 1_285_000,
     "net_direction": "IN",
+    # `collected-today-v3` (PAYMENT-001, DEC-035): the same money split by method, each figure the
+    # server's. Non-round on purpose, and nine payments for seven settled orders: two were deposits.
+    "payment_count": 9,
+    "cash_vnd": 885_000,
+    "cash_count": 6,
+    "transfer_vnd": 400_000,
+    "transfer_count": 3,
     "business_timezone": "Asia/Ho_Chi_Minh",
     # OPS-BOARD-001, invariant 18: the rule that produced the figure travels with the figure, and
     # the takings card renders it beneath the amount.
-    "query_version": "collected-today-v2:c266d2f11377a64c",
+    "query_version": "collected-today-v3:3e7eb2f9fcaade13",
 }
 
 #: What `GET /internal/v1/stores/{id}/day-summary` returns. Two statuses rather than one, because
@@ -881,7 +918,7 @@ SLA_BOARD_POLICY_NOTICE = (
 #: fraction that does not round to a whole percent, a denominator of zero (no order reached quality
 #: check), and a window whose refunds exceeded its takings, so the drawer went OUT. The screen must
 #: print every one as the server sent it and compute none of them.
-REPORT_VERSION = "report-v3:b65625ff9f50cbe7"
+REPORT_VERSION = "report-v3:ac05595a37f3c36d"
 
 #: SHOP-CAPTURE-001 (DEC-038). The machines a load goes into, in the server's order (the last one
 #: used first): the console must offer exactly these, in this order, and never re-sort them.
@@ -1050,7 +1087,17 @@ def report_kpis(start: str, end: str) -> list[dict[str, object]]:
         kpi("ON_TIME_INTERNAL", 5, 6, quality="RULE_ASSUMED", rule_assumed=2),
         kpi("REWASH", 0, 0),
         kpi("COMPLAINTS", 2, 7, unit="INCIDENTS"),
-        kpi("MONEY_COLLECTED", 90_000, unit="VND", entries=1),
+        kpi(
+            "MONEY_COLLECTED",
+            90_000,
+            unit="VND",
+            entries=2,
+            # PAYMENT-001: money in by method, as the server summed it.
+            by_kind=[
+                {"kind": "TIEN_MAT", "count": 1, "amount_vnd": 60_000},
+                {"kind": "CHUYEN_KHOAN", "count": 1, "amount_vnd": 30_000},
+            ],
+        ),
         kpi("MONEY_REFUNDED", 240_000, unit="VND", entries=2),
         kpi("MONEY_NET", 150_000, unit="VND", direction="OUT"),
         kpi(
@@ -2356,6 +2403,33 @@ with sync_playwright() as playwright:
                     status=reply[0], content_type="application/json", body=json.dumps(reply[1])
                 )
                 return
+            if path.endswith("/payments"):
+                sent = json.loads(route.request.post_data or "{}")
+                settles = sent.get("amount_vnd") == 110_000
+                route.fulfill(
+                    status=201,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "payment_id": "14141414-2525-4333-8444-363636363636",
+                            "order_id": PICKUP_ORDER_ID,
+                            "amount_vnd": sent.get("amount_vnd"),
+                            "method": sent.get("method"),
+                            "bank_ref_last": (sent.get("bank_ref_last") or "").upper() or None,
+                            "recorded_at": "2026-09-25T09:00:00+00:00",
+                            "balance_status": "PAID" if settles else "PARTIALLY_PAID",
+                            "owed_vnd": 110_000,
+                            "paid_vnd": 110_000 if settles else 50_000,
+                            "remaining_vnd": 0 if settles else 60_000,
+                            "settlement_id": None,
+                            "settlement_shape": None,
+                            "self_collection_recorded": bool(sent.get("collected_by_customer")),
+                            "row_version": 15,
+                            "replayed": False,
+                        }
+                    ),
+                )
+                return
             if path.endswith("/collection"):
                 route.fulfill(
                     status=201,
@@ -3286,7 +3360,17 @@ with sync_playwright() as playwright:
     )
     check(
         "the rule behind the takings travels with the figure, in the technical drawer",
-        "collected-today-v2:c266d2f11377a64c" in body,
+        "collected-today-v3:3e7eb2f9fcaade13" in body,
+    )
+    methods = page.locator("[data-methods]").first
+    methods_text = methods.inner_text() if methods.count() else ""
+    check(
+        "the day's money is split into cash and transfer, each the server's sum and count",
+        "Tiền mặt (6)" in methods_text
+        and "885.000" in methods_text
+        and "Chuyển khoản (3)" in methods_text
+        and "400.000" in methods_text,
+        methods_text[:120],
     )
 
     print()
@@ -4871,7 +4955,7 @@ with sync_playwright() as playwright:
     )
     check(
         "once paid, no payment is offered and the screen says the money is taken",
-        page.locator("button[data-step=SETTLE], button[data-step=PREPAY]").count() == 0
+        page.locator("button[data-step=TAKE_PAYMENT]").count() == 0
         and "Đã thu đủ tiền" in rendered_text()
         and "Khách chưa nhận đồ" in rendered_text(),
     )
@@ -4902,48 +4986,156 @@ with sync_playwright() as playwright:
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
 
-    # The payment sheet, and its guardrail: the finality line beside the field and the DEC-010 /
-    # DEC-032 policy (POLICY_BOUND) one tap away in the same sheet.
+    # PAYMENT-001 (DEC-035): the one Thu tiền sheet. The remaining amount is prefilled from the
+    # server, a deposit is one tap away, the method is one tap, and the handover tick is offered
+    # only where the server says the settling payment may carry it. The policy (POLICY_BOUND,
+    # DEC-035) is one tap away in the same sheet.
+    pay_step = step("TAKE_PAYMENT", True, requires=["amount_vnd", "method"])
     unpaid_pickup = order_view(
         "PICKUP_ONLY",
         balance="UNPAID",
         collected=False,
-        steps=[step("SETTLE", True), step("PREPAY")],
+        steps=[pay_step],
+        hand_over=True,
     )
     open_order(unpaid_pickup)
     check("an unpaid order offers no pickup press", pickup_button() == 0)
-    page.locator(".action-bar--v2 button[data-step=SETTLE]").click()
+    page.locator(".action-bar--v2 button[data-step=TAKE_PAYMENT]").click()
     page.wait_for_timeout(400)
     sheet_text = open_dialog_text()
     check(
-        "Thu tiền shows the amount due large, and the field is empty -- typed on purpose",
-        "110.000" in sheet_text and page.locator("#settlement-amount").input_value() == "",
+        "Thu tiền shows what remains large, prefilled from the server, with a deposit one tap away",
+        "Còn lại" in sheet_text
+        and "110.000" in sheet_text
+        and page.locator("#payment-edit").count() == 1
+        and page.locator("#payment-amount").count() == 0,
         sheet_text[:120],
     )
     check(
-        "the settlement guardrail says no courier takes money, and that the record is final",
-        "Người giao không thu tiền" in sheet_text and "Ghi rồi không sửa được" in sheet_text,
+        "the payment rule says no courier takes money, change goes back, and it is final",
+        "Người giao không thu tiền" in sheet_text
+        and "trả lại tiền thừa" in sheet_text
+        and "Ghi rồi không sửa được" in sheet_text,
+    )
+    check(
+        "the handover tick is offered, ticked, where the server says the goods may go with it",
+        page.locator("#payment-hand-over").is_checked(),
     )
     state["order_writes"] = []
-    page.locator("#settlement-amount").type("110.000", delay=15)
-    check(
-        "the typed amount is echoed as the server will read it",
-        "= 110.000" in open_dialog_text(),
-    )
-    page.locator("dialog[open] #settlement-submit").click()
+    page.locator("dialog[open] #payment-submit").click()
     page.wait_for_timeout(900)
     writes = state.get("order_writes") or []
     sent = json.loads(writes[0]["body"]) if writes else {}
     check(
-        "the payment posts the typed figure with collected_by_customer, and an Idempotency-Key",
+        "the payment posts the server's remaining figure in cash, with the handover, If-Match and "
+        "an Idempotency-Key",
         len(writes) == 1
-        and writes[0]["path"] == f"{PICKUP_ORDER_ID}/settlement"
-        and sent == {"paid_amount_vnd": 110000, "collected_by_customer": True}
+        and writes[0]["path"] == f"{PICKUP_ORDER_ID}/payments"
+        and sent
+        == {
+            "amount_vnd": 110000,
+            "method": "TIEN_MAT",
+            "transfer_seen": False,
+            "bank_ref_last": None,
+            "collected_by_customer": True,
+        }
+        and writes[0]["if_match"] == '"14"'
         and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    check(
+        "and the success is said where the press was, with the amount and the method",
+        "Đã ghi nhận 110.000" in open_dialog_text() and "Tiền mặt" in open_dialog_text(),
+        open_dialog_text()[:120],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # A 50.000 ₫ deposit by transfer at drop-off: not the big button, so it sits on the money card.
+    open_order(
+        order_view(
+            "SELF_DROP_SELF_COLLECT",
+            balance="UNPAID",
+            collected=False,
+            production="IN_PROCESS",
+            steps=[step("QUALITY_CHECK", True), step("TAKE_PAYMENT", requires=["amount_vnd"])],
+        )
+    )
+    card_pay = page.locator(".order__money button[data-step=TAKE_PAYMENT]")
+    check(
+        "money owed while washing is the big button's business: Thu tiền sits on the money card",
+        card_pay.count() == 1
+        and page.locator(".action-bar--v2 button[data-step=QUALITY_CHECK]").count() == 1,
+    )
+    card_pay.first.click()
+    page.wait_for_timeout(400)
+    page.locator("#payment-edit").click()
+    page.wait_for_timeout(200)
+    page.locator("#payment-amount").type("50.000", delay=15)
+    check(
+        "the typed deposit is echoed as the server will read it, and no handover is offered",
+        "= 50.000" in open_dialog_text() and page.locator("#payment-hand-over").count() == 0,
+    )
+    page.locator("#payment-method button[data-value=CHUYEN_KHOAN]").click()
+    page.wait_for_timeout(200)
+    check(
+        "a transfer asks for 'Đã thấy tiền vào tài khoản' and offers an optional reference",
+        page.locator("#payment-transfer-seen").count() == 1
+        and not page.locator("#payment-transfer-seen").is_checked()
+        and page.locator("#payment-bank-ref").count() == 1
+        and "Đã thấy tiền vào tài khoản" in open_dialog_text(),
+    )
+    page.locator("#payment-transfer-seen").check()
+    page.locator("#payment-bank-ref").type("ft26", delay=15)
+    state["order_writes"] = []
+    page.locator("dialog[open] #payment-submit").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    sent = json.loads(writes[0]["body"]) if writes else {}
+    check(
+        "the deposit posts the typed amount, the transfer, the attestation and the reference",
+        len(writes) == 1
+        and writes[0]["path"] == f"{PICKUP_ORDER_ID}/payments"
+        and sent
+        == {
+            "amount_vnd": 50000,
+            "method": "CHUYEN_KHOAN",
+            "transfer_seen": True,
+            "bank_ref_last": "ft26",
+            "collected_by_customer": False,
+        },
         repr(writes),
     )
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
+
+    # Partly paid: the card reads Tổng · Đã trả · Còn lại and lists the deposit; no handover.
+    open_order(
+        order_view(
+            "SELF_DROP_SELF_COLLECT",
+            balance="PARTIALLY_PAID",
+            collected=False,
+            paid=50_000,
+            payments=[DEPOSIT_PAYMENT],
+            steps=[pay_step],
+            hand_over=True,
+        )
+    )
+    card = page.locator(".order__money").first.inner_text()
+    check(
+        "a partly paid order reads Còn lại large, then Tổng · Đã trả · Còn lại, then each payment",
+        "Còn lại" in card
+        and "60.000" in card
+        and "Tổng" in card
+        and "110.000" in card
+        and "Đã trả" in card
+        and "50.000" in card
+        and "Chuyển khoản" in card
+        and "FT26" in card
+        and "Chị Lan" in card,
+        card[:200],
+    )
+    check("and it offers no pickup press while money is owed", pickup_button() == 0)
 
     open_order(
         order_view(
@@ -7357,6 +7549,15 @@ with sync_playwright() as playwright:
         "what came in and what went back are the server's own sums",
         "90.000" in money_tile and "240.000" in money_tile,
         money_tile[:120],
+    )
+    # PAYMENT-001: money in split by method, each the server's count and amount.
+    check(
+        "money in is split by method, each the server's count and amount",
+        "Tiền mặt (1)" in money_tile
+        and "60.000" in money_tile
+        and "Chuyển khoản (1)" in money_tile
+        and "30.000" in money_tile,
+        money_tile[:160],
     )
     # SHOP-CAPTURE-001: margin is the month's, and the server sends no figure until the month's
     # Sổ thu chi has all five core categories. The tile says so and names what is missing.

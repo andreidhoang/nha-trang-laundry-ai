@@ -20,6 +20,11 @@ Nothing in that sentence is a judgement. The amount is compared against the immu
 the order already references; the staff member attests to an event they witnessed at the counter.
 Everything else returns `NOT_SUPPORTED` naming the decision that owns it — not rounded, not accepted
 partially, and not recorded as something it is not.
+
+`PAYMENT-001` (`DEC-035`, 2026-09-25) lifted the deferral for the counter: deposits and part
+payments with a method are decided in `payments.py`, and the payment that settles an order in full
+writes the same settlement row this module decides the shape of. The exact-total shapes below are
+unchanged, and the settlement route still takes only the exact total, so older clients keep working.
 """
 
 from __future__ import annotations
@@ -70,8 +75,10 @@ class SettlementRefusal(StrEnum):
     NO_PRESENTABLE_TOTAL = "NO_PRESENTABLE_TOTAL"
     #: The quote is a range, so there is no single amount the customer owes (DEC-001).
     TOTAL_IS_A_RANGE = "TOTAL_IS_A_RANGE"
-    #: Anything other than the exact total in one settlement: part payment, deposit, overpayment,
-    #: instalments, or credit terms. All of it is DEC-010.
+    #: Anything other than the exact total in one settlement. Until 2026-09-25 that was all
+    #: `DEC-010`; `DEC-035` superseded the deferral, and a deposit or part payment is now recorded
+    #: on the payments route (`payments.evaluate_payment`). This route stays the exact-total shape
+    #: older clients use, and its refusal still names `DEC-010`, the decision that fixed its shape.
     AMOUNT_IS_NOT_THE_EXACT_TOTAL = "AMOUNT_IS_NOT_THE_EXACT_TOTAL"
     #: "Collected at the counter" on an order whose mode says the laundry travels back to the
     #: customer. Since `DEC-023` a delivery reaches its customer by a leg (DEC-003), so the tick and
@@ -205,6 +212,29 @@ def handover_refusal(production: ProductionStatus) -> str | None:
     return None if production in HANDOVER_READY_PRODUCTION else GOODS_NOT_READY_FOR_HANDOVER
 
 
+#: The balances under which the goods may leave the shop in the customer's hands. `DEC-035`
+#: (2026-09-25): goods leave only when paid.
+#:
+#: **The `PAYMENT-002` seam.** An account customer (công nợ) may take goods unpaid while the
+#: account's outstanding total plus this order stays within the owner's limit. That is a decision
+#: over facts this set cannot see (the account, its limit, its overdue statements), so it will be a
+#: second input to `goods_may_leave`, not a member added here. Until then only `PAID` qualifies:
+#: `PARTIALLY_PAID` -- a deposit taken, money still owed -- does not.
+GOODS_MAY_LEAVE_BALANCES: Final = frozenset({OrderBalanceStatus.PAID})
+
+
+def goods_may_leave(balance: OrderBalanceStatus) -> bool:
+    """Whether the order's money lets the goods leave with the customer (`DEC-035`).
+
+    The one statement of "goods leave only when paid", read by pickup (`evaluate_collection`), by
+    `RELEASE` for a self-collect order (`order_steps`), and -- through `transition_commercial`'s own
+    settled-balance guard -- by `HAND_OVER`. `PAYMENT-002` extends this function with the account
+    rule; nothing else should restate it.
+    """
+
+    return balance in GOODS_MAY_LEAVE_BALANCES
+
+
 class CollectionRefusal(StrEnum):
     """Why the counter may not yet record that a customer who paid in advance took their laundry.
 
@@ -217,7 +247,8 @@ class CollectionRefusal(StrEnum):
     #: Already recorded -- by an earlier pickup, or by a customer who paid at pickup, whose
     #: settlement records the handover in the same step.
     ALREADY_COLLECTED = "ALREADY_COLLECTED"
-    #: Not paid. A customer who pays at pickup is recorded by the settlement, in one step.
+    #: Not paid in full (`DEC-035`: a deposit is not payment). A customer who pays the rest at
+    #: pickup is recorded by that payment, in one step.
     COLLECTION_REQUIRES_PAYMENT = "COLLECTION_REQUIRES_PAYMENT"
     #: Paid, but not in advance for collection at the counter: a delivery reaches its customer by a
     #: leg (`DEC-023`), and a customer who paid at pickup was recorded by that settlement.
@@ -244,7 +275,9 @@ def evaluate_collection(
         return CollectionRefusal.ORDER_NOT_ACTIVE
     if self_collection_recorded:
         return CollectionRefusal.ALREADY_COLLECTED
-    if balance is not OrderBalanceStatus.PAID:
+    if not goods_may_leave(balance):
+        # `DEC-035`: a deposit is not payment. A partly paid order is refused here exactly as an
+        # unpaid one is, and the counter takes the rest first.
         return CollectionRefusal.COLLECTION_REQUIRES_PAYMENT
     if settlement_shape is not SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION:
         return CollectionRefusal.NOT_A_PREPAID_SELF_COLLECTION
@@ -266,6 +299,7 @@ def _valid_amount(value: int) -> bool:
 
 
 __all__ = [
+    "GOODS_MAY_LEAVE_BALANCES",
     "GOODS_NOT_READY_FOR_HANDOVER",
     "HANDOVER_READY_PRODUCTION",
     "REFUSAL_DECISIONS",
@@ -278,5 +312,6 @@ __all__ = [
     "SettlementShape",
     "evaluate_collection",
     "evaluate_settlement",
+    "goods_may_leave",
     "handover_refusal",
 ]

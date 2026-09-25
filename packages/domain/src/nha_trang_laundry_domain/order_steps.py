@@ -15,9 +15,10 @@ one database transaction. `plan_step` builds that list by applying each transiti
 state as it goes, so the list it returns is exactly the list the domain has already accepted, and
 `next_steps` is nothing but `plan_step` (and the money rules) asked in advance.
 
-Money is never computed here. `SETTLE` and `PREPAY` are legal when `evaluate_settlement` would
-accept the order's own quoted total -- a figure read off the bound quote revision, not derived --
-and they are executed on the settlement route, where the staff member types the amount they took.
+Money is never computed here. `TAKE_PAYMENT` (`PAYMENT-001`, `DEC-035`) is legal while money is
+still owed on a running order whose quote presents a single total -- the balance reads `UNPAID` or
+`PARTIALLY_PAID`, which `0056` keeps equal to "owed > paid" -- and it is executed on the payments
+route, where the amount, the method and the customer's word are recorded.
 
 Pure: no clock, no database, no environment. The one instant a plan needs (when production accepted
 the goods) is a parameter.
@@ -63,11 +64,12 @@ flow, offered beside it, and the reason each records is on the first transition'
 
 Steps served by their own existing routes, listed so the console has one source of the next action:
 
-* ``SETTLE`` -- ``POST /orders/{id}/settlement``, ``collected_by_customer=true``: the customer
-  pays the exact total and takes the goods now.
-* ``PREPAY`` -- ``POST /orders/{id}/settlement``, ``collected_by_customer=false``: paid before
-  collection or delivery (``DEC-023`` / ``DEC-032``).
-* ``COLLECT`` -- ``POST /orders/{id}/collection``: a prepaid customer takes the goods.
+* ``TAKE_PAYMENT`` -- ``POST /orders/{id}/payments`` (``PAYMENT-001``, ``DEC-035``): a deposit, a
+  part payment or the rest, with its method. It replaced ``SETTLE`` and ``PREPAY``: both were the
+  exact total and differed only in whether the customer took the goods at once, which the payment
+  that settles the order still records (``collected_by_customer``). The exact-total settlement route
+  is unchanged for older clients; the step list no longer offers it by name.
+* ``COLLECT`` -- ``POST /orders/{id}/collection``: a customer who has paid in full takes the goods.
 * ``DELIVERY_PICKUP`` -- ``POST /orders/{id}/delivery-legs`` with ``leg_kind=PICKUP``.
 * ``DELIVERY_RETURN`` -- ``POST /orders/{id}/delivery-legs`` with ``leg_kind=RETURN``.
 """
@@ -105,6 +107,7 @@ from nha_trang_laundry_domain.settlement import (
     SettlementShape,
     evaluate_collection,
     evaluate_settlement,
+    goods_may_leave,
     handover_refusal,
 )
 
@@ -125,8 +128,7 @@ class OrderStep(StrEnum):
     CANCEL = "CANCEL"
     REJECT_INTAKE = "REJECT_INTAKE"
     REOPEN = "REOPEN"
-    SETTLE = "SETTLE"
-    PREPAY = "PREPAY"
+    TAKE_PAYMENT = "TAKE_PAYMENT"
     COLLECT = "COLLECT"
     DELIVERY_PICKUP = "DELIVERY_PICKUP"
     DELIVERY_RETURN = "DELIVERY_RETURN"
@@ -429,16 +431,17 @@ def plan_step(
         simulation.production(state.production_resume_status)
     elif step is OrderStep.RELEASE:
         # Founder ruling 2026-09-25: goods a customer collects in person do not leave an unpaid
-        # order by this step. The counter's way out is SETTLE (collected) then HAND_OVER, which
-        # takes the money in the same visit; a delivery order is released to the courier after
-        # its DEC-023 prepayment, and a courier never takes money.
-        if (
-            state.fulfillment_mode not in MODES_EXPECTING_RETURN
-            and state.balance is OrderBalanceStatus.UNPAID
+        # order by this step. The counter's way out is TAKE_PAYMENT then HAND_OVER, which takes
+        # the money in the same visit; a delivery order is released to the courier after its
+        # DEC-023 prepayment, and a courier never takes money. `DEC-035` widened "unpaid" to "not
+        # paid in full": a deposit does not let the goods leave (`goods_may_leave`, the seam where
+        # PAYMENT-002's account customers will be admitted).
+        if state.fulfillment_mode not in MODES_EXPECTING_RETURN and not goods_may_leave(
+            state.balance
         ):
             raise OrderTransitionError(
-                "INVALID_STATE_TRANSITION: an unpaid order the customer collects is released "
-                "by taking payment, not on its own"
+                "INVALID_STATE_TRANSITION: an order the customer collects is released only once "
+                "it is paid in full"
             )
         _require_production(state, ProductionStatus.READY_AT_STORE)
         simulation.production(ProductionStatus.RELEASED)
@@ -611,13 +614,20 @@ def _legal(
     return True
 
 
-def _settlement_legal(facts: StepFacts, *, collected_by_customer: bool) -> bool:
-    """Would the settlement route accept the order's own total for this shape now?"""
+def _payment_legal(facts: StepFacts) -> bool:
+    """Is money still owed on a running order whose quote presents a single total? `DEC-035`.
+
+    The balance says whether money is owed: `0056` keeps `UNPAID` / `PARTIALLY_PAID` equal to
+    "owed > paid" at every commit. Whether the quote presents a total is asked of
+    `evaluate_settlement` with the order's own total, as before -- the payment that settles the
+    order writes the settlement row whose shape it decides, so a quote it would refuse is one no
+    payment may be measured against.
+    """
 
     state = facts.state
     if state.commercial is not CommercialOrderStatus.ACTIVE:
         return False
-    if state.balance is not OrderBalanceStatus.UNPAID:
+    if state.balance not in {OrderBalanceStatus.UNPAID, OrderBalanceStatus.PARTIALLY_PAID}:
         return False
     total = facts.quoted_total.minimum_vnd
     if total is None:
@@ -625,12 +635,28 @@ def _settlement_legal(facts: StepFacts, *, collected_by_customer: bool) -> bool:
     outcome = evaluate_settlement(
         quoted=facts.quoted_total,
         tendered_vnd=total,
-        collected_by_customer=collected_by_customer,
+        collected_by_customer=False,
         fulfillment_mode=state.fulfillment_mode,
     )
-    if not isinstance(outcome, SettlementAccepted):
-        return False
-    return not (collected_by_customer and handover_refusal(state.production) is not None)
+    return isinstance(outcome, SettlementAccepted)
+
+
+def payment_may_hand_over(facts: StepFacts) -> bool:
+    """Whether the payment that settles this order may also record that the customer takes the
+    goods now (`collected_by_customer`), as the old `SETTLE` did.
+
+    True for a running self-collect order, not yet recorded as collected, whose laundry is finished
+    and on which money is owed. The payments route asks the same questions under the row lock and
+    refuses anything else; this only tells the console whether to offer the tick.
+    """
+
+    state = facts.state
+    return (
+        _payment_legal(facts)
+        and state.fulfillment_mode not in MODES_EXPECTING_RETURN
+        and not state.self_collection_recorded
+        and handover_refusal(state.production) is None
+    )
 
 
 def _legal_steps(facts: StepFacts) -> dict[OrderStep, NextStep]:
@@ -681,10 +707,11 @@ def _legal_steps(facts: StepFacts) -> dict[OrderStep, NextStep]:
         else:
             found.pop(OrderStep.RELEASE, None)
 
-    if _settlement_legal(facts, collected_by_customer=True):
-        found[OrderStep.SETTLE] = NextStep(OrderStep.SETTLE, False)
-    if _settlement_legal(facts, collected_by_customer=False):
-        found[OrderStep.PREPAY] = NextStep(OrderStep.PREPAY, False)
+    if _payment_legal(facts):
+        # One step whatever the amount: a deposit, a part payment or the rest (`DEC-035`).
+        found[OrderStep.TAKE_PAYMENT] = NextStep(
+            OrderStep.TAKE_PAYMENT, False, ("amount_vnd", "method")
+        )
     if (
         evaluate_collection(
             commercial=state.commercial,
@@ -727,14 +754,19 @@ def _primary_order(facts: StepFacts) -> tuple[OrderStep, ...]:
         # `DEC-023`: paid in full at the counter before the laundry leaves, then the courier
         # takes it out, then the leg records arrival, then the order closes.
         finish = (
-            OrderStep.PREPAY,
+            OrderStep.TAKE_PAYMENT,
             OrderStep.RELEASE,
             OrderStep.DELIVERY_RETURN,
             OrderStep.HAND_OVER,
             OrderStep.COMPLETE,
         )
     else:
-        finish = (OrderStep.SETTLE, OrderStep.COLLECT, OrderStep.HAND_OVER, OrderStep.COMPLETE)
+        finish = (
+            OrderStep.TAKE_PAYMENT,
+            OrderStep.COLLECT,
+            OrderStep.HAND_OVER,
+            OrderStep.COMPLETE,
+        )
     return (
         OrderStep.RECEIVE,
         OrderStep.RESUME,
@@ -796,6 +828,7 @@ __all__ = [
     "StepRequiresHuman",
     "derive_intake_readiness",
     "next_steps",
+    "payment_may_hand_over",
     "plan_step",
     "readiness_blockers",
 ]

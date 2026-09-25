@@ -133,9 +133,17 @@ DECLARED_CONTROLS = (
     "orderDetail.cancel-custody",
     "orderDetail.cancel-confirm",
     "orderDetail.stale-reload",
-    "orderDetail.settlement-amount",
-    "orderDetail.settlement-submit",
-    "orderDetail.prepay",
+    # PAYMENT-001 (DEC-035): one Thu tiền sheet replaced the exact-total settlement and the
+    # separate "Khách trả trước": the money card's own button, the deposit field, the method, the
+    # transfer attestation and reference, and the handover tick.
+    "orderDetail.money-take",
+    "orderDetail.payment-edit",
+    "orderDetail.payment-amount",
+    "orderDetail.payment-method",
+    "orderDetail.payment-transfer-seen",
+    "orderDetail.payment-bank-ref",
+    "orderDetail.payment-hand-over",
+    "orderDetail.payment-submit",
     "orderDetail.collection-submit",
     # ORDER-STEPS-002: Giặt lại and Không nhận đồ, each with the reason picked in its sheet.
     "orderDetail.rewash-reason",
@@ -682,8 +690,12 @@ class Console:
         return str(node.first.get_attribute("data-step")) if node.count() else ""
 
     def offered(self) -> list[str]:
-        """Every step the page offers, primary first then the ones under "Khác"."""
+        """Every step the page offers: primary first, then the money card's, then "Khác"."""
         steps = [self.primary_step()] if self.primary_step() else []
+        steps += [
+            str(node.get_attribute("data-step"))
+            for node in self.page.locator(".order__money button[data-step]").all()
+        ]
         more = self.page.locator("button[data-more-steps]")
         if more.count():
             more.first.click()
@@ -702,6 +714,11 @@ class Console:
         if bar.count():
             touched("orderDetail.step-primary")
             return bar.first
+        # PAYMENT-001: "Thu tiền" that is not the big button sits on the money card.
+        card = self.page.locator(f".order__money button[data-step={step}]")
+        if card.count():
+            touched("orderDetail.money-take")
+            return card.first
         more = self.page.locator("button[data-more-steps]")
         if more.count():
             more.first.click()
@@ -803,23 +820,51 @@ class Console:
         self.page.wait_for_timeout(1800)
         return self.said()
 
-    def pay(self, order_id: str, step: str, amount_text: str = "", *, reopen: bool = True) -> str:
-        """Thu tiền / Khách trả trước: type the amount (default: the one the sheet shows)."""
+    def pay(
+        self,
+        order_id: str,
+        amount_text: str = "",
+        *,
+        method: str = "TIEN_MAT",
+        seen: bool = True,
+        ref: str = "",
+        hand_over: bool | None = None,
+        reopen: bool = True,
+    ) -> str:
+        """Thu tiền (PAYMENT-001, DEC-035): the remaining amount as the sheet prefills it, or --
+        with `amount_text` -- a deposit typed after "Khách trả một phần"; then the method, the
+        transfer attestation and reference, and the handover tick when the sheet offers it.
+        """
         if reopen:
             self.open_order(order_id)
-        control = self.step_control(step)
+        control = self.step_control("TAKE_PAYMENT")
         if control is None:
-            return f"(the page offers no {step}; primary is {self.primary_step() or 'none'})"
+            return f"(the page offers no TAKE_PAYMENT; primary is {self.primary_step() or 'none'})"
         control.click()
         self.page.wait_for_timeout(600)
-        if step == "PREPAY":
-            touched("orderDetail.prepay")
-        if not amount_text:
-            due = self.page.locator("dialog[open] .money-hero__amount").first.inner_text()
-            amount_text = due.replace("₫", "").replace("\xa0", "").strip()
-        self.type_into("#settlement-amount", amount_text, "orderDetail.settlement-amount")
-        self.page.locator("#settlement-submit").click()
-        touched("orderDetail.settlement-submit")
+        if amount_text:
+            self.page.locator("#payment-edit").click()
+            touched("orderDetail.payment-edit")
+            self.page.wait_for_timeout(200)
+            self.type_into("#payment-amount", amount_text, "orderDetail.payment-amount")
+        if method != "TIEN_MAT":
+            self.page.locator(f"#payment-method button[data-value={method}]").click()
+            touched("orderDetail.payment-method")
+            self.page.wait_for_timeout(200)
+            if seen:
+                self.page.locator("#payment-transfer-seen").check()
+                touched("orderDetail.payment-transfer-seen")
+            if ref:
+                self.type_into("#payment-bank-ref", ref, "orderDetail.payment-bank-ref")
+        tick = self.page.locator("#payment-hand-over")
+        if hand_over is not None and tick.count():
+            if hand_over:
+                tick.check()
+            else:
+                tick.uncheck()
+            touched("orderDetail.payment-hand-over")
+        self.page.locator("#payment-submit").click()
+        touched("orderDetail.payment-submit")
         self.page.wait_for_timeout(1800)
         return self.said()
 
@@ -887,61 +932,58 @@ def eventually(query: str, expected: str, tries: int = 8) -> str:
 
 
 def scenario_money(console: Console) -> None:
-    """Money that is not the exact quoted total, and what the counter is told about it."""
+    """Money the counter must not take, and what the counter is told about it (PAYMENT-001)."""
 
-    head("1", "TIỀN — the one supported shape, and every refusal around it")
+    head("1", "TIỀN — what the counter may take, and every refusal around it")
     order = console.build_order(kg="7", stop="released")
     total = order["quote"]["net_service_subtotal_vnd"]
     grouped = f"{total:,}".replace(",", ".")
     note(f"the quote says {total} đồng; the screen prints it as {grouped}")
 
-    def settle(amount_text: str) -> tuple[str, str]:
-        said = console.pay(order["order_id"], "SETTLE", amount_text)
-        return said, console.dialog_text()
-
-    said, sheet = settle(str(total - 5_000))
-    # This asserted the words "không sai" ("your input is not wrong"). The console review found that
-    # sentence false for the commonest case the same refusal covers -- 13.200 typed for 132.000 --
-    # and the client cannot tell a typo from a deliberate part payment. The intent is kept whole:
-    # refused, framed as the owner's decision rather than bad input, and never "không hợp lệ".
-    # CONSOLE-REDESIGN-002: the policy sentence ("Trả thiếu, trả thừa, đặt cọc…", POLICY_BOUND) is
-    # one tap away in the same payment sheet, beside the field, rather than a panel guardrail.
+    over = f"{total + 5_000:,}".replace(",", ".")
+    said = console.pay(order["order_id"], over)
+    sheet = console.dialog_text()
+    # DEC-035: more than remains is refused -- the counter gives change -- and the words say so.
     ok(
-        "a part payment is refused as the owner's decision, and is not called invalid input",
-        "DEC-010" in said and "Trả thiếu" in sheet and "không hợp lệ" not in said,
-        said[:150],
+        "an amount above what remains is refused, and the counter is told to give change",
+        "trả lại tiền thừa" in said and "không hợp lệ" not in said,
+        said[:160],
     )
     ok(
-        "the refusal names the reason code, in words the counter can act on",
-        # The code travels verbatim in the notice's technical drawer; the words are visible.
-        "AMOUNT_IS_NOT_THE_EXACT_TOTAL" in console.reason_codes() and "đúng tổng đã báo" in sheet,
+        "the refusal names the reason code, and the sheet states the rule beside the method",
+        "OVERPAYMENT_REFUSED" in console.reason_codes()
+        and "Khách đưa dư thì trả lại tiền thừa" in sheet,
         repr(sorted(console.reason_codes())),
-    )
-    ok(
-        "and names the decision that owns it, so staff know it is policy and not a fault",
-        "DEC-010" in said,
-        "",
     )
     if READS_DATABASE:
         ok(
             "nothing was written for a refused payment",
-            sql(f"select count(*) from order_settlements where order_id='{order['order_id']}'")
-            == "0",
+            sql(f"select count(*) from order_payments where order_id='{order['order_id']}'") == "0",
         )
 
-    said, _ = settle("170000.5")
+    said = console.pay(order["order_id"], "170000.5")
     ok(
         "a decimal is refused at the screen rather than read as ten times the amount",
         "nguyên đồng" in said,
         said[:130],
     )
 
-    said, sheet = settle(grouped)
+    said, sheet = console.pay(order["order_id"], "20.000"), console.dialog_text()
     ok(
-        "the total copied off the screen, dots and all, is accepted",
+        "a deposit typed as the screen prints amounts, dots and all, is read as 20000",
+        sql(f"select amount_vnd from order_payments where order_id='{order['order_id']}'")
+        == "20000"
+        if READS_DATABASE
+        else "Đã ghi nhận 20.000" in sheet,
+        sheet[:130],
+    )
+    note(f"the rest of the {grouped} ₫ is taken as the sheet prefills it, with the handover")
+    said, sheet = console.pay(order["order_id"]), console.dialog_text()
+    ok(
+        "the prefilled rest settles the order",
         stored(order["order_id"], "balance_status") == "PAID"
         if READS_DATABASE
-        else "Đã ghi nhận" in sheet,
+        else "Đã trả đủ" in sheet,
         sheet[:130],
     )
 
@@ -1947,8 +1989,8 @@ def _prepay_then_collect(
     order_id = order["order_id"]
     # The amount a person at the counter reads out is the one the sheet shows as "Phải thu" -- the
     # washing and any delivery fee together. `pay` reads it off the sheet and types it.
-    console.pay(order_id, "PREPAY")
-    note(f"order {order_id[:8]}… is accepted and not yet washed; paid in advance from 'Khác'")
+    console.pay(order_id)
+    note(f"order {order_id[:8]}… is accepted and not yet washed; paid in advance on the money card")
     console.open_order(order_id, settle=1600)
     shown = console.text()
     ok(
@@ -1969,7 +2011,7 @@ def _prepay_then_collect(
     offered = console.offered()
     ok(
         "once paid, the screen no longer offers to take the money a second time",
-        "SETTLE" not in offered and "PREPAY" not in offered,
+        "TAKE_PAYMENT" not in offered,
         offered,
     )
     ok(
@@ -2095,12 +2137,13 @@ def scenario_busy(console: Console) -> None:
     )
     time.sleep(1.0)
     console.open_order(order_id)
-    control = console.step_control("SETTLE")
+    control = console.step_control("TAKE_PAYMENT")
     if control is not None:
         control.click()
         console.page.wait_for_timeout(500)
-    console.type_into("#settlement-amount", grouped)
-    submit = console.page.locator("#settlement-submit")
+    # The remaining amount is prefilled (PAYMENT-001); `grouped` is what the sheet shows.
+    note(f"the sheet takes the {grouped} ₫ that remains")
+    submit = console.page.locator("#payment-submit")
     submit.click()
     try:
         console.page.wait_for_selector("text=Hệ thống đang bận", timeout=12000)
@@ -2719,7 +2762,7 @@ def scenario_rework(console: Console) -> None:
     )
     console.step(order_id, "QUALITY_CHECK", reopen=False)
     console.step(order_id, "MARK_READY")
-    console.pay(order_id, "SETTLE")
+    console.pay(order_id)
     console.step(order_id, "HAND_OVER")
     if READS_DATABASE:
         ok(
@@ -3720,7 +3763,7 @@ def scenario_report(console: Console) -> None:
         )
         if moved["status"] >= 300:
             raise AssertionError(f"could not move to {target}: {moved['text']}")
-    console.pay(washed["order_id"], "SETTLE")
+    console.pay(washed["order_id"])
     console.step(washed["order_id"], "COMPLETE")
     total = int(washed["quote"]["net_service_subtotal_vnd"])
     complaint = console.call(
@@ -5090,6 +5133,169 @@ def scenario_customers(console: Console) -> None:
     console.sign_in("demo-owner")
 
 
+def scenario_deposit(console: Console) -> None:
+    """`PAYMENT-001` (`DEC-035`): a 50.000 ₫ transfer deposit at drop-off, the rest in cash at
+    pickup, the handover -- and the two refusals around it: more than remains, and the goods
+    leaving while money is still owed. Every figure is read back from the server, never computed.
+    """
+
+    head("21", "ĐẶT CỌC — 50.000 ₫ chuyển khoản lúc gửi, phần còn lại tiền mặt lúc lấy (DEC-035)")
+    console.sign_in("demo-operations")
+    order = console.build_order(kg="7", stop="active")
+    order_id = order["order_id"]
+
+    def read() -> dict:
+        return console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}
+
+    before = read()
+    owed = int(before.get("owed_vnd") or 0)
+    note(f"order {order_id[:8]}… owes {owed} đồng; nothing paid yet")
+
+    # A transfer is recorded only once somebody saw it arrive.
+    said = console.pay(order_id, "50.000", method="CHUYEN_KHOAN", seen=False)
+    ok(
+        "a transfer nobody ticked as seen is refused, and nothing is written",
+        "TRANSFER_NOT_SEEN" in console.reason_codes()
+        and "Đã thấy tiền vào tài khoản" in said
+        and int(read().get("paid_vnd") or 0) == 0,
+        said[:160],
+    )
+
+    said = console.pay(order_id, "50.000", method="CHUYEN_KHOAN", seen=True, ref="ft 2609")
+    after = read()
+    ok(
+        "the deposit lands: partly paid, 50.000 ₫ paid, the rest remaining (server figures)",
+        after.get("balance") == "PARTIALLY_PAID"
+        and after.get("paid_vnd") == 50_000
+        and after.get("remaining_vnd") == owed - 50_000,
+        {k: after.get(k) for k in ("balance", "paid_vnd", "remaining_vnd")},
+    )
+    ok(
+        "the payment is on the ledger as a transfer with its reference tail",
+        [(p["amount_vnd"], p["method"], p["bank_ref_last"]) for p in after.get("payments", [])]
+        == [(50_000, "CHUYEN_KHOAN", "FT2609")],
+        after.get("payments"),
+    )
+    console.open_order(order_id)
+    shown = console.text()
+    ok(
+        "the money card reads Tổng · Đã trả · Còn lại and lists the transfer",
+        all(word in shown for word in ("Tổng", "Đã trả", "Còn lại", "Chuyển khoản", "FT2609")),
+        [line for line in shown.splitlines() if "₫" in line][:6],
+    )
+    if READS_DATABASE:
+        ok(
+            "the database holds one 50000 CHUYEN_KHOAN payment and a PARTIALLY_PAID order",
+            sql(
+                "select method || ':' || amount_vnd from order_payments "
+                f"where order_id='{order_id}'"
+            )
+            == "CHUYEN_KHOAN:50000"
+            and stored(order_id, "balance_status") == "PARTIALLY_PAID",
+            sql(f"select method, amount_vnd from order_payments where order_id='{order_id}'"),
+        )
+
+    for target in ("QUEUED", "IN_PROCESS", "QUALITY_CHECK", "READY_AT_STORE"):
+        moved = console.call(
+            "POST",
+            f"/internal/v1/orders/{order_id}/production-transition",
+            {"target": target},
+            if_match=console.current_version(order_id, order["row_version"]),
+        )
+        if moved["status"] >= 300:
+            raise AssertionError(f"could not move to {target}: {moved['text']}")
+    note("washed and on the shelf; the customer comes back")
+
+    # Goods leave only when paid: nothing that hands them over is offered, and the server refuses.
+    console.open_order(order_id)
+    offered = console.offered()
+    ok(
+        "at pickup the big button is Thu tiền, and no handover is offered while money is owed",
+        console.primary_step() == "TAKE_PAYMENT"
+        and not {"COLLECT", "HAND_OVER", "RELEASE"} & set(offered),
+        offered,
+    )
+    version = console.current_version(order_id, order["row_version"])
+    pickup = console.call("POST", f"/internal/v1/orders/{order_id}/collection", if_match=version)
+    hand_over = console.call(
+        "POST", f"/internal/v1/orders/{order_id}/steps", {"step": "HAND_OVER"}, if_match=version
+    )
+    ok(
+        "the server refuses the pickup and the handover while partly paid",
+        pickup["status"] == 422
+        and "COLLECTION_REQUIRES_PAYMENT" in pickup["text"]
+        and hand_over["status"] == 409,
+        f"{pickup['status']} {pickup['text'][:80]} / {hand_over['status']}",
+    )
+
+    # The customer hands over more than remains: change is given, the excess is refused.
+    over = f"{owed - 50_000 + 10_000:,}".replace(",", ".")
+    said = console.pay(order_id, over)
+    ok(
+        "more than remains is refused -- trả lại tiền thừa cho khách -- and nothing is written",
+        "OVERPAYMENT_REFUSED" in console.reason_codes()
+        and "trả lại tiền thừa" in said
+        and read().get("paid_vnd") == 50_000,
+        said[:160],
+    )
+
+    # The rest, prefilled, in cash; the customer takes the bag with it.
+    said = console.pay(order_id, hand_over=True)
+    closing = console.page.locator("dialog[open] button[data-step=HAND_OVER]")
+    paid = read()
+    ok(
+        "the rest in cash settles the order and records the handover in the same press",
+        paid.get("balance") == "PAID"
+        and paid.get("remaining_vnd") == 0
+        and paid.get("self_collection_recorded") is True
+        and [p["method"] for p in paid.get("payments", [])] == ["CHUYEN_KHOAN", "TIEN_MAT"],
+        {k: paid.get(k) for k in ("balance", "remaining_vnd", "self_collection_recorded")},
+    )
+    ok("the payment sheet offers 'Giao đồ & đóng đơn' straight away", closing.count() == 1)
+    if closing.count():
+        closing.first.click()
+        console.page.wait_for_timeout(2000)
+    ok(
+        "handed over: the order is completed",
+        read().get("commercial") == "COMPLETED",
+        read().get("commercial"),
+    )
+
+    console.open(f"#/orders/{order_id}/receipt")
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#receipt-paper [data-paid]", timeout=10000)
+    paper = console.text()
+    ok(
+        "the receipt prints Đã trả and Còn lại once a payment exists",
+        "Đã trả" in paper and "Còn lại" in paper,
+        [line for line in paper.splitlines() if "Đã trả" in line or "Còn lại" in line][:2],
+    )
+
+    console.open("#/")
+    touched("shell.nav.today")
+    board = console.text()
+    takings_read = console.call("GET", f"/internal/v1/stores/{STORE}/settlements/today")
+    takings = takings_read.get("body") or {}
+    ok(
+        "Hôm nay splits the day's money into cash and transfer",
+        "Tiền mặt (" in board and "Chuyển khoản (" in board,
+        [line for line in board.splitlines() if "Tiền mặt" in line or "Chuyển khoản" in line][:2],
+    )
+    if READS_DATABASE:
+        by_method = sql(
+            "select coalesce(sum(amount_vnd) filter (where method='TIEN_MAT'),0) || ':' || "
+            "coalesce(sum(amount_vnd) filter (where method='CHUYEN_KHOAN'),0) "
+            f"from order_payments where store_id='{STORE}' and "
+            "(recorded_at at time zone 'Asia/Ho_Chi_Minh')::date = "
+            "(now() at time zone 'Asia/Ho_Chi_Minh')::date"
+        )
+        ok(
+            "the takings by method equal the day's payments, method by method",
+            by_method == f"{takings.get('cash_vnd')}:{takings.get('transfer_vnd')}",
+            f"ledger {by_method} / takings {takings.get('cash_vnd')}:{takings.get('transfer_vnd')}",
+        )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -5112,6 +5318,8 @@ SCENARIOS = {
     "contact_pick": scenario_contact_pick,
     "report": scenario_report,
     "shop_capture": scenario_shop_capture,
+    # PAYMENT-001: a deposit at drop-off, the rest at pickup. Before the two that publish a policy.
+    "deposit": scenario_deposit,
     # CUSTOMER-001. Before promise: it proves the refusal on a shop that has not published the
     # privacy notice, then publishes it; nothing after it depends on the notice being unpublished.
     "customers": scenario_customers,

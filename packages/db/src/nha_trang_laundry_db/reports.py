@@ -37,9 +37,12 @@ is shown at all, is the console formatting this fraction -- never a figure this 
   is `COMPLETE` when none of its orders were, `RULE_ASSUMED` otherwise; `rule_assumed` says how many
   of the denominator the stated rule judged.
 * Complaints: `customer_incidents.opened_at`, every category.
-* Money: `order_settlements` in, `order_refunds` out, each on its own local day -- the two ledgers
-  and the two predicates of `collected-today-v2`, widened from one day to a range. Summed by
-  PostgreSQL over BIGINT columns; Python never adds an amount.
+* Money: `order_payments` in (`PAYMENT-001`, `DEC-035`), `order_refunds` out, each on its own local
+  day -- the two ledgers and the two predicates of `collected-today-v3`, widened from one day to a
+  range. Money in is split by method (`TIEN_MAT`, `CHUYEN_KHOAN`) as `MONEY_COLLECTED.by_kind`; a
+  deposit is money in on the day it was taken. `0056` gave every earlier settlement the one payment
+  it was, on its attestation day, so no past day's figure moves. Summed by PostgreSQL over BIGINT
+  columns; Python never adds an amount.
 * Remedies: `remedy_proposals` that reached `EXECUTED`, dated by `executed_at`, by kind, with the
   credit value the database sums. A free rewash carries no money, so its amount is `None`, not 0.
 
@@ -114,12 +117,11 @@ REPORT_READ_ROLES: Final = frozenset(
 REPORT_MAX_DAYS: Final = 92
 
 #: The published identifier. `report-v3:<digest>` travels with every figure (invariant 18).
-#: `v2` (`PROMISE-001`): the on-time figure counts a promised order against its first promise.
-#: `v3` (merge of both): v2 was used twice on parallel branches -- completed and cancelled as
-#: counts (the round-6 filmed review) and on-time against the first promise (`PROMISE-001`).
-#: Both are in this version, so it carries its own identifier. `SHOP-CAPTURE-001` (`DEC-038`)
-#: added `capture` and `months[]` on a third parallel branch that also called itself `v2`; that is
-#: in `report-v3` too -- the statements it adds are hashed into the digest, so the digest moved.
+#: `v2` was used on four parallel branches: completed and cancelled as counts (the round-6 filmed
+#: review), on-time against the first promise (`PROMISE-001`), the shop's own measurements --
+#: `capture` and `months[]` (`SHOP-CAPTURE-001`, `DEC-038`) -- and money in from the payment ledger,
+#: split by method (`PAYMENT-001`, `DEC-035`). All four are in this version, so it carries its own
+#: identifier, and every statement they add is hashed into the digest.
 REPORT_QUERY_IDENTIFIER: Final = "report-v3"
 
 #: The production sequence the rewash rule compares positions in, as the SQL receives it.
@@ -149,6 +151,10 @@ class ReportKey(StrEnum):
     MONEY_NET = "MONEY_NET"
     REMEDIES_EXECUTED = "REMEDIES_EXECUTED"
 
+
+#: `PAYMENT-001`: the payment methods, in the order `MONEY_COLLECTED.by_kind` lists them. The
+#: schema's CHECK on `order_payments.method` is the authority, as for the remedy kinds below.
+PAYMENT_METHODS: Final = ("TIEN_MAT", "CHUYEN_KHOAN")
 
 #: Remedy kinds in the order the report lists them. The schema's CHECK is the authority; a kind
 #: added there and not here is reported under nothing, which the pinned digest makes visible.
@@ -211,9 +217,9 @@ _REPORT_SQL = """
         FROM customer_incidents i
         WHERE i.store_id = %(store)s
         UNION ALL
-        SELECT 'MONEY_COLLECTED', s.attested_at, s.id, s.paid_amount_vnd
-        FROM order_settlements s
-        WHERE s.store_id = %(store)s
+        SELECT 'MONEY_COLLECTED_' || p.method, p.recorded_at, p.id, p.amount_vnd
+        FROM order_payments p
+        WHERE p.store_id = %(store)s
         UNION ALL
         SELECT 'MONEY_REFUNDED', r.refunded_at, r.id, r.refunded_amount_vnd
         FROM order_refunds r
@@ -237,9 +243,9 @@ _REPORT_SQL = """
                    AS reached_quality_check,
                count(DISTINCT w.subject) FILTER (WHERE w.fact = 'ORDERS_REWASHED') AS rewashed,
                count(DISTINCT w.subject) FILTER (WHERE w.fact = 'INCIDENTS_OPENED') AS incidents,
-               count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_COLLECTED')
+               count(DISTINCT w.subject) FILTER (WHERE left(w.fact, 16) = 'MONEY_COLLECTED_')
                    AS settlement_count,
-               coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_COLLECTED'), 0)
+               coalesce(sum(w.amount) FILTER (WHERE left(w.fact, 16) = 'MONEY_COLLECTED_'), 0)
                    AS collected_vnd,
                count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_REFUNDED') AS refund_count,
                coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_REFUNDED'), 0)
@@ -260,7 +266,15 @@ _REPORT_SQL = """
                    AS remedy_lost_vnd,
                count(DISTINCT w.subject) FILTER (WHERE left(w.fact, 7) = 'REMEDY_') AS remedies,
                coalesce(sum(w.amount) FILTER (WHERE left(w.fact, 7) = 'REMEDY_'), 0)
-                   AS remedies_vnd
+                   AS remedies_vnd,
+               count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_COLLECTED_TIEN_MAT')
+                   AS cash_count,
+               coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_COLLECTED_TIEN_MAT'), 0)
+                   AS cash_vnd,
+               count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_COLLECTED_CHUYEN_KHOAN')
+                   AS transfer_count,
+               coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_COLLECTED_CHUYEN_KHOAN'), 0)
+                   AS transfer_vnd
         FROM days d
         LEFT JOIN windowed w ON w.day = d.day
         GROUP BY GROUPING SETS ((d.day), ())
@@ -270,7 +284,8 @@ _REPORT_SQL = """
            abs(collected_vnd - refunded_vnd) AS net_vnd,
            CASE WHEN collected_vnd >= refunded_vnd THEN 'IN' ELSE 'OUT' END AS net_direction,
            remedy_free_rewash, remedy_damage, remedy_damage_vnd, remedy_late, remedy_late_vnd,
-           remedy_lost, remedy_lost_vnd, remedies, remedies_vnd
+           remedy_lost, remedy_lost_vnd, remedies, remedies_vnd,
+           cash_count, cash_vnd, transfer_count, transfer_vnd
     FROM counted
     ORDER BY is_window, day
 """
@@ -342,17 +357,21 @@ _TRIP_SQL = """
 """
 
 #: `SHOP-CAPTURE-001`. One calendar month's takings: the two ledgers of `MONEY_COLLECTED` and
-#: `MONEY_REFUNDED`, over the month's own days.
+#: `MONEY_REFUNDED`, over the month's own days. Money in is the payment ledger (`PAYMENT-001`), the
+#: one `collected-today-v3` and `MONEY_COLLECTED` read: a deposit counts in the month it was taken
+#: and the rest in the month it was paid, each once. A settlement is not read here -- the payment
+#: that settled the order is already in the ledger (and `0056` gave every earlier settlement its one
+#: payment), so reading both would count the same money twice.
 _MONTH_MONEY_SQL = """
     WITH bounds AS (
         SELECT (%(from_date)s::date)::timestamp AT TIME ZONE %(zone)s AS lower_at,
                (%(to_date)s::date + 1)::timestamp AT TIME ZONE %(zone)s AS upper_at
     )
     SELECT
-        (SELECT coalesce(sum(s.paid_amount_vnd), 0)::bigint
-         FROM order_settlements s CROSS JOIN bounds b
-         WHERE s.store_id = %(store)s AND s.attested_at >= b.lower_at
-           AND s.attested_at < b.upper_at),
+        (SELECT coalesce(sum(p.amount_vnd), 0)::bigint
+         FROM order_payments p CROSS JOIN bounds b
+         WHERE p.store_id = %(store)s AND p.recorded_at >= b.lower_at
+           AND p.recorded_at < b.upper_at),
         (SELECT coalesce(sum(r.refunded_amount_vnd), 0)::bigint
          FROM order_refunds r CROSS JOIN bounds b
          WHERE r.store_id = %(store)s AND r.direction = 'TO_CUSTOMER'
@@ -376,6 +395,7 @@ def report_query_version(policy: ProductionSlaPolicy) -> QueryVersion:
         BUSINESS_TIMEZONE,
         "|".join(_SEQUENCE),
         "|".join(REMEDY_KINDS),
+        "|".join(PAYMENT_METHODS),
         str(REPORT_MAX_DAYS),
         sla_board_query_version(policy).label,
         # SHOP-CAPTURE-001: the capture statements, the month's money, the spending vocabulary,
@@ -430,10 +450,12 @@ class ReportFigure:
     data_quality: DataQuality
     #: `MONEY_NET` only: the drawer's direction, `IN` (including no change) or `OUT`.
     direction: str | None = None
-    #: `REMEDIES_EXECUTED` only: counts and credit value per kind (`None` value = the kind moves
-    #: no money, which is not the same as zero).
+    #: `REMEDIES_EXECUTED`: counts and credit value per kind (`None` value = the kind moves no
+    #: money, which is not the same as zero). `MONEY_COLLECTED` (`PAYMENT-001`): count and amount
+    #: per payment method, `TIEN_MAT` then `CHUYEN_KHOAN`.
     by_kind: tuple[tuple[str, int, int | None], ...] | None = None
-    #: `MONEY_COLLECTED` / `MONEY_REFUNDED`: how many ledger rows the amount sums.
+    #: `MONEY_COLLECTED` / `MONEY_REFUNDED`: how many ledger rows the amount sums -- payments since
+    #: `PAYMENT-001` (a deposit and the rest are two), settlements before it.
     entries: int | None = None
     #: `REMEDIES_EXECUTED`: the total credit value the executed remedies carried.
     amount_vnd: int | None = None
@@ -771,6 +793,10 @@ def _period(
             "VND",
             DataQuality.COMPLETE,
             entries=int(row[8]),
+            by_kind=(
+                ("TIEN_MAT", int(row[23]), int(row[24])),
+                ("CHUYEN_KHOAN", int(row[25]), int(row[26])),
+            ),
         ),
         ReportFigure(
             ReportKey.MONEY_REFUNDED,

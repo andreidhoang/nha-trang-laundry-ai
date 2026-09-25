@@ -197,13 +197,17 @@ def _balance_after_cancellation(
     * `PAID` under anything else is refused. The only such resolution is `NOT_RECEIVED`, which the
       custody check above already refuses for a paid order; this is the money-side statement of the
       same rule, so no future resolution code can cancel a paid order and keep the money counted.
-    * Every other balance is a settlement shape `DEC-010` keeps `NOT_SUPPORTED`, and none can be
-      written today. A cancellation of one is refused rather than guessed at.
+    * `PARTIALLY_PAID` (`DEC-035`: a deposit was taken) is the same rule over what was paid: under
+      a resolution that charges the customer nothing the deposit goes back through the same refund
+      path, up to what was paid -- the sum of the payment ledger, read by the repository -- and any
+      other resolution is refused, because nobody has decided the shop may keep a deposit.
+    * Every other balance (`ON_ACCOUNT`, `OVERPAID`) cannot be written today. A cancellation of one
+      is refused rather than guessed at.
     """
 
     if balance is OrderBalanceStatus.UNPAID:
         return balance
-    if balance is OrderBalanceStatus.PAID:
+    if balance in {OrderBalanceStatus.PAID, OrderBalanceStatus.PARTIALLY_PAID}:
         if resolution in CUSTOMER_NOT_CHARGED_RESOLUTIONS:
             return OrderBalanceStatus.REFUNDED
         raise OrderTransitionError(

@@ -11,8 +11,8 @@
  *   - **Composite steps go to `POST /orders/{id}/steps`** with the row version read (`If-Match`)
  *     and an `Idempotency-Key` held for exactly one intent: the same press after a timeout replays,
  *     a different step, version or answer is a new key, and nothing is ever re-sent by software.
- *     Money and legs keep their own routes -- settlement, collection, delivery legs -- because they
- *     carry what only a person can attest: the amount taken, the courier's outcome.
+ *     Money and legs keep their own routes -- payments, collection, delivery legs -- because they
+ *     carry what only a person can attest: the amount taken and how, the courier's outcome.
  *   - **`RECEIVE` needs the operator's word on capacity.** The server derives five of the six
  *     readiness facts itself; `slot_approved` is the one it cannot know. The confirmation sheet asks
  *     for it as an explicit tick — the button alone never asserts it.
@@ -24,10 +24,12 @@
  *     makes either primary and lists the reasons it will take; the sheet offers exactly those, and
  *     the history reads the step and its reason back ("Giặt lại · Chưa sạch"). When they are the only
  *     legal steps the bar has no big button, only "Khác".
- *   - **The amount is typed, not prefilled.** The settlement compares what is typed against the
- *     immutable quote the order is bound to; a pre-filled figure a person confirms without reading is
- *     how a wrong amount gets attested, and the point of the comparison is that two independent
- *     sources agree (SETTLEMENT-001). The figure to read to the customer is on screen, large.
+ *   - **Thu tiền takes what the server says remains** (`PAYMENT-001`, `DEC-035`). The money card
+ *     reads *Tổng · Đã trả · Còn lại* and every payment, all figures the server's. The sheet
+ *     prefills the remaining amount as the server computed it -- the owner's spec -- and "Khách trả
+ *     một phần" opens a field for a deposit, parsed with `parseDong`; the method (Tiền mặt /
+ *     Chuyển khoản) is one tap, and a transfer asks for "Đã thấy tiền vào tài khoản". The server
+ *     refuses more than remains (`OVERPAYMENT_REFUSED`) and pickup while money is owed.
  *   - **Every write ends in one of two ways**: a toast and the order re-read and re-drawn; or the
  *     refusal inline at the button, in Vietnamese, with the way out. A stale version is never
  *     retried -- the offer is "Đơn vừa đổi — tải lại".
@@ -58,6 +60,7 @@ import {
 import {
   ACQUISITION_SOURCE_VI,
   ORDER_STEP_DONE_VI,
+  PAYMENT_METHOD_VI,
   enumLabel,
   enumVi,
   stepVi,
@@ -141,12 +144,8 @@ const AUDIT_COMPACT = 5;
 /** The page size asked of the order's incident list. */
 const INCIDENT_LIMIT = 50;
 
-/**
- * `SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION`: paid in advance at the counter, to be
- * collected there later -- a walk-in at drop-off (`DEC-032`), or a `PICKUP_ONLY` customer who came
- * by before the laundry was finished (its addendum).
- */
-const PREPAID_SELF_COLLECTION = "EXACT_PAYMENT_PREPAID_SELF_COLLECTION";
+/** `SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY`: paid in full before the courier leaves. */
+const PREPAID_DELIVERY = "EXACT_PAYMENT_PREPAID_DELIVERY";
 
 /**
  * The modes whose customer collects at the counter: every mode outside the server's
@@ -198,18 +197,19 @@ const REASON_STEPS = {
 const CLOSING = new Set(["HAND_OVER", "COMPLETE"]);
 
 /**
- * `SETTLEMENT-001` / `DEC-010` / `DEC-032`: the one shape of payment the counter takes. A policy
- * statement bound to the decision register (`console-disclosures-v1.yaml`, POLICY_BOUND); its text
- * is the slot and must not be reworded without the decision behind it. Shown behind ⓘ in the
- * payment sheet, with its point-of-action summary visible beside the field.
+ * `PAYMENT-001` / `DEC-035`: how the counter takes money. A policy statement bound to the decision
+ * register (`console-disclosures-v1.yaml`, POLICY_BOUND); its text is the slot and must not be
+ * reworded without the decision behind it. Re-worded by `DEC-035`, which superseded the `DEC-010`
+ * deferral the previous sentence ("đặt cọc … bị từ chối") stated. Shown behind ⓘ in the payment
+ * sheet, with its point-of-action summary visible beside the method.
  */
 const SETTLEMENT_RULE = {
   guardrail:
-    "Mọi trường hợp là cùng một khoản tiền: khách trả đúng tổng đã báo, đủ một lần, tại quầy — " +
-    "lúc lấy đồ, lúc gửi đồ hoặc ghé quầy trả trước khi đồ xong (quyết định DEC-032), hoặc " +
-    "trước khi tiệm giao tận nơi. Người giao không thu tiền. " +
-    "Trả thiếu, trả thừa, đặt cọc, trả góp và ghi nợ đều bị từ chối kèm mã quyết định — không " +
-    "làm tròn và không ghi nhận một phần. Bản ghi tất toán không sửa được.",
+    "Khách trả bằng tiền mặt hoặc chuyển khoản vào tài khoản của tiệm, một lần hay nhiều lần " +
+    "(đặt cọc), mỗi lần từ 1 ₫ tới số còn lại (quyết định DEC-035). Khách đưa dư thì trả lại " +
+    "tiền thừa: số lớn hơn số còn lại bị từ chối. Chuyển khoản chỉ ghi khi đã thấy tiền vào tài " +
+    "khoản; máy không tự kiểm tra ngân hàng. Đồ chỉ giao khi đã trả đủ. Người giao không thu " +
+    "tiền. Mỗi lần thu là một dòng không sửa được.",
 };
 
 /** How the audit timeline is to be read (was the V1 panel's guardrail). */
@@ -456,10 +456,18 @@ export function render_(context) {
     drawActions(order);
   }
 
-  /** @param {any} order */
+  /**
+   * The money section (`PAYMENT-001`): *Còn lại* large, *Tổng · Đã trả* under it, then every
+   * payment. Every figure is the server's (`owed_vnd`, `paid_vnd`, `remaining_vnd`, `payments`);
+   * this only formats. When money is owed but paying is not the page's big button (a deposit at
+   * drop-off, while washing is), "Thu tiền" sits here instead of under "Khác".
+   *
+   * @param {any} order
+   */
   function moneyCard(order) {
     const due = amountDue(order);
     const paid = order.balance === "PAID";
+    const partly = order.balance === "PARTIALLY_PAID";
     const waiting =
       paid &&
       order.self_collection_recorded === false &&
@@ -471,32 +479,82 @@ export function render_(context) {
         ? cancelled
           ? "Tổng đơn"
           : "Phải thu"
-        : paid
-          ? "Đã thu"
-          : order.balance === "REFUNDED"
-            ? "Tổng đơn · đã hoàn"
-            : "Tổng đơn";
+        : partly
+          ? "Còn lại"
+          : paid
+            ? "Đã thu"
+            : order.balance === "REFUNDED"
+              ? "Tổng đơn · đã hoàn"
+              : "Tổng đơn";
+    const amount = partly
+      ? money(order.remaining_vnd, "Chưa có tổng")
+      : due
+        ? due.text
+        : UNKNOWN;
     const caption = paid
       ? `Đã thu đủ tiền.${waiting ? " Khách chưa nhận đồ." : ""}`
       : order.balance === "REFUNDED"
         ? "Đã hoàn tiền cho khách."
-        : order.balance === "UNPAID"
-          ? cancelled
-            ? "Đơn đã huỷ — không thu tiền."
-            : due && !due.known
-            ? "Báo giá chưa có một tổng duy nhất, nên chưa thu được."
-            : null
-          : `Công nợ: ${enumVi(order.balance)}. Quầy không thu tiền cho đơn này; có gì chưa rõ ` +
-            "thì báo chủ tiệm.";
+        : partly
+          ? "Khách trả đủ phần còn lại thì mới giao đồ."
+          : order.balance === "UNPAID"
+            ? cancelled
+              ? "Đơn đã huỷ — không thu tiền."
+              : due && !due.known
+                ? "Báo giá chưa có một tổng duy nhất, nên chưa thu được."
+                : null
+            : `Công nợ: ${enumVi(order.balance)}. Quầy không thu tiền cho đơn này; có gì chưa ` +
+              "rõ thì báo chủ tiệm.";
+    const payments = Array.isArray(order.payments) ? order.payments : [];
+    // Tổng · Đã trả once something is paid; before that "Phải thu" already is the total.
+    const split =
+      payments.length && order.owed_vnd !== null && order.owed_vnd !== undefined
+        ? h(
+            "div",
+            { class: "order__money-split", dataMoneySplit: "true" },
+            keyValues([
+              ["Tổng", money(order.owed_vnd)],
+              ["Đã trả", money(order.paid_vnd)],
+              // Partly paid, the large figure above already is "Còn lại"; said once.
+              partly ? null : ["Còn lại", money(order.remaining_vnd)],
+            ]),
+          )
+        : null;
+    const ledger = payments.length
+      ? h(
+          "div",
+          { class: "order__payments", dataPayments: String(payments.length) },
+          h("p", { class: "field-label" }, "Các lần thu"),
+          list(
+            payments.map((item) =>
+              listRow({
+                title: paymentMethod(item),
+                meta: paymentMeta(item),
+                trailing: money(item.amount_vnd),
+                data: { payment: String(item.payment_id) },
+              }),
+            ),
+            { label: "Các lần thu" },
+          ),
+          order.payments_truncated
+            ? h(
+                "p",
+                { class: "hint" },
+                `Chỉ hiện ${payments.length} lần thu đầu; số đã trả vẫn tính đủ mọi lần.`,
+              )
+            : null,
+        )
+      : null;
+    const take = (order.next_steps || []).find(
+      (entry) => String(entry.step) === "TAKE_PAYMENT" && !entry.primary,
+    );
     return h(
       "div",
       { class: "surface order__money" },
-      moneyHero({
-        label,
-        amount: due ? due.text : UNKNOWN,
-        caption,
-        state: paid ? "ok" : null,
-      }),
+      moneyHero({ label, amount, caption, state: paid ? "ok" : null }),
+      split,
+      ledger,
+      take ? stepControl(take) : null,
     );
   }
 
@@ -537,6 +595,34 @@ export function render_(context) {
           : null,
       ),
     ];
+  }
+
+  /**
+   * How one payment came (a row's title). A payment recorded before the method was asked for says
+   * so rather than claiming cash was seen.
+   *
+   * @param {any} item a `PaymentViewResponse`
+   * @returns {string}
+   */
+  function paymentMethod(item) {
+    const how = PAYMENT_METHOD_VI[item.method] || String(item.method);
+    return item.legacy ? `${how} (không ghi cách trả)` : how;
+  }
+
+  /**
+   * When, the reference tail and who took it (a row's second line) -- all the server's.
+   *
+   * @param {any} item a `PaymentViewResponse`
+   * @returns {string}
+   */
+  function paymentMeta(item) {
+    return [
+      dateTime(item.recorded_at),
+      item.bank_ref_last ? `…${item.bank_ref_last}` : null,
+      item.recorded_by_name || null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
   }
 
   /** @param {any} order */
@@ -690,8 +776,11 @@ export function render_(context) {
     // the steps stay under "Khác", and the bar says there is no ordinary next step.
     const primary = steps.find((entry) => entry.primary) || null;
     // Presentation only: the server's order, with the steps that stop or end work moved last so a
-    // thumb reaching for "Khách trả trước" does not land on "Huỷ đơn".
-    const rest = steps.filter((entry) => entry !== primary);
+    // thumb reaching for "Thu tiền" does not land on "Huỷ đơn". A "Thu tiền" that is not the big
+    // button is on the money card already (`moneyCard`), so it is not listed twice.
+    const rest = steps.filter(
+      (entry) => entry !== primary && String(entry.step) !== "TAKE_PAYMENT",
+    );
     const others = [
       ...rest.filter((entry) => !DESTRUCTIVE.has(String(entry.step))),
       ...rest.filter((entry) => DESTRUCTIVE.has(String(entry.step))),
@@ -783,7 +872,7 @@ export function render_(context) {
           closeMore();
           const opener = /** @type {HTMLButtonElement} */ (event.currentTarget);
           if (step === "RECEIVE") openReceive(entry);
-          else if (step === "SETTLE" || step === "PREPAY") openPayment(entry);
+          else if (step === "TAKE_PAYMENT") openPayment();
           else if (step === "COLLECT") openCollect();
           else if (step === "DELIVERY_PICKUP" || step === "DELIVERY_RETURN") openLeg(entry);
           else if (step === "CANCEL") openCancel(entry);
@@ -1174,22 +1263,30 @@ export function render_(context) {
   }
 
   /**
-   * Thu tiền / Khách trả trước. The same exact total either way; they differ only in whether the
-   * customer takes the laundry now (`collected_by_customer`).
+   * Thu tiền (`PAYMENT-001`, `DEC-035`): a deposit, a part payment or the rest, in cash or by
+   * transfer, on `POST /orders/{id}/payments` with the version read (`If-Match`).
    *
-   * @param {any} entry
+   * The server's `remaining_vnd` is the amount unless the person taps "Khách trả một phần" and
+   * types another; the console parses the typed text and compares nothing. When the server says
+   * the settling payment may also hand the goods over (`payment_may_hand_over`), "Khách lấy đồ
+   * luôn" is offered, ticked, beside the full amount -- the old "Thu tiền" did both in one press.
    */
-  function openPayment(entry) {
+  function openPayment() {
     const order = current;
     if (!order) return;
-    const collected = String(entry.step) === "SETTLE";
-    const due = amountDue(order);
     const alertHost = h("div");
+    const remaining = order.remaining_vnd;
+    let editing = false;
     let typed = "";
+    let method = "TIEN_MAT";
+    let seen = false;
+    let reference = "";
+    let handOver = order.payment_may_hand_over === true;
+
     const field = moneyInput({
-      id: "settlement-amount",
-      label: "Số tiền khách đưa",
-      placeholder: "Gõ số tiền khách đưa",
+      id: "payment-amount",
+      label: "Số tiền khách trả lần này",
+      placeholder: "Ví dụ 50.000",
       echo: (text) => {
         const parsed = parseDong(text);
         return text.trim() && parsed !== null ? `= ${money(parsed)}` : "";
@@ -1198,57 +1295,171 @@ export function render_(context) {
         typed = text;
       },
     });
+    const amountHost = h("div", { class: "stack stack--tight" });
+    const handOverHost = h("div");
+    const transferHost = h("div", { class: "stack stack--tight" });
+
+    function drawAmount() {
+      render(
+        amountHost,
+        editing
+          ? h(
+              "div",
+              { class: "stack stack--tight" },
+              h("label", { for: "payment-amount", class: "field-label" }, "Khách trả lần này"),
+              field.node,
+              button({
+                label: `Thu đủ ${money(remaining)}`,
+                variant: "quiet",
+                id: "payment-full",
+                onClick: () => {
+                  editing = false;
+                  typed = "";
+                  field.input.value = "";
+                  drawAmount();
+                },
+              }),
+            )
+          : button({
+              label: "Khách trả một phần (đặt cọc)",
+              variant: "quiet",
+              id: "payment-edit",
+              onClick: () => {
+                editing = true;
+                drawAmount();
+                setTimeout(() => field.input.focus(), 30);
+              },
+            }),
+      );
+      drawHandOver();
+    }
+
+    function drawHandOver() {
+      if (editing || order?.payment_may_hand_over !== true) {
+        render(handOverHost);
+        return;
+      }
+      const tick = h("input", {
+        type: "checkbox",
+        id: "payment-hand-over",
+        checked: handOver,
+        onChange: (event) => {
+          handOver = /** @type {HTMLInputElement} */ (event.target).checked;
+        },
+      });
+      render(
+        handOverHost,
+        h(
+          "label",
+          { class: "check-line", for: "payment-hand-over" },
+          tick,
+          h("span", null, "Khách lấy đồ luôn"),
+        ),
+      );
+    }
+
+    function drawTransfer() {
+      if (method !== "CHUYEN_KHOAN") {
+        render(transferHost);
+        return;
+      }
+      const tick = h("input", {
+        type: "checkbox",
+        id: "payment-transfer-seen",
+        checked: seen,
+        onChange: (event) => {
+          seen = /** @type {HTMLInputElement} */ (event.target).checked;
+        },
+      });
+      const ref = h("input", {
+        id: "payment-bank-ref",
+        type: "text",
+        class: "input",
+        autocomplete: "off",
+        autocapitalize: "characters",
+        maxlength: "40",
+        placeholder: "Mã giao dịch (tuỳ chọn)",
+        "aria-label": "Mã giao dịch, vài số cuối, không bắt buộc",
+        value: reference,
+        onInput: (event) => {
+          reference = /** @type {HTMLInputElement} */ (event.target).value;
+        },
+      });
+      render(
+        transferHost,
+        h(
+          "label",
+          { class: "check-line", for: "payment-transfer-seen" },
+          tick,
+          h("span", null, "Đã thấy tiền vào tài khoản"),
+        ),
+        ref,
+      );
+    }
+
     const submit = button({
-      label: collected ? "Ghi nhận đã thu tiền" : "Ghi nhận khách trả trước",
+      label: "Ghi nhận đã thu",
       variant: "primary",
       block: true,
       network: true,
-      id: "settlement-submit",
+      id: "payment-submit",
       onClick: () => void send(),
     });
 
     async function send() {
-      // `parseDong` rather than `parseInt`: the total on this very screen renders as "132.000 ₫",
-      // and `parseInt("132.000", 10)` is 132.
-      const amount = parseDong(typed);
-      if (amount === null) {
+      const amount = editing ? parseDong(typed) : remaining;
+      if (amount === null || amount === undefined) {
         show(
           alertHost,
           inlineAlert({
             state: "danger",
-            title:
-              "Số tiền phải là số nguyên đồng. Chép cả dấu chấm cũng được — “132.000” đọc là " +
-              "132000. Không nhận dấu phẩy hay số lẻ.",
+            title: editing
+              ? "Gõ số tiền khách trả, số nguyên đồng — ví dụ 50.000. Không nhận dấu phẩy hay số lẻ."
+              : "Đơn chưa có số còn lại để thu. Tải lại đơn.",
           }),
         );
         return;
       }
+      const transfer = method === "CHUYEN_KHOAN";
+      const body = {
+        amount_vnd: amount,
+        method,
+        transfer_seen: transfer && seen,
+        bank_ref_last: transfer && reference.trim() ? reference.trim() : null,
+        collected_by_customer: !editing && handOver && order?.payment_may_hand_over === true,
+      };
       render(alertHost);
       await pressing(submit, async () => {
         try {
-          const recorded = await request(`/internal/v1/orders/${id}/settlement`, {
+          const recorded = await request(`/internal/v1/orders/${id}/payments`, {
             method: "POST",
-            body: { paid_amount_vnd: amount, collected_by_customer: collected },
-            // A corrected amount is a new intent; replaying the old key with new content is a 409.
-            idempotencyKey: keyFor(`settle|${collected}|${amount}`),
+            body,
+            ifMatch: order?.row_version,
+            // A changed amount, method or tick is a new intent; the same press after a timeout
+            // replays the first answer.
+            idempotencyKey: keyFor(`pay|${order?.row_version}|${JSON.stringify(body)}`),
           });
           releaseKey();
-          toast(`${collected ? "Đã thu tiền" : "Đã thu tiền trả trước"} · ${orderName(order)}`);
+          toast(`Đã thu ${money(recorded.amount_vnd)} · ${orderName(order)}`);
           const view = await reread();
           successState(
             made,
-            `Đã ghi nhận ${money(recorded.paid_amount_vnd)} đúng bằng tổng đã báo.`,
-            // Read from the response, not asserted: a prepayment leaves the handover unrecorded.
-            recorded.self_collection_recorded
-              ? "Đã ghi nhận khách tự lấy đồ."
-              : recorded.settlement_shape === PREPAID_SELF_COLLECTION
-                ? "Khách chưa nhận đồ. Khi đưa đồ cho khách, bấm “Khách đã nhận đồ”."
-                : "Chưa ghi nhận giao đồ — cần một chuyến giao thành công thì mới đóng được đơn.",
+            `Đã ghi nhận ${money(recorded.amount_vnd)} · ${
+              PAYMENT_METHOD_VI[recorded.method] || recorded.method
+            }.`,
+            // Read from the response, not asserted: who has the goods is the settlement's shape.
+            recorded.balance_status === "PAID"
+              ? recorded.self_collection_recorded
+                ? "Đã trả đủ. Đã ghi khách nhận đồ."
+                : recorded.settlement_shape === PREPAID_DELIVERY
+                  ? "Đã trả đủ. Đơn đóng khi có một chuyến giao thành công."
+                  : "Đã trả đủ. Khi đưa đồ cho khách, bấm “Khách đã nhận đồ”."
+              : `Còn lại ${money(recorded.remaining_vnd)}.`,
             view,
           );
         } catch (error) {
-          // A refusal names the decision that owns it and is shown as the server gave it, never
-          // translated into "thử lại". The key is kept so an unchanged resend replays.
+          // A refusal is shown as the server gave it -- "trả lại tiền thừa cho khách" for an
+          // amount above what remains -- and the key is kept so an unchanged resend replays.
           show(alertHost, refusal(error));
         }
       });
@@ -1256,54 +1467,51 @@ export function render_(context) {
 
     const made = openFresh({
       id: "order-payment",
-      title: collected ? "Thu tiền" : "Khách trả trước",
+      title: "Thu tiền",
       body: h(
         "div",
         { class: "stack" },
         moneyHero({
-          label: "Phải thu",
-          amount: due ? due.text : UNKNOWN,
-          caption: collected
-            ? "Khách trả đủ và lấy đồ luôn."
-            : "Khách trả đủ bây giờ, nhận đồ sau.",
+          label: "Còn lại",
+          amount: money(remaining, "Chưa có tổng"),
+          caption:
+            order.paid_vnd && order.owed_vnd !== null
+              ? `Tổng ${money(order.owed_vnd)} · đã trả ${money(order.paid_vnd)}`
+              : null,
         }),
+        amountHost,
         h(
           "div",
           { class: "stack stack--tight" },
           h(
             "div",
             { class: "fact-line" },
-            h("label", { for: "settlement-amount", class: "field-label" }, "Số tiền khách đưa"),
-            infoButton(
-              "Vì sao phải tự gõ số tiền?",
-              h(
-                "p",
-                null,
-                "Nhập số khách đưa, không phải số hệ thống nghĩ. Máy chủ đối chiếu với ảnh chụp báo " +
-                  "giá gắn với đơn; lệch một đồng cũng bị từ chối.",
-              ),
-              h(
-                "p",
-                null,
-                "Ô này cố ý không điền sẵn: một con số điền sẵn mà người bấm không đọc là cách một " +
-                  "khoản sai được ghi nhận. Hai nguồn độc lập — số bạn gõ và tổng đã báo — phải khớp " +
-                  "nhau (SETTLEMENT-001).",
-              ),
-            ),
+            h("p", { class: "field-label" }, "Khách trả bằng"),
+            infoButton("Quầy thu tiền thế nào?", h("p", null, SETTLEMENT_RULE.guardrail)),
           ),
-          field.node,
+          segmented({
+            label: "Khách trả bằng",
+            id: "payment-method",
+            options: [
+              { value: "TIEN_MAT", label: PAYMENT_METHOD_VI.TIEN_MAT },
+              { value: "CHUYEN_KHOAN", label: PAYMENT_METHOD_VI.CHUYEN_KHOAN },
+            ],
+            value: method,
+            onChange: (value) => {
+              method = value;
+              drawTransfer();
+            },
+          }),
+          transferHost,
         ),
-        h(
-          "div",
-          { class: "fact-line" },
-          h("p", { class: "hint" }, "Thu đúng tổng, đủ một lần. Ghi rồi không sửa được."),
-          infoButton("Quầy được thu những khoản nào?", h("p", null, SETTLEMENT_RULE.guardrail)),
-        ),
+        handOverHost,
+        h("p", { class: "hint" }, "Khách đưa dư thì trả lại tiền thừa. Ghi rồi không sửa được."),
         alertHost,
       ),
       actions: gated(submit, writeVerdict),
     });
-    setTimeout(() => field.input.focus(), 50);
+    drawAmount();
+    drawTransfer();
   }
 
   /** Khách đã nhận đồ: the pickup of an order paid in advance at the counter (`DEC-032`). */

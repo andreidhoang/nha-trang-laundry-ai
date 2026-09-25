@@ -342,7 +342,10 @@ def test_the_day_count_and_takings_versions_are_pinned_too() -> None:
     # `collected_vnd` and adds today's `order_refunds` and the drawer's net movement as a
     # non-negative magnitude plus IN/OUT, each leg on its own business day, with the day a
     # parameter instead of `now()` -- a changed rule, so a new identifier, not a bumped digest.
-    assert COLLECTED_TODAY_QUERY.label == "collected-today-v2:c266d2f11377a64c"
+    # v3 (`PAYMENT-001`, `DEC-035`): money in is the payment ledger, split by method, so a deposit
+    # counts on the day it was taken; `0056` backfilled every settlement as its one payment, so no
+    # past day moves. v2 was `c266d2f11377a64c`.
+    assert COLLECTED_TODAY_QUERY.label == "collected-today-v3:3e7eb2f9fcaade13"
 
 
 def test_a_changed_rule_produces_a_different_digest_under_the_same_identifier() -> None:

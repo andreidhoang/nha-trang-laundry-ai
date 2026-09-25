@@ -132,7 +132,7 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
         (
             f"accepted {mode}",
             _active(mode),
-            [S.START_WASH, S.CANCEL, S.PREPAY, *extra],
+            [S.START_WASH, S.CANCEL, S.TAKE_PAYMENT, *extra],
             S.START_WASH,
         )
         for mode, extra in (
@@ -145,25 +145,25 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
     (
         "washing",
         _active(production=P.IN_PROCESS),
-        [S.QUALITY_CHECK, S.HOLD, S.CANCEL, S.PREPAY],
+        [S.QUALITY_CHECK, S.HOLD, S.CANCEL, S.TAKE_PAYMENT],
         S.QUALITY_CHECK,
     ),
     (
         "checking",
         _active(production=P.QUALITY_CHECK),
-        [S.MARK_READY, S.HOLD, S.REWASH, S.CANCEL, S.PREPAY],
+        [S.MARK_READY, S.HOLD, S.REWASH, S.CANCEL, S.TAKE_PAYMENT],
         S.MARK_READY,
     ),
     (
         "held",
         _active(production=P.ON_HOLD, resume=P.IN_PROCESS),
-        [S.RESUME, S.CANCEL, S.PREPAY],
+        [S.RESUME, S.CANCEL, S.TAKE_PAYMENT],
         S.RESUME,
     ),
     (
         "exception",
         _active(production=P.EXCEPTION, resume=P.QUALITY_CHECK),
-        [S.RESUME, S.CANCEL, S.PREPAY],
+        [S.RESUME, S.CANCEL, S.TAKE_PAYMENT],
         S.RESUME,
     ),
     # --- self-collect, pay at pickup
@@ -171,9 +171,49 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
         "self ready unpaid",
         _active(SELF, production=P.READY_AT_STORE),
         # Founder ruling 2026-09-25: no RELEASE while unpaid for a customer who collects.
-        [S.HOLD, S.REWASH, S.CANCEL, S.SETTLE, S.PREPAY],
-        S.SETTLE,
+        [S.HOLD, S.REWASH, S.CANCEL, S.TAKE_PAYMENT],
+        S.TAKE_PAYMENT,
     ),
+    # --- PAYMENT-001 (DEC-035): a deposit was taken; goods leave only when paid in full
+    (
+        "self washing partly paid",
+        _active(SELF, production=P.IN_PROCESS, balance=OrderBalanceStatus.PARTIALLY_PAID),
+        [S.QUALITY_CHECK, S.HOLD, S.CANCEL, S.TAKE_PAYMENT],
+        S.QUALITY_CHECK,
+    ),
+    (
+        "self ready partly paid",
+        _active(SELF, production=P.READY_AT_STORE, balance=OrderBalanceStatus.PARTIALLY_PAID),
+        # No RELEASE, no COLLECT, no HAND_OVER: the rest is taken first.
+        [S.HOLD, S.REWASH, S.CANCEL, S.TAKE_PAYMENT],
+        S.TAKE_PAYMENT,
+    ),
+    (
+        "pickup-only ready partly paid",
+        _active(
+            P_ONLY,
+            production=P.READY_AT_STORE,
+            balance=OrderBalanceStatus.PARTIALLY_PAID,
+            pickup_done=True,
+        ),
+        [S.HOLD, S.REWASH, S.CANCEL, S.TAKE_PAYMENT],
+        S.TAKE_PAYMENT,
+    ),
+    *[
+        (
+            f"{mode} ready partly paid",
+            _active(
+                mode,
+                production=P.READY_AT_STORE,
+                balance=OrderBalanceStatus.PARTIALLY_PAID,
+                pickup_done=True,
+            ),
+            # DEC-023 unchanged in meaning: the rest is taken before the courier leaves.
+            [S.HOLD, S.REWASH, S.RELEASE, S.CANCEL, S.TAKE_PAYMENT, S.DELIVERY_RETURN],
+            S.TAKE_PAYMENT,
+        )
+        for mode in (P_AND_R, R_ONLY)
+    ],
     (
         "self ready paid+collected",
         _active(
@@ -225,8 +265,8 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
     (
         "pickup-only ready unpaid",
         _active(P_ONLY, production=P.READY_AT_STORE, pickup_done=True),
-        [S.HOLD, S.REWASH, S.CANCEL, S.SETTLE, S.PREPAY],
-        S.SETTLE,
+        [S.HOLD, S.REWASH, S.CANCEL, S.TAKE_PAYMENT],
+        S.TAKE_PAYMENT,
     ),
     (
         "pickup-only ready prepaid",
@@ -245,8 +285,8 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
         (
             f"{mode} ready unpaid",
             _active(mode, production=P.READY_AT_STORE, pickup_done=True),
-            [S.HOLD, S.REWASH, S.RELEASE, S.CANCEL, S.PREPAY, S.DELIVERY_RETURN],
-            S.PREPAY,
+            [S.HOLD, S.REWASH, S.RELEASE, S.CANCEL, S.TAKE_PAYMENT, S.DELIVERY_RETURN],
+            S.TAKE_PAYMENT,
         )
         for mode in (P_AND_R, R_ONLY)
     ],
@@ -370,7 +410,7 @@ def test_a_cancellation_through_review_lists_exactly_the_resolutions_the_domain_
 
 def test_a_quote_with_no_single_total_offers_no_money_step() -> None:
     listed, _ = _listed(_active(SELF, production=P.READY_AT_STORE, total=None))
-    assert S.SETTLE not in listed and S.PREPAY not in listed
+    assert S.TAKE_PAYMENT not in listed
 
 
 # --- composite plans -----------------------------------------------------------------------------
@@ -480,7 +520,7 @@ def test_cancel_plans() -> None:
 
 
 def test_money_and_delivery_steps_are_not_composite() -> None:
-    for step in (S.SETTLE, S.PREPAY, S.COLLECT, S.DELIVERY_PICKUP, S.DELIVERY_RETURN):
+    for step in (S.TAKE_PAYMENT, S.COLLECT, S.DELIVERY_PICKUP, S.DELIVERY_RETURN):
         assert step not in COMPOSITE_STEPS
         with pytest.raises(OrderTransitionError, match="its own route"):
             _plan(step, _active())
@@ -539,7 +579,7 @@ def test_an_unpaid_self_collect_order_is_not_released_on_its_own() -> None:
         _active(SELF, production=P.READY_AT_STORE),
         _active(P_ONLY, production=P.READY_AT_STORE, pickup_done=True),
     ):
-        with pytest.raises(OrderTransitionError, match="taking payment"):
+        with pytest.raises(OrderTransitionError, match="paid in full"):
             plan_step(
                 S.RELEASE,
                 facts,
@@ -734,7 +774,7 @@ def test_after_a_rewash_the_order_walks_forward_again(start: ProductionStatus) -
     checked = _apply(after, _plan(S.QUALITY_CHECK, after))
     ready = _apply(checked, _plan(S.MARK_READY, checked))
     assert ready.state.production is P.READY_AT_STORE
-    assert _listed(ready)[1] is S.SETTLE
+    assert _listed(ready)[1] is S.TAKE_PAYMENT
 
 
 def test_after_a_refusal_the_order_is_cancelled_and_offers_nothing() -> None:
@@ -779,3 +819,54 @@ def test_rewash_is_not_the_resume_of_an_exception_or_a_hold() -> None:
         facts = _active(production=production, resume=P.QUALITY_CHECK)
         with pytest.raises(OrderTransitionError, match="quality check or from the shelf"):
             _plan(S.REWASH, facts, rewash_reason=RewashReason.NOT_CLEAN)
+
+
+# --- PAYMENT-001 (DEC-035) -----------------------------------------------------------------------
+
+
+def test_take_payment_is_one_step_that_names_what_it_needs() -> None:
+    entry = next(item for item in next_steps(_active()) if item.step is S.TAKE_PAYMENT)
+    assert entry.requires == ("amount_vnd", "method")
+    assert not hasattr(OrderStep, "SETTLE") and not hasattr(OrderStep, "PREPAY")
+
+
+@pytest.mark.parametrize("mode", [SELF, P_ONLY])
+def test_release_of_a_self_collect_order_is_refused_while_a_deposit_is_all_that_is_paid(
+    mode: FulfillmentMode,
+) -> None:
+    partly = _active(mode, production=P.READY_AT_STORE, balance=OrderBalanceStatus.PARTIALLY_PAID)
+    with pytest.raises(OrderTransitionError, match="paid in full"):
+        _plan(S.RELEASE, partly)
+    with pytest.raises(OrderTransitionError, match="balance is not settled"):
+        _plan(
+            S.HAND_OVER, replace(partly, state=replace(partly.state, self_collection_recorded=True))
+        )
+
+
+def test_payment_may_hand_over_only_when_the_goods_are_finished_and_the_customer_collects() -> None:
+    from nha_trang_laundry_domain.order_steps import payment_may_hand_over
+
+    assert payment_may_hand_over(_active(SELF, production=P.READY_AT_STORE))
+    assert payment_may_hand_over(
+        _active(SELF, production=P.READY_AT_STORE, balance=OrderBalanceStatus.PARTIALLY_PAID)
+    )
+    assert not payment_may_hand_over(_active(SELF, production=P.IN_PROCESS))
+    assert not payment_may_hand_over(_active(P_AND_R, production=P.READY_AT_STORE))
+    assert not payment_may_hand_over(
+        _active(SELF, production=P.READY_AT_STORE, balance=OrderBalanceStatus.PAID)
+    )
+    assert not payment_may_hand_over(_active(SELF, production=P.READY_AT_STORE, total=None))
+
+
+def test_a_partly_paid_cancellation_offers_only_the_resolutions_that_refund_the_deposit() -> None:
+    partly = _active(balance=OrderBalanceStatus.PARTIALLY_PAID)
+    cancel = next(item for item in next_steps(partly) if item.step is S.CANCEL)
+    assert cancel.custody_resolutions == (
+        CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        CustodyResolution.SHOP_FAULT_NO_CHARGE,
+    )
+    after = _apply(
+        partly,
+        _plan(S.CANCEL, partly, custody_resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE),
+    )
+    assert after.state.balance is OrderBalanceStatus.REFUNDED

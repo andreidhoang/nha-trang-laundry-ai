@@ -917,7 +917,16 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   ui/customers.js line, and Nhận đồ's new ⓘ.
     # Merged (round 7 wave 1, PROMISE-001 + SHOP-CAPTURE-001 + CUSTOMER-001): 490 + 24 - 7 + 17 - 8
     #   = 516, as regenerated; the receipt's hint is one slot reworded in place to say both facts.
-    assert sum(counts.values()) == _registry()["total"] == 516
+    # PAYMENT-001 (round 7, DEC-035) on its own branch: 475 + 8 = 483. Seven `REASON_NOTE` entries
+    #   in `core/i18n.js`, one per refusal the payment sheet can meet (OVERPAYMENT_REFUSED,
+    #   NOTHING_OWED, PAYMENT_AMOUNT_INVALID, TRANSFER_NOT_SEEN, BANK_REF_INVALID,
+    #   HANDOVER_REQUIRES_FULL_PAYMENT, ORDER_PARTLY_PAID), and `REFUSAL.OVERPAYMENT_REFUSED` in
+    #   `core/errors.js`. Re-keyed, none retired: the settlement guardrail (POLICY_BOUND, now
+    #   DEC-035), the payments gap's `missing` (ABSENT_TABLE, now the account tables) and
+    #   `blockedBy`, the payment sheet's hint, and three REASON_NOTE entries whose advice named a
+    #   button that no longer exists ("Khách trả trước") or a refusal that no longer holds.
+    # PAYMENT-001 merged on top (round 7 wave 1, all four slices): 516 + 8 = 524, as regenerated.
+    assert sum(counts.values()) == _registry()["total"] == 524
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

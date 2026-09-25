@@ -263,6 +263,18 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("GET", "/internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding"): (
         store_scoped("message_drafts", "read_message_draft_binding_for_store")
     ),
+    # CONSENT-TRANSACTIONAL-001 (DEC-033). A contact's TRANSACTIONAL state and the messages a
+    # release may cite, and the release itself. Module-level functions, checked mechanically: role
+    # and MFA, then membership of the named store (unknown store = the same opaque 403), then the
+    # contact's footprint in that store -- a draft, an intake request or an order -- so a contact
+    # another shop dealt with answers exactly as one that does not exist (404).
+    ("GET", "/internal/v1/stores/{store_id}/contacts/{contact_binding_id}/service-messaging"): (
+        store_scoped("transactional_consent", "read_service_messaging_state")
+    ),
+    (
+        "POST",
+        "/internal/v1/stores/{store_id}/contacts/{contact_binding_id}/service-messaging/release",
+    ): store_scoped("transactional_consent", "release_transactional_suppression"),
     ("GET", "/internal/v1/stores/{store_id}/shadow/reviews"): store_scoped(
         "shadow_console", "ShadowConsoleRepository.list_reviewed_drafts"
     ),

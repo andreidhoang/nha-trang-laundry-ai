@@ -485,7 +485,12 @@ Consent withdrawal is an ingress safety control, not an LLM intent:
 - evaluate the published exact-command/phrase registry before creating an agent run;
 - an exact withdrawal immediately appends the withdrawal/suppression event and blocks marketing;
 - a message matching the separately published deterministic ambiguous-opt-out phrase/regex registry—but not an exact registered command—immediately sets `marketing_suppression=PENDING_REVIEW_BLOCKED`, preventing marketing while a human reviews it;
-- service/transactional messages remain governed by their separate purpose and policy;
+- service/transactional messages remain governed by their separate purpose and policy; since
+  `DEC-033` an exact withdrawal also suppresses `TRANSACTIONAL` on that channel (an ambiguous one
+  blocks it pending review), and only an `OWNER_ADMIN`/`OPS_APPROVER` with MFA releases that, citing
+  an inbound message the server verifies is the customer's own, on that channel, after the stop.
+  A service send additionally needs a basis the owner's published transactional messaging policy
+  names; with none published every service send is `REQUIRE_HUMAN` (`MESSAGING_POLICY_UNPUBLISHED`);
 - no model output may reverse, narrow or delay a deterministic block.
 
 A consent grant is valid only when the server can bind an affirmative provider event to a pending consent request with exact wording version, purpose, channel, contact and expiry. The model cannot choose the evidence, contact, scope, wording version or consent status. Every grant, withdrawal, ambiguous block and review decision is audited.

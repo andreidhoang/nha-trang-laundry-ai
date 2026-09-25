@@ -17,9 +17,12 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_db.identity import StaffPrincipal
+from nha_trang_laundry_db.inbox import EncryptedInboundPayload, InboundWebhook, InboxRepository
 from nha_trang_laundry_db.message_drafts import MessageDraftBinding, read_message_draft_binding
+from nha_trang_laundry_db.service_messaging import publish_messaging_policy
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_db.stores import StoreRepository
+from nha_trang_laundry_domain.consent import OptOutDisposition
 
 #: The words of every synthetic message draft. Synthetic, customer-free, and fixed so a digest is
 #: reproducible run to run.
@@ -155,9 +158,73 @@ def current_message_binding(connection: Any, agent_run_id: UUID) -> MessageDraft
     return binding
 
 
+#: A synthetic transactional messaging policy (`DEC-033`) with the recommended figures. It is a
+#: fixture for a synthetic database and says so: it is not the owner's confirmation, which only the
+#: shipped template published by the owner can be.
+SYNTHETIC_MESSAGING_POLICY: dict[str, object] = {
+    "schema": "transactional-messaging-policy-v1",
+    "decision": "DEC-033",
+    "service_window_hours": 48,
+    "closed_order_grace_hours": 72,
+    "bases": ["CUSTOMER_INITIATED", "OPEN_ORDER"],
+    "owner_confirmation_vi": "Tài liệu tổng hợp cho kiểm thử; không phải xác nhận của chủ tiệm.",
+    "owner_confirmation_en": "Synthetic evaluation fixture; not the shop owner's confirmation.",
+}
+
+
+def seed_service_basis(
+    connection: Any, *, contact_binding_id: UUID, channel: str, occurred_at: datetime
+) -> None:
+    """Publish the synthetic messaging policy and record one inbound message from the contact.
+
+    `CONSENT-TRANSACTIONAL-001`: a manual send is a TRANSACTIONAL send and is refused without a
+    published policy and a provable basis. The generator seeds both as production would have them
+    -- the policy published by an active owner, the customer's message through the ingress path --
+    rather than the guard being bypassed.
+    """
+    owner = uuid4()
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO staff_users (id, oidc_subject, display_name, status, created_at)
+            VALUES (%s, %s, 'Chủ tiệm tổng hợp', 'ACTIVE', %s)
+            """,
+            (owner, f"synthetic-owner-{owner}", occurred_at),
+        )
+        cursor.execute(
+            """
+            INSERT INTO staff_role_assignments (id, staff_user_id, role, assigned_at)
+            VALUES (%s, %s, 'OWNER_ADMIN', %s)
+            """,
+            (uuid4(), owner, occurred_at),
+        )
+    publish_messaging_policy(connection, actor_id=owner, payload=SYNTHETIC_MESSAGING_POLICY)
+    InboxRepository().record(
+        connection,
+        InboundWebhook(
+            provider="SYNTHETIC_PROVIDER",
+            channel_account_id=f"synthetic-{uuid4().hex}",
+            provider_event_id=f"synthetic-service-basis-{uuid4().hex}",
+            event_type="MESSAGE",
+            channel=channel,
+            payload=EncryptedInboundPayload.from_ciphertext_and_plaintext(
+                ciphertext=b"synthetic-sealed-question",
+                authenticated_plaintext=b"synthetic-customer-question",
+            ),
+            opt_out_disposition=OptOutDisposition.NONE,
+            contact_binding_id=contact_binding_id,
+            opt_out_registry_version=None,
+            correlation_id=uuid4(),
+            received_at=occurred_at,
+        ),
+    )
+
+
 __all__ = [
     "SYNTHETIC_DRAFT_TEXT",
+    "SYNTHETIC_MESSAGING_POLICY",
     "current_message_binding",
     "seed_message_draft",
+    "seed_service_basis",
     "seed_store_membership",
 ]

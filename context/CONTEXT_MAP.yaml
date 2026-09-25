@@ -153,10 +153,17 @@ domains:
     - packages/db/src/nha_trang_laundry_db/retention.py
     - docs/DECISION_REQUEST_WALKIN_IDENTITY_2026-08.md
     - docs/DECISION_REQUEST_ACQUISITION_2026-08.md
+    - docs/DECISION_RECORD_CONSENT_2026-09-25.md
+    - docs/POLICY_TRANSACTIONAL_MESSAGING_V1.md
+    - packages/db/src/nha_trang_laundry_db/consent_egress.py
+    - packages/db/src/nha_trang_laundry_db/transactional_consent.py
+    - packages/domain/src/nha_trang_laundry_domain/service_messaging.py
     contracts:
     - specs/contracts/canonical-enums-v1.json
     prohibitions:
     - STOP and suppression are deterministic ingress and egress checks.
+    - A STOP suppresses MARKETING and TRANSACTIONAL on its channel; only an owner or approver
+      releases TRANSACTIONAL, on the customer's own later message (DEC-033).
     - Never add internal risk material to customer retrieval content.
   channel_operations:
     sources:

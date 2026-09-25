@@ -15,10 +15,20 @@
  * writes gated on the MANUAL_SEND capability, and every refusal is the server's own, rendered
  * verbatim. Nothing in this module decides policy.
  *
+ * `CONSENT-TRANSACTIONAL-001` (`DEC-033`) added the service-messaging card between step 0 and step
+ * 1. A manual send is a service (TRANSACTIONAL) message, and the server refuses it -- at step 0,
+ * step 1 and step 2 -- when the customer wrote STOP on the channel, when an opt-out awaits review,
+ * when the owner has not published the service-messaging policy, or when there is no basis (no
+ * recent message from the customer, no open order). The card reads the contact's state from the
+ * server and shows the server's answer; an owner or approver releases a STOP there by picking one
+ * of the customer's own later messages from the server's list. Nothing here is typed, and nothing
+ * here decides whether a message may go: the server does, and asks itself again at every step.
+ *
  * @module screens/manualSend
  */
 
 import { Submission, request } from "../core/api.js";
+import { consentRefusalText } from "../core/errors.js";
 import { h, render } from "../core/dom.js";
 import { UNKNOWN, UUID, dateTime, integer, shortHash, shortId } from "../core/format.js";
 import { ENUM_GLOSS, enumLabel } from "../core/i18n.js";
@@ -31,6 +41,7 @@ import {
   gatedFields,
   labelled,
   panel,
+  reasonCodeList,
   resultLine,
   revealError,
   setResult,
@@ -202,6 +213,18 @@ function boundMessage(read) {
 }
 
 /**
+ * A suppression state as the service-messaging read sends it. `NONE` is that read's own word for
+ * "no row" -- nobody wrote STOP on this channel -- and is glossed here rather than in the shared
+ * enum map, where `NONE` also names a remedy next step.
+ *
+ * @param {string|null|undefined} value
+ * @returns {string}
+ */
+function suppressionLabel(value) {
+  return value === "NONE" ? "chưa từng yêu cầu dừng (NONE)" : enumLabel(value);
+}
+
+/**
  * The manual-send panel: raise the envelope from a draft, lock the approved envelope, then attest
  * the send.
  *
@@ -210,11 +233,17 @@ function boundMessage(read) {
  *
  * @param {object} spec
  * @param {import("../core/rbac.js").Verdict} spec.sendVerdict
+ * @param {import("../core/rbac.js").Verdict} [spec.releaseVerdict] SERVICE_MESSAGING_RELEASE
  * @param {string|null} [spec.store] the selected store; the draft read is scoped to it
  * @param {string} [spec.draftId] a draft to open step 0 on, from `#/exceptions?draft=<id>`
  * @returns {HTMLElement}
  */
-export function manualSendPanel({ sendVerdict, store = null, draftId = "" }) {
+export function manualSendPanel({
+  sendVerdict,
+  releaseVerdict = { allowed: false, reason: "" },
+  store = null,
+  draftId = "",
+}) {
   const raiseSubmission = new Submission("manual-send-raise");
   const prepareSubmission = new Submission("manual-send-prepare");
   const attestSubmission = new Submission("manual-send-attest");
@@ -255,6 +284,28 @@ export function manualSendPanel({ sendVerdict, store = null, draftId = "" }) {
   const attestResult = resultLine();
   const attestErrorHost = h("div");
   const attestOutcomeHost = h("div", { class: "stack" });
+
+  // The service-messaging card (`DEC-033`). Hidden until a contact is known -- from the step 0
+  // read, or from a refusal that names the contact it was for. The result line and error host
+  // live outside the card, which is rebuilt on every read, so a release's confirmation survives
+  // the re-read that follows it.
+  const releaseSubmission = new Submission("service-release");
+  const serviceCardHost = h("div", { class: "stack" });
+  const serviceResult = resultLine();
+  serviceResult.id = "service-release-result";
+  const serviceErrorHost = h("div");
+  const serviceHost = h(
+    "div",
+    { class: "card stack", id: "manual-service-messaging" },
+    serviceCardHost,
+    serviceResult,
+    serviceErrorHost,
+  );
+  serviceHost.hidden = true;
+  /** @type {{storeId: string, contactBindingId: string, channel: string}|null} */
+  let serviceSubject = null;
+  /** @type {{evidenceId: string}} */
+  const release = { evidenceId: "" };
 
   /** @param {string} value @returns {string} */
   const asHash = (value) => value.trim().replace(/\s+/g, "");
@@ -332,6 +383,12 @@ export function manualSendPanel({ sendVerdict, store = null, draftId = "" }) {
       );
       render(boundHost, boundMessage(read));
       render(raiseActionHost, raiseControl());
+      // Before anything is asked of it: can this customer be sent a service message at all?
+      void loadServiceMessaging({
+        storeId: String(read.store_id || store),
+        contactBindingId: String(read.recipient_binding_id || ""),
+        channel: CHANNEL,
+      });
     } catch (error) {
       setResult(
         raiseResult,
@@ -385,6 +442,7 @@ export function manualSendPanel({ sendVerdict, store = null, draftId = "" }) {
       prepare.renderedHash = String(read.rendered_hash);
       redrawPrepare();
     } catch (error) {
+      if (showConsentRefusal(error, raiseResult, raiseErrorHost)) return;
       setResult(
         raiseResult,
         error.kind === "DENIED" ? "warn" : "danger",
@@ -515,6 +573,7 @@ export function manualSendPanel({ sendVerdict, store = null, draftId = "" }) {
       attest.resourceVersion = prepare.resourceVersion;
       redrawAttest();
     } catch (error) {
+      if (showConsentRefusal(error, prepareResult, prepareErrorHost)) return;
       setResult(
         prepareResult,
         error.kind === "DENIED" || error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
@@ -570,6 +629,17 @@ export function manualSendPanel({ sendVerdict, store = null, draftId = "" }) {
         manualSendResult(recorded, { title: "Đã ghi nhận gửi tay", attested: true }),
       );
     } catch (error) {
+      if (
+        showConsentRefusal(
+          error,
+          attestResult,
+          attestErrorHost,
+          "Lời chứng thực không được ghi. Nếu bạn đã lỡ gửi tin này sau khi khách yêu cầu dừng, " +
+            "báo chủ tiệm ngay.",
+        )
+      ) {
+        return;
+      }
       setResult(
         attestResult,
         error.kind === "DENIED" || error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
@@ -579,6 +649,254 @@ export function manualSendPanel({ sendVerdict, store = null, draftId = "" }) {
       );
       render(attestErrorHost, errorNotice(error));
       revealError(attestErrorHost);
+    }
+  }
+
+  /**
+   * Render a `DEC-033` refusal where the step's own refusal would go, and open the contact's card.
+   *
+   * The headline is the server's reason in Vietnamese, not the step's generic "không khoá được":
+   * "the customer asked the shop to stop" and "the envelope is stale" call for different people.
+   *
+   * @param {any} error
+   * @param {HTMLElement} resultNode
+   * @param {HTMLElement} errorHost
+   * @param {string} [extra] a sentence only this step needs
+   * @returns {boolean} whether the error was one
+   */
+  function showConsentRefusal(error, resultNode, errorHost, extra = "") {
+    if (!error?.consent) return false;
+    setResult(resultNode, "warn", error.message);
+    render(
+      errorHost,
+      h(
+        "div",
+        { dataConsentRefusal: String(error.consent.reasonCode || "") },
+        errorNotice(error),
+        extra ? h("p", { class: "hint" }, extra) : null,
+      ),
+    );
+    revealError(errorHost);
+    void loadServiceMessaging(error.consent);
+    return true;
+  }
+
+  /**
+   * Read the contact's service-messaging state and render the card. A pure read.
+   *
+   * @param {{storeId: string, contactBindingId: string, channel: string}} subject
+   */
+  async function loadServiceMessaging(subject) {
+    if (!UUID.test(subject.storeId) || !UUID.test(subject.contactBindingId)) return;
+    serviceSubject = subject;
+    serviceHost.hidden = false;
+    render(serviceCardHost, h("p", { class: "hint" }, "Đang đọc trạng thái tin dịch vụ…"));
+    const storePart = encodeURIComponent(subject.storeId);
+    const contactPart = encodeURIComponent(subject.contactBindingId);
+    const channelPart = encodeURIComponent(subject.channel || CHANNEL);
+    try {
+      const read = await request(
+        `/internal/v1/stores/${storePart}/contacts/${contactPart}/service-messaging?channel=${channelPart}`,
+      );
+      release.evidenceId = String(read.release_evidence?.[0]?.webhook_event_id || "");
+      releaseSubmission.reset();
+      render(serviceCardHost, serviceMessagingCard(read));
+    } catch (error) {
+      render(
+        serviceCardHost,
+        h("p", { class: "eyebrow" }, "Tin dịch vụ cho khách này"),
+        errorNotice(error, { title: "Không đọc được trạng thái tin dịch vụ của khách này." }),
+      );
+    }
+  }
+
+  /**
+   * The contact's TRANSACTIONAL state, the server's answer, and -- while releasable -- the release.
+   *
+   * @param {any} read the `ServiceMessagingStateResponse` body
+   * @returns {HTMLElement}
+   */
+  function serviceMessagingCard(read) {
+    const egress = read.egress || {};
+    const allowed = egress.decision === "ALLOW";
+    return h(
+      "section",
+      {
+        class: "stack",
+        dataTransactionalState: String(read.transactional_state || ""),
+        dataEgressDecision: String(egress.decision || ""),
+        dataEgressReason: String(egress.reason_code || ""),
+      },
+      h("p", { class: "eyebrow" }, "Tin dịch vụ cho khách này"),
+      facts([
+        ["Kênh", String(read.channel || UNKNOWN), { mono: true }],
+        ["Khách chặn tin dịch vụ", suppressionLabel(read.transactional_state)],
+        ["Khách chặn tin quảng cáo", suppressionLabel(read.marketing_state)],
+        ["Chặn từ lúc", read.blocked_since ? dateTime(read.blocked_since) : "—"],
+        ["Căn cứ gửi", egress.basis ? enumLabel(egress.basis) : "—"],
+        [
+          "Chính sách tin dịch vụ",
+          egress.policy_version ? `v${String(egress.policy_version)}` : "chưa công bố",
+          { mono: true },
+        ],
+      ]),
+      allowed
+        ? h(
+            "div",
+            { class: "notice", dataState: "ok", dataServiceAllowed: "true" },
+            h(
+              "p",
+              { class: "notice__title" },
+              `Lúc này gửi được tin dịch vụ cho khách này, căn cứ ${enumLabel(egress.basis)}.`,
+            ),
+            h(
+              "p",
+              null,
+              "Máy chủ vẫn kiểm tra lại khi khoá phong bì và khi ghi nhận đã gửi; khách nhắn dừng " +
+                "trong lúc đó thì bước sau sẽ bị từ chối.",
+            ),
+          )
+        : h(
+            "div",
+            { class: "notice", dataState: "warn", dataServiceRefusal: String(egress.reason_code) },
+            h(
+              "p",
+              { class: "notice__title" },
+              consentRefusalText(egress.reason_code) ||
+                "Máy chủ không cho gửi tin dịch vụ cho khách này lúc này.",
+            ),
+            reasonCodeList([String(egress.reason_code || egress.decision || UNKNOWN)], "Mã lý do"),
+          ),
+      read.releasable ? releaseControl(read) : null,
+    );
+  }
+
+  /**
+   * The release: pick the customer's own later message from the server's list, then press.
+   *
+   * @param {any} read
+   * @returns {HTMLElement}
+   */
+  function releaseControl(read) {
+    const evidence = Array.isArray(read.release_evidence) ? read.release_evidence : [];
+    const scope =
+      "Chỉ gỡ chặn tin dịch vụ trên kênh này. Tin quảng cáo vẫn bị chặn — muốn nhận lại quảng cáo, " +
+      "khách phải đồng ý riêng.";
+    if (!evidence.length) {
+      return h(
+        "div",
+        { class: "notice", dataState: "info", dataReleaseEvidence: "none" },
+        h(
+          "p",
+          { class: "notice__title" },
+          "Chưa gỡ chặn được: chưa có tin nhắn nào của chính khách trên kênh này sau khi khách yêu " +
+            "cầu dừng.",
+        ),
+        h(
+          "p",
+          null,
+          "Chỉ gỡ chặn dựa trên một tin nhắn mới của chính khách — không theo lời kể, ghi chú hay " +
+            "cuộc gọi. Khi khách nhắn lại, tải lại thẻ này.",
+        ),
+      );
+    }
+    const select = h(
+      "select",
+      {
+        onChange: (event) => {
+          release.evidenceId = event.target.value;
+          releaseSubmission.reset();
+        },
+      },
+      evidence.map((item) =>
+        h(
+          "option",
+          {
+            value: String(item.webhook_event_id),
+            selected: String(item.webhook_event_id) === release.evidenceId,
+            title: String(item.webhook_event_id),
+          },
+          `Tin khách nhắn lúc ${dateTime(item.received_at)} · ${shortId(item.webhook_event_id)}`,
+        ),
+      ),
+    );
+    return gatedFields(
+      h(
+        "div",
+        { class: "stack", dataReleaseEvidence: String(evidence.length) },
+        labelled({
+          id: "service-release-evidence",
+          label: "Tin nhắn của khách làm căn cứ gỡ chặn",
+          hint:
+            "Danh sách do máy chủ đưa ra: chỉ gồm tin chính khách này nhắn trên kênh này sau khi " +
+            "yêu cầu dừng. Máy chủ kiểm tra lại tin được chọn trước khi ghi.",
+          control: select,
+        }),
+        h("p", { class: "hint" }, scope),
+        h(
+          "div",
+          { class: "form__actions" },
+          gated(
+            h(
+              "button",
+              {
+                type: "button",
+                dataVariant: "danger",
+                dataRequiresNetwork: "true",
+                dataServiceRelease: "true",
+                onClick: () => void submitRelease(),
+              },
+              "Gỡ chặn tin dịch vụ",
+            ),
+            releaseVerdict,
+          ),
+        ),
+      ),
+      releaseVerdict,
+    );
+  }
+
+  async function submitRelease() {
+    const subject = serviceSubject;
+    if (!subject || !UUID.test(release.evidenceId)) {
+      setResult(serviceResult, "danger", "Chưa chọn tin nhắn nào của khách làm căn cứ.");
+      return;
+    }
+    setResult(serviceResult, "warn", "Đang gỡ chặn tin dịch vụ…");
+    render(serviceErrorHost);
+    const storePart = encodeURIComponent(subject.storeId);
+    const contactPart = encodeURIComponent(subject.contactBindingId);
+    try {
+      const released = await request(
+        `/internal/v1/stores/${storePart}/contacts/${contactPart}/service-messaging/release`,
+        {
+          method: "POST",
+          body: {
+            channel: subject.channel || CHANNEL,
+            evidence_webhook_event_id: release.evidenceId,
+          },
+          idempotencyKey: releaseSubmission.key(),
+        },
+      );
+      releaseSubmission.reset();
+      setResult(
+        serviceResult,
+        "ok",
+        `Đã gỡ chặn tin dịch vụ cho khách này trên kênh ${String(released.channel)}, dưới tên bạn. ` +
+          "Tin quảng cáo vẫn bị chặn. Gửi tin vẫn phải qua đủ các bước bên dưới.",
+      );
+      await loadServiceMessaging(subject);
+    } catch (error) {
+      setResult(
+        serviceResult,
+        error.kind === "DENIED" || error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
+        error.kind === "DENIED"
+          ? "Máy chủ từ chối: chỉ chủ tiệm hoặc người duyệt của cửa hàng này, đã xác thực hai " +
+              "bước, mới gỡ chặn được. Không có gì được ghi."
+          : error.message,
+      );
+      render(serviceErrorHost, errorNotice(error));
+      revealError(serviceErrorHost);
     }
   }
 
@@ -886,6 +1204,7 @@ export function manualSendPanel({ sendVerdict, store = null, draftId = "" }) {
       // is wrapped in `gated()`, which already states the server's rule under it; another copy at
       // the top would be the same paragraph once more on one screen.
       h("div", { class: "card" }, raiseBody),
+      serviceHost,
       h("div", { class: "card" }, prepareBody),
       h("div", { class: "card" }, attestBody),
     ),

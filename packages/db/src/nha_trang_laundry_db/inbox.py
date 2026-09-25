@@ -289,47 +289,62 @@ def _insert_suppression(
         if command.opt_out_disposition is OptOutDisposition.WITHDRAW
         else SuppressionState.PENDING_REVIEW_BLOCKED
     )
-    cursor.execute(
-        """
-        INSERT INTO consent_events (
-            id, contact_binding_id, purpose, channel, event_type, registry_version,
-            evidence_webhook_id, occurred_at
-        ) VALUES (%s, %s, 'MARKETING', %s, %s, %s, %s, %s)
-        """,
-        (
-            consent_event_id,
-            command.contact_binding_id,
-            command.channel,
-            event_type,
-            command.opt_out_registry_version,
-            webhook_event_id,
-            occurred_at,
-        ),
-    )
-    cursor.execute(
-        """
-        INSERT INTO suppression_entries (
-            contact_binding_id, purpose, channel, state, source_consent_event_id,
-            row_version, updated_at
-        ) VALUES (%s, 'MARKETING', %s, %s, %s, 1, %s)
-        ON CONFLICT (contact_binding_id, purpose, channel) DO UPDATE
-        SET state = CASE
-                WHEN suppression_entries.state = 'SUPPRESSED' THEN 'SUPPRESSED'
-                WHEN EXCLUDED.state = 'SUPPRESSED' THEN 'SUPPRESSED'
-                ELSE 'PENDING_REVIEW_BLOCKED'
-            END,
-            source_consent_event_id = EXCLUDED.source_consent_event_id,
-            row_version = suppression_entries.row_version + 1,
-            updated_at = EXCLUDED.updated_at
-        """,
-        (
-            command.contact_binding_id,
-            command.channel,
-            state.value,
-            consent_event_id,
-            occurred_at,
-        ),
-    )
+    # `DEC-033`: a STOP stops everything the shop initiates on this channel, so one withdrawal (or
+    # one ambiguous opt-out) is recorded for both purposes the tables model -- one consent event per
+    # purpose, both citing the same inbound message, both suppression rows written in this same
+    # transaction under the lock taken above. The MARKETING event keeps the id the caller minted, so
+    # everything that already cites it is unchanged.
+    #
+    # `updated_at` never moves backwards: the 0008 guard refuses that, and a STOP delivered late --
+    # received before a release that has since been recorded -- must still suppress rather than
+    # fail the whole inbound write and be lost.
+    for purpose, purpose_event_id in (
+        ("MARKETING", consent_event_id),
+        ("TRANSACTIONAL", uuid4()),
+    ):
+        cursor.execute(
+            """
+            INSERT INTO consent_events (
+                id, contact_binding_id, purpose, channel, event_type, registry_version,
+                evidence_webhook_id, occurred_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                purpose_event_id,
+                command.contact_binding_id,
+                purpose,
+                command.channel,
+                event_type,
+                command.opt_out_registry_version,
+                webhook_event_id,
+                occurred_at,
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO suppression_entries (
+                contact_binding_id, purpose, channel, state, source_consent_event_id,
+                row_version, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, 1, %s)
+            ON CONFLICT (contact_binding_id, purpose, channel) DO UPDATE
+            SET state = CASE
+                    WHEN suppression_entries.state = 'SUPPRESSED' THEN 'SUPPRESSED'
+                    WHEN EXCLUDED.state = 'SUPPRESSED' THEN 'SUPPRESSED'
+                    ELSE 'PENDING_REVIEW_BLOCKED'
+                END,
+                source_consent_event_id = EXCLUDED.source_consent_event_id,
+                row_version = suppression_entries.row_version + 1,
+                updated_at = GREATEST(suppression_entries.updated_at, EXCLUDED.updated_at)
+            """,
+            (
+                command.contact_binding_id,
+                purpose,
+                command.channel,
+                state.value,
+                purpose_event_id,
+                occurred_at,
+            ),
+        )
 
 
 def _record_replay_conflict(

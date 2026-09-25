@@ -46,7 +46,12 @@ from nha_trang_laundry_db.stores import StoreRepository
 # See `test_ops_board_postgres.py`: the real draft fixture lives beside the repository tests.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "db" / "tests"))
 
-from message_draft_test_data import SeededDraft, current_binding, seed_message_draft
+from message_draft_test_data import (
+    SeededDraft,
+    current_binding,
+    grant_service_basis,
+    seed_message_draft,
+)
 
 ORIGIN = "http://testserver"
 CSRF = "q" * 40
@@ -95,6 +100,8 @@ class _Shop:
         for member in (self.operator, self.approver, self.sender):
             self.add(connection, member)
         self.draft: SeededDraft = seed_message_draft(connection, self.store_id)
+        # DEC-033: a manual send needs a published policy and a basis; the customer wrote.
+        grant_service_basis(connection, self.draft.contact_binding_id, received_at=NOW)
 
     def add(self, connection: Any, member: StaffPrincipal) -> None:
         with connection.cursor() as cursor:

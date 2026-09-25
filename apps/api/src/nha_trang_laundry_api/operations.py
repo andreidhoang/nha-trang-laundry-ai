@@ -129,6 +129,12 @@ from nha_trang_laundry_db.store_access import (
     member_store_ids,
     require_store_membership,
 )
+from nha_trang_laundry_db.transactional_consent import (
+    ServiceMessagingState,
+    TransactionalReleaseCommand,
+    read_service_messaging_state,
+    release_transactional_suppression,
+)
 from nha_trang_laundry_domain.approvals import APPROVAL_POLICIES, APPROVAL_RESOURCE_TYPES
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
@@ -346,6 +352,21 @@ class StoredCollectionResult:
 class StoredManualSendResult:
     value: StoredManualSend
     row_version: int
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StoredTransactionalReleaseResult:
+    """A recorded TRANSACTIONAL release (`DEC-033`), as the idempotency ledger stored it."""
+
+    release_consent_event_id: UUID
+    contact_binding_id: UUID
+    channel: str
+    purpose: str
+    previous_state: str
+    state: str
+    evidence_webhook_event_id: UUID
+    released_at: datetime
     replayed: bool
 
 
@@ -2046,6 +2067,80 @@ class OperationsService:
             )
         return _stored_manual_send_result(result.response, replayed=result.replayed)
 
+    def read_service_messaging_state(
+        self,
+        *,
+        store_id: UUID,
+        contact_binding_id: UUID,
+        channel: str,
+        principal: StaffPrincipal,
+    ) -> ServiceMessagingState:
+        """A contact's TRANSACTIONAL state and the messages a release may cite (`DEC-033`).
+
+        A read: it takes no advisory lock and decides nothing. The egress answer it carries is
+        what the guard would say now, and the send asks the guard again under the lock.
+        """
+
+        with self._connection_factory(self._database_url) as connection:
+            return read_service_messaging_state(
+                connection,
+                store_id=store_id,
+                contact_binding_id=contact_binding_id,
+                channel=channel,
+                principal=principal,
+                at=datetime.now(UTC),
+            )
+
+    def release_transactional_suppression(
+        self,
+        *,
+        store_id: UUID,
+        contact_binding_id: UUID,
+        channel: str,
+        evidence_webhook_event_id: UUID,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+    ) -> StoredTransactionalReleaseResult:
+        with self._connection_factory(self._database_url) as connection:
+            result = self._idempotency.execute(
+                connection,
+                IdempotentCommand(
+                    scope=f"staff-consent-release:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={
+                        "store_id": str(store_id),
+                        "contact_binding_id": str(contact_binding_id),
+                        "channel": channel,
+                        "evidence_webhook_event_id": str(evidence_webhook_event_id),
+                    },
+                ),
+                lambda: _transactional_release_mapping(
+                    release_transactional_suppression(
+                        connection,
+                        TransactionalReleaseCommand(
+                            store_id=store_id,
+                            contact_binding_id=contact_binding_id,
+                            channel=channel,
+                            evidence_webhook_event_id=evidence_webhook_event_id,
+                            principal=principal,
+                            correlation_id=uuid4(),
+                        ),
+                    )
+                ),
+            )
+        value = result.response
+        return StoredTransactionalReleaseResult(
+            release_consent_event_id=UUID(str(value["release_consent_event_id"])),
+            contact_binding_id=UUID(str(value["contact_binding_id"])),
+            channel=str(value["channel"]),
+            purpose=str(value["purpose"]),
+            previous_state=str(value["previous_state"]),
+            state=str(value["state"]),
+            evidence_webhook_event_id=UUID(str(value["evidence_webhook_event_id"])),
+            released_at=datetime.fromisoformat(str(value["released_at"])),
+            replayed=result.replayed,
+        )
+
     def open_incident(
         self,
         *,
@@ -2734,6 +2829,19 @@ def _manual_send_mapping(value: StoredManualSend, *, row_version: int) -> dict[s
         "recipient_binding_id": str(value.recipient_binding_id),
         "rendered_hash": value.rendered_hash,
         "row_version": row_version,
+    }
+
+
+def _transactional_release_mapping(value: Any) -> dict[str, object]:
+    return {
+        "release_consent_event_id": str(value.release_consent_event_id),
+        "contact_binding_id": str(value.contact_binding_id),
+        "channel": value.channel,
+        "purpose": value.purpose,
+        "previous_state": value.previous_state,
+        "state": value.state,
+        "evidence_webhook_event_id": str(value.evidence_webhook_event_id),
+        "released_at": value.released_at.isoformat(),
     }
 
 

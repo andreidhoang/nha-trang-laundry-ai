@@ -32,7 +32,13 @@ from nha_trang_laundry_db.stores import StoreRepository
 # See `test_ops_board_postgres.py`: the real draft fixture lives beside the repository tests.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "db" / "tests"))
 
-from message_draft_test_data import DRAFT_TEXT, SeededDraft, current_binding, seed_message_draft
+from message_draft_test_data import (
+    DRAFT_TEXT,
+    SeededDraft,
+    current_binding,
+    grant_service_basis,
+    seed_message_draft,
+)
 
 ORIGIN = "http://testserver"
 CSRF = "q" * 40
@@ -314,7 +320,9 @@ def test_an_envelope_raised_from_the_read_is_listed_decided_and_locked_with_the_
     assert decided.status_code == 200, decided.text
     assert decided.json()["status"] == "APPROVED"
 
-    # Still a human manual send, and still to the draft's own recipient: nothing here sends.
+    # Still a human manual send, and still to the draft's own recipient: nothing here sends. A
+    # service send needs a published policy and a basis (DEC-033): the customer wrote.
+    grant_service_basis(connection, shop.draft.contact_binding_id, received_at=NOW)
     with _as(service, shop.sender) as client:
         prepared = client.post(
             f"/internal/v1/approvals/{approval_id}/manual-send",

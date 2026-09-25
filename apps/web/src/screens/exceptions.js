@@ -245,6 +245,7 @@ export function render_(context) {
   const readVerdict = can(who, "UNKNOWN_SENDS_READ");
   const decideVerdict = can(who, "SHADOW_DECIDE");
   const sendVerdict = can(who, "MANUAL_SEND");
+  const releaseVerdict = can(who, "SERVICE_MESSAGING_RELEASE");
 
   // `gated()` prints the verdict's reason under every control it disables. The SHADOW_DECIDE reason
   // is a paragraph naming where enforcement happens, and the unknown queue can hold fifty cards
@@ -404,6 +405,7 @@ export function render_(context) {
     // outcome) travel with it.
     manualSendPanel({
       sendVerdict,
+      releaseVerdict,
       store,
       draftId: String(context?.query?.get("draft") || "").trim(),
     }),

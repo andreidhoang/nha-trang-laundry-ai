@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
-from message_draft_test_data import current_binding, seed_message_draft
+from message_draft_test_data import current_binding, grant_service_basis, seed_message_draft
 from nha_trang_laundry_contracts import AgentDeploymentStage
 from nha_trang_laundry_db.approvals import (
     ApprovalDecision,
@@ -126,6 +126,8 @@ def _approved_message(
     owner = _principal(StaffRole.OWNER_ADMIN)
     store_id = _member_store(connection, requester, owner)
     draft = seed_message_draft(connection, store_id)
+    # DEC-033: a service send needs a published policy and a provable basis -- the customer wrote.
+    grant_service_basis(connection, draft.contact_binding_id, received_at=NOW)
     binding = current_binding(connection, draft.agent_run_id)
     hash_a, hash_b = binding.snapshot_hash, binding.rendered_hash
     created = approvals.request(

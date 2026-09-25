@@ -207,7 +207,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 6 REPOSITORY_ROLES since API-INTEGRITY-002: `UNKNOWN_SENDS_READ` is the unknown-send queue,
     # now store-scoped and MFA-gated inside `list_unknown_sends`. Its route depends on
     # `current_principal`, so it binds to `SHADOW_READ_ROLES` for the same reason SHADOW_READ does.
-    assert counts.get("SERVER_GATE") == 13
+    #
+    # 14 since CONSENT-TRANSACTIONAL-001: `SERVICE_MESSAGING_RELEASE` (`DEC-033`) binds to
+    # `require_approval_staff`, the release route's own gate. 13 + 1 = 14.
+    assert counts.get("SERVER_GATE") == 14
     assert counts.get("REPOSITORY_ROLES") == 6
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
@@ -741,7 +744,19 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   * 1 re-keyed in `screens/remedies.js`: the recorded-proposals panel's hint, which now says
     #     an approved, unexecuted row carries its own execute press.
     #   410 + 9 = 419, predicted from the registry diff before pinning.
-    assert sum(counts.values()) == _registry()["total"] == 419
+    # 430 after CONSENT-TRANSACTIONAL-001 (`DEC-033`): +11 added, 0 retired, 0 re-keyed.
+    #   * +7 `REFUSAL` entries in `core/errors.js`, all DESCRIPTIVE: the Vietnamese sentence for
+    #     each reason the server now refuses a service send or a release with -- SUPPRESSED
+    #     ("Khách đã yêu cầu dừng nhận tin trên kênh này..."), PENDING_REVIEW, SUPPRESSION_UNKNOWN,
+    #     MESSAGING_POLICY_UNPUBLISHED ("Chủ tiệm chưa công bố chính sách tin dịch vụ..."),
+    #     NO_SERVICE_BASIS, RELEASE_EVIDENCE_INVALID and NOTHING_TO_RELEASE.
+    #   * +1 `why` in `core/rbac.js`, SERVER_GATE: `SERVICE_MESSAGING_RELEASE`, bound to
+    #     `require_approval_staff` in the generator's `CAPABILITY_GATES`.
+    #   * +3 in `screens/manualSend.js`, DESCRIPTIVE: the service-messaging card's allowed-notice
+    #     body (the server checks again at the lock and at the attestation), and the no-evidence
+    #     notice's title and body (a release rests only on the customer's own later message).
+    #   419 + 11 = 430, predicted from the registry diff before pinning.
+    assert sum(counts.values()) == _registry()["total"] == 430
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -749,11 +764,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #
     # 19 after OPS-BOARD-001: 16 + 3, one per new capability.
     # 20 after API-INTEGRITY-002: + `UNKNOWN_SENDS_READ`.
+    # 21 after CONSENT-TRANSACTIONAL-001: + `SERVICE_MESSAGING_RELEASE`, on its route's gate.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 20
+        == 21
     )
 
 

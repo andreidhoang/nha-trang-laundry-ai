@@ -18,7 +18,12 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
-from message_draft_test_data import SeededDraft, current_binding, seed_message_draft
+from message_draft_test_data import (
+    SeededDraft,
+    current_binding,
+    grant_service_basis,
+    seed_message_draft,
+)
 from nha_trang_laundry_contracts import AgentDeploymentStage
 from nha_trang_laundry_db.approvals import (
     ApprovalDecision,
@@ -134,6 +139,10 @@ class _Shop:
         self.sender = _staff(StaffRole.OPERATOR)
         self.store_id = _store(connection, self.requester, self.approver, self.sender)
         self.draft: SeededDraft = seed_message_draft(connection, self.store_id)
+        # DEC-033: the manual send checks a published policy and a basis; the customer wrote.
+        grant_service_basis(
+            connection, self.draft.contact_binding_id, received_at=datetime.now(UTC)
+        )
 
     def approve(self, connection: psycopg.Connection[Any], binding: MessageDraftBinding) -> UUID:
         repository = ApprovalRepository()

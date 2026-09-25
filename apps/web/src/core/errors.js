@@ -17,6 +17,19 @@
 
 /** @typedef {"OFFLINE"|"NETWORK"|"TIMEOUT"|"SESSION_ENDED"|"DENIED"|"MISSING"|"DISPOSED"|"CONFLICT"|"STALE"|"IDEMPOTENCY_CONFLICT"|"REQUIRE_HUMAN"|"NOT_SUPPORTED"|"INVALID"|"PRECONDITION_REQUIRED"|"TOO_LARGE"|"RATE_LIMITED"|"BUSY"|"UNAVAILABLE"|"PRICEBOOK_UNAVAILABLE"|"FAULT"} ErrorKind */
 
+/**
+ * The contact a service send was refused for, as the egress refusal names it (`DEC-033`). The
+ * manual-send panel reads it to open that contact's service-messaging state; the contact is the
+ * opaque binding, never a phone number or a chat id.
+ *
+ * @typedef {object} ConsentRefusal
+ * @property {string} reasonCode
+ * @property {string} outcome `SUPPRESSED` or `REQUIRE_HUMAN`
+ * @property {string} storeId
+ * @property {string} contactBindingId
+ * @property {string} channel
+ */
+
 export class ApiError extends Error {
   /**
    * @param {object} init
@@ -29,6 +42,7 @@ export class ApiError extends Error {
    * @param {{field: string, message: string}[]} [init.fieldErrors]
    * @param {number} [init.retryAfterSeconds]
    * @param {string} [init.correlationId]
+   * @param {ConsentRefusal|null} [init.consent] who a refused service send was for (`DEC-033`)
    */
   constructor(init) {
     super(init.message);
@@ -38,6 +52,7 @@ export class ApiError extends Error {
     this.detail = init.detail || "";
     this.reasonCodes = init.reasonCodes || [];
     this.decision = init.decision || "";
+    this.consent = init.consent || null;
     this.fieldErrors = init.fieldErrors || [];
     this.retryAfterSeconds = init.retryAfterSeconds ?? null;
     this.correlationId = init.correlationId || "";
@@ -204,7 +219,60 @@ const REFUSAL = {
   AMOUNT_IS_NOT_THE_EXACT_TOTAL:
     "Máy chủ không ghi nhận khoản này: số tiền phải đúng bằng tổng của đơn. Kiểm tra lại số vừa " +
     "gõ rồi nhập lại.",
+  // `CONSENT-TRANSACTIONAL-001` (`DEC-033`). Why a service message was refused, and why a release
+  // was. Each one is what the server's egress guard or release decided; none is a suggestion to
+  // find another way of sending.
+  SERVICE_SUPPRESSED:
+    "Khách đã yêu cầu dừng nhận tin trên kênh này. Tiệm không chủ động gửi gì trên kênh này — kể " +
+    "cả tin dịch vụ — cho đến khi chủ tiệm hoặc người duyệt gỡ chặn dựa trên một tin nhắn mới của " +
+    "chính khách. Không có gì được ghi.",
+  SERVICE_PENDING_REVIEW:
+    "Khách vừa nhắn một câu có thể là yêu cầu dừng nhận tin, và câu đó đang chờ người đọc lại. " +
+    "Chưa gửi được gì trên kênh này cho đến khi chủ tiệm hoặc người duyệt xem xong.",
+  SERVICE_SUPPRESSION_UNKNOWN:
+    "Trạng thái nhận tin của khách trên kênh này không rõ, nên máy không gửi. Báo chủ tiệm; " +
+    "không có gì được ghi.",
+  MESSAGING_POLICY_UNPUBLISHED:
+    "Chủ tiệm chưa công bố chính sách tin dịch vụ, nên hệ thống chưa cho gửi tin dịch vụ nào. " +
+    "Chỉ chủ tiệm công bố được; không có gì được ghi.",
+  NO_SERVICE_BASIS:
+    "Chưa có căn cứ để gửi tin dịch vụ cho khách này: khách không nhắn cho tiệm gần đây, và khách " +
+    "không có đơn nào đang mở hay vừa đóng. Đợi khách nhắn cho tiệm trước; không có gì được ghi.",
+  RELEASE_EVIDENCE_INVALID:
+    "Tin nhắn được chọn không phải tin của chính khách này trên kênh này, gửi sau khi khách yêu cầu " +
+    "dừng, nên không gỡ chặn được bằng tin đó. Tải lại và chọn trong danh sách máy chủ đưa ra.",
+  NOTHING_TO_RELEASE:
+    "Khách này không bị chặn tin dịch vụ trên kênh này, nên không có gì để gỡ. Tải lại để xem trạng " +
+    "thái hiện tại.",
 };
+
+/**
+ * Server reason code -> `REFUSAL` key, for the refusals `DEC-033` introduced. The codes are the
+ * server's (`TransactionalRefusal`, `TransactionalConsentStateError.reason_code`), matched exactly.
+ *
+ * @type {Readonly<Record<string, keyof typeof REFUSAL>>}
+ */
+const CONSENT_REFUSAL_KEY = {
+  SUPPRESSED: "SERVICE_SUPPRESSED",
+  PENDING_REVIEW: "SERVICE_PENDING_REVIEW",
+  SUPPRESSION_UNKNOWN: "SERVICE_SUPPRESSION_UNKNOWN",
+  MESSAGING_POLICY_UNPUBLISHED: "MESSAGING_POLICY_UNPUBLISHED",
+  NO_SERVICE_BASIS: "NO_SERVICE_BASIS",
+  RELEASE_EVIDENCE_INVALID: "RELEASE_EVIDENCE_INVALID",
+  NOTHING_TO_RELEASE: "NOTHING_TO_RELEASE",
+};
+
+/**
+ * The Vietnamese sentence for a `DEC-033` reason code, or "" for a code this console does not know
+ * -- in which case the caller shows the generic sentence and the code itself.
+ *
+ * @param {string|null|undefined} code
+ * @returns {string}
+ */
+export function consentRefusalText(code) {
+  const key = code ? CONSENT_REFUSAL_KEY[code] : undefined;
+  return key ? REFUSAL[key] : "";
+}
 
 /**
  * Server text -> `REFUSAL` key. Matched by prefix, most specific first, because several refusals
@@ -372,6 +440,28 @@ export function classify(status, detail, context = {}) {
     // own word for "a person has to decide this". It is not a validation failure and must not be
     // rendered as one.
     if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+      // `DEC-033`. A service send the egress guard refused, or a release the server would not
+      // record. Matched on the decision the server names rather than on `outcome`, because a
+      // SUPPRESSED refusal is neither `REQUIRE_HUMAN` nor a validation failure, and the generic
+      // "Cần người quyết định" would hide that the customer asked the shop to stop.
+      if (detail.decision === "DEC-033" && typeof detail.reason_code === "string") {
+        const text = consentRefusalText(detail.reason_code);
+        return of("REQUIRE_HUMAN", {
+          message: text || MESSAGES.REQUIRE_HUMAN,
+          reasonCodes: [detail.reason_code],
+          decision: "DEC-033",
+          consent:
+            typeof detail.contact_binding_id === "string"
+              ? {
+                  reasonCode: detail.reason_code,
+                  outcome: String(detail.outcome || ""),
+                  storeId: String(detail.store_id || ""),
+                  contactBindingId: detail.contact_binding_id,
+                  channel: String(detail.channel || ""),
+                }
+              : null,
+        });
+      }
       if (detail.outcome === "REQUIRE_HUMAN") {
         return of("REQUIRE_HUMAN", { reasonCodes: reasonCodesOf(detail) });
       }

@@ -119,6 +119,16 @@ export const CAPABILITIES = {
     mfa: true,
     why: "Khoá và chứng thực gửi thủ công cần vai trò vận hành và đã xác thực hai bước.",
   },
+  // `DEC-033`. Lifting a customer's STOP for service messages on one channel. The route gate is
+  // `require_approval_staff`; the repository re-checks role and MFA, then store membership, then
+  // that the cited message is the customer's own, on that channel, after the STOP.
+  SERVICE_MESSAGING_RELEASE: {
+    roles: [OWNER, APPROVER],
+    mfa: true,
+    why:
+      "Gỡ chặn tin dịch vụ chỉ dành cho chủ tiệm hoặc người duyệt đã xác thực hai bước, và phải " +
+      "dựa trên một tin nhắn mới của chính khách.",
+  },
   STAFF_ADMIN: {
     roles: [OWNER],
     mfa: false,

@@ -163,6 +163,12 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/stores/{}/day-summary",
         "/internal/v1/stores/{}/exports",
         "/internal/v1/stores/{}/exports/{}/execution",
+        # CONSENT-TRANSACTIONAL-001 (DEC-033). The manual-send panel reads a contact's service-
+        # messaging state and releases a STOP through these. Without the read, a refusal names a
+        # customer the console can say nothing more about; without the release, a STOP can only be
+        # lifted by hand in the database, which is the one way it must never be lifted.
+        "/internal/v1/stores/{}/contacts/{}/service-messaging",
+        "/internal/v1/stores/{}/contacts/{}/service-messaging/release",
     }
     missing = sorted(required - referenced)
     assert not missing, f"no screen calls these routes any more: {missing}"

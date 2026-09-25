@@ -916,6 +916,75 @@ MESSAGE_TEXT = (
     '<img src=x onerror="window.__pwned = true"> Tiệm mở cửa đến 21 giờ.'
 )
 
+#: `CONSENT-TRANSACTIONAL-001` (`DEC-033`), section 19. The customer's own messages after the STOP,
+#: newest first, as `release_evidence` lists them. The release must send the one the operator picks
+#: from this list, value for value -- never an id the console composed or was typed.
+SERVICE_EVIDENCE = [
+    {
+        "webhook_event_id": "dddddddd-1111-4333-8444-000000000001",
+        "received_at": "2026-09-25T02:40:00+00:00",
+    },
+    {
+        "webhook_event_id": "dddddddd-1111-4333-8444-000000000002",
+        "received_at": "2026-09-25T02:10:00+00:00",
+    },
+]
+
+
+def service_messaging(kind: str) -> dict[str, object]:
+    """`ServiceMessagingStateResponse` for the recipient of `MESSAGE_BINDING`, in four states."""
+
+    blocked = kind in {"SUPPRESSED", "SUPPRESSED_NO_EVIDENCE"}
+    return {
+        "store_id": STORE,
+        "contact_binding_id": MESSAGE_RECIPIENT,
+        "channel": "INTERNAL_TEST",
+        "purpose": "TRANSACTIONAL",
+        "transactional_state": "SUPPRESSED"
+        if blocked
+        else ("CLEAR" if kind == "CLEAR" else "NONE"),
+        "blocked_since": "2026-09-25T02:00:00+00:00" if blocked else None,
+        "releasable": blocked,
+        "marketing_state": "SUPPRESSED" if blocked or kind == "CLEAR" else "NONE",
+        "egress": (
+            {
+                "decision": "SUPPRESSED",
+                "reason_code": "SUPPRESSED",
+                "basis": None,
+                "policy_version": 1,
+                "suppression_state": "SUPPRESSED",
+            }
+            if blocked
+            else {
+                "decision": "ALLOW",
+                "reason_code": None,
+                "basis": "CUSTOMER_INITIATED",
+                "policy_version": 1,
+                "suppression_state": "CLEAR" if kind == "CLEAR" else "NONE",
+            }
+        ),
+        "release_evidence": SERVICE_EVIDENCE if kind == "SUPPRESSED" else [],
+    }
+
+
+def egress_refusal(reason: str) -> dict[str, object]:
+    """The 422 body `_egress_refusal_detail` sends for a refused service send."""
+
+    return {
+        "detail": {
+            "outcome": "SUPPRESSED" if reason == "SUPPRESSED" else "REQUIRE_HUMAN",
+            "reason_code": reason,
+            "purpose": "TRANSACTIONAL",
+            "suppression_state": "SUPPRESSED" if reason == "SUPPRESSED" else "NONE",
+            "policy_version": None if reason == "MESSAGING_POLICY_UNPUBLISHED" else 1,
+            "contact_binding_id": MESSAGE_RECIPIENT,
+            "channel": "INTERNAL_TEST",
+            "store_id": STORE,
+            "decision": "DEC-033",
+        }
+    }
+
+
 #: `MessageDraftBindingResponse` from `main.py`, field for field.
 MESSAGE_BINDING = {
     "store_id": STORE,
@@ -1108,6 +1177,57 @@ with sync_playwright() as playwright:
             body = SESSION_OK
         elif url.endswith("/internal/v1/stores"):
             body = {"store_ids": [STORE]}
+        elif "/service-messaging/release" in url and route.request.method == "POST":
+            # `DEC-033`, section 19. Captured with its key: the property is that the evidence sent
+            # is the one picked from the server's own list, under an idempotency key.
+            state.setdefault("release_posts", []).append(
+                (route.request.post_data, route.request.headers.get("idempotency-key"))
+            )
+            state["service_state"] = "CLEAR"
+            sent = json.loads(route.request.post_data or "{}")
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "release_consent_event_id": "eeeeeeee-2222-4333-8444-000000000001",
+                        "contact_binding_id": MESSAGE_RECIPIENT,
+                        "channel": sent.get("channel"),
+                        "purpose": "TRANSACTIONAL",
+                        "previous_state": "SUPPRESSED",
+                        "state": "CLEAR",
+                        "evidence_webhook_event_id": sent.get("evidence_webhook_event_id"),
+                        "released_at": "2026-09-25T03:00:00+00:00",
+                        "replayed": False,
+                    }
+                ),
+            )
+            return
+        elif "/service-messaging" in url:
+            state.setdefault("service_reads", []).append(url)
+            body = service_messaging(str(state.get("service_state") or "ALLOW"))
+        elif url.split("?")[0].endswith("/manual-send") and route.request.method == "POST":
+            # Only section 19 presses step 1; every refusal it reads is the server's structured one.
+            reason = state.get("prepare_refusal")
+            state.setdefault("prepare_posts", []).append(route.request.post_data)
+            if reason:
+                route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(egress_refusal(str(reason))),
+                )
+                return
+            body = {
+                "manual_send_envelope_id": "ffffffff-3333-4333-8444-000000000001",
+                "approval_request_id": MESSAGE_APPROVAL,
+                "status": "APPROVED_FOR_MANUAL_SEND",
+                "recipient_binding_id": MESSAGE_RECIPIENT,
+                "rendered_hash": MESSAGE_RENDERED,
+                "row_version": 1,
+                "replayed": False,
+            }
+            route.fulfill(status=201, content_type="application/json", body=json.dumps(body))
+            return
         elif "/range-price-proposal" in url:
             # The read section 12 exists for. When it refuses, it refuses with a code -- the
             # console has to render that as a refusal and keep the approve control shut, and a
@@ -3738,6 +3858,154 @@ with sync_playwright() as playwright:
     )
     state["recorded_executable"] = False
     state["recorded_listed"] = False
+
+    print()
+    print("=" * 74)
+    print(
+        "19. GỬI THỦ CÔNG — a STOP refuses the send; only the customer's own later message lifts it"
+    )
+    print("=" * 74)
+
+    # `CONSENT-TRANSACTIONAL-001` (`DEC-033`). What a browser can prove that the HTTP tests cannot:
+    # that step 0 opens the contact's service-messaging card from the server's read, that a
+    # refusal's headline is the server's reason in Vietnamese rather than "không khoá được", that
+    # the release sends the message picked from the server's list and nothing composed, and that a
+    # role that may not release is shown the control shut with the rule under it.
+
+    state["service_state"] = "SUPPRESSED"
+    state["service_reads"] = []
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate(f"location.hash = '#/exceptions?draft={MESSAGE_DRAFT_ID}'")
+    page.wait_for_timeout(1200)
+    card = page.locator("#manual-service-messaging")
+    card_text = (card.text_content() or "") if card.count() else ""
+    check(
+        "step 0 opens the contact's service-messaging card, read from the draft's own store",
+        any(
+            f"/stores/{STORE}/contacts/{MESSAGE_RECIPIENT}/service-messaging?channel=INTERNAL_TEST"
+            in url
+            for url in state.get("service_reads", [])
+        )
+        and card.count() == 1
+        and card.is_visible(),
+        repr(state.get("service_reads")),
+    )
+    section = page.locator("#manual-service-messaging section[data-transactional-state]")
+    check(
+        "the card states the STOP in Vietnamese, with the server's state and reason on the element",
+        section.count() == 1
+        and section.get_attribute("data-transactional-state") == "SUPPRESSED"
+        and section.get_attribute("data-egress-reason") == "SUPPRESSED"
+        and "Khách đã yêu cầu dừng nhận tin trên kênh này" in card_text,
+        repr(card_text[:300]),
+    )
+    check(
+        "and says a release lifts service messages only, marketing stays blocked",
+        "Tin quảng cáo vẫn bị chặn" in card_text,
+    )
+    options = page.evaluate(
+        """() => [...document.querySelectorAll("#service-release-evidence option")]
+                 .map((o) => o.value)"""
+    )
+    check(
+        "the evidence is a picker over the server's list, nothing typed",
+        options == [item["webhook_event_id"] for item in SERVICE_EVIDENCE]
+        and page.locator("#manual-service-messaging input[type=text]").count() == 0,
+        repr(options),
+    )
+    release_button = page.locator("button[data-service-release]")
+    check(
+        "an owner is offered the release control",
+        release_button.count() == 1 and release_button.is_enabled(),
+    )
+    page.locator("#service-release-evidence").select_option(SERVICE_EVIDENCE[1]["webhook_event_id"])
+    press(release_button)
+    page.wait_for_timeout(900)
+    posts = state.get("release_posts", [])
+    check(
+        "the release sends the picked message and the channel, under an idempotency key",
+        len(posts) == 1
+        and json.loads(posts[0][0] or "{}")
+        == {
+            "channel": "INTERNAL_TEST",
+            "evidence_webhook_event_id": SERVICE_EVIDENCE[1]["webhook_event_id"],
+        }
+        and bool(posts[0][1]),
+        repr(posts),
+    )
+    result_text = page.locator("#service-release-result").text_content() or ""
+    section = page.locator("#manual-service-messaging section[data-transactional-state]")
+    check(
+        "after the release the card is re-read from the server and says a send is allowed",
+        "Đã gỡ chặn tin dịch vụ" in result_text
+        and section.count() == 1
+        and section.get_attribute("data-egress-decision") == "ALLOW"
+        and page.locator("button[data-service-release]").count() == 0,
+        repr(result_text),
+    )
+
+    # Step 1 refused: raise the envelope so the four boxes fill, then press the lock.
+    page.locator("button", has_text="Xin duyệt gửi đúng tin này").first.click()
+    page.wait_for_timeout(700)
+    refusals = {
+        "SUPPRESSED": "Khách đã yêu cầu dừng nhận tin trên kênh này",
+        "MESSAGING_POLICY_UNPUBLISHED": "Chủ tiệm chưa công bố chính sách tin dịch vụ",
+        "NO_SERVICE_BASIS": "Chưa có căn cứ để gửi tin dịch vụ",
+        "PENDING_REVIEW": "có thể là yêu cầu dừng nhận tin",
+    }
+    for reason, sentence in refusals.items():
+        state["prepare_refusal"] = reason
+        state["service_state"] = "SUPPRESSED" if reason == "SUPPRESSED" else "ALLOW"
+        reads_before = len(state.get("service_reads", []))
+        page.locator("button", has_text="Khoá phong bì cho người gửi tay").first.click()
+        page.wait_for_timeout(800)
+        refused = page.locator(f"[data-consent-refusal='{reason}']")
+        refused_text = (refused.text_content() or "") if refused.count() else ""
+        panel_text = rendered_text()
+        check(
+            f"a {reason} refusal at step 1 is headed by the server's reason in Vietnamese",
+            refused.count() == 1 and sentence in refused_text and "DEC-033" in refused_text,
+            repr(refused_text[:200]),
+        )
+        check(
+            f"and the {reason} refusal locks nothing and opens the contact's card again",
+            "Envelope đã khoá" not in panel_text
+            and len(state.get("service_reads", [])) > reads_before,
+        )
+    state["prepare_refusal"] = None
+
+    # No message from the customer since the STOP: nothing to cite, so no release control at all.
+    state["service_state"] = "SUPPRESSED_NO_EVIDENCE"
+    page.locator("button", has_text="Đọc tin nhắn sẽ gửi").first.click()
+    page.wait_for_timeout(900)
+    check(
+        "with no later message from the customer the card offers no release, and says why",
+        page.locator("#manual-service-messaging [data-release-evidence=none]").count() == 1
+        and page.locator("button[data-service-release]").count() == 0
+        and "chưa có tin nhắn nào của chính khách" in rendered_text(),
+    )
+
+    # An operator sees the release shut, with the rule under it.
+    state["service_state"] = "SUPPRESSED"
+    SESSION_OK["roles"] = ["OPERATOR"]
+    page.reload()
+    page.wait_for_timeout(1500)
+    shut = page.locator("button[data-service-release]")
+    check(
+        "an operator is shown the release control shut, with who may release it",
+        shut.count() == 1
+        and not shut.is_enabled()
+        and "chỉ dành cho chủ tiệm hoặc người duyệt" in rendered_text(),
+        f"{shut.count()} controls",
+    )
+    check(
+        "and the evidence picker is shut with it",
+        page.locator("#service-release-evidence").count() == 1
+        and not page.locator("#service-release-evidence").is_enabled(),
+    )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    state["service_state"] = None
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

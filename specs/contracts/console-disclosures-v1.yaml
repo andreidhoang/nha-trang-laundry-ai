@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 391
+  DESCRIPTIVE: 401
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
-  SERVER_GATE: 13
-total: 419
+  SERVER_GATE: 14
+total: 430
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -377,6 +377,70 @@ disclosures:
   key: REFUSAL.AMOUNT_IS_NOT_THE_EXACT_TOTAL
   text: 'Máy chủ không ghi nhận khoản này: số tiền phải đúng bằng tổng của đơn. Kiểm tra lại số vừa gõ
     rồi nhập lại.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.SERVICE_SUPPRESSED:22f1c5c0f8b1
+  module: core/errors.js
+  key: REFUSAL.SERVICE_SUPPRESSED
+  text: Khách đã yêu cầu dừng nhận tin trên kênh này. Tiệm không chủ động gửi gì trên kênh này — kể cả
+    tin dịch vụ — cho đến khi chủ tiệm hoặc người duyệt gỡ chặn dựa trên một tin nhắn mới của chính khách.
+    Không có gì được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.SERVICE_PENDING_REVIEW:98f7f94980a4
+  module: core/errors.js
+  key: REFUSAL.SERVICE_PENDING_REVIEW
+  text: Khách vừa nhắn một câu có thể là yêu cầu dừng nhận tin, và câu đó đang chờ người đọc lại. Chưa
+    gửi được gì trên kênh này cho đến khi chủ tiệm hoặc người duyệt xem xong.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.SERVICE_SUPPRESSION_UNKNOWN:8f8cfdfd61e1
+  module: core/errors.js
+  key: REFUSAL.SERVICE_SUPPRESSION_UNKNOWN
+  text: Trạng thái nhận tin của khách trên kênh này không rõ, nên máy không gửi. Báo chủ tiệm; không có
+    gì được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.MESSAGING_POLICY_UNPUBLISHED:08e762c6cc4c
+  module: core/errors.js
+  key: REFUSAL.MESSAGING_POLICY_UNPUBLISHED
+  text: Chủ tiệm chưa công bố chính sách tin dịch vụ, nên hệ thống chưa cho gửi tin dịch vụ nào. Chỉ chủ
+    tiệm công bố được; không có gì được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.NO_SERVICE_BASIS:041d895fb70a
+  module: core/errors.js
+  key: REFUSAL.NO_SERVICE_BASIS
+  text: 'Chưa có căn cứ để gửi tin dịch vụ cho khách này: khách không nhắn cho tiệm gần đây, và khách
+    không có đơn nào đang mở hay vừa đóng. Đợi khách nhắn cho tiệm trước; không có gì được ghi.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.RELEASE_EVIDENCE_INVALID:d008af6c2256
+  module: core/errors.js
+  key: REFUSAL.RELEASE_EVIDENCE_INVALID
+  text: Tin nhắn được chọn không phải tin của chính khách này trên kênh này, gửi sau khi khách yêu cầu
+    dừng, nên không gỡ chặn được bằng tin đó. Tải lại và chọn trong danh sách máy chủ đưa ra.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.NOTHING_TO_RELEASE:8b5fd11b6555
+  module: core/errors.js
+  key: REFUSAL.NOTHING_TO_RELEASE
+  text: Khách này không bị chặn tin dịch vụ trên kênh này, nên không có gì để gỡ. Tải lại để xem trạng
+    thái hiện tại.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1347,6 +1411,17 @@ disclosures:
     kind: SERVER_GATE
     capability: MANUAL_SEND
     gate: require_operations_staff
+    why: The console declares which roles and MFA state this capability needs. The test probes the named
+      server gate and requires the console to be no more permissive than it is.
+- slot_id: core/rbac.js#why:220252546446
+  module: core/rbac.js
+  key: why
+  text: Gỡ chặn tin dịch vụ chỉ dành cho chủ tiệm hoặc người duyệt đã xác thực hai bước, và phải dựa trên
+    một tin nhắn mới của chính khách.
+  binding:
+    kind: SERVER_GATE
+    capability: SERVICE_MESSAGING_RELEASE
+    gate: require_approval_staff
     why: The console declares which roles and MFA state this capability needs. The test probes the named
       server gate and requires the console to be no more permissive than it is.
 - slot_id: core/rbac.js#why:3d864b158f0c
@@ -2406,6 +2481,32 @@ disclosures:
   key: hint
   text: Xin duyệt không phải là duyệt, và duyệt không phải là gửi. Máy chủ từ chối người đã xin tự duyệt
     phiếu của mình; tin chỉ rời khỏi hệ thống khi một người tự gửi tay và ký tên ở bước 2.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#notice:a0697e0de6e8
+  module: screens/manualSend.js
+  key: notice
+  text: Máy chủ vẫn kiểm tra lại khi khoá phong bì và khi ghi nhận đã gửi; khách nhắn dừng trong lúc đó
+    thì bước sau sẽ bị từ chối.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#notice:d327381cfd25
+  module: screens/manualSend.js
+  key: notice
+  text: Chỉ gỡ chặn dựa trên một tin nhắn mới của chính khách — không theo lời kể, ghi chú hay cuộc gọi.
+    Khi khách nhắn lại, tải lại thẻ này.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#notice__title:c5180d2e8700
+  module: screens/manualSend.js
+  key: notice__title
+  text: 'Chưa gỡ chặn được: chưa có tin nhắn nào của chính khách trên kênh này sau khi khách yêu cầu dừng.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

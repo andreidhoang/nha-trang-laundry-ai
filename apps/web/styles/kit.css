@@ -1239,3 +1239,385 @@ details.accordion[open] .accordion__meta {
     white-space: normal;
   }
 }
+
+/* ================================================================================================
+ * CONSOLE-REDESIGN-001 — ＋ Nhận đồ, the receipt, and the pieces the quote/intake lists share.
+ * Generic where it could be (receipt, ticket hero, line card, compact select, check row).
+ * ============================================================================================== */
+
+/* A segmented control whose options share the width equally and may wrap their own label. */
+.segmented--fit .segmented__option {
+  flex: 1 1 0;
+  line-height: var(--leading-tight);
+  min-height: var(--tap-min);
+  padding: var(--space-1) var(--space-2);
+  white-space: normal;
+}
+
+/* A text link in a group header ("Xem tất cả"). */
+.link-action {
+  align-items: center;
+  color: var(--brand-700);
+  display: inline-flex;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  min-height: var(--tap-min);
+  text-decoration: none;
+}
+
+/* A checkbox with its sentence, one tap target. */
+label.check {
+  align-items: center;
+  display: flex;
+  font-weight: var(--weight-medium);
+  gap: var(--space-3);
+  margin: 0;
+  min-height: var(--tap-min);
+}
+
+label.check input {
+  height: 1.375rem;
+  width: 1.375rem;
+}
+
+select.select--compact {
+  font-size: var(--text-sm);
+  width: auto;
+}
+
+/* The number the customer is told: "Phiếu 17". */
+.ticket-hero {
+  background: var(--brand-050);
+  border: 1px solid var(--brand-200);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+}
+
+.ticket-hero__number {
+  color: var(--brand-900);
+  font-size: var(--text-display);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-heavy);
+  line-height: 1.1;
+  margin: 0;
+}
+
+.ticket-hero__word {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+}
+
+.ticket-hero__meta {
+  color: var(--brand-800);
+  font-size: var(--text-sm);
+  margin: var(--space-1) 0 0;
+}
+
+/* One line of the bag: the service, − qty +, the basis. */
+.line-card {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.line-card__head {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+}
+
+button.line-card__service {
+  background: transparent;
+  border: none;
+  flex: 1 1 auto;
+  font-size: var(--text-md);
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+
+button.line-card__service:hover:not(:disabled) {
+  background: transparent;
+  color: var(--brand-700);
+}
+
+button.line-card__remove {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  min-width: var(--tap-min);
+  padding: 0;
+}
+
+.line-card__qty {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.line-card__qty .stepper {
+  flex: 1 1 11rem;
+}
+
+.line-card > .hint,
+.line-card .hint:empty {
+  margin: 0;
+}
+
+.line-card .hint:empty {
+  display: none;
+}
+
+.picker__group {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  margin: var(--space-2) 0 0;
+}
+
+/* The receipt: lines, sums, and the total big. */
+.receipt {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.receipt__head {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.receipt__title {
+  font-size: var(--text-lg);
+  margin: 0;
+}
+
+.receipt__lines {
+  display: grid;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.receipt__line,
+.receipt__row {
+  align-items: baseline;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.receipt__item {
+  display: grid;
+  min-width: 0;
+}
+
+.receipt__name {
+  font-weight: var(--weight-medium);
+}
+
+.receipt__qty,
+.receipt__label {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.receipt__label {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.receipt__value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.receipt__sums {
+  border-top: 1px dashed var(--border-strong);
+  display: grid;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+}
+
+.receipt__sums:empty {
+  display: none;
+}
+
+.receipt__group {
+  display: grid;
+}
+
+.receipt__total {
+  align-items: baseline;
+  border-top: 1px solid var(--border-strong);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+  padding-top: var(--space-3);
+}
+
+.receipt__total-label {
+  font-weight: var(--weight-bold);
+}
+
+.receipt__total-amount {
+  font-size: var(--text-display);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-heavy);
+  line-height: 1.1;
+  margin-left: auto;
+  text-align: right;
+}
+
+.receipt__note {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.receipt__note[data-state="warn"] {
+  color: var(--warn-fg);
+  font-weight: var(--weight-medium);
+}
+
+.receipt__note[data-state="ok"] {
+  color: var(--ok-fg);
+  font-weight: var(--weight-medium);
+}
+
+/* Closing a band, inside the receipt. */
+.band-closer {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+
+.band-closer__head {
+  align-items: center;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.band-closer__title {
+  font-size: var(--text-md);
+  margin: 0;
+}
+
+/* Step 3's summary. */
+.confirm-card {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.confirm-card__head {
+  align-items: baseline;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.confirm-card__who {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-heavy);
+}
+
+.confirm-card__mode {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.confirm-card__lines {
+  color: var(--text-secondary);
+  display: grid;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Chips on an even grid (nine answers in five rows on a phone, three columns on a desk). */
+.segmented--grid.segmented--wrap {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.segmented--grid.segmented--wrap .segmented__option {
+  border-radius: var(--radius-md);
+  justify-content: flex-start;
+  line-height: var(--leading-tight);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+@media (min-width: 48rem) {
+  .segmented--grid.segmented--wrap {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* A wrapper that must not become the containing block of the sticky bar it holds. */
+.host-contents {
+  display: contents;
+}
+
+/* An action bar whose first button is a short "Quay lại": it takes its word, the verb the rest. */
+.action-bar--v2.action-bar--lead {
+  grid-auto-columns: auto;
+  grid-auto-flow: row;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.action-bar--v2.action-bar--lead > .btn:only-of-type {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 64rem) {
+  .action-bar--v2.action-bar--lead {
+    grid-template-columns: auto minmax(12rem, auto);
+    justify-content: end;
+  }
+}
+
+/* ＋ Nhận đồ step 2: the bag on the left, the receipt beside it on a desk. */
+.new-order__grid {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.receipt-placeholder {
+  display: none;
+}
+
+@media (min-width: 64rem) {
+  .new-order__grid {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr) minmax(20rem, 26rem);
+  }
+
+  .new-order__side {
+    position: sticky;
+    top: var(--space-4);
+  }
+
+  .receipt-placeholder {
+    display: block;
+  }
+}
+
+/* A band is two amounts: it may wrap at its dash rather than push the page sideways. */
+.receipt__value,
+.receipt__total-amount {
+  min-width: 0;
+  white-space: normal;
+}
+
+.receipt__total-amount[data-range="true"] {
+  font-size: var(--text-xl);
+}

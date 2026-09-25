@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 408
+  DESCRIPTIVE: 414
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 14
-total: 437
+total: 443
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -2565,6 +2565,172 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:61fdcca1e4e0
+  module: screens/newOrder.js
+  key: hint
+  text: Không lưu tên hay số điện thoại — chỉ một số phiếu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:da61726ab6a8
+  module: screens/newOrder.js
+  key: hint
+  text: Bấm “Khách vãng lai — phát phiếu”. Quầy phát một số phiếu, đọc số đó cho khách, và lượt tiếp nhận
+    được mở luôn cho số phiếu đó. Không cần khách nhắn tin trước, và không cần ghi tay.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:dbd90d241f6e
+  module: screens/newOrder.js
+  key: hint
+  text: Hệ thống không lưu tên, số điện thoại hay địa chỉ của khách vãng lai — chỉ một con số do quầy
+    phát. Vì không có thông tin cá nhân nào được lưu nên cũng không cần xin phép khách điều gì. Đây là
+    quyết định của chủ tiệm ngày 26/08/2026 (DEC-013), không phải một khoảng trống.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:ff53eba7c51d
+  module: screens/newOrder.js
+  key: hint
+  text: 'Bước này chỉ mở một phiếu nháp: chưa có giá, chưa hẹn giờ, chưa hứa gì với khách. Giá do máy
+    chủ tính ở bước sau.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:41258bf1756c
+  module: screens/newOrder.js
+  key: hint
+  text: Chưa tìm được khách theo tên hay số điện thoại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:8183352f4a04
+  module: screens/newOrder.js
+  key: hint
+  text: Máy chủ chưa có đường nào để tìm một liên hệ theo tên, số điện thoại hay đoạn chat, nên bảng vận
+    hành không đoán giúp. Khách đã từng nhắn tin qua kênh chính thức thì dùng mã sinh ra từ lần nhắn đó.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:74efe08a86c2
+  module: screens/newOrder.js
+  key: hint
+  text: 'Đo thật, không ước lượng. Với đơn có cả lấy và trả: từ 2.000m trở xuống miễn phí, trên 2.000m
+    đến 6.000m thu 10.000đ, trên 6.000m nhân viên và khách thỏa thuận rồi nhập ở ô phí. Bỏ trống thì báo
+    giá không ra tổng tiền và không chốt được.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:ac6bcc72e07f
+  module: screens/newOrder.js
+  key: hint
+  text: Đơn “Lấy tận nơi” hoặc “Trả tận nơi” chỉ có một chiều nên không dùng bảng quãng đường — phí luôn
+    do nhân viên và khách thỏa thuận, ở mọi quãng đường, và phải tích ô khách đã đồng ý.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#notice:138760e6c1ca
+  module: screens/newOrder.js
+  key: notice
+  text: Máy chủ trả về một bảng giá rỗng, nên không có dịch vụ nào để chọn và không thể tính giá. Đây
+    là vấn đề của bảng giá đã công bố, không phải của thao tác này.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#notice:9143ff9eb7ed
+  module: screens/newOrder.js
+  key: notice
+  text: Bảng giá công bố một khoảng cho món này chứ không công bố một đơn giá, nên bộ tính giá không tự
+    chọn một số — đó là việc của nhân viên đang trực quầy.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#notice:8e363e052ad9
+  module: screens/newOrder.js
+  key: notice
+  text: 'Đọc khoảng giá cho khách được, nhưng chưa chốt được: chưa có con số nào để khách đồng ý. Chốt
+    một giá trong khoảng ở ô bên dưới, rồi mới bấm “Tiếp tục”.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#notice__title:ad6202751e05
+  module: screens/newOrder.js
+  key: notice__title
+  text: Bản này là một khoảng giá, chưa phải một số
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:f59170512ac9
+  module: screens/newOrder.js
+  key: hint
+  text: Dùng đúng một lần, trừ vào tổng trước khi báo khách — không trừ vào số khách đã trả.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:8688f3fe9c91
+  module: screens/newOrder.js
+  key: hint
+  text: 'Mã in trên phiếu giấy của khách lúc phát hành. Khách quên mã thì tìm đơn đã phát hành khoản đó
+    theo số phiếu ở màn hình Đơn hàng: mã nằm ở mục “Khoản giảm trừ của đơn này”.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:5220b49faa8b
+  module: screens/newOrder.js
+  key: hint
+  text: Máy chủ chưa có đường nào liệt kê các khoản giảm trừ chưa dùng của một khách, nên ở đây chỉ nhập
+    được mã. Bản báo giá và dấu vân của nó được gửi kèm tự động từ bản đang hiện.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:4266fedbe20e
+  module: screens/newOrder.js
+  key: hint
+  text: 'Hỏi: “Anh/chị biết tiệm qua đâu ạ?” Chưa hỏi thì để “Chưa biết”. Ghi xong không sửa được.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#hint:20b051f8212b
+  module: screens/newOrder.js
+  key: hint
+  text: Bấm khi khách đã nghe giá và đồng ý. Tên bạn sẽ được ghi lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#notice:580264d6aa9f
+  module: screens/newOrder.js
+  key: notice
+  text: Mã có thể thuộc cửa hàng khác hoặc đã bị gõ sai — máy chủ trả lời cùng một cách cho cả hai, nên
+    màn hình này cũng không đoán. Không có dữ kiện nào được điền sẵn; hãy chọn từ danh sách bên dưới.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/newOrder.js#notice__title:037d161023b5
+  module: screens/newOrder.js
+  key: notice__title
+  text: Không tìm thấy yêu cầu này trong cửa hàng đang chọn
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/orderDetail.js#guardrail:0341c82d18a7
   module: screens/orderDetail.js
   key: guardrail
@@ -2684,41 +2850,6 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderRequests.js#notice:258eea73149a
-  module: screens/orderRequests.js
-  key: notice
-  text: Lượt tiếp nhận này đã được ghi trước đó — đây là kết quả cũ hiện lại. Không có yêu cầu mới nào
-    được tạo.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderRequests.js#notice:0cb2a0fd9969
-  module: screens/orderRequests.js
-  key: notice
-  text: Chỉ cần khi bạn báo lỗi cho kỹ thuật. Thao tác thường ngày không dùng tới nó — nút “Báo giá ngay”
-    ở trên đã mang sẵn mã này sang màn hình Báo giá.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderRequests.js#screen__lede:a6f669658a61
-  module: screens/orderRequests.js
-  key: screen__lede
-  text: Ghi nhận khách đang ở quầy, gắn với một liên hệ máy chủ đã biết. Bước tiếp theo là báo giá.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderRequests.js#guardrail:ea2ce1bbb4e5
-  module: screens/orderRequests.js
-  key: guardrail
-  text: 'Bước này chỉ mở một phiếu nháp: chưa có giá, chưa hẹn giờ, chưa hứa gì với khách. Giá tính ở
-    màn hình Báo giá và do máy chủ quyết.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/orders.js#notice:9e5d6a7e2900
   module: screens/orders.js
   key: notice
@@ -2740,15 +2871,6 @@ disclosures:
   module: screens/orders.js
   key: hint
   text: Khách đã trả trước, chưa nhận đồ — mở đơn và bấm “Khách đã nhận đồ” khi đưa đồ.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orders.js#guardrail:3f18d87de043
-  module: screens/orders.js
-  key: guardrail
-  text: Đơn chỉ được tạo từ một báo giá khách đã chốt. Bấm “Khách đã chốt giá” ở màn hình Báo giá trước,
-    rồi mới tạo đơn ở đây. Máy chủ kiểm lại toàn bộ điều kiện; màn hình này chỉ bắt lỗi gõ trước khi gửi.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2793,202 +2915,28 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#hint:d45cb9beaa9e
+- slot_id: screens/quotes.js#hint:c18a32813101
   module: screens/quotes.js
   key: hint
-  text: Để tạo đơn ngay từ đây, hãy chọn lượt tiếp nhận của khách ở trên trước — bảng vận hành cần mã
-    khách, mà bản báo giá không mang theo.
+  text: Chưa đọc được danh sách tiếp nhận, nên chưa biết số phiếu và báo giá nào đã thành đơn.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#hint:2aceac798e0c
+- slot_id: screens/quotes.js#hint:b1a0ef7ac5ac
   module: screens/quotes.js
   key: hint
-  text: Đã chốt. Bản này không sửa được nữa, và người chốt đã được ghi lại.
+  text: Máy chủ tính theo bảng giá đã chốt. Món niêm yết theo khoảng giá thì nhân viên trực quầy chốt
+    một số trong khoảng, có ghi tên. Màn hình này không tự cộng tiền, không làm tròn, và không tự chọn
+    số nào trong khoảng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:75dd3c92f663
-  module: screens/quotes.js
-  key: notice
-  text: 'Đọc khoảng giá cho khách được, nhưng chưa chốt được: chưa có con số nào để khách đồng ý. Chốt
-    một giá trong khoảng ở ô bên dưới, rồi mới bấm “Khách đã chốt giá”.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice__title:ad6202751e05
-  module: screens/quotes.js
-  key: notice__title
-  text: Bản này là một khoảng giá, chưa phải một số
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#hint:20b051f8212b
+- slot_id: screens/quotes.js#hint:473650fae3a4
   module: screens/quotes.js
   key: hint
-  text: Bấm khi khách đã nghe giá và đồng ý. Tên bạn sẽ được ghi lại.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:759d8966ea11
-  module: screens/quotes.js
-  key: notice
-  text: 'Kết quả được phát lại: cùng khoá thao tác và cùng nội dung đã gửi trước đó. Không có bản ghi
-    mới nào được tạo.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#hint:18cf2bbbb383
-  module: screens/quotes.js
-  key: hint
-  text: Không có chương trình nào được xét trên bản báo giá này. Mã lý do bên dưới nói rõ là chưa công
-    bố chương trình nào, hay dòng khoảng giá chưa được chốt.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#hint:eb90aaca781f
-  module: screens/quotes.js
-  key: hint
-  text: Thời điểm tính giá của bản báo giá này nằm ngoài khoảng trên, nên mức giảm là 0 ₫. Đây là một
-    con số không, có lý do đi kèm — không phải một ô bỏ trống.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#hint:d3cfbaf71057
-  module: screens/quotes.js
-  key: hint
-  text: 'Mốc sau là mốc kết thúc không bao gồm: chương trình chạy đến ngay trước nó, và thời điểm đó đã
-    ở ngoài chương trình. Cả hai mốc lấy nguyên từ máy chủ; màn hình này không tự trừ ra một ngày nào
-    khác.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:71919684fd9e
-  module: screens/quotes.js
-  key: notice
-  text: Không có các dòng thì không biết khoảng giá của từng món, và bảng vận hành không tự đoán khoảng.
-    Thử tải lại; nếu vẫn vậy thì báo kỹ thuật kèm mã theo dõi bên dưới.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice__title:9294fef5c654
-  module: screens/quotes.js
-  key: notice__title
-  text: Chưa đọc được các dòng của bản báo giá này
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:2daf68f5ac81
-  module: screens/quotes.js
-  key: notice
-  text: Máy chủ báo đây là bản khoảng giá nhưng không dòng nào mang khoảng. Đừng gửi số nào; tải lại báo
-    giá và báo kỹ thuật.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice__title:609813b46a5b
-  module: screens/quotes.js
-  key: notice__title
-  text: Bản này không có dòng nào theo khoảng giá
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:ef2a59c38b7e
-  module: screens/quotes.js
-  key: notice
-  text: 'Khoảng giá là chủ tiệm đã cho phép trước: mọi số trong khoảng đều hợp lệ, và bảng vận hành không
-    tự chọn giúp số nào. Bạn chọn số khách đồng ý rồi bấm chốt — không cần chờ chủ tiệm.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#hint:9ca00d7dd719
-  module: screens/quotes.js
-  key: hint
-  text: Tên bạn được ghi cùng con số, không sửa được, và chủ tiệm xem lại được. Số ngoài khoảng thì máy
-    chủ từ chối.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:492faa1c97ae
-  module: screens/quotes.js
-  key: notice
-  text: Máy chủ chốt cả bản một lần, không chốt từng dòng. Một bản nửa quyết nửa đoán còn tệ hơn là chưa
-    có tổng, nên phải điền đủ mọi dòng trước khi gửi.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice__title:a308e6935090
-  module: screens/quotes.js
-  key: notice__title
-  text: 'Chưa gửi được: còn dòng chưa có giá hợp lệ'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:f5ba20eae62d
-  module: screens/quotes.js
-  key: notice
-  text: 'Phiếu duyệt niêm phong một mã băm của đúng những con số này, chứ máy chủ không lưu chính những
-    con số ấy — nên chúng chỉ còn ở màn hình này. Rời đi là phải gửi lại từ đầu. Gửi lại không mất gì:
-    lúc đề nghị chưa có giá nào được ghi.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:138760e6c1ca
-  module: screens/quotes.js
-  key: notice
-  text: Máy chủ trả về một bảng giá rỗng, nên không có dịch vụ nào để chọn và không thể tính giá. Đây
-    là vấn đề của bảng giá đã công bố, không phải của thao tác này.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:be0adcdc34b4
-  module: screens/quotes.js
-  key: notice
-  text: Chưa có lượt tiếp nhận nào trong cửa hàng này. Tạo một lượt ở màn hình
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:7c81144140bd
-  module: screens/quotes.js
-  key: notice
-  text: Không có dữ kiện nào được điền sẵn; hãy chọn từ danh sách bên dưới.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:580264d6aa9f
-  module: screens/quotes.js
-  key: notice
-  text: Mã có thể thuộc cửa hàng khác hoặc đã bị gõ sai — máy chủ trả lời cùng một cách cho cả hai, nên
-    màn hình này cũng không đoán. Không có dữ kiện nào được điền sẵn; hãy chọn từ danh sách bên dưới.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice__title:037d161023b5
-  module: screens/quotes.js
-  key: notice__title
-  text: Không tìm thấy yêu cầu này trong cửa hàng đang chọn
+  text: Thiếu dữ kiện thì máy chủ từ chối đoán và không ghi gì cả — người quyết, không phải máy.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3017,15 +2965,6 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#guardrail:32618808b423
-  module: screens/quotes.js
-  key: guardrail
-  text: Bảng này chỉ để đọc. Nó cho thấy đúng những dòng và những khoảng giá mà một phiếu duyệt niêm phong,
-    để không ai phải duyệt một mã băm mà chưa nhìn thấy nội dung.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/quotes.js#notice:19819af48ee8
   module: screens/quotes.js
   key: notice
@@ -3044,29 +2983,19 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#notice:9143ff9eb7ed
+- slot_id: screens/quotes.js#hint:158952403781
   module: screens/quotes.js
-  key: notice
-  text: Bảng giá công bố một khoảng cho món này chứ không công bố một đơn giá, nên bộ tính giá không tự
-    chọn một số — đó là việc của nhân viên đang trực quầy.
+  key: hint
+  text: 'Chỉ để đọc: đúng những dòng và khoảng giá mà phiếu duyệt niêm phong.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#screen__lede:29b40670d8b6
+- slot_id: screens/quotes.js#hint:32618808b423
   module: screens/quotes.js
-  key: screen__lede
-  text: Chọn yêu cầu, chọn dịch vụ, nhập khối lượng — máy chủ tính theo bảng giá đã chốt. Món niêm yết
-    theo khoảng giá thì nhân viên trực quầy chốt một số trong khoảng, có ghi tên. Màn hình này không tự
-    cộng tiền, không làm tròn, và không tự chọn số nào trong khoảng.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#guardrail:473650fae3a4
-  module: screens/quotes.js
-  key: guardrail
-  text: Thiếu dữ kiện thì máy chủ từ chối đoán và không ghi gì cả — người quyết, không phải máy.
+  key: hint
+  text: Bảng này chỉ để đọc. Nó cho thấy đúng những dòng và những khoảng giá mà một phiếu duyệt niêm phong,
+    để không ai phải duyệt một mã băm mà chưa nhìn thấy nội dung.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3945,6 +3874,131 @@ disclosures:
   key: notice
   text: Không có API phía sau. Hiển thị một biểu mẫu ở đây sẽ tạo cảm giác dữ liệu đã được lưu trong khi
     không có gì được lưu cả.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#hint:18cf2bbbb383
+  module: ui/quoting.js
+  key: hint
+  text: Không có chương trình nào được xét trên bản báo giá này. Mã lý do bên dưới nói rõ là chưa công
+    bố chương trình nào, hay dòng khoảng giá chưa được chốt.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#hint:eb90aaca781f
+  module: ui/quoting.js
+  key: hint
+  text: Thời điểm tính giá của bản báo giá này nằm ngoài khoảng trên, nên mức giảm là 0 ₫. Đây là một
+    con số không, có lý do đi kèm — không phải một ô bỏ trống.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#hint:d3cfbaf71057
+  module: ui/quoting.js
+  key: hint
+  text: 'Mốc sau là mốc kết thúc không bao gồm: chương trình chạy đến ngay trước nó, và thời điểm đó đã
+    ở ngoài chương trình. Cả hai mốc lấy nguyên từ máy chủ; màn hình này không tự trừ ra một ngày nào
+    khác.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#hint:e1daf8bfe307
+  module: ui/quoting.js
+  key: hint
+  text: Máy chủ gửi hai số này dưới một cái tên số đơn, nhưng ruột của chúng là đầu trên của khoảng giá.
+    Với một bản khoảng giá, in đầu trên ra sẽ đọc như giá đã chốt. Khoảng đầy đủ nằm ở dòng tổng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#notice:759d8966ea11
+  module: ui/quoting.js
+  key: notice
+  text: 'Kết quả được phát lại: cùng khoá thao tác và cùng nội dung đã gửi trước đó. Không có bản ghi
+    mới nào được tạo.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#notice:71919684fd9e
+  module: ui/quoting.js
+  key: notice
+  text: Không có các dòng thì không biết khoảng giá của từng món, và bảng vận hành không tự đoán khoảng.
+    Thử tải lại; nếu vẫn vậy thì báo kỹ thuật kèm mã theo dõi bên dưới.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#notice__title:9294fef5c654
+  module: ui/quoting.js
+  key: notice__title
+  text: Chưa đọc được các dòng của bản báo giá này
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#notice:2daf68f5ac81
+  module: ui/quoting.js
+  key: notice
+  text: Máy chủ báo đây là bản khoảng giá nhưng không dòng nào mang khoảng. Đừng gửi số nào; tải lại báo
+    giá và báo kỹ thuật.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#notice__title:609813b46a5b
+  module: ui/quoting.js
+  key: notice__title
+  text: Bản này không có dòng nào theo khoảng giá
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#notice:ef2a59c38b7e
+  module: ui/quoting.js
+  key: notice
+  text: 'Khoảng giá là chủ tiệm đã cho phép trước: mọi số trong khoảng đều hợp lệ, và bảng vận hành không
+    tự chọn giúp số nào. Bạn chọn số khách đồng ý rồi bấm chốt — không cần chờ chủ tiệm.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#hint:9ca00d7dd719
+  module: ui/quoting.js
+  key: hint
+  text: Tên bạn được ghi cùng con số, không sửa được, và chủ tiệm xem lại được. Số ngoài khoảng thì máy
+    chủ từ chối.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#notice:492faa1c97ae
+  module: ui/quoting.js
+  key: notice
+  text: Máy chủ chốt cả bản một lần, không chốt từng dòng. Một bản nửa quyết nửa đoán còn tệ hơn là chưa
+    có tổng, nên phải điền đủ mọi dòng trước khi gửi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#notice__title:a308e6935090
+  module: ui/quoting.js
+  key: notice__title
+  text: 'Chưa gửi được: còn dòng chưa có giá hợp lệ'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/quoting.js#notice:f5ba20eae62d
+  module: ui/quoting.js
+  key: notice
+  text: 'Phiếu duyệt niêm phong một mã băm của đúng những con số này, chứ máy chủ không lưu chính những
+    con số ấy — nên chúng chỉ còn ở màn hình này. Rời đi là phải gửi lại từ đầu. Gửi lại không mất gì:
+    lúc đề nghị chưa có giá nào được ghi.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

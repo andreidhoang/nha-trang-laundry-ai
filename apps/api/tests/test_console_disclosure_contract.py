@@ -766,7 +766,18 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # are in the role/store/disable ⓘ), and the wrong-role notice title (now an inline alert).
     # One staff sentence corrected, not only moved: a taken OIDC subject is a 409 refusal now,
     # not the "lỗi máy chủ" the V1 field hint claimed.
-    assert sum(counts.values()) == _registry()["total"] == 437
+    # 443 after CONSOLE-REDESIGN-001 (437 + 6) (＋ Nhận đồ; Tiếp nhận and Báo giá as lists), all
+    # DESCRIPTIVE. Re-keyed by module, text unchanged: the band closer, promotion, replay and
+    # line-read sentences moved from `screens/quotes.js` to the shared `ui/quoting.js`; the
+    # acceptance hint, empty-pricebook notice, band offer, "a band is not one number" notice and the
+    # unknown-request notice to `screens/newOrder.js`; two quotes guardrails to ⓘ `hint`s. Retired
+    # (their subject no longer exists on screen): the intake created-card replay notice and its
+    # technical-code explain, the intake picker's empty and bad-prefill notices, the "choose an
+    # intake above first" hand-off hint and the "Đã chốt" record (the flow creates the order
+    # itself), both screens' ledes (merged into ⓘ), and `#/orders`' manual create-form guardrail
+    # (the form is gone; it told staff to press a button that no longer exists). Added: tier-1 one-liners and ⓘ bodies of
+    # the flow (no PII kept, no contact search, delivery fee rules, credit use, source question).
+    assert sum(counts.values()) == _registry()["total"] == 443
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

@@ -1000,6 +1000,13 @@ export function markUpdated(stamp, at = new Date()) {
  * @param {() => void} [spec.onLoadStart]
  * @param {(items: any[]) => void} [spec.onLoaded]
  * @param {(error: unknown) => void} [spec.onError]
+ * @param {(rows: HTMLElement[]) => HTMLElement} [spec.container] wraps the rendered rows; the
+ *   default is a V1 `div.stack` of cards, a V2 screen passes the kit's `list()` (CONSOLE-REDESIGN-001)
+ * @param {() => ((item: any) => boolean)|null} [spec.scope] a second narrowing beside the text
+ *   filter (a segmented "Đang chờ / Đã thành đơn"). It narrows the fetched rows exactly like the
+ *   filter does — nothing is refetched, and the status line keeps both counts
+ * @param {(filtered: boolean) => HTMLElement} [spec.emptyNode] the empty state, when the screen
+ *   draws a kit `emptyState` instead of the plain sentence
  * @returns {{
  *   bar: {node: HTMLElement, stamp: HTMLElement, search: HTMLInputElement|null},
  *   host: HTMLElement,
@@ -1007,6 +1014,8 @@ export function markUpdated(stamp, at = new Date()) {
  *   truncation: HTMLElement|null,
  *   filterStatus: HTMLElement,
  *   reload: () => Promise<boolean>,
+ *   rerender: () => void,
+ *   items: () => any[],
  * }}
  */
 export function listView(spec) {
@@ -1022,40 +1031,45 @@ export function listView(spec) {
   let filterText = "";
 
   function visibleItems() {
-    if (!spec.filter) return fetched;
+    const predicate = spec.scope?.() || null;
+    const scoped = predicate ? fetched.filter(predicate) : fetched;
+    if (!spec.filter) return scoped;
     const needle = filterText.trim().toLowerCase();
-    if (!needle) return fetched;
-    return fetched.filter((item) => spec.filter.matches(item, needle));
+    if (!needle) return scoped;
+    return scoped.filter((item) => spec.filter.matches(item, needle));
   }
 
   function renderVisible() {
     const visible = visibleItems();
-    const active = Boolean(spec.filter && filterText.trim());
+    // The status line is about the typed filter; a scope is its own visible control.
+    const filtering = Boolean(spec.filter && filterText.trim());
+    const active = filtering || Boolean(spec.scope?.());
     if (spec.filter) {
       if (spec.filterStatusHiddenWhenInactive) {
-        filterStatus.hidden = !active;
-        if (active) {
+        filterStatus.hidden = !filtering;
+        if (filtering) {
           filterStatus.textContent = `Đang lọc ${visible.length}/${fetched.length} ${spec.filter.noun}`;
         }
       } else {
-        filterStatus.textContent = active
+        filterStatus.textContent = filtering
           ? `Đang lọc ${visible.length}/${fetched.length} ${spec.filter.noun}`
           : "";
       }
     }
+    const rows = visible.map((item) => spec.renderItem(item));
     render(
       host,
       visible.length
-        ? h(
-            "div",
-            { class: "stack" },
-            visible.map((item) => spec.renderItem(item)),
-          )
-        : empty(
-            active && spec.filter.filteredEmptyText
-              ? spec.filter.filteredEmptyText
-              : spec.emptyText,
-          ),
+        ? spec.container
+          ? spec.container(rows)
+          : h("div", { class: "stack" }, rows)
+        : spec.emptyNode
+          ? spec.emptyNode(active)
+          : empty(
+              active && spec.filter?.filteredEmptyText
+                ? spec.filter.filteredEmptyText
+                : spec.emptyText,
+            ),
     );
   }
 
@@ -1103,7 +1117,16 @@ export function listView(spec) {
     }
   }
 
-  return { bar, host, count: countNode, truncation, filterStatus, reload };
+  return {
+    bar,
+    host,
+    count: countNode,
+    truncation,
+    filterStatus,
+    reload,
+    rerender: renderVisible,
+    items: () => fetched,
+  };
 }
 
 /**

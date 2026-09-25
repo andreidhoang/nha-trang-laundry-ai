@@ -22,12 +22,12 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 
 | | Làm gì | Ở màn hình |
 |---|---|---|
-| 1 | Bấm **Phát phiếu**, đọc to số phiếu cho khách, ghi số lên túi đồ | Tiếp nhận |
-| 2 | Bấm **Ghi nhận tiếp nhận** | Tiếp nhận |
-| 3 | Cân đồ, chọn dịch vụ, nhập số kg | Báo giá |
-| 4 | Bấm **Tính giá**, đọc giá cho khách | Báo giá |
-| 5 | Khách đồng ý → bấm **Khách đã chốt giá** | Báo giá |
-| 6 | Bấm **Tạo đơn** | Đơn hàng |
+| 1 | Bấm **＋ Nhận đồ**, rồi **Khách vãng lai — phát phiếu**. Đọc to số phiếu màn hình hiện cho khách, ghi số lên túi đồ | Nhận đồ |
+| 2 | Chọn cách giao nhận — khách tự mang tới và tự lấy là *Tại quầy* (đã chọn sẵn) | Nhận đồ |
+| 3 | Cân đồ. Bấm **Chọn dịch vụ**, chọn món, gõ số kg ngay vào ô vừa hiện | Nhận đồ |
+| 4 | Bấm **Tính giá**, đọc **Tổng khách trả** cho khách | Nhận đồ |
+| 5 | Bấm **Tiếp tục**, hỏi khách biết tiệm qua đâu (chưa hỏi thì để *Chưa biết*) | Nhận đồ |
+| 6 | Khách đồng ý → bấm **Khách đồng ý — tạo đơn**. Máy ghi lời đồng ý, tạo đơn, rồi mở luôn trang đơn | Nhận đồ |
 | 7 | Nhận túi đồ từ khách → chuyển **nhận đồ** sang *Đã nhận, chờ kiểm* | Đơn hàng |
 | 8 | Chuyển **nhận đồ** sang *Đã nhận*, tích **Đã duyệt lịch** | Đơn hàng |
 | 9 | Chuyển **thương mại** lần lượt tới *Đang chạy* | Đơn hàng |
@@ -35,6 +35,14 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 11 | Khách tới lấy → **Tìm theo số phiếu** (hỏi ngày trên phiếu nếu không phải hôm nay), bấm **Mở đơn**, rồi **Chuyển trạng thái đơn này**: **sản xuất** sang *Đã giao ra* | Đơn hàng |
 | 12 | Đọc cho khách số **Phải thu** ngay trên ô tiền, nhập đúng số đó, tích **Khách đã tự lấy đồ**, bấm **Ghi nhận tất toán** | Chi tiết đơn |
 | 13 | Chuyển **thương mại** sang *Hoàn tất* | Đơn hàng |
+
+- **Khách đã nhắn tin cho tiệm qua kênh chính thức:** ở bước 1 bấm **Khách đã nhắn qua kênh**,
+  nhập mã khách ở *Nhập mã thủ công*, bấm **Ghi nhận tiếp nhận**. Mã lạ bị từ chối, không tự tạo.
+- **Khách đã có phiếu nhưng chưa thành đơn** (mất mạng, khách quay lại sau): mở **＋ Nhận đồ**, chọn
+  dòng *Phiếu N* ở mục **Tiếp tục một khách đang chờ** — món, giá và cách giao nhận hiện lại đủ.
+- Sửa món sau khi đã tính giá thì nút đổi thành **Tính lại**; bấm để ra giá mới rồi đọc lại cho khách.
+- Nếu máy báo từ chối ở bước 6, đọc lý do ngay dưới nút. Bấm lại chỉ làm tiếp bước còn thiếu: lời
+  đồng ý đã ghi thì không ghi lại, và nút đổi thành **Tạo đơn**.
 
 ### Khách muốn trả tiền ngay lúc gửi đồ
 
@@ -58,13 +66,13 @@ vẫn bị từ chối.
 
 Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **khoảng giá**, vì phải nhìn món đồ mới
 định giá được. Bước 4 ở trên sẽ báo là máy không tự chọn số. Làm tiếp như sau, vẫn ở màn hình
-**Báo giá**:
+**Nhận đồ**, ngay dưới hoá đơn tạm:
 
 | | Làm gì |
 |---|---|
 | 4a | Bấm **Lập bản khoảng giá**. Đọc khoảng cho khách nghe (ví dụ *80.000 – 240.000 ₫*) |
 | 4b | Xem đồ, thoả thuận với khách, gõ **một số nằm trong khoảng** cho từng dòng |
-| 4c | Bấm **Chốt giá này** → máy ghi giá luôn → quay lại bước 5 ở bảng trên |
+| 4c | Bấm **Chốt giá này** → máy ghi giá luôn → bấm **Tiếp tục** (bước 5 ở bảng trên) |
 
 - **Không cần chờ chủ tiệm.** Người đang trực quầy chốt giá trong khoảng chủ tiệm đã niêm yết
   (quyết định DEC-029, 25/09/2026). **Tên bạn được ghi cùng con số, không sửa được**, và chủ tiệm
@@ -179,10 +187,10 @@ dòng. Dòng chỉ có một món thì không cần chọn. Đồ tính theo ký
 - **Vượt trần thì máy từ chối, không tự hạ xuống.** Nếu màn hình báo vượt trần, nói đúng con số
   trần cho khách nghe. Gõ một số khác cho lọt là tự quyết thay chủ tiệm.
 
-**Khách quay lại dùng phiếu giảm trừ:** tính giá như bình thường, rồi ở mục *Dùng một khoản giảm
-trừ* nhập mã phiếu, mã báo giá, số bản sửa đổi và dấu vân của bản đó, rồi bấm
-**“Áp dụng khoản giảm trừ”**. Phiếu dùng **đúng một lần**. Đọc lại tổng mới cho khách nghe rồi mới
-thu tiền.
+**Khách quay lại dùng phiếu giảm trừ:** tính giá như bình thường ở **＋ Nhận đồ**, rồi — **trước
+khi khách đồng ý** — bấm **Dùng khoản giảm trừ** dưới hoá đơn tạm, nhập mã in trên phiếu của khách
+và bấm **“Áp dụng khoản giảm trừ”**. Bản báo giá được máy gửi kèm, không phải chép gì khác. Phiếu dùng
+**đúng một lần**. Đọc lại tổng mới cho khách nghe rồi mới bấm **Tiếp tục**.
 
 ---
 

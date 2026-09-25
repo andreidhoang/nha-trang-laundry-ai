@@ -55,7 +55,7 @@ import pathlib
 import sys
 import urllib.request
 
-from console_recording import Recorder, add_arguments, watch_render_defects
+from console_recording import Recorder, add_arguments, viewport, watch_render_defects
 from playwright.sync_api import sync_playwright
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -141,7 +141,7 @@ with sync_playwright() as pw:
         **REC.launch_options(),  # type: ignore[arg-type]
     )
     ctx = browser.new_context(
-        viewport={"width": 1280, "height": 900},
+        viewport=viewport(),
         permissions=["clipboard-read", "clipboard-write"],
         **REC.context_options(),  # type: ignore[arg-type]
     )
@@ -774,7 +774,7 @@ with sync_playwright() as pw:
     )
     ok("an open order exists for the auditor to look at", bool(auditor_order), auditor_order)
     actx = browser.new_context(
-        viewport={"width": 1280, "height": 900},
+        viewport=viewport(),
         **REC.context_options(),  # type: ignore[arg-type]
     )
     auditor_defects = watch_render_defects(actx)

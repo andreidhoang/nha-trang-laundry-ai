@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import pathlib
 from typing import Any
 
@@ -108,7 +109,7 @@ class Recorder:
             return {}
         return {
             "record_video_dir": str(self.directory / ".raw"),
-            "record_video_size": {"width": 1280, "height": 900},
+            "record_video_size": viewport(),
         }
 
     def film(self, context: Any, page: Any, label: str) -> Any:
@@ -183,6 +184,16 @@ class Recorder:
                     page.wait_for_timeout(pause)
             except Exception:
                 pass
+
+
+def viewport() -> dict[str, int]:
+    """The browser size a walk runs at: a desk (default) or, with `CONSOLE_VIEWPORT=phone`, the
+    390x844 phone the counter actually uses. The same walk, the same checks — only the size moves,
+    so a phone run proves the tab bar, sheets and sticky action bars carry every workflow."""
+
+    if os.environ.get("CONSOLE_VIEWPORT") == "phone":
+        return {"width": 390, "height": 844}
+    return {"width": 1280, "height": 900}
 
 
 def add_arguments(parser: Any) -> None:

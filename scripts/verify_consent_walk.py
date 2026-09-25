@@ -49,7 +49,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "packages" / "db" / "tests"))
 
 import workspace_env  # noqa: E402,F401  (every scripts/ entry point imports it first)
-from console_recording import Recorder, add_arguments, watch_render_defects  # noqa: E402
+from console_recording import (  # noqa: E402
+    Recorder,
+    add_arguments,
+    viewport,
+    watch_render_defects,
+)
 
 parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 parser.add_argument("--base-url", default="http://127.0.0.1:8100")
@@ -171,9 +176,7 @@ def main() -> int:
             **({"executable_path": browser_path} if browser_path else {}),
             **REC.launch_options(),  # type: ignore[arg-type]
         )
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 900}, **REC.context_options()
-        )
+        context = browser.new_context(viewport=viewport(), **REC.context_options())
         defects = watch_render_defects(context)
         console = Console(REC.film(context, context.new_page(), "tin-dich-vu"))
         page = console.page

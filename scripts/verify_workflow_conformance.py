@@ -53,7 +53,7 @@ import urllib.request
 import uuid
 from typing import Any
 
-from console_recording import Recorder, add_arguments, watch_render_defects
+from console_recording import Recorder, add_arguments, viewport, watch_render_defects
 from playwright.sync_api import sync_playwright
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -2373,7 +2373,7 @@ def main() -> int:
             **REC.launch_options(),  # type: ignore[arg-type]
         )
         context = browser.new_context(
-            viewport={"width": 1280, "height": 900},
+            viewport=viewport(),
             permissions=["clipboard-read", "clipboard-write"],
             **REC.context_options(),  # type: ignore[arg-type]
         )
@@ -2390,6 +2390,12 @@ def main() -> int:
             ("Đơn hàng", "orders", "#/orders"),
         ):
             link = console.page.locator("nav a", has_text=label).first
+            if link.count() and not link.is_visible():
+                # On a phone only five destinations are tabs; the rest are reached the way a
+                # person reaches them there: the "Thêm" tab, then the row on #/more.
+                console.page.locator("nav a", has_text="Thêm").first.click()
+                console.page.wait_for_timeout(700)
+                link = console.page.locator(f"main a[data-nav='{hash_path[1:]}']").first
             if link.count():
                 link.click()
                 console.page.wait_for_timeout(900)

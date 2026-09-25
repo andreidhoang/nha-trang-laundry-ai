@@ -691,8 +691,11 @@ input.stepper__input {
 
 /* Toasts ----------------------------------------------------------------------------------------- */
 
+/* Toasts sit under the app bar, not above the tab bar: at the bottom they covered the sticky
+ * action bar — the very button the person presses next — for their four seconds (found filming
+ * ＋ Nhận đồ's confirm step). */
 .toasts {
-  bottom: calc(var(--nav-height, 0px) + var(--space-4));
+  top: calc(var(--appbar-height) + env(safe-area-inset-top) + var(--space-2));
   display: grid;
   gap: var(--space-2);
   left: 50%;
@@ -719,7 +722,7 @@ input.stepper__input {
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateY(0.5rem);
+    transform: translateY(-0.5rem);
   }
 }
 

@@ -263,6 +263,10 @@ class AuditEntry:
     actor_id: UUID | None
     aggregate_type: str
     aggregate_id: UUID
+    #: For an order state transition, which axis moved and to what (from its domain event);
+    #: `None` for every other row. Only these two whitelisted keys are ever copied out.
+    transition_dimension: str | None = None
+    transition_target: str | None = None
 
 
 class ShadowConsoleRepository:
@@ -1084,9 +1088,22 @@ class ShadowConsoleRepository:
             # identifier that does not exist -- so probing still teaches nobody which stores exist.
             cursor.execute(
                 """
-                SELECT occurred_at, action, actor_type, actor_id, aggregate_type, aggregate_id
-                FROM audit_events
-                WHERE aggregate_id = %(aggregate)s
+                SELECT a.occurred_at, a.action, a.actor_type, a.actor_id, a.aggregate_type,
+                       a.aggregate_id, d.payload ->> 'dimension', d.payload ->> 'target'
+                FROM audit_events a
+                -- The audit row says only "a transition happened"; its domain event (same
+                -- aggregate, correlation and instant) says which axis moved and to what, so the
+                -- order's history can read "Đang giặt" instead of nine identical lines.
+                LEFT JOIN LATERAL (
+                    SELECT e.payload FROM domain_events e
+                     WHERE a.action = 'ORDER_STATE_TRANSITION'
+                       AND e.event_type = 'ORDER_STATE_TRANSITIONED'
+                       AND e.aggregate_id = a.aggregate_id
+                       AND e.correlation_id = a.correlation_id
+                       AND e.occurred_at = a.occurred_at
+                     LIMIT 1
+                ) d ON TRUE
+                WHERE a.aggregate_id = %(aggregate)s
                   AND EXISTS (
                       SELECT 1 FROM orders t
                        WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
@@ -1122,7 +1139,7 @@ class ShadowConsoleRepository:
                       SELECT 1 FROM approval_requests t
                        WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
                   )
-                ORDER BY occurred_at, id
+                ORDER BY a.occurred_at, a.id
                 LIMIT %(limit)s
                 """,
                 {"aggregate": aggregate_id, "store": store_id, "limit": limit},
@@ -1135,6 +1152,8 @@ class ShadowConsoleRepository:
                     actor_id=_uuid(row[3]) if row[3] is not None else None,
                     aggregate_type=str(row[4]),
                     aggregate_id=_uuid(row[5]),
+                    transition_dimension=str(row[6]) if row[6] is not None else None,
+                    transition_target=str(row[7]) if row[7] is not None else None,
                 )
                 for row in cursor.fetchall()
             )

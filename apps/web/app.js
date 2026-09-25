@@ -626,7 +626,17 @@ function syncChrome() {
   renderBanners();
   renderNav();
   syncNetworkAffordance();
-  const active = router.registered().find((route) => route.path === currentPath());
+  // Match parameterised routes too (`/orders/:orderId`): comparing the literal path meant every
+  // detail page left the app bar saying "Bảng vận hành" instead of where the person is.
+  const path = currentPath();
+  const segments = path.split("/");
+  const active = router.registered().find((route) => {
+    const pattern = route.path.split("/");
+    return (
+      pattern.length === segments.length &&
+      pattern.every((part, index) => part.startsWith(":") || part === segments[index])
+    );
+  });
   screenTitle.textContent = active?.title || "Bảng vận hành";
   document.title = active?.title ? `${active.title} · Bảng vận hành` : "Bảng vận hành";
 }

@@ -1045,7 +1045,7 @@ function remedyContents(read) {
       "p",
       { class: "hint" },
       "Bấm Duyệt là cho phép trả đúng số tiền này cho đúng món này. Duyệt chưa trả gì cả: một " +
-        "nhân viên phải bấm “Thực hiện bồi hoàn” ở màn hình Bồi hoàn trước khi phiếu duyệt hết hạn.",
+        "nhân viên phải bấm “Thực hiện bồi hoàn” trên trang khiếu nại trước khi phiếu duyệt hết hạn.",
     ),
   );
 }

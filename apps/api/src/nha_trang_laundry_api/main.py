@@ -4280,6 +4280,8 @@ class AuditEntryResponse(BaseModel):
     actor_id: UUID | None
     aggregate_type: str
     aggregate_id: UUID
+    transition_dimension: str | None = None
+    transition_target: str | None = None
 
 
 @app.get(
@@ -4486,6 +4488,8 @@ def shadow_audit_timeline(
             actor_id=entry.actor_id,
             aggregate_type=entry.aggregate_type,
             aggregate_id=entry.aggregate_id,
+            transition_dimension=entry.transition_dimension,
+            transition_target=entry.transition_target,
         )
         for entry in entries
     ]

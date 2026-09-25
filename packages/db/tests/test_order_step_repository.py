@@ -734,3 +734,41 @@ def test_the_sla_board_carries_each_orders_ticket(connection: psycopg.Connection
     )
     (item,) = [entry for entry in board if entry.order_id == order_id]
     assert (item.ticket_number, item.ticket_issued_on) == (number, issued_on)
+
+
+def test_the_order_history_names_each_state_a_step_moved_to(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The timeline reads as states, not as five identical "transition" rows.
+
+    Found filming the redesigned order page: after one RECEIVE the history read "Chuyển trạng
+    thái đơn" five times, because an audit row carries only the action. The axis and target come
+    from the transition's own domain event (same aggregate, correlation and instant), and nothing
+    but those two keys is copied out of the event payload.
+    """
+
+    store_id = uuid4()
+    staff = _staff(connection, store_id)
+    order_id = _order(connection, store_id, staff)
+    _step(connection, order_id, staff, 1, OrderStep.RECEIVE, slot_approved=True)
+
+    timeline = ShadowConsoleRepository().audit_timeline(
+        connection, store_id=store_id, aggregate_id=order_id, principal=staff
+    )
+
+    moved = [
+        (entry.transition_dimension, entry.transition_target)
+        for entry in timeline
+        if entry.action == "ORDER_STATE_TRANSITION"
+    ]
+    assert moved == [
+        ("intake", "RECEIVED_PENDING_INSPECTION"),
+        ("commercial", "STORE_CONFIRMATION_PENDING"),
+        ("commercial", "CONFIRMED"),
+        ("intake", "ACCEPTED"),
+        ("commercial", "ACTIVE"),
+    ]
+    others = [entry for entry in timeline if entry.action != "ORDER_STATE_TRANSITION"]
+    assert others and all(
+        entry.transition_dimension is None and entry.transition_target is None for entry in others
+    )

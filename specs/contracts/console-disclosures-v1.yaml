@@ -1712,11 +1712,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/approvals.js#hint:4780a629228c
+- slot_id: screens/approvals.js#hint:bd9a6df58bae
   module: screens/approvals.js
   key: hint
   text: 'Bấm Duyệt là cho phép trả đúng số tiền này cho đúng món này. Duyệt chưa trả gì cả: một nhân viên
-    phải bấm “Thực hiện bồi hoàn” ở màn hình Bồi hoàn trước khi phiếu duyệt hết hạn.'
+    phải bấm “Thực hiện bồi hoàn” trên trang khiếu nại trước khi phiếu duyệt hết hạn.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

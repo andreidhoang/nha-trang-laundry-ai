@@ -91,6 +91,14 @@ import { amountDue, orderName, ticketLabel } from "./orders.js";
  */
 const AUDIT_LIMIT = 100;
 
+/** The four axes of an order, named as the history reads them. Presentation only. */
+const AXIS_VI = {
+  commercial: "Đơn",
+  intake: "Tiếp nhận",
+  production: "Sản xuất",
+  balance: "Tiền",
+};
+
 /** How many timeline rows the compact view shows before "Xem tất cả". */
 const AUDIT_COMPACT = 5;
 
@@ -1281,7 +1289,9 @@ export function render_(context) {
     /** @type {Array<{entry: any, times: number, key: string}>} */
     const out = [];
     for (const entry of rows) {
-      const key = `${entry.action}|${entry.actor_type}|${entry.actor_id}|${dateTime(entry.occurred_at)}`;
+      const key =
+        `${entry.action}|${entry.transition_target || ""}|${entry.actor_type}|` +
+        `${entry.actor_id}|${dateTime(entry.occurred_at)}`;
       const last = out[out.length - 1];
       if (last && last.key === key) last.times += 1;
       else out.push({ entry, times: 1, key });
@@ -1293,10 +1303,19 @@ export function render_(context) {
   function auditRow(folded) {
     const entry = folded.entry;
     return listRow({
+      // A transition row names what moved and where to (from its domain event), so a composite
+      // step reads as its real states — "Tiếp nhận · Đã nhận đồ" — not "Chuyển trạng thái đơn × 5".
       title: h(
         "span",
-        { title: String(entry.action) },
-        enumVi(entry.action),
+        {
+          title: entry.transition_target
+            ? `${entry.action} ${entry.transition_dimension}→${entry.transition_target}`
+            : String(entry.action),
+        },
+        entry.transition_target
+          ? `${AXIS_VI[entry.transition_dimension] || enumVi(entry.transition_dimension)} · ` +
+              enumVi(entry.transition_target)
+          : enumVi(entry.action),
         folded.times > 1 ? h("span", { class: "muted" }, ` × ${folded.times}`) : null,
       ),
       meta: h(

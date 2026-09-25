@@ -8,6 +8,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from .connection import migration_lock_timeout_ms
+
 MIGRATION_FILENAME = re.compile(r"^(?P<version>\d{4})_(?P<name>[a-z0-9_]+)\.sql$")
 MIGRATIONS_DIRECTORY = Path(__file__).resolve().parents[2] / "migrations"
 
@@ -45,12 +47,28 @@ def discover_migrations(directory: Path = MIGRATIONS_DIRECTORY) -> tuple[Migrati
     return tuple(migrations)
 
 
-def apply_migrations(connection: Any, directory: Path = MIGRATIONS_DIRECTORY) -> tuple[str, ...]:
+def apply_migrations(
+    connection: Any,
+    directory: Path = MIGRATIONS_DIRECTORY,
+    *,
+    lock_timeout_ms: int | None = None,
+) -> tuple[str, ...]:
     """Apply unapplied migrations and reject changed deployed migration content.
 
     The caller must use a dedicated migration identity. Application runtime identities must not have
     DDL rights. Each migration is committed as its own PostgreSQL transaction.
+
+    **Each one also gives up on a lock rather than queueing for it** (`OPS-HARDENING-002`). An
+    `ALTER TABLE` waiting behind a running request holds its place in the lock queue, and every
+    request after it waits behind the `ALTER`; with no bound, one slow request plus one migration
+    stops the counter. `SET LOCAL` scopes both settings to the migration's own transaction, so the
+    caller's session -- a test fixture's, a drill's -- is left exactly as it was.
+    `statement_timeout` is zero for the same span: a role-level default must not cut a data
+    migration in half.
     """
+    lock_timeout = migration_lock_timeout_ms() if lock_timeout_ms is None else lock_timeout_ms
+    if lock_timeout <= 0:
+        raise ValueError("a migration lock timeout must be positive; zero means wait for ever")
     applied_versions: list[str] = []
     with connection.transaction(), connection.cursor() as cursor:
         cursor.execute(
@@ -77,6 +95,10 @@ def apply_migrations(connection: Any, directory: Path = MIGRATIONS_DIRECTORY) ->
                         f"migration {migration.version} checksum changed after application"
                     )
                 continue
+            # An integer from `migration_lock_timeout_ms`, never text: interpolation is safe here,
+            # and `SET` takes no bind parameters.
+            cursor.execute(f"SET LOCAL lock_timeout = {int(lock_timeout)}")
+            cursor.execute("SET LOCAL statement_timeout = 0")
             cursor.execute(migration.path.read_text(encoding="utf-8"))
             cursor.execute(
                 """

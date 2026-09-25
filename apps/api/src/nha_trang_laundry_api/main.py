@@ -118,6 +118,7 @@ from nha_trang_laundry_api.operations import (
     UnresolvedQuoteResult,
 )
 from nha_trang_laundry_api.ops_board import OpsBoardService, OpsBoardUnavailable
+from nha_trang_laundry_api.readiness import readyz
 from nha_trang_laundry_api.security import BrowserSecurityMiddleware, RequestSizeLimitMiddleware
 
 # SHOP-OBSERVABILITY-001. Before this call, every `_LOGGER.record(...)` below was a no-op in the
@@ -195,7 +196,7 @@ async def correlation_middleware(
 
 
 def _http_operation(path: str) -> str:
-    if path == "/healthz":
+    if path in ("/healthz", "/readyz"):
         return "healthz"
     if path.startswith("/internal/v1/stores/") and "/quotes" in path:
         return "quote_compute"
@@ -867,8 +868,12 @@ def current_principal(
 
 @app.get("/healthz", include_in_schema=False)
 def healthz() -> dict[str, str]:
-    """Return only process health; dependency health is added with real infrastructure."""
+    """Return only process health; /readyz is the one that asks the database."""
     return {"status": "ok"}
+
+
+# OPS-HARDENING-002: `/readyz`, and why it is not the container healthcheck -- see readiness.py.
+app.add_api_route("/readyz", readyz, methods=["GET"], include_in_schema=False)
 
 
 @app.post("/internal/v1/auth/session", response_model=SessionResponse, include_in_schema=False)

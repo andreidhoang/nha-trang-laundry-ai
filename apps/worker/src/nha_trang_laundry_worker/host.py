@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import psycopg
 from nha_trang_laundry_db.agent_runs import AgentRunRepository
+from nha_trang_laundry_db.connection import application_connect
 from nha_trang_laundry_db.outbox import OutboxRepository
 from nha_trang_laundry_domain.catalog import ActorRole
 from nha_trang_laundry_observability import EventSeverity, SafeStructuredLogger
@@ -77,7 +78,7 @@ class WorkerSupervisor:
         *,
         internal_worker: InternalOutboxWorker | None = None,
         agent_cycle: AgentCycle | None = None,
-        connection_factory: ConnectionFactory = psycopg.connect,
+        connection_factory: ConnectionFactory = application_connect,
         logger: SafeStructuredLogger | None = None,
     ) -> None:
         self.settings = settings

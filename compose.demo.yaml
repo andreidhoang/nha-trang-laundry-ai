@@ -18,6 +18,12 @@ name: nha-trang-laundry-private-staging
 
 x-demo-job: &demo-job
   image: ${STAGING_API_IMAGE:-nha-trang-laundry-api:local}
+  # Bounded like every other service (`OPS-HARDENING-002`); see compose.yaml for the figures.
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
   init: true
   read_only: true
   cap_drop: ["ALL"]

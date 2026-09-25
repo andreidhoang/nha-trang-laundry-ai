@@ -1,14 +1,28 @@
 name: nha-trang-laundry-ai
 
+# `OPS-HARDENING-002`. Docker's default json-file driver keeps every line a container ever wrote, on
+# the disk the database lives on. Three files of ten megabytes each, per service, is days of this
+# stack's output and a bound nobody has to remember. Every compose file carries its own copy of this
+# anchor, because a YAML anchor does not cross files; a contract test renders each combination.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16.10-alpine
+    logging: *default-logging
     environment:
       POSTGRES_DB: nha_trang_laundry
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
     ports:
-      - "5432:5432"
+      # Loopback only. `app`/`app` is a superuser, and "5432:5432" published it on every interface
+      # of whatever machine ran this -- including, through `compose.production.yaml
+      # --profile local-database`, a staging host (`OPS-HARDENING-002`).
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d nha_trang_laundry"]
       interval: 5s
@@ -19,4 +33,3 @@ services:
 
 volumes:
   postgres-data:
-

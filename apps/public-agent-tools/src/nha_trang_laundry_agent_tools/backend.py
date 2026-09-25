@@ -28,6 +28,7 @@ import psycopg
 from nha_trang_laundry_contracts import AgentToolOperation
 from nha_trang_laundry_db.approvals import ApprovalRepository, ApprovalRequestCommand
 from nha_trang_laundry_db.configurations import ConfigurationRepository, snapshot_hash
+from nha_trang_laundry_db.connection import application_connect
 from nha_trang_laundry_db.idempotency import (
     IdempotencyConflictError,
     IdempotencyRepository,
@@ -139,7 +140,7 @@ class DomainAgentToolBackend:
         self,
         *,
         database_url: str,
-        connection_factory: Callable[[str], Any] = psycopg.connect,
+        connection_factory: Callable[[str], Any] = application_connect,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         if not database_url:
@@ -804,7 +805,7 @@ class DomainAgentToolBackend:
 def build_domain_backend(
     *,
     database_url: str | None = None,
-    connection_factory: Callable[[str], Any] = psycopg.connect,
+    connection_factory: Callable[[str], Any] = application_connect,
     now: Callable[[], datetime] | None = None,
 ) -> AgentToolBackend:
     """Assemble the domain backend under explicit configuration, or the unavailable one.

@@ -74,8 +74,8 @@ transition functions exactly like the existing ones (no second transition table)
   (backwards, which only an exception permits: `transition_production`'s DEC-024 branch). It is
   refused from any other production state, on a closed order and during cancellation review. It
   requires `rewash_reason`.
-- `REJECT_INTAKE`: legal while intake is `RECEIVED_PENDING_INSPECTION`, `WAITING_CUSTOMER_INFO`,
-  `WAITING_SLOT_APPROVAL` or whatever pre-acceptance states `INTAKE_SEQUENCE` holds (never
+- `REJECT_INTAKE`: legal while intake is `RECEIVED_PENDING_INSPECTION`,
+  `WAITING_PRICE_APPROVAL`, `WAITING_CUSTOMER_RECONFIRMATION` or `WAITING_SLOT_APPROVAL` (never
   `AWAITING_HANDOFF`: nothing was received; never `ACCEPTED`), and commercial is before `ACTIVE`.
   Plan: intake → `REJECTED`, then commercial → `CANCELLED` (direct; `REJECTED` is in
   `CUSTODY_NOT_HELD_INTAKE_STATUSES`, so the domain admits it). It requires `rejection_reason`.

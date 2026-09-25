@@ -456,9 +456,9 @@ def test_every_kpi_over_a_two_day_window_matches_the_fixture(
     assert _pairs(report.summary) == {
         # A, B, C, E, F, G on DAY and K at NEXT's midnight; H is one microsecond early.
         "ORDERS_CREATED": (7, None),
-        "ORDERS_COMPLETED": (1, 7),
+        "ORDERS_COMPLETED": (1, None),
         # G on DAY, F at NEXT's midnight.
-        "ORDERS_CANCELLED": (2, 7),
+        "ORDERS_CANCELLED": (2, None),
         # A (3 h) and C (3 h 30 from acceptance to its last completion) on time; B at 9 h 30 late.
         "ON_TIME_INTERNAL": (2, 3),
         # B (per-axis) and C (REWASH shape); E resumed in place; A, B, C, E reached quality check.
@@ -507,8 +507,8 @@ def test_each_day_is_its_own_row_and_the_midnight_boundary_files_each_fact_once(
 
     assert on_day["ORDERS_CREATED"] == (6, None)
     assert on_next["ORDERS_CREATED"] == (1, None)
-    assert on_day["ORDERS_CANCELLED"] == (1, 6)
-    assert on_next["ORDERS_CANCELLED"] == (1, 1)
+    assert on_day["ORDERS_CANCELLED"] == (1, None)
+    assert on_next["ORDERS_CANCELLED"] == (1, None)
     # F's payment at the last microsecond of DAY is DAY's; its refund at midnight is NEXT's.
     assert on_day["MONEY_COLLECTED"] == (220_000, None)
     assert on_next["MONEY_COLLECTED"] == (0, None)
@@ -607,7 +607,7 @@ def test_on_time_is_the_boards_rule_at_exactly_the_mark_and_one_microsecond_past
 def test_the_report_version_is_pinned_and_moves_with_the_boards_rule() -> None:
     """Invariant 18. Editing either statement, the day boundary, or the board's rule fails this."""
     version = report_query_version(STANDARD_WASH_SLA)
-    assert version.identifier == "report-v1"
+    assert version.identifier == "report-v2"
     assert version.digest == "2e30b2c5fdd366f2"
     stricter = ProductionSlaPolicy(
         policy_id="SLA_STANDARD_CLOTHES",

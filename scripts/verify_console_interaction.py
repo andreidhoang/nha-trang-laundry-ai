@@ -771,7 +771,7 @@ SLA_BOARD_POLICY_NOTICE = (
 #: fraction that does not round to a whole percent, a denominator of zero (no order reached quality
 #: check), and a window whose refunds exceeded its takings, so the drawer went OUT. The screen must
 #: print every one as the server sent it and compute none of them.
-REPORT_VERSION = "report-v1:2e30b2c5fdd366f2"
+REPORT_VERSION = "report-v2:2e30b2c5fdd366f2"
 
 
 def report_kpis(start: str, end: str) -> list[dict[str, object]]:
@@ -793,8 +793,8 @@ def report_kpis(start: str, end: str) -> list[dict[str, object]]:
 
     return [
         kpi("ORDERS_CREATED", 12),
-        kpi("ORDERS_COMPLETED", 7, 12),
-        kpi("ORDERS_CANCELLED", 1, 12),
+        kpi("ORDERS_COMPLETED", 7),
+        kpi("ORDERS_CANCELLED", 1),
         kpi("ON_TIME_INTERNAL", 5, 6, quality="RULE_ASSUMED"),
         kpi("REWASH", 0, 0),
         kpi("COMPLAINTS", 2, 7, unit="INCIDENTS"),
@@ -6532,9 +6532,13 @@ with sync_playwright() as playwright:
         return node.first.inner_text() if node.count() else ""
 
     check(
-        "a fraction is shown beside the percentage the console formats from it",
-        "58%" in tile("ORDERS_COMPLETED") and "7 / 12 đơn tạo" in tile("ORDERS_COMPLETED"),
-        tile("ORDERS_COMPLETED")[:80],
+        "a fraction is shown beside the percentage the console formats from it, and a count "
+        "(report-v2: completed) is a count with no rate beside it",
+        "5 / 6" in tile("ON_TIME_INTERNAL")
+        and "7" in tile("ORDERS_COMPLETED")
+        and "%" not in tile("ORDERS_COMPLETED")
+        and "/" not in tile("ORDERS_COMPLETED"),
+        tile("ORDERS_COMPLETED")[:80] + " | " + tile("ON_TIME_INTERNAL")[:80],
     )
     check(
         "no denominator is not zero percent: nothing reached quality check reads as unknown",

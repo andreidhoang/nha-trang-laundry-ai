@@ -3679,13 +3679,13 @@ def scenario_report(console: Console) -> None:
 
     ok("two orders more were created", delta("ORDERS_CREATED")[0] == 2, delta("ORDERS_CREATED"))
     ok(
-        "one more completed, over two more created",
-        delta("ORDERS_COMPLETED") == (1, 2),
+        "one more completed, a count with no denominator (report-v2)",
+        delta("ORDERS_COMPLETED") == (1, 0) and after["ORDERS_COMPLETED"]["denominator"] is None,
         delta("ORDERS_COMPLETED"),
     )
     ok(
-        "one more cancelled, over the same two",
-        delta("ORDERS_CANCELLED") == (1, 2),
+        "one more cancelled, a count with no denominator (report-v2)",
+        delta("ORDERS_CANCELLED") == (1, 0) and after["ORDERS_CANCELLED"]["denominator"] is None,
         delta("ORDERS_CANCELLED"),
     )
     ok(
@@ -3717,7 +3717,7 @@ def scenario_report(console: Console) -> None:
     ok(
         "every figure carries the rule's version, and the on-time figure says it is assumed",
         len({kpi["query_version"] for kpi in after.values()}) == 1
-        and next(iter(after.values()))["query_version"].startswith("report-v1:")
+        and next(iter(after.values()))["query_version"].startswith("report-v2:")
         and after["ON_TIME_INTERNAL"]["data_quality"] == "RULE_ASSUMED"
         and all(
             kpi["data_quality"] == "COMPLETE"
@@ -3766,7 +3766,7 @@ def scenario_report(console: Console) -> None:
         tile_value("ORDERS_CREATED") == str(after["ORDERS_CREATED"]["numerator"]),
         tile_value("ORDERS_CREATED"),
     )
-    for key in ("ORDERS_COMPLETED", "ORDERS_CANCELLED", "ON_TIME_INTERNAL", "REWASH", "COMPLAINTS"):
+    for key in ("ON_TIME_INTERNAL", "REWASH", "COMPLAINTS"):
         wanted = f"{after[key]['numerator']}/{after[key]['denominator']}"
         ok(
             f"{key} shows the server's fraction beside its percentage",

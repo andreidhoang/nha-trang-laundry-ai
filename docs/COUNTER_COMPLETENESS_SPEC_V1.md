@@ -171,13 +171,17 @@ computing for a store and a closed date window `[from, to]` (shop-local calendar
 | KPI | Numerator | Denominator | Data quality |
 |---|---|---|---|
 | Đơn mới | orders created in window | — (a count) | `COMPLETE` |
-| Đơn hoàn tất | orders `COMPLETED` in window | orders created in window | `COMPLETE` |
-| Đơn huỷ | orders `CANCELLED` in window | orders created in window | `COMPLETE` |
+| Đơn hoàn tất | orders `COMPLETED` in window | — (a count; `report-v2`, see below) | `COMPLETE` |
+| Đơn huỷ | orders `CANCELLED` in window | — (a count; `report-v2`) | `COMPLETE` |
 | Đúng hẹn (nội bộ) | orders reaching `READY_AT_STORE` within the SLA board's stated rule | orders reaching `READY_AT_STORE` in window | `RULE_ASSUMED` (the per-order rule is undecided) |
 | Giặt lại | orders with ≥ 1 rewash in window (a production move from `EXCEPTION` back to an earlier state: counts both `REWASH` and older per-axis rewashes) | orders reaching `QUALITY_CHECK` in window | `COMPLETE` |
 | Khiếu nại | incidents opened in window | orders completed in window | `COMPLETE` |
 | Tiền đã thu | the takings figure summed per day, net of refunds, as the day summary computes it | — | `COMPLETE` |
 | Bồi hoàn đã chi | remedies executed in window, by kind | — | `COMPLETE` |
+
+**Amended by the filmed review (`report-v2`):** completed and cancelled were first divided by
+orders *created* in the window — two different populations, so the tile read "37 %" as a share of
+the week's orders and could pass 100 %. They are counts now.
 
 Every KPI is returned as `{key, numerator, denominator|null, window, data_quality, query_version}`.
 Rates are **never computed in the API or the console**: the console shows "12 / 40" and lets the

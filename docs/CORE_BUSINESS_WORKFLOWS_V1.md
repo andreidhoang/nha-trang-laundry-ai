@@ -196,7 +196,7 @@ physical custody, and inventing a fourth code would make that rule negotiable at
   cancelled; on time against the SLA board's one stated internal mark (`RULE_ASSUMED`); rewash
   (a production move out of `EXCEPTION` to an earlier state, however it was recorded); complaints;
   money collected net of refunds; remedies executed by kind. Every figure is a numerator and a
-  denominator from `report-v1`; the screen prints both and computes no rate. Margin is shown as not
+  denominator from `report-v2`; the screen prints both and computes no rate. Margin is shown as not
   computed, because no cost is captured (`SHOP-INSTRUMENT-001`).
 - **The network drops.** The console says so, disables every control that would write, and queues
   nothing. When the network returns, the controls it disabled come back — and only those; a control
@@ -293,7 +293,7 @@ Recorded so the gap is visible rather than discovered at the counter. Each is in
 | ~~An SLA board~~ | **Built, 2026-09-22.** The read model was never the missing half: `ShadowConsoleRepository.sla_risk_board` already existed with migration `0037`'s clock fix, and building a second one would have re-introduced a bug already paid for once. What was missing was a surface — `GET /internal/v1/stores/{store_id}/sla-board` and `#/sla-board`, ordered by the server, each row carrying the query version and the one stated rule that produced it. Per-order `ProductionSlaPolicy` is still undecided and the board says so in the assistant's own words. `OPS-BOARD-001` |
 | Payment methods, part payments, deposits, credit | One shape only (§4) |
 | Batches, chain of custody, machine cycles, delivery cost capture | Blocked on `SHOP-INSTRUMENT-001` |
-| ~~A daily operations dashboard and CSV export~~ | **Built, 2026-09-22 and 2026-09-25.** The export exists and is versioned: `#/exports` raises an `EXPORT_SANITIZED_DATA` envelope, an owner who is not the staff member that defined it approves it, and the file is released once with its query version and a digest recorded in `data_exports`. It carries no incident free text, no evidence summary and no contact key. One day, or since `EXPORT-RANGE-001` a window of up to 92 shop-local days whose two ends are inside the digest the owner approves (an approval of one window cannot release another), cut on `orders.created_at` — which is **not** the boundary the takings figure uses, and both surfaces now say so. The file carries no KPI. The dashboard is built (`REPORT-DASHBOARD-001`): `#/reports` serves every `FR-RPT-005` figure as a numerator, a denominator, a window, a data-quality status and the `report-v1` version; margin is still not computed. `OPS-BOARD-001`, `EXPORT-FIX-001`, `EXPORT-RANGE-001`, `REPORT-DASHBOARD-001` |
+| ~~A daily operations dashboard and CSV export~~ | **Built, 2026-09-22 and 2026-09-25.** The export exists and is versioned: `#/exports` raises an `EXPORT_SANITIZED_DATA` envelope, an owner who is not the staff member that defined it approves it, and the file is released once with its query version and a digest recorded in `data_exports`. It carries no incident free text, no evidence summary and no contact key. One day, or since `EXPORT-RANGE-001` a window of up to 92 shop-local days whose two ends are inside the digest the owner approves (an approval of one window cannot release another), cut on `orders.created_at` — which is **not** the boundary the takings figure uses, and both surfaces now say so. The file carries no KPI. The dashboard is built (`REPORT-DASHBOARD-001`): `#/reports` serves every `FR-RPT-005` figure as a numerator, a denominator, a window, a data-quality status and the `report-v2` version; margin is still not computed. `OPS-BOARD-001`, `EXPORT-FIX-001`, `EXPORT-RANGE-001`, `REPORT-DASHBOARD-001` |
 
 ### 9.1 Where a specification and the code disagree
 
@@ -310,7 +310,7 @@ These are documentation defects, not behaviour defects — the code is the autho
 | `specs/ENGINEERING_SPEC_V1.md` §10.6 | TypeScript strict mode | The console is plain ES modules, deliberately, with the reasoning recorded in `apps/web/README.md` |
 | `specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md` | An agent opens incidents with server-computed hashes | The agent path is unauthorised, so nothing computes them, and the staff path inherited the requirement |
 | `docs/STAFF_CONSOLE_ENGINEERING_SPEC_V1.md` §2 | The SLA risk read model is unrouted | Routed since `OPS-BOARD-001`: `GET /internal/v1/stores/{store_id}/sla-board` behind `#/sla-board`. The per-order policy it also names is genuinely still undecided |
-| same, §14 | No versioned read models, so there is no dashboard and no export | The day summary, the sanitized export and the owner's report (`report-v1`, `REPORT-DASHBOARD-001`) are versioned queries with pinned identifiers; the report is the dashboard `FR-RPT-005` asks for, every figure with its numerator and denominator |
+| same, §14 | No versioned read models, so there is no dashboard and no export | The day summary, the sanitized export and the owner's report (`report-v2`, `REPORT-DASHBOARD-001`) are versioned queries with pinned identifiers; the report is the dashboard `FR-RPT-005` asks for, every figure with its numerator and denominator |
 
 ---
 

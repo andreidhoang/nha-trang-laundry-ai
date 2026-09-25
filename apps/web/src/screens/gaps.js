@@ -203,7 +203,7 @@ const GROUPS = [
         blockedBy: "SHOP-INSTRUMENT-001",
       },
       // "Bảng điều hành hằng ngày" (M3 · MÀN 14, FR-RPT-001/-005) was here until
-      // REPORT-DASHBOARD-001 built `report-v1` and the #/reports screen: the funnel, the on-time
+      // REPORT-DASHBOARD-001 built `report-v2` and the #/reports screen: the funnel, the on-time
       // rate against the board's stated rule, rewash, complaints, money collected and remedies,
       // each as numerator / denominator / window / data quality / query version. What that entry
       // still covered and the report cannot show is margin, so the entry is narrowed to it rather

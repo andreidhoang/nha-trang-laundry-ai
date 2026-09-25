@@ -78,8 +78,8 @@ REPORT_READ_ROLES: Final = frozenset(
 #: The longest window a report answers, in shop-local calendar days (a quarter).
 REPORT_MAX_DAYS: Final = 92
 
-#: The published identifier. `report-v1:<digest>` travels with every figure (invariant 18).
-REPORT_QUERY_IDENTIFIER: Final = "report-v1"
+#: The published identifier. `report-v2:<digest>` travels with every figure (invariant 18).
+REPORT_QUERY_IDENTIFIER: Final = "report-v2"
 
 #: The production sequence the rewash rule compares positions in, as the SQL receives it.
 _SEQUENCE: Final = tuple(status.value for status in PRODUCTION_SEQUENCE)
@@ -477,21 +477,14 @@ def _period(row: Any, from_date: date, to_date: date, on_time: tuple[int, int]) 
     )
     figures = (
         ReportFigure(ReportKey.ORDERS_CREATED, created, None, None, "ORDERS", DataQuality.COMPLETE),
+        # Counts, not rates (`report-v2`, the round-6 filmed review). v1 divided the orders that
+        # completed or were cancelled in the window by the orders *created* in it: two different
+        # populations, so "37 %" read as "37 % of this week's orders finished" and could pass 100 %.
         ReportFigure(
-            ReportKey.ORDERS_COMPLETED,
-            completed,
-            created,
-            ReportKey.ORDERS_CREATED,
-            "ORDERS",
-            DataQuality.COMPLETE,
+            ReportKey.ORDERS_COMPLETED, completed, None, None, "ORDERS", DataQuality.COMPLETE
         ),
         ReportFigure(
-            ReportKey.ORDERS_CANCELLED,
-            cancelled,
-            created,
-            ReportKey.ORDERS_CREATED,
-            "ORDERS",
-            DataQuality.COMPLETE,
+            ReportKey.ORDERS_CANCELLED, cancelled, None, None, "ORDERS", DataQuality.COMPLETE
         ),
         ReportFigure(
             ReportKey.ON_TIME_INTERNAL,

@@ -74,14 +74,14 @@ const KPI = {
   ORDERS_COMPLETED: {
     label: "Đơn hoàn tất",
     definition:
-      "Tử số: số đơn chuyển sang hoàn tất trong khoảng ngày. Mẫu số: số đơn tạo trong cùng " +
-      "khoảng. Một đơn tạo từ trước mà hoàn tất trong khoảng này vẫn được đếm ở tử số.",
+      "Số đơn chuyển sang hoàn tất trong khoảng ngày, kể cả đơn tạo từ trước. Đây là số đếm, " +
+      "không chia cho số đơn mới — hai nhóm đơn đó khác nhau.",
   },
   ORDERS_CANCELLED: {
     label: "Đơn huỷ",
     definition:
-      "Tử số: số đơn bị huỷ trong khoảng ngày, kể cả đơn không nhận đồ. Mẫu số: số đơn tạo " +
-      "trong cùng khoảng.",
+      "Số đơn bị huỷ trong khoảng ngày, kể cả đơn không nhận đồ và đơn tạo từ trước. Đây là số " +
+      "đếm, không chia cho số đơn mới.",
   },
   ON_TIME_INTERNAL: {
     label: "Đúng hẹn (nội bộ)",
@@ -171,6 +171,26 @@ function tile(spec) {
     spec.fraction ? h("p", { class: "kpi__fraction" }, spec.fraction) : null,
     spec.note ? h("div", { class: "kpi__note" }, spec.note) : null,
   );
+}
+
+/**
+ * A count tile: the server's integer, large, with no rate beside it (`report-v2`).
+ *
+ * @param {any} kpi
+ * @returns {HTMLElement}
+ */
+function countTile(kpi) {
+  const words = KPI[kpi.key];
+  return tile({
+    key: kpi.key,
+    label: words.label,
+    value: integer(kpi.numerator),
+    fraction: "đơn",
+    info: infoButton(
+      `${words.label} tính thế nào?`,
+      ...definitionBody(words.definition, kpi.data_quality),
+    ),
+  });
 }
 
 /**
@@ -315,8 +335,8 @@ function tiles(summary) {
           ...definitionBody(KPI.ORDERS_CREATED.definition, kpis.ORDERS_CREATED.data_quality),
         ),
       }),
-      ratioTile(kpis.ORDERS_COMPLETED, "đơn tạo"),
-      ratioTile(kpis.ORDERS_CANCELLED, "đơn tạo"),
+      countTile(kpis.ORDERS_COMPLETED),
+      countTile(kpis.ORDERS_CANCELLED),
       ratioTile(
         onTime,
         "đơn giặt xong",

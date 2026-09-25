@@ -111,8 +111,8 @@ def test_the_summary_serves_the_seeded_figures_in_the_fr_rpt_005_shape(
         assert kpi["denominator"] is None or isinstance(kpi["denominator"], int)
     assert {key: (kpi["numerator"], kpi["denominator"]) for key, kpi in kpis.items()} == {
         "ORDERS_CREATED": (7, None),
-        "ORDERS_COMPLETED": (1, 7),
-        "ORDERS_CANCELLED": (2, 7),
+        "ORDERS_COMPLETED": (1, None),
+        "ORDERS_CANCELLED": (2, None),
         "ON_TIME_INTERNAL": (2, 3),
         "REWASH": (2, 4),
         "COMPLAINTS": (3, 1),

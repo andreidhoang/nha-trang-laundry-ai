@@ -5382,3 +5382,257 @@ items:
   - no_capability_authorisation_changed
   - rollback_assessment
   blocked_by_decisions: []
+- id: CUSTOMER-001
+  phase: PRODUCTION_HARDENING
+  title: 'A customer list with consent: phone, name, address, note; search by phone, last four digits or name'
+  status: PENDING
+  priority: 330
+  depends_on:
+  - CONTACT-PICK-001
+  context_domains:
+  - platform
+  - orders_audit
+  - privacy_consent
+  normative_sources:
+  - docs/SHOP_OPERATIONS_SPEC_V1.md
+  - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-shop-operations-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - refused_until_the_owner_publishes_the_notice
+  - no_phone_value_in_any_audit_event_or_outbox_row
+  - search_by_phone_last_four_and_name
+  - erasure_keeps_orders
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: PAYMENT-001
+  phase: PRODUCTION_HARDENING
+  title: Part payments and deposits with a method (cash or transfer); goods leave only when paid
+  status: PENDING
+  priority: 331
+  depends_on:
+  - ORDER-STEPS-002
+  context_domains:
+  - platform
+  - orders_audit
+  - pricing
+  normative_sources:
+  - docs/SHOP_OPERATIONS_SPEC_V1.md
+  - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-shop-operations-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - overpayment_is_refused_and_pickup_needs_paid
+  - existing_paid_orders_migrate_with_their_sum
+  - takings_split_by_method_equal_the_payments
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: PAYMENT-002
+  phase: PRODUCTION_HARDENING
+  title: 'Account customers (công nợ): owner-set limit, monthly statement, overdue block'
+  status: PENDING
+  priority: 332
+  depends_on:
+  - CUSTOMER-001
+  - PAYMENT-001
+  context_domains:
+  - platform
+  - orders_audit
+  - pricing
+  normative_sources:
+  - docs/SHOP_OPERATIONS_SPEC_V1.md
+  - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-shop-operations-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - an_unpaid_handover_stays_within_the_owner_limit
+  - an_overdue_statement_blocks_new_account_orders
+  - statement_totals_equal_orders_and_payments
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: PROMISE-001
+  phase: PRODUCTION_HARDENING
+  title: A promised-ready time on every order, in opening hours, from the owner-confirmed turnaround rules
+  status: PENDING
+  priority: 333
+  depends_on:
+  - ORDER-STEPS-002
+  context_domains:
+  - platform
+  - orders_audit
+  - promotion_delivery_sla
+  normative_sources:
+  - docs/SHOP_OPERATIONS_SPEC_V1.md
+  - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-shop-operations-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_promise_is_computed_by_the_domain_in_opening_hours
+  - a_human_sets_it_where_the_rule_says_so
+  - on_time_counts_against_the_first_promise
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: UNCLAIMED-001
+  phase: PRODUCTION_HARDENING
+  title: 'Laundry waiting for pickup: contact attempts, storage fee after day 20, owner-approved disposal after day 60'
+  status: PENDING
+  priority: 334
+  depends_on:
+  - PAYMENT-001
+  context_domains:
+  - platform
+  - orders_audit
+  - pricing
+  normative_sources:
+  - docs/SHOP_OPERATIONS_SPEC_V1.md
+  - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-shop-operations-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_fee_is_computed_by_the_domain_from_the_published_policy
+  - disposal_needs_the_attempts_the_rule_names
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-CAPTURE-001
+  phase: PRODUCTION_HARDENING
+  title: 'Measure the shop inside existing taps: machine per wash cycle, trip costs, Sổ thu chi, margin only when complete'
+  status: PENDING
+  priority: 335
+  depends_on:
+  - ORDER-STEPS-002
+  - REPORT-DASHBOARD-001
+  context_domains:
+  - platform
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - docs/SHOP_OPERATIONS_SPEC_V1.md
+  - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-shop-operations-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_cycle_opens_and_closes_inside_the_step_transaction
+  - margin_is_shown_only_for_a_complete_month
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: DAILY-SUMMARY-001
+  phase: PRODUCTION_HARDENING
+  title: The owner's evening summary from a versioned template over the report read model, no language model
+  status: PENDING
+  priority: 336
+  depends_on:
+  - REPORT-DASHBOARD-001
+  - PAYMENT-001
+  - PROMISE-001
+  - UNCLAIMED-001
+  context_domains:
+  - platform
+  - business_truth
+  normative_sources:
+  - docs/SHOP_OPERATIONS_SPEC_V1.md
+  - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-shop-operations-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_sentence_names_a_versioned_figure
+  - no_personal_data_in_the_text
+  - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SHOP-FILMED-REVIEW-004
+  phase: PRODUCTION_HARDENING
+  title: Every shop-operations flow filmed at phone size against the real API, reviewed as the counter worker and the owner, every finding fixed
+  status: PENDING
+  priority: 337
+  depends_on:
+  - CUSTOMER-001
+  - PAYMENT-001
+  - PAYMENT-002
+  - PROMISE-001
+  - UNCLAIMED-001
+  - SHOP-CAPTURE-001
+  - DAILY-SUMMARY-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/SHOP_OPERATIONS_SPEC_V1.md
+  - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-shop-operations-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_new_flow_filmed_at_phone_size
+  - each_review_finding_is_fixed_with_a_guard
+  - gaps_register_lists_exactly_what_is_missing
+  - no_capability_authorisation_changed
+  - rollback_assessment
+  blocked_by_decisions: []

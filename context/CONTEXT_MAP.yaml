@@ -27,6 +27,8 @@ global_sources:
 domains:
   platform:
     sources:
+    - docs/SHOP_OPERATIONS_SPEC_V1.md
+    - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
     - specs/IMPLEMENTATION_ROADMAP_V1.md
     - docs/adr/0001-python-control-plane.md
     - docs/adr/0007-production-deployment-topology.md
@@ -87,6 +89,8 @@ domains:
     - Runtime comparisons use identical model, prompt, context, tools, budgets, datasets and safety denominator.
   pricing:
     sources:
+    - docs/SHOP_OPERATIONS_SPEC_V1.md
+    - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
     - specs/DOMAIN_DATA_API_SPEC_V1.md
     - specs/ENGINEERING_SPEC_V1.md
     - PRICEBOOK_V1.md
@@ -106,6 +110,8 @@ domains:
     - Use integer VND only.
   promotion_delivery_sla:
     sources:
+    - docs/SHOP_OPERATIONS_SPEC_V1.md
+    - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
     - specs/DOMAIN_DATA_API_SPEC_V1.md
     - specs/ENGINEERING_SPEC_V1.md
     - PROMOTION_2026_08.md
@@ -119,6 +125,8 @@ domains:
     - Unresolved or stale policy must return REQUIRE_HUMAN.
   orders_audit:
     sources:
+    - docs/SHOP_OPERATIONS_SPEC_V1.md
+    - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
     - specs/DOMAIN_DATA_API_SPEC_V1.md
     - specs/SECURITY_RELIABILITY_SPEC_V1.md
     - docs/DECISION_REQUEST_ORDER_EXIT_2026-08.md
@@ -151,6 +159,8 @@ domains:
     - The public agent cannot choose customer, contact, address, or order identifiers.
   privacy_consent:
     sources:
+    - docs/SHOP_OPERATIONS_SPEC_V1.md
+    - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
     - specs/ENGINEERING_SPEC_V1.md
     - specs/SECURITY_RELIABILITY_SPEC_V1.md
     - CUSTOMER_SERVICE_POLICY_DRAFT.md
@@ -197,6 +207,8 @@ domains:
     - Dashboard metrics and priorities are deterministic; AI may explain but not originate or mutate them.
   business_truth:
     sources:
+    - docs/SHOP_OPERATIONS_SPEC_V1.md
+    - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
     - BUSINESS_TRUTH_INTAKE.md
     - MACHINE_INVENTORY.md
     - PRICEBOOK_V1.md

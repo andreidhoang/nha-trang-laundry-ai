@@ -156,7 +156,7 @@ the same transaction.
 | Cancelling from review | Requires a **custody resolution**: `NOT_RECEIVED`, `RETURNED_UNWASHED_REFUNDED`, or `SHOP_FAULT_NO_CHARGE`. It is recorded on the order's event permanently |
 | A resolution that contradicts the record | Refused. "We never received it" cannot be said about an order whose custody is recorded; "returned unwashed" cannot be said about laundry that has been in a machine |
 | A stain or a machine fault during production | `EXCEPTION`, then resume to the interrupted state **or any earlier one** — which is how a rewash is recorded. An exception is an interruption, never an ending |
-| The customer's laundry is finished and they never come back | No workflow. `DEC-005` (storage fee, unclaimed goods) is open |
+| The customer's laundry is finished and they never come back | `DEC-036` (2026-09-25): free 20 days, then a storage fee; disposal from day 60 after recorded contact attempts, owner-approved. Built by `UNCLAIMED-001` (`docs/SHOP_OPERATIONS_SPEC_V1.md` §5). Earlier versions of this line cited `DEC-005`, which is the channel decision |
 
 There is deliberately **no** resolution code for "washed, walked away, paid nothing". A customer
 whose laundry has been washed pays and collects, or the goods stay with the shop; the protection is

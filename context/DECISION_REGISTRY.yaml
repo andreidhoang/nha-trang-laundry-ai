@@ -119,6 +119,7 @@ decisions:
       customer-supplied media is never fetched. This answer does not depend on DEC-008.
   - id: DEC-010
     title: Settlement shapes beyond exact payment in full at handover
+    superseded_by: DEC-035 (2026-09-25, part payments, methods and account customers)
     status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW, ORDER_STATUS, BOOKING]
@@ -240,6 +241,7 @@ decisions:
       automatically.
   - id: DEC-015
     title: What a customer record is, and when a person becomes one
+    superseded_by: DEC-034 (2026-09-25, the owner reopened it for a customer database)
     status: RESOLVED
     owner: BUSINESS_OWNER
     affected_capabilities: [INTERNAL_SHADOW, QUOTE_ESTIMATE, BOOKING, MARKETING_FOLLOWUP]
@@ -1114,3 +1116,170 @@ decisions:
       released one by one. (2) Withdraw the release route, or narrow RELEASE_ROLES to OWNER_ADMIN.
       (3) Publish a changed policy document; it is the next version with no deploy. (4) Removing an
       enforcement point reopens the gap it closes and needs a replacement, not a revert.
+  - id: DEC-034
+    title: 'The shop keeps a customer list: phone, name, address, note, with consent'
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, ORDER_STATUS, MARKETING_FOLLOWUP]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    opened_at: '2026-09-25'
+    question: >-
+      DEC-015 said not yet (no use, no consent event). The owner now wants a customer database for
+      the business. What is stored, under which consent, who sees it, how it is erased.
+    resolved_at: '2026-09-25'
+    decision_record: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    decided_under: >-
+      The business owner wrote on 2026-09-25: "solve all these issues by reasoning as founder and
+      senior software engineer ... you make decision best based on Vietnamese business thinking".
+      Delegated, not signed. Boundaries kept: no legal basis is asserted by the software (the owner
+      confirms by publishing), and no money figure the owner has not given is enforced before the
+      owner publishes it.
+    resolution: >-
+      Reopens DEC-015. A customer record holds a normalised Vietnamese phone (encrypted, keyed
+      digest for search, last 4 digits), optional name as given, address, a note of at most 200
+      characters, kind RETAIL or BUSINESS; a required service consent attested by staff with the
+      notice version, and a separate marketing consent, default off. Search by phone, last 4 digits
+      or name. Records link counter tickets and channel bindings. Erasure on request and after 24
+      months without activity keeps orders (DEC-008 financial schedule). Creating a record is
+      refused with PRIVACY_NOTICE_UNPUBLISHED until the owner publishes
+      docs/POLICY_CUSTOMER_PRIVACY_NOTICE_V1.md.
+    reversal: >-
+      Unpublish the notice and run the erasure job; orders and money untouched.
+  - id: DEC-035
+    title: Part payments, payment methods and account customers (công nợ)
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, ORDER_STATUS, BOOKING]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    opened_at: '2026-09-25'
+    question: >-
+      DEC-010 deferred everything beyond exact payment. The owner confirmed cash or bank transfer,
+      and B2B credit after approval with terms undecided.
+    resolved_at: '2026-09-25'
+    decision_record: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    decided_under: >-
+      The business owner wrote on 2026-09-25: "solve all these issues by reasoning as founder and
+      senior software engineer ... you make decision best based on Vietnamese business thinking".
+      Delegated, not signed. Boundaries kept: no legal basis is asserted by the software (the owner
+      confirms by publishing), and no money figure the owner has not given is enforced before the
+      owner publishes it.
+    resolution: >-
+      Supersedes the DEC-010 deferral. Methods TIEN_MAT and CHUYEN_KHOAN; any number of payments
+      from 1 VND up to what is owed; overpayment refused; goods leave only when paid, except an
+      owner-marked BUSINESS account within the credit limit the owner types (unset refuses
+      ACCOUNT_LIMIT_UNSET); monthly statement due the 15th of the next month; an overdue statement
+      requires counter payment for new orders until settled or the owner lifts it. Refunds through
+      the existing refund path. Recommended starting limit 3.000.000 VND, not enforced.
+    reversal: >-
+      Unmark accounts; exact payment stays the default shape.
+  - id: DEC-036
+    title: 'Laundry nobody comes back for: storage fee and disposal'
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [ORDER_STATUS]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    opened_at: '2026-09-25'
+    question: >-
+      The shop's terms say collect within 20 days, then a storage fee, disposal after 60 days; no
+      fee amount, no procedure, and no decision id existed (docs had mislabelled it DEC-005).
+    resolved_at: '2026-09-25'
+    decision_record: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    decided_under: >-
+      The business owner wrote on 2026-09-25: "solve all these issues by reasoning as founder and
+      senior software engineer ... you make decision best based on Vietnamese business thinking".
+      Delegated, not signed. Boundaries kept: no legal basis is asserted by the software (the owner
+      confirms by publishing), and no money figure the owner has not given is enforced before the
+      owner publishes it.
+    resolution: >-
+      Free for 20 days after ready; from day 21, 5.000 VND per order per day capped at 50% of the
+      order total, waivable by an approver or the owner with a record; contact attempts recorded;
+      from day 60 the owner may approve disposal (donation) only with at least 3 attempts on at
+      least 2 distinct days, closing with custody resolution UNCLAIMED_DISPOSED; the receipt prints
+      the rule. Fee and disposal run only after the owner publishes
+      scripts/publish_storage_policy.py.
+    reversal: >-
+      Unpublish or republish with other figures; recorded fees stay on their orders.
+  - id: DEC-037
+    title: Every order gets a promised-ready time
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [ORDER_STATUS, SLA_GUIDANCE]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    opened_at: '2026-09-25'
+    question: >-
+      The per-order SLA rule was listed as undecided, though templates/service-sla.csv and the
+      calendar rules were owner-confirmed; nothing computed a promise.
+    resolved_at: '2026-09-25'
+    decision_record: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    decided_under: >-
+      The business owner wrote on 2026-09-25: "solve all these issues by reasoning as founder and
+      senior software engineer ... you make decision best based on Vietnamese business thinking".
+      Delegated, not signed. Boundaries kept: no legal basis is asserted by the software (the owner
+      confirms by publishing), and no money figure the owner has not given is enforced before the
+      owner publishes it.
+    resolution: >-
+      Computed at RECEIVE from the order's service categories in opening hours (08:00-20:00,
+      published closed days skipped): standard clothing 8 opening hours; shoes, curtains, bedding 24
+      or 48 h by staff choice (default 48); special items and express 2 h only by staff choice; the
+      latest line wins; a year without published Tet dates makes staff set the time. Changes need a
+      reason; on-time counts against the first promise. The owner's late-delivery 10% credit is
+      reported, not issued, this round. Runs after scripts/publish_turnaround_policy.py.
+    reversal: >-
+      Unpublish the turnaround policy; orders carry no promise.
+  - id: DEC-038
+    title: Measure the shop inside taps staff already make
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    opened_at: '2026-09-25'
+    question: >-
+      SHOP-INSTRUMENT-001 needs cycle, delivery-cost and cost data and nothing captures any of it.
+    resolved_at: '2026-09-25'
+    decision_record: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    decided_under: >-
+      The business owner wrote on 2026-09-25: "solve all these issues by reasoning as founder and
+      senior software engineer ... you make decision best based on Vietnamese business thinking".
+      Delegated, not signed. Boundaries kept: no legal basis is asserted by the software (the owner
+      confirms by publishing), and no money figure the owner has not given is enforced before the
+      owner publishes it.
+    resolution: >-
+      The five confirmed machines are seeded; START_WASH asks which machine (skippable, counted) and
+      QUALITY_CHECK closes the cycle; delivery legs record vehicle, km and money spent; the owner
+      keeps a Sổ thu chi by category; margin is shown for a month only when electricity, water,
+      chemicals, wages and rent are all recorded. No per-task labour timing. SHOP-INSTRUMENT-001
+      stays BLOCKED until the data exists.
+    reversal: >-
+      Capture is optional at every tap; retire the machine list to stop asking.
+  - id: DEC-039
+    title: The owner's evening summary, built without a language model
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    opened_at: '2026-09-25'
+    question: >-
+      The owner wants an AI daily summary; DEC-006 (provider data terms, a cross-border legal act)
+      is open and every AI capability is NOT_AUTHORIZED.
+    resolved_at: '2026-09-25'
+    decision_record: docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    decided_under: >-
+      The business owner wrote on 2026-09-25: "solve all these issues by reasoning as founder and
+      senior software engineer ... you make decision best based on Vietnamese business thinking".
+      Delegated, not signed. Boundaries kept: no legal basis is asserted by the software (the owner
+      confirms by publishing), and no money figure the owner has not given is enforced before the
+      owner publishes it.
+    resolution: >-
+      A deterministic, versioned Vietnamese template over the report read model and operational
+      lists, on the owner's Hôm nay with copy and share to Zalo; no personal data in the text; no
+      automatic push until SHOP-ALERT-DELIVERY-001 passes. A model rephrasing is a later gated
+      upgrade behind DEC-006, which stays the owner's; the recommendation on record is a zero-
+      retention provider receiving aggregate figures only.
+    reversal: >-
+      Hide the card.

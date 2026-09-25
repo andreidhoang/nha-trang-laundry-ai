@@ -21,12 +21,12 @@ them.
 | Sessions cannot be listed or revoked one by one | The owner, when a phone is lost | **Yes**: `staff_sessions.id` exists, and so does the revoke route | `SESSION-LIST-001` |
 | An approval of an `ORDER` envelope makes the approver compare two version numbers by eye | The approver | **Yes** | `SESSION-LIST-001` (same slice: small, touches `approvals.js`) |
 | Real customer channel (Telegram/Zalo) | Everyone | **No**: `CHANNEL-TELEGRAM-001` needs a bot token and a public webhook endpoint; an agent may hold neither | stays BLOCKED |
-| Customer records, names, phones | Counter | **No**: `DEC-015` (owner declined on purpose) | stays declined |
-| Part payment, deposits, debt | Counter | **No**: `DEC-010` (deferred on purpose) | stays declined |
-| Unclaimed goods, storage fee | Counter | **No**: `DEC-005` is open, the owner's | stays open |
-| Batches, custody, machine cycles, delivery cost, distance | Owner | **No**: they need real measurements (`SHOP-INSTRUMENT-001`) | stays BLOCKED |
-| Per-order SLA rule | Owner | **No**: which rule applies to which service is a business decision nobody has made | stays open |
-| AI summary of the day (`FR-RPT-007`) | Owner | **No**: needs an authorised model (`DEC-006`, all 13 capabilities `NOT_AUTHORIZED`) | stays BLOCKED |
+| Customer records, names, phones | Counter | Decided 2026-09-25 (`DEC-034`, reopening `DEC-015`) | `CUSTOMER-001`, `docs/SHOP_OPERATIONS_SPEC_V1.md` |
+| Part payment, deposits, debt | Counter | Decided 2026-09-25 (`DEC-035`, superseding the `DEC-010` deferral) | `PAYMENT-001`, `PAYMENT-002` |
+| Unclaimed goods, storage fee | Counter | Decided 2026-09-25 (`DEC-036`; earlier text wrongly cited `DEC-005`, the channel decision) | `UNCLAIMED-001` |
+| Batches, custody, machine cycles, delivery cost, distance | Owner | Capture decided 2026-09-25 (`DEC-038`); the 4–6 week baseline itself still needs real days (`SHOP-INSTRUMENT-001` stays BLOCKED on data) | `SHOP-CAPTURE-001` |
+| Per-order SLA rule | Owner | Decided 2026-09-25 (`DEC-037`, from the owner-confirmed `templates/service-sla.csv`) | `PROMISE-001` |
+| AI summary of the day (`FR-RPT-007`) | Owner | Decided 2026-09-25 (`DEC-039`): a deterministic template now; a model only after `DEC-006` | `DAILY-SUMMARY-001` |
 
 **Rule for this round:** every piece either works end to end against the real API, or keeps its
 entry on `#/gaps` with the true reason. Nothing is shown working that is not.

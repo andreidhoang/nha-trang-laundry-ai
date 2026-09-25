@@ -394,7 +394,7 @@ def test_receive_at_17_00_promises_13_00_the_next_open_day(
     assert outbox["promised_ready_at"] == view.promised_ready_at.isoformat()
 
 
-def test_a_blanket_is_promised_48_opening_hours_unless_the_staff_says_24(
+def test_a_blanket_is_promised_48_calendar_hours_unless_the_staff_says_24(
     connection: psycopg.Connection[Any], shop: tuple[UUID, StaffPrincipal, StaffPrincipal]
 ) -> None:
     store_id, owner, operator = shop
@@ -402,7 +402,7 @@ def test_a_blanket_is_promised_48_opening_hours_unless_the_staff_says_24(
     silent = _receive(
         connection, _order(connection, store_id, operator, (STANDARD, BLANKET)), operator
     )
-    assert silent.promised_ready_at == at(2026, 9, 29, 17)
+    assert silent.promised_ready_at == at(2026, 9, 27, 17)  # Friday 17:00 + 48 calendar hours
     assert (silent.promise_basis, silent.promise_rule_id) == ("H48", "SLA_BLANKETS_SHEETS")
     chosen = _receive(
         connection,
@@ -410,7 +410,7 @@ def test_a_blanket_is_promised_48_opening_hours_unless_the_staff_says_24(
         operator,
         choice=PromiseChoice.H24,
     )
-    assert chosen.promised_ready_at == at(2026, 9, 27, 17)
+    assert chosen.promised_ready_at == at(2026, 9, 26, 17)
     assert chosen.promise_basis == "H24"
 
 
@@ -522,7 +522,7 @@ def test_receive_replays_with_its_promise_and_a_changed_choice_is_a_conflict(
     first = send(PromiseChoice.H24)
     again = send(PromiseChoice.H24)
     assert again.replayed and again.view == first.view
-    assert again.view.promised_ready_at == at(2026, 9, 27, 17)
+    assert again.view.promised_ready_at == at(2026, 9, 26, 17)
     with pytest.raises(IdempotencyConflictError):
         send(PromiseChoice.H48)
 
@@ -716,7 +716,7 @@ def test_the_board_ranks_by_the_order_promise_and_says_which_rule(
     unpromised = _order(connection, store_id, operator, (STANDARD,))
     _receive(connection, unpromised, operator)
     _publish(connection, owner)
-    # Accepted at the same instant with a promise of 29/9 17:00: due later, so ranked below.
+    # Same instant, promised 27/9 17:00 (48 calendar hours): due later, so ranked below.
     blanket = _order(connection, store_id, operator, (BLANKET,))
     _receive(connection, blanket, operator)
     # Express, promised 19:00 on 25/9: due soonest.
@@ -734,7 +734,7 @@ def test_the_board_ranks_by_the_order_promise_and_says_which_rule(
     assert [row.rule_source for row in board] == ["ORDER_PROMISE", "STATED_RULE", "ORDER_PROMISE"]
     assert [row.promise_rule_id for row in board] == ["EXPRESS_2H", None, "SLA_BLANKETS_SHEETS"]
     assert board[0].sla_outcome == "BREACHED" and board[0].breach_microseconds == 3_600_000_000
-    assert board[2].internal_risk_due_at == at(2026, 9, 29, 17)
+    assert board[2].internal_risk_due_at == at(2026, 9, 27, 17)
     assert board[2].remaining_microseconds is not None and board[2].remaining_microseconds > 0
 
     # The keyset is the ranking: paging one row at a time returns the same list.

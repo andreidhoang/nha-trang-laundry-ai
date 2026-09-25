@@ -435,7 +435,7 @@ def test_the_board_ranks_by_the_promise_and_says_so(
     board = client.get(f"/internal/v1/stores/{store_id}/sla-board?limit=1").json()
     (row,) = board["items"]
     # Whatever the wall clock: the stated rule's mark is eight hours after acceptance, and a
-    # blanket's promise is 48 opening hours -- at least four days -- so the blanket ranks second.
+    # blanket's promise is at least 48 calendar hours away -- so the blanket ranks second.
     assert (row["order_id"], row["rule_source"], row["promise_rule_id"]) == (
         str(unpromised),
         "STATED_RULE",

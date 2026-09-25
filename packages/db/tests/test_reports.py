@@ -612,7 +612,7 @@ def test_the_report_version_is_pinned_and_moves_with_the_boards_rule() -> None:
     """
     version = report_query_version(STANDARD_WASH_SLA)
     assert version.identifier == "report-v2"
-    assert version.digest == "b6e45d5c0fb41609"
+    assert version.digest == "b09f715c3a0cb3e2"
     stricter = ProductionSlaPolicy(
         policy_id="SLA_STANDARD_CLOTHES",
         policy_type=SlaPolicyType.COMMITMENT,

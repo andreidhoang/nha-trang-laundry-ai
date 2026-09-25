@@ -812,7 +812,7 @@ SLA_BOARD_POLICY_NOTICE = (
 #: fraction that does not round to a whole percent, a denominator of zero (no order reached quality
 #: check), and a window whose refunds exceeded its takings, so the drawer went OUT. The screen must
 #: print every one as the server sent it and compute none of them.
-REPORT_VERSION = "report-v2:b6e45d5c0fb41609"
+REPORT_VERSION = "report-v2:b09f715c3a0cb3e2"
 
 
 def report_kpis(start: str, end: str) -> list[dict[str, object]]:
@@ -944,7 +944,7 @@ SLA_BOARD_FIRST_PAGE = {
             "due_at": "2026-09-09T12:00:00+00:00",
         },
     ],
-    "query_version": "sla-risk-board-v2:cb135da94bb2a0a8",
+    "query_version": "sla-risk-board-v2:1f8c822c3e51aee1",
     "policy_id": "SLA_STANDARD_CLOTHES",
     "policy_type": "COMMITMENT",
     "policy_target_max_hours": 8,
@@ -4177,7 +4177,7 @@ with sync_playwright() as playwright:
     check(
         "the versioned query behind the figures is on the screen (technical drawer), not only in "
         "the response",
-        "sla-risk-board-v2:cb135da94bb2a0a8" in str(page.evaluate("document.body.textContent")),
+        "sla-risk-board-v2:1f8c822c3e51aee1" in str(page.evaluate("document.body.textContent")),
     )
     check(
         "each row links to the order it is about, so the list is something to act on",
@@ -4733,10 +4733,10 @@ with sync_playwright() as playwright:
             published=True,
             options=promise_options(
                 "RANGE_CHOICE",
-                "2026-09-29T10:00:00+00:00",
+                "2026-09-27T10:00:00+00:00",
                 [
-                    ("H24", "2026-09-27T10:00:00+00:00"),
-                    ("H48", "2026-09-29T10:00:00+00:00"),
+                    ("H24", "2026-09-26T10:00:00+00:00"),
+                    ("H48", "2026-09-27T10:00:00+00:00"),
                     ("CUSTOM", None),
                 ],
             ),
@@ -4751,7 +4751,7 @@ with sync_playwright() as playwright:
     check(
         "a blanket's Nhận đồ shows the promise before the press, with 48 giờ already chosen",
         "Hẹn trả:" in line
-        and "17:00 thứ Ba 29/9" in line
+        and "17:00 Chủ nhật 27/9" in line
         and chosen.count() == 1
         and chosen.first.get_attribute("value") == "H48",
         line,
@@ -4761,7 +4761,7 @@ with sync_playwright() as playwright:
     line = page.locator("#receive-promise-line").inner_text()
     check(
         "choosing 24 giờ shows the server's time for it, not a time the browser worked out",
-        "17:00 Chủ nhật 27/9" in line,
+        "17:00 thứ Bảy 26/9" in line,
         line,
     )
     page.locator("#receive-slot").check()

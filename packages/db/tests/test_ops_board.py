@@ -233,14 +233,14 @@ def test_the_board_query_version_is_pinned_to_the_rule_it_names() -> None:
     they had already moved. The identifier stayed `v1` then: no board figure changed on the day
     that pinned value did.
 
-    `PROMISE-001` published `v2` (`cb135da94bb2a0a8`): the board ranks by when each order is due --
+    `PROMISE-001` published `v2` (`1f8c822c3e51aee1`): the board ranks by when each order is due --
     its own promise, or the stated rule's mark -- and measures a promised order against its promise
     (`promise.promise_figures`, hashed beside the engine). Figures changed, so the name did.
     """
     version = sla_board_query_version(STANDARD_WASH_SLA)
     assert version.identifier == "sla-risk-board-v2"
-    assert version.digest == "cb135da94bb2a0a8"
-    assert version.label == "sla-risk-board-v2:cb135da94bb2a0a8"
+    assert version.digest == "1f8c822c3e51aee1"
+    assert version.label == "sla-risk-board-v2:1f8c822c3e51aee1"
 
 
 def test_the_board_version_moves_when_the_policy_behind_the_figure_moves() -> None:

@@ -7,22 +7,25 @@ decides nothing new:
 * **Standard clothing, washed and dried** (`SLA_STANDARD_CLOTHES`): 8 hours from acceptance.
 * **Shoes, curtains, blankets and sheets** (`SLA_SHOES`, `SLA_CURTAINS`, `SLA_BLANKETS_SHEETS`):
   24 or 48 hours, the staff member's choice after inspection -- 48 when they say nothing ("promise
-  late, deliver early").
+  late, deliver early"). These are **calendar** hours -- one or two days, as a Vietnamese customer
+  hears "24 giờ / 48 giờ" -- rolled into opening hours (founder ruling on `DEC-037`, 2026-09-25).
 * **Everything else** -- plush toys, bags, leather, toppers, pillows, dry cleaning, ironing, the
   rest (`SLA_OTHER_SPECIAL`): `HUMAN_ETA_REQUIRED`, the staff member picks the day and hour.
 * **Express, 2 hours**: only when the staff member chooses it after checking the machines, and only
   for an order of standard clothing (the one service whose fastest turnaround the owner stated).
-* **Counted in opening hours**, 08:00-20:00 Asia/Ho_Chi_Minh, published closed days skipped. Laundry
-  accepted at 17:00 is promised at 13:00 the next open day. A promise that would run through late
-  January or February of a year whose Tết days are not published is not made: the staff member
-  sets the time (`TET_DATES_UNPUBLISHED`), because the software cannot know which six days the shop
-  shuts.
+* **The 8 h and the 2 h are counted in opening hours**, 08:00-20:00 Asia/Ho_Chi_Minh, published
+  closed days skipped, because they are machine and staff work inside the working day. Laundry
+  accepted at 17:00 is promised at 13:00 the next open day.
+* **The 24 h and 48 h are counted on the clock** and then rolled into opening hours: landing before
+  08:00 moves to 08:00 that day, after 20:00 to 08:00 the next day, and a published closed day to
+  08:00 of the next open day. Friday 17:00 + 48 h is Sunday 17:00.
+* **An unpublished Tết stops both.** A promise whose span touches late January or February of a
+  year whose Tết days are not published is not made: the staff member sets the time
+  (`TET_DATES_UNPUBLISHED`), because the software cannot know which six days the shop shuts.
 * **The latest line wins**: an order's promise is the latest of its lines' promises.
 
-`DEC-037` states the rule as "counted in opening hours" and gives the 8-hour example; the 24/48-hour
-figures are counted the same way here, one rule for every duration. The console shows the resulting
-day and hour beside each choice before anything is pressed, so nobody promises a number of hours
-without seeing the date it means.
+The console shows the resulting day and hour beside each choice before anything is pressed, so
+nobody promises a number of hours without seeing the date it means.
 
 **Pure.** No clock, no database, no environment, no time-zone database: the shop's zone is a fixed
 UTC+7 offset (Vietnam has kept one offset, without daylight saving, since 1975), so a promise
@@ -55,6 +58,9 @@ TET_WINDOW_START: Final = (1, 15)
 TET_WINDOW_END: Final = (2, 29)
 #: How many Tết days the owner closes (`TET_CLOSE`, `days_count` 6).
 TET_DAYS: Final = 6
+
+#: `LinePromise.counting` for a 24/48 h line (founder ruling on `DEC-037`).
+CALENDAR_HOURS: Final = "CALENDAR_HOURS"
 
 #: `promise_state` calls an unfinished order "due soon" inside this distance of its promise. A
 #: display threshold for the counter, not a business commitment.
@@ -215,8 +221,10 @@ class LinePromise:
     service_code: str
     scope: TurnaroundScope | None
     sla_id: str | None
-    #: The opening hours this line was counted at, or None when a person must set it.
+    #: The hours this line was counted at, or None when a person must set it.
     hours: int | None
+    #: `OPENING_HOURS` (8 h, 2 h) or `CALENDAR_HOURS` (24 h / 48 h, rolled into opening hours).
+    counting: str = "OPENING_HOURS"
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +255,7 @@ class Promised:
                     "scope": None if line.scope is None else line.scope.value,
                     "sla_id": line.sla_id,
                     "hours": line.hours,
+                    "counting": line.counting,
                 }
                 for line in self.lines
             ],
@@ -430,6 +439,42 @@ def add_opening_hours(policy: TurnaroundPolicy, start: datetime, hours: int) -> 
     raise TurnaroundPolicyError("the calendar has no opening hours within a year")
 
 
+def add_calendar_hours(policy: TurnaroundPolicy, start: datetime, hours: int) -> datetime | None:
+    """`start` plus `hours` on the clock, rolled into opening hours; None across an unknown Tết.
+
+    Founder ruling on `DEC-037` (2026-09-25): "24 giờ / 48 giờ" is one or two calendar days, as a
+    customer hears it. The instant is floored to the minute; before opening it moves to opening that
+    day, after closing to opening the next day, and on a published closed day to opening on the next
+    open day. Every day from `start` to the promise is checked against the Tết-unknown window.
+    """
+
+    _require_aware(start)
+    if hours <= 0:
+        raise ValueError("hours must be positive")
+    local = start.astimezone(SHOP_TIMEZONE)
+    landing = _floor_minute(local + timedelta(hours=hours))
+    day = landing.date()
+    clock = landing.timetz().replace(tzinfo=None)
+    if clock < policy.opens_at:
+        landing = datetime.combine(day, policy.opens_at, SHOP_TIMEZONE)
+    elif clock > policy.closes_at:
+        day = day + timedelta(days=1)
+        landing = datetime.combine(day, policy.opens_at, SHOP_TIMEZONE)
+    for _ in range(_MAX_DAYS_WALKED):
+        if not policy.is_closed(day):
+            break
+        day = day + timedelta(days=1)
+        landing = datetime.combine(day, policy.opens_at, SHOP_TIMEZONE)
+    else:
+        raise TurnaroundPolicyError("the calendar has no open day within a year")
+    walked = local.date()
+    while walked <= day:
+        if policy.tet_unknown(walked):
+            return None
+        walked = walked + timedelta(days=1)
+    return landing.astimezone(UTC)
+
+
 def check_promise_time(policy: TurnaroundPolicy, at: datetime, *, after: datetime) -> datetime:
     """A person's own promise time, checked: later than `after`, on an open day, in opening hours.
 
@@ -534,16 +579,27 @@ def compute_promise(
         assert rule is not None
         if rule.kind is ScopeKind.FIXED:
             assert rule.hours is not None
-            hours = rule.hours
+            counted.append(LinePromise(line.service_code, line.scope, line.sla_id, rule.hours))
         else:
-            hours = _range_hours(rule, choice)
-        counted.append(LinePromise(line.service_code, line.scope, line.sla_id, hours))
+            counted.append(
+                LinePromise(
+                    line.service_code,
+                    line.scope,
+                    line.sla_id,
+                    _range_hours(rule, choice),
+                    CALENDAR_HOURS,
+                )
+            )
 
     latest: datetime | None = None
     latest_line: LinePromise | None = None
     for line in counted:
         assert line.hours is not None
-        at = add_opening_hours(policy, accepted_at, line.hours)
+        at = (
+            add_calendar_hours(policy, accepted_at, line.hours)
+            if line.counting == CALENDAR_HOURS
+            else add_opening_hours(policy, accepted_at, line.hours)
+        )
         if at is None:
             return PromiseNeedsHuman((PromiseReason.TET_DATES_UNPUBLISHED,), ())
         if latest is None or at > latest:
@@ -801,6 +857,7 @@ def _utc_text(value: datetime) -> str:
 
 
 __all__ = [
+    "CALENDAR_HOURS",
     "DUE_SOON",
     "SHOP_TIMEZONE",
     "SHOP_TIMEZONE_NAME",
@@ -827,6 +884,7 @@ __all__ = [
     "TurnaroundPolicy",
     "TurnaroundPolicyError",
     "TurnaroundScope",
+    "add_calendar_hours",
     "add_opening_hours",
     "check_promise_time",
     "compute_promise",

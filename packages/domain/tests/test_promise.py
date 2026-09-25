@@ -29,6 +29,7 @@ from nha_trang_laundry_domain.promise import (
     TurnaroundPolicy,
     TurnaroundPolicyError,
     TurnaroundScope,
+    add_calendar_hours,
     add_opening_hours,
     compute_promise,
     met_first_promise,
@@ -186,18 +187,58 @@ def test_a_person_may_set_a_time_across_an_unpublished_tet() -> None:
 # --- 24/48 h lines, special items, mixed orders -----------------------------------------------
 
 
+# Founder ruling on DEC-037 (2026-09-25): "24 giờ / 48 giờ" is one or two calendar days, as a
+# Vietnamese customer hears it -- clock hours, then rolled into opening hours. Only the 8 h and the
+# 2 h are opening hours.
+
+
 @pytest.mark.parametrize("code", [BLANKET, SHOES, CURTAIN, "OTHER_CURTAIN_INSTALL"])
-def test_a_range_line_defaults_to_48_opening_hours(code: str) -> None:
+def test_a_range_line_defaults_to_48_calendar_hours(code: str) -> None:
     result = compute_promise(POLICY, accepted_at=at(2026, 9, 25, 17), service_codes=[code])
     assert isinstance(result, Promised)
-    # 3 h on 25/9, then 12 h a day: 26/9, 27/9, 28/9 (39 h), 9 h on 29/9 -> 17:00.
-    assert result.promised_at.astimezone(VN) == at(2026, 9, 29, 17)
+    # Friday 17:00 + 48 h is Sunday 17:00 (it was Tuesday 17:00 in opening hours).
+    assert result.promised_at.astimezone(VN) == at(2026, 9, 27, 17)
     assert result.basis == "H48"
+    assert result.lines[0].counting == "CALENDAR_HOURS"
 
 
 def test_a_range_line_takes_24_hours_by_choice() -> None:
-    # 3 h on 25/9, 12 h on 26/9, 9 h on 27/9.
-    assert promised(at(2026, 9, 25, 17), [BLANKET], choice=PromiseChoice.H24) == at(2026, 9, 27, 17)
+    assert promised(at(2026, 9, 25, 17), [BLANKET], choice=PromiseChoice.H24) == at(2026, 9, 26, 17)
+
+
+@pytest.mark.parametrize(
+    ("accepted", "choice", "expected"),
+    [
+        # 19:30 + 24 h is 19:30 the next day: inside opening hours, untouched.
+        (at(2026, 9, 25, 19, 30), PromiseChoice.H24, at(2026, 9, 26, 19, 30)),
+        # Landing at 07:30 moves to 08:00 the same day.
+        (at(2026, 9, 25, 7, 30), PromiseChoice.H24, at(2026, 9, 26, 8)),
+        # Landing exactly at closing is a promise; a minute after closing is tomorrow 08:00.
+        (at(2026, 9, 25, 20), PromiseChoice.H24, at(2026, 9, 26, 20)),
+        (at(2026, 9, 25, 20, 1), PromiseChoice.H24, at(2026, 9, 27, 8)),
+        # Landing on 30/4 (closed), 1/5 closed too: 08:00 on 2/5.
+        (at(2027, 4, 29, 10), PromiseChoice.H24, at(2027, 5, 2, 8)),
+        (at(2027, 4, 28, 15), PromiseChoice.H48, at(2027, 5, 2, 8)),
+        # Landing inside a published Tết: 08:00 on the first day after it.
+        (at(2027, 2, 4, 10), PromiseChoice.H24, at(2027, 2, 11, 8)),
+        # Floored to the minute.
+        (at(2026, 9, 25, 15, 0, 59), PromiseChoice.H48, at(2026, 9, 27, 15)),
+    ],
+)
+def test_a_range_line_lands_in_opening_hours(
+    accepted: datetime, choice: PromiseChoice, expected: datetime
+) -> None:
+    assert promised(accepted, [BLANKET], choice=choice) == expected
+
+
+def test_a_range_line_across_an_unpublished_tet_needs_a_person() -> None:
+    # 13/1/2028 + 48 h lands on 15/1/2028, inside the window of a year without published Tết days.
+    result = compute_promise(
+        POLICY, accepted_at=at(2028, 1, 13, 10), service_codes=[BLANKET], choice=PromiseChoice.H48
+    )
+    assert result == PromiseNeedsHuman((PromiseReason.TET_DATES_UNPUBLISHED,), ())
+    # The day before the window it is promised as usual.
+    assert promised(at(2028, 1, 12, 10), [BLANKET], choice=PromiseChoice.H48) == at(2028, 1, 14, 10)
 
 
 def test_the_latest_line_wins() -> None:
@@ -205,7 +246,8 @@ def test_the_latest_line_wins() -> None:
         POLICY, accepted_at=at(2026, 9, 25, 17), service_codes=[STANDARD, BLANKET]
     )
     assert isinstance(mixed, Promised)
-    assert mixed.promised_at.astimezone(VN) == at(2026, 9, 29, 17)
+    # The blanket's Sunday 17:00 is later than the shirts' Saturday 13:00.
+    assert mixed.promised_at.astimezone(VN) == at(2026, 9, 27, 17)
     assert mixed.rule_id == "SLA_BLANKETS_SHEETS"
     assert [line.hours for line in mixed.lines] == [8, 48]
     assert mixed.trace()["lines"] == [
@@ -214,14 +256,39 @@ def test_the_latest_line_wins() -> None:
             "scope": "STANDARD_CLOTHES",
             "sla_id": "SLA_STANDARD_CLOTHES",
             "hours": 8,
+            "counting": "OPENING_HOURS",
         },
         {
             "service_code": BLANKET,
             "scope": "BLANKETS_AND_SHEETS",
             "sla_id": "SLA_BLANKETS_SHEETS",
             "hours": 48,
+            "counting": "CALENDAR_HOURS",
         },
     ]
+
+
+def test_the_latest_line_wins_when_it_is_the_opening_hours_one() -> None:
+    # Accepted 19:30: the shirts' 8 opening hours end 15:30 the next day, the blanket's 24 calendar
+    # hours at 19:30 the next day -- and 2 h express shirts beside a blanket are refused elsewhere.
+    mixed = compute_promise(
+        POLICY,
+        accepted_at=at(2026, 9, 25, 19, 30),
+        service_codes=[STANDARD, BLANKET],
+        choice=PromiseChoice.H24,
+    )
+    assert isinstance(mixed, Promised)
+    assert mixed.promised_at.astimezone(VN) == at(2026, 9, 26, 19, 30)
+    # Accepted 07:00 on a day before two closed days: the shirts end at 16:00 the same day, the
+    # blanket's 24 h lands on closed 30/4 and moves to 2/5 08:00, which wins.
+    later = compute_promise(
+        POLICY,
+        accepted_at=at(2027, 4, 29, 7),
+        service_codes=[STANDARD, BLANKET],
+        choice=PromiseChoice.H24,
+    )
+    assert isinstance(later, Promised)
+    assert later.promised_at.astimezone(VN) == at(2027, 5, 2, 8)
 
 
 @pytest.mark.parametrize("codes", [[PLUSH], [STANDARD, PILLOW], [BLANKET, "BED_TOPPER"]])
@@ -355,10 +422,10 @@ def test_options_for_a_blanket_offer_24_and_48_with_48_by_default() -> None:
     )
     assert options.requirement is PromiseRequirement.RANGE_CHOICE
     assert options.default_choice is PromiseChoice.H48
-    assert options.default_promised_at == at(2026, 9, 29, 17)
+    assert options.default_promised_at == at(2026, 9, 27, 17)
     assert [(item.choice, item.promised_at) for item in options.choices] == [
-        (PromiseChoice.H24, at(2026, 9, 27, 17)),
-        (PromiseChoice.H48, at(2026, 9, 29, 17)),
+        (PromiseChoice.H24, at(2026, 9, 26, 17)),
+        (PromiseChoice.H48, at(2026, 9, 27, 17)),
         (PromiseChoice.CUSTOM, None),
     ]
 
@@ -565,6 +632,27 @@ def test_a_later_acceptance_never_gets_an_earlier_promise(first: int, gap: int) 
     early = at(2026, 9, 1, 0) + timedelta(minutes=first)
     late = early + timedelta(minutes=gap)
     assert promised(early, [STANDARD, BLANKET]) <= promised(late, [STANDARD, BLANKET])
+
+
+@settings(max_examples=80, deadline=None)
+@given(
+    offset=st.integers(min_value=0, max_value=200 * 24 * 60 * 60),
+    hours=st.sampled_from([24, 48]),
+)
+def test_every_calendar_promise_is_the_first_opening_minute_at_or_after_the_clock(
+    offset: int, hours: int
+) -> None:
+    accepted = at(2026, 3, 1, 0) + timedelta(seconds=offset)
+    result = add_calendar_hours(POLICY, accepted, hours)
+    assert result is not None
+    local = result.astimezone(VN)
+    clock = (accepted + timedelta(hours=hours)).astimezone(VN).replace(second=0, microsecond=0)
+    assert local >= clock
+    assert not POLICY.is_closed(local.date())
+    assert POLICY.opens_at <= local.time() <= POLICY.closes_at
+    # Nothing in between is an open minute the promise skipped: it is the clock itself, or the
+    # opening of the first open day after it.
+    assert local == clock or local.time() == POLICY.opens_at
 
 
 def test_the_fixed_offset_is_asia_ho_chi_minh() -> None:

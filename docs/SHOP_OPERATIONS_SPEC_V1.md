@@ -159,8 +159,11 @@ the orders and payments; real API: a homestay account with two unpaid orders and
 `service-sla.csv` scopes (`standard_weight` → STANDARD 8h; `shoes`; `bedding` and curtains → 24/48
 staff choice; everything else → HUMAN_ETA_REQUIRED), the published opening hours and closed dates,
 staff choices. Output: promised_at, or `HUMAN_ETA_REQUIRED` with which lines need it. Business-hour
-arithmetic with closed days; a year with no Tết dates published → HUMAN_ETA_REQUIRED for any promise
-crossing late January–February of that year (fail closed).
+arithmetic with closed days for the 8 h and the express 2 h; the 24/48 h are **calendar** hours
+(founder ruling on `DEC-037`) rolled into opening hours — before 08:00 → 08:00 that day, after 20:00
+→ 08:00 the next day, a published closed day → 08:00 of the next open day. A year with no Tết dates
+published → HUMAN_ETA_REQUIRED for any promise (either counting) crossing late January–February of
+that year (fail closed).
 
 **Data:** `orders.promised_ready_at` (first promise, immutable), `order_promise_changes` (new time,
 reason, by, at). Policy: `scripts/publish_turnaround_policy.py` from `templates/service-sla.csv` +

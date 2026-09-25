@@ -4158,6 +4158,35 @@ def scenario_promise(console: Console) -> None:
         and _promise_text(str(body.get("promised_ready_at") or "")) in after_line,
         answer["text"][:200],
     )
+    # Founder ruling on DEC-037: 24 h is a calendar day, rolled into opening hours -- the stored
+    # promise is the domain's answer for the stored acceptance, and never earlier than 24 clock
+    # hours after it.
+    blanket_accepted = stored(
+        blanket["order_id"],
+        "to_char(production_accepted_at at time zone 'UTC', "
+        '\'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"\')',
+    )
+    blanket_promised = str(body.get("promised_ready_at") or "")
+    if blanket_accepted and blanket_promised:
+        from datetime import datetime, timedelta
+
+        from nha_trang_laundry_domain.promise import PromiseChoice
+
+        accepted_at = datetime.fromisoformat(blanket_accepted)
+        expected = compute_promise(
+            policy,
+            accepted_at=accepted_at,
+            service_codes=["BED_BLANKET"],
+            choice=PromiseChoice.H24,
+        )
+        stored_at = datetime.fromisoformat(blanket_promised.replace("Z", "+00:00"))
+        ok(
+            "the blanket's 24 giờ is one calendar day, rolled into opening hours (founder ruling)",
+            getattr(expected, "promised_at", None) == stored_at
+            and stored_at >= (accepted_at + timedelta(hours=24)).replace(second=0, microsecond=0)
+            and all(line.counting == "CALENDAR_HOURS" for line in getattr(expected, "lines", ())),
+            f"accepted {blanket_accepted} promised {blanket_promised} domain {expected}",
+        )
 
     # Hẹn lại: a new time and a reason; the first promise stays.
     console.open_order(order_id)

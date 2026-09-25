@@ -32,7 +32,27 @@ from uuid import UUID
 
 from nha_trang_laundry_domain.canonical import canonical_document
 
+from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
+
 MESSAGE_DRAFT_RESOURCE_TYPE = "MESSAGE_DRAFT"
+
+#: The `policy_version` a staff-raised `SEND_MESSAGE` envelope names. `MESSAGE-DRAFT-BINDING-001`.
+#:
+#: The same label the API-INTEGRITY-002 fixtures already raised these envelopes under, and it
+#: decides nothing: `SEND_MESSAGE`'s role, TTL and obligations come from `APPROVAL_POLICIES` in
+#: `packages/domain`, derived by the server when the envelope is built. It is returned beside the
+#: binding for the reason `EXPORT_POLICY_VERSION` is returned beside an export -- so the console
+#: raises the envelope from values the server handed it, and never from a string it typed.
+SEND_MESSAGE_POLICY_VERSION = "manual-send-policy-v1"
+
+#: Who may read a draft's binding: the three roles that may raise a `SEND_MESSAGE` envelope, decide
+#: one, or spend one on a manual send (`require_operations_staff`, `_require_manual_sender`). Each
+#: of them has to read the exact words to do their part. `AUDITOR` reads drafts on the Shadow
+#: surfaces and has no part in a send, so it is not admitted here.
+MESSAGE_DRAFT_BINDING_READ_ROLES = frozenset(
+    {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.OPERATOR}
+)
 
 #: The agent's own text, and that same text approved unchanged by a reviewer.
 AGENT_TEXT_REVISION = 1
@@ -145,6 +165,38 @@ def read_message_draft_binding(cursor: Any, agent_run_id: UUID) -> MessageDraftB
     )
 
 
+def read_message_draft_binding_for_store(
+    cursor: Any, *, store_id: UUID, agent_run_id: UUID, principal: StaffPrincipal
+) -> MessageDraftBinding | None:
+    """One store's draft binding, as a member of that store may read it.
+
+    `MESSAGE-DRAFT-BINDING-001`.
+
+    `API-INTEGRITY-002` made the server compute what a `SEND_MESSAGE` envelope binds and left
+    nothing that exposed it, so an envelope could not be raised from the console and an approver
+    deciding one could not read the words they were approving. This is that read, and it is the same
+    function the request, decision and manual-send paths call -- the digests a caller receives here
+    are byte-for-byte the digests those paths compare against, not a second derivation of them.
+
+    Role and MFA first, then membership of the named store, both raising the same
+    `StoreAccessError`: a caller cannot tell "your role may not" from "that store is not yours",
+    and an unknown store is indistinguishable from somebody else's. Only then is the draft read, and
+    a draft of another store answers `None` exactly as a missing or rejected one does, so a member
+    of one shop learns nothing about another shop's draft identifiers.
+
+    `None` also covers a draft a reviewer REJECTed: it has no sendable content and there is nothing
+    to show an approver or to send.
+    """
+
+    if not principal.mfa_verified or not principal.roles & MESSAGE_DRAFT_BINDING_READ_ROLES:
+        raise StoreAccessError("store access is not authorized")
+    require_store_membership(cursor, staff_user_id=principal.staff_user_id, store_id=store_id)
+    binding = read_message_draft_binding(cursor, agent_run_id)
+    if binding is None or binding.store_id != store_id:
+        return None
+    return binding
+
+
 def _uuid(value: object) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))
 
@@ -152,10 +204,13 @@ def _uuid(value: object) -> UUID:
 __all__ = [
     "AGENT_TEXT_REVISION",
     "EDITED_TEXT_REVISION",
+    "MESSAGE_DRAFT_BINDING_READ_ROLES",
     "MESSAGE_DRAFT_RESOURCE_TYPE",
+    "SEND_MESSAGE_POLICY_VERSION",
     "MessageDraftBinding",
     "MessageDraftFacts",
     "MessageDraftRendering",
     "message_draft_binding",
     "read_message_draft_binding",
+    "read_message_draft_binding_for_store",
 ]

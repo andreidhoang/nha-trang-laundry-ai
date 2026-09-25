@@ -662,7 +662,26 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 396 with all founder-ruling items landed: disjoint sentences, so 392 + 4
     # (REMEDY-ITEM-FEE-001's
     # -3 retired / +7 added). Predicted before regenerating; the registry came out at 396.
-    assert sum(counts.values()) == _registry()["total"] == 396
+    #
+    # 401 after MESSAGE-DRAFT-BINDING-001: -3 retired, +8 added, 5 re-keyed. 396 - 3 + 8 = 401.
+    #   * -3 in `screens/gaps.js`: the "Duyệt một tin nhắn soạn sẵn" entry's `missing`,
+    #     `blockedBy` and `today`. They said the message body is stored nowhere and `rendered_hash`
+    #     is checked against nothing; the body is `agent_drafts`, API-INTEGRITY-002 made the server
+    #     derive and verify the binding from it, and this item added the read the approvals card
+    #     prints. The entry was deleted rather than reworded -- the exit ORDER-LOOKUP-001 took.
+    #   * +6 in `screens/approvals.js`, the `SEND_MESSAGE` card. Two are the disclosure: the line
+    #     saying pressing Duyet allows exactly these words to exactly this recipient and sends
+    #     nothing, and the hint saying Tu choi still works on a card whose approve control is shut.
+    #     Four are refusals that keep approve shut, each saying why: a queue row with no store, a
+    #     draft edited after the envelope was raised (its text withheld, not shown with a caveat),
+    #     a draft rejected since, and a read that failed.
+    #   * +2 in `screens/manualSend.js`, step 0: the recipient is the draft's and nobody picks it,
+    #     and asking for approval is not approval and approval is not sending.
+    #   * 5 re-keyed: the `#/gaps` group lede (four entries became three), the "Tạo yêu cầu duyệt"
+    #     entry's `blockedBy` and `today` (a send and an export are both raised from the console
+    #     now, from values a server read returned), and the manual-send panel's guardrail and its
+    #     four-values hint (step 0 fills them).
+    assert sum(counts.values()) == _registry()["total"] == 401
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

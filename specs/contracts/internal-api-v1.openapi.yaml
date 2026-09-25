@@ -670,6 +670,28 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding:
+    get:
+      operationId: read_message_draft_binding
+      summary: The exact words a `SEND_MESSAGE` envelope over this draft binds, and its digests.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: agent_run_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/order-requests:
     get:
       operationId: list_order_requests

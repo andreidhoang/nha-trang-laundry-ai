@@ -581,6 +581,59 @@ def export_queue_item() -> dict[str, object]:
     }
 
 
+#: `MESSAGE-DRAFT-BINDING-001`. A `SEND_MESSAGE` envelope, and the read that makes it decidable.
+#:
+#: Until this item the card said the message body was stored nowhere and kept both buttons shut
+#: for good, and nothing in the console could raise the envelope in the first place. Section 15
+#: checks both halves: the words are on the card above the approve control, and step 0 of the
+#: manual-send panel raises the envelope from the server's read with nothing typed.
+MESSAGE_APPROVAL = "aaaaaaaa-bbbb-4333-8444-dddddddddddd"
+MESSAGE_DRAFT_ID = "bbbbbbbb-cccc-4333-8444-eeeeeeeeeeee"
+MESSAGE_RECIPIENT = "cccccccc-dddd-4333-8444-ffffffffffff"
+MESSAGE_SNAPSHOT = "JCS-SHA256-V1:" + "5" * 64
+MESSAGE_RENDERED = "JCS-SHA256-V1:" + "6" * 64
+#: Untrusted text, and deliberately hostile: a draft is shaped by a customer's conversation. The
+#: markup must arrive on screen as characters, never as an element.
+MESSAGE_TEXT = (
+    "Dạ, đồ của anh/chị đã giặt xong, mời anh/chị ghé tiệm nhận ạ.\n"
+    '<img src=x onerror="window.__pwned = true"> Tiệm mở cửa đến 21 giờ.'
+)
+
+#: `MessageDraftBindingResponse` from `main.py`, field for field.
+MESSAGE_BINDING = {
+    "store_id": STORE,
+    "action": "SEND_MESSAGE",
+    "resource_type": "MESSAGE_DRAFT",
+    "resource_id": MESSAGE_DRAFT_ID,
+    "resource_version": 1,
+    "text": MESSAGE_TEXT,
+    "recipient_binding_id": MESSAGE_RECIPIENT,
+    "snapshot_hash": MESSAGE_SNAPSHOT,
+    "rendered_hash": MESSAGE_RENDERED,
+    "policy_version": "manual-send-policy-v1",
+}
+
+
+def message_queue_item() -> dict[str, object]:
+    """The envelope as `GET /internal/v1/approvals` returns it, with the store it belongs to."""
+
+    return {
+        "approval_request_id": MESSAGE_APPROVAL,
+        "status": "REQUESTED",
+        "envelope_hash": "JCS-SHA256-V1:" + "7" * 64,
+        "required_role": "OPS_APPROVER",
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+        "replayed": False,
+        "resource_type": "MESSAGE_DRAFT",
+        "resource_id": MESSAGE_DRAFT_ID,
+        "resource_version": 1,
+        "snapshot_hash": MESSAGE_SNAPSHOT,
+        "rendered_hash": MESSAGE_RENDERED,
+        "action": "SEND_MESSAGE",
+        "store_id": STORE,
+    }
+
+
 def range_price_approval() -> dict[str, object]:
     """The raised envelope, as the server answers since `DEC-029`: already attested by the chooser.
 
@@ -773,8 +826,102 @@ with sync_playwright() as playwright:
                 )
                 return
             body = EXPORT_REQUEST_CONTENT
+        elif "/message-drafts/" in url and url.split("?")[0].endswith("/binding"):
+            # The read section 15 exists for. Three answers: the envelope's own words, a draft a
+            # reviewer edited since (revision 2, other digests), and a draft rejected since (404).
+            state.setdefault("binding_reads", []).append(url)
+            if state.get("message_rejected"):
+                route.fulfill(
+                    status=404,
+                    content_type="application/json",
+                    body=json.dumps({"detail": "no sendable message draft"}),
+                )
+                return
+            if state.get("message_edited"):
+                body = {
+                    **MESSAGE_BINDING,
+                    "resource_version": 2,
+                    "text": "Dạ, tiệm giao tận nơi trong hôm nay ạ.",
+                    "snapshot_hash": "JCS-SHA256-V1:" + "8" * 64,
+                    "rendered_hash": "JCS-SHA256-V1:" + "9" * 64,
+                }
+            else:
+                body = MESSAGE_BINDING
+        elif "/shadow/reviews" in url and state.get("reviews_listed"):
+            # Two decided drafts: one a person approved, which may now be asked to send, and one
+            # they rejected, which has nothing sendable and must offer no such link.
+            body = [
+                {
+                    "review_id": "dddddddd-eeee-4333-8444-111111111111",
+                    "agent_run_id": MESSAGE_DRAFT_ID,
+                    "decision": "APPROVE",
+                    "reason_code": None,
+                    "edited_text": None,
+                    "decided_by_staff_id": SESSION_OK["staff_user_id"],
+                    "decided_at": "2026-09-25T03:00:00+00:00",
+                    "draft_text": "Dạ, đồ của anh/chị đã giặt xong ạ.",
+                    "terminal_outcome": "DRAFT",
+                    "terminal_code": "DRAFT_REQUIRES_HUMAN",
+                    "produced_at": "2026-09-25T02:59:00+00:00",
+                },
+                {
+                    "review_id": "dddddddd-eeee-4333-8444-222222222222",
+                    "agent_run_id": "eeeeeeee-ffff-4333-8444-333333333333",
+                    "decision": "REJECT",
+                    "reason_code": "TONE_NOT_APPROPRIATE",
+                    "edited_text": None,
+                    "decided_by_staff_id": SESSION_OK["staff_user_id"],
+                    "decided_at": "2026-09-25T02:00:00+00:00",
+                    "draft_text": "Mai lấy nhé.",
+                    "terminal_outcome": "DRAFT",
+                    "terminal_code": "DRAFT_REQUIRES_HUMAN",
+                    "produced_at": "2026-09-25T01:59:00+00:00",
+                },
+            ]
+        elif "/internal/v1/approvals/" in url and url.endswith("/decisions"):
+            # Captured, because the property is what the press sends back: the envelope's own
+            # version and digests, exactly as the queue gave them.
+            state.setdefault("decision_posts", []).append(route.request.post_data)
+            sent = json.loads(route.request.post_data or "{}")
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "approval_request_id": MESSAGE_APPROVAL,
+                        "status": sent.get("decision", "APPROVED"),
+                        "envelope_hash": "JCS-SHA256-V1:" + "7" * 64,
+                        "required_role": "OPS_APPROVER",
+                        "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+                        "replayed": False,
+                    }
+                ),
+            )
+            return
+        elif (
+            url.split("?")[0].endswith("/internal/v1/approvals") and route.request.method == "POST"
+        ):
+            # Step 0 of the manual-send panel raising the `SEND_MESSAGE` envelope.
+            state.setdefault("approval_posts", []).append(route.request.post_data)
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "approval_request_id": MESSAGE_APPROVAL,
+                        "status": "REQUESTED",
+                        "envelope_hash": "JCS-SHA256-V1:" + "7" * 64,
+                        "required_role": "OPS_APPROVER",
+                        "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+                        "replayed": False,
+                    }
+                ),
+            )
+            return
         elif url.split("?")[0].endswith("/internal/v1/approvals"):
-            if state.get("export_listed"):
+            if state.get("message_listed"):
+                body = [message_queue_item()]
+            elif state.get("export_listed"):
                 body = [export_queue_item()]
             else:
                 body = [range_price_queue_item()] if state.get("approvals_listed") else []
@@ -2457,6 +2604,233 @@ with sync_playwright() as playwright:
     )
     EXPORT_REQUEST_CONTENT["rendered_hash"] = EXPORT_RENDERED
     state["export_listed"] = False
+
+    print()
+    print("=" * 74)
+    print("15. DUYỆT GỬI TIN — the exact words above the button, and raised from the server's read")
+    print("=" * 74)
+
+    # `MESSAGE-DRAFT-BINDING-001`. The card used to say the message body was stored nowhere and
+    # kept both buttons shut for good, and nothing in the console could raise the envelope. Four
+    # properties, each only provable in a browser: the words are in the document above the approve
+    # control; hostile markup in a draft is shown as characters and never becomes an element; a
+    # draft that moved after the envelope was raised withholds its text and leaves only "Từ chối";
+    # and step 0 raises the envelope from the read with nothing typed.
+
+    def approve_state() -> object:
+        return page.evaluate(
+            """() => {
+              const card = document.querySelector("article.card");
+              if (!card) return "no card";
+              const find = (label) => [...card.querySelectorAll("button")]
+                .find((b) => b.textContent.trim() === label);
+              const approve = find("Duyệt");
+              const refuse = find("Từ chối");
+              if (!approve || !refuse) return "missing a control";
+              return { approve: approve.disabled, refuse: refuse.disabled };
+            }"""
+        )
+
+    state["message_listed"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    text = rendered_text()
+
+    check(
+        "the queue names the send action and its resource type",
+        "SEND_MESSAGE" in text and "MESSAGE_DRAFT" in text,
+    )
+    check(
+        "the card read the words through the envelope's own store",
+        any(
+            f"/stores/{STORE}/message-drafts/{MESSAGE_DRAFT_ID}/binding" in u
+            for u in state.get("binding_reads", [])
+        ),
+        repr(state.get("binding_reads")),
+    )
+    check(
+        "the exact words the envelope binds are on the card",
+        "mời anh/chị ghé tiệm nhận ạ." in text and "Tiệm mở cửa đến 21 giờ." in text,
+    )
+    check(
+        "hostile markup in the draft is shown as characters",
+        '<img src=x onerror="window.__pwned = true">' in text,
+    )
+    check(
+        "and never becomes an element or runs",
+        page.evaluate(
+            """() => document.querySelectorAll("article.card img").length === 0
+                     && window.__pwned !== true"""
+        )
+        is True,
+    )
+    check(
+        "the stale 'hệ thống không lưu nội dung tin nhắn' reasoning is gone from the screen",
+        "không lưu nội dung tin nhắn" not in text,
+    )
+    ordering = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          const body = card.querySelector("[data-message-body]");
+          if (!approve) return "no approve control";
+          if (!body) return "the message body is not rendered";
+          const before =
+            Boolean(body.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING);
+          return { before, disabled: approve.disabled };
+        }"""
+    )
+    check(
+        "the words precede the approve control in the document",
+        isinstance(ordering, dict) and ordering.get("before") is True,
+        repr(ordering),
+    )
+    check(
+        "and the control is pressable — this envelope was undecidable by anyone",
+        isinstance(ordering, dict) and ordering.get("disabled") is False,
+        repr(ordering),
+    )
+
+    page.locator("article.card button", has_text="Duyệt").first.click()
+    page.wait_for_timeout(700)
+    posts = [json.loads(p or "{}") for p in state.get("decision_posts", [])]
+    check(
+        "pressing Duyệt sends back the envelope's own version and both digests",
+        bool(posts)
+        and posts[-1].get("decision") == "APPROVED"
+        and posts[-1].get("resource_version") == 1
+        and posts[-1].get("snapshot_hash") == MESSAGE_SNAPSHOT
+        and posts[-1].get("rendered_hash") == MESSAGE_RENDERED,
+        repr(posts[-1:]),
+    )
+
+    # A reviewer edited the draft after the envelope was raised. The words on file are no longer
+    # the words the press would hand back, so they are withheld and only a refusal is offered.
+    state["message_edited"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    text = rendered_text()
+    controls = approve_state()
+    check(
+        "an edited draft leaves Duyệt shut and Từ chối usable",
+        controls == {"approve": True, "refuse": False},
+        repr(controls),
+    )
+    check(
+        "its new text is withheld rather than shown with a caveat",
+        "tiệm giao tận nơi" not in text and "mời anh/chị ghé tiệm nhận ạ." not in text,
+    )
+    check(
+        "and the card names the reason, with both versions",
+        "Tin nhắn đã đổi so với phiếu" in text and "v1" in text and "v2" in text,
+    )
+    before = len(state.get("decision_posts", []))
+    page.locator("article.card button", has_text="Từ chối").first.click()
+    page.wait_for_timeout(700)
+    posts = [json.loads(p or "{}") for p in state.get("decision_posts", [])]
+    check(
+        "refusing the stale envelope sends a REJECTED decision and nothing else",
+        len(posts) == before + 1 and posts[-1].get("decision") == "REJECTED",
+        repr(posts[-1:]),
+    )
+    state["message_edited"] = False
+
+    # A reviewer rejected the draft since: nothing is sendable.
+    state["message_rejected"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    text = rendered_text()
+    controls = approve_state()
+    check(
+        "a rejected draft leaves Duyệt shut and Từ chối usable",
+        controls == {"approve": True, "refuse": False},
+        repr(controls),
+    )
+    check(
+        "and says the draft has nothing left to send",
+        "Bản nháp không còn gửi được" in text and "mời anh/chị" not in text,
+    )
+    state["message_rejected"] = False
+    state["message_listed"] = False
+
+    # Where the operator starts: a decided draft on `#/shadow`. Only one a person approved or
+    # rewrote offers the way to ask for a send.
+    state["reviews_listed"] = True
+    page.evaluate("location.hash = '#/shadow'")
+    page.wait_for_timeout(900)
+    links = page.evaluate(
+        """() => [...document.querySelectorAll("a[href^='#/exceptions?draft=']")]
+                 .map((a) => a.getAttribute("href"))"""
+    )
+    check(
+        "an approved draft on #/shadow links to step 0 with its id, and a rejected one does not",
+        links == [f"#/exceptions?draft={MESSAGE_DRAFT_ID}"],
+        repr(links),
+    )
+    state["reviews_listed"] = False
+
+    # Step 0: the operator opens the manual-send panel on a draft, as the `#/shadow` link does.
+    page.evaluate(f"location.hash = '#/exceptions?draft={MESSAGE_DRAFT_ID}'")
+    page.wait_for_timeout(1000)
+    text = rendered_text()
+    check(
+        "step 0 reads the draft and prints the words before offering anything",
+        "Đúng những chữ sẽ được xin duyệt và gửi" in text
+        and "mời anh/chị ghé tiệm nhận ạ." in text,
+    )
+    check(
+        "the recipient is the opaque binding, shortened, and nothing else about the customer",
+        MESSAGE_RECIPIENT[:8] in text and MESSAGE_RECIPIENT not in text,
+    )
+    page.locator("button", has_text="Xin duyệt gửi đúng tin này").first.click()
+    page.wait_for_timeout(700)
+    raised = [json.loads(p or "{}") for p in state.get("approval_posts", [])]
+    check(
+        "the envelope is raised from the server's read, value for value",
+        bool(raised)
+        and raised[-1]
+        == {
+            k: MESSAGE_BINDING[k]
+            for k in MESSAGE_BINDING
+            if k not in {"text", "recipient_binding_id"}
+        },
+        repr(raised[-1:]),
+    )
+    check(
+        "and names no recipient of its own",
+        bool(raised) and "recipient_binding_id" not in raised[-1],
+    )
+    prefilled = page.evaluate(
+        """() => ({
+          approval: document.querySelector("#manual-approval-id")?.value,
+          version: document.querySelector("#manual-resource-version")?.value,
+          snapshot: document.querySelector("#manual-snapshot-hash")?.value,
+          rendered: document.querySelector("#manual-rendered-hash")?.value,
+        })"""
+    )
+    check(
+        "step 1 is filled from the raised envelope, so nothing is pasted",
+        prefilled
+        == {
+            "approval": MESSAGE_APPROVAL,
+            "version": "1",
+            "snapshot": MESSAGE_SNAPSHOT,
+            "rendered": MESSAGE_RENDERED,
+        },
+        repr(prefilled),
+    )
+    check(
+        "and the page says a different person must approve and nothing was sent",
+        "không phải bạn" in rendered_text() and "Chưa có gì được gửi" in rendered_text(),
+    )
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

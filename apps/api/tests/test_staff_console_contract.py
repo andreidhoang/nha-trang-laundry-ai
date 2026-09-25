@@ -276,7 +276,12 @@ def test_every_screen_declares_a_unique_path() -> None:
 #: the exemption is unsafe and the screen should declare `needsStore` instead. `approvals.js` is
 #: here because its queue spans every store the owner is assigned to, and only the DEC-029 review
 #: panel is per store -- declaring `needsStore` would blank the whole queue for a multi-store owner.
-STORE_GATE_EXEMPT = {"today.js", "approvals.js"}
+#: Its `MESSAGE_DRAFT` card is store-scoped too, but by the envelope's own store rather than the
+#: selected one (`MESSAGE-DRAFT-BINDING-001`), and has its own guard test below. `manualSend.js`
+#: is not a screen at all: it is the panel `exceptions.js` mounts, and that screen declares
+#: `needsStore`. The test below proves both halves of that, and that the panel still refuses
+#: without a store.
+STORE_GATE_EXEMPT = {"today.js", "approvals.js", "manualSend.js"}
 
 SCREEN_EXPORT = re.compile(r"export const screen = \{(.*?)\n\};", re.S)
 
@@ -432,4 +437,42 @@ def test_the_exempt_approvals_screen_builds_its_store_url_only_with_a_store() ->
     )
     assert re.search(r"store\s*\n?\s*\?\s*h\(", text), (
         "approvals.js must render a no-store notice instead of the review list when no store is set"
+    )
+
+
+def test_the_message_draft_card_reads_through_the_envelopes_own_store() -> None:
+    """`MESSAGE-DRAFT-BINDING-001`. The queue spans stores; the selected one would be wrong.
+
+    The card must build its URL from the queue row's `store_id` and refuse a row without one --
+    never fall back to `storeId()`, which names whichever shop the top bar shows.
+    """
+
+    text = (WEB / "src" / "screens" / "approvals.js").read_text(encoding="utf-8")
+    start = text.index("async function loadMessageDraft(")
+    body = text[start : text.index("\n}\n", start)]
+    assert "message-drafts/${draftPart}/binding" in body
+    assert re.search(r"const storePart = encodeURIComponent\(envelopeStore\)", body)
+    assert re.search(r"const envelopeStore = typeof item\.store_id === \"string\"", body)
+    assert re.search(r"if \(!envelopeStore\) \{", body), (
+        "a queue row without a store must be refused, not guessed"
+    )
+    assert "storeId()" not in body
+
+
+def test_the_manual_send_panel_is_mounted_only_by_a_screen_that_needs_a_store() -> None:
+    """The exemption of `manualSend.js` above is only safe while all three of these hold."""
+
+    screens = WEB / "src" / "screens"
+    panel = (screens / "manualSend.js").read_text(encoding="utf-8")
+    assert SCREEN_EXPORT.search(panel) is None, "manualSend.js became a screen; declare needsStore"
+    importers = sorted(
+        path.name
+        for path in screens.glob("*.js")
+        if path.name != "manualSend.js" and "./manualSend.js" in path.read_text(encoding="utf-8")
+    )
+    assert importers == ["exceptions.js"], importers
+    block = SCREEN_EXPORT.search((screens / "exceptions.js").read_text(encoding="utf-8"))
+    assert block is not None and "needsStore: true" in block.group(1)
+    assert re.search(r"if \(!store\) \{", panel), (
+        "the manual-send panel must refuse to build a store-scoped URL without a store"
     )

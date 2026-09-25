@@ -42,6 +42,7 @@ from nha_trang_laundry_db.manual_sends import (
     ManualSendAuthorizationError,
     ManualSendStateError,
 )
+from nha_trang_laundry_db.message_drafts import SEND_MESSAGE_POLICY_VERSION
 from nha_trang_laundry_db.orders import (
     OrderAuthorizationError,
     OrderNotVisibleError,
@@ -573,6 +574,40 @@ class ApprovalResponse(BaseModel):
     # show an approver what they are approving: `SET_RANGE_PRICE` and `PRESENT_QUOTE` are both
     # `QUOTE_REVISION`, and only one of them is about a number the quote screen does not render.
     action: str | None = None
+    # The shop the envelope belongs to, from the approval row. Null on the same two paths. The
+    # queue spans every store the approver is assigned to, and a `MESSAGE_DRAFT`'s words are read
+    # through a store-scoped route, so the console needs the envelope's own store rather than the
+    # one selected in its top bar (`MESSAGE-DRAFT-BINDING-001`).
+    store_id: UUID | None = None
+
+
+class MessageDraftBindingResponse(BaseModel):
+    """What a `SEND_MESSAGE` envelope over one draft binds, as the server computes it.
+
+    `MESSAGE-DRAFT-BINDING-001`. Every value is the server's: the words are the draft's current
+    sendable text as stored (the agent's, or a reviewer's EDIT), and `resource_version`,
+    `snapshot_hash` and `rendered_hash` are the digests `ApprovalRepository.request`, `decide` and
+    the manual send compare against -- the same function computes all of them. `action`,
+    `resource_type` and `policy_version` complete an `ApprovalRequest`, so the console raises the
+    envelope from this body without typing any of it.
+
+    The recipient is the opaque contact binding, the identifier `ManualSendResponse` already
+    returns as `recipient_binding_id`. No phone number or chat id exists on a draft to disclose:
+    the channel identity lives behind the binding, and this route adds no path to it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    action: Literal["SEND_MESSAGE"]
+    resource_type: Literal["MESSAGE_DRAFT"]
+    resource_id: UUID
+    resource_version: int
+    text: str
+    recipient_binding_id: UUID
+    snapshot_hash: str
+    rendered_hash: str
+    policy_version: str
 
 
 class ManualSendResponse(BaseModel):
@@ -1900,6 +1935,51 @@ def read_range_price_proposal(
     )
 
 
+@app.get(
+    "/internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding",
+    response_model=MessageDraftBindingResponse,
+)
+def read_message_draft_binding(
+    store_id: UUID,
+    agent_run_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> MessageDraftBindingResponse:
+    """The exact words a `SEND_MESSAGE` envelope over this draft binds, and its digests.
+
+    `MESSAGE-DRAFT-BINDING-001`. `API-INTEGRITY-002` made the server compute a draft's binding and
+    nothing exposed it: an envelope could not be raised from the console, and an approver deciding
+    one could not read the message. A pure read -- it decides, reserves and sends nothing.
+
+    Role, MFA and membership of the named store are checked in the repository and refused with one
+    opaque 403, so an unknown store is indistinguishable from somebody else's. A draft that does not
+    exist, belongs to another store, or was REJECTed by a reviewer is one 404: none of them has
+    sendable content, and a caller learns nothing about other shops from the difference.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        binding = service.read_message_draft_binding(
+            store_id=store_id, agent_run_id=agent_run_id, principal=principal
+        )
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+    if binding is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no sendable message draft")
+    return MessageDraftBindingResponse(
+        store_id=binding.store_id,
+        action="SEND_MESSAGE",
+        resource_type="MESSAGE_DRAFT",
+        resource_id=binding.agent_run_id,
+        resource_version=binding.resource_version,
+        text=binding.text,
+        recipient_binding_id=binding.contact_binding_id,
+        snapshot_hash=binding.snapshot_hash,
+        rendered_hash=binding.rendered_hash,
+        policy_version=SEND_MESSAGE_POLICY_VERSION,
+    )
+
+
 @app.post(
     "/internal/v1/stores/{store_id}/quotes",
     response_model=QuoteRevisionResponse,
@@ -3062,6 +3142,7 @@ def _approval_response(stored: StoredApproval) -> ApprovalResponse:
         snapshot_hash=stored.snapshot_hash,
         rendered_hash=stored.rendered_hash,
         action=stored.action,
+        store_id=stored.store_id,
     )
 
 

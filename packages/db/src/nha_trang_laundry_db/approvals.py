@@ -152,6 +152,12 @@ class StoredApproval:
     # them. Populated by `list_pending` alongside the binding, and for the same reason: the console
     # has to know what it is being asked to approve before it can know whether it can show it.
     action: str | None = None
+    # `MESSAGE-DRAFT-BINDING-001`. The shop the envelope belongs to, read off the approval row. The
+    # queue spans every store the approver is assigned to, and the content read for a
+    # `MESSAGE_DRAFT` is store-scoped: without the envelope's own store the console could only
+    # guess it from the store selected in the top bar, and would ask the wrong shop for the words
+    # whenever the two differed. Populated by `list_pending` only, like the binding above.
+    store_id: UUID | None = None
 
 
 class ApprovalRepository:
@@ -346,6 +352,8 @@ class ApprovalRepository:
                     _datetime(row[8]),
                 )
             else:
+                if command.decision is ApprovalDecision.APPROVED:
+                    _require_computed_content_unchanged(cursor, row)
                 _record_decision(
                     connection,
                     row=row,
@@ -590,7 +598,7 @@ class ApprovalRepository:
             """
             SELECT r.id, s.status, r.envelope_hash, r.required_role, r.expires_at,
                    r.resource_type, r.resource_id, r.resource_version, r.snapshot_hash,
-                   r.rendered_hash, r.action
+                   r.rendered_hash, r.action, r.store_id
             FROM approval_requests r
             JOIN approval_request_states s ON s.approval_request_id = r.id
             JOIN staff_store_assignments a
@@ -615,6 +623,7 @@ class ApprovalRepository:
                 snapshot_hash=str(row[8]),
                 rendered_hash=str(row[9]),
                 action=str(row[10]),
+                store_id=_uuid(row[11]),
             )
             for row in cursor.fetchall()
         )
@@ -766,6 +775,35 @@ def _require_computed_resource(cursor: Any, command: ApprovalRequestCommand) -> 
     ):
         raise ApprovalStateError("the approval names a content digest this resource does not have")
     return True
+
+
+def _require_computed_content_unchanged(cursor: Any, row: tuple[object, ...]) -> None:
+    """Refuse to APPROVE content the server can recompute and that has moved since the request.
+
+    `MESSAGE-DRAFT-BINDING-001`. `_require_exact_binding` compares the decision with the stored
+    envelope, which proves the approver is deciding the envelope they read -- not that the envelope
+    still describes the draft. A reviewer's EDIT or REJECT after the envelope was raised leaves the
+    envelope intact and the draft different, and until now the approval went through: the ledger
+    then said a person approved words the draft no longer says, and the manual send refused it only
+    later. Now it is refused here, in the approval's own sentence for a stale binding, so the
+    console reads it as `APPROVAL_STALE`.
+
+    Only APPROVED is checked. A refusal of a stale envelope is always safe and is how an approver
+    clears it from the queue. Resource types without a server-side derivation are untouched; for
+    them the request-time check and `_require_exact_binding` remain the whole of it.
+    """
+    resolver = _COMPUTED_RESOURCES.get(str(row[14]))
+    if resolver is None:
+        return
+    content = resolver(cursor, _uuid(row[0]))
+    if (
+        content is None
+        or _uuid(content.store_id) != _uuid(row[13])
+        or int(content.resource_version) != int(str(row[1]))
+        or not hmac.compare_digest(str(content.snapshot_hash), str(row[2]))
+        or not hmac.compare_digest(str(content.rendered_hash), str(row[3]))
+    ):
+        raise ApprovalStateError("approval resource version or hash is stale")
 
 
 def _require_resolvable_resource(cursor: Any, command: ApprovalRequestCommand) -> None:

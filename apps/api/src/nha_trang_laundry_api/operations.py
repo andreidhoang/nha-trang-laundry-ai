@@ -62,6 +62,10 @@ from nha_trang_laundry_db.manual_sends import (
     ManualSendRepository,
     StoredManualSend,
 )
+from nha_trang_laundry_db.message_drafts import (
+    MessageDraftBinding,
+    read_message_draft_binding_for_store,
+)
 from nha_trang_laundry_db.orders import (
     CreateOrderCommand,
     OrderRepository,
@@ -967,6 +971,24 @@ class OperationsService:
         if stored.status == "EXPIRED":
             raise ApprovalStateError("approval expired")
         return stored
+
+    def read_message_draft_binding(
+        self, *, store_id: UUID, agent_run_id: UUID, principal: StaffPrincipal
+    ) -> MessageDraftBinding | None:
+        """One draft's server-computed `SEND_MESSAGE` binding (`MESSAGE-DRAFT-BINDING-001`).
+
+        A pure read. Role, MFA and membership are checked inside
+        `read_message_draft_binding_for_store`, on the cursor that then reads the draft.
+        """
+
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            return read_message_draft_binding_for_store(
+                cursor, store_id=store_id, agent_run_id=agent_run_id, principal=principal
+            )
 
     def list_pending_approvals(
         self, *, principal: StaffPrincipal, limit: int

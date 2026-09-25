@@ -746,6 +746,8 @@ def test_after_a_refusal_the_order_is_cancelled_and_offers_nothing() -> None:
     assert (after.state.commercial, after.state.intake) == (C.CANCELLED, I.REJECTED)
     assert after.state.balance is OrderBalanceStatus.UNPAID
     assert next_steps(after) == ()
+    with pytest.raises(OrderTransitionError, match="order is closed"):
+        _plan(S.REJECT_INTAKE, after, rejection_reason=IntakeRejectionReason.OTHER)
 
 
 def test_neither_step_is_ever_primary() -> None:

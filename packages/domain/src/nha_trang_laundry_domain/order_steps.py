@@ -91,6 +91,7 @@ from nha_trang_laundry_domain.catalog import (
     RewashReason,
 )
 from nha_trang_laundry_domain.orders import (
+    TERMINAL_COMMERCIAL_STATUSES,
     IntakeReadiness,
     OrderState,
     OrderTransitionError,
@@ -531,6 +532,8 @@ def _plan_rewash(simulation: _Simulation, reason: RewashReason | None) -> None:
     """
 
     state = simulation.state
+    if state.commercial in TERMINAL_COMMERCIAL_STATUSES:
+        raise OrderTransitionError("INVALID_STATE_TRANSITION: order is closed")
     if state.commercial is not CommercialOrderStatus.ACTIVE:
         raise OrderTransitionError(
             "INVALID_STATE_TRANSITION: laundry is washed again only on an active order"
@@ -558,6 +561,8 @@ def _plan_reject_intake(simulation: _Simulation, reason: IntakeRejectionReason |
     """`REJECT_INTAKE`: refuse the goods on the counter, and close the order they came with."""
 
     state = simulation.state
+    if state.commercial in TERMINAL_COMMERCIAL_STATUSES:
+        raise OrderTransitionError("INVALID_STATE_TRANSITION: order is closed")
     if state.commercial not in _COMMERCIAL_BEFORE_ACTIVE:
         raise OrderTransitionError(
             "INVALID_STATE_TRANSITION: goods are refused only before the order is accepted for work"

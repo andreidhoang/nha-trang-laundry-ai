@@ -4552,3 +4552,242 @@ items:
   - partial_payment_is_still_refused
   - rollback_assessment
   blocked_by_decisions: []
+- id: API-INTEGRITY-003
+  phase: PRODUCTION_HARDENING
+  title: A busy database answers 503 with a safe retry; an approval re-resolves its resource at decision time
+  status: PENDING
+  priority: 300
+  depends_on:
+  - API-INTEGRITY-002
+  context_domains:
+  - orders_audit
+  - platform
+  normative_sources:
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-followups-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_timed_out_statement_answers_503_with_retry_after
+  - a_timed_out_write_rolls_back_whole_and_retries_once
+  - integrity_and_programming_errors_stay_500
+  - an_approval_is_refused_when_its_resource_changed_after_the_request
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: MESSAGE-DRAFT-BINDING-001
+  phase: PRODUCTION_HARDENING
+  title: The approver reads the exact words a SEND_MESSAGE envelope binds and decides it in the queue
+  status: PENDING
+  priority: 301
+  depends_on:
+  - API-INTEGRITY-002
+  context_domains:
+  - orders_audit
+  - platform
+  normative_sources:
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-followups-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_approver_reads_the_exact_bound_text_and_hashes
+  - the_envelope_is_raised_from_the_server_read
+  - an_edited_or_rejected_draft_cannot_be_approved
+  - no_automated_send_and_no_capability_change
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: PICKUP-ONLY-SETTLE-001
+  phase: PRODUCTION_HARDENING
+  title: 'DEC-032 addendum: a PICKUP_ONLY customer pays the exact total at the counter, early or at pickup'
+  status: PENDING
+  priority: 302
+  depends_on:
+  - PREPAID-DROPOFF-001
+  context_domains:
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-followups-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_pickup_only_customer_prepays_at_the_counter_only
+  - the_handover_still_requires_finished_laundry
+  - no_courier_takes_money
+  - partial_payment_is_still_refused
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: REMEDY-GARMENT-001
+  phase: PRODUCTION_HARDENING
+  title: 'DEC-031 addendum: the staff limit and the ceiling are per garment; owner remedy envelopes open to the end of the next business day'
+  status: PENDING
+  priority: 303
+  depends_on:
+  - REMEDY-ITEM-FEE-001
+  context_domains:
+  - orders_audit
+  - pricing
+  normative_sources:
+  - docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-followups-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - each_garment_has_its_own_staff_limit_and_ceiling
+  - a_line_total_never_exceeds_five_times_the_line
+  - rows_before_the_migration_count_against_every_garment
+  - loss_and_refunded_order_compensation_still_go_to_the_owner
+  - an_owner_remedy_envelope_stays_open_to_the_end_of_the_next_business_day
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: REMEDY-INCIDENT-OUTCOME-001
+  phase: PRODUCTION_HARDENING
+  title: A complaint closes when every claim on it has an outcome, not when the first is carried out
+  status: PENDING
+  priority: 304
+  depends_on:
+  - REMEDY-GARMENT-001
+  context_domains:
+  - orders_audit
+  normative_sources:
+  - docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+  contracts:
+  - specs/contracts/canonical-enums-v1.json
+  task_packet: context/tasks/TASK-followups-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - paying_one_claim_leaves_the_complaint_open_while_another_is_open
+  - a_dead_owner_envelope_does_not_hold_the_complaint_open
+  - the_only_claim_paid_still_closes_it
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: READ-PATHS-001
+  phase: PRODUCTION_HARDENING
+  title: 'The staff directory, an order''s credits, an incident''s remedy proposals and the customer source are read back'
+  status: PENDING
+  priority: 305
+  depends_on:
+  - REMEDY-ITEM-FEE-001
+  context_domains:
+  - orders_audit
+  - platform
+  normative_sources:
+  - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-followups-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_owner_reads_the_shops_staff
+  - an_order_shows_its_credits_with_an_unused_code
+  - an_incident_lists_every_recorded_proposal
+  - an_order_shows_its_recorded_customer_source
+  - every_read_is_store_scoped
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: REMEDY-OWNER-DECIDE-001
+  phase: PRODUCTION_HARDENING
+  title: The owner decides a remedy envelope on Duyệt and staff carry an approved claim out later, from any session
+  status: PENDING
+  priority: 306
+  depends_on:
+  - REMEDY-GARMENT-001
+  - READ-PATHS-001
+  context_domains:
+  - orders_audit
+  - platform
+  normative_sources:
+  - docs/DECISION_RECORD_FOUNDER_2026-09-25.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-followups-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_owner_reads_the_exact_claim_an_envelope_binds
+  - the_owner_decides_it_in_the_console
+  - an_approved_claim_is_carried_out_later_without_session_state
+  - a_changed_claim_cannot_be_approved
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-FILMED-WALK-001
+  phase: PRODUCTION_HARDENING
+  title: Every core workflow driven in a real browser against the real API on a database migrated from empty, filmed, and every defect found fixed with a guard
+  status: PENDING
+  priority: 307
+  depends_on:
+  - API-INTEGRITY-003
+  - MESSAGE-DRAFT-BINDING-001
+  - PICKUP-ONLY-SETTLE-001
+  - REMEDY-GARMENT-001
+  - REMEDY-INCIDENT-OUTCOME-001
+  - READ-PATHS-001
+  - REMEDY-OWNER-DECIDE-001
+  context_domains:
+  - platform
+  - orders_audit
+  normative_sources:
+  - docs/STAFF_CONSOLE_ENGINEERING_SPEC_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-followups-002.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_core_workflow_driven_against_the_real_api_on_a_fresh_database
+  - each_defect_the_walk_found_is_fixed_with_a_test_that_fails_before
+  - the_walk_is_recorded_on_video
+  - no_capability_authorisation_changed
+  - rollback_assessment
+  blocked_by_decisions: []

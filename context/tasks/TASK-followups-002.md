@@ -8,7 +8,8 @@ so the owner can watch it rather than read a log.
 **Domains:** `orders_audit`, `pricing`, `business_truth`, `platform`
 
 **Stable work items:** `API-INTEGRITY-003`, `MESSAGE-DRAFT-BINDING-001`, `PICKUP-ONLY-SETTLE-001`,
-`REMEDY-GARMENT-001`, `READ-PATHS-001`, `CONSOLE-FILMED-WALK-001`.
+`REMEDY-GARMENT-001`, `REMEDY-INCIDENT-OUTCOME-001`, `READ-PATHS-001`, `REMEDY-OWNER-DECIDE-001`,
+`CONSOLE-FILMED-WALK-001`.
 
 **Stage:** PRODUCTION_HARDENING
 **Risk:** HIGH for `REMEDY-GARMENT-001` and `PICKUP-ONLY-SETTLE-001` (who may authorise money, and
@@ -31,6 +32,8 @@ when it is taken); MEDIUM for the rest.
 | `MESSAGE-DRAFT-BINDING-001` | The approver reads the exact words a `SEND_MESSAGE` envelope binds and decides it in the queue; the operator raises it from the server's read. No automated send; no capability changes. |
 | `PICKUP-ONLY-SETTLE-001` | A customer whose laundry the courier fetched may pay the exact total at the counter before it is finished; no courier takes money. |
 | `REMEDY-GARMENT-001` | A claim names which garment on a per-piece line; the staff limit and the 5× ceiling are per garment. Owner-only remedy envelopes stay open to the end of the next business day. |
+| `REMEDY-INCIDENT-OUTCOME-001` | A complaint about several garments stays open until every claim on it has an outcome; paying the first no longer closes it (found by the filmed walk). |
+| `REMEDY-OWNER-DECIDE-001` | The owner decides a loss or above-limit claim on Duyệt, and staff carry an approved claim out later from any session. Before it, every `DEC-031` owner envelope was undecidable from the console. |
 | `READ-PATHS-001` | The owner sees who works in the shop; an order shows its credits; an incident shows its remedy proposals; an order shows where the customer came from. |
 | `CONSOLE-FILMED-WALK-001` | The real-API browser scripts can film themselves (`--video`), read the database without docker (`--database-url`), and watch every screen for `[object Object]`/`NaN`. Every defect the filmed walk found is fixed with a guard. |
 

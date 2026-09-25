@@ -52,6 +52,7 @@ from nha_trang_laundry_db.orders import (
 from nha_trang_laundry_db.quotes import QuoteIntegrityError, QuoteStateError
 from nha_trang_laundry_db.range_prices import RangePriceProposalIntegrityError
 from nha_trang_laundry_db.remedies import RemedyAuthorizationError, RemedyStateError
+from nha_trang_laundry_db.remedy_reads import RemedyReadNotFoundError
 from nha_trang_laundry_db.settlement import (
     BUSINESS_TIMEZONE,
     COLLECTED_TODAY_QUERY,
@@ -546,6 +547,11 @@ class OrderViewResponse(OrderResponse):
     #: drop-off reads `balance` PAID with this false until the pickup is recorded, and the counter
     #: needs the difference to know which of the two actions to offer.
     self_collection_recorded: bool
+    #: `READ-PATHS-001`: where the customer said they found the shop, as recorded when the order
+    #: was created. Read-only and immutable (`0036`'s trigger), so the counter can see a mis-tap but
+    #: not correct it. On the staff read model only -- the command reply above does not carry it,
+    #: and the agent tool contract never names it.
+    acquisition_source: AcquisitionSource
 
 
 class ApprovalResponse(BaseModel):
@@ -1320,6 +1326,73 @@ def disable_staff(
         service.disable_staff(staff_user_id, principal.staff_user_id)
     except IdentityStateError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="staff user unavailable") from error
+
+
+# --- READ-PATHS-001: the staff directory ---------------------------------------------------------
+#
+# The four staff commands above write and nothing read them back, so every form on the staff screen
+# took a pasted UUID and the create reply was the only place one was ever shown. This is the read,
+# for the one role that may act on it. `require_owner` is the same gate the write routes use; the
+# repository re-checks the role against the database, requires MFA, and requires membership of the
+# store named -- so a wrong role, another store and an unknown store are one opaque 403.
+
+
+class StaffDirectoryEntryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    staff_user_id: UUID
+    display_name: str
+    #: `ACTIVE` or `DISABLED`.
+    status: str
+    #: Active roles, in `StaffRole` order. Roles are the person's everywhere, not this store's.
+    roles: list[str]
+    assigned_at: datetime
+    #: Null for a live assignment; set for one revoked inside `recent_revocation_days`.
+    assignment_revoked_at: datetime | None
+
+
+class StaffDirectoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    recent_revocation_days: int
+    truncated: bool
+    staff: list[StaffDirectoryEntryResponse]
+
+
+@app.get("/internal/v1/stores/{store_id}/staff", response_model=StaffDirectoryResponse)
+def list_store_staff(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_owner)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> StaffDirectoryResponse:
+    """Everyone assigned to this store, with their roles and status. Owner only.
+
+    No email and no OIDC subject: the create command hands the owner neither back, and this read
+    does not widen what the console discloses about a person.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        directory = service.list_store_staff(store_id=store_id, principal=principal)
+    except StoreAccessError as error:
+        _raise_operations_error(error)
+    return StaffDirectoryResponse(
+        store_id=directory.store_id,
+        recent_revocation_days=directory.recent_revocation_days,
+        truncated=directory.truncated,
+        staff=[
+            StaffDirectoryEntryResponse(
+                staff_user_id=entry.staff_user_id,
+                display_name=entry.display_name,
+                status=entry.status,
+                roles=list(entry.roles),
+                assigned_at=entry.assigned_at,
+                assignment_revoked_at=entry.assignment_revoked_at,
+            )
+            for entry in directory.entries
+        ],
+    )
 
 
 @app.post("/internal/v1/sessions/{session_id}/revoke", status_code=status.HTTP_204_NO_CONTENT)
@@ -2925,6 +2998,158 @@ def redeem_remedy_credit(
     return RemedyCreditRedemptionResponse.model_validate(result, from_attributes=True)
 
 
+# --- READ-PATHS-001: reading remedies back -------------------------------------------------------
+#
+# Two reads over what the four routes above write. Same gate as proposing and spending --
+# `require_operations_staff`, which is `REMEDY_ROLES` with MFA -- re-checked in the repository with
+# membership of the named store, and every row selected with that store in its predicate. So an
+# order or incident of another store answers exactly as one that does not exist: 404, after the
+# caller has already been proved a member of the store they named.
+
+
+class OrderRemedyCreditResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The code the counter types into "Dùng một khoản giảm trừ" -- the credit's own identifier.
+    credit_id: UUID
+    remedy_proposal_id: UUID
+    incident_id: UUID
+    kind: str
+    amount_vnd: int
+    #: `UNUSED` until an order spends it, then `REDEEMED`. There is no expired state: the schema
+    #: records no expiry for a credit, and this read does not invent one.
+    status: Literal["UNUSED", "REDEEMED"]
+    issued_at: datetime
+    redeemed_at: datetime | None
+    redeemed_quote_id: UUID | None
+    redeemed_quote_revision: int | None
+
+
+class OrderRemedyCreditsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    order_id: UUID
+    truncated: bool
+    credits: list[OrderRemedyCreditResponse]
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/orders/{order_id}/remedy-credits",
+    response_model=OrderRemedyCreditsResponse,
+)
+def list_order_remedy_credits(
+    store_id: UUID,
+    order_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> OrderRemedyCreditsResponse:
+    """The remedy credits issued against one order, spent or not.
+
+    The customer keeps the order's paper ticket, and the counter finds the order by its number; this
+    is how the counter then finds a credit whose code was lost (`DEC-030` lets one wait unspent).
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.list_order_remedy_credits(
+            store_id=store_id, order_id=order_id, principal=principal
+        )
+    except RemedyReadNotFoundError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order unavailable") from error
+    except StoreAccessError as error:
+        _raise_operations_error(error)
+    return OrderRemedyCreditsResponse(
+        store_id=store_id,
+        order_id=result.order_id,
+        truncated=result.truncated,
+        credits=[
+            OrderRemedyCreditResponse(
+                credit_id=credit.credit_id,
+                remedy_proposal_id=credit.remedy_proposal_id,
+                incident_id=credit.incident_id,
+                kind=credit.kind,
+                amount_vnd=credit.amount_vnd,
+                status="UNUSED" if credit.status == "UNUSED" else "REDEEMED",
+                issued_at=credit.issued_at,
+                redeemed_at=credit.redeemed_at,
+                redeemed_quote_id=credit.redeemed_quote_id,
+                redeemed_quote_revision=credit.redeemed_quote_revision,
+            )
+            for credit in result.credits
+        ],
+    )
+
+
+class IncidentRemedyProposalItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_id: UUID
+    kind: str
+    #: `STAFF_AUTHORIZED`, `OWNER_APPROVAL_REQUIRED`, `EXECUTED`, or `POLICY_UNRESOLVED` -- the
+    #: last only for a loss recorded before `DEC-031`, which carries no amount.
+    status: str
+    amount_vnd: int | None
+    ceiling_vnd: int | None
+    order_line_id: str | None
+    attested_late_by_minutes: int | None
+    window_closes_at: datetime | None
+    approval_id: UUID | None
+    #: The owner envelope's stored state, null when the proposal has none.
+    approval_status: str | None
+    approval_expires_at: datetime | None
+    #: True for an envelope still `REQUESTED` past its expiry on the server's clock.
+    approval_lapsed: bool | None
+    proposed_by: UUID
+    proposed_by_name: str
+    proposed_at: datetime
+    executed_at: datetime | None
+    credit_id: UUID | None
+
+
+class IncidentRemedyProposalsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    incident_id: UUID
+    order_id: UUID | None
+    truncated: bool
+    proposals: list[IncidentRemedyProposalItemResponse]
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-proposals",
+    response_model=IncidentRemedyProposalsResponse,
+)
+def list_incident_remedy_proposals(
+    store_id: UUID,
+    incident_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> IncidentRemedyProposalsResponse:
+    """Every proposal recorded on one incident, oldest first, whoever made it and whenever."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        result = service.list_incident_remedy_proposals(
+            store_id=store_id, incident_id=incident_id, principal=principal
+        )
+    except RemedyReadNotFoundError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="incident unavailable") from error
+    except StoreAccessError as error:
+        _raise_operations_error(error)
+    return IncidentRemedyProposalsResponse(
+        store_id=store_id,
+        incident_id=result.incident_id,
+        order_id=result.order_id,
+        truncated=result.truncated,
+        proposals=[
+            IncidentRemedyProposalItemResponse.model_validate(item, from_attributes=True)
+            for item in result.proposals
+        ],
+    )
+
+
 @app.get("/internal/v1/queue-recovery", response_model=QueueRecoveryResponse)
 def queue_recovery(
     principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
@@ -3045,6 +3270,7 @@ def _order_view_response(view: OrderView) -> OrderViewResponse:
         ticket_number=view.ticket_number,
         ticket_issued_on=view.ticket_issued_on,
         self_collection_recorded=view.self_collection_recorded,
+        acquisition_source=view.acquisition_source,
     )
 
 

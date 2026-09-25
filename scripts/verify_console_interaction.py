@@ -177,6 +177,139 @@ REMEDY_EXECUTED = {
 }
 
 
+#: READ-PATHS-001, section 15. One order as `GET /internal/v1/orders/{id}` returns it, with the
+#: acquisition source the counter recorded; the two credits it issued, one unspent and one spent;
+#: the proposals of one incident, including a pre-DEC-031 loss with no figure and an owner envelope
+#: that ran out; and a store's staff, one of them disabled and one with a name that is markup.
+ORDER_VIEW_ID = "eeeeeeee-5555-4333-8444-555555555555"
+ORDER_VIEW = {
+    "order_id": ORDER_VIEW_ID,
+    "store_id": STORE,
+    "commercial": "COMPLETED",
+    "intake": "ACCEPTED",
+    "production": "RELEASED",
+    "balance": "PAID",
+    "row_version": 14,
+    "replayed": False,
+    "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
+    "created_at": "2026-09-20T03:00:00+00:00",
+    "quote_id": "55555555-6666-4333-8444-999999999999",
+    "quote_revision": 2,
+    "payable_total_vnd": 132_000,
+    "ticket_number": 17,
+    "ticket_issued_on": "2026-09-20",
+    "self_collection_recorded": True,
+    "acquisition_source": "GOOGLE_MAPS",
+}
+UNUSED_CREDIT_ID = "abababab-1111-4333-8444-555555555555"
+SPENT_CREDIT_ID = "cdcdcdcd-2222-4333-8444-555555555555"
+ORDER_CREDITS = {
+    "store_id": STORE,
+    "order_id": ORDER_VIEW_ID,
+    "truncated": False,
+    "credits": [
+        {
+            "credit_id": UNUSED_CREDIT_ID,
+            "remedy_proposal_id": "12121212-3333-4333-8444-555555555555",
+            "incident_id": INCIDENTS[0]["incident_id"],
+            "kind": "LATE_DELIVERY_CREDIT",
+            # Not round, so a screen that reformatted or rounded it would be visible.
+            "amount_vnd": 13_200,
+            "status": "UNUSED",
+            "issued_at": "2026-09-21T03:00:00+00:00",
+            "redeemed_at": None,
+            "redeemed_quote_id": None,
+            "redeemed_quote_revision": None,
+        },
+        {
+            "credit_id": SPENT_CREDIT_ID,
+            "remedy_proposal_id": "34343434-4444-4333-8444-555555555555",
+            "incident_id": INCIDENTS[0]["incident_id"],
+            "kind": "DAMAGE_COMPENSATION",
+            "amount_vnd": 80_000,
+            "status": "REDEEMED",
+            "issued_at": "2026-09-21T04:00:00+00:00",
+            "redeemed_at": "2026-09-22T04:00:00+00:00",
+            "redeemed_quote_id": "56565656-5555-4333-8444-555555555555",
+            "redeemed_quote_revision": 3,
+        },
+    ],
+}
+RECORDED_PROPOSALS = {
+    "store_id": STORE,
+    "incident_id": INCIDENTS[0]["incident_id"],
+    "order_id": INCIDENTS[0]["order_id"],
+    "truncated": False,
+    "proposals": [
+        {
+            "proposal_id": "78787878-6666-4333-8444-555555555555",
+            "kind": "DAMAGE_COMPENSATION",
+            "status": "OWNER_APPROVAL_REQUIRED",
+            "amount_vnd": 150_000,
+            "ceiling_vnd": 600_000,
+            "order_line_id": "line-large",
+            "attested_late_by_minutes": None,
+            "window_closes_at": "2026-09-18T03:00:00+00:00",
+            "approval_id": "89898989-7777-4333-8444-555555555555",
+            "approval_status": "REQUESTED",
+            "approval_expires_at": "2026-09-17T03:10:00+00:00",
+            "approval_lapsed": True,
+            "proposed_by": "00000000-0000-4000-8000-0000000000cc",
+            "proposed_by_name": "Nguyễn Thị Lan",
+            "proposed_at": "2026-09-17T03:00:00+00:00",
+            "executed_at": None,
+            "credit_id": None,
+        },
+        {
+            "proposal_id": "90909090-8888-4333-8444-555555555555",
+            "kind": "LOST_ITEM",
+            "status": "POLICY_UNRESOLVED",
+            "amount_vnd": None,
+            "ceiling_vnd": None,
+            "order_line_id": None,
+            "attested_late_by_minutes": None,
+            "window_closes_at": None,
+            "approval_id": None,
+            "approval_status": None,
+            "approval_expires_at": None,
+            "approval_lapsed": None,
+            "proposed_by": "00000000-0000-4000-8000-0000000000cc",
+            "proposed_by_name": "Nguyễn Thị Lan",
+            "proposed_at": "2026-09-17T04:00:00+00:00",
+            "executed_at": None,
+            "credit_id": None,
+        },
+    ],
+}
+STAFF_ACTIVE_ID = "a1a1a1a1-1111-4333-8444-555555555555"
+STAFF_DISABLED_ID = "b2b2b2b2-2222-4333-8444-555555555555"
+#: Markup as a display name. The owner typed it; the directory must print it, never parse it.
+HOSTILE_NAME = '<img src=x onerror="window.__staffInjected=1">Bình'
+STAFF_DIRECTORY = {
+    "store_id": STORE,
+    "recent_revocation_days": 30,
+    "truncated": False,
+    "staff": [
+        {
+            "staff_user_id": STAFF_ACTIVE_ID,
+            "display_name": HOSTILE_NAME,
+            "status": "ACTIVE",
+            "roles": ["OPS_APPROVER", "OPERATOR"],
+            "assigned_at": "2026-09-01T03:00:00+00:00",
+            "assignment_revoked_at": None,
+        },
+        {
+            "staff_user_id": STAFF_DISABLED_ID,
+            "display_name": "Lê Thị Cúc",
+            "status": "DISABLED",
+            "roles": ["OPERATOR"],
+            "assigned_at": "2026-08-01T03:00:00+00:00",
+            "assignment_revoked_at": "2026-09-20T03:00:00+00:00",
+        },
+    ],
+}
+
+
 def check(name: str, ok: bool, detail: str = "") -> None:
     (PASS if ok else FAIL).append(name)
     print(f"{'  ok  ' if ok else ' FAIL '} {name}" + (f"  — {detail}" if detail else ""))
@@ -205,9 +338,10 @@ ORDER_REQUEST = {
 }
 ORDER_REQUEST_CREATED = {**ORDER_REQUEST, "store_id": STORE, "replayed": False}
 
-#: `OrderResponse`, verbatim. Note what it does not contain: `acquisition_source`. The console
-#: cannot show the recorded source back, which is a registered gap on `#/gaps` and the reason
-#: section 7 has to check the *form's* behaviour rather than reading the value off a card.
+#: `OrderResponse`, verbatim. Note what it does not contain: `acquisition_source`. The command
+#: reply never carries it; since READ-PATHS-001 the order *read* does (`ORDER_VIEW` below), which is
+#: what section 15 reads it back from. Section 7 still checks the form's behaviour, because what the
+#: next customer's form says is a property of the form, not of any read.
 ORDER_CREATED = {
     "order_id": "44444444-5555-4333-8444-888888888888",
     "store_id": STORE,
@@ -826,6 +960,23 @@ with sync_playwright() as playwright:
                 status=201, content_type="application/json", body=json.dumps(REMEDY_EXECUTED)
             )
             return
+        elif "remedy-proposals" in url and route.request.method == "GET":
+            # READ-PATHS-001. Empty until section 15 asks for rows, so section 11's checks about
+            # what *its own* proposal and execution put on screen are not answered by this list.
+            state.setdefault("proposal_reads", []).append(url)
+            body = (
+                RECORDED_PROPOSALS
+                if state.get("recorded_listed")
+                else {**RECORDED_PROPOSALS, "proposals": []}
+            )
+        elif "/orders/" in url and "/remedy-credits" in url:
+            state.setdefault("credit_reads", []).append(url)
+            body = ORDER_CREDITS
+        elif "/stores/" in url and url.split("?")[0].endswith("/staff"):
+            state.setdefault("staff_reads", []).append(url)
+            body = STAFF_DIRECTORY
+        elif url.split("?")[0].endswith(f"/internal/v1/orders/{ORDER_VIEW_ID}"):
+            body = ORDER_VIEW
         elif "remedy-proposals" in url and route.request.method == "POST":
             # Captured rather than merely answered: the property section 11 proves is that the
             # body carries exactly the keys this kind owns and no ceiling of its own. A stub that
@@ -1435,7 +1586,7 @@ with sync_playwright() as playwright:
         f"class={source.get_attribute('class')}",
     )
     check(
-        "the field warns that the entry is final, since no screen can show it back",
+        "the field warns that the entry is final: the detail shows it back, never edits it",
         "không sửa được" in page.content(),
     )
     # And the label points at the select, which is the CONSOLE-LABEL-001 defect one screen over.
@@ -1974,7 +2125,7 @@ with sync_playwright() as playwright:
         "Đã thực hiện" in content and "CREDIT_EXECUTED" in content,
     )
     check(
-        "the credit id is shown in full with a copy control: nothing can look it up",
+        "the credit id is shown in full with a copy control at the moment it is issued",
         REMEDY_CREDIT_ID in content and "Chép mã giảm trừ này lại ngay" in content,
     )
 
@@ -2457,6 +2608,153 @@ with sync_playwright() as playwright:
     )
     EXPORT_REQUEST_CONTENT["rendered_hash"] = EXPORT_RENDERED
     state["export_listed"] = False
+
+    print()
+    print("=" * 74)
+    print("15. ĐỌC LẠI — who works here, what an order issued, what an incident holds, and where")
+    print("    the customer came from")
+    print("=" * 74)
+
+    # READ-PATHS-001. Four reads the console's own gap register admitted it lacked. What a browser
+    # can prove that a source test cannot: that each reaches the screen that needs it, that a spent
+    # credit offers no copy control while an unspent one does, that the directory's buttons fill
+    # the *existing* forms rather than replacing them, and that a name typed as markup stays text.
+
+    page.evaluate(f"location.hash = '#/orders/{ORDER_VIEW_ID}'")
+    page.wait_for_timeout(1200)
+    text = rendered_text()
+    source = page.locator("[data-field=acquisition-source]")
+    check(
+        "the order detail shows the recorded acquisition source, glossed with its token",
+        source.count() == 1 and (source.text_content() or "") == "Tìm trên Google (GOOGLE_MAPS)",
+        repr(source.text_content()) if source.count() else "absent",
+    )
+    check(
+        "and says beside it that the value cannot be corrected",
+        "ghi rồi thì không sửa được" in text,
+    )
+    check(
+        "the credits are read from the order's own store, by the order's id",
+        any(
+            f"/stores/{STORE}/orders/{ORDER_VIEW_ID}/remedy-credits" in url
+            for url in state.get("credit_reads", [])
+        ),
+        repr(state.get("credit_reads")),
+    )
+    unused = page.locator(f"#order-remedy-credits li[data-credit-id='{UNUSED_CREDIT_ID}']")
+    spent = page.locator(f"#order-remedy-credits li[data-credit-id='{SPENT_CREDIT_ID}']")
+    check(
+        "the panel is headed for the counter and lists both credits",
+        "Khoản giảm trừ của đơn này" in text and unused.count() == 1 and spent.count() == 1,
+    )
+    check(
+        "an unused code is printed in full with a copy control",
+        UNUSED_CREDIT_ID in (unused.text_content() or "")
+        and unused.locator("button", has_text="Sao chép").count() == 1
+        and unused.get_attribute("data-credit-status") == "UNUSED",
+    )
+    check(
+        "a spent code offers no copy control, and says it was used",
+        spent.locator("button").count() == 0
+        and "Đã dùng" in (spent.text_content() or "")
+        and SPENT_CREDIT_ID not in (spent.text_content() or ""),
+        repr(spent.text_content()),
+    )
+    check(
+        "the amounts are the server's integers, formatted and not rounded",
+        "13.200" in (unused.text_content() or "") and "80.000" in (spent.text_content() or ""),
+    )
+    check(
+        "no expiry is invented for a credit",
+        "Máy chủ không ghi hạn dùng" in text and "hết hạn" not in (unused.text_content() or ""),
+    )
+
+    state["recorded_listed"] = True
+    incident = str(INCIDENTS[0]["incident_id"])
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate(f"location.hash = '#/remedies?incident={incident}'")
+    page.wait_for_timeout(1200)
+    recorded = page.locator("#remedy-recorded-proposals li[data-proposal-id]")
+    check(
+        "reading an incident lists every proposal the server recorded on it",
+        recorded.count() == 2,
+        f"{recorded.count()} rows",
+    )
+    check(
+        "the list is the incident's, read from the selected store",
+        any(
+            f"/stores/{STORE}/incidents/{incident}/remedy-proposals" in url
+            for url in state.get("proposal_reads", [])
+        ),
+    )
+    lapsed = page.locator(
+        "#remedy-recorded-proposals li[data-proposal-status=OWNER_APPROVAL_REQUIRED]"
+    )
+    legacy = page.locator("#remedy-recorded-proposals li[data-proposal-status=POLICY_UNRESOLVED]")
+    check(
+        "an owner envelope that ran out says the owner can no longer decide it",
+        "quá hạn" in (lapsed.text_content() or "")
+        and "Nguyễn Thị Lan" in (lapsed.text_content() or ""),
+        repr(lapsed.text_content()),
+    )
+    check(
+        "a loss recorded before DEC-031 is listed, with no figure rather than 0 ₫",
+        legacy.count() == 1
+        and "Không có số tiền" in (legacy.text_content() or "")
+        and "0 ₫" not in (legacy.text_content() or ""),
+        repr(legacy.text_content()),
+    )
+    state["recorded_listed"] = False
+
+    page.evaluate("location.hash = '#/staff'")
+    page.wait_for_timeout(1200)
+    rows = page.locator("#staff-directory li[data-staff-id]")
+    check(
+        "the owner sees who works in the selected store",
+        rows.count() == 2 and bool(state.get("staff_reads")),
+        f"{rows.count()} rows",
+    )
+    active_row = page.locator(f"#staff-directory li[data-staff-id='{STAFF_ACTIVE_ID}']")
+    disabled_row = page.locator(f"#staff-directory li[data-staff-id='{STAFF_DISABLED_ID}']")
+    check(
+        "a display name that is markup is printed as text and never parsed",
+        HOSTILE_NAME in (active_row.text_content() or "")
+        and active_row.locator("img").count() == 0
+        and page.evaluate("window.__staffInjected") is None,
+    )
+    check(
+        "each person's roles and status are on the row",
+        "OPS_APPROVER" in (active_row.text_content() or "")
+        and "DISABLED" in (disabled_row.text_content() or "")
+        and "Thu hồi lúc" in (disabled_row.text_content() or ""),
+    )
+    check(
+        "a disabled account is not offered to the disable form",
+        disabled_row.locator("[data-prefill=disable]").count() == 0
+        and active_row.locator("[data-prefill=disable]").count() == 1,
+    )
+    active_row.locator("[data-prefill=role]").click()
+    page.wait_for_timeout(300)
+    check(
+        "'Điền vào Gán vai trò' fills the existing role form with that person's id",
+        page.locator("#staff-role-id").input_value() == STAFF_ACTIVE_ID,
+        repr(page.locator("#staff-role-id").input_value()),
+    )
+    active_row.locator("[data-prefill=store]").click()
+    active_row.locator("[data-prefill=disable]").click()
+    page.wait_for_timeout(300)
+    check(
+        "and the store and disable forms the same way, without sending anything",
+        page.locator("#staff-store-staff").input_value() == STAFF_ACTIVE_ID
+        and page.locator("#staff-disable-id").input_value() == STAFF_ACTIVE_ID
+        and "Bấm lần nữa" not in rendered_text(),
+    )
+    check(
+        "the forms are still there, including creating somebody who belongs to no store yet",
+        page.locator("#staff-create-subject").count() == 1
+        and "không có danh sách" not in rendered_text(),
+    )
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

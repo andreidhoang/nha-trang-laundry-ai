@@ -1,13 +1,19 @@
 /**
- * Nhân sự: the four identity commands an owner actually has.
+ * Nhân sự: who works in the selected store, and the four identity commands an owner has.
  *
- * This screen is small and its shape is dictated almost entirely by what the API refuses to offer,
- * so the reasoning is written down rather than left to be rediscovered:
+ * This screen is small and its shape is dictated almost entirely by what the API offers, so the
+ * reasoning is written down rather than left to be rediscovered:
  *
- *   - **There is no staff list.** The API has `POST /internal/v1/staff` and two commands addressed
- *     by `staff_user_id`, and nothing that reads a staff user back. So the two command forms take a
- *     pasted UUID, and the create form hands its returned identifier straight across — that hand-off
- *     is the only moment in the whole system where an owner is shown a staff UUID.
+ *   - **The staff list is per store, and only the owner's.** READ-PATHS-001 added
+ *     `GET /internal/v1/stores/{store}/staff`: everyone assigned to the selected store, with their
+ *     active roles, their account status and, for thirty days, an assignment that was revoked. Each
+ *     row's buttons fill the existing forms below with that person's identifier — the forms stay
+ *     as they were, because a person created a minute ago belongs to no store yet and appears in no
+ *     list, so pasting the identifier the create reply handed across is still the way to reach them.
+ *     No email and no OIDC subject are shown: the server does not return them.
+ *   - **The list needs a store; the forms do not.** An owner with no store yet must still be able to
+ *     create people and assign stores — including to themselves — so the screen does not declare
+ *     `needsStore`. The list alone waits for a store, and says so instead of requesting one.
  *   - **Each command is its own form, its own `Submission` and its own result line.** They are three
  *     unrelated writes; sharing one idempotency key across them would let a replayed key from a role
  *     assignment collide with a disable.
@@ -29,12 +35,14 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UUID, shortId } from "../core/format.js";
+import { UNKNOWN, UUID, dateTime, shortId } from "../core/format.js";
 import { enumLabel } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
-import { principal } from "../core/session.js";
+import { principal, storeId } from "../core/session.js";
 import {
+  badge,
   copyable,
+  empty,
   enumSelect,
   errorNotice,
   explain,
@@ -44,6 +52,7 @@ import {
   panel,
   resultLine,
   setResult,
+  skeleton,
 } from "../ui/components.js";
 
 /** `StaffRole`, in the order the database `CHECK` constraint lists them. */
@@ -276,8 +285,8 @@ function createdCard(staffUserId, onCarry) {
     h(
       "p",
       { class: "hint" },
-      "Chép lại mã này. Máy chủ chưa có cách liệt kê hay tra cứu nhân sự, nên nếu mất mã thì hai " +
-        "lệnh bên dưới không dùng được cho người này nữa.",
+      "Chép lại mã này. Người mới chưa thuộc cửa hàng nào nên chưa có trong danh sách nhân sự của " +
+        "cửa hàng nào; nếu mất mã trước khi gán cửa hàng thì không tra lại được.",
     ),
     h(
       "div",
@@ -300,6 +309,7 @@ function createdCard(staffUserId, onCarry) {
  *
  * @param {object} spec
  * @param {import("../core/rbac.js").Verdict} spec.verdict
+ * @param {() => void} [spec.onDone] after a write the server accepted: re-read the staff list
  * @returns {{node: HTMLElement, setStaffId: (value: string) => void}}
  */
 function assignRolePanel(spec) {
@@ -337,6 +347,7 @@ function assignRolePanel(spec) {
       });
       submission.reset();
       setResult(result, "ok", `Đã gán ${enumLabel(draft.role)} cho ${shortId(staffUserId)}.`);
+      spec.onDone?.();
       render(
         resultHost,
         h(
@@ -346,8 +357,9 @@ function assignRolePanel(spec) {
           h(
             "p",
             null,
-            "Máy chủ chưa có cách đọc lại vai trò của một nhân viên, nên bảng vận hành không thể xác " +
-              "nhận danh sách vai trò hiện tại của người này. Chỉ biết lệnh vừa rồi đã được nhận.",
+            "Danh sách nhân sự ở đầu màn hình vừa được đọc lại. Nếu người này thuộc cửa hàng đang " +
+              "chọn, vai trò hiện tại của họ hiện ở đó; nếu không, màn hình này chỉ biết lệnh vừa " +
+              "rồi đã được nhận.",
           ),
         ),
       );
@@ -393,7 +405,9 @@ function assignRolePanel(spec) {
       labelled({
         id: "staff-role-id",
         label: "Mã nhân viên",
-        hint: "UUID của người đã được tạo. Không có danh sách để chọn — máy chủ chưa có cách đọc nhân sự.",
+        hint:
+          "Bấm “Điền vào Gán vai trò” trên một người trong danh sách nhân sự phía trên, hoặc dán " +
+          "UUID của người vừa tạo.",
         control: idInput,
       }),
       labelled({
@@ -419,8 +433,8 @@ function assignRolePanel(spec) {
       title: "Gán vai trò",
       guardrail:
         "Gán vai trò là cộng thêm, không phải thay thế: lệnh này không gỡ vai trò nào đang có. " +
-        "Bảng vận hành không đọc được vai trò hiện có và máy chủ chưa có cách thu hồi vai trò, nên " +
-        "hãy chắc chắn trước khi gửi.",
+        "Vai trò hiện có xem ở danh sách nhân sự phía trên; máy chủ chưa có cách thu hồi vai trò, " +
+        "nên hãy chắc chắn trước khi gửi.",
       children: h("div", { class: "stack" }, body, resultHost),
     }),
     setStaffId: (value) => {
@@ -439,6 +453,7 @@ function assignRolePanel(spec) {
  *
  * @param {object} spec
  * @param {import("../core/rbac.js").Verdict} spec.verdict
+ * @param {() => void} [spec.onDone] after a write the server accepted: re-read the staff list
  * @returns {{node: HTMLElement, setStaffId: (value: string) => void}}
  */
 function disableStaffPanel(spec) {
@@ -522,6 +537,7 @@ function disableStaffPanel(spec) {
       draft.staffUserId = "";
       disarm();
       redraw();
+      spec.onDone?.();
       setResult(
         result,
         "ok",
@@ -654,6 +670,7 @@ function disableStaffPanel(spec) {
  *
  * @param {object} spec
  * @param {import("../core/rbac.js").Verdict} spec.verdict
+ * @param {() => void} [spec.onDone] after a write the server accepted: re-read the staff list
  * @returns {{node: HTMLElement, setStaffId: (value: string) => void}}
  */
 function assignStorePanel(spec) {
@@ -689,6 +706,7 @@ function assignStorePanel(spec) {
         { method: intent === "grant" ? "POST" : "DELETE", idempotencyKey: submission.key() },
       );
       submission.reset();
+      spec.onDone?.();
       setResult(
         result,
         "ok",
@@ -705,9 +723,9 @@ function assignStorePanel(spec) {
           h(
             "p",
             null,
-            "Máy chủ chưa có cách đọc lại danh sách cửa hàng của người khác, nên bảng vận hành " +
-              "không xác nhận được trạng thái hiện tại của họ. Người đó đăng nhập rồi xem thanh " +
-              "trên cùng là cách kiểm tra chắc chắn.",
+            "Danh sách nhân sự phía trên chỉ nói về cửa hàng đang chọn và vừa được đọc lại. Máy " +
+              "chủ chưa có cách đọc danh sách cửa hàng của một người, nên với cửa hàng khác thì " +
+              "người đó đăng nhập rồi xem thanh trên cùng là cách kiểm tra chắc chắn.",
           ),
         ),
       );
@@ -817,14 +835,183 @@ function assignStorePanel(spec) {
 }
 
 /**
+ * Nhân sự của cửa hàng này — `GET /internal/v1/stores/{store}/staff` (READ-PATHS-001).
+ *
+ * Read-only. Each row carries buttons that put the person's identifier into the matching form
+ * further down and scroll to it; nothing is sent until the operator presses that form's own
+ * button, so the two-step disable keeps its confirm and the idempotency keys stay per form. The
+ * disable button is offered only for an active account, because disabling a disabled one is a 404.
+ *
+ * Without a selected store nothing is requested: the route is store-scoped, and a `/stores/null/`
+ * request would come back as a refusal the owner would misread as "you are not allowed".
+ *
+ * @param {object} spec
+ * @param {import("../core/rbac.js").Verdict} spec.verdict
+ * @param {(target: "role"|"store"|"disable", staffUserId: string) => void} spec.onPick
+ * @returns {{node: HTMLElement, reload: () => Promise<void>}}
+ */
+function directoryPanel(spec) {
+  const store = storeId();
+  const host = h("div", { id: "staff-directory", class: "stack" });
+  const countNode = h("span", { class: "count" }, "…");
+  const truncation = h("p", { class: "hint" });
+
+  async function reload() {
+    if (!store || !spec.verdict.allowed) return;
+    render(host, skeleton(3));
+    try {
+      const body = await request(`/internal/v1/stores/${encodeURIComponent(store)}/staff`);
+      const staff = Array.isArray(body?.staff) ? body.staff : [];
+      countNode.textContent = String(staff.length);
+      truncation.textContent = body?.truncated
+        ? `Máy chủ cắt danh sách ở ${staff.length} người; có thể còn nữa.`
+        : "";
+      render(
+        host,
+        staff.length
+          ? h("ul", { class: "stack" }, staff.map((entry) => directoryRow(entry, spec)))
+          : empty("Chưa có ai được gán vào cửa hàng này."),
+      );
+    } catch (error) {
+      countNode.textContent = UNKNOWN;
+      truncation.textContent = "";
+      render(host, errorNotice(error, { onRetry: () => void reload() }));
+    }
+  }
+
+  if (!spec.verdict.allowed) {
+    countNode.textContent = UNKNOWN;
+    render(
+      host,
+      h(
+        "div",
+        { class: "notice", dataState: "warn" },
+        h("p", { class: "notice__title" }, "Vai trò này không đọc được danh sách nhân sự"),
+        h("p", null, spec.verdict.reason),
+      ),
+    );
+  } else if (store) {
+    void reload();
+  } else {
+    countNode.textContent = UNKNOWN;
+    render(
+      host,
+      h(
+        "div",
+        { class: "notice", dataState: "info" },
+        h("p", { class: "notice__title" }, "Chưa chọn cửa hàng"),
+        h(
+          "p",
+          null,
+          "Danh sách nhân sự đọc theo từng cửa hàng. Chọn cửa hàng ở thanh trên cùng để xem ai " +
+            "đang làm ở đó; các lệnh bên dưới vẫn dùng được khi chưa chọn.",
+        ),
+      ),
+    );
+  }
+
+  return {
+    node: panel({
+      eyebrow: "Đọc · GET /internal/v1/stores/{store}/staff",
+      title: "Nhân sự của cửa hàng này",
+      count: countNode,
+      children: h(
+        "div",
+        { class: "stack" },
+        h(
+          "p",
+          { class: "hint" },
+          "Vai trò là của người đó ở mọi cửa hàng, không riêng cửa hàng này. Người bị thu hồi " +
+            "khỏi cửa hàng vẫn hiện thêm 30 ngày, có ghi rõ lúc thu hồi.",
+        ),
+        truncation,
+        host,
+      ),
+    }),
+    reload,
+  };
+}
+
+/**
+ * One person on the directory. Every string from the server is a text node (`core/dom`).
+ *
+ * @param {any} entry a `StaffDirectoryEntryResponse`
+ * @param {{onPick: (target: "role"|"store"|"disable", staffUserId: string) => void}} spec
+ * @returns {HTMLElement}
+ */
+function directoryRow(entry, spec) {
+  const id = String(entry.staff_user_id || "");
+  const roles = Array.isArray(entry.roles) ? entry.roles : [];
+  const active = entry.status === "ACTIVE";
+  const revoked = Boolean(entry.assignment_revoked_at);
+  /**
+   * @param {"role"|"store"|"disable"} target
+   * @param {string} label
+   */
+  const pick = (target, label) =>
+    h(
+      "button",
+      {
+        type: "button",
+        dataVariant: "quiet",
+        dataPrefill: target,
+        onClick: () => spec.onPick(target, id),
+      },
+      label,
+    );
+  return h(
+    "li",
+    { class: "card stack stack--tight", dataStaffId: id },
+    h(
+      "div",
+      { class: "row" },
+      h("h3", null, String(entry.display_name || UNKNOWN)),
+      badge(
+        active
+          ? { token: "ACTIVE", gloss: "Đang hoạt động", state: "ok" }
+          : { token: String(entry.status || UNKNOWN), gloss: "Đã vô hiệu hoá", state: "danger" },
+      ),
+      revoked ? badge({ token: "REVOKED", gloss: "Đã thu hồi khỏi cửa hàng", state: "warn" }) : null,
+    ),
+    facts([
+      [
+        "Vai trò",
+        roles.length ? roles.map((role) => enumLabel(role)).join(", ") : "Chưa có vai trò nào",
+        { span: true },
+      ],
+      ["Gán vào cửa hàng lúc", dateTime(entry.assigned_at)],
+      revoked ? ["Thu hồi lúc", dateTime(entry.assignment_revoked_at)] : null,
+      ["Mã nhân viên", copyable({ value: id, display: shortId(id) }), { mono: true }],
+    ]),
+    h(
+      "div",
+      { class: "form__actions" },
+      pick("role", "Điền vào Gán vai trò"),
+      pick("store", "Điền vào Gán cửa hàng"),
+      active ? pick("disable", "Điền vào Vô hiệu hoá") : null,
+    ),
+  );
+}
+
+/**
  * @returns {HTMLElement}
  */
 export function render_() {
   const verdict = can(principal(), "STAFF_ADMIN");
 
-  const roles = assignRolePanel({ verdict });
-  const stores = assignStorePanel({ verdict });
-  const disable = disableStaffPanel({ verdict });
+  /** Re-read the list after a write the server accepted, so it shows state rather than intent. */
+  const refresh = () => void directory.reload();
+  const roles = assignRolePanel({ verdict, onDone: refresh });
+  const stores = assignStorePanel({ verdict, onDone: refresh });
+  const disable = disableStaffPanel({ verdict, onDone: refresh });
+  const directory = directoryPanel({
+    verdict,
+    onPick: (target, staffUserId) => {
+      const chosen = target === "role" ? roles : target === "store" ? stores : disable;
+      chosen.setStaffId(staffUserId);
+      chosen.node.scrollIntoView({ block: "start", behavior: "smooth" });
+    },
+  });
 
   const create = createStaffPanel({
     verdict,
@@ -842,14 +1029,14 @@ export function render_() {
     h(
       "div",
       { class: "screen__header" },
-      h("p", { class: "eyebrow" }, "Chỉ chủ · không có danh sách"),
+      h("p", { class: "eyebrow" }, "Chỉ chủ · danh sách theo cửa hàng đang chọn"),
       h("h1", null, "Nhân sự"),
       h(
         "p",
         { class: "screen__lede" },
-        "Ba lệnh danh tính mà máy chủ có. Máy chủ chưa có cách đọc lại nhân sự, nên màn hình này viết " +
-          "chứ không đọc: mọi thứ nó khẳng định là kết quả của lệnh vừa gửi, không phải trạng thái " +
-          "đang có.",
+        "Ai đang làm ở cửa hàng đang chọn, cùng vai trò và trạng thái, đọc từ máy chủ; bên dưới là " +
+          "các lệnh danh tính. Sau mỗi lệnh được nhận, danh sách được đọc lại, nên điều nó hiện là " +
+          "trạng thái máy chủ đang giữ chứ không phải điều màn hình này đoán.",
       ),
     ),
     explain(
@@ -861,6 +1048,7 @@ export function render_() {
           "này; một tài khoản mới bị máy chủ từ chối ở mọi thao tác theo cửa hàng cho tới khi bước ba xong.",
       ),
     ),
+    directory.node,
     create,
     roles.node,
     stores.node,

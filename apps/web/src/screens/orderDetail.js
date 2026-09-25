@@ -22,8 +22,13 @@
  *     nothing more — not that the order is new, not that the order is absent. The empty state says
  *     the ambiguous thing because the ambiguous thing is what is true.
  *   - **Nothing is re-sorted and nothing is totalled.** The server orders by `(occurred_at, id)`,
- *     oldest first, and that order is preserved; the one amount on this screen is displayed, never
+ *     oldest first, and that order is preserved; every amount on this screen is displayed, never
  *     computed.
+ *   - **Two readbacks READ-PATHS-001 added.** The acquisition source the counter recorded when the
+ *     order was created is shown read-only — it is immutable, so a mis-tap can be seen and not
+ *     corrected. And the remedy credits the order issued are listed with their codes, because the
+ *     customer keeps this order's paper ticket and `DEC-030` lets a credit wait unspent: finding
+ *     the order by its ticket number is now how a lost credit code is found again.
  *
  * @module screens/orderDetail
  */
@@ -31,7 +36,7 @@
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UNKNOWN, UUID, count, dateTime, money, parseDong, shortId } from "../core/format.js";
-import { enumLabel, enumVi } from "../core/i18n.js";
+import { ACQUISITION_SOURCE_VI, enumLabel, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import { navigate } from "../core/router.js";
@@ -67,6 +72,81 @@ const AUDIT_LIMIT = 100;
 
 /** `SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION`: a walk-in who paid at drop-off. */
 const PREPAID_SELF_COLLECTION = "EXACT_PAYMENT_PREPAID_SELF_COLLECTION";
+
+/** `RemedyKind` in the counter's words, for the credit cards below. */
+const CREDIT_KIND_LABEL = {
+  DAMAGE_COMPENSATION: "Bồi thường món bị hỏng",
+  LATE_DELIVERY_CREDIT: "Giảm trừ do giao trễ",
+  LOST_ITEM: "Mất đồ",
+};
+
+/**
+ * The recorded acquisition source, `Gloss (TOKEN)`, from the scoped map `orders.js` writes it with.
+ *
+ * @param {string|null|undefined} value
+ * @returns {string}
+ */
+function acquisitionSourceLabel(value) {
+  if (!value) return UNKNOWN;
+  const gloss = ACQUISITION_SOURCE_VI[value];
+  if (!gloss) return String(value);
+  return `${gloss.charAt(0).toUpperCase()}${gloss.slice(1)} (${value})`;
+}
+
+/**
+ * One remedy credit the order issued.
+ *
+ * The copy control is offered only for an unused code: a spent one cannot be applied again, and a
+ * copy button beside it would invite the counter to try.
+ *
+ * @param {any} credit an `OrderRemedyCreditResponse`
+ * @returns {HTMLElement}
+ */
+function creditCard(credit) {
+  const id = String(credit.credit_id || "");
+  const unused = credit.status === "UNUSED";
+  return h(
+    "li",
+    { class: "card stack stack--tight", dataCreditId: id, dataCreditStatus: String(credit.status) },
+    h(
+      "div",
+      { class: "row" },
+      h("strong", { class: "money" }, money(credit.amount_vnd)),
+      badge(
+        unused
+          ? { token: "UNUSED", gloss: "Chưa dùng", state: "ok" }
+          : { token: String(credit.status || UNKNOWN), gloss: "Đã dùng", state: "neutral" },
+      ),
+    ),
+    facts([
+      [
+        "Mã giảm trừ",
+        unused
+          ? copyable({ value: id })
+          : h("span", { class: "mono", title: id }, shortId(id)),
+        { mono: true, span: true },
+      ],
+      ["Loại", CREDIT_KIND_LABEL[credit.kind] || String(credit.kind || UNKNOWN)],
+      ["Phát hành lúc", dateTime(credit.issued_at)],
+      unused ? null : ["Dùng lúc", dateTime(credit.redeemed_at)],
+      unused || !credit.redeemed_quote_id
+        ? null
+        : [
+            "Đã trừ vào báo giá",
+            h(
+              "a",
+              {
+                href:
+                  `#/quotes?quote=${encodeURIComponent(String(credit.redeemed_quote_id))}` +
+                  `&revision=${encodeURIComponent(String(credit.redeemed_quote_revision))}`,
+                title: String(credit.redeemed_quote_id),
+              },
+              `${shortId(credit.redeemed_quote_id)} · bản ${credit.redeemed_quote_revision}`,
+            ),
+          ],
+    ]),
+  );
+}
 
 /**
  * One audit row.
@@ -419,11 +499,15 @@ export function render_(context) {
   const shadowVerdict = can(principal(), "SHADOW_READ");
   const settlementVerdict = can(principal(), "ORDERS_WRITE");
   const incidentVerdict = can(principal(), "INCIDENTS_WRITE");
+  // The credit read uses the remedy surface's gate: an operations role with MFA.
+  const creditVerdict = can(principal(), "INCIDENTS_READ");
   const wellFormed = UUID.test(orderId);
 
   const orderHost = h("div", null, skeleton(1));
   const timelineHost = h("div", null, skeleton(3));
   const timelineCount = h("span", { class: "count" }, "…");
+  const creditHost = h("div", { id: "order-remedy-credits" }, skeleton(1));
+  const creditCount = h("span", { class: "count" }, "…");
   const timelineTruncation = h("p", { class: "hint" });
   const heading = h("h1", null, "Chi tiết đơn");
   const dueHost = h("div");
@@ -474,6 +558,14 @@ export function render_(context) {
             ["Giao nhận", enumVi(found.fulfillment_mode)],
             ["Tạo lúc", dateTime(found.created_at)],
             [
+              "Nguồn khách",
+              h(
+                "span",
+                { dataField: "acquisition-source" },
+                acquisitionSourceLabel(found.acquisition_source),
+              ),
+            ],
+            [
               "Báo giá",
               h(
                 "span",
@@ -488,6 +580,12 @@ export function render_(context) {
             "p",
             { class: "hint" },
             "Bốn trục chuyển động độc lập với nhau; đừng đọc chúng như một chuỗi tuần tự.",
+          ),
+          h(
+            "p",
+            { class: "hint" },
+            "Nguồn khách là điều nhân viên ghi lúc tạo đơn. Chỉ để xem lại: ghi rồi thì không sửa " +
+              "được, kể cả khi thấy bấm nhầm.",
           ),
           h(
             "div",
@@ -524,6 +622,47 @@ export function render_(context) {
       }
       render(orderHost, errorNotice(error, { onRetry: () => void start() }));
       return null;
+    }
+  }
+
+  /**
+   * The remedy credits this order issued, from the order's own store.
+   *
+   * @param {string} store the order's own store, read off the order
+   */
+  async function loadCredits(store) {
+    if (!creditVerdict.allowed) {
+      creditCount.textContent = "—";
+      render(
+        creditHost,
+        h(
+          "div",
+          { class: "notice", dataState: "warn" },
+          h("p", { class: "notice__title" }, "Vai trò này không đọc được khoản giảm trừ"),
+          h("p", null, creditVerdict.reason),
+        ),
+      );
+      return;
+    }
+    render(creditHost, skeleton(1));
+    try {
+      const body = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/orders/${encodeURIComponent(orderId)}/remedy-credits`,
+      );
+      const credits = Array.isArray(body?.credits) ? body.credits : [];
+      creditCount.textContent = String(credits.length);
+      render(
+        creditHost,
+        credits.length
+          ? h("ul", { class: "stack" }, credits.map(creditCard))
+          : empty("Đơn này chưa phát hành khoản giảm trừ nào."),
+        body?.truncated
+          ? h("p", { class: "hint" }, "Máy chủ cắt danh sách; có thể còn khoản khác.")
+          : null,
+      );
+    } catch (error) {
+      creditCount.textContent = "—";
+      render(creditHost, errorNotice(error, { onRetry: () => void loadCredits(store) }));
     }
   }
 
@@ -573,8 +712,11 @@ export function render_(context) {
     const found = await loadOrder();
     if (found) {
       void loadTimeline(found.store_id || storeId());
+      void loadCredits(found.store_id || storeId());
       return;
     }
+    creditCount.textContent = "—";
+    render(creditHost, empty("Chưa đọc khoản giảm trừ vì chưa đọc được đơn."));
     timelineCount.textContent = "—";
     render(timelineHost, empty("Chưa đọc dòng thời gian vì chưa đọc được đơn."));
   }
@@ -592,6 +734,8 @@ export function render_(context) {
       h("p", { class: "hint mono" }, orderId || UNKNOWN),
     );
     render(orderHost, malformed);
+    creditCount.textContent = "—";
+    render(creditHost, empty("Chưa đọc khoản giảm trừ vì mã đơn trong địa chỉ không hợp lệ."));
     timelineCount.textContent = "—";
     render(
       timelineHost,
@@ -670,6 +814,28 @@ export function render_(context) {
       onRecorded: () => void loadOrder(),
     }),
     collection.node,
+    panel({
+      eyebrow: "Đọc · GET /internal/v1/stores/{store}/orders/{id}/remedy-credits",
+      title: "Khoản giảm trừ của đơn này",
+      count: creditCount,
+      children: h(
+        "div",
+        { class: "stack" },
+        h(
+          "p",
+          { class: "hint" },
+          "Khoản giảm trừ là phiếu cầm tay: ai đọc đúng mã thì dùng được, đúng một lần, ở cửa " +
+            "hàng này, cho hoá đơn lần sau. Khách quên mã thì tìm lại đơn theo số phiếu rồi đọc " +
+            "mã ở đây. Máy chủ không ghi hạn dùng cho khoản giảm trừ.",
+        ),
+        creditHost,
+        h(
+          "p",
+          null,
+          h("a", { href: "#/remedies" }, "Dùng một khoản cho hoá đơn lần sau ở màn hình Bồi hoàn"),
+        ),
+      ),
+    }),
     panel({
       eyebrow: "Kiểm toán",
       title: "Dòng thời gian",

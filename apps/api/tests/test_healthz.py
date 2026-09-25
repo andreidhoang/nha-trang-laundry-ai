@@ -20,6 +20,7 @@ from nha_trang_laundry_db.manual_sends import StoredManualSend
 from nha_trang_laundry_db.orders import OrderView
 from nha_trang_laundry_db.quotes import QuoteSummary
 from nha_trang_laundry_domain.catalog import (
+    AcquisitionSource,
     ActorRole,
     CommercialOrderStatus,
     FulfillmentMode,
@@ -89,6 +90,8 @@ class StubOperationsService:
                 ticket_issued_on=date(2026, 8, 1),
                 # PREPAID-DROPOFF-001 (`DEC-032`) put the stored collection flag on the read.
                 self_collection_recorded=False,
+                # READ-PATHS-001 put the attested acquisition source on the staff read model.
+                acquisition_source=AcquisitionSource.WALK_IN,
             ),
         )
 

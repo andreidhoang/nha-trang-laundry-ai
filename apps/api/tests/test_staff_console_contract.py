@@ -276,7 +276,9 @@ def test_every_screen_declares_a_unique_path() -> None:
 #: the exemption is unsafe and the screen should declare `needsStore` instead. `approvals.js` is
 #: here because its queue spans every store the owner is assigned to, and only the DEC-029 review
 #: panel is per store -- declaring `needsStore` would blank the whole queue for a multi-store owner.
-STORE_GATE_EXEMPT = {"today.js", "approvals.js"}
+#: `staff.js` is here because an owner with no store yet must still create people and assign stores
+#: (to themselves, first); only READ-PATHS-001's directory panel is per store.
+STORE_GATE_EXEMPT = {"today.js", "approvals.js", "staff.js"}
 
 SCREEN_EXPORT = re.compile(r"export const screen = \{(.*?)\n\};", re.S)
 
@@ -433,3 +435,23 @@ def test_the_exempt_approvals_screen_builds_its_store_url_only_with_a_store() ->
     assert re.search(r"store\s*\n?\s*\?\s*h\(", text), (
         "approvals.js must render a no-store notice instead of the review list when no store is set"
     )
+
+
+def test_the_exempt_staff_screen_builds_its_store_url_only_with_a_store() -> None:
+    """READ-PATHS-001's staff directory is the one store-scoped part of #/staff.
+
+    The forms must work for an owner with no store yet -- assigning a store, including to
+    themselves, is what those forms are for -- so the screen cannot declare `needsStore`. The
+    directory must therefore refuse to request `/stores/${store}/staff` without one, and say so.
+    """
+
+    text = (WEB / "src" / "screens" / "staff.js").read_text(encoding="utf-8")
+    assert "/internal/v1/stores/${encodeURIComponent(store)}/staff" in text
+    assert re.search(r"if \(!store \|\| !spec\.verdict\.allowed\) return;", text), (
+        "staff.js must not request the staff directory without a selected store; without that "
+        "guard the exemption in STORE_GATE_EXEMPT is unsafe"
+    )
+    assert re.search(r"\} else if \(store\) \{\s*void reload\(\);\s*\} else \{", text), (
+        "staff.js must render a no-store notice instead of the directory when no store is set"
+    )
+    assert "Chưa chọn cửa hàng" in text

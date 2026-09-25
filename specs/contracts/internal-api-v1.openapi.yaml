@@ -649,6 +649,27 @@ paths:
         schema:
           type: string
   /internal/v1/stores/{store_id}/incidents/{incident_id}/remedy-proposals:
+    get:
+      operationId: list_incident_remedy_proposals
+      summary: Every proposal recorded on one incident, oldest first, whoever made it and whenever.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: incident_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
     post:
       operationId: propose_remedy
       summary: Propose a remedy against one incident, checked against the published `DEC-004` figures.
@@ -753,6 +774,28 @@ paths:
         '201':
           description: Success response.
       parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/orders/{order_id}/remedy-credits:
+    get:
+      operationId: list_order_remedy_credits
+      summary: The remedy credits issued against one order, spent or not.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
       - name: store_id
         in: path
         required: true
@@ -1021,6 +1064,23 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_ops_board_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/staff:
+    get:
+      operationId: list_store_staff
+      summary: Everyone assigned to this store, with their roles and status. Owner only.
+      x-authorization-dependencies:
+      - require_owner
+      - get_operations_service
       x-documented-by-fastapi: true
       responses:
         '200':

@@ -291,8 +291,14 @@ def _record_draft_for_review(
         # approval. That is wrong twice: a reviewer approves text believing a model wrote it, and
         # the Shadow evidence the capability ladder is measured on records a deterministic fallback
         # as model output. `agent_drafts.terminal_outcome` has admitted both values since 0021.
+        #
+        # That mapping could still never produce REQUIRE_HUMAN, because the runner reported every
+        # returned output as DRAFT_REQUIRES_HUMAN and the bounded runtime returns, rather than
+        # raises, on a handoff. `result.status` now carries the runtime's own disposition and
+        # `result.terminal_code` its own reason (PROVIDER_TIMEOUT, COST_BUDGET_EXHAUSTED, a
+        # model-requested reason code, ...), so the reviewer sees why no model draft exists.
         terminal_outcome=("DRAFT" if result.status == "DRAFT_REQUIRES_HUMAN" else "REQUIRE_HUMAN"),
-        terminal_code=result.status,
+        terminal_code=result.terminal_code,
         tool_call_count=result.tool_call_count,
         correlation_id=correlation_id,
         now=timestamp,

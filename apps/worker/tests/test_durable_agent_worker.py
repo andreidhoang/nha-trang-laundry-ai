@@ -182,6 +182,10 @@ def test_durable_worker_claims_runs_persists_safe_tool_ledger_and_requires_human
         False,
         {
             "disposition": "REQUIRE_HUMAN",
+            # AGENT-SHADOW-DEFECTS-001 F1: the summary names what the runtime concluded. A scripted
+            # synthetic draft is a draft, and its code says it was never model output.
+            "terminal_outcome": "DRAFT",
+            "terminal_code": "SYNTHETIC_SCRIPTED_DRAFT",
             "draft_character_count": len(draft_text),
             "tool_call_count": 1,
         },

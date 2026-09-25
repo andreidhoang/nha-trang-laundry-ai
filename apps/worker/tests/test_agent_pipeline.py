@@ -335,16 +335,28 @@ def test_a_transport_timeout_lands_require_human_with_its_terminal_code(
 
     # A provider timeout is not a crash: the runtime settles the reservation, revokes the bridge and
     # returns the deterministic handoff, so the run lands REQUIRE_HUMAN carrying its terminal code.
-    assert result.status == "DRAFT_REQUIRES_HUMAN"
+    #
+    # Corrected by AGENT-SHADOW-DEFECTS-001 F1. This line used to read
+    # `assert result.status == "DRAFT_REQUIRES_HUMAN"`, asserting the defect as correct: the comment
+    # above says REQUIRE_HUMAN and the assertion enshrined the runner mislabelling every handoff a
+    # draft, which is how the fallback sentence reached staff as an AI draft.
+    assert result.status == "REQUIRE_HUMAN"
     with postgres_connection.cursor() as cursor:
         cursor.execute(
             "SELECT result_safe_summary FROM agent_runs WHERE id = %s", (result.agent_run_id,)
         )
         evidence = _row(cursor)[0]["runtime_evidence"]
+        cursor.execute(
+            "SELECT terminal_outcome, terminal_code FROM agent_drafts WHERE agent_run_id = %s",
+            (result.agent_run_id,),
+        )
+        filed = _row(cursor)
     assert evidence["terminal_outcome"] == "REQUIRE_HUMAN"
     assert evidence["terminal_code"] == "PROVIDER_TIMEOUT"
     assert evidence["bridge_revoked"] is True
     assert evidence["retry_count"] == 0
+    # What the Shadow console reads: the badge keys on terminal_outcome, the reason on the code.
+    assert filed == ("REQUIRE_HUMAN", "PROVIDER_TIMEOUT")
 
 
 def test_a_model_call_budget_of_zero_is_rejected_before_any_provider_call() -> None:

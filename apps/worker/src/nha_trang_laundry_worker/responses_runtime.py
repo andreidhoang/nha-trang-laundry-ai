@@ -804,6 +804,9 @@ class BoundedResponsesRuntime:
                     "TERMINAL_EVIDENCE_PERSIST_FAILED"
                 ) from error
         return AgentRuntimeOutput(
+            # A validated model draft is the only DRAFT; every other exit is a handoff and says so.
+            disposition="DRAFT_REQUIRES_HUMAN" if outcome == "DRAFT" else "REQUIRE_HUMAN",
+            terminal_code=terminal_code,
             draft_text=draft_text,
             model_calls=budget.model_attempts,
             input_tokens=budget.input_tokens,

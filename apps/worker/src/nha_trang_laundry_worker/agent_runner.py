@@ -544,11 +544,25 @@ class AgentToolBridgeSession:
                 self._row_version = int(value)
 
 
+AgentRunDisposition = Literal["DRAFT_REQUIRES_HUMAN", "REQUIRE_HUMAN"]
+TerminalCode = Annotated[str, StringConstraints(pattern=r"^[A-Z][A-Z0-9_]{2,63}$")]
+
+
 class AgentRuntimeOutput(BaseModel):
-    """Only a customer-visible draft and bounded usage may leave the public runtime."""
+    """Only a customer-visible draft and bounded usage may leave the public runtime.
+
+    `disposition` is the runtime's own conclusion and has no default. `DRAFT_REQUIRES_HUMAN` means
+    a draft was produced for a human to review; `REQUIRE_HUMAN` means the runtime handed off --
+    provider failure, exhausted budget, policy denial, invalid output or a model-requested
+    handoff -- and `draft_text` is then the deterministic handoff sentence, not model output.
+    Before AGENT-SHADOW-DEFECTS-001 the output carried only the text, so the runner labelled every
+    handoff a draft and staff were shown the fallback sentence as if a model had written it.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    disposition: AgentRunDisposition
+    terminal_code: TerminalCode
     draft_text: Annotated[str, StringConstraints(min_length=1, max_length=4000)]
     model_calls: int = Field(ge=0, le=3)
     input_tokens: int = Field(default=0, ge=0, le=8000)
@@ -599,7 +613,13 @@ class SyntheticScriptedRuntime:
                 route_path_parameters=bridge.expected_path_parameters(call.operation),
                 idempotency_key=call.idempotency_key,
             )
-        return AgentRuntimeOutput(draft_text=self._draft_text, model_calls=0)
+        # Scripted text is never model output; its terminal code says so wherever it is filed.
+        return AgentRuntimeOutput(
+            disposition="DRAFT_REQUIRES_HUMAN",
+            terminal_code="SYNTHETIC_SCRIPTED_DRAFT",
+            draft_text=self._draft_text,
+            model_calls=0,
+        )
 
 
 class DisabledOpenClawProviderRuntime:
@@ -624,8 +644,11 @@ class DisabledOpenClawProviderRuntime:
 
 @dataclass(frozen=True, slots=True)
 class AgentRunResult:
+    """What one run concluded. `status` is the runtime's disposition, never a constant."""
+
     run_id: UUID
-    status: Literal["DRAFT_REQUIRES_HUMAN", "REQUIRE_HUMAN"]
+    status: AgentRunDisposition
+    terminal_code: str
     draft_text: str
     tool_call_count: int
     automatic_send_authorized: Literal[False] = False
@@ -679,9 +702,12 @@ class AgentRunner:
         output = self._invoke_with_deadline(runtime, invocation, bridge, job.deadline_at)
         if output.model_calls > self._registry.limits.max_model_calls:
             raise AgentRunRejected("REQUIRE_HUMAN: model-call budget exhausted")
+        # The runtime's disposition, read rather than asserted. Hardcoding DRAFT_REQUIRES_HUMAN
+        # here filed every deterministic handoff as a model draft (AGENT-SHADOW-DEFECTS-001 F1).
         return AgentRunResult(
             run_id=job.run_id,
-            status="DRAFT_REQUIRES_HUMAN",
+            status=output.disposition,
+            terminal_code=output.terminal_code,
             draft_text=output.draft_text,
             tool_call_count=bridge.tool_call_count,
         )
@@ -765,6 +791,7 @@ class AgentRunner:
 __all__ = [
     "INTENT_BUDGETS",
     "AgentIntentBudget",
+    "AgentRunDisposition",
     "AgentRunJob",
     "AgentRunRejected",
     "AgentRunResult",

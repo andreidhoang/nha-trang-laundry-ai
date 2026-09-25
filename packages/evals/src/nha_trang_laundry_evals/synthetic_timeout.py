@@ -62,7 +62,13 @@ class _BlockingRuntime:
     ) -> AgentRuntimeOutput:
         del invocation, bridge
         self.release.wait(timeout=1)
-        return AgentRuntimeOutput(draft_text="Nhân viên sẽ hỗ trợ.", model_calls=0)
+        # Only reached after the deadline, when the runner has already discarded it.
+        return AgentRuntimeOutput(
+            disposition="REQUIRE_HUMAN",
+            terminal_code="SYNTHETIC_LATE_OUTPUT",
+            draft_text="Nhân viên sẽ hỗ trợ.",
+            model_calls=0,
+        )
 
 
 def execute_model_timeout_preflight(fixture: SyntheticFixtureBundle) -> SyntheticTimeoutPreflight:

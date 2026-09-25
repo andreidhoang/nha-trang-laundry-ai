@@ -164,6 +164,12 @@ class DurableAgentRunWorker:
                 return DurableAgentRunWorkerResult(str(claimed.agent_run_id), "FAILED")
             safe_summary: dict[str, Any] = {
                 "disposition": "REQUIRE_HUMAN",
+                # DRAFT only for a validated model draft; a deterministic handoff says REQUIRE_HUMAN
+                # and carries the runtime's own code (AGENT-SHADOW-DEFECTS-001 F1).
+                "terminal_outcome": (
+                    "DRAFT" if result.status == "DRAFT_REQUIRES_HUMAN" else "REQUIRE_HUMAN"
+                ),
+                "terminal_code": result.terminal_code,
                 "draft_character_count": len(result.draft_text),
                 "tool_call_count": result.tool_call_count,
             }

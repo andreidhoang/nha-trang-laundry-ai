@@ -51,7 +51,8 @@ from playwright.sync_api import Route, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "apps" / "web"
-PORT = 8912
+# Overridable so several engineers can run the suite at once on one machine.
+PORT = int(os.environ.get("CONSOLE_STUB_PORT", "8912"))
 STORE = "11111111-2222-4333-8444-555555555555"
 
 PASS: list[str] = []

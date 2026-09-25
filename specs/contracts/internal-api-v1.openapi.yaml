@@ -4,7 +4,7 @@ info:
   version: v1
   description: 'Generated from the built FastAPI application by scripts/generate_internal_api_contract.py.
     It covers EVERY served operation, including those FastAPI excludes from its own schema via include_in_schema=False
-    - on this application that is four operations, three of them the authentication surface. Do not hand-edit:
+    - on this application that is five operations, three of them the authentication surface. Do not hand-edit:
     scripts/verify_contracts.py regenerates this document and fails on any difference, which is what keeps
     a new route from landing without a contract entry. Non-operation entries the application serves -
     today only the /staff static mount - are listed under x-served-mounts rather than omitted; an unrecognized
@@ -13,7 +13,7 @@ paths:
   /healthz:
     get:
       operationId: healthz
-      summary: Return only process health; dependency health is added with real infrastructure.
+      summary: Return only process health; /readyz is the one that asks the database.
       x-authorization-dependencies: []
       x-documented-by-fastapi: false
       responses:
@@ -1014,6 +1014,15 @@ paths:
         required: true
         schema:
           type: string
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Report whether this process can reach its database within two seconds.
+      x-authorization-dependencies: []
+      x-documented-by-fastapi: false
+      responses:
+        '200':
+          description: Success response.
 x-served-mounts:
   /staff: 'Static staff PWA assets served by StaticFiles (name=staff-pwa). Not an API operation and deliberately
     unauthenticated: it serves the console shell, and every datum the console shows comes from an authorized

@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import jwt
-import psycopg
+from nha_trang_laundry_db.connection import application_connect
 from nha_trang_laundry_db.identity import (
     IdentityRepository,
     IdentityStateError,
@@ -208,7 +208,7 @@ class StaffIdentityService:
         self,
         settings: AuthSettings,
         verifier: IdentityPlatformVerifier | None = None,
-        connection_factory: Callable[[str], Any] = psycopg.connect,
+        connection_factory: Callable[[str], Any] = application_connect,
     ) -> None:
         settings.require_identity_configuration()
         self._settings = settings

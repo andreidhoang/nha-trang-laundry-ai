@@ -400,7 +400,7 @@ DATABASE_URL=... \
 R1_PGDATA_PATH=/var/lib/docker/volumes/nha-trang-laundry-shop_pgdata/_data \
 R1_BASE_BACKUP_MARKER=/var/lib/docker/volumes/nha-trang-laundry-shop_pgbackupstaging/_data/last-success \
 R1_RECOVERY_MODE=self-managed \
-R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/healthz \
+R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/readyz \
   R1_CONSOLE_CA_FILE="$SHOP_ROOT/.shop/ca/ca.crt" \
   uv run python scripts/check_shop_operations.py
 ```
@@ -466,10 +466,17 @@ export R1_ALERT_TELEGRAM_CHAT_ID=...        # the owner's chat, one recipient
 
 Three properties of it that matter more than the mechanism. It is a **separate bot** from any
 future customer bot, with **no inbound handler** and one hardcoded recipient. It posts directly
-over HTTPS from the check script — never through the outbox, the channel adapter or the consent
-machinery — so it is not an automated send, and `FEATURE_AUTOMATED_SENDS_ENABLED` stays false and
-stays meaningful. And a failed alert never masks the failure it was carrying: the exit code and the
-structured line stand on their own.
+over HTTPS — never through the outbox, the channel adapter or the consent machinery — so it is not
+an automated send, and `FEATURE_AUTOMATED_SENDS_ENABLED` stays false and stays meaningful. And a
+failed alert never masks the failure it was carrying: the exit code and the structured line stand
+on their own.
+
+**On the self-managed branch the poster is the host, not the check** (`SHOP-ALERT-DELIVERY-001`).
+The data checks run on `database-private`, which is `internal: true` and cannot reach Telegram; a
+check posting from in there failed every time and said nothing. Run every check through
+`scripts/relay_shop_alert.py` with `--emit-alert`, as `shop-pilot.md` §6 does: the check prints its
+alert, the relay delivers it from the host, and a delivery that fails is exit 3 plus a line in
+`R1_ALERT_LOG_FILE`. `R1_ALERT_TELEGRAM_CHAT_ID_FILE` may replace `R1_ALERT_TELEGRAM_CHAT_ID`.
 
 The WAL gap, the volume and the capability flags alert at any hour. Console-unreachable alerts
 between 07:00 and 21:00 only: a console down at 03:00 that is back before opening needs nobody

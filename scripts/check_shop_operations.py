@@ -24,9 +24,11 @@ managed infrastructure and a channel-carrying system, and R1 is neither:
                                  fallback path.
 
 Each check exits non-zero on failure so a host scheduler surfaces it, and emits one structured line
-so the outcome is in the same stream as everything else. Alert *routing* is `DEC-025` and is the
-owner's: there is deliberately no channel, no SMTP and no paging provider here, and an alert nobody
-receives is not an alert.
+so the outcome is in the same stream as everything else. Alert *routing* is `DEC-025`: one Telegram
+message to the owner. With `--emit-alert` this script sends nothing and prints the alert as one JSON
+document instead, and `scripts/relay_shop_alert.py` delivers it from the host -- because the data
+checks run on `database-private`, which has no route out, and an alert nobody receives is not an
+alert (`SHOP-ALERT-DELIVERY-001`).
 """
 
 from __future__ import annotations
@@ -284,6 +286,17 @@ def check_console_reachable(
         with urllib.request.urlopen(url, timeout=timeout, context=context) as response:
             body = response.read(256).decode("utf-8", "replace")
             healthy = response.status == 200
+    except urllib.error.HTTPError as error:
+        # `/readyz` answers 503 when the console is up and its database is not. That is an answer,
+        # not silence, and "did not answer" would send the owner to the network instead of the
+        # database. (`HTTPError` is a `URLError`, so it has to be caught first.)
+        answered = error.read(256).decode("utf-8", "replace") if error.fp else ""
+        return CheckResult(
+            "console_reachable",
+            passed=False,
+            detail=f"{url} answered {error.code} {answered.strip()[:80]}",
+            fields={"url": url, "status": error.code},
+        )
     except (urllib.error.URLError, OSError, ValueError) as error:
         return CheckResult(
             "console_reachable",
@@ -316,6 +329,14 @@ def main() -> int:
         help="repeatable; defaults to every check that is configured",
     )
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL"))
+    parser.add_argument(
+        "--database-url-stdin",
+        action="store_true",
+        help=(
+            "read the database URL from the first line of stdin, so it is never an argument or an "
+            "environment variable of `docker run` -- both are visible to `ps` and `docker inspect`"
+        ),
+    )
     parser.add_argument("--volume-path", default=os.environ.get("R1_PGDATA_PATH"))
     parser.add_argument("--compose-file", default="compose.r1.yaml")
     parser.add_argument(
@@ -336,7 +357,20 @@ def main() -> int:
         help="who owns point-in-time recovery; undeclared makes the WAL check refuse to guess",
     )
     parser.add_argument("--json", action="store_true", help="one JSON object, for a wrapper")
+    parser.add_argument(
+        "--emit-alert",
+        action="store_true",
+        help=(
+            "print one alert document on stdout for scripts/relay_shop_alert.py and send nothing: "
+            "the check then needs no network egress at all (SHOP-ALERT-DELIVERY-001)"
+        ),
+    )
     arguments = parser.parse_args()
+    if arguments.database_url_stdin:
+        supplied = _sys.stdin.readline().strip()
+        if not supplied:
+            raise SystemExit("--database-url-stdin was given and stdin held no database URL.")
+        arguments.database_url = supplied
 
     selected = set(arguments.check or ["all"])
     run_all = "all" in selected
@@ -426,6 +460,9 @@ def main() -> int:
             )
         )
 
+    # With `--emit-alert`, stdout carries the structured stream and the one alert document the relay
+    # parses, so the lines meant for a person go to stderr -- which is the scheduler's log anyway.
+    human = _sys.stderr if arguments.emit_alert else _sys.stdout
     if arguments.json:
         print(
             json.dumps(
@@ -435,11 +472,18 @@ def main() -> int:
         )
     else:
         for result in results:
-            print(f"  {'OK ' if result.passed else '!!!'} {result.name}: {result.detail}")
+            print(
+                f"  {'OK ' if result.passed else '!!!'} {result.name}: {result.detail}", file=human
+            )
 
     failures = [result for result in results if not result.passed]
-    if failures:
-        deliver_alert(failures, now=datetime.now(UTC))
+    moment = datetime.now(UTC)
+    if arguments.emit_alert:
+        # The relay on the host delivers. Nothing here opens a socket, which is the point: on the
+        # self-managed branch this runs on `database-private`, and that network has no way out.
+        print(json.dumps(alert_document(results, now=moment), ensure_ascii=False), flush=True)
+    elif failures:
+        deliver_alert(failures, now=moment)
 
     return 0 if not failures else 1
 
@@ -462,8 +506,65 @@ QUIET_HOURS_END = 7
 SHOP_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
+#: What `--emit-alert` prints and `scripts/relay_shop_alert.py` reads. Versioned because the two run
+#: in different places -- the check in a container image, the relay from the host checkout -- and an
+#: image built from an older checkout must be refused rather than half-understood.
+ALERT_DOCUMENT_SCHEMA = "nha-trang-laundry.shop-alert.v1"
+ALERT_HEADING = "Bảng vận hành — cần xem ngay:"
+
+
+def _reportable(
+    failures: list[CheckResult], *, now: datetime
+) -> tuple[list[CheckResult], list[CheckResult]]:
+    """Split failures into those that alert now and those `DEC-025` holds for opening hours."""
+
+    local_hour = now.astimezone(SHOP_TIMEZONE).hour
+    quiet = local_hour >= QUIET_HOURS_START or local_hour < QUIET_HOURS_END
+    held = [failure for failure in failures if quiet and failure.name in QUIET_HOURS_CHECKS]
+    return [failure for failure in failures if failure not in held], held
+
+
+def alert_text(failures: list[CheckResult], *, now: datetime) -> str | None:
+    """The one message the owner receives, or `None` when nothing is reportable at this hour."""
+
+    reportable, _ = _reportable(failures, now=now)
+    if not reportable:
+        return None
+    lines = [ALERT_HEADING]
+    lines.extend(f"• {failure.name}: {failure.detail}" for failure in reportable)
+    return "\n".join(lines)
+
+
+def alert_document(results: list[CheckResult], *, now: datetime) -> dict[str, object]:
+    """Everything the host relay needs to deliver, and nothing it would have to decide itself.
+
+    The quiet-hours rule is applied here, where the failure was seen, so the relay stays a courier:
+    it delivers `alert.text` verbatim or, when `alert` is null, delivers nothing.
+    """
+
+    failures = [result for result in results if not result.passed]
+    reportable, held = _reportable(failures, now=now)
+    text = alert_text(failures, now=now)
+    return {
+        "schema": ALERT_DOCUMENT_SCHEMA,
+        "passed": not failures,
+        "results": {r.name: {"passed": r.passed, "detail": r.detail} for r in results},
+        "alert": (
+            None
+            if text is None
+            else {"text": text, "checks": [failure.name for failure in reportable]}
+        ),
+        "suppressed": [failure.name for failure in held],
+    }
+
+
 def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
     """Send one message to the owner, per `DEC-025`. Returns whether anything was sent.
+
+    **Prefer `--emit-alert` and `scripts/relay_shop_alert.py`.** This direct path only works where
+    the check itself has internet -- never on `database-private`, which is where the data checks
+    run -- and it was the reason those checks could not tell anybody anything. It stays for a check
+    run by hand on a host with egress.
 
     **This is not a customer channel and must never become one.** It posts directly over HTTPS from
     this script -- never through the outbox, the channel adapter or the consent machinery -- so it
@@ -481,23 +582,18 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
     if not token_file or not chat_id:
         return False
 
-    local_hour = now.astimezone(SHOP_TIMEZONE).hour
-    quiet = local_hour >= QUIET_HOURS_START or local_hour < QUIET_HOURS_END
-    reportable = [
-        failure for failure in failures if not (quiet and failure.name in QUIET_HOURS_CHECKS)
-    ]
-    if not reportable:
+    text = alert_text(failures, now=now)
+    if text is None:
         return False
 
     try:
         token = _Path(token_file).read_text(encoding="utf-8").strip()
-    except OSError:
+    except OSError as error:
+        _not_delivered(f"cannot read R1_ALERT_TELEGRAM_TOKEN_FILE ({error.strerror})")
         return False
 
-    lines = ["Bảng vận hành — cần xem ngay:"]
-    lines.extend(f"• {failure.name}: {failure.detail}" for failure in reportable)
     body = urllib.parse.urlencode(
-        {"chat_id": chat_id, "text": "\n".join(lines), "disable_web_page_preview": "true"}
+        {"chat_id": chat_id, "text": text, "disable_web_page_preview": "true"}
     ).encode()
 
     try:
@@ -507,11 +603,21 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         with urllib.request.urlopen(request, timeout=10) as response:
-            return bool(200 <= response.status < 300)
-    except (urllib.error.URLError, OSError, ValueError):
-        # A failed alert must not mask the failure it was carrying. The exit code and the structured
-        # line already stand on their own; swallowing this keeps the check's own verdict intact.
+            delivered = bool(200 <= response.status < 300)
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        # A failed alert must not mask the failure it was carrying: the exit code and the structured
+        # line stand on their own, so this returns rather than raises. But it is never silent --
+        # `SHOP-ALERT-DELIVERY-001` was a swallowed `URLError` here that nobody could see.
+        reason = str(getattr(error, "reason", error)).replace(token, "<token>")
+        _not_delivered(f"{type(error).__name__}: {reason}"[:200])
         return False
+    if not delivered:
+        _not_delivered("telegram did not answer 2xx")
+    return delivered
+
+
+def _not_delivered(reason: str) -> None:
+    print(f"check_shop_operations: ALERT NOT DELIVERED: {reason}", file=_sys.stderr, flush=True)
 
 
 if __name__ == "__main__":

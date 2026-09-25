@@ -42,12 +42,12 @@ from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
-import psycopg
 from nha_trang_laundry_db.assistant import (
     BUSINESS_TIMEZONE,
     TODAY_STATUS_COUNTS_QUERY,
     today_status_counts,
 )
+from nha_trang_laundry_db.connection import application_connect
 from nha_trang_laundry_db.exports import (
     ExportApprovalDisclosure,
     ExportDataset,
@@ -108,7 +108,7 @@ class OpsBoardService:
     def __init__(
         self,
         settings: AuthSettings,
-        connection_factory: Callable[[str], Any] = psycopg.connect,
+        connection_factory: Callable[[str], Any] = application_connect,
     ) -> None:
         if not settings.database_url:
             raise OpsBoardUnavailable("operations board database is not configured")

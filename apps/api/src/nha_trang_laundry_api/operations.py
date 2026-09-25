@@ -30,6 +30,7 @@ from nha_trang_laundry_db.channel import (
     ContactChannelBindingRepository,
 )
 from nha_trang_laundry_db.configurations import ConfigurationRepository, snapshot_hash
+from nha_trang_laundry_db.connection import application_connect
 from nha_trang_laundry_db.counter_tickets import (
     CounterTicketRepository,
     IssuedTicket,
@@ -463,7 +464,7 @@ class OperationsService:
     def __init__(
         self,
         settings: AuthSettings,
-        connection_factory: Callable[[str], Any] = psycopg.connect,
+        connection_factory: Callable[[str], Any] = application_connect,
     ) -> None:
         if not settings.database_url:
             raise OperationsUnavailable("operations database is not configured")

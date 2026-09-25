@@ -5,7 +5,7 @@ decorators misses routes added by a router include and miscounts overloaded path
 `app.routes` is the only method that reports what is actually served.
 
 It is deliberately not `app.openapi()`. FastAPI omits any route carrying `include_in_schema=False`
-from its own document, and on this application that hides four served operations — three of which
+from its own document, and on this application that hides five served operations — three of which
 are the authentication surface (`POST /internal/v1/auth/session`, `POST /internal/v1/auth/logout`,
 `GET /internal/v1/session`). A contract that documents everything except the login route would be
 worse than none, because it would look complete.
@@ -63,7 +63,7 @@ DESCRIPTION = (
     "Generated from the built FastAPI application by "
     "scripts/generate_internal_api_contract.py. It covers EVERY served operation, including "
     "those FastAPI excludes from its own schema via include_in_schema=False - on this "
-    "application that is four operations, three of them the authentication surface. Do not "
+    "application that is five operations, three of them the authentication surface. Do not "
     "hand-edit: scripts/verify_contracts.py regenerates this document and fails on any "
     "difference, which is what keeps a new route from landing without a contract entry. "
     "Non-operation entries the application serves - today only the /staff static mount - are "

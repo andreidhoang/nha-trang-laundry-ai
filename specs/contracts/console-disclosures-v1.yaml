@@ -2621,12 +2621,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/orderDetail.js#hint:03770ff31bf3
+- slot_id: screens/orderDetail.js#hint:69a81ead130c
   module: screens/orderDetail.js
   key: hint
-  text: 'Bồi hoàn gắn với sự cố, không gắn thẳng với đơn: mở màn hình Sự cố, tìm đúng lời khách phàn nàn,
-    rồi bấm “Đề xuất bồi hoàn” trên chính dòng đó. API này không có đường nào liệt kê sự cố của riêng
-    một đơn, nên màn hình này không chọn hộ được.'
+  text: 'Bồi hoàn gắn với khiếu nại, không gắn thẳng với đơn: mở màn hình Khiếu nại, chọn đúng lời khách
+    phàn nàn; bồi hoàn làm ngay trên trang của khiếu nại đó.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

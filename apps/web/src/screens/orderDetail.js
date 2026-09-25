@@ -870,20 +870,18 @@ export function render_(context) {
                 incidentVerdict,
               ),
               // REMEDY-001's second entry point, and a link rather than a button on purpose. A
-              // remedy answers one incident and is keyed by `incident_id`, not by `order_id`;
-              // there is no route that lists an order's incidents, so this screen cannot pick
-              // the incident for the operator. Sending them to the list they can read, with the
-              // reason, beats a button that would have to guess which complaint it answers.
-              h("a", { href: "#/remedies" }, "Bồi hoàn cho một sự cố của đơn này"),
+              // remedy answers one incident and is keyed by `incident_id`, not by `order_id`, so
+              // this screen does not pick the complaint for the operator. CONSOLE-REDESIGN-004:
+              // the remedy flow lives on each complaint's own page; the list is where to find it.
+              h("a", { href: "#/incidents" }, "Bồi hoàn cho một khiếu nại của đơn này"),
             )
           : null,
         wellFormed
           ? h(
               "p",
               { class: "hint" },
-              "Bồi hoàn gắn với sự cố, không gắn thẳng với đơn: mở màn hình Sự cố, tìm đúng lời " +
-                "khách phàn nàn, rồi bấm “Đề xuất bồi hoàn” trên chính dòng đó. API này không có " +
-                "đường nào liệt kê sự cố của riêng một đơn, nên màn hình này không chọn hộ được.",
+              "Bồi hoàn gắn với khiếu nại, không gắn thẳng với đơn: mở màn hình Khiếu nại, chọn " +
+                "đúng lời khách phàn nàn; bồi hoàn làm ngay trên trang của khiếu nại đó.",
             )
           : null,
       ),

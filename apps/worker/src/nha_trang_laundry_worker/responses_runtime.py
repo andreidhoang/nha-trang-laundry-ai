@@ -681,6 +681,11 @@ class BoundedResponsesRuntime:
             ]
             tools = self._tools_for(invocation.capability)
             while True:
+                # The runner revokes the bridge when the job's hard deadline passes. A runtime
+                # thread that resumes after that must not start another provider call: its result
+                # would be discarded and its cost unaccounted for by the run that owned it.
+                if bridge.is_closed:
+                    raise ResponsesRuntimeFailure("RUN_REVOKED")
                 self._require_time(context.deadline_at)
                 reservation = budget.reserve()
                 try:
@@ -855,6 +860,9 @@ class BoundedResponsesRuntime:
         )
         if mismatch is not None:
             raise ResponsesContextRejected(f"CONTEXT_{mismatch.upper()}_MISMATCH")
+        if context.deadline_at > invocation.deadline_at:
+            # A packet may shorten the run, never extend it past the job's server-set deadline.
+            raise ResponsesContextRejected("CONTEXT_DEADLINE_EXCEEDS_RUN")
         if not _constant_text_equal(
             _sha256_text(context.instructions), self._config.prompt_instructions_hash
         ):

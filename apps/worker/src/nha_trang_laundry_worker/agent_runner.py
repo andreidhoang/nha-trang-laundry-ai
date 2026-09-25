@@ -352,17 +352,33 @@ class AgentToolBridgeSession:
             contract, validated, expected_path, idempotency_key, current_time
         )
         response = self._transport.send(request)
+        if self._closed:
+            # The runner revoked this bridge while the call was in flight. Whatever the facade did
+            # is now an unknown outcome for a human; the result must not reach the model.
+            raise AgentToolBridgeRejected(
+                "TOOL_UNAVAILABLE: facade result arrived after bridge revocation"
+            )
         result = self._validated_result(contract, response)
         self._update_bound_state(operation, result, response.headers)
         if self._observer is not None:
-            self._observer.record(
-                sequence_number=self._tool_call_count,
-                operation=operation,
-                arguments=validated,
-                result=result,
-                started_at=started_at,
-                completed_at=datetime.now(UTC),
-            )
+            try:
+                self._observer.record(
+                    sequence_number=self._tool_call_count,
+                    operation=operation,
+                    arguments=validated,
+                    result=result,
+                    started_at=started_at,
+                    completed_at=datetime.now(UTC),
+                )
+            except Exception as error:
+                # A tool call that cannot be written to the run ledger (a stale claim, a revoked
+                # run, an unavailable database) ends the run here. It is named for what it is:
+                # before AGENT-SHADOW-DEFECTS-001 the ledger's ValueError reached the runtime's
+                # catch-all and was filed as INVALID_PROVIDER_OUTPUT, blaming the model.
+                self._closed = True
+                raise AgentToolBridgeRejected(
+                    "TOOL_LEDGER_UNAVAILABLE: tool call could not be recorded under the run claim"
+                ) from error
         if logical_key is not None:
             self._idempotent_results[logical_key] = (fingerprint, result)
         return result
@@ -371,6 +387,12 @@ class AgentToolBridgeSession:
         """Irrevocably revoke this in-memory bridge after timeout or controlled failure."""
 
         self._closed = True
+
+    @property
+    def is_closed(self) -> bool:
+        """True once revoked; a runtime must start no further model or tool work after that."""
+
+        return self._closed
 
     def _verify_executor(self, bridge_token: str, binding_id: UUID, now: datetime) -> None:
         if now > self._job.deadline_at:
@@ -575,6 +597,10 @@ class AgentRuntimeInvocation:
     capability: ReleaseCapability
     session_key: str
     bridge_token: str
+    #: The job's hard deadline, server-derived. A runtime's own context deadline and every provider
+    #: timeout it grants must fall inside it; before AGENT-SHADOW-DEFECTS-001 the context loader
+    #: granted a fresh twenty seconds from whenever it happened to run.
+    deadline_at: datetime
 
 
 class ConstrainedAgentRuntime(Protocol):
@@ -698,6 +724,7 @@ class AgentRunner:
             capability=job.capability,
             session_key=bridge.session_key,
             bridge_token=token,
+            deadline_at=job.deadline_at,
         )
         output = self._invoke_with_deadline(runtime, invocation, bridge, job.deadline_at)
         if output.model_calls > self._registry.limits.max_model_calls:

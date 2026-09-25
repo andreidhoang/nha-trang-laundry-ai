@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from threading import Lock
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -56,6 +57,11 @@ STOPPED_STATUS = "STOPPED"
 # Mirrors the runner's hard run deadline; the context deadline may be shorter but never longer.
 TURN_DEADLINE_SECONDS = 20.0
 
+# How long before the job's hard deadline the runtime must stop on its own. The runtime then returns
+# its own handoff (PROVIDER_TIMEOUT, DEADLINE_EXHAUSTED) with the bridge revoked and the reservation
+# settled, instead of being cut off by the runner's guard with nothing accounted.
+RUNTIME_DEADLINE_GRACE = timedelta(milliseconds=500)
+
 
 class PipelineConfigurationError(RuntimeError):
     """Raised when the pipeline cannot be assembled safely from settings."""
@@ -67,18 +73,30 @@ class CapturingEvidenceSink:
     `ResponsesRuntimeEvidence` is already typed `extra="forbid"` with no prompt text, no draft, no
     tool arguments, no reasoning and no provider response id, so what is captured here is safe by
     construction rather than by filtering.
+
+    Keyed by run. A runtime thread the runner abandoned at its deadline still persists its
+    evidence when it finally returns; with a single slot that late record was taken by whichever
+    run the worker processed next, which is misattribution. Now a record is only ever handed to the
+    run that produced it, and a late one is simply never collected.
     """
 
     def __init__(self) -> None:
-        self._terminal: ResponsesRuntimeEvidence | None = None
+        self._terminal: dict[UUID, ResponsesRuntimeEvidence] = {}
+        self._lock = Lock()
+
+    #: A worker processes one run at a time, so anything beyond a handful is a late record nobody
+    #: will collect. Bounded so abandoned runs cannot accumulate for the life of the process.
+    _MAX_UNCOLLECTED = 8
 
     def persist(self, evidence: ResponsesRuntimeEvidence) -> None:
-        self._terminal = evidence
+        with self._lock:
+            self._terminal[evidence.run_id] = evidence
+            while len(self._terminal) > self._MAX_UNCOLLECTED:
+                self._terminal.pop(next(iter(self._terminal)))
 
-    def take(self) -> ResponsesRuntimeEvidence | None:
-        terminal = self._terminal
-        self._terminal = None
-        return terminal
+    def take(self, run_id: UUID) -> ResponsesRuntimeEvidence | None:
+        with self._lock:
+            return self._terminal.pop(run_id, None)
 
 
 class RunScopedContextLoader:
@@ -112,12 +130,20 @@ class RunScopedContextLoader:
         # The session key is the bridge's own, not a derived one: the runtime re-hashes
         # `invocation.session_key` and rejects a context whose hash disagrees, which is what stops a
         # packet built for one session being served to another.
+        #
+        # The deadline is the job's, less a grace for the runtime to conclude itself. It used to be
+        # `now + 20 s` whatever the job had left, so a provider could be granted time the run's
+        # lease did not have (AGENT-SHADOW-DEFECTS-001 F2).
+        deadline_at = min(
+            self._now() + timedelta(seconds=self._turn_deadline_seconds),
+            invocation.deadline_at - RUNTIME_DEADLINE_GRACE,
+        )
         return ResponsesRuntimeContext.assemble(
             run_id=invocation.run_id,
             capability=invocation.capability,
             session_key=invocation.session_key,
             config=self._config,
-            deadline_at=self._now() + timedelta(seconds=self._turn_deadline_seconds),
+            deadline_at=deadline_at,
             instructions=self._instructions,
             input_text=self._input_text_for(invocation),
         )
@@ -187,7 +213,7 @@ def build_agent_pipeline(
         runner,
         repository=repository,
         logger=logger,
-        terminal_evidence=lambda: _safe_evidence(sink.take()),
+        terminal_evidence=lambda run_id: _safe_evidence(sink.take(run_id)),
         draft_recorder=draft_recorder if draft_recorder is not None else _record_draft_for_review,
     )
     return AgentPipeline(
@@ -234,6 +260,8 @@ def _safe_evidence(evidence: ResponsesRuntimeEvidence | None) -> Mapping[str, An
         return None
     document = evidence.model_dump(mode="json")
     allowed: Sequence[str] = (
+        # The run the record belongs to; without it a summary cannot be checked against its row.
+        "run_id",
         "terminal_outcome",
         "terminal_code",
         "runtime_id",
@@ -311,6 +339,7 @@ def utc_now() -> datetime:
 
 __all__ = [
     "DISABLED_STATUS",
+    "RUNTIME_DEADLINE_GRACE",
     "STOPPED_STATUS",
     "TURN_DEADLINE_SECONDS",
     "AgentPipeline",

@@ -306,6 +306,7 @@ def test_the_context_packet_is_bound_to_the_run_being_executed(
         capability=ReleaseCapability.INTERNAL_SHADOW,
         session_key="session-abc",
         bridge_token="token",
+        deadline_at=datetime.now(UTC) + timedelta(seconds=15),
     )
 
     context = loader.load(invocation)
@@ -317,6 +318,7 @@ def test_the_context_packet_is_bound_to_the_run_being_executed(
         capability=ReleaseCapability.INTERNAL_SHADOW,
         session_key="session-other",
         bridge_token="token",
+        deadline_at=datetime.now(UTC) + timedelta(seconds=15),
     )
     assert loader.load(other).session_key_hash != context.session_key_hash
 
@@ -492,7 +494,9 @@ def test_evidence_from_a_failed_run_is_not_attributed_to_the_next_run(
     assembled = pipeline(script=[ResponsesTransportTimeout("PROVIDER_TIMEOUT")], sink=sink)
     failed = assembled.run_cycle(postgres_connection, lambda: True)
 
-    assert sink.take() is None
+    # Drained by the worker for the run that produced it (the sink is keyed by run since F2).
+    assert failed.agent_run_id is not None
+    assert sink.take(UUID(failed.agent_run_id)) is None
 
     enqueue(postgres_connection)
     follow_up = pipeline(sink=CapturingEvidenceSink())

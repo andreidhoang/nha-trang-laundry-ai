@@ -251,6 +251,7 @@ def harness(
         capability=capability,
         session_key=bridge.session_key,
         bridge_token=token,
+        deadline_at=current_job.deadline_at,
     )
     context = ResponsesRuntimeContext.assemble(
         run_id=current_job.run_id,

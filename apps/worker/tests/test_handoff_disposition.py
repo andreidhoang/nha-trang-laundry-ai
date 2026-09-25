@@ -166,11 +166,11 @@ def _execute(script: list[Any]) -> tuple[AgentRunResult, CapturingEvidenceSink, 
 def test_every_runtime_handoff_is_reported_as_require_human_with_its_real_code(
     script: list[Any], terminal_code: str | None
 ) -> None:
-    result, sink, _job = _execute(script)
+    result, sink, job = _execute(script)
 
     assert result.status == "REQUIRE_HUMAN"
     assert result.draft_text == DETERMINISTIC_HANDOFF_TEXT
-    evidence = sink.take()
+    evidence = sink.take(job.run_id)
     assert evidence is not None
     assert evidence.terminal_outcome == "REQUIRE_HUMAN"
     # The run result carries the runtime's own terminal code, not the run status restated.
@@ -180,14 +180,14 @@ def test_every_runtime_handoff_is_reported_as_require_human_with_its_real_code(
 
 
 def test_only_a_validated_model_draft_is_reported_as_a_draft() -> None:
-    result, sink, _job = _execute(
+    result, sink, job = _execute(
         [_final({"disposition": "DRAFT_REQUIRES_HUMAN", "draft_text": "Dạ.", "reason_code": None})]
     )
 
     assert result.status == "DRAFT_REQUIRES_HUMAN"
     assert result.terminal_code == "VALIDATED_DRAFT"
     assert result.draft_text == "Dạ."
-    evidence = sink.take()
+    evidence = sink.take(job.run_id)
     assert evidence is not None and evidence.terminal_outcome == "DRAFT"
 
 

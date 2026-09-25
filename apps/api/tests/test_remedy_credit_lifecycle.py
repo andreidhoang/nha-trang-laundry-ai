@@ -478,3 +478,45 @@ class _QuoteRef:
     quote_id: UUID
     revision: int
     snapshot_hash: str
+
+
+# --- RECEIPT-PRINT-001: what the receipt reads back ---------------------------------------------
+
+
+def test_the_revision_read_names_the_credit_on_it_beside_the_undiscounted_line(
+    connection: Any, service: OperationsService
+) -> None:
+    """The customer's receipt says the credit was used, and by how much, from the stored revision.
+
+    4 kg is 100.000 d and the 11.000 d credit is allocated into the line, so the line's net amount
+    is 89.000 d. The read returns the line at 100.000 d, the `REMEDY_CREDIT` row at 11.000 d and
+    the stored total at 89.000 d -- three figures the receipt prints and never adds up itself.
+    """
+
+    store_id, staff, credit_id = _issued_credit(connection)
+    _contact_id, request_id = _customer(connection, store_id, staff)
+    first = _price(service, store_id=store_id, staff=staff, request_id=request_id, kg="4")
+    credited = _reserve(service, store_id=store_id, staff=staff, credit_id=credit_id, quote=first)
+
+    view = service.read_quote(
+        store_id=store_id, quote_id=first.quote_id, principal=staff, revision=credited.revision
+    )
+    (line,) = view.lines
+    assert line.list_amount_vnd == 4 * PER_KG_UNDER_SIX
+    assert line.net_amount_vnd == 4 * PER_KG_UNDER_SIX - LATE_CREDIT
+    (credit,) = view.adjustments
+    assert credit.kind == "REMEDY_CREDIT"
+    assert credit.direction == "CREDIT"
+    assert credit.amount_min_vnd == credit.amount_max_vnd == LATE_CREDIT
+    assert (
+        view.display_total_min_vnd
+        == view.display_total_max_vnd
+        == 4 * PER_KG_UNDER_SIX - LATE_CREDIT
+    )
+
+    # The revision before the credit landed reads exactly as it was: no row, no discount.
+    before = service.read_quote(
+        store_id=store_id, quote_id=first.quote_id, principal=staff, revision=first.revision
+    )
+    assert before.adjustments == ()
+    assert before.lines[0].list_amount_vnd == before.lines[0].net_amount_vnd

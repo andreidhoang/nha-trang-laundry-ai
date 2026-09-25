@@ -45,6 +45,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -162,6 +163,12 @@ DECLARED_CONTROLS = (
     "remedy.fault",
     "remedy.propose",
     "remedy.execute",
+    # RECEIPT-PRINT-001: the receipt, reached from the order Nhận đồ lands on and from "Khác".
+    # "Chia sẻ" is not declared: it renders only where the browser has a share sheet, and the
+    # headless browser these walks run in has none (the scenario checks it is absent there).
+    "orderDetail.receipt-offer",
+    "orderDetail.receipt-more",
+    "receipt.print",
 )
 
 PASS: list[str] = []
@@ -2321,6 +2328,187 @@ def scenario_remedy(console: Console) -> None:
     )
 
 
+#: `RECEIPT-PRINT-001`: where the receipt scenario saves its print-media screenshots, when asked.
+#: Unset, it saves nothing and says so; the checks run either way.
+RECEIPT_SHOTS = os.environ.get("CONSOLE_RECEIPT_SHOTS", "")
+
+#: A full UUID anywhere in visible text: the receipt carries none (tier 3 stays on the order page).
+UUID_TEXT = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+
+def scenario_receipt(console: Console) -> None:
+    """`RECEIPT-PRINT-001`: the walk-in leaves with a receipt, printed or shared, of what the
+    server holds -- and nothing it does not."""
+
+    head("13", "PHIẾU CHO KHÁCH — the receipt a walk-in takes home (RECEIPT-PRINT-001)")
+    console.sign_in("demo-operations")
+    order = console.build_order(kg="7", stop="created")
+    order_id = order["order_id"]
+
+    offer = console.page.locator("#order-created button[data-receipt]")
+    ok(
+        "the order page Nhận đồ lands on offers 'In phiếu cho khách' straight away",
+        offer.count() == 1 and "In phiếu cho khách" in offer.first.inner_text(),
+        offer.first.inner_text()[:60] if offer.count() else "absent",
+    )
+    if offer.count():
+        offer.first.click()
+        touched("orderDetail.receipt-offer")
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#receipt-paper [data-total]", timeout=15000)
+        console.page.wait_for_selector("#receipt-paper .receipt-paper__lines", timeout=15000)
+    console.page.wait_for_timeout(600)
+    ok(
+        "one tap opens the receipt of that order",
+        console.page.url.endswith(f"#/orders/{order_id}/receipt"),
+        console.page.url,
+    )
+
+    read = console.call("GET", f"/internal/v1/orders/{order_id}")
+    server = read.get("body") or {}
+    quote = (
+        console.call(
+            "GET",
+            f"/internal/v1/stores/{STORE}/quotes/{server.get('quote_id')}"
+            f"?revision={server.get('quote_revision')}",
+        ).get("body")
+        or {}
+    )
+    formatted = console.page.evaluate(
+        """async ({total, amounts}) => {
+            const format = await import('./src/core/format.js');
+            return {total: format.money(total), amounts: amounts.map((a) => format.money(a))};
+        }""",
+        {
+            "total": server.get("payable_total_vnd"),
+            "amounts": [line.get("list_amount_vnd") for line in quote.get("lines") or []],
+        },
+    )
+    paper = console.page.locator("#receipt-paper")
+    total = paper.locator("[data-total]")
+    ok(
+        "the total on the paper is the server's figure for the order, verbatim",
+        total.count() == 1 and total.first.inner_text().strip() == formatted["total"],
+        f"{total.first.inner_text() if total.count() else 'absent'} vs {formatted['total']}",
+    )
+    printed = [
+        node.inner_text().strip()
+        for node in paper.locator(".receipt-paper__line .receipt-paper__value").all()
+    ]
+    ok(
+        "every priced line is on the paper at the amount the stored revision holds",
+        printed == formatted["amounts"] and len(printed) == len(quote.get("lines") or []),
+        f"{printed} vs {formatted['amounts']}",
+    )
+    ticket = paper.locator("[data-field=ticket]")
+    ok(
+        "the ticket number is the order's",
+        ticket.count() == 1
+        and ticket.first.inner_text().strip() == f"Phiếu {server.get('ticket_number')}",
+        ticket.first.inner_text() if ticket.count() else "absent",
+    )
+    closing = paper.locator("[data-field=closing]")
+    ok(
+        "it promises no ready time: it says the shop will tell the customer (R4)",
+        closing.count() == 1
+        and closing.first.inner_text().strip() == "Tiệm sẽ báo khi đồ sẵn sàng."
+        and "hẹn" not in paper.inner_text().lower(),
+        closing.first.inner_text() if closing.count() else "absent",
+    )
+    visible = console.text()
+    ok(
+        "no identifier is visible anywhere on the receipt screen",
+        re.search(UUID_TEXT, visible, re.IGNORECASE) is None,
+        visible[:120],
+    )
+    reference = paper.locator("[data-field=reference] .receipt-paper__value")
+    ok(
+        "the short reference is the order's own, eight characters",
+        reference.count() == 1 and reference.first.inner_text().strip() == order_id[:8].upper(),
+        reference.first.inner_text() if reference.count() else "absent",
+    )
+
+    button = console.page.locator("#receipt-print")
+    console.page.evaluate(
+        "() => { window.__printed = 0; window.print = () => { window.__printed += 1; }; }"
+    )
+    if button.count() and button.first.is_enabled():
+        button.first.click()
+        touched("receipt.print")
+    ok(
+        "'In phiếu' opens the print dialog, once",
+        console.page.evaluate("() => window.__printed") == 1,
+    )
+    share = console.page.locator("#receipt-share")
+    supported = console.page.evaluate("() => typeof navigator.share === 'function'")
+    ok(
+        "'Chia sẻ' is offered exactly where the browser can share",
+        share.count() == (1 if supported else 0),
+        f"supported={supported}, rendered={share.count()}",
+    )
+
+    # Print media: only the slip. Measured at a thermal roll's width, and filmed there when asked.
+    original = console.page.viewport_size
+    console.page.emulate_media(media="print")
+    for label, width in (("80mm", 302), ("58mm", 219), ("a5", 559)):
+        console.page.set_viewport_size({"width": width, "height": 900})
+        console.page.wait_for_timeout(250)
+        shell = console.page.evaluate(
+            """() => ['.appbar', '.nav', '.action-bar', '.page-head', '.banners']
+                .map((s) => [...document.querySelectorAll(s)])
+                .flat()
+                .filter((e) => e.getClientRects().length > 0).length"""
+        )
+        overflow = console.page.evaluate(
+            "() => document.querySelector('#receipt-paper').scrollWidth - "
+            "document.querySelector('#receipt-paper').clientWidth"
+        )
+        ok(
+            f"printed at {label}: the shell, header and buttons are gone and nothing overflows",
+            shell == 0 and overflow <= 0 and paper.is_visible(),
+            f"{shell} shell elements visible, {overflow}px overflow",
+        )
+        if RECEIPT_SHOTS:
+            os.makedirs(RECEIPT_SHOTS, exist_ok=True)
+            tag = os.environ.get("CONSOLE_VIEWPORT", "desk")
+            paper.screenshot(path=os.path.join(RECEIPT_SHOTS, f"real-print-{label}-{tag}.png"))
+    console.page.emulate_media(media="screen")
+    if original:
+        console.page.set_viewport_size(original)
+    if not RECEIPT_SHOTS:
+        note("CONSOLE_RECEIPT_SHOTS unset: the print-media screenshots were not saved")
+
+    # Later -- the customer is back, or asks again: the order page's "Khác" has it too.
+    console.open_order(order_id, settle=1600)
+    ok(
+        "the 'just created' offer does not come back on a later visit",
+        console.page.locator("#order-created button[data-receipt]").count() == 0,
+    )
+    more = console.page.locator("button[data-more-steps]")
+    direct = console.page.locator(".action-bar--v2 button[data-receipt]")
+    if more.count():
+        more.first.click()
+        console.page.wait_for_timeout(400)
+        entry = console.page.locator("dialog[open] button[data-receipt]")
+    else:
+        entry = direct
+    ok(
+        "'Khác' lists 'In phiếu' beside the order's other steps",
+        entry.count() == 1 and "In phiếu" in entry.first.inner_text(),
+        f"more={more.count()}, entry={entry.count()}",
+    )
+    if entry.count():
+        entry.first.click()
+        touched("orderDetail.receipt-more")
+        console.page.wait_for_timeout(1500)
+    ok(
+        "and opens the same receipt",
+        console.page.url.endswith(f"#/orders/{order_id}/receipt")
+        and console.page.locator("#receipt-paper [data-total]").count() == 1,
+        console.page.url,
+    )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -2334,6 +2522,7 @@ SCENARIOS = {
     "pickup_only": scenario_pickup_only,
     "busy": scenario_busy,
     "remedy": scenario_remedy,
+    "receipt": scenario_receipt,
 }
 
 

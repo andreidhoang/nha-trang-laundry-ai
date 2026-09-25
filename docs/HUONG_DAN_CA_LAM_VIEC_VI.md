@@ -31,6 +31,7 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 4 | Bấm **Tính giá**, đọc **Tổng khách trả** cho khách | Nhận đồ |
 | 5 | Bấm **Tiếp tục**, hỏi khách biết tiệm qua đâu (chưa hỏi thì để *Chưa biết*) | Nhận đồ |
 | 6 | Khách đồng ý → bấm **Khách đồng ý — tạo đơn**. Máy ghi lời đồng ý, tạo đơn, rồi mở luôn trang đơn | Nhận đồ |
+| 6a | Khách cần phiếu → bấm **In phiếu cho khách** ngay đầu trang đơn, rồi **In phiếu** (máy in nhiệt 80 mm, 58 mm hoặc giấy A5). Máy có nút **Chia sẻ** thì gửi được phiếu qua điện thoại. Phiếu không ghi giờ hẹn trả đồ — chỉ ghi *Tiệm sẽ báo khi đồ sẵn sàng* | Phiếu cho khách |
 | 7 | Nhận túi đồ từ khách → bấm **Nhận đồ**, tích **Tiệm làm kịp đơn này**, bấm **Nhận đồ** lần nữa | Chi tiết đơn |
 | 8 | Bỏ đồ vào máy → bấm **Bắt đầu giặt** | Chi tiết đơn |
 | 9 | Giặt xong → **Giặt xong, kiểm tra đồ**; kiểm xong → **Báo đồ đã sẵn sàng** | Chi tiết đơn |
@@ -39,7 +40,7 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 12 | Đưa đồ cho khách, bấm **Giao đồ & đóng đơn** (nút hiện ngay sau khi thu tiền) | Chi tiết đơn |
 
 Trên trang của một đơn, **nút lớn ở cuối màn hình luôn là việc tiếp theo** — máy chủ tính ra, không
-phải đoán. Các việc khác (tạm dừng, huỷ đơn, khách trả trước…) nằm ở nút **Khác**.
+phải đoán. Các việc khác (tạm dừng, huỷ đơn, khách trả trước, **in lại phiếu**…) nằm ở nút **Khác**.
 
 - **Khách đã nhắn tin cho tiệm qua kênh chính thức:** ở bước 1 bấm **Khách đã nhắn qua kênh**,
   nhập mã khách ở *Nhập mã thủ công*, bấm **Ghi nhận tiếp nhận**. Mã lạ bị từ chối, không tự tạo.

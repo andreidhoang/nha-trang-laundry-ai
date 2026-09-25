@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 428
+  DESCRIPTIVE: 433
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 14
-total: 457
+total: 462
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -3119,6 +3119,48 @@ disclosures:
   key: hint
   text: Bảng này chỉ để đọc. Nó cho thấy đúng những dòng và những khoảng giá mà một phiếu duyệt niêm phong,
     để không ai phải duyệt một mã băm mà chưa nhìn thấy nội dung.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/receipt.js#hint:22f3e7267279
+  module: screens/receipt.js
+  key: hint
+  text: 'Phiếu không ghi giờ hẹn trả đồ: tiệm chưa quyết định quy tắc hẹn giờ cho từng đơn, nên phiếu
+    ghi “Tiệm sẽ báo khi đồ sẵn sàng”.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/receipt.js#hint:35968a6b9ca8
+  module: screens/receipt.js
+  key: hint
+  text: Nút “Chia sẻ” chỉ có trên máy có mục chia sẻ (thường là điện thoại). Máy không có thì in phiếu,
+    hoặc cho khách xem màn hình này.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/receipt.js#hint:8a0902d2f2cd
+  module: screens/receipt.js
+  key: hint
+  text: Máy này chưa chia sẻ được phiếu. Bấm “In phiếu” hoặc cho khách xem màn hình.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/receipt.js#notice:41e9b3c33ae8
+  module: screens/receipt.js
+  key: notice
+  text: Mã đơn sai, hoặc đơn thuộc cửa hàng bạn không làm.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/receipt.js#notice__title:a904619eb812
+  module: screens/receipt.js
+  key: notice__title
+  text: Địa chỉ này không chứa một mã đơn hợp lệ
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

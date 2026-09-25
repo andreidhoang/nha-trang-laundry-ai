@@ -302,6 +302,28 @@ class QuoteLineView:
     net_amount_vnd: int | None
     band_minimum_vnd: int | None
     band_maximum_vnd: int | None
+    #: `RECEIPT-PRINT-001`: the line's amount before any promotion or remedy credit was allocated
+    #: to it, read off the snapshot like `net_amount_vnd`. A receipt prints this beside the line and
+    #: the adjustments below it, so a customer who adds the rows up reaches the stored total instead
+    #: of seeing a discount twice. Null on a band line, for the reason the class docstring gives.
+    list_amount_vnd: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QuoteAdjustmentView:
+    """One money row the stored revision applies on top of its lines (`RECEIPT-PRINT-001`).
+
+    Read off `QuoteRevisionData.adjustments` verbatim: the kind (`PROMOTION`, `REMEDY_CREDIT`,
+    `DELIVERY`, `SURCHARGE`, `MANUAL_DISCOUNT`), whether it takes money off (`CREDIT`) or adds it
+    (`DEBIT`), the stored bounds (equal on every exact revision) and the reason code the snapshot
+    carries. Nothing is summed or netted here; the total stays the revision's own.
+    """
+
+    kind: str
+    direction: str
+    amount_min_vnd: int
+    amount_max_vnd: int
+    reason_code: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,6 +350,9 @@ class QuoteRevisionView:
     order_request_id: UUID | None = None
     contact_binding_id: UUID | None = None
     fulfillment_mode: str | None = None
+    #: `RECEIPT-PRINT-001`: the promotion, remedy credit, delivery fee and surcharge rows of this
+    #: revision, in the snapshot's own order. Empty when the revision has none.
+    adjustments: tuple[QuoteAdjustmentView, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -3312,10 +3337,25 @@ def _quote_revision_view(
                     if isinstance(line.amounts, ExactLineAmounts)
                     else line.amounts.net_amount_max_vnd
                 ),
+                list_amount_vnd=(
+                    line.amounts.list_amount_vnd
+                    if isinstance(line.amounts, ExactLineAmounts)
+                    else None
+                ),
             )
             for line in data.lines
         ),
         customer_accepted_at=customer_accepted_at,
+        adjustments=tuple(
+            QuoteAdjustmentView(
+                kind=item.kind.value,
+                direction=item.direction.value,
+                amount_min_vnd=item.amount_min_vnd,
+                amount_max_vnd=item.amount_max_vnd,
+                reason_code=item.reason_code,
+            )
+            for item in data.adjustments
+        ),
     )
 
 

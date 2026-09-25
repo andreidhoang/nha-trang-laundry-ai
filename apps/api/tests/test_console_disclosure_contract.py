@@ -855,7 +855,8 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # fill from the server, MANUAL-SEND-RESUME) and NOT_SUPPORTED's "Mã lý do bên dưới" (the notes
     # are visible, the codes are in the drawer). None removed.
     # 457 after merging the concurrent slices above (lead, at integration).
-    assert sum(counts.values()) == _registry()["total"] == 457
+    # 462 after RECEIPT-PRINT-001 (+5, all DESCRIPTIVE, screens/receipt.js; none removed).
+    assert sum(counts.values()) == _registry()["total"] == 462
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

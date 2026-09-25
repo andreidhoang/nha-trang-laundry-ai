@@ -40,6 +40,7 @@ import http.server
 import itertools
 import json
 import os
+import re
 import socketserver
 import sys
 import threading
@@ -546,6 +547,102 @@ ORDER_CREATED = {
 
 #: Section 15's order: fetched by the shop's courier, collected by the customer at the counter.
 PICKUP_ORDER_ID = "77777777-8888-4333-8444-999999999999"
+
+#: Section 20, `RECEIPT-PRINT-001`. An order whose bound revision carries everything a receipt
+#: prints: two lines at their list amounts, a promotion and a remedy credit taken off, a delivery
+#: fee added, and the order's own total. The figures are chosen so a screen that netted or added
+#: anything would print a number that is not here.
+#: The receipt prints a credit as U+2212 MINUS SIGN, the typographic minus, not a hyphen.
+MINUS = "\u2212"
+RECEIPT_ORDER_ID = "abcdef01-2345-4333-8444-555555555555"
+RECEIPT_QUOTE_ID = "abcdef02-2345-4333-8444-555555555555"
+RECEIPT_TOTAL_VND = 120_000 + 30_000 - 36_000 - 11_000 + 15_000
+RECEIPT_ORDER = {
+    "order_id": RECEIPT_ORDER_ID,
+    "store_id": STORE,
+    "commercial": "ACTIVE",
+    "intake": "ACCEPTED",
+    "production": "IN_PROCESS",
+    "balance": "UNPAID",
+    "row_version": 6,
+    "replayed": False,
+    "fulfillment_mode": "RETURN_ONLY",
+    "created_at": "2026-09-25T02:15:00+00:00",
+    "quote_id": RECEIPT_QUOTE_ID,
+    "quote_revision": 3,
+    "payable_total_vnd": RECEIPT_TOTAL_VND,
+    "ticket_number": 23,
+    "ticket_issued_on": "2026-09-25",
+    "self_collection_recorded": False,
+    "acquisition_source": "WALK_IN",
+    "delivery_legs": [],
+    "required_delivery_legs_succeeded": False,
+    "settlement_shape": None,
+    "next_steps": [],
+}
+RECEIPT_DETAIL = {
+    "quote_id": RECEIPT_QUOTE_ID,
+    "revision": 3,
+    "row_version": 3,
+    "finality": "APPROVED_EXACT",
+    "status": "ACCEPTED_FINAL",
+    "snapshot_hash": "JCS-SHA256-V1:" + "7" * 64,
+    "display_total_min_vnd": RECEIPT_TOTAL_VND,
+    "display_total_max_vnd": RECEIPT_TOTAL_VND,
+    "valid_until": None,
+    "reason_codes": [],
+    "lines": [
+        {
+            "line_id": "line-1",
+            "service_code": "STD_WASH_DRY_LT6",
+            "quantity": "4.8",
+            "unit": "KG",
+            "price_kind": "EXACT",
+            "net_amount_vnd": 120_000 - 36_000 - 8_000,
+            "list_amount_vnd": 120_000,
+            "band_minimum_vnd": None,
+            "band_maximum_vnd": None,
+        },
+        {
+            "line_id": "line-2",
+            "service_code": "IRON_SHIRT_UNREGISTERED",
+            "quantity": "3",
+            "unit": "ITEM",
+            "price_kind": "EXACT",
+            "net_amount_vnd": 30_000 - 3_000,
+            "list_amount_vnd": 30_000,
+            "band_minimum_vnd": None,
+            "band_maximum_vnd": None,
+        },
+    ],
+    "customer_accepted_at": "2026-09-25T02:14:00+00:00",
+    "order_request_id": "33333333-4444-4333-8444-777777777777",
+    "contact_binding_id": "22222222-3333-4333-8444-666666666666",
+    "fulfillment_mode": "RETURN_ONLY",
+    "adjustments": [
+        {
+            "kind": "PROMOTION",
+            "direction": "CREDIT",
+            "amount_min_vnd": 36_000,
+            "amount_max_vnd": 36_000,
+            "reason_code": "PROMO_WET30_DRY40_20260717_20260831",
+        },
+        {
+            "kind": "REMEDY_CREDIT",
+            "direction": "CREDIT",
+            "amount_min_vnd": 11_000,
+            "amount_max_vnd": 11_000,
+            "reason_code": "REMEDY_CREDIT_APPLIED",
+        },
+        {
+            "kind": "DELIVERY",
+            "direction": "DEBIT",
+            "amount_min_vnd": 15_000,
+            "amount_max_vnd": 15_000,
+            "reason_code": "AUTO_FIXED",
+        },
+    ],
+}
 
 
 def step(name: str, primary: bool = False, **extra: object) -> dict[str, object]:
@@ -1745,6 +1842,19 @@ with sync_playwright() as playwright:
             body = STAFF_DIRECTORY
         elif url.split("?")[0].endswith(f"/internal/v1/orders/{ORDER_VIEW_ID}"):
             body = ORDER_VIEW
+        elif url.split("?")[0].endswith(f"/internal/v1/orders/{RECEIPT_ORDER_ID}"):
+            body = state.get("receipt_order") or RECEIPT_ORDER
+        elif f"/quotes/{RECEIPT_QUOTE_ID}" in url:
+            # Section 20. Recorded, so the check can see the receipt asked for the bound revision.
+            state.setdefault("receipt_quote_reads", []).append(url)
+            if state.get("receipt_quote_fails"):
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps({"detail": "operations unavailable"}),
+                )
+                return
+            body = RECEIPT_DETAIL
         elif "remedy-proposals" in url and route.request.method == "POST":
             # Captured rather than merely answered: the property section 11 proves is that the
             # body carries exactly the keys this kind owns and no ceiling of its own. A stub that
@@ -2607,6 +2717,15 @@ with sync_playwright() as playwright:
         page.url.endswith(f"#/orders/{ORDER_CREATED['order_id']}")
         and "Đã tạo đơn · Phiếu 1" in page.content(),
         page.url,
+    )
+    # RECEIPT-PRINT-001: the customer is still at the counter, so the receipt is one tap away.
+    handoff = page.locator("#order-created button[data-receipt]")
+    check(
+        "and the order it opens offers 'In phiếu cho khách' at once, not as the page's primary",
+        handoff.count() == 1
+        and "In phiếu cho khách" in (handoff.inner_text() or "")
+        and handoff.get_attribute("data-variant") != "primary",
+        f"{handoff.count()} offers",
     )
 
     # The assertion that matters most: what the *next* customer's confirmation says. A sticky
@@ -5449,6 +5568,215 @@ with sync_playwright() as playwright:
     )
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
     state["service_state"] = None
+
+    print("=" * 74)
+    print("20. PHIẾU CHO KHÁCH — the receipt prints what the server holds, and nothing else")
+    print("=" * 74)
+
+    def main_text() -> str:
+        return page.locator("main").inner_text() or ""
+
+    formatted = page.evaluate(
+        """async (amounts) => {
+            const format = await import('./src/core/format.js');
+            return amounts.map((amount) => format.money(amount));
+        }""",
+        [RECEIPT_TOTAL_VND, 120_000, 30_000, 36_000, 11_000, 15_000],
+    )
+    total_text, wash_text, iron_text, promo_text, credit_text, fee_text = formatted
+
+    # First paint: the order read alone. The quote read fails, so the lines are not in.
+    state["receipt_quote_fails"] = True
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate(f"location.hash = '#/orders/{RECEIPT_ORDER_ID}/receipt'")
+    page.wait_for_timeout(1500)
+    paper = page.locator("#receipt-paper")
+    printer = page.locator("#receipt-print")
+    check(
+        "with the lines unread, the total on the paper is the server's figure, verbatim",
+        paper.locator("[data-total]").count() == 1
+        and paper.locator("[data-total]").inner_text().strip() == total_text,
+        paper.locator("[data-total]").inner_text() if paper.locator("[data-total]").count() else "",
+    )
+    check(
+        "and 'In phiếu' is shut with its reason: a receipt without its lines is not handed over",
+        printer.count() == 1
+        and printer.is_disabled()
+        and "Chưa in được: chưa đọc được các món của đơn." in main_text(),
+    )
+    reads = state.get("receipt_quote_reads") or []
+    check(
+        "the lines are read from the revision the order is bound to, in the order's store",
+        bool(reads) and f"/stores/{STORE}/quotes/{RECEIPT_QUOTE_ID}?revision=3" in reads[-1],
+        reads[-1] if reads else "no read",
+    )
+
+    # Second paint: the lines, once the read answers.
+    state["receipt_quote_fails"] = False
+    page.locator("#receipt-paper button", has_text="Đọc lại các món").first.click()
+    page.wait_for_timeout(1200)
+    lines = [
+        node.inner_text().strip()
+        for node in paper.locator(".receipt-paper__line .receipt-paper__value").all()
+    ]
+    check(
+        "each line prints at its list amount, with its quantity and published name",
+        lines == [wash_text, iron_text]
+        and "Giặt sấy dưới 6kg" in paper.inner_text()
+        and "4.8 kg" in paper.inner_text()
+        and "3 cái" in paper.inner_text(),
+        repr(lines),
+    )
+    adjustments = {
+        str(node.get_attribute("data-adjustment")): node.inner_text().replace("\n", " ")
+        for node in paper.locator("[data-adjustment]").all()
+    }
+    check(
+        "the promotion and the credit are printed as taken off, the delivery fee as added",
+        adjustments.get("PROMOTION") == f"Khuyến mãi {MINUS}{promo_text}"
+        and adjustments.get("REMEDY_CREDIT") == f"Khoản giảm trừ {MINUS}{credit_text}"
+        and adjustments.get("DELIVERY") == f"Phí giao +{fee_text}",
+        repr(adjustments),
+    )
+    if os.environ.get("CONSOLE_STUB_SHOTS"):
+        os.makedirs(os.environ["CONSOLE_STUB_SHOTS"], exist_ok=True)
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_timeout(300)
+        page.screenshot(
+            path=os.path.join(os.environ["CONSOLE_STUB_SHOTS"], "stub-receipt-phone.png"),
+            full_page=True,
+        )
+        page.set_viewport_size({"width": 1280, "height": 900})
+    check(
+        "and the total is still exactly the server's, never re-added on the screen",
+        paper.locator("[data-total]").inner_text().strip() == total_text,
+    )
+    check(
+        "it names the ticket and its day, and promises no ready time (R4)",
+        paper.locator("[data-field=ticket]").inner_text().strip() == "Phiếu 23"
+        and "25/09/2026" in paper.inner_text()
+        and paper.locator("[data-field=closing]").inner_text().strip()
+        == "Tiệm sẽ báo khi đồ sẵn sàng."
+        and "hẹn" not in paper.inner_text().lower(),
+    )
+    check(
+        "a store the server holds no name for gets no name line: nothing is invented",
+        paper.locator("[data-field=store]").count() == 0,
+    )
+    visible = main_text()
+    check(
+        "no identifier is visible on the receipt screen: the reference is eight characters",
+        re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", visible, re.I)
+        is None
+        and paper.locator("[data-field=reference]").inner_text().split()[-1] == "ABCDEF01",
+        visible[:160],
+    )
+    check(
+        "with the lines in, 'In phiếu' opens the print dialog",
+        printer.is_enabled(),
+    )
+    page.evaluate(
+        "() => { window.__printed = 0; window.print = () => { window.__printed += 1; }; }"
+    )
+    printer.click()
+    check("one press, one print dialog", page.evaluate("() => window.__printed") == 1)
+    check(
+        "'Chia sẻ' is not offered by a browser that cannot share",
+        page.evaluate("() => typeof navigator.share") != "function"
+        and page.locator("#receipt-share").count() == 0,
+    )
+
+    # Print media: only the slip.
+    page.emulate_media(media="print")
+    page.wait_for_timeout(200)
+    shown = page.evaluate(
+        """() => ['.appbar', '.nav', '.banners', '.toasts', '.action-bar', '.page-head',
+                  '#receipt-print']
+            .flatMap((s) => [...document.querySelectorAll(s)])
+            .filter((e) => e.getClientRects().length > 0)
+            .map((e) => e.className || e.id)"""
+    )
+    check(
+        "printed, the app bar, tab bar, toasts, header and buttons are hidden; the slip is not",
+        shown == [] and paper.is_visible(),
+        repr(shown),
+    )
+    for label, width in (("80mm", 302), ("58mm", 219), ("a5", 559)):
+        page.set_viewport_size({"width": width, "height": 900})
+        page.wait_for_timeout(200)
+        overflow = page.evaluate(
+            "() => { const p = document.querySelector('#receipt-paper');"
+            " return p.scrollWidth - p.clientWidth; }"
+        )
+        check(f"at {label} the slip fits its paper", overflow <= 0, f"{overflow}px")
+        shots = os.environ.get("CONSOLE_STUB_SHOTS", "")
+        if shots:
+            os.makedirs(shots, exist_ok=True)
+            paper.screenshot(path=os.path.join(shots, f"stub-print-{label}.png"))
+    page.emulate_media(media="screen")
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    # A browser with a share sheet gets "Chia sẻ", and it shares plain text.
+    page.add_init_script("navigator.share = async (data) => { window.__shared = data; };")
+    page.reload()
+    page.wait_for_timeout(1800)
+    share = page.locator("#receipt-share")
+    if share.count():
+        share.click()
+        page.wait_for_timeout(300)
+    shared = page.evaluate("() => window.__shared || null") or {}
+    text = str(shared.get("text") or "")
+    check(
+        "'Chia sẻ' shares the receipt as plain text: lines, credit, total, no identifier",
+        share.count() == 1
+        and f"Tổng cộng: {total_text}" in text
+        and f"Khoản giảm trừ: {MINUS}{credit_text}" in text
+        and "Tiệm sẽ báo khi đồ sẵn sàng." in text
+        and re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-", text, re.I) is None,
+        text[:200],
+    )
+
+    # A closed order: the receipt says so instead of promising to call.
+    state["receipt_order"] = {**RECEIPT_ORDER, "commercial": "COMPLETED", "production": "RELEASED"}
+    page.reload()
+    page.wait_for_timeout(1500)
+    check(
+        "a completed order's receipt no longer says the shop will call",
+        paper.locator("[data-field=closing]").inner_text().strip() == "Đơn đã hoàn tất.",
+    )
+    state["receipt_order"] = None
+
+    # The ways in: a closed order offers it beside the closed line; an AUDITOR sees it shut.
+    page.evaluate(f"location.hash = '#/orders/{ORDER_VIEW_ID}'")
+    page.wait_for_timeout(1500)
+    entry = page.locator(".action-bar--v2 button[data-receipt]")
+    check(
+        "a closed order's page offers 'In phiếu' in its action bar",
+        entry.count() == 1 and entry.is_enabled(),
+    )
+    if entry.count():
+        entry.click()
+        page.wait_for_timeout(900)
+    check(
+        "and it opens that order's receipt",
+        page.evaluate("location.hash") == f"#/orders/{ORDER_VIEW_ID}/receipt",
+        page.evaluate("location.hash"),
+    )
+    SESSION_OK["roles"] = ["AUDITOR"]
+    page.evaluate(f"location.hash = '#/orders/{ORDER_VIEW_ID}'")
+    page.reload()
+    page.wait_for_timeout(1800)
+    denied = page.locator(".action-bar--v2 button[data-receipt]")
+    check(
+        "an AUDITOR, who cannot read the quote the receipt prints, sees 'In phiếu' shut with why",
+        denied.count() == 1
+        and denied.is_disabled()
+        and "AUDITOR bị từ chối" in (page.locator(".action-bar--v2").inner_text() or ""),
+    )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    page.reload()
+    page.wait_for_timeout(1200)
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

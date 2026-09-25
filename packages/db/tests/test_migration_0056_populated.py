@@ -180,11 +180,19 @@ def _rows(connection: Any, statement: str, *params: object) -> list[tuple[Any, .
 
 
 def test_every_settlement_before_0056_becomes_its_one_payment_and_no_day_moves(
-    scratch_database: str, migrations_before: Path
+    scratch_database: str, migrations_before: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     P = ProductionStatus
     with psycopg.connect(scratch_database) as connection:
         apply_migrations(connection, migrations_before)
+        # The production moves are written the way the pre-`0056` repository wrote them, too: the
+        # move and nothing else. Today's `transition` also opens and closes a wash cycle
+        # (`SHOP-CAPTURE-001`), in a table `0058` creates -- later than the database this test
+        # populates -- so, as `_settle_as_before` does for the ledger, that one hook is left out
+        # while the old data is written, and restored before the migration is applied.
+        monkeypatch.setattr(
+            "nha_trang_laundry_db.orders.apply_cycle_effect", lambda *args, **kwargs: None
+        )
         store_id = _store(connection)
         staff = _person(connection, store_id, frozenset({StaffRole.OPERATOR}))
         owner = _person(connection, store_id, frozenset({StaffRole.OWNER_ADMIN}))
@@ -244,6 +252,7 @@ def test_every_settlement_before_0056_becomes_its_one_payment_and_no_day_moves(
         )
         assert len(settled) == 3
 
+        monkeypatch.undo()
         applied = apply_migrations(connection)
         assert MIGRATION_UNDER_TEST in applied
         connection.commit()

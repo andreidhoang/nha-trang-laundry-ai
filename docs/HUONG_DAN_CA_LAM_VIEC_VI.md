@@ -40,7 +40,21 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 12 | Đưa đồ cho khách, bấm **Giao đồ & đóng đơn** (nút hiện ngay sau khi thu tiền) | Chi tiết đơn |
 
 Trên trang của một đơn, **nút lớn ở cuối màn hình luôn là việc tiếp theo** — máy chủ tính ra, không
-phải đoán. Các việc khác (tạm dừng, huỷ đơn, khách trả trước, **in lại phiếu**…) nằm ở nút **Khác**.
+phải đoán. Các việc khác (tạm dừng, giặt lại, không nhận đồ, huỷ đơn, khách trả trước, **in lại phiếu**…)
+nằm ở nút **Khác**.
+
+### Đồ chưa sạch, hoặc tiệm không nhận đồ
+
+| Khi nào | Làm gì | Ở màn hình |
+|---|---|---|
+| Kiểm tra thấy đồ **chưa sạch** (hoặc máy lỗi), đồ **chưa rời tiệm** | **Khác** → **Giặt lại**, chọn lý do (*Chưa sạch*, *Máy lỗi*, *Lý do khác*), bấm **Giặt lại**. Đồ quay lại bước giặt; giặt xong thì **Giặt xong, kiểm tra đồ** như thường | Chi tiết đơn |
+| Đơn đã ghi **tiệm đang giữ đồ nhưng chưa nhận làm** (trạng thái *đã nhận, chờ kiểm* hoặc *chờ duyệt…*) và tiệm **không nhận** (tiệm không giặt loại này, đồ hỏng sẵn…) | **Khác** → **Không nhận đồ**, chọn lý do, bấm **Không nhận đồ** hai lần. Trả túi đồ cho khách; đơn bị huỷ, không có tiền nào chuyển | Chi tiết đơn |
+| Chưa bấm **Nhận đồ** mà khách lấy lại túi đồ | **Khác** → **Huỷ đơn**: đơn chưa ghi tiệm giữ đồ, nên huỷ ngay | Chi tiết đơn |
+
+- Giặt lại **không tính thêm tiền**: giá của đơn giữ nguyên.
+- Khách đã lấy đồ về rồi mới quay lại vì đồ chưa sạch thì **không** bấm Giặt lại — đó là
+  **khiếu nại** (xem mục khiếu nại bên dưới).
+- Lịch sử của đơn ghi rõ bước và lý do, ví dụ **Giặt lại · Chưa sạch**, kèm tên bạn.
 
 - **Khách đã nhắn tin cho tiệm qua kênh chính thức:** ở bước 1 bấm **Khách đã nhắn qua kênh**,
   nhập mã khách ở *Nhập mã thủ công*, bấm **Ghi nhận tiếp nhận**. Mã lạ bị từ chối, không tự tạo.

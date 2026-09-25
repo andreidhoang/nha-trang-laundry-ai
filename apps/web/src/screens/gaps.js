@@ -69,31 +69,14 @@ const GROUPS = [
     //
     // CONSOLE-REDESIGN-002 removed that generic "Chuyển trạng thái đơn" form: each order's page now
     // offers the steps the server computes as legal (ORDER-STEPS-001). Two targets the old form
-    // reached have no step yet, and are listed below rather than silently gone.
+    // reached -- a rewash and refusing the goods -- had no step, and were listed here until
+    // ORDER-STEPS-002 made them "Giặt lại" and "Không nhận đồ" under "Khác", each with a reason.
     lede:
       "Bảng vận hành hôm nay bao được cả bốn chiều của một đơn tại quầy: thương mại, nhận đồ, " +
       "sản xuất và tất toán, cùng chặng giao. Mỗi việc là một nút trên trang của đơn: nút lớn " +
-      "là bước tiếp theo máy chủ cho phép, các bước khác nằm ở “Khác”. Hai việc chưa có nút — " +
-      "xem mục “Sự cố sản xuất và từ chối nhận đồ” bên dưới.",
+      "là bước tiếp theo máy chủ cho phép, các bước khác nằm ở “Khác” — kể cả “Giặt lại” và " +
+      "“Không nhận đồ”.",
     entries: [
-      {
-        ref: "ORDER-STEPS-001",
-        title: "Sự cố sản xuất và từ chối nhận đồ",
-        what: "Ghi một mẻ đồ gặp sự cố để giặt lại, và từ chối nhận đồ của khách ngay tại quầy.",
-        // The V1 three-axis form offered every target, so EXCEPTION (a stain found at quality
-        // check, back through the wash) and intake REJECTED were one dropdown away. The composite
-        // steps have HOLD/RESUME for an interruption but nothing that means "rewash" or "refuse
-        // the goods", and the console must not re-grow a transition table to fake one.
-        missing:
-          "Trang đơn chỉ hiện các bước máy chủ tính ra, và danh sách bước chưa có “ghi sự cố để " +
-          "giặt lại” (sản xuất sang EXCEPTION rồi giặt lại) hay “từ chối nhận đồ” (nhận đồ sang " +
-          "REJECTED). Hai đường chuyển trạng thái riêng vẫn còn ở máy chủ nhưng bảng vận hành " +
-          "không còn biểu mẫu nào gọi chúng.",
-        blockedBy: "Chưa có bước REWASH hay REJECT_INTAKE trong danh sách bước của ORDER-STEPS",
-        today:
-          "Đồ cần giặt lại: bấm “Tạm dừng”, giặt lại, rồi “Làm tiếp”. Không nhận đồ: đừng bấm " +
-          "“Nhận đồ” — huỷ đơn khi khách mang đồ về.",
-      },
       {
         ref: "M3 · MÀN 2",
         title: "Khách hàng / hỏi mới",

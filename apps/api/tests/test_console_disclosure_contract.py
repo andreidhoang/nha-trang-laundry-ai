@@ -856,7 +856,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # are visible, the codes are in the drawer). None removed.
     # 457 after merging the concurrent slices above (lead, at integration).
     # 462 after RECEIPT-PRINT-001 (+5, all DESCRIPTIVE, screens/receipt.js; none removed).
-    assert sum(counts.values()) == _registry()["total"] == 462
+    # 461 after ORDER-STEPS-002 merged on top (round 6 slice A): -3 the retired gaps.js entry
+    # "Sự cố sản xuất và từ chối nhận đồ" (missing, blockedBy, today), +2 the Giặt lại / Không nhận
+    # đồ sheet notes in orderDetail.js; the gaps lede is reworded (same slot count). 462 - 3 + 2.
+    assert sum(counts.values()) == _registry()["total"] == 461
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

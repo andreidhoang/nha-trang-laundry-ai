@@ -47,9 +47,11 @@ from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     CustodyResolution,
     FulfillmentMode,
+    IntakeRejectionReason,
     IntakeStatus,
     OrderBalanceStatus,
     ProductionStatus,
+    RewashReason,
 )
 from nha_trang_laundry_domain.order_steps import OrderStep
 from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA
@@ -141,6 +143,8 @@ def _step(
     key: str | None = None,
     slot_approved: bool = False,
     custody_resolution: CustodyResolution | None = None,
+    rewash_reason: RewashReason | None = None,
+    rejection_reason: IntakeRejectionReason | None = None,
 ) -> OrderStepResult:
     return OrderRepository().execute_step(
         connection,
@@ -153,6 +157,8 @@ def _step(
             step=step,
             slot_approved=slot_approved,
             custody_resolution=custody_resolution,
+            rewash_reason=rewash_reason,
+            rejection_reason=rejection_reason,
         ),
     )
 
@@ -772,3 +778,356 @@ def test_the_order_history_names_each_state_a_step_moved_to(
     assert others and all(
         entry.transition_dimension is None and entry.transition_target is None for entry in others
     )
+
+
+# --- ORDER-STEPS-002: rewash and refuse-at-intake ------------------------------------------------
+
+
+def _step_rows(connection: Any, order_id: UUID, since_version: int) -> list[tuple[Any, ...]]:
+    """(version, event payload, audit details, outbox payload) per transition after a version."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT e.aggregate_version, e.payload, a.details, o.payload
+            FROM domain_events e
+            JOIN audit_events a
+              ON a.aggregate_id = e.aggregate_id AND a.correlation_id = e.correlation_id
+             AND a.occurred_at = e.occurred_at AND a.action = 'ORDER_STATE_TRANSITION'
+            JOIN outbox_events o
+              ON o.aggregate_id = e.aggregate_id
+             AND o.idempotency_key
+                 = 'order:' || e.aggregate_id || ':version:' || e.aggregate_version
+            WHERE e.aggregate_id = %s AND e.event_type = 'ORDER_STATE_TRANSITIONED'
+              AND e.aggregate_version > %s
+            ORDER BY e.aggregate_version
+            """,
+            (order_id, since_version),
+        )
+        return [tuple(row) for row in cursor.fetchall()]
+
+
+def _to_quality_check(connection: Any, order_id: UUID, staff: StaffPrincipal) -> Any:
+    view = _step(connection, order_id, staff, 1, OrderStep.RECEIVE, slot_approved=True).view
+    for step in (OrderStep.START_WASH, OrderStep.QUALITY_CHECK):
+        view = _step(connection, order_id, staff, view.row_version, step).view
+    return view
+
+
+def _received_on_the_counter(connection: Any, order_id: UUID, staff: StaffPrincipal) -> int:
+    """The per-axis intake move a channel order makes: custody recorded, nothing accepted."""
+
+    return (
+        OrderRepository()
+        .transition(
+            connection,
+            OrderTransitionCommand(
+                order_id,
+                1,
+                staff,
+                f"hand-{uuid4().hex}",
+                uuid4(),
+                intake_target=IntakeStatus.RECEIVED_PENDING_INSPECTION,
+            ),
+        )
+        .row_version
+    )
+
+
+@pytest.mark.parametrize("from_ready", [False, True])
+def test_a_rewash_writes_two_audited_transitions_and_the_reason_on_the_first(
+    connection: psycopg.Connection[Any], from_ready: bool
+) -> None:
+    store_id = uuid4()
+    staff = _staff(connection, store_id)
+    order_id = _order(connection, store_id, staff)
+    view = _to_quality_check(connection, order_id, staff)
+    if from_ready:
+        view = _step(connection, order_id, staff, view.row_version, OrderStep.MARK_READY).view
+        assert _order_row(connection, order_id)[2] == "READY_AT_STORE"
+    rewash = next(item for item in view.next_steps if item.step is OrderStep.REWASH)
+    assert not rewash.primary and rewash.requires == ("rewash_reason",)
+    assert rewash.rewash_reasons == tuple(RewashReason)
+    before = view.row_version
+
+    after = _step(
+        connection,
+        order_id,
+        staff,
+        before,
+        OrderStep.REWASH,
+        rewash_reason=RewashReason.NOT_CLEAN,
+    ).view
+
+    assert (after.production, after.row_version) == (ProductionStatus.IN_PROCESS, before + 2)
+    assert after.payable_total_vnd == view.payable_total_vnd == TOTAL_VND
+    assert _primary(after) is OrderStep.QUALITY_CHECK
+    rows = _step_rows(connection, order_id, before)
+    assert [(version, event) for version, event, _audit, _outbox in rows] == [
+        (
+            before + 1,
+            {
+                "dimension": "production",
+                "target": "EXCEPTION",
+                "step": "REWASH",
+                "rewash_reason": "NOT_CLEAN",
+            },
+        ),
+        (before + 2, {"dimension": "production", "target": "IN_PROCESS"}),
+    ]
+    assert rows[0][2] == {
+        "event_type": "ORDER_STATE_TRANSITIONED",
+        "step": "REWASH",
+        "rewash_reason": "NOT_CLEAN",
+    }
+    assert rows[1][2] == {"event_type": "ORDER_STATE_TRANSITIONED"}
+    assert [outbox["target"] for *_rest, outbox in rows] == ["EXCEPTION", "IN_PROCESS"]
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT production_ready_at, production_resume_status FROM orders WHERE id = %s",
+            (order_id,),
+        )
+        # Being washed again is not finished: the SLA clock's "done" stamp is cleared (`0037`).
+        assert _one(cursor) == (None, None)
+
+
+def test_the_rewashed_order_walks_forward_again_to_completed(
+    connection: psycopg.Connection[Any],
+) -> None:
+    store_id = uuid4()
+    staff = _staff(connection, store_id)
+    order_id = _order(connection, store_id, staff)
+    view = _to_quality_check(connection, order_id, staff)
+    view = _step(
+        connection,
+        order_id,
+        staff,
+        view.row_version,
+        OrderStep.REWASH,
+        rewash_reason=RewashReason.MACHINE_FAULT,
+    ).view
+    for step in (OrderStep.QUALITY_CHECK, OrderStep.MARK_READY):
+        view = _step(connection, order_id, staff, view.row_version, step).view
+    assert _primary(view) is OrderStep.SETTLE
+    SettlementRepository().record(
+        connection, SettlementCommand(order_id, TOTAL_VND, True, staff, uuid4())
+    )
+    view = _read(connection, order_id, staff)
+    done = _step(connection, order_id, staff, view.row_version, OrderStep.HAND_OVER).view
+    assert done.commercial is CommercialOrderStatus.COMPLETED
+    assert done.next_steps == ()
+
+
+def test_a_refusal_at_intake_rejects_cancels_and_closes_the_intake_request(
+    connection: psycopg.Connection[Any],
+) -> None:
+    store_id = uuid4()
+    staff = _staff(connection, store_id)
+    order_id = _order(connection, store_id, staff)
+    version = _received_on_the_counter(connection, order_id, staff)
+    view = _read(connection, order_id, staff)
+    reject = next(item for item in view.next_steps if item.step is OrderStep.REJECT_INTAKE)
+    assert not reject.primary and reject.requires == ("rejection_reason",)
+    assert reject.rejection_reasons == tuple(IntakeRejectionReason)
+
+    after = _step(
+        connection,
+        order_id,
+        staff,
+        version,
+        OrderStep.REJECT_INTAKE,
+        rejection_reason=IntakeRejectionReason.DAMAGED_ON_ARRIVAL,
+    ).view
+
+    assert (after.commercial, after.intake, after.production, after.balance) == (
+        CommercialOrderStatus.CANCELLED,
+        IntakeStatus.REJECTED,
+        ProductionStatus.NOT_STARTED,
+        OrderBalanceStatus.UNPAID,
+    )
+    assert after.next_steps == ()
+    rows = _step_rows(connection, order_id, version)
+    assert [event for _version, event, _audit, _outbox in rows] == [
+        {
+            "dimension": "intake",
+            "target": "REJECTED",
+            "step": "REJECT_INTAKE",
+            "rejection_reason": "DAMAGED_ON_ARRIVAL",
+        },
+        {"dimension": "commercial", "target": "CANCELLED"},
+    ]
+    assert rows[0][2]["rejection_reason"] == "DAMAGED_ON_ARRIVAL"
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT r.status FROM order_requests r
+            JOIN quotes q ON q.bound_order_request_id = r.id
+            JOIN orders o ON o.current_quote_id = q.id
+            WHERE o.id = %s
+            """,
+            (order_id,),
+        )
+        assert _one(cursor) == ("CANCELLED",)
+        cursor.execute("SELECT count(*) FROM order_refunds WHERE order_id = %s", (order_id,))
+        assert _one(cursor) == (0,)
+
+
+def test_a_refused_rewash_or_refusal_writes_nothing(connection: psycopg.Connection[Any]) -> None:
+    store_id = uuid4()
+    staff = _staff(connection, store_id)
+    washing = _order(connection, store_id, staff)
+    view = _step(connection, washing, staff, 1, OrderStep.RECEIVE, slot_approved=True).view
+    view = _step(connection, washing, staff, view.row_version, OrderStep.START_WASH).view
+    before = _ledger(connection, washing)
+    with pytest.raises(OrderStateError, match="quality check or from the shelf"):
+        _step(
+            connection,
+            washing,
+            staff,
+            view.row_version,
+            OrderStep.REWASH,
+            rewash_reason=RewashReason.NOT_CLEAN,
+        )
+    assert _ledger(connection, washing) == before
+    # Nothing received yet: nothing to refuse; and an accepted order is not refused either.
+    fresh = _order(connection, store_id, staff)
+    before = _ledger(connection, fresh)
+    with pytest.raises(OrderStateError, match="nothing was received"):
+        _step(
+            connection,
+            fresh,
+            staff,
+            1,
+            OrderStep.REJECT_INTAKE,
+            rejection_reason=IntakeRejectionReason.OTHER,
+        )
+    assert _ledger(connection, fresh) == before
+    with pytest.raises(OrderStateError, match="before the order is accepted"):
+        _step(
+            connection,
+            washing,
+            staff,
+            view.row_version,
+            OrderStep.REJECT_INTAKE,
+            rejection_reason=IntakeRejectionReason.OTHER,
+        )
+
+
+def test_a_rewash_replays_and_a_different_reason_on_the_same_key_is_a_conflict(
+    connection: psycopg.Connection[Any],
+) -> None:
+    store_id = uuid4()
+    staff = _staff(connection, store_id)
+    order_id = _order(connection, store_id, staff)
+    view = _to_quality_check(connection, order_id, staff)
+    key = f"step-{uuid4().hex}"
+    first = _step(
+        connection,
+        order_id,
+        staff,
+        view.row_version,
+        OrderStep.REWASH,
+        key=key,
+        rewash_reason=RewashReason.NOT_CLEAN,
+    )
+    written = _ledger(connection, order_id)
+    again = _step(
+        connection,
+        order_id,
+        staff,
+        view.row_version,
+        OrderStep.REWASH,
+        key=key,
+        rewash_reason=RewashReason.NOT_CLEAN,
+    )
+    assert again.replayed and again.view == first.view
+    assert _ledger(connection, order_id) == written
+    with pytest.raises(IdempotencyConflictError):
+        _step(
+            connection,
+            order_id,
+            staff,
+            view.row_version,
+            OrderStep.REWASH,
+            key=key,
+            rewash_reason=RewashReason.OTHER,
+        )
+
+
+def test_an_ordinary_step_still_hashes_as_it_did_before_the_reasons_existed(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """A key taken before ORDER-STEPS-002 must still replay: absent reasons add no payload keys."""
+
+    store_id = uuid4()
+    staff = _staff(connection, store_id)
+    order_id = _order(connection, store_id, staff)
+    key = f"step-{uuid4().hex}"
+    _step(connection, order_id, staff, 1, OrderStep.RECEIVE, key=key, slot_approved=True)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT request_hash FROM command_idempotency_records
+            WHERE scope = %s AND idempotency_key = %s
+            """,
+            (f"order:{order_id}:step", key),
+        )
+        stored = _one(cursor)[0]
+    from nha_trang_laundry_db.keyed_digest import request_digest
+    from nha_trang_laundry_domain.canonical import canonical_document
+
+    legacy = {
+        "order_id": str(order_id),
+        "expected_row_version": 1,
+        "step": "RECEIVE",
+        "slot_approved": True,
+        "custody_resolution": None,
+    }
+    assert stored == request_digest(canonical_document(legacy).canonical_json)
+
+
+def test_the_order_history_names_the_step_and_its_reason(
+    connection: psycopg.Connection[Any],
+) -> None:
+    store_id = uuid4()
+    staff = _staff(connection, store_id)
+    order_id = _order(connection, store_id, staff)
+    view = _to_quality_check(connection, order_id, staff)
+    _step(
+        connection,
+        order_id,
+        staff,
+        view.row_version,
+        OrderStep.REWASH,
+        rewash_reason=RewashReason.NOT_CLEAN,
+    )
+    refused = _order(connection, store_id, staff)
+    version = _received_on_the_counter(connection, refused, staff)
+    _step(
+        connection,
+        refused,
+        staff,
+        version,
+        OrderStep.REJECT_INTAKE,
+        rejection_reason=IntakeRejectionReason.NOT_SERVICEABLE,
+    )
+
+    def named(aggregate: UUID) -> list[tuple[str | None, ...]]:
+        timeline = ShadowConsoleRepository().audit_timeline(
+            connection, store_id=store_id, aggregate_id=aggregate, principal=staff
+        )
+        return [
+            (entry.transition_target, entry.transition_step, entry.transition_reason)
+            for entry in timeline
+            if entry.action == "ORDER_STATE_TRANSITION"
+        ]
+
+    assert named(order_id)[-2:] == [
+        ("EXCEPTION", "REWASH", "NOT_CLEAN"),
+        ("IN_PROCESS", None, None),
+    ]
+    assert all(step is None for _target, step, _reason in named(order_id)[:-2])
+    assert named(refused)[-2:] == [
+        ("REJECTED", "REJECT_INTAKE", "NOT_SERVICEABLE"),
+        ("CANCELLED", None, None),
+    ]

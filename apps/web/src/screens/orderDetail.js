@@ -16,6 +16,10 @@
  *   - **`RECEIVE` needs the operator's word on capacity.** The server derives five of the six
  *     readiness facts itself; `slot_approved` is the one it cannot know. The confirmation sheet asks
  *     for it as an explicit tick — the button alone never asserts it.
+ *   - **Giặt lại and Không nhận đồ need a person's reason** (ORDER-STEPS-002). The server never
+ *     makes either primary and lists the reasons it will take; the sheet offers exactly those, and
+ *     the history reads the step and its reason back ("Giặt lại · Chưa sạch"). When they are the only
+ *     legal steps the bar has no big button, only "Khác".
  *   - **The amount is typed, not prefilled.** The settlement compares what is typed against the
  *     immutable quote the order is bound to; a pre-filled figure a person confirms without reading is
  *     how a wrong amount gets attested, and the point of the comparison is that two independent
@@ -71,6 +75,7 @@ import {
   page,
   progress,
   section,
+  segmented,
   sheet,
   show,
   skeletonRows,
@@ -129,15 +134,36 @@ const COMPOSITE = new Set([
   "MARK_READY",
   "HOLD",
   "RESUME",
+  "REWASH",
   "RELEASE",
   "HAND_OVER",
   "COMPLETE",
   "CANCEL",
+  "REJECT_INTAKE",
   "REOPEN",
 ]);
 
 /** Steps that stop or end work: red, and never one tap. */
-const DESTRUCTIVE = new Set(["CANCEL", "HOLD"]);
+const DESTRUCTIVE = new Set(["CANCEL", "HOLD", "REJECT_INTAKE"]);
+
+/**
+ * ORDER-STEPS-002: the steps that record a reason a person gives, and where the server lists the
+ * reasons it will take. Presentation of the server's own `requires` / reason lists, nothing more.
+ */
+const REASON_STEPS = {
+  REWASH: {
+    field: "rewash_reason",
+    list: "rewash_reasons",
+    question: "Vì sao giặt lại?",
+    note: "Khách không trả thêm tiền. Đồ quay lại bước giặt, rồi kiểm tra lại.",
+  },
+  REJECT_INTAKE: {
+    field: "rejection_reason",
+    list: "rejection_reasons",
+    question: "Vì sao không nhận?",
+    note: "Trả túi đồ cho khách. Đơn bị huỷ, không có tiền nào chuyển.",
+  },
+};
 
 /** Steps that end the visit; offered straight away in a sheet's success state when primary. */
 const CLOSING = new Set(["HAND_OVER", "COMPLETE"]);
@@ -570,7 +596,10 @@ export function render_(context) {
       );
       return;
     }
-    const primary = steps.find((entry) => entry.primary) || steps[0];
+    // ORDER-STEPS-002: a list may have no primary -- when the only legal steps are ones the server
+    // never makes primary (Giặt lại, Không nhận đồ). Then nothing is promoted to the big button;
+    // the steps stay under "Khác", and the bar says there is no ordinary next step.
+    const primary = steps.find((entry) => entry.primary) || null;
     // Presentation only: the server's order, with the steps that stop or end work moved last so a
     // thumb reaching for "Khách trả trước" does not land on "Huỷ đơn".
     const rest = steps.filter((entry) => entry !== primary);
@@ -582,7 +611,9 @@ export function render_(context) {
       actionHost,
       actionBar(
         actionAlert,
-        stepControl(primary, { primary: true }),
+        primary
+          ? stepControl(primary, { primary: true })
+          : h("p", { class: "muted order__no-primary" }, "Chưa có bước tiếp theo."),
         // With nothing else to offer, the receipt takes the secondary place; otherwise it is the
         // first thing under "Khác" that is not a step.
         others.length ? moreButton(others) : receiptControl("In phiếu"),
@@ -667,6 +698,7 @@ export function render_(context) {
           else if (step === "COLLECT") openCollect();
           else if (step === "DELIVERY_PICKUP" || step === "DELIVERY_RETURN") openLeg(entry);
           else if (step === "CANCEL") openCancel(entry);
+          else if (Object.hasOwn(REASON_STEPS, step)) openReason(entry);
           else if (COMPOSITE.has(step)) void runComposite(entry, {}, actionAlert, opener);
           else show(actionAlert, unknownStep(step));
         },
@@ -750,7 +782,7 @@ export function render_(context) {
    * One composite step on `POST /orders/{id}/steps`.
    *
    * @param {any} entry
-   * @param {{slot_approved?: boolean, custody_resolution?: string}} extra
+   * @param {{slot_approved?: boolean, custody_resolution?: string, rewash_reason?: string, rejection_reason?: string}} extra
    * @param {HTMLElement} alertHost where a refusal is shown
    * @param {HTMLButtonElement} [control]
    * @returns {Promise<any|null>} the re-read order, or null when refused
@@ -1237,6 +1269,68 @@ export function render_(context) {
     });
   }
 
+  /**
+   * Giặt lại / Không nhận đồ (ORDER-STEPS-002). Each needs the person's reason, picked from exactly
+   * the reasons the server listed for this order; the press stays shut until one is picked. The
+   * refusal ends the order, so it is red and takes two presses, as Huỷ đơn does.
+   *
+   * @param {any} entry
+   */
+  function openReason(entry) {
+    const step = String(entry.step);
+    const spec = REASON_STEPS[step];
+    const choices = Array.isArray(entry[spec.list]) ? entry[spec.list].map(String) : [];
+    const alertHost = h("div");
+    let reason = "";
+    const send = async () => {
+      const done = await runComposite(entry, { [spec.field]: reason }, alertHost, confirm);
+      if (done) made.close();
+    };
+    const confirm = DESTRUCTIVE.has(step)
+      ? confirmButton({
+          label: stepVi(step),
+          confirmLabel: "Bấm lần nữa để trả đồ và huỷ đơn",
+          block: true,
+          onConfirm: () => void send(),
+        })
+      : button({
+          label: stepVi(step),
+          variant: "primary",
+          block: true,
+          network: true,
+          onClick: () => void send(),
+        });
+    confirm.id = "step-reason-submit";
+    confirm.disabled = true;
+    const made = openFresh({
+      id: "order-reason",
+      title: stepVi(step),
+      body: h(
+        "div",
+        { class: "stack" },
+        h("p", { class: "field-label" }, spec.question),
+        segmented({
+          label: spec.question,
+          id: "step-reason",
+          value: "",
+          wrap: true,
+          options: choices.map((value) => ({ value, label: enumVi(value) })),
+          onChange: (value) => {
+            reason = value;
+            if (writeVerdict.allowed) confirm.disabled = false;
+          },
+        }),
+        h("p", { class: "hint" }, spec.note),
+        alertHost,
+      ),
+      actions: gated(confirm, writeVerdict),
+    });
+    // The token beside each gloss, for whoever needs to quote it (spec V2 §4.1).
+    for (const option of made.node.querySelectorAll("#step-reason [data-value]")) {
+      option.setAttribute("title", String(option.getAttribute("data-value")));
+    }
+  }
+
   // --- side reads -----------------------------------------------------------------------------
 
   /** @param {string} store the order's own store, read off the order */
@@ -1345,7 +1439,8 @@ export function render_(context) {
     const out = [];
     for (const entry of rows) {
       const key =
-        `${entry.action}|${entry.transition_target || ""}|${entry.actor_type}|` +
+        `${entry.action}|${entry.transition_target || ""}|${entry.transition_step || ""}|` +
+        `${entry.actor_type}|` +
         `${entry.actor_id}|${dateTime(entry.occurred_at)}`;
       const last = out[out.length - 1];
       if (last && last.key === key) last.times += 1;
@@ -1357,6 +1452,27 @@ export function render_(context) {
   /** @param {{entry: any, times: number}} folded */
   function auditRow(folded) {
     const entry = folded.entry;
+    // ORDER-STEPS-002: the transition that starts a rewash or a refusal carries the step and the
+    // reason staff gave, so the history reads "Giặt lại · Chưa sạch" instead of "Sản xuất · Sự cố".
+    if (entry.transition_step) {
+      return listRow({
+        title: h(
+          "span",
+          {
+            title:
+              `${entry.action} ${entry.transition_dimension}→${entry.transition_target} ` +
+              `${entry.transition_step} ${entry.transition_reason || ""}`.trim(),
+          },
+          `${stepVi(String(entry.transition_step))} · ${enumVi(entry.transition_reason)}`,
+        ),
+        meta: h(
+          "span",
+          { title: entry.actor_id || "" },
+          `${dateTime(entry.occurred_at)} · ${enumVi(entry.actor_type)}` +
+            (entry.actor_id ? "" : " —"),
+        ),
+      });
+    }
     return listRow({
       // A transition row names what moved and where to (from its domain event), so a composite
       // step reads as its real states — "Tiếp nhận · Đã nhận đồ" — not "Chuyển trạng thái đơn × 5".

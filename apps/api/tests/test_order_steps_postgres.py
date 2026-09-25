@@ -460,3 +460,212 @@ def test_the_sla_board_items_carry_the_ticket(client: TestClient, connection: An
         view["ticket_number"],
         view["ticket_issued_on"],
     )
+
+
+# --- ORDER-STEPS-002: rewash and refuse-at-intake over HTTP --------------------------------------
+
+
+def _checking(client: TestClient, connection: Any) -> tuple[UUID, StaffPrincipal, dict[str, Any]]:
+    """An order being checked after its first wash, driven only through the step route."""
+
+    store_id, staff = _shop(connection)
+    created = _create_order(client, connection, store_id, staff)
+    counter = _Counter(client)
+    order = client.get(f"/internal/v1/orders/{created['order_id']}").json()
+    order = counter.step(order, "RECEIVE", slot_approved=True)
+    for step in ("START_WASH", "QUALITY_CHECK"):
+        order = counter.step(order, step)
+    return store_id, staff, order
+
+
+def _on_the_counter(
+    client: TestClient, connection: Any
+) -> tuple[UUID, StaffPrincipal, dict[str, Any]]:
+    """Goods received on the counter and not yet accepted (the per-axis intake move)."""
+
+    store_id, staff = _shop(connection)
+    created = _create_order(client, connection, store_id, staff)
+    moved = client.post(
+        f"/internal/v1/orders/{created['order_id']}/intake-transition",
+        headers=_headers(1),
+        json={"target": "RECEIVED_PENDING_INSPECTION"},
+    )
+    assert moved.status_code == 200, moved.text
+    return store_id, staff, client.get(f"/internal/v1/orders/{created['order_id']}").json()
+
+
+def _named_history(client: TestClient, store_id: UUID, order_id: str) -> list[tuple[Any, ...]]:
+    history = client.get(f"/internal/v1/stores/{store_id}/shadow/audit/{order_id}")
+    assert history.status_code == 200, history.text
+    return [
+        (entry["transition_target"], entry["transition_step"], entry["transition_reason"])
+        for entry in history.json()
+        if entry["action"] == "ORDER_STATE_TRANSITION"
+    ]
+
+
+def test_rewash_is_listed_with_its_reasons_and_never_primary(
+    client: TestClient, connection: Any
+) -> None:
+    _store, _staff, order = _checking(client, connection)
+    (rewash,) = [item for item in order["next_steps"] if item["step"] == "REWASH"]
+    assert rewash == {
+        "step": "REWASH",
+        "primary": False,
+        "requires": ["rewash_reason"],
+        "custody_resolutions": [],
+        "rewash_reasons": ["NOT_CLEAN", "MACHINE_FAULT", "OTHER"],
+        "rejection_reasons": [],
+    }
+    assert _primary(order) == "MARK_READY"
+
+
+def test_a_stain_at_quality_check_is_washed_again_and_the_order_still_completes(
+    client: TestClient, connection: Any
+) -> None:
+    store_id, _staff, order = _checking(client, connection)
+    counter = _Counter(client)
+    order = counter.step(order, "REWASH", rewash_reason="NOT_CLEAN")
+    assert order["production"] == "IN_PROCESS"
+    assert order["payable_total_vnd"] == TOTAL_VND
+    assert _primary(order) == "QUALITY_CHECK"
+    for step in ("QUALITY_CHECK", "MARK_READY"):
+        order = counter.step(order, step)
+    order = counter.settle(order, collected=True)
+    order = counter.step(order, "HAND_OVER")
+    assert (order["commercial"], order["balance"]) == ("COMPLETED", "PAID")
+
+    named = [row for row in _named_history(client, store_id, order["order_id"]) if row[1]]
+    assert named == [("EXCEPTION", "REWASH", "NOT_CLEAN")]
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT a.details ->> 'rewash_reason', e.payload ->> 'rewash_reason'
+            FROM audit_events a
+            JOIN domain_events e
+              ON e.aggregate_id = a.aggregate_id AND e.correlation_id = a.correlation_id
+             AND e.occurred_at = a.occurred_at
+            WHERE a.aggregate_id = %s AND a.action = 'ORDER_STATE_TRANSITION'
+              AND e.payload ->> 'target' = 'EXCEPTION'
+            """,
+            (order["order_id"],),
+        )
+        assert cursor.fetchall() == [("NOT_CLEAN", "NOT_CLEAN")]
+
+
+def test_goods_refused_on_the_counter_close_the_order_with_nothing_left_to_do(
+    client: TestClient, connection: Any
+) -> None:
+    store_id, _staff, order = _on_the_counter(client, connection)
+    (reject,) = [item for item in order["next_steps"] if item["step"] == "REJECT_INTAKE"]
+    assert reject["requires"] == ["rejection_reason"] and not reject["primary"]
+    assert reject["rejection_reasons"] == ["NOT_SERVICEABLE", "DAMAGED_ON_ARRIVAL", "OTHER"]
+    assert _primary(order) == "RECEIVE"
+
+    order = _Counter(client).step(order, "REJECT_INTAKE", rejection_reason="NOT_SERVICEABLE")
+    assert (order["commercial"], order["intake"], order["balance"]) == (
+        "CANCELLED",
+        "REJECTED",
+        "UNPAID",
+    )
+    assert order["next_steps"] == []
+    assert _named_history(client, store_id, order["order_id"])[-2:] == [
+        ("REJECTED", "REJECT_INTAKE", "NOT_SERVICEABLE"),
+        ("CANCELLED", None, None),
+    ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"step": "REWASH"},
+        {"step": "REWASH", "rewash_reason": "DIRTY"},
+        {"step": "REWASH", "rewash_reason": "NOT_CLEAN", "rejection_reason": "OTHER"},
+        {
+            "step": "REWASH",
+            "rewash_reason": "NOT_CLEAN",
+            "custody_resolution": "SHOP_FAULT_NO_CHARGE",
+        },
+        {"step": "MARK_READY", "rewash_reason": "NOT_CLEAN"},
+        {"step": "REJECT_INTAKE"},
+        {"step": "REJECT_INTAKE", "rejection_reason": "NOT_CLEAN"},
+        {"step": "CANCEL", "rejection_reason": "OTHER"},
+    ],
+)
+def test_a_missing_or_misplaced_reason_is_422_and_writes_nothing(
+    client: TestClient, connection: Any, body: dict[str, Any]
+) -> None:
+    _store, _staff, order = _checking(client, connection)
+    response = client.post(
+        f"/internal/v1/orders/{order['order_id']}/steps",
+        headers=_headers(order["row_version"]),
+        json=body,
+    )
+    assert response.status_code == 422, response.text
+    after = client.get(f"/internal/v1/orders/{order['order_id']}").json()
+    assert (after["row_version"], after["production"]) == (order["row_version"], "QUALITY_CHECK")
+
+
+def test_a_rewash_is_version_checked_replayed_and_conflicts_on_a_changed_reason(
+    client: TestClient, connection: Any
+) -> None:
+    _store, _staff, order = _checking(client, connection)
+    path = f"/internal/v1/orders/{order['order_id']}/steps"
+    body = {"step": "REWASH", "rewash_reason": "MACHINE_FAULT"}
+
+    assert client.post(path, headers=_headers(), json=body).status_code == 428
+    stale = client.post(path, headers=_headers(order["row_version"] - 1), json=body)
+    assert stale.status_code == 409 and stale.json()["detail"].startswith("STALE_VERSION")
+
+    headers = _headers(order["row_version"])
+    first = client.post(path, headers=headers, json=body)
+    again = client.post(path, headers=headers, json=body)
+    changed = client.post(path, headers=headers, json={**body, "rewash_reason": "OTHER"})
+    assert first.status_code == again.status_code == 200
+    assert (first.json()["replayed"], again.json()["replayed"]) == (False, True)
+    assert {**again.json(), "replayed": False} == first.json()
+    assert changed.status_code == 409 and changed.json() == {"detail": "IDEMPOTENCY_CONFLICT"}
+    assert first.json()["row_version"] == order["row_version"] + 2
+
+
+def test_a_refusal_is_version_checked_and_replayed(client: TestClient, connection: Any) -> None:
+    _store, _staff, order = _on_the_counter(client, connection)
+    path = f"/internal/v1/orders/{order['order_id']}/steps"
+    body = {"step": "REJECT_INTAKE", "rejection_reason": "DAMAGED_ON_ARRIVAL"}
+    stale = client.post(path, headers=_headers(order["row_version"] + 3), json=body)
+    assert stale.status_code == 409 and stale.json()["detail"].startswith("STALE_VERSION")
+    headers = _headers(order["row_version"])
+    first = client.post(path, headers=headers, json=body)
+    again = client.post(path, headers=headers, json=body)
+    assert first.status_code == again.status_code == 200
+    assert again.json()["replayed"] is True
+    assert {**again.json(), "replayed": False} == first.json()
+
+
+def test_rewash_and_refusal_are_409_where_the_domain_refuses_them(
+    client: TestClient, connection: Any
+) -> None:
+    store_id, staff = _shop(connection)
+    order = _create_order(client, connection, store_id, staff)
+    path = f"/internal/v1/orders/{order['order_id']}/steps"
+    # Nothing received: nothing to refuse, and nothing washed to rewash.
+    for body in (
+        {"step": "REJECT_INTAKE", "rejection_reason": "OTHER"},
+        {"step": "REWASH", "rewash_reason": "OTHER"},
+    ):
+        refused = client.post(path, headers=_headers(1), json=body)
+        assert refused.status_code == 409, body
+        assert refused.json()["detail"].startswith("INVALID_STATE_TRANSITION")
+    assert client.get(f"/internal/v1/orders/{order['order_id']}").json()["row_version"] == 1
+
+
+def test_a_non_member_cannot_rewash(client: TestClient, connection: Any) -> None:
+    _store, _staff, order = _checking(client, connection)
+    _other, outsider = _shop(connection)
+    _as(outsider)
+    refused = client.post(
+        f"/internal/v1/orders/{order['order_id']}/steps",
+        headers=_headers(order["row_version"]),
+        json={"step": "REWASH", "rewash_reason": "NOT_CLEAN"},
+    )
+    assert refused.status_code == 403 and refused.json() == DENIED

@@ -267,6 +267,11 @@ class AuditEntry:
     #: `None` for every other row. Only these two whitelisted keys are ever copied out.
     transition_dimension: str | None = None
     transition_target: str | None = None
+    #: `ORDER-STEPS-002`: on the transition that starts a `REWASH` / `REJECT_INTAKE`, the step's
+    #: name and the reason staff gave (a `RewashReason` / `IntakeRejectionReason` token); `None`
+    #: everywhere else. Two more whitelisted keys, never the payload.
+    transition_step: str | None = None
+    transition_reason: str | None = None
 
 
 class ShadowConsoleRepository:
@@ -1089,7 +1094,9 @@ class ShadowConsoleRepository:
             cursor.execute(
                 """
                 SELECT a.occurred_at, a.action, a.actor_type, a.actor_id, a.aggregate_type,
-                       a.aggregate_id, d.payload ->> 'dimension', d.payload ->> 'target'
+                       a.aggregate_id, d.payload ->> 'dimension', d.payload ->> 'target',
+                       d.payload ->> 'step',
+                       COALESCE(d.payload ->> 'rewash_reason', d.payload ->> 'rejection_reason')
                 FROM audit_events a
                 -- The audit row says only "a transition happened"; its domain event (same
                 -- aggregate, correlation and instant) says which axis moved and to what, so the
@@ -1154,6 +1161,8 @@ class ShadowConsoleRepository:
                     aggregate_id=_uuid(row[5]),
                     transition_dimension=str(row[6]) if row[6] is not None else None,
                     transition_target=str(row[7]) if row[7] is not None else None,
+                    transition_step=str(row[8]) if row[8] is not None else None,
+                    transition_reason=str(row[9]) if row[9] is not None else None,
                 )
                 for row in cursor.fetchall()
             )

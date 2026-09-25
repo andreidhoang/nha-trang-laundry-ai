@@ -12,9 +12,11 @@ from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     CustodyResolution,
     FulfillmentMode,
+    IntakeRejectionReason,
     IntakeStatus,
     OrderBalanceStatus,
     ProductionStatus,
+    RewashReason,
 )
 from nha_trang_laundry_domain.order_steps import (
     COMPOSITE_STEPS,
@@ -117,6 +119,13 @@ class OrderTransitionCommand:
     #: succeed while the unreviewed one always did. Supplying a resolution *is* the approval --
     #: there is no separate boolean, because a second field nobody sets is how this defect started.
     custody_resolution: CustodyResolution | None = None
+    #: `ORDER-STEPS-002`. Set only on the first transition of a `REWASH` / `REJECT_INTAKE` step,
+    #: by `execute_step` from the domain's plan; the per-axis routes never set them. Written onto
+    #: that transition's event payload and audit details, with the step's name, so the order's
+    #: history can say "Giặt lại · Chưa sạch" instead of "Sản xuất · Sự cố".
+    step: OrderStep | None = None
+    rewash_reason: RewashReason | None = None
+    rejection_reason: IntakeRejectionReason | None = None
 
 
 @dataclass(frozen=True)
@@ -126,7 +135,9 @@ class OrderStepCommand:
     `expected_row_version` is the caller's `If-Match`, checked once against the row the step locks;
     the step's own transitions then advance it one version each. `slot_approved` is the operator's
     attestation for `RECEIVE`, the only readiness fact a caller supplies. `custody_resolution` is
-    the `DEC-024` statement a cancellation through review requires.
+    the `DEC-024` statement a cancellation through review requires. `rewash_reason` and
+    `rejection_reason` are what a named staff member says about a `REWASH` / `REJECT_INTAKE`
+    (`ORDER-STEPS-002`); each is taken only by its own step.
     """
 
     order_id: UUID
@@ -138,6 +149,8 @@ class OrderStepCommand:
     slot_approved: bool = False
     custody_resolution: CustodyResolution | None = None
     occurred_at: datetime | None = None
+    rewash_reason: RewashReason | None = None
+    rejection_reason: IntakeRejectionReason | None = None
 
 
 @dataclass(frozen=True)
@@ -1037,6 +1050,21 @@ class OrderRepository:
                     (command.order_id,),
                 )
 
+        # ORDER-STEPS-002: what a person said about a rewash or a refusal, recorded once, on the
+        # transition that starts the step. Absent for every other transition, so the payload of a
+        # per-axis move or an ordinary step is exactly what it always was.
+        step_note: dict[str, object] = {}
+        if command.rewash_reason is not None:
+            step_note["rewash_reason"] = command.rewash_reason.value
+        if command.rejection_reason is not None:
+            step_note["rejection_reason"] = command.rejection_reason.value
+        if step_note and command.step is not None:
+            step_note["step"] = command.step.value
+        audit_details: dict[str, object] = {
+            **({} if refund is None else {"refund": refund.document()}),
+            **step_note,
+        }
+
         commit_material_change(
             connection,
             MaterialChange(
@@ -1051,20 +1079,21 @@ class OrderRepository:
                 # table because a quote acceptance is spent by a later command; nothing spends
                 # a cancellation.
                 event_payload=(
-                    {"dimension": dimension, "target": target}
+                    {"dimension": dimension, "target": target, **step_note}
                     if command.custody_resolution is None
                     else {
                         "dimension": dimension,
                         "target": target,
                         "custody_resolution": command.custody_resolution.value,
                         **({} if refund is None else {"refund": refund.document()}),
+                        **step_note,
                     }
                 ),
                 audit_action="ORDER_STATE_TRANSITION",
                 actor_type="STAFF",
                 actor_id=command.principal.staff_user_id,
                 correlation_id=command.correlation_id,
-                audit_details=None if refund is None else {"refund": refund.document()},
+                audit_details=audit_details or None,
                 outbox_events=(
                     OutboxEvent(
                         "order.state_transitioned.v1",
@@ -1144,6 +1173,20 @@ class OrderRepository:
             "custody_resolution": (
                 command.custody_resolution.value if command.custody_resolution else None
             ),
+            # ORDER-STEPS-002. Present only when given, so a step recorded before these existed
+            # hashes exactly as it did and its key still replays; and part of the identity when
+            # given, so the same key resent with a different reason is a conflict, not a replay of
+            # what somebody else said.
+            **(
+                {}
+                if command.rewash_reason is None
+                else {"rewash_reason": command.rewash_reason.value}
+            ),
+            **(
+                {}
+                if command.rejection_reason is None
+                else {"rejection_reason": command.rejection_reason.value}
+            ),
         }
 
         def step_once() -> dict[str, object]:
@@ -1168,6 +1211,8 @@ class OrderRepository:
                     slot_approved=command.slot_approved,
                     custody_resolution=command.custody_resolution,
                     accepted_at=occurred_at,
+                    rewash_reason=command.rewash_reason,
+                    rejection_reason=command.rejection_reason,
                 )
             except StepRequiresHuman as error:
                 raise OrderStepRequiresHuman(str(error), error.reason_codes) from error
@@ -1198,6 +1243,9 @@ class OrderRepository:
                         production_accepted_at=moment if accepting else None,
                         occurred_at=moment,
                         custody_resolution=planned.custody_resolution,
+                        step=command.step,
+                        rewash_reason=planned.rewash_reason,
+                        rejection_reason=planned.rejection_reason,
                     ),
                     locked,
                     moment,
@@ -1563,6 +1611,8 @@ def _order_view_document(view: OrderView) -> dict[str, object]:
                 "primary": item.primary,
                 "requires": list(item.requires),
                 "custody_resolutions": [value.value for value in item.custody_resolutions],
+                "rewash_reasons": [value.value for value in item.rewash_reasons],
+                "rejection_reasons": [value.value for value in item.rejection_reasons],
             }
             for item in view.next_steps
         ],
@@ -1609,6 +1659,12 @@ def _order_view_from_document(document: dict[str, object]) -> OrderView:
                 item["primary"] is True,
                 tuple(str(value) for value in item["requires"]),
                 tuple(CustodyResolution(str(value)) for value in item["custody_resolutions"]),
+                # Absent from a result stored before ORDER-STEPS-002; such a result lists neither
+                # step, so the empty tuple is what it said.
+                tuple(RewashReason(str(value)) for value in item.get("rewash_reasons", ())),
+                tuple(
+                    IntakeRejectionReason(str(value)) for value in item.get("rejection_reasons", ())
+                ),
             )
             for item in steps
         ),

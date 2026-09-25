@@ -3229,3 +3229,14 @@ a.row-link {
     width: 100%;
   }
 }
+
+/* --- ORDER-STEPS-002 ------------------------------------------------------------------------- */
+
+/* The order page's bar when the only legal steps are never primary (Giặt lại, Không nhận đồ): a
+ * quiet line where the big button would be, with "Khác" beside it. */
+.order__no-primary {
+  align-self: center;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  margin: 0;
+}

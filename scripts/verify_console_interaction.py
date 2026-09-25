@@ -529,6 +529,37 @@ ORDER_REQUEST = {
 }
 ORDER_REQUEST_CREATED = {**ORDER_REQUEST, "store_id": STORE, "replayed": False}
 
+#: CONTACT-PICK-001: one returning channel customer of the store, as `GET …/contacts/recent` returns
+#: it, and a second binding the conversation hand-off names. Neither is typed anywhere.
+RECENT_CONTACT = "55555555-6666-4333-8444-999999999991"
+HANDED_OFF_CONTACT = "55555555-6666-4333-8444-999999999992"
+RECENT_CONTACTS = {
+    "store_id": STORE,
+    "limit": 20,
+    "truncated": False,
+    "contacts": [
+        {
+            "contact_binding_id": RECENT_CONTACT,
+            "channels": ["ZALO_OA"],
+            "last_activity_at": "2026-08-16T02:00:00+00:00",
+            "latest_order": {
+                "order_id": "44444444-5555-4333-8444-888888888801",
+                "created_at": "2026-08-16T02:00:00+00:00",
+                "commercial": "ACTIVE",
+                "intake": "ACCEPTED",
+                "production": "IN_PROCESS",
+                "balance": "UNPAID",
+                "payable_total_vnd": 120000,
+                "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
+                "self_collection_recorded": False,
+                "required_delivery_legs_succeeded": False,
+            },
+            "open_order_count": 1,
+            "waiting_order_request_id": None,
+        }
+    ],
+}
+
 #: `OrderResponse`, verbatim. Note what it does not contain: `acquisition_source`. The command
 #: reply never carries it; since READ-PATHS-001 the order *read* does (`ORDER_VIEW` below), which is
 #: what section 15 reads it back from. Section 7 still checks the form's behaviour, because what the
@@ -1319,6 +1350,9 @@ with sync_playwright() as playwright:
             body = SESSION_OK
         elif url.endswith("/internal/v1/stores"):
             body = {"store_ids": [STORE]}
+        elif "/contacts/recent" in url:
+            state.setdefault("recent_reads", []).append(url)
+            body = RECENT_CONTACTS
         elif "/service-messaging/release" in url and route.request.method == "POST":
             # `DEC-033`, section 19. Captured with its key: the property is that the evidence sent
             # is the one picked from the server's own list, under an idempotency key.
@@ -1894,6 +1928,13 @@ with sync_playwright() as playwright:
             body = ORDER_REQUEST
         elif "/order-requests" in url:
             if route.request.method == "POST":
+                # CONTACT-PICK-001: which binding each intake was opened for, and under what key.
+                state.setdefault("intake_posts", []).append(
+                    (
+                        json.loads(route.request.post_data or "{}"),
+                        route.request.headers.get("idempotency-key"),
+                    )
+                )
                 route.fulfill(
                     status=201,
                     content_type="application/json",
@@ -2304,9 +2345,67 @@ with sync_playwright() as playwright:
     print("5. TIẾP NHẬN — real keystrokes, then resuming a waiting customer with no typing at all")
     print("=" * 74)
 
-    # A customer who wrote through a channel: the one value no route can supply, typed under
-    # "Nhập mã thủ công" -- and still typed one character at a time, because this file exists for
-    # the form that rebuilt itself on every keystroke.
+    # CONTACT-PICK-001: a returning channel customer is one tap in "Khách nhắn tin gần đây", and
+    # the typing path below is folded under "Nhập mã thủ công" -- still proved keystroke by
+    # keystroke, because this file exists for the form that rebuilt itself on every keystroke.
+    page.goto(f"http://localhost:{PORT}/#/new")
+    page.reload(wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    recent_row = page.locator(f"#new-recent [data-contact='{RECENT_CONTACT}']")
+    recent_text = recent_row.first.inner_text() if recent_row.count() else ""
+    check(
+        "a returning channel customer is listed by channel, last order and total -- no code shown",
+        recent_row.count() == 1
+        and "Zalo" in recent_text
+        and "Đang giặt" in recent_text
+        and "120.000" in recent_text
+        and RECENT_CONTACT not in (page.locator("main").inner_text() or ""),
+        recent_text.replace("\n", " | "),
+    )
+    fold = page.locator("details:has(#new-contact)")
+    check(
+        "typing a customer code survives only folded under 'Nhập mã thủ công'",
+        fold.count() == 1
+        and fold.first.get_attribute("open") is None
+        and not page.locator("#new-contact").is_visible(),
+    )
+    state["intake_posts"] = []  # earlier sections open walk-in intakes; only this tap counts here
+    recent_row.first.click()
+    page.wait_for_timeout(1200)
+    posts = state.get("intake_posts", [])
+    check(
+        "one tap opens the intake for exactly that binding, under an idempotency key",
+        len(posts) == 1
+        and posts[0][0] == {"contact_binding_id": RECENT_CONTACT}
+        and bool(posts[0][1]),
+        posts,
+    )
+    check(
+        "and the flow moves on to the bag",
+        page.locator("#new-ticket").count() == 1 and page.locator("#new-add-line").count() == 1,
+    )
+
+    # The hand-off from a conversation: `#/new?contact=` opens the intake and lands on step 2, and
+    # the address then names the intake so a reload resumes it instead of opening a second one.
+    page.goto("about:blank")
+    page.goto(
+        f"http://localhost:{PORT}/#/new?contact={HANDED_OFF_CONTACT}", wait_until="networkidle"
+    )
+    page.wait_for_timeout(1500)
+    posts = state.get("intake_posts", [])
+    check(
+        "#/new?contact= opens the intake for the binding the conversation named",
+        len(posts) == 2 and posts[1][0] == {"contact_binding_id": HANDED_OFF_CONTACT},
+        posts[1:],
+    )
+    check(
+        "lands on step 2 and the address becomes ?request=<the intake>",
+        page.locator("#new-add-line").count() == 1
+        and page.url.endswith(f"#/new?request={ORDER_REQUEST['order_request_id']}"),
+        page.url,
+    )
+    state["intake_posts"] = []
+
     page.goto(f"http://localhost:{PORT}/#/new")
     page.reload(wait_until="networkidle")
     page.wait_for_timeout(1000)

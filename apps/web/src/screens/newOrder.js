@@ -598,7 +598,7 @@ export function render_(context) {
     const open = Number.isInteger(item.open_order_count) ? item.open_order_count : 0;
     const status = latest ? orderStatus(latest) : null;
     const facts = waiting
-      ? "Đang chờ báo giá — bấm để làm tiếp"
+      ? "Đang chờ báo giá"
       : latest && status
         ? [
             `Đơn gần nhất: ${status.text}`,
@@ -607,13 +607,14 @@ export function render_(context) {
             .filter(Boolean)
             .join(" · ")
         : "Chưa có đơn";
+    // The time sits on the facts line rather than beside the title, so a long channel name
+    // ("Telegram (thử nghiệm)") keeps one line at 390 px.
     const row = listRow({
       onClick: () => void pickContact(item, row, alertHost),
       leading: "message",
       title: `Khách ${channels.join(", ") || "qua kênh chat"}`,
-      meta: facts,
-      trailing: ago(item.last_activity_at),
-      trailingMeta: open > 0 ? `${open} đơn đang mở` : undefined,
+      meta: `${facts} · ${ago(item.last_activity_at)}`,
+      trailing: open > 0 ? `${open} đơn mở` : undefined,
       data: { contact: String(item.contact_binding_id || ""), requiresNetwork: "true" },
     });
     return row;
@@ -1769,7 +1770,7 @@ export function render_(context) {
   const creditFilter = searchField({
     id: "new-credit-ticket",
     label: "Lọc theo số phiếu",
-    placeholder: "Số phiếu đã phát hành khoản…",
+    placeholder: "Lọc theo số phiếu…",
     inputmode: "numeric",
     onInput: (value) => {
       creditTicket = String(value || "").trim();
@@ -1933,10 +1934,12 @@ export function render_(context) {
     const row = listRow({
       onClick: () => void redeemCredit(String(credit.credit_id || ""), row),
       leading: "tag",
-      title: numbered
-        ? `Phiếu ${credit.ticket_number} · ${ticketDay(credit.ticket_issued_on)}`
-        : `Khách nhắn qua kênh · ${dateOnly(credit.issued_at)}`,
-      meta: CREDIT_KIND[credit.kind] || enumVi(credit.kind),
+      // The ticket is what the customer holds and the counter asks for; the day beside it
+      // tells two Phiếu 7s apart (numbers restart daily).
+      title: numbered ? `Phiếu ${credit.ticket_number}` : "Khách nhắn qua kênh",
+      meta: `${numbered ? ticketDay(credit.ticket_issued_on) : dateOnly(credit.issued_at)} · ${
+        CREDIT_KIND[credit.kind] || enumVi(credit.kind)
+      }`,
       trailing: h("span", { class: "money" }, money(credit.amount_vnd)),
       data: { creditId: String(credit.credit_id || ""), requiresNetwork: "true" },
     });

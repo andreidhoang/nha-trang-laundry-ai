@@ -540,6 +540,19 @@ class ApprovalRepository:
                 )
                 if not hmac.compare_digest(str(row[5]), command.observed_policy_version):
                     raise ApprovalStateError("approval policy version is stale")
+                # `API-INTEGRITY-004`. Everything above compares the worker's observed binding with
+                # the stored envelope, which proves the worker was handed the envelope and nothing
+                # about the resource: approve a draft, have a reviewer EDIT it, and a worker that
+                # echoes the approved binding exactly claimed the approval of words nobody was
+                # sending any more. The claim is the last gate before a provider, so it now asks
+                # the question `decide` and `attest` ask (`API-INTEGRITY-003`), through the same
+                # function, on this transaction and under this approval row's lock -- taken first,
+                # then the resource, the order `decide` uses, so no new lock cycle. A refusal is
+                # raised inside the transaction and rolls it back whole: the approval stays
+                # APPROVED, and no execution row, event, audit or outbox row is written
+                # (invariant 5). `UNRESOLVABLE_AT_DECISION` types keep the check above and nothing
+                # more; a type in neither table is refused.
+                _require_resource_unchanged(cursor, row)
                 execution_id = uuid4()
 
                 def mutation(change_cursor: Any) -> None:
@@ -859,6 +872,8 @@ def _require_resolvable_resource(cursor: Any, command: ApprovalRequestCommand) -
 # that no longer offers it -- and the record said so with every check green. Invariant 8 says an
 # approval binds exact content, so the content is now resolved again, by the server, on the
 # transaction that holds the approval's row lock, immediately before the decision row is written.
+# `API-INTEGRITY-004` asks it once more in `claim_execution`, immediately before the execution row:
+# a resource that moved on between the approval and the worker's claim is refused there too.
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,10 +6,11 @@ escaped the route and the API answered a generic 500. The console renders a 500 
 lỗi. Đừng thử lại", which is the right advice when nobody knows whether a write landed and the
 wrong advice here, where the server does know.
 
-These tests need no database: the three database-side refusals are raised by a stub service, and
-the unreachable database is a real `psycopg.connect` to a port nothing listens on. The half that
-proves the rolled-back transaction and the safe same-key retry runs against PostgreSQL in
-`test_api_integrity_003_postgres.py`.
+These tests need no database: the database-side refusals are raised by a stub service, and the
+unreachable database is a real `psycopg.connect` to a port nothing listens on. The half that proves
+the rolled-back transaction and the safe same-key retry runs against PostgreSQL in
+`test_api_integrity_003_postgres.py` (timeouts) and `test_api_integrity_004_postgres.py` (a real
+deadlock, which `API-INTEGRITY-004` moved from the 500 side to the 503 side).
 
 The negative half matters as much as the positive one. `IntegrityError` and `ProgrammingError` are a
 refused write and a defect; an `OperationalError` from a connection lost mid-transaction may sit on
@@ -72,8 +73,11 @@ def _client(service: object) -> Iterator[TestClient]:
     [
         psycopg.errors.QueryCanceled("canceling statement due to statement timeout"),
         psycopg.errors.LockNotAvailable("canceling statement due to lock timeout"),
+        # `API-INTEGRITY-004`: PostgreSQL aborted this transaction whole to let another finish.
+        psycopg.errors.DeadlockDetected("deadlock detected"),
+        psycopg.errors.SerializationFailure("could not serialize access"),
     ],
-    ids=["statement_timeout", "lock_timeout"],
+    ids=["statement_timeout", "lock_timeout", "deadlock", "serialization_failure"],
 )
 def test_a_timed_out_statement_answers_503_with_retry_after_and_a_reason_code(
     error: BaseException,
@@ -86,6 +90,8 @@ def test_a_timed_out_statement_answers_503_with_retry_after_and_a_reason_code(
     assert response.json() == {"detail": {"reason_code": "DATABASE_BUSY"}}
     # The driver's sentence names tables and settings; none of it reaches the client.
     assert "timeout" not in response.text
+    assert "deadlock" not in response.text
+    assert "serialize" not in response.text
 
 
 def test_a_database_that_cannot_be_reached_answers_503_database_unavailable(
@@ -133,10 +139,24 @@ def test_the_connection_factory_says_which_failure_it_was() -> None:
         psycopg.errors.UndefinedTable('relation "nothing" does not exist'),
         # A connection lost mid-transaction. The COMMIT may have landed; "try again" is a guess.
         psycopg.OperationalError("server closed the connection unexpectedly"),
-        # A deadlock rolls back too, but it is not a timeout and this item does not decide it.
-        psycopg.errors.DeadlockDetected("deadlock detected"),
+        # 2026-09-25, `API-INTEGRITY-004`: the `DeadlockDetected` case that stood here asserting 500
+        # was reversed deliberately and moved to the 503 test above. A deadlock is PostgreSQL
+        # aborting the transaction whole, so the outcome is known and the same-key retry is safe --
+        # proven against a real deadlock in `test_api_integrity_004_postgres.py`. Its siblings in
+        # SQLSTATE class 40 are not, and they take its place here so the class is never mapped
+        # wholesale: 40003 is literally "statement completion unknown", and 40002 is a constraint
+        # refusing the write at commit.
+        psycopg.errors.StatementCompletionUnknown("statement completion unknown"),
+        psycopg.errors.TransactionIntegrityConstraintViolation("integrity constraint violation"),
     ],
-    ids=["unique", "check", "undefined_table", "connection_lost", "deadlock"],
+    ids=[
+        "unique",
+        "check",
+        "undefined_table",
+        "connection_lost",
+        "completion_unknown",
+        "transaction_integrity",
+    ],
 )
 def test_integrity_and_programming_errors_are_never_answered_as_busy(
     error: BaseException,

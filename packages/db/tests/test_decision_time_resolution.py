@@ -11,6 +11,9 @@ of them.
 The explicit half matters as much. Four resource types name capabilities this system has not built,
 and for those the decision keeps precisely the check it had; a resource type in neither list is
 refused outright rather than falling through a missing dictionary entry.
+
+`API-INTEGRITY-004` applies the same re-resolution to the worker's execution claim; its tests are
+the last section of this module.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from nha_trang_laundry_db.approvals import (
     ApprovalAttestationCommand,
     ApprovalDecision,
     ApprovalDecisionCommand,
+    ApprovalExecutionCommand,
     ApprovalRepository,
     ApprovalRequestCommand,
     ApprovalResourceChangedError,
@@ -48,6 +52,7 @@ from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_domain.approvals import APPROVAL_RESOURCE_TYPES
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
+    ActorRole,
     ApprovalAction,
     CommercialOrderStatus,
     FulfillmentMode,
@@ -682,3 +687,277 @@ def test_a_resource_type_the_server_does_not_know_is_refused_not_waved_through(
     # Not "changed": nothing is known to have changed. The server cannot identify the resource.
     assert not isinstance(refused.value, ApprovalResourceChangedError)
     _nothing_decided(connection, approval_id)
+
+
+# --- The worker's execution claim (`API-INTEGRITY-004`) ------------------------------------------
+#
+# `claim_execution` compared the worker's observed binding with the stored envelope and nothing
+# else, exactly as `decide` did before `API-INTEGRITY-003`. It is the last gate before a provider,
+# and the gap there is wider than at the decision: an approval can sit APPROVED until it expires
+# while the quote is re-priced or a reviewer rewrites the draft. Each refusal below is built the
+# same way as the decision tests above -- approve real content, change it, then claim with the
+# stored binding *exactly* -- and before this item every one of them was claimed.
+
+POLICY = "decision-time-resolution-v1"
+NOTHING_CLAIMED = ("APPROVED", 0, 0, 0, 0)
+CLAIMED_ONCE = ("EXECUTING", 1, 1, 1, 1)
+
+
+def _claim(
+    connection: Any, approval_id: UUID, *, version: int, snapshot_hash: str, rendered_hash: str
+) -> Any:
+    return ApprovalRepository().claim_execution(
+        connection,
+        ApprovalExecutionCommand(
+            approval_id,
+            ActorRole.OUTBOX_WORKER,
+            version,
+            snapshot_hash,
+            rendered_hash,
+            POLICY,
+            uuid4(),
+        ),
+    )
+
+
+def _claim_footprint(connection: Any, approval_id: UUID) -> tuple[object, ...]:
+    """The state a claim leaves, and every row a claim writes -- execution, event, audit, outbox."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT s.status,
+                   (SELECT count(*) FROM approval_executions x WHERE x.approval_request_id = %s),
+                   (SELECT count(*) FROM domain_events e
+                     WHERE e.aggregate_id = %s AND e.event_type = 'APPROVAL_EXECUTION_CLAIMED'),
+                   (SELECT count(*) FROM audit_events a
+                     WHERE a.aggregate_id = %s AND a.action = 'APPROVAL_EXECUTION_CLAIM'),
+                   (SELECT count(*) FROM outbox_events o WHERE o.idempotency_key = %s)
+            FROM approval_request_states s WHERE s.approval_request_id = %s
+            """,
+            (
+                approval_id,
+                approval_id,
+                approval_id,
+                f"approval:{approval_id}:execution-claimed",
+                approval_id,
+            ),
+        )
+        row = cursor.fetchone()
+    assert row is not None
+    return tuple(row)
+
+
+class _ApprovedQuote:
+    """A PRESENT_QUOTE envelope over revision 1 of a real quote, approved by a second person."""
+
+    def __init__(self, connection: Any) -> None:
+        self.store_id = _shop(connection)
+        self.operator = _member(connection, self.store_id, StaffRole.OPERATOR)
+        approver = _member(connection, self.store_id, StaffRole.OPS_APPROVER)
+        self.quote_id, self.order_request_id, self.first = _quote(
+            connection, self.store_id, self.operator
+        )
+        self.approval_id = _raise(
+            connection,
+            action=ApprovalAction.PRESENT_QUOTE,
+            store_id=self.store_id,
+            resource_id=self.quote_id,
+            version=1,
+            snapshot_hash=self.first.document.snapshot_hash,
+            rendered_hash=RENDERED,
+            requested_by=self.operator,
+        )
+        approved = _decide(
+            connection,
+            self.approval_id,
+            version=1,
+            snapshot_hash=self.first.document.snapshot_hash,
+            rendered_hash=RENDERED,
+            by=approver,
+        )
+        assert approved.status == "APPROVED"
+
+    def claim(self, connection: Any) -> Any:
+        """Claim with the stored binding exactly, as a worker handed this envelope would."""
+        return _claim(
+            connection,
+            self.approval_id,
+            version=1,
+            snapshot_hash=self.first.document.snapshot_hash,
+            rendered_hash=RENDERED,
+        )
+
+
+def test_a_quote_re_priced_after_approval_cannot_be_claimed_with_the_stored_hashes(
+    connection: Any,
+) -> None:
+    """Approved at 100.000 đ; the quote now offers 150.000 đ. The worker echoes the envelope."""
+
+    quote = _ApprovedQuote(connection)
+    _reprice(connection, quote.store_id, quote.quote_id, quote.order_request_id, quote.operator)
+
+    with pytest.raises(ApprovalResourceChangedError) as refused:
+        quote.claim(connection)
+    assert str(refused.value).startswith(f"{RESOURCE_CHANGED_SINCE_REQUEST}:")
+    # Still an `ApprovalStateError`: every caller that refuses a stale claim refuses this one.
+    assert isinstance(refused.value, ApprovalStateError)
+    assert _claim_footprint(connection, quote.approval_id) == NOTHING_CLAIMED
+
+
+def test_an_unchanged_approved_quote_is_still_claimed_once(connection: Any) -> None:
+    """The control: the check refuses a change, not every quote claim -- and one-time use holds."""
+
+    quote = _ApprovedQuote(connection)
+    assert quote.claim(connection).status == "EXECUTING"
+    assert _claim_footprint(connection, quote.approval_id) == CLAIMED_ONCE
+    with pytest.raises(ApprovalStateError, match="not executable"):
+        quote.claim(connection)
+    assert _claim_footprint(connection, quote.approval_id) == CLAIMED_ONCE
+
+
+class _ApprovedDraft:
+    """A SEND_MESSAGE envelope over a real draft's server-computed binding, approved."""
+
+    def __init__(self, connection: Any) -> None:
+        store_id = _shop(connection)
+        operator = _member(connection, store_id, StaffRole.OPERATOR)
+        approver = _member(connection, store_id, StaffRole.OPS_APPROVER)
+        self.reviewer = _member(connection, store_id, StaffRole.OPS_APPROVER)
+        draft = seed_message_draft(connection, store_id)
+        self.agent_run_id = draft.agent_run_id
+        self.binding = current_binding(connection, draft.agent_run_id)
+        self.approval_id = _raise(
+            connection,
+            action=ApprovalAction.SEND_MESSAGE,
+            store_id=store_id,
+            resource_id=draft.agent_run_id,
+            version=self.binding.resource_version,
+            snapshot_hash=self.binding.snapshot_hash,
+            rendered_hash=self.binding.rendered_hash,
+            requested_by=operator,
+        )
+        approved = _decide(
+            connection,
+            self.approval_id,
+            version=self.binding.resource_version,
+            snapshot_hash=self.binding.snapshot_hash,
+            rendered_hash=self.binding.rendered_hash,
+            by=approver,
+        )
+        assert approved.status == "APPROVED"
+
+    def claim(self, connection: Any) -> Any:
+        return _claim(
+            connection,
+            self.approval_id,
+            version=self.binding.resource_version,
+            snapshot_hash=self.binding.snapshot_hash,
+            rendered_hash=self.binding.rendered_hash,
+        )
+
+
+@pytest.mark.parametrize("review", ["EDIT", "REJECT"])
+def test_a_draft_reviewed_after_approval_cannot_be_claimed_with_the_stored_hashes(
+    connection: Any, review: str
+) -> None:
+    """The send path's version of the defect. An EDIT after approval makes the approved words not
+    the draft's words; a REJECT leaves nothing sendable. The worker must claim neither."""
+
+    draft = _ApprovedDraft(connection)
+    ShadowConsoleRepository().decide_draft(
+        connection,
+        agent_run_id=draft.agent_run_id,
+        decision=review,
+        principal=draft.reviewer,
+        correlation_id=uuid4(),
+        reason_code="REVIEWER_CHANGED_IT" if review == "REJECT" else None,
+        edited_text="Dạ, đồ của anh/chị xong rồi ạ." if review == "EDIT" else None,
+    )
+
+    with pytest.raises(ApprovalResourceChangedError):
+        draft.claim(connection)
+    assert _claim_footprint(connection, draft.approval_id) == NOTHING_CLAIMED
+
+
+def test_an_unchanged_approved_draft_is_still_claimed(connection: Any) -> None:
+    draft = _ApprovedDraft(connection)
+    assert draft.claim(connection).status == "EXECUTING"
+    assert _claim_footprint(connection, draft.approval_id) == CLAIMED_ONCE
+
+
+def test_an_unbuilt_resource_type_keeps_exactly_the_echo_check_at_the_claim(
+    connection: Any,
+) -> None:
+    """`SLOT_PROPOSAL` has nothing to resolve, at the claim as at the decision: a mismatched echo is
+    refused as stale, as it always was, and an exact echo is claimed."""
+
+    store_id = _shop(connection)
+    operator = _member(connection, store_id, StaffRole.OPERATOR)
+    approver = _member(connection, store_id, StaffRole.OPS_APPROVER)
+    approval_id = _raise(
+        connection,
+        action=ApprovalAction.CONFIRM_SLOT,
+        store_id=store_id,
+        resource_id=uuid4(),
+        version=1,
+        snapshot_hash=HASH_A,
+        rendered_hash=HASH_B,
+        requested_by=operator,
+    )
+    _decide(
+        connection, approval_id, version=1, snapshot_hash=HASH_A, rendered_hash=HASH_B, by=approver
+    )
+    with pytest.raises(ApprovalStateError, match="resource version or hash is stale"):
+        _claim(connection, approval_id, version=1, snapshot_hash=HASH_B, rendered_hash=HASH_B)
+    assert _claim_footprint(connection, approval_id) == NOTHING_CLAIMED
+    claimed = _claim(connection, approval_id, version=1, snapshot_hash=HASH_A, rendered_hash=HASH_B)
+    assert claimed.status == "EXECUTING"
+
+
+def test_a_resource_type_the_server_does_not_know_is_not_claimed(connection: Any) -> None:
+    """Fail closed at the claim too. An APPROVED row over a type no resolver knows -- written
+    directly, because nothing in this repository could write it -- is refused and left APPROVED."""
+
+    store_id = _shop(connection)
+    operator = _member(connection, store_id, StaffRole.OPERATOR)
+    approval_id = uuid4()
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO approval_requests (
+                id, action, resource_type, resource_id, resource_version, snapshot_hash,
+                rendered_hash, policy_version, required_role, reason_codes, obligations,
+                execution_capability, requested_by, requested_at, expires_at, envelope,
+                envelope_hash, store_id
+            ) VALUES (
+                %s, 'CONFIRM_SLOT', 'MYSTERY_RESOURCE', %s, 1, %s, %s, %s,
+                'OPS_APPROVER', '[]'::jsonb, '[]'::jsonb, 'HUMAN_APPROVED_ACTION', %s, %s, %s,
+                '{}'::jsonb, %s, %s
+            )
+            """,
+            (
+                approval_id,
+                uuid4(),
+                HASH_A,
+                HASH_B,
+                POLICY,
+                operator.staff_user_id,
+                NOW,
+                NOW + timedelta(minutes=15),
+                f"JCS-SHA256-V1:{uuid4().hex * 2}",
+                store_id,
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO approval_request_states (
+                approval_request_id, status, row_version, updated_at
+            ) VALUES (%s, 'APPROVED', 1, %s)
+            """,
+            (approval_id, NOW),
+        )
+
+    with pytest.raises(ApprovalStateError, match="cannot be verified") as refused:
+        _claim(connection, approval_id, version=1, snapshot_hash=HASH_A, rendered_hash=HASH_B)
+    assert not isinstance(refused.value, ApprovalResourceChangedError)
+    assert _claim_footprint(connection, approval_id) == NOTHING_CLAIMED

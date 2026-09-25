@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 391
+  DESCRIPTIVE: 390
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 419
+total: 418
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1741,15 +1741,6 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/approvals.js#screen__lede:110cc8eacfc7
-  module: screens/approvals.js
-  key: screen__lede
-  text: Việc đang chờ duyệt và còn bao lâu nữa hết hạn. Quyết được ngay tại đây với loại nội dung bảng
-    vận hành mở ra xem được; loại nào chưa xem được thì nút vẫn khoá và phiếu nói rõ đó là loại nào.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/assistant.js#hint:4c5316e8754b
   module: screens/assistant.js
   key: hint
@@ -3416,6 +3407,15 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/slaBoard.js#guardrail:19ac6a74b8e3
+  module: screens/slaBoard.js
+  key: guardrail
+  text: Bảng này chỉ đọc. Không có nút nào ở đây thay đổi trạng thái đơn, và mốc hiển thị là mốc nội bộ
+    của tiệm chứ không phải giờ đã hẹn với khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/slaBoard.js#hint:6021ccbd1e51
   module: screens/slaBoard.js
   key: hint
@@ -3467,11 +3467,10 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/slaBoard.js#guardrail:19ac6a74b8e3
+- slot_id: screens/slaBoard.js#hint:5aff82af7121
   module: screens/slaBoard.js
-  key: guardrail
-  text: Bảng này chỉ đọc. Không có nút nào ở đây thay đổi trạng thái đơn, và mốc hiển thị là mốc nội bộ
-    của tiệm chứ không phải giờ đã hẹn với khách.
+  key: hint
+  text: Xếp theo lúc nhận vào giặt, không theo độ gấp — hãy xem giờ trên từng dòng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3721,14 +3720,6 @@ disclosures:
   module: screens/today.js
   key: hint
   text: Chọn một cửa hàng để xem số đơn trong ngày.
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/today.js#screen__lede:80fea583bc59
-  module: screens/today.js
-  key: screen__lede
-  text: Việc đang chờ bạn quyết định và tình hình cửa hàng — chỉ những gì cần một người xử lý.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

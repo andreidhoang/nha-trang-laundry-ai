@@ -12,7 +12,10 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 
 1. Bật máy, mở Docker Desktop, đợi biểu tượng con cá voi đứng yên.
 2. Mở bảng vận hành, đăng nhập bằng tài khoản của **chính mình** — không dùng chung tài khoản.
-3. Mở màn hình **Hôm nay**. Đọc hai dòng đầu: việc đang chờ người quyết định, và tiền đã thu.
+3. Mở màn hình **Hôm nay**. Đọc số **Đã thu tại quầy**, rồi mục **Cần làm**: mỗi dòng là một việc
+   đang chờ (chờ duyệt, tin AI, gửi chưa rõ, sự cố, đơn quá mốc) — bấm dòng để mở. Hết việc thì mục
+   này chỉ còn một dòng **“Không có gì chờ bạn”**. Hai nút lớn ở trên cùng: **＋ Nhận đồ** và
+   **Khách tới lấy đồ** (tìm theo số phiếu).
 4. Nếu màn hình báo **“Đang ngoại tuyến”** hoặc **“Chưa đọc được danh sách cửa hàng”** → xem mục
    *Khi có sự cố* bên dưới. Đừng nhận đơn cho tới khi màn hình bình thường trở lại.
 
@@ -68,7 +71,8 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 
 - **Không cần chờ chủ tiệm.** Người đang trực quầy chốt giá trong khoảng chủ tiệm đã niêm yết
   (quyết định DEC-029, 25/09/2026). **Tên bạn được ghi cùng con số, không sửa được**, và chủ tiệm
-  xem lại được tất cả — nên chỉ gõ đúng số đã thoả thuận với khách.
+  xem lại được tất cả (màn hình **Duyệt**, nút **Giá trong khoảng**) — nên chỉ gõ đúng số đã thoả
+  thuận với khách.
 - Nếu màn hình dừng ở **Ghi giá vào báo giá** (mất mạng giữa chừng), bấm nút đó thêm một lần.
 - Gõ số ngoài khoảng thì màn hình cảnh báo **ngay khi đang gõ**, và máy chủ cũng từ chối. Đừng
   lách: muốn ra ngoài khoảng thì chủ tiệm phải công bố lại bảng giá.
@@ -154,7 +158,7 @@ dòng. Dòng chỉ có một món thì không cần chọn. Đồ tính theo ký
 
 **Khoản chờ chủ tiệm — chủ duyệt, rồi nhân viên mới trả:**
 
-1. **Chủ tiệm** mở màn hình **Duyệt**. Thẻ phiếu in
+1. **Chủ tiệm** mở màn hình **Duyệt** (thẻ **Duyệt bồi hoàn · Phiếu …**). Thẻ phiếu in
    **“Khoản bồi hoàn bạn đang được đề nghị duyệt”**: loại, số tiền, trần, món nào, vì sao cần chủ
    tiệm và khách đã phản ánh gì. Đọc xong rồi bấm **Duyệt** hoặc **Từ chối**. Người đã ghi đề nghị
    thì không tự duyệt được, kể cả chủ tiệm.

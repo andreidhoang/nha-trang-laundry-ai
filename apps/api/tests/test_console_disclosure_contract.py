@@ -741,7 +741,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   * 1 re-keyed in `screens/remedies.js`: the recorded-proposals panel's hint, which now says
     #     an approved, unexecuted row carries its own execute press.
     #   410 + 9 = 419, predicted from the registry diff before pinning.
-    assert sum(counts.values()) == _registry()["total"] == 419
+    # 418 after CONSOLE-REDESIGN-003 (Hôm nay, Duyệt, Bảng trễ hạn on the V2 kit): -2 +1.
+    #   * -1 `approvals.js#screen__lede`: its fact (a type the console cannot show keeps Duyệt shut
+    #     and the card names the type) is stated on every such card and in the ⓘ "Tại sao nút
+    #     Duyệt đang tắt?"; -1 `today.js#screen__lede`, a lede with no fact the screen lost.
+    #   * +1 `slaBoard.js#hint`: the visible one-line "position is not urgency" note; the V1 lede
+    #     it summarises moved verbatim into the ⓘ and keeps its slot.
+    assert sum(counts.values()) == _registry()["total"] == 418
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

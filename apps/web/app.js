@@ -688,6 +688,9 @@ async function boot() {
   // The one standing poll in the application: a read-only count behind the approvals badge.
   setInterval(() => void pollApprovals(), APPROVALS_POLL_MS);
   void pollApprovals();
+  // `#/approvals` announces a recorded decision so the badge follows it now, not a minute later.
+  // The same read-only GET as the poll; nothing is written or retried.
+  window.addEventListener("console:approvals-changed", () => void pollApprovals());
 
   // The service worker caches the application shell and nothing else. Registered last so that a
   // failure to register never blocks sign-in.

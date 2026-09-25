@@ -1855,8 +1855,10 @@ with sync_playwright() as playwright:
     print("6. HÔM NAY — the owner's morning, and what it refuses to claim")
     print("=" * 74)
 
-    # Every queue stub returns `[]`, so this is the empty-morning case: the one an owner sees most
-    # often and the one the old screen answered with five zero-cards and a wall of footnotes.
+    # Every list-shaped queue stub returns `[]`; the SLA board answers its fixture, whose first page
+    # holds one order past the internal mark and has a next page. So this is the near-empty
+    # morning: one queue with work, four clear -- and the old screen answered it with five cards
+    # and a wall of footnotes.
     page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
     page.wait_for_timeout(1200)
     body = page.content()
@@ -1864,7 +1866,7 @@ with sync_playwright() as playwright:
     check(
         "the day's takings lead the screen, formatted as VND and not recomputed",
         "1.285.000" in body.replace("&nbsp;", " ") or "1.285.000 ₫" in body,
-        repr(page.locator(".takings__amount").text_content()),
+        repr(page.locator(".money-hero__amount").first.text_content()),
     )
     check(
         "the figure says how many settlements it is a sum of",
@@ -1874,31 +1876,70 @@ with sync_playwright() as playwright:
         "and names itself as money collected, never as doanh thu",
         "Đã thu tại quầy" in body and "đây không phải doanh thu" in body,
     )
-    # Asked as "can the operator see it", not "does it carry the class". The first version of this
+    # Asked as "can the operator see it", not "does it carry a class". The first version of this
     # check counted `.tile--clear` elements and passed while all four tiles were still on screen:
-    # the class was applied, and a `display: grid` declared later in the same stylesheet outranked
-    # the `display: none`. A class is an intention; visibility is the claim.
-    empty_tiles = page.locator("article.tile--clear")
+    # the class was applied, and a later `display: grid` outranked the `display: none`. A class is
+    # an intention; visibility is the claim. Since CONSOLE-REDESIGN-003 an empty queue renders no
+    # row at all, so the claim is that no row for an empty queue is visible.
+    empty_rows = [
+        queue
+        for queue in ("approvals", "drafts", "unknown-sends", "incidents")
+        if any(
+            page.locator(f"[data-queue='{queue}']").nth(i).is_visible()
+            for i in range(page.locator(f"[data-queue='{queue}']").count())
+        )
+    ]
     check(
-        "an empty queue takes no space instead of showing a zero card",
-        empty_tiles.count() >= 1
-        and all(not empty_tiles.nth(i).is_visible() for i in range(empty_tiles.count())),
-        f"{empty_tiles.count()} marked empty, "
-        f"{sum(empty_tiles.nth(i).is_visible() for i in range(empty_tiles.count()))} still visible",
+        "an empty queue takes no space instead of showing a zero row",
+        not empty_rows,
+        f"visible rows for empty queues: {empty_rows}",
     )
+    sla_row = page.locator("[data-queue='sla']")
+    check(
+        "a queue with work is one row, its count at the right, a floor when the read has more",
+        sla_row.count() == 1
+        and sla_row.first.is_visible()
+        and "1+" in (sla_row.first.inner_text() or "")
+        and sla_row.first.get_attribute("href") == "#/sla-board",
+        repr(sla_row.first.inner_text() if sla_row.count() else None),
+    )
+    clear = page.locator("[data-queue-clear]")
+    clear_text = clear.first.inner_text() if clear.count() else ""
     check(
         "the all-clear line claims only what was checked, never that nothing is pending",
-        "Các hàng đợi đã kiểm đều đang trống." in body
-        and "Không có việc nào đang chờ bạn xử lý" not in body,
+        clear.count() == 1
+        and clear.first.get_attribute("data-queue-clear") == "some"
+        and "Đang trống:" in clear_text
+        and "chờ duyệt" in clear_text
+        and "Không có gì chờ bạn" not in page.inner_text("main")
+        and "Các hàng đợi đã kiểm đều đang trống." not in page.inner_text("main"),
+        repr(clear_text),
     )
-    # `page.content()` serialises hidden nodes too, so this must ask what the operator can see.
-    # The scope note stays in the DOM and is revealed only for a session with more than one store —
-    # the reader it can matter to — rather than being deleted for everyone.
-    scope_note = page.locator("p.hint", has_text="Mọi cửa hàng bạn được gán.")
+    # The scope note is for the reader it can matter to -- a session with more than one store --
+    # and a one-store session is not shown it at all.
+    scope_note = page.get_by_text("Mọi cửa hàng bạn được gán.")
     check(
         "a single-store session is not told which reads ignore the store picker",
-        scope_note.count() >= 1 and not scope_note.first.is_visible(),
-        f"{scope_note.count()} in DOM, hidden from a one-store session",
+        all(not scope_note.nth(i).is_visible() for i in range(scope_note.count())),
+        f"{scope_note.count()} visible to a one-store session",
+    )
+    chips = page.locator("a.today__chip")
+    check(
+        "the day's orders are the server's counts, one tappable status each, into the order list",
+        chips.count() == 2
+        and chips.first.get_attribute("href") == "#/orders?status=ACTIVE"
+        and "4" in (chips.first.inner_text() or "")
+        and "Tổng 6 đơn" in page.inner_text("main"),
+        repr([chips.nth(i).inner_text() for i in range(chips.count())]),
+    )
+    check(
+        "the two counter actions are on the first screen: Nhận đồ and the pickup lookup",
+        page.locator("a[href='#/new']", has_text="Nhận đồ").first.is_visible()
+        and page.locator("a[href='#/orders?lookup=1']").first.is_visible(),
+    )
+    check(
+        "the rule behind the takings travels with the figure, in the technical drawer",
+        "collected-today-v2:c266d2f11377a64c" in body,
     )
 
     print()
@@ -2679,6 +2720,49 @@ with sync_playwright() as playwright:
         repr(ordering),
     )
 
+    # CONSOLE-REDESIGN-003 (spec V2 §5.5): the queue is the first thing under the title -- only the
+    # two-way switch between it and today's range prices sits in between -- and the screen's limits
+    # are one ⓘ on the title, verbatim, not a panel of prose above or below the work.
+    layout = page.evaluate(
+        """() => {
+          const head = document.querySelector(".approvals > .page-head");
+          const next = head && head.nextElementSibling;
+          const pane = next && next.nextElementSibling;
+          return {
+            switch: next ? next.getAttribute("role") + ":" + next.getAttribute("aria-label") : null,
+            pane: pane ? pane.getAttribute("data-pane") : null,
+            cardInPane: Boolean(pane && pane.querySelector("article.card")),
+          };
+        }"""
+    )
+    check(
+        "the queue is the first thing under the title, behind one two-way switch",
+        layout == {"switch": "group:Chọn danh sách", "pane": "queue", "cardInPane": True},
+        repr(layout),
+    )
+    page.locator(".approvals .page-head .info-btn").first.click()
+    page.wait_for_timeout(300)
+    limits = page.locator("dialog.sheet[open]").first.inner_text()
+    check(
+        "the screen's limits are one tap away, verbatim",
+        "Quyết định ở đây ghi thẳng vào máy chủ và không hoàn tác được." in limits
+        and "Tại sao nút Duyệt đang tắt?" in limits
+        and "Phê duyệt còn những quy tắc nào khác?" in limits,
+        limits[:160],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(200)
+    page.locator(".approvals .segmented__option", has_text="Giá trong khoảng").click()
+    page.wait_for_timeout(300)
+    check(
+        "the switch shows today's range prices and hides the queue, without a reload",
+        page.locator("[data-pane='reviews']").is_visible()
+        and not page.locator("[data-pane='queue']").is_visible()
+        and "chưa có món nào được chốt giá trong khoảng" in page.inner_text("main"),
+    )
+    page.locator(".approvals .segmented__option", has_text="Chờ duyệt").click()
+    page.wait_for_timeout(200)
+
     # Now the failure direction, which is the one that has to be safe. The server refuses the read
     # -- a stored amount that does not re-derive to the digest the envelope binds -- and the card
     # must go back to offering nothing.
@@ -2702,6 +2786,21 @@ with sync_playwright() as playwright:
         "an amount that cannot be read leaves the approve control shut",
         blocked is True,
         repr(blocked),
+    )
+    described = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          const approve = card && [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          const id = approve && approve.getAttribute("aria-describedby");
+          const target = id && document.getElementById(id);
+          return target ? target.textContent.includes("Khoá theo loại nội dung") : id || "none";
+        }"""
+    )
+    check(
+        "the shut control is described by the full reason, which lives in the title's ⓘ",
+        described is True,
+        repr(described),
     )
     check(
         "no figure at all is shown beside the shut control",
@@ -2783,7 +2882,8 @@ with sync_playwright() as playwright:
     page.goto(f"http://localhost:{PORT}/#/sla-board", wait_until="networkidle")
     page.wait_for_timeout(700)
 
-    cards = page.locator("article[data-sla-outcome]")
+    # Rows, since CONSOLE-REDESIGN-003: each order is a list row that links to it.
+    cards = page.locator("[data-sla-outcome]")
     check("the board lists the orders the server returned", cards.count() == 2, str(cards.count()))
     # The server answers in acceptance order, oldest first, and the screen renders that order
     # unchanged. Asserted as the sequence rather than as "the breached one is on top": the board
@@ -2815,17 +2915,28 @@ with sync_playwright() as playwright:
         "10800000000" not in body_text and "3600000000" not in body_text,
     )
     check(
+        "and says plainly, on the screen itself, that this is the shop's own mark, not a promise",
+        "không phải hẹn với khách" in body_text,
+    )
+    # The rule is one tap away (tier 2): open the ⓘ on the title, as a person would, and read it.
+    page.locator(".page-head .info-btn").first.click()
+    page.wait_for_timeout(300)
+    sheet_text = page.locator("dialog.sheet[open]").first.inner_text()
+    check(
         "the board states which rule produced its numbers, in the assistant's own words",
-        SLA_BOARD_POLICY_NOTICE in body_text.replace("\n", " "),
+        SLA_BOARD_POLICY_NOTICE in sheet_text.replace("\n", " "),
         "the shared policy sentence is missing or reworded",
     )
     check(
-        "and says plainly that this is the shop's own mark, not a promise to a customer",
-        "không phải hẹn với khách" in body_text,
+        "and why the order is not urgency order, in the same sheet",
+        "Đây không phải thứ tự gấp" in sheet_text,
     )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(200)
     check(
-        "the versioned query behind the figures is on the screen, not only in the response",
-        "sla-risk-board-v1:e56e50ea7beb4021" in body_text,
+        "the versioned query behind the figures is on the screen (technical drawer), not only in "
+        "the response",
+        "sla-risk-board-v1:e56e50ea7beb4021" in str(page.evaluate("document.body.textContent")),
     )
     check(
         "each row links to the order it is about, so the list is something to act on",
@@ -2839,8 +2950,8 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(700)
     check(
         "Tải thêm appends the next keyset page rather than replacing or repeating the first",
-        page.locator("article[data-sla-outcome]").count() == 3,
-        str(page.locator("article[data-sla-outcome]").count()),
+        page.locator("[data-sla-outcome]").count() == 3,
+        str(page.locator("[data-sla-outcome]").count()),
     )
     body_text = page.inner_text("body")
     check(
@@ -3207,6 +3318,12 @@ with sync_playwright() as playwright:
 
     page.locator("article.card button", has_text="Duyệt").first.click()
     page.wait_for_timeout(700)
+    toasts = page.locator(".toasts .toast").all_inner_texts()
+    check(
+        "a recorded decision is confirmed out loud, not by the card silently vanishing",
+        any("Đã duyệt" in t and "Cho gửi tin nhắn" in t for t in toasts),
+        repr(toasts),
+    )
     posts = [json.loads(p or "{}") for p in state.get("decision_posts", [])]
     check(
         "pressing Duyệt sends back the envelope's own version and both digests",

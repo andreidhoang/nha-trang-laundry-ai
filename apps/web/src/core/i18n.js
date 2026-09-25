@@ -622,6 +622,21 @@ export const ENUM_GLOSS = {
   ORDER_STATE_TRANSITION: "chuyển trạng thái đơn",
   ORDER_SETTLEMENT_RECORD: "ghi nhận tất toán",
   ORDER_COLLECTION_RECORD: "ghi nhận khách nhận đồ",
+  // `ApprovalAction` — what an approval envelope asks a person to authorise. `#/approvals` titles
+  // each card with this gloss (spec V2 §5.5) and keeps the token in the card's technical record.
+  PRESENT_QUOTE: "cho gửi báo giá tới khách",
+  FINALIZE_QUOTE: "xác nhận giá khách đã đồng ý",
+  CONFIRM_SLOT: "xác nhận khung giờ",
+  SET_RANGE_PRICE: "duyệt giá trong khoảng",
+  SET_DELIVERY_FEE: "duyệt phí giao",
+  APPLY_PROMOTION: "áp khuyến mãi",
+  SEND_MESSAGE: "cho gửi tin nhắn",
+  ACCEPT_ORDER: "nhận đơn",
+  CANCEL_ACTIVE_ORDER: "huỷ đơn đang làm",
+  APPROVE_REMEDY: "duyệt bồi hoàn",
+  APPROVE_B2B_TERMS: "duyệt điều khoản khách doanh nghiệp",
+  PUBLISH_POLICY: "công bố chính sách",
+  EXPORT_SANITIZED_DATA: "xuất dữ liệu",
 };
 
 /**

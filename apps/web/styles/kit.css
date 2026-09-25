@@ -965,3 +965,349 @@ details.tech[open] > summary::after {
     display: none !important;
   }
 }
+
+/* ================================================================================================
+ * CONSOLE-REDESIGN-003 — Hôm nay (`#/`), Duyệt (`#/approvals`), Bảng trễ hạn (`#/sla-board`).
+ * Screen-scoped styles for the three screens this slice rebuilt; nothing here restyles a kit
+ * component globally. The lead may move this block to a screens stylesheet when merging.
+ * ============================================================================================== */
+
+/* A text link in a group header ("Xem tất cả"), with a full tap target. */
+.group__link {
+  align-items: center;
+  color: var(--brand-700);
+  display: inline-flex;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  min-height: var(--tap-min);
+  text-decoration: none;
+}
+
+/* Hôm nay ---------------------------------------------------------------------------------------- */
+
+.today__refresh {
+  align-items: center;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.today__refresh .updated {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.today__quick {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.today__quick .btn {
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
+  white-space: nowrap;
+  min-height: var(--tap-primary);
+}
+
+.today__refunds {
+  color: var(--text-secondary);
+  display: grid;
+  font-size: var(--text-sm);
+  gap: 2px;
+}
+
+.today__count {
+  background: var(--brand-050);
+  border-radius: var(--radius-pill);
+  color: var(--brand-800);
+  display: inline-block;
+  font-size: var(--text-base);
+  min-width: 2rem;
+  padding: 0.1rem 0.6rem;
+  text-align: center;
+}
+
+.today__clear {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.today__clear-icon {
+  background: var(--ok-bg);
+  border-radius: var(--radius-pill);
+  color: var(--ok-fg);
+  display: inline-flex;
+  flex: none;
+  padding: var(--space-2);
+}
+
+.today__clear-title {
+  font-weight: var(--weight-bold);
+}
+
+.today__clear-meta {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.today__calm {
+  color: var(--text-secondary);
+}
+
+.today__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.today__chip {
+  align-items: center;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  display: inline-flex;
+  gap: var(--space-2);
+  min-height: var(--tap-min);
+  padding: var(--space-1) var(--space-4) var(--space-1) var(--space-2);
+  text-decoration: none;
+}
+
+.today__chip:hover,
+.today__chip:focus-visible {
+  background: var(--brand-050);
+  border-color: var(--brand-600);
+}
+
+.today__chip-count {
+  background: var(--surface);
+  border-radius: var(--radius-pill);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-heavy);
+  min-width: 1.9rem;
+  padding: 0.15rem 0.45rem;
+  text-align: center;
+}
+
+.today__chip-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+}
+
+.today__total {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin-top: var(--space-2);
+}
+
+/* Duyệt ------------------------------------------------------------------------------------------ */
+
+.approvals__pane-head {
+  align-items: center;
+  display: flex;
+  gap: var(--space-1);
+  padding: 0 var(--space-1);
+}
+
+.approval {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.approval__head {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  justify-content: space-between;
+}
+
+/* The title takes the line; on a phone the countdown drops beneath it rather than squeezing it
+   into three lines. */
+.approval__title {
+  flex: 1 1 15rem;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-heavy);
+  line-height: var(--leading-tight);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.approval__detail {
+  color: var(--text-secondary);
+  font-weight: var(--weight-bold);
+}
+
+.approval__clock {
+  flex: none;
+}
+
+.approval__meta {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  margin-top: calc(-1 * var(--space-2));
+}
+
+/* The bound content is the document being signed, not a warning: a calm sunken panel with a brand
+   rule on its left. A refusal inside it (danger) keeps its own colours. */
+.approval__content > .notice[data-state="warn"],
+.approval__content > .notice[data-state="info"] {
+  background: var(--surface-sunken);
+  border-left: 3px solid var(--brand-600);
+  color: var(--text);
+}
+
+.approval__content .notice__title {
+  font-size: var(--text-base);
+}
+
+.approval__content .money {
+  font-size: var(--text-lg);
+}
+
+.approval__decide {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.approval__why {
+  margin: 0;
+}
+
+.approval__buttons {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.approval__buttons .btn {
+  min-height: var(--tap-primary);
+}
+
+.approval__open {
+  align-items: center;
+  color: var(--brand-700);
+  display: inline-flex;
+  font-weight: var(--weight-bold);
+  min-height: var(--tap-min);
+}
+
+.approval__limits-lead {
+  font-weight: var(--weight-bold);
+}
+
+.review {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
+.review__head {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.review__who {
+  display: grid;
+  min-width: 0;
+}
+
+.review__when {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.review__lines {
+  display: grid;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.review__line {
+  align-items: baseline;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  justify-content: space-between;
+  padding-top: var(--space-1);
+}
+
+.review__service {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.review__band {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* Bảng trễ hạn ----------------------------------------------------------------------------------- */
+
+.sla__count {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+}
+
+.sla__order {
+  margin: 0;
+  padding: 0 var(--space-1);
+}
+
+.sla__time {
+  display: inline-block;
+  font-size: var(--text-md);
+  max-width: 7rem;
+  text-align: right;
+  white-space: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.sla__time[data-state="danger"] {
+  color: var(--danger-fg);
+}
+
+.sla__time[data-state="ok"] {
+  color: var(--ok-fg);
+}
+
+.sla__more {
+  padding: 0 var(--space-4) var(--space-1);
+}
+
+.sla__more details.tech {
+  border-top: none;
+  padding-top: 0;
+}
+
+.sla__more details.tech > summary {
+  min-height: 2.25rem;
+}
+
+/* A pane the switch has hidden stays hidden whatever layout class it also carries. */
+.approvals__pane[hidden] {
+  display: none;
+}
+
+/* On a desk the two counter actions keep a button's width instead of spanning the page. */
+@media (min-width: 48rem) {
+  .today__quick {
+    grid-template-columns: repeat(2, minmax(0, 16rem));
+  }
+}

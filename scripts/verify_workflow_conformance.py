@@ -3892,39 +3892,9 @@ def _customer_rows(phone_digits: str) -> str:
     )
 
 
-def scenario_customers(console: Console) -> None:
-    """`CUSTOMER-001` (`DEC-034`): refused until the owner publishes the notice; then a regular is
-    recorded at the counter with consent, found again by four digits in one tap, their history is
-    on their page, and their record is erased on request -- the orders kept."""
+def _customer_refusal_then_publish(console: Console, digits: str, spaced: str) -> None:
+    """Before publication: the sheet offers nothing to save and the server refuses; then publish."""
 
-    head("16", "KHÁCH HÀNG — refused until the owner publishes the privacy notice")
-    if not arguments.database_url:
-        ok(
-            "publishing the notice uses the owner's script, which needs --database-url",
-            False,
-        )
-        return
-    console.sign_in("demo-operations")
-    notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
-    unpublished = (notice.get("body") or {}).get("published") is False
-    ok(
-        "the notice is not published on this stack yet (the refusal can only be proven before it)",
-        unpublished,
-        notice["text"][:120],
-    )
-    digits = "09" + str(uuid.uuid4().int)[:8]
-    spaced = f"{digits[:4]} {digits[4:7]} {digits[7:]}"
-    console.open("#/new", settle=1600)
-    search = console.page.locator("#new-customer-search")
-    ok(
-        "step 1 opens on one field, 'SĐT hoặc tên khách', above the walk-in button",
-        (
-            search.count() == 1
-            and search.first.get_attribute("aria-label") == "SĐT hoặc tên khách"
-            and console.page.locator("#new-walk-in").count() == 1
-        ),
-        "",
-    )
     console.type_into("#new-customer-search", spaced, "newOrder.customer-search")
     console.page.wait_for_timeout(1200)
     console.page.locator("#new-customer-add").click()
@@ -3975,11 +3945,54 @@ def scenario_customers(console: Console) -> None:
         (publish.stdout or publish.stderr).strip()[:160],
     )
 
+
+def scenario_customers(console: Console) -> None:
+    """`CUSTOMER-001` (`DEC-034`): refused until the owner publishes the notice; then a regular is
+    recorded at the counter with consent, found again by four digits in one tap, their history is
+    on their page, and their record is erased on request -- the orders kept."""
+
+    head("16", "KHÁCH HÀNG — refused until the owner publishes the privacy notice")
+    if not arguments.database_url:
+        ok(
+            "publishing the notice uses the owner's script, which needs --database-url",
+            False,
+        )
+        return
+    console.sign_in("demo-operations")
+    notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
+    unpublished = (notice.get("body") or {}).get("published") is False
+    ok(
+        "the notice is not published on this stack yet (the refusal can only be proven before it)",
+        unpublished,
+        notice["text"][:120],
+    )
+    digits = "09" + str(uuid.uuid4().int)[:8]
+    spaced = f"{digits[:4]} {digits[4:7]} {digits[7:]}"
+    console.open("#/new", settle=1600)
+    search = console.page.locator("#new-customer-search")
+    ok(
+        "step 1 opens on one field, 'SĐT hoặc tên khách', above the walk-in button",
+        (
+            search.count() == 1
+            and search.first.get_attribute("aria-label") == "SĐT hoặc tên khách"
+            and console.page.locator("#new-walk-in").count() == 1
+        ),
+        "",
+    )
+    if unpublished:
+        _customer_refusal_then_publish(console, digits, spaced)
+    else:
+        note(
+            "the notice was published before this scenario began, so its refusal is not provable "
+            "here: run it on a stack that has not published the notice"
+        )
+
     head("16b", "KHÁCH MỚI — recorded at the counter, with the consent read aloud")
     console.open("#/new", settle=1600)
     console.type_into("#new-customer-search", spaced, "newOrder.customer-search")
     console.page.wait_for_timeout(1200)
     console.page.locator("#new-customer-add").click()
+    touched("newOrder.customer-add")
     console.page.wait_for_timeout(1400)
     sheet = console.page.locator("#customer-new-sheet")
     sentence = console.page.locator("#customer-new-sheet .customer-consent__sentence")

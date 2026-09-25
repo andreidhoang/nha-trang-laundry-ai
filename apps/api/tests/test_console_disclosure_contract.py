@@ -916,11 +916,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 21 after CONSENT-TRANSACTIONAL-001: + `SERVICE_MESSAGING_RELEASE`, on its route's gate.
     # 22 after SESSION-LIST-001: + `SESSIONS_REVOKE_OTHER`, on `require_owner`.
     # 23 with REPORT-DASHBOARD-001 merged on top: + `REPORTS_READ`.
+    # 26 after CUSTOMER-001: + `CUSTOMERS_READ`, `CUSTOMERS_WRITE`, `CUSTOMERS_ERASE`, each on the
+    #   exact role set `CustomerRepository` enforces.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 23
+        == 26
     )
 
 

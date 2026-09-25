@@ -49,6 +49,7 @@ from nha_trang_laundry_db.orders import (
     OrderAuthorizationError,
     OrderNotVisibleError,
     OrderStateError,
+    OrderStepRequiresHuman,
     OrderView,
     StoredOrder,
 )
@@ -81,6 +82,7 @@ from nha_trang_laundry_domain.catalog import (
     QuantityBasis,
     Unit,
 )
+from nha_trang_laundry_domain.order_steps import COMPOSITE_STEPS, OrderStep
 from nha_trang_laundry_domain.quote_composition import RequestedLine
 from nha_trang_laundry_domain.range_prices import RangePriceChoice
 from nha_trang_laundry_domain.remedies import RemedyKind
@@ -94,7 +96,7 @@ from nha_trang_laundry_observability import (
     current_correlation,
 )
 from opentelemetry import metrics, trace
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse, StreamingResponse
 
@@ -295,6 +297,31 @@ class IntakeTransitionRequest(StrictRequest):
 
 class ProductionTransitionRequest(StrictRequest):
     target: ProductionStatus
+
+
+class OrderStepRequest(StrictRequest):
+    """`ORDER-STEPS-001`: one named business step. Only the composite steps are accepted here.
+
+    `SETTLE`, `PREPAY`, `COLLECT`, `DELIVERY_PICKUP` and `DELIVERY_RETURN` appear in `next_steps`
+    but are recorded on their own routes (settlement, collection, delivery legs), which carry the
+    facts only a person can attest -- the amount taken, the courier's outcome.
+    """
+
+    step: OrderStep
+    #: `RECEIVE` only: the operator's attestation that the shop has capacity for this order. The one
+    #: readiness fact a caller supplies; the other five are read by the server. Absent is false, and
+    #: false refuses the whole step with `SLOT_APPROVAL_REQUIRED`.
+    slot_approved: StrictBool = False
+    #: `CANCEL` through review only (`DEC-024`): what happened to the laundry and the money. The
+    #: order's `next_steps` entry lists exactly the resolutions the domain accepts for it.
+    custody_resolution: CustodyResolution | None = None
+
+    @field_validator("step")
+    @classmethod
+    def _composite_only(cls, value: OrderStep) -> OrderStep:
+        if value not in COMPOSITE_STEPS:
+            raise ValueError(f"{value.value} is recorded on its own route, not as a step")
+        return value
 
 
 class ApprovalRequest(StrictRequest):
@@ -544,6 +571,36 @@ class OrderResponse(BaseModel):
     replayed: bool
 
 
+class NextStepResponse(BaseModel):
+    """One legal next step for the order (`ORDER-STEPS-001`), decided by the domain.
+
+    `step` is one of: `RECEIVE`, `START_WASH`, `QUALITY_CHECK`, `MARK_READY`, `HOLD`, `RESUME`,
+    `RELEASE`, `HAND_OVER`, `COMPLETE`, `CANCEL`, `REOPEN` (executed by `POST
+    /internal/v1/orders/{order_id}/steps`); `SETTLE` (`POST .../settlement` with
+    `collected_by_customer=true`), `PREPAY` (`POST .../settlement` with
+    `collected_by_customer=false`), `COLLECT` (`POST .../collection`), `DELIVERY_PICKUP` /
+    `DELIVERY_RETURN` (`POST .../delivery-legs` with that `leg_kind`). Exactly one entry of a
+    non-empty list has `primary=true`: the natural next real-world event.
+
+    `requires` names request fields the step needs: `slot_approved` (RECEIVE) or
+    `custody_resolution` (a cancellation through review). `custody_resolutions` lists the
+    resolutions the domain would accept for this order, each dry-run; empty otherwise.
+    """
+
+    step: OrderStep
+    primary: bool
+    requires: list[str]
+    custody_resolutions: list[CustodyResolution]
+
+
+class DeliveryLegViewResponse(BaseModel):
+    """One recorded delivery attempt (`READ-ENRICH-001`)."""
+
+    leg_kind: str
+    outcome: str
+    recorded_at: datetime
+
+
 class OrderViewResponse(OrderResponse):
     """An order as the counter reads it: the command result's fields, plus what pickup needs.
 
@@ -576,6 +633,17 @@ class OrderViewResponse(OrderResponse):
     #: not correct it. On the staff read model only -- the command reply above does not carry it,
     #: and the agent tool contract never names it.
     acquisition_source: AcquisitionSource
+    #: `READ-ENRICH-001`: every delivery attempt recorded for the order, oldest first, failed ones
+    #: included; empty when none.
+    delivery_legs: list[DeliveryLegViewResponse]
+    #: The stored flag a succeeded RETURN leg sets; what completion reads for a delivery order.
+    required_delivery_legs_succeeded: bool
+    #: The settlement's shape, or null when nothing has been settled.
+    settlement_shape: str | None
+    #: `ORDER-STEPS-001`: the legal next steps, computed by dry-running the domain state machines
+    #: and settlement rules against the order's stored facts. The console holds no transition
+    #: table of its own; this list is the only source of which action to offer.
+    next_steps: list[NextStepResponse]
 
 
 class ApprovalResponse(BaseModel):
@@ -892,6 +960,12 @@ class QuoteRevisionDetailResponse(BaseModel):
     #: When the customer agreed the price that produced this revision, from the `DEC-021`
     #: attestation. Null for a revision no acceptance produced.
     customer_accepted_at: datetime | None = None
+    #: `READ-ENRICH-001`: the intake request this quote is bound to, that request's customer
+    #: reference (a counter ticket id or a channel binding id), and the fulfilment mode this
+    #: revision was priced under -- the mode an order create must name.
+    order_request_id: UUID | None = None
+    contact_binding_id: UUID | None = None
+    fulfillment_mode: FulfillmentMode | None = None
 
 
 class QuoteSummaryResponse(BaseModel):
@@ -906,6 +980,10 @@ class QuoteSummaryResponse(BaseModel):
     display_total_min_vnd: int | None
     display_total_max_vnd: int | None
     valid_until: datetime | None
+    #: `READ-ENRICH-001`: as on `QuoteRevisionDetailResponse`, for the listed (current) revision.
+    order_request_id: UUID | None = None
+    contact_binding_id: UUID | None = None
+    fulfillment_mode: FulfillmentMode | None = None
 
 
 class IncidentResponse(BaseModel):
@@ -929,6 +1007,10 @@ class IncidentSummaryResponse(BaseModel):
     #: evidence has been disposed of under `INCIDENT_EVIDENCE`. The incident itself never
     #: disappears; only its description does, and only on the published schedule.
     evidence_summary: str | None = None
+    #: `READ-ENRICH-001`: the walk-in ticket of the incident's order ("Phiếu 17"); null when the
+    #: incident names no order or the order's customer is a channel binding.
+    ticket_number: int | None = None
+    ticket_issued_on: date | None = None
 
 
 class QueueRecoveryResponse(BaseModel):
@@ -1775,6 +1857,53 @@ def transition_order_production(
     return _order_response(stored)
 
 
+@app.post("/internal/v1/orders/{order_id}/steps", response_model=OrderViewResponse)
+def execute_order_step(
+    order_id: UUID,
+    request: OrderStepRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> OrderViewResponse:
+    """Execute one named business step as its order state transitions, in one transaction.
+
+    `ORDER-STEPS-001`. The step is planned by the domain against the order as it stands -- each
+    transition dry-run by the real state machine before anything is written -- and then every
+    transition is written exactly as the per-axis routes write it: its own event, audit row and
+    outbox row, at its own row version. A refusal anywhere refuses the whole step and writes
+    nothing. `If-Match` is the row version the caller read (428 when absent, 400 when malformed,
+    409 `STALE_VERSION` when it moved); `Idempotency-Key` replays the first answer.
+
+    Refusals: 409 with the domain's `INVALID_STATE_TRANSITION: ...` / `HUMAN_APPROVAL_REQUIRED: ...`
+    text, as on the per-axis routes; 422 `{"outcome": "REQUIRE_HUMAN", "reason_codes": [...]}` when
+    `RECEIVE` is missing a readiness fact (`SLOT_APPROVAL_REQUIRED`, `QUANTITY_NOT_MEASURED`,
+    `SERVICE_NOT_CLASSIFIED`, `EXACT_PRICE_NOT_APPROVED`, `CUSTOMER_AGREEMENT_MISSING`,
+    `CUSTODY_NOT_RECORDED`). The reply is the order view after the step, `next_steps` included.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    expected = _parse_if_match(if_match)
+    try:
+        result = service.execute_order_step(
+            order_id=order_id,
+            step=request.step,
+            expected_row_version=expected,
+            idempotency_key=idempotency_key,
+            principal=principal,
+            slot_approved=request.slot_approved,
+            custody_resolution=request.custody_resolution,
+        )
+    except OrderStepRequiresHuman as error:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "REQUIRE_HUMAN", "reason_codes": list(error.reason_codes)},
+        ) from error
+    except (OrderStateError, OrderAuthorizationError, IdempotencyConflictError) as error:
+        _raise_operations_error(error)
+    return _order_view_response(result.view, replayed=result.replayed)
+
+
 @app.post(
     "/internal/v1/orders/{order_id}/settlement",
     response_model=SettlementResponse,
@@ -2600,6 +2729,11 @@ def read_quote(
             for line in view.lines
         ],
         customer_accepted_at=view.customer_accepted_at,
+        order_request_id=view.order_request_id,
+        contact_binding_id=view.contact_binding_id,
+        fulfillment_mode=(
+            None if view.fulfillment_mode is None else FulfillmentMode(view.fulfillment_mode)
+        ),
     )
 
 
@@ -2777,6 +2911,11 @@ class OrderRequestSummaryResponse(BaseModel):
     status: str
     row_version: int
     created_at: datetime
+    #: `READ-ENRICH-001`: the walk-in ticket the customer reference names ("Phiếu 17"), null for a
+    #: channel binding; and the order the request became, null until its quote is converted.
+    ticket_number: int | None = None
+    ticket_issued_on: date | None = None
+    order_id: UUID | None = None
 
 
 @app.post(
@@ -2882,6 +3021,9 @@ def _order_request_summary_response(item: OrderRequestSummary) -> OrderRequestSu
         status=item.status,
         row_version=item.row_version,
         created_at=item.created_at,
+        ticket_number=item.ticket_number,
+        ticket_issued_on=item.ticket_issued_on,
+        order_id=item.order_id,
     )
 
 
@@ -2990,6 +3132,62 @@ def list_incidents(
         ]
     except (StoreAccessError, ValueError) as error:
         _raise_operations_error(error)
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/orders/{order_id}/incidents",
+    response_model=list[IncidentSummaryResponse],
+)
+def list_order_incidents(
+    store_id: UUID,
+    order_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+    limit: int = 100,
+) -> list[IncidentSummaryResponse]:
+    """One order's incidents, newest first, for the order page's "Khiếu nại" section.
+
+    `READ-ENRICH-001`. Membership of the named store is required in the repository; another
+    store's order id answers an empty list, exactly as an id that does not exist does.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        return [
+            IncidentSummaryResponse.model_validate(item, from_attributes=True)
+            for item in service.list_order_incidents(
+                store_id=store_id, order_id=order_id, principal=principal, limit=limit
+            )
+        ]
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/incidents/{incident_id}",
+    response_model=IncidentSummaryResponse,
+)
+def read_incident(
+    store_id: UUID,
+    incident_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> IncidentSummaryResponse:
+    """One incident of this store, for the incident detail page. Another store's id is a 404.
+
+    `READ-ENRICH-001`. The same fields as a list item, from the same statement.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        found = service.read_incident(
+            store_id=store_id, incident_id=incident_id, principal=principal
+        )
+    except (StoreAccessError, ValueError) as error:
+        _raise_operations_error(error)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="incident not found")
+    return IncidentSummaryResponse.model_validate(found, from_attributes=True)
 
 
 # --- REMEDY-001: DEC-004 expressed as configuration, and a surface to act on it ----------------
@@ -3590,7 +3788,7 @@ def _order_response(stored: StoredOrder) -> OrderResponse:
     )
 
 
-def _order_view_response(view: OrderView) -> OrderViewResponse:
+def _order_view_response(view: OrderView, *, replayed: bool = False) -> OrderViewResponse:
     return OrderViewResponse(
         order_id=view.order_id,
         store_id=view.store_id,
@@ -3600,7 +3798,8 @@ def _order_view_response(view: OrderView) -> OrderViewResponse:
         balance=view.balance.value,
         row_version=view.row_version,
         # A read, so nothing was replayed. Kept so a list item and a command result share a shape.
-        replayed=False,
+        # The step route is the one command that answers with a view, and it says when it replays.
+        replayed=replayed,
         fulfillment_mode=view.fulfillment_mode.value,
         created_at=view.created_at,
         quote_id=view.quote_id,
@@ -3610,6 +3809,23 @@ def _order_view_response(view: OrderView) -> OrderViewResponse:
         ticket_issued_on=view.ticket_issued_on,
         self_collection_recorded=view.self_collection_recorded,
         acquisition_source=view.acquisition_source,
+        delivery_legs=[
+            DeliveryLegViewResponse(
+                leg_kind=leg.leg_kind, outcome=leg.outcome, recorded_at=leg.recorded_at
+            )
+            for leg in view.delivery_legs
+        ],
+        required_delivery_legs_succeeded=view.required_delivery_legs_succeeded,
+        settlement_shape=view.settlement_shape,
+        next_steps=[
+            NextStepResponse(
+                step=item.step,
+                primary=item.primary,
+                requires=list(item.requires),
+                custody_resolutions=list(item.custody_resolutions),
+            )
+            for item in view.next_steps
+        ],
     )
 
 
@@ -4175,6 +4391,9 @@ class SlaRiskResponse(BaseModel):
     elapsed_microseconds: int | None
     remaining_microseconds: int | None
     breach_microseconds: int
+    #: `READ-ENRICH-001`: the order's walk-in ticket ("Phiếu 17"); null for a channel customer.
+    ticket_number: int | None = None
+    ticket_issued_on: date | None = None
 
 
 class SlaBoardResponse(BaseModel):
@@ -4356,6 +4575,8 @@ def sla_board(
                 elapsed_microseconds=item.elapsed_microseconds,
                 remaining_microseconds=item.remaining_microseconds,
                 breach_microseconds=item.breach_microseconds,
+                ticket_number=item.ticket_number,
+                ticket_issued_on=item.ticket_issued_on,
             )
             for item in page.items
         ],

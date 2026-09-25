@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
 from uuid import UUID, uuid4
 
@@ -16,6 +16,17 @@ from nha_trang_laundry_domain.catalog import (
     OrderBalanceStatus,
     ProductionStatus,
 )
+from nha_trang_laundry_domain.order_steps import (
+    COMPOSITE_STEPS,
+    NextStep,
+    OrderStep,
+    QuoteReadinessFacts,
+    StepFacts,
+    StepRequiresHuman,
+    derive_intake_readiness,
+    next_steps,
+    plan_step,
+)
 from nha_trang_laundry_domain.orders import (
     IntakeReadiness,
     OrderState,
@@ -24,9 +35,11 @@ from nha_trang_laundry_domain.orders import (
     transition_intake,
     transition_production,
 )
+from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
 
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.quotes import PRICED_FULFILLMENT_MODE_SQL
 from nha_trang_laundry_db.remedies import RemedyStateError, spend_reserved_remedy_credits
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
@@ -38,6 +51,19 @@ class OrderStateError(ValueError):
 
 class OrderAuthorizationError(PermissionError):
     """Raised when a staff principal lacks an order command permission."""
+
+
+class OrderStepRequiresHuman(OrderStateError):
+    """`ORDER-STEPS-001`: a step a person must unblock, with one reason code per missing fact.
+
+    Raised before anything is written, so the whole step is refused and the order is unchanged.
+    The message keeps the domain's `HUMAN_APPROVAL_REQUIRED:` prefix; `reason_codes` is what the
+    route hands the console.
+    """
+
+    def __init__(self, message: str, reason_codes: tuple[str, ...]) -> None:
+        super().__init__(message)
+        self.reason_codes = reason_codes
 
 
 class OrderNotVisibleError(LookupError):
@@ -94,6 +120,35 @@ class OrderTransitionCommand:
 
 
 @dataclass(frozen=True)
+class OrderStepCommand:
+    """`ORDER-STEPS-001`: one named business step, executed as its domain transitions.
+
+    `expected_row_version` is the caller's `If-Match`, checked once against the row the step locks;
+    the step's own transitions then advance it one version each. `slot_approved` is the operator's
+    attestation for `RECEIVE`, the only readiness fact a caller supplies. `custody_resolution` is
+    the `DEC-024` statement a cancellation through review requires.
+    """
+
+    order_id: UUID
+    expected_row_version: int
+    principal: StaffPrincipal
+    idempotency_key: str
+    correlation_id: UUID
+    step: OrderStep
+    slot_approved: bool = False
+    custody_resolution: CustodyResolution | None = None
+    occurred_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class OrderStepResult:
+    """The order as it stood when a step committed, and whether this answer is a replay."""
+
+    view: OrderView
+    replayed: bool
+
+
+@dataclass(frozen=True)
 class StoredOrder:
     order_id: UUID
     store_id: UUID
@@ -129,7 +184,10 @@ class TicketReference:
 
 @dataclass(frozen=True)
 class OrderView:
-    """One order as the counter reads it. Every field is a stored fact; nothing is computed.
+    """One order as the counter reads it. Every field is a stored fact, except `next_steps`.
+
+    `next_steps` (`ORDER-STEPS-001`) is computed, and only by the domain: `order_steps.next_steps`
+    over the stored facts this row was read with. No money is computed anywhere in this view.
 
     The first seven are `StoredOrder`'s, with the same names, so a caller that read the old list
     item reads this one unchanged.
@@ -169,25 +227,117 @@ class OrderView:
     #: readback: a counter that mis-tapped can now see it, and still cannot change it. Staff read
     #: model only -- the agent tool contract never names this field.
     acquisition_source: AcquisitionSource
+    #: `READ-ENRICH-001`. Every delivery attempt recorded for the order, oldest first: the stored
+    #: rows of `delivery_legs`, including failed attempts. Empty for an order with none.
+    delivery_legs: tuple[DeliveryLegView, ...] = ()
+    #: The stored flag a succeeded `RETURN` leg sets, which `transition_commercial` reads.
+    required_delivery_legs_succeeded: bool = False
+    #: The order's settlement shape (`EXACT_PAYMENT_SELF_COLLECTION`, `..._PREPAID_DELIVERY`,
+    #: `..._PREPAID_SELF_COLLECTION`), or null when nothing has been settled.
+    settlement_shape: str | None = None
+    #: `ORDER-STEPS-001`. The legal next steps, computed by `order_steps.next_steps` from the stored
+    #: facts this row was read with -- the one computed field, and computed only by the domain.
+    next_steps: tuple[NextStep, ...] = ()
 
+
+@dataclass(frozen=True, slots=True)
+class DeliveryLegView:
+    """One recorded delivery attempt, as `delivery_legs` stores it."""
+
+    leg_kind: str
+    outcome: str
+    recorded_at: datetime
+
+
+#: The four readiness facts the bound quote revision holds, as columns over the revision aliased
+#: `r`. The one statement of them: the order read (for `next_steps`), the `RECEIVE` step and the
+#: per-axis intake route (`OrderRepository.intake_readiness_for`) all read these columns, so no two
+#: of them can disagree about whether an order may be accepted.
+#:
+#: * quantity: every line was weighed or counted by staff, none is the customer's estimate;
+#: * services: every line names a service code, which a pricebook-priced line always does;
+#: * exact price: the revision is `APPROVED_EXACT` and `ACCEPTED_FINAL`;
+#: * agreement: a `DEC-021` acceptance attestation produced this revision.
+_QUOTE_READINESS_COLUMNS: Final = """
+    CASE WHEN jsonb_typeof(r.snapshot -> 'lines') = 'array'
+              AND jsonb_array_length(r.snapshot -> 'lines') > 0
+         THEN NOT EXISTS (
+             SELECT 1 FROM jsonb_array_elements(r.snapshot -> 'lines') AS line
+             WHERE line ->> 'quantity_basis' = 'CUSTOMER_ESTIMATE'
+         )
+         ELSE FALSE END AS quantity_basis_approved,
+    CASE WHEN jsonb_typeof(r.snapshot -> 'lines') = 'array'
+              AND jsonb_array_length(r.snapshot -> 'lines') > 0
+         THEN NOT EXISTS (
+             SELECT 1 FROM jsonb_array_elements(r.snapshot -> 'lines') AS line
+             WHERE coalesce(line ->> 'service_code', '') = ''
+         )
+         ELSE FALSE END AS service_classified,
+    (r.finality = 'APPROVED_EXACT' AND r.status = 'ACCEPTED_FINAL') AS exact_price_approved,
+    EXISTS (
+        SELECT 1 FROM quote_acceptances a
+        WHERE a.quote_id = r.quote_id AND a.final_revision = r.revision
+    ) AS customer_agreed
+"""
 
 #: The read model, shared by the board and the read by id so the two cannot disagree about a field.
 #: `CASE` rather than `display_total_min_vnd` alone: a range has no single amount owed, and the
 #: settlement refuses it (`TOTAL_IS_A_RANGE`), so reporting its lower bound would put a number on
 #: screen that the counter cannot take. An order's revision is always APPROVED_EXACT, where 0006
 #: already forces the two equal; the CASE states the rule rather than relying on that.
-_ORDER_VIEW_SELECT: Final = """
+#:
+#: Columns 16 onward are `ORDER-STEPS-001` / `READ-ENRICH-001`: the stored facts `next_steps` is
+#: computed from, and the delivery legs and settlement shape the order page shows. The settlement
+#: and the legs are scalar subqueries rather than joins so the board's plan -- one index scan over
+#: `orders`, stopped at the LIMIT -- is unchanged; each is served by its own order-keyed index.
+_ORDER_VIEW_SELECT: Final = (
+    """
     SELECT o.id, o.store_id, o.commercial_status, o.intake_status, o.production_status,
            o.balance_status, o.row_version, o.fulfillment_mode, o.created_at,
            o.current_quote_id, o.current_quote_revision,
            CASE WHEN r.display_total_min_vnd = r.display_total_max_vnd
                 THEN r.display_total_min_vnd END AS payable_total_vnd,
-           t.ticket_number, t.issued_on, o.self_collection_recorded, o.acquisition_source
+           t.ticket_number, t.issued_on, o.self_collection_recorded, o.acquisition_source,
+           o.required_delivery_legs_succeeded, o.production_resume_status,
+           o.production_accepted_at, r.display_total_min_vnd, r.display_total_max_vnd,
+           (
+               SELECT s.settlement_shape FROM order_settlements s WHERE s.order_id = o.id
+           ) AS settlement_shape,
+           (
+               SELECT coalesce(
+                   jsonb_agg(
+                       jsonb_build_object(
+                           'leg_kind', d.leg_kind,
+                           'outcome', d.outcome,
+                           'recorded_at', d.recorded_at
+                       )
+                       ORDER BY d.recorded_at, d.id
+                   ),
+                   '[]'::jsonb
+               )
+               FROM delivery_legs d WHERE d.order_id = o.id
+           ) AS delivery_legs,
+    """
+    + _QUOTE_READINESS_COLUMNS
+    + """
     FROM orders o
     JOIN quote_revisions r
       ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
     LEFT JOIN counter_tickets t
       ON t.id = o.bound_contact_id AND t.store_id = o.store_id
+"""
+)
+
+#: The row a transition locks and decides from. One statement for the per-axis routes and for each
+#: transition of a composite step, so the two paths read the same facts under the same lock.
+_LOCK_ORDER_FOR_TRANSITION_SQL: Final = """
+    SELECT store_id, commercial_status, intake_status, production_status,
+           fulfillment_mode, balance_status,
+           required_delivery_legs_succeeded, self_collection_recorded,
+           production_accepted_at, production_resume_status, row_version
+    FROM orders
+    WHERE id = %s
+    FOR UPDATE
 """
 
 
@@ -335,12 +485,9 @@ class OrderRepository:
                            ) AS quoted_customer,
                            -- The fulfilment mode the price was computed under, read from the
                            -- delivery engine's own trace inside the immutable snapshot.
-                           (
-                               SELECT t -> 'trace' ->> 'fulfillment_mode'
-                               FROM jsonb_array_elements(r.snapshot -> 'calculation_traces') AS t
-                               WHERE t ->> 'component' = 'DELIVERY'
-                               LIMIT 1
-                           ) AS priced_mode,
+                           """
+                    + PRICED_FULFILLMENT_MODE_SQL
+                    + """ AS priced_mode,
                            -- Has this agreement already been turned into an order? `CONVERTED` has
                            -- been in this column's CHECK since migration 0005 and nothing ever
                            -- wrote it, so one acceptance could back unlimited orders.
@@ -654,18 +801,7 @@ class OrderRepository:
 
         def transition_once() -> dict[str, object]:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT store_id, commercial_status, intake_status, production_status,
-                           fulfillment_mode, balance_status,
-                           required_delivery_legs_succeeded, self_collection_recorded,
-                           production_accepted_at, production_resume_status, row_version
-                    FROM orders
-                    WHERE id = %s
-                    FOR UPDATE
-                    """,
-                    (command.order_id,),
-                )
+                cursor.execute(_LOCK_ORDER_FOR_TRANSITION_SQL, (command.order_id,))
                 row = cursor.fetchone()
                 if row is not None:
                     # STORE-SCOPING-002. `STORE-SCOPING-001` enumerated store-scoped routes by URL
@@ -686,258 +822,7 @@ class OrderRepository:
                     )
             if row is None or int(row[10]) != command.expected_row_version:
                 raise OrderStateError("STALE_VERSION: order is missing or stale")
-            current = _order_state(row)
-            try:
-                if command.commercial_target is not None:
-                    # DEC-024: a resolution supplied by a named staff member is the approval. Both
-                    # flags derive from the one field, so there is no way to approve a cancellation
-                    # without saying what happened to the customer's laundry and their money.
-                    resolved = command.custody_resolution is not None
-                    next_state = transition_commercial(
-                        current,
-                        command.commercial_target,
-                        cancellation_approved=resolved,
-                        custody_and_financial_resolution_recorded=resolved,
-                        custody_resolution=command.custody_resolution,
-                    )
-                    dimension = "commercial"
-                    target = command.commercial_target.value
-                elif command.intake_target is not None:
-                    next_state = transition_intake(
-                        current,
-                        command.intake_target,
-                        readiness=command.intake_readiness,
-                        production_accepted_at=command.production_accepted_at,
-                    )
-                    dimension = "intake"
-                    target = command.intake_target.value
-                elif command.production_target is not None:
-                    next_state = transition_production(current, command.production_target)
-                    dimension = "production"
-                    target = command.production_target.value
-                else:
-                    raise OrderStateError("order transition target is missing")
-            except OrderTransitionError as error:
-                raise OrderStateError(str(error)) from error
-
-            next_version = command.expected_row_version + 1
-            # DEC-024. The domain decided whether money goes back; this reads how much, from the
-            # settlement ledger, under the order lock already held. Nobody types the amount: it is
-            # the settled amount, and `order_refunds`' composite key to `order_settlements` makes it
-            # impossible for the row to say anything else.
-            refund = (
-                _refund_for_cancellation(
-                    connection, order_id=command.order_id, resolution=command.custody_resolution
-                )
-                if current.balance is OrderBalanceStatus.PAID
-                and next_state.balance is OrderBalanceStatus.REFUNDED
-                else None
-            )
-            closed_at = (
-                occurred_at if next_state.commercial is CommercialOrderStatus.COMPLETED else None
-            )
-            # `0037`. When production last said the laundry was finished, which is what stops the
-            # SLA clock. Three cases, and the middle one is why this is not a plain COALESCE:
-            #
-            #   READY_AT_STORE  stamp it now, replacing any earlier stamp. `DEC-024` makes
-            #                   READY_AT_STORE -> EXCEPTION -> IN_PROCESS legal on purpose, because
-            #                   a stain found at quality check needs a rewash. The first "finished"
-            #                   was wrong, so keeping it would be wrong.
-            #   RELEASED        keep what is there. The laundry left; nothing was redone.
-            #   anything else   clear it. While an order is being rewashed it is NOT finished, and
-            #                   a stale stamp made the risk board report SLA_MET for exactly the
-            #                   order most likely to be late.
-            #
-            # A first version kept the earliest stamp forever, on the reasoning that the question is
-            # when the laundry was done rather than how often the board was touched. That reasoning
-            # is wrong the moment a rewash exists: it freezes MET permanently for a rewashed order.
-            #
-            # All three of those cases are about the *production* dimension, and the second version
-            # read them off the resulting production status without asking which dimension had
-            # actually moved. One UPDATE serves all three, so an order finished at 09:00 and sent to
-            # cancellation review at 16:00 recorded 16:00 as the moment its laundry was done --
-            # nothing had happened to the laundry at 16:00, and this column exists precisely so the
-            # SLA board can tell those two times apart. A commercial or intake move now leaves the
-            # clock exactly as it found it.
-            #
-            # A hold is the third case, and it is not rework. `ON_HOLD` from `READY_AT_STORE`
-            # records `production_resume_status = READY_AT_STORE` and the domain permits exactly one
-            # exit, back to where it was held from -- so nothing happens to the laundry while it is
-            # held. Treating every state that is not READY_AT_STORE or RELEASED as rework cleared
-            # the clock for a finished bag put on hold for a shelf audit, and restamped it when
-            # somebody lifted the hold. `0037`'s own comment says a hold does not reset it; the code
-            # did. (That comment also still says "write-once" and "the first moment", which the
-            # rewash correction replaced with the last completion. The migration is applied and
-            # checksummed, so it is not edited; the rule lives here.)
-            # `0042`. When the customer physically took their laundry away, which is what starts
-            # the `DEC-004` remedy windows for a self-collected order. Distinct from
-            # `production_ready_at` (the work was finished, possibly days earlier) and from
-            # `closed_at` (the commercial order completed, possibly later still); a remedy window
-            # measured against either would be measured against the wrong event.
-            #
-            # Write-once through the COALESCE below: `RELEASED` is terminal on the production
-            # dimension, so there is no second release to record.
-            released_now = (
-                occurred_at
-                if command.production_target is not None
-                and next_state.production is ProductionStatus.RELEASED
-                else None
-            )
-            ready_now, ready_keep = _ready_clock_effect(
-                moving_production=command.production_target is not None,
-                before=current.production,
-                after=next_state.production,
-                resume_to=next_state.production_resume_status,
-                moment=occurred_at,
-            )
-
-            def mutation(cursor: Any) -> None:
-                # The refund row first: `order_refund_consistency` refuses to let the order read
-                # REFUNDED unless one exists, and the deferred check on `order_refunds` refuses to
-                # commit one beside an order that is not cancelled. Either write alone fails.
-                if refund is not None:
-                    cursor.execute(
-                        """
-                        INSERT INTO order_refunds (
-                            id, order_id, store_id, settlement_id, refunded_amount_vnd,
-                            direction, custody_resolution, attested_by_staff_id, refunded_at,
-                            created_at
-                        ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s)
-                        """,
-                        (
-                            refund.refund_id,
-                            command.order_id,
-                            refund.store_id,
-                            refund.settlement_id,
-                            refund.amount_vnd,
-                            refund.resolution.value,
-                            command.principal.staff_user_id,
-                            occurred_at,
-                            occurred_at,
-                        ),
-                    )
-                cursor.execute(
-                    """
-                    UPDATE orders
-                    SET commercial_status = %s, intake_status = %s, production_status = %s,
-                        balance_status = %s,
-                        production_resume_status = %s, production_accepted_at = %s,
-                        production_ready_at = COALESCE(
-                            %s, CASE WHEN %s THEN production_ready_at ELSE NULL END
-                        ),
-                        production_released_at = COALESCE(production_released_at, %s),
-                        closed_at = COALESCE(closed_at, %s), row_version = row_version + 1
-                    WHERE id = %s AND row_version = %s
-                    RETURNING id
-                    """,
-                    (
-                        next_state.commercial.value,
-                        next_state.intake.value,
-                        next_state.production.value,
-                        next_state.balance.value,
-                        (
-                            next_state.production_resume_status.value
-                            if next_state.production_resume_status
-                            else None
-                        ),
-                        next_state.production_accepted_at,
-                        ready_now,
-                        ready_keep,
-                        released_now,
-                        closed_at,
-                        command.order_id,
-                        command.expected_row_version,
-                    ),
-                )
-                if cursor.fetchone() is None:
-                    raise OrderStateError("STALE_VERSION: order transition lost concurrency race")
-                # A cancelled order ends its intake request with it. Without this the request stays
-                # `SUBMITTED` in "Tiếp nhận gần đây" and reads as live intake for a customer who
-                # has gone home -- the console cannot tell the difference, because until
-                # COUNTER-DEFECTS-001 no status but `DRAFT` was ever written.
-                if next_state.commercial is CommercialOrderStatus.CANCELLED:
-                    cursor.execute(
-                        """
-                        UPDATE order_requests
-                        SET status = 'CANCELLED', row_version = row_version + 1
-                        WHERE id = (
-                            SELECT q.bound_order_request_id
-                            FROM quotes q
-                            JOIN orders o ON o.current_quote_id = q.id
-                            WHERE o.id = %s
-                        )
-                          AND status <> 'CANCELLED'
-                        """,
-                        (command.order_id,),
-                    )
-
-            commit_material_change(
-                connection,
-                MaterialChange(
-                    aggregate_type="ORDER",
-                    aggregate_id=command.order_id,
-                    aggregate_version=next_version,
-                    event_type="ORDER_STATE_TRANSITIONED",
-                    # DEC-024's attestation lives here rather than in a table of its own. The
-                    # event ledger is already append-only, already carries the acting staff id, and
-                    # `domain_events` is unique on (type, id, version) -- so the resolution is
-                    # attributed and immutable without a fifth aggregate. `DEC-021` got its own
-                    # table because a quote acceptance is spent by a later command; nothing spends
-                    # a cancellation.
-                    event_payload=(
-                        {"dimension": dimension, "target": target}
-                        if command.custody_resolution is None
-                        else {
-                            "dimension": dimension,
-                            "target": target,
-                            "custody_resolution": command.custody_resolution.value,
-                            **({} if refund is None else {"refund": refund.document()}),
-                        }
-                    ),
-                    audit_action="ORDER_STATE_TRANSITION",
-                    actor_type="STAFF",
-                    actor_id=command.principal.staff_user_id,
-                    correlation_id=command.correlation_id,
-                    audit_details=None if refund is None else {"refund": refund.document()},
-                    outbox_events=(
-                        OutboxEvent(
-                            "order.state_transitioned.v1",
-                            {
-                                "order_id": str(command.order_id),
-                                "dimension": dimension,
-                                "target": target,
-                                "row_version": next_version,
-                            },
-                            f"order:{command.order_id}:version:{next_version}",
-                        ),
-                        # Money leaving the drawer is its own downstream fact, keyed once per order
-                        # because an order is refunded at most once -- the same shape as
-                        # `order:{id}:settlement` for the money that came in.
-                        *(
-                            ()
-                            if refund is None
-                            else (
-                                OutboxEvent(
-                                    "order.refund_recorded.v1",
-                                    {"order_id": str(command.order_id), **refund.document()},
-                                    f"order:{command.order_id}:refund",
-                                ),
-                            )
-                        ),
-                    ),
-                    occurred_at=occurred_at,
-                ),
-                mutation,
-            )
-            return {
-                "order_id": str(command.order_id),
-                "store_id": str(row[0]),
-                "commercial": next_state.commercial.value,
-                "intake": next_state.intake.value,
-                "production": next_state.production.value,
-                "balance": next_state.balance.value,
-                "row_version": next_version,
-            }
+            return self._apply_locked_transition(connection, command, row, occurred_at)
 
         result = self._idempotency.execute(
             connection,
@@ -950,6 +835,431 @@ class OrderRepository:
             transition_once,
         )
         return _stored_order(result.response, result.replayed)
+
+    def _apply_locked_transition(
+        self,
+        connection: Any,
+        command: OrderTransitionCommand,
+        row: tuple[object, ...],
+        occurred_at: datetime,
+    ) -> dict[str, object]:
+        """Decide and write one transition of a row already locked, member-checked and
+        version-checked by the caller.
+
+        The whole of what a transition writes: the order row, any refund, the domain event, the
+        audit row and the outbox rows, through `commit_material_change`. Shared by the per-axis
+        routes (`transition`) and by every transition of a composite step (`execute_step`), so a
+        step's audit trail is the per-axis audit trail, row for row.
+        """
+
+        current = _order_state(row)
+        try:
+            if command.commercial_target is not None:
+                # DEC-024: a resolution supplied by a named staff member is the approval. Both
+                # flags derive from the one field, so there is no way to approve a cancellation
+                # without saying what happened to the customer's laundry and their money.
+                resolved = command.custody_resolution is not None
+                next_state = transition_commercial(
+                    current,
+                    command.commercial_target,
+                    cancellation_approved=resolved,
+                    custody_and_financial_resolution_recorded=resolved,
+                    custody_resolution=command.custody_resolution,
+                )
+                dimension = "commercial"
+                target = command.commercial_target.value
+            elif command.intake_target is not None:
+                next_state = transition_intake(
+                    current,
+                    command.intake_target,
+                    readiness=command.intake_readiness,
+                    production_accepted_at=command.production_accepted_at,
+                )
+                dimension = "intake"
+                target = command.intake_target.value
+            elif command.production_target is not None:
+                next_state = transition_production(current, command.production_target)
+                dimension = "production"
+                target = command.production_target.value
+            else:
+                raise OrderStateError("order transition target is missing")
+        except OrderTransitionError as error:
+            raise OrderStateError(str(error)) from error
+
+        next_version = command.expected_row_version + 1
+        # DEC-024. The domain decided whether money goes back; this reads how much, from the
+        # settlement ledger, under the order lock already held. Nobody types the amount: it is
+        # the settled amount, and `order_refunds`' composite key to `order_settlements` makes it
+        # impossible for the row to say anything else.
+        refund = (
+            _refund_for_cancellation(
+                connection, order_id=command.order_id, resolution=command.custody_resolution
+            )
+            if current.balance is OrderBalanceStatus.PAID
+            and next_state.balance is OrderBalanceStatus.REFUNDED
+            else None
+        )
+        closed_at = (
+            occurred_at if next_state.commercial is CommercialOrderStatus.COMPLETED else None
+        )
+        # `0037`. When production last said the laundry was finished, which is what stops the
+        # SLA clock. Three cases, and the middle one is why this is not a plain COALESCE:
+        #
+        #   READY_AT_STORE  stamp it now, replacing any earlier stamp. `DEC-024` makes
+        #                   READY_AT_STORE -> EXCEPTION -> IN_PROCESS legal on purpose, because
+        #                   a stain found at quality check needs a rewash. The first "finished"
+        #                   was wrong, so keeping it would be wrong.
+        #   RELEASED        keep what is there. The laundry left; nothing was redone.
+        #   anything else   clear it. While an order is being rewashed it is NOT finished, and
+        #                   a stale stamp made the risk board report SLA_MET for exactly the
+        #                   order most likely to be late.
+        #
+        # A first version kept the earliest stamp forever, on the reasoning that the question is
+        # when the laundry was done rather than how often the board was touched. That reasoning
+        # is wrong the moment a rewash exists: it freezes MET permanently for a rewashed order.
+        #
+        # All three of those cases are about the *production* dimension, and the second version
+        # read them off the resulting production status without asking which dimension had
+        # actually moved. One UPDATE serves all three, so an order finished at 09:00 and sent to
+        # cancellation review at 16:00 recorded 16:00 as the moment its laundry was done --
+        # nothing had happened to the laundry at 16:00, and this column exists precisely so the
+        # SLA board can tell those two times apart. A commercial or intake move now leaves the
+        # clock exactly as it found it.
+        #
+        # A hold is the third case, and it is not rework. `ON_HOLD` from `READY_AT_STORE`
+        # records `production_resume_status = READY_AT_STORE` and the domain permits exactly one
+        # exit, back to where it was held from -- so nothing happens to the laundry while it is
+        # held. Treating every state that is not READY_AT_STORE or RELEASED as rework cleared
+        # the clock for a finished bag put on hold for a shelf audit, and restamped it when
+        # somebody lifted the hold. `0037`'s own comment says a hold does not reset it; the code
+        # did. (That comment also still says "write-once" and "the first moment", which the
+        # rewash correction replaced with the last completion. The migration is applied and
+        # checksummed, so it is not edited; the rule lives here.)
+        # `0042`. When the customer physically took their laundry away, which is what starts
+        # the `DEC-004` remedy windows for a self-collected order. Distinct from
+        # `production_ready_at` (the work was finished, possibly days earlier) and from
+        # `closed_at` (the commercial order completed, possibly later still); a remedy window
+        # measured against either would be measured against the wrong event.
+        #
+        # Write-once through the COALESCE below: `RELEASED` is terminal on the production
+        # dimension, so there is no second release to record.
+        released_now = (
+            occurred_at
+            if command.production_target is not None
+            and next_state.production is ProductionStatus.RELEASED
+            else None
+        )
+        ready_now, ready_keep = _ready_clock_effect(
+            moving_production=command.production_target is not None,
+            before=current.production,
+            after=next_state.production,
+            resume_to=next_state.production_resume_status,
+            moment=occurred_at,
+        )
+
+        def mutation(cursor: Any) -> None:
+            # The refund row first: `order_refund_consistency` refuses to let the order read
+            # REFUNDED unless one exists, and the deferred check on `order_refunds` refuses to
+            # commit one beside an order that is not cancelled. Either write alone fails.
+            if refund is not None:
+                cursor.execute(
+                    """
+                    INSERT INTO order_refunds (
+                        id, order_id, store_id, settlement_id, refunded_amount_vnd,
+                        direction, custody_resolution, attested_by_staff_id, refunded_at,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s)
+                    """,
+                    (
+                        refund.refund_id,
+                        command.order_id,
+                        refund.store_id,
+                        refund.settlement_id,
+                        refund.amount_vnd,
+                        refund.resolution.value,
+                        command.principal.staff_user_id,
+                        occurred_at,
+                        occurred_at,
+                    ),
+                )
+            cursor.execute(
+                """
+                UPDATE orders
+                SET commercial_status = %s, intake_status = %s, production_status = %s,
+                    balance_status = %s,
+                    production_resume_status = %s, production_accepted_at = %s,
+                    production_ready_at = COALESCE(
+                        %s, CASE WHEN %s THEN production_ready_at ELSE NULL END
+                    ),
+                    production_released_at = COALESCE(production_released_at, %s),
+                    closed_at = COALESCE(closed_at, %s), row_version = row_version + 1
+                WHERE id = %s AND row_version = %s
+                RETURNING id
+                """,
+                (
+                    next_state.commercial.value,
+                    next_state.intake.value,
+                    next_state.production.value,
+                    next_state.balance.value,
+                    (
+                        next_state.production_resume_status.value
+                        if next_state.production_resume_status
+                        else None
+                    ),
+                    next_state.production_accepted_at,
+                    ready_now,
+                    ready_keep,
+                    released_now,
+                    closed_at,
+                    command.order_id,
+                    command.expected_row_version,
+                ),
+            )
+            if cursor.fetchone() is None:
+                raise OrderStateError("STALE_VERSION: order transition lost concurrency race")
+            # A cancelled order ends its intake request with it. Without this the request stays
+            # `SUBMITTED` in "Tiếp nhận gần đây" and reads as live intake for a customer who
+            # has gone home -- the console cannot tell the difference, because until
+            # COUNTER-DEFECTS-001 no status but `DRAFT` was ever written.
+            if next_state.commercial is CommercialOrderStatus.CANCELLED:
+                cursor.execute(
+                    """
+                    UPDATE order_requests
+                    SET status = 'CANCELLED', row_version = row_version + 1
+                    WHERE id = (
+                        SELECT q.bound_order_request_id
+                        FROM quotes q
+                        JOIN orders o ON o.current_quote_id = q.id
+                        WHERE o.id = %s
+                    )
+                      AND status <> 'CANCELLED'
+                    """,
+                    (command.order_id,),
+                )
+
+        commit_material_change(
+            connection,
+            MaterialChange(
+                aggregate_type="ORDER",
+                aggregate_id=command.order_id,
+                aggregate_version=next_version,
+                event_type="ORDER_STATE_TRANSITIONED",
+                # DEC-024's attestation lives here rather than in a table of its own. The
+                # event ledger is already append-only, already carries the acting staff id, and
+                # `domain_events` is unique on (type, id, version) -- so the resolution is
+                # attributed and immutable without a fifth aggregate. `DEC-021` got its own
+                # table because a quote acceptance is spent by a later command; nothing spends
+                # a cancellation.
+                event_payload=(
+                    {"dimension": dimension, "target": target}
+                    if command.custody_resolution is None
+                    else {
+                        "dimension": dimension,
+                        "target": target,
+                        "custody_resolution": command.custody_resolution.value,
+                        **({} if refund is None else {"refund": refund.document()}),
+                    }
+                ),
+                audit_action="ORDER_STATE_TRANSITION",
+                actor_type="STAFF",
+                actor_id=command.principal.staff_user_id,
+                correlation_id=command.correlation_id,
+                audit_details=None if refund is None else {"refund": refund.document()},
+                outbox_events=(
+                    OutboxEvent(
+                        "order.state_transitioned.v1",
+                        {
+                            "order_id": str(command.order_id),
+                            "dimension": dimension,
+                            "target": target,
+                            "row_version": next_version,
+                        },
+                        f"order:{command.order_id}:version:{next_version}",
+                    ),
+                    # Money leaving the drawer is its own downstream fact, keyed once per order
+                    # because an order is refunded at most once -- the same shape as
+                    # `order:{id}:settlement` for the money that came in.
+                    *(
+                        ()
+                        if refund is None
+                        else (
+                            OutboxEvent(
+                                "order.refund_recorded.v1",
+                                {"order_id": str(command.order_id), **refund.document()},
+                                f"order:{command.order_id}:refund",
+                            ),
+                        )
+                    ),
+                ),
+                occurred_at=occurred_at,
+            ),
+            mutation,
+        )
+        return {
+            "order_id": str(command.order_id),
+            "store_id": str(row[0]),
+            "commercial": next_state.commercial.value,
+            "intake": next_state.intake.value,
+            "production": next_state.production.value,
+            "balance": next_state.balance.value,
+            "row_version": next_version,
+        }
+
+    def execute_step(self, connection: Any, command: OrderStepCommand) -> OrderStepResult:
+        """Execute one named business step as its domain transitions, all or nothing.
+
+        `ORDER-STEPS-001`. The step is planned by `order_steps.plan_step` against the facts read
+        under the order's row lock -- every transition dry-run by the real domain function before
+        anything is written -- and then each planned transition is written by the same
+        `_apply_locked_transition` the per-axis routes use: its own `ORDER_STATE_TRANSITIONED`
+        event, `ORDER_STATE_TRANSITION` audit row and `order.state_transitioned.v1` outbox row, at
+        its own `row_version`. All of them share one correlation id, and all of them commit in the
+        one transaction the idempotency claim opened, or none do.
+
+        Each transition is stamped one microsecond after the one before it. They happen in that
+        order inside one command, and the audit timeline sorts on `occurred_at`; identical stamps
+        would let "ACTIVE" print above "RECEIVED" on the order's history.
+
+        Authorization is the per-axis route's, twice over for the same reason: membership of the
+        order's store before the idempotency lookup (so a revoked member cannot replay a key), and
+        again on the cursor that holds the row lock. `If-Match` is compared once, against the row
+        the step starts from.
+
+        The idempotent result is the order view as it stood when the step committed, next steps
+        included, so a replay returns exactly what the first call did (`replayed=True`).
+        """
+
+        _require_order_mutation(command.principal)
+        if command.step not in COMPOSITE_STEPS or command.expected_row_version < 1:
+            raise OrderStateError("a composite order step and a valid row version are required")
+        _require_store_membership_for_order(connection, command.order_id, command.principal)
+        occurred_at = command.occurred_at or datetime.now(UTC)
+        # What the caller asked for, and nothing the server mints: `occurred_at` and the acceptance
+        # instant are left out for the reason `transition` gives.
+        payload: dict[str, object] = {
+            "order_id": str(command.order_id),
+            "expected_row_version": command.expected_row_version,
+            "step": command.step.value,
+            "slot_approved": command.slot_approved,
+            "custody_resolution": (
+                command.custody_resolution.value if command.custody_resolution else None
+            ),
+        }
+
+        def step_once() -> dict[str, object]:
+            with connection.cursor() as cursor:
+                cursor.execute(_LOCK_ORDER_FOR_TRANSITION_SQL, (command.order_id,))
+                row = cursor.fetchone()
+                if row is not None:
+                    # The store is the locked row's, as in `transition`; never the request's.
+                    require_store_membership(
+                        cursor,
+                        staff_user_id=command.principal.staff_user_id,
+                        store_id=_uuid(row[0]),
+                        error=OrderAuthorizationError,
+                    )
+            if row is None or int(row[10]) != command.expected_row_version:
+                raise OrderStateError("STALE_VERSION: order is missing or stale")
+            facts_row = _read_view_row(connection, command.order_id)
+            try:
+                plan = plan_step(
+                    command.step,
+                    _step_facts(facts_row),
+                    slot_approved=command.slot_approved,
+                    custody_resolution=command.custody_resolution,
+                    accepted_at=occurred_at,
+                )
+            except StepRequiresHuman as error:
+                raise OrderStepRequiresHuman(str(error), error.reason_codes) from error
+            except OrderTransitionError as error:
+                raise OrderStateError(str(error)) from error
+
+            version = command.expected_row_version
+            for index, planned in enumerate(plan):
+                moment = occurred_at + timedelta(microseconds=index)
+                with connection.cursor() as cursor:
+                    cursor.execute(_LOCK_ORDER_FOR_TRANSITION_SQL, (command.order_id,))
+                    locked = cursor.fetchone()
+                if locked is None or int(locked[10]) != version:
+                    raise OrderStateError("STALE_VERSION: order changed during the step")
+                accepting = planned.intake_target is IntakeStatus.ACCEPTED
+                written = self._apply_locked_transition(
+                    connection,
+                    OrderTransitionCommand(
+                        command.order_id,
+                        version,
+                        command.principal,
+                        command.idempotency_key,
+                        command.correlation_id,
+                        commercial_target=planned.commercial_target,
+                        intake_target=planned.intake_target,
+                        production_target=planned.production_target,
+                        intake_readiness=planned.intake_readiness,
+                        production_accepted_at=moment if accepting else None,
+                        occurred_at=moment,
+                        custody_resolution=planned.custody_resolution,
+                    ),
+                    locked,
+                    moment,
+                )
+                version = int(str(written["row_version"]))
+            return _order_view_document(
+                _order_view_row(_read_view_row(connection, command.order_id))
+            )
+
+        result = self._idempotency.execute(
+            connection,
+            IdempotentCommand(
+                f"order:{command.order_id}:step",
+                command.idempotency_key,
+                payload,
+                occurred_at,
+            ),
+            step_once,
+        )
+        try:
+            view = _order_view_from_document(result.response)
+        except (KeyError, TypeError, ValueError) as error:
+            raise OrderStateError("stored idempotent step result is invalid") from error
+        return OrderStepResult(view=view, replayed=result.replayed)
+
+    @staticmethod
+    def intake_readiness_for(
+        cursor: Any, *, order_id: UUID, staff_user_id: UUID, slot_approved: bool
+    ) -> IntakeReadiness:
+        """The six intake readiness facts for the per-axis intake route: five read, one attested.
+
+        The same `_QUOTE_READINESS_COLUMNS` and the same `derive_intake_readiness` the `RECEIVE`
+        step and `next_steps` use. Scoped to the caller's own stores by filtering, not by a second
+        error, so a non-member and a stranger's identifier get the same "order is missing" -- the
+        reason `OperationsService._derive_intake_readiness` gives.
+        """
+
+        cursor.execute(
+            "SELECT o.intake_status, "
+            + _QUOTE_READINESS_COLUMNS
+            + """
+            FROM orders o
+            JOIN quote_revisions r
+              ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
+            WHERE o.id = %s
+              AND EXISTS (
+                  SELECT 1 FROM staff_store_assignments s
+                  WHERE s.staff_user_id = %s
+                    AND s.store_id = o.store_id
+                    AND s.revoked_at IS NULL
+              )
+            """,
+            (order_id, staff_user_id),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise OrderStateError("order is missing")
+        return derive_intake_readiness(
+            IntakeStatus(str(row[0])),
+            QuoteReadinessFacts(bool(row[1]), bool(row[2]), bool(row[3]), bool(row[4])),
+            slot_approved=slot_approved,
+        )
 
     @staticmethod
     def list_for_store(
@@ -1148,6 +1458,160 @@ def _order_view_row(row: tuple[object, ...]) -> OrderView:
         ticket_issued_on=_optional_date(row[13]),
         self_collection_recorded=bool(row[14]),
         acquisition_source=AcquisitionSource(str(row[15])),
+        delivery_legs=_delivery_legs(row[22]),
+        required_delivery_legs_succeeded=bool(row[16]),
+        settlement_shape=None if row[21] is None else str(row[21]),
+        next_steps=next_steps(_step_facts(row)),
+    )
+
+
+def _read_view_row(connection: Any, order_id: UUID) -> tuple[object, ...]:
+    """The order's read-model row, inside the caller's transaction and under its row lock."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(_ORDER_VIEW_SELECT + " WHERE o.id = %(order_id)s", {"order_id": order_id})
+        row = cursor.fetchone()
+    if row is None:
+        raise OrderStateError("STALE_VERSION: order is missing or stale")
+    return tuple(row)
+
+
+def _delivery_legs(value: object) -> tuple[DeliveryLegView, ...]:
+    if not isinstance(value, list):
+        raise OrderStateError("stored delivery legs are invalid")
+    legs = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise OrderStateError("stored delivery leg is invalid")
+        recorded_at = datetime.fromisoformat(str(item["recorded_at"]))
+        legs.append(
+            DeliveryLegView(
+                leg_kind=str(item["leg_kind"]),
+                outcome=str(item["outcome"]),
+                recorded_at=_datetime(recorded_at),
+            )
+        )
+    return tuple(legs)
+
+
+def _step_facts(row: tuple[object, ...]) -> StepFacts:
+    """The stored facts `order_steps` decides from, out of one `_ORDER_VIEW_SELECT` row."""
+
+    legs = _delivery_legs(row[22])
+    return StepFacts(
+        state=OrderState(
+            commercial=CommercialOrderStatus(str(row[2])),
+            intake=IntakeStatus(str(row[3])),
+            production=ProductionStatus(str(row[4])),
+            fulfillment_mode=FulfillmentMode(str(row[7])),
+            balance=OrderBalanceStatus(str(row[5])),
+            required_delivery_legs_succeeded=bool(row[16]),
+            self_collection_recorded=bool(row[14]),
+            production_accepted_at=_optional_datetime(row[18]),
+            production_resume_status=(None if row[17] is None else ProductionStatus(str(row[17]))),
+        ),
+        quote_readiness=QuoteReadinessFacts(
+            bool(row[23]), bool(row[24]), bool(row[25]), bool(row[26])
+        ),
+        quoted_total=QuotedTotal(_optional_int(row[19]), _optional_int(row[20])),
+        settlement_shape=None if row[21] is None else SettlementShape(str(row[21])),
+        pickup_leg_succeeded=any(
+            leg.leg_kind == "PICKUP" and leg.outcome == "SUCCEEDED" for leg in legs
+        ),
+    )
+
+
+def _optional_int(value: object) -> int | None:
+    return None if value is None else int(str(value))
+
+
+def _order_view_document(view: OrderView) -> dict[str, object]:
+    """An order view as JSON primitives, for the idempotency ledger to store as a step's result."""
+
+    return {
+        "order_id": str(view.order_id),
+        "store_id": str(view.store_id),
+        "commercial": view.commercial.value,
+        "intake": view.intake.value,
+        "production": view.production.value,
+        "balance": view.balance.value,
+        "row_version": view.row_version,
+        "fulfillment_mode": view.fulfillment_mode.value,
+        "created_at": view.created_at.isoformat(),
+        "quote_id": str(view.quote_id),
+        "quote_revision": view.quote_revision,
+        "payable_total_vnd": view.payable_total_vnd,
+        "ticket_number": view.ticket_number,
+        "ticket_issued_on": (
+            None if view.ticket_issued_on is None else view.ticket_issued_on.isoformat()
+        ),
+        "self_collection_recorded": view.self_collection_recorded,
+        "acquisition_source": view.acquisition_source.value,
+        "delivery_legs": [
+            {
+                "leg_kind": leg.leg_kind,
+                "outcome": leg.outcome,
+                "recorded_at": leg.recorded_at.isoformat(),
+            }
+            for leg in view.delivery_legs
+        ],
+        "required_delivery_legs_succeeded": view.required_delivery_legs_succeeded,
+        "settlement_shape": view.settlement_shape,
+        "next_steps": [
+            {
+                "step": item.step.value,
+                "primary": item.primary,
+                "requires": list(item.requires),
+                "custody_resolutions": [value.value for value in item.custody_resolutions],
+            }
+            for item in view.next_steps
+        ],
+    }
+
+
+def _order_view_from_document(document: dict[str, object]) -> OrderView:
+    def text(key: str) -> str:
+        return str(document[key])
+
+    def optional_int(key: str) -> int | None:
+        value = document[key]
+        return None if value is None else int(str(value))
+
+    legs = document["delivery_legs"]
+    steps = document["next_steps"]
+    if not isinstance(legs, list) or not isinstance(steps, list):
+        raise ValueError("stored step result lists are invalid")
+    issued_on = document["ticket_issued_on"]
+    shape = document["settlement_shape"]
+    return OrderView(
+        order_id=UUID(text("order_id")),
+        store_id=UUID(text("store_id")),
+        commercial=CommercialOrderStatus(text("commercial")),
+        intake=IntakeStatus(text("intake")),
+        production=ProductionStatus(text("production")),
+        balance=OrderBalanceStatus(text("balance")),
+        row_version=int(text("row_version")),
+        fulfillment_mode=FulfillmentMode(text("fulfillment_mode")),
+        created_at=_datetime(datetime.fromisoformat(text("created_at"))),
+        quote_id=UUID(text("quote_id")),
+        quote_revision=int(text("quote_revision")),
+        payable_total_vnd=optional_int("payable_total_vnd"),
+        ticket_number=optional_int("ticket_number"),
+        ticket_issued_on=None if issued_on is None else date.fromisoformat(str(issued_on)),
+        self_collection_recorded=document["self_collection_recorded"] is True,
+        acquisition_source=AcquisitionSource(text("acquisition_source")),
+        delivery_legs=_delivery_legs(legs),
+        required_delivery_legs_succeeded=document["required_delivery_legs_succeeded"] is True,
+        settlement_shape=None if shape is None else str(shape),
+        next_steps=tuple(
+            NextStep(
+                OrderStep(str(item["step"])),
+                item["primary"] is True,
+                tuple(str(value) for value in item["requires"]),
+                tuple(CustodyResolution(str(value)) for value in item["custody_resolutions"]),
+            )
+            for item in steps
+        ),
     )
 
 

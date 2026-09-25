@@ -112,6 +112,38 @@ class QuoteSummary:
     display_total_min_vnd: int | None
     display_total_max_vnd: int | None
     valid_until: datetime | None
+    #: `READ-ENRICH-001`. The intake request the quote is bound to, and the customer reference that
+    #: request names (a counter ticket or a channel binding) -- the two values an order create
+    #: needs and a console used to have an operator paste.
+    order_request_id: UUID | None = None
+    contact_binding_id: UUID | None = None
+    #: The fulfilment mode the listed revision was priced under, read from the delivery engine's
+    #: trace in the immutable snapshot by `PRICED_FULFILLMENT_MODE_SQL` -- the same expression the
+    #: order create checks the requested mode against. Null only for a snapshot with no DELIVERY
+    #: trace, which no composer-produced revision lacks.
+    fulfillment_mode: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QuoteBinding:
+    """What one quote revision is bound to: its intake request, that request's customer, and the
+    fulfilment mode the revision was priced under. `READ-ENRICH-001`."""
+
+    order_request_id: UUID
+    contact_binding_id: UUID | None
+    fulfillment_mode: str | None
+
+
+#: The fulfilment mode a quote revision was priced under, read from the delivery engine's own trace
+#: inside the immutable snapshot of the revision aliased `r`. One expression, used by the order
+#: create guard ("fulfilled the way it was priced") and by the quote reads that hand the mode to the
+#: console, so the mode a console pre-fills is the mode the create will accept.
+PRICED_FULFILLMENT_MODE_SQL = """(
+    SELECT t -> 'trace' ->> 'fulfillment_mode'
+    FROM jsonb_array_elements(r.snapshot -> 'calculation_traces') AS t
+    WHERE t ->> 'component' = 'DELIVERY'
+    LIMIT 1
+)"""
 
 
 #: The refusal prefix for a revision that would lose a reserved remedy credit. Spelled into the
@@ -416,13 +448,18 @@ class QuoteRepository:
         cursor.execute(
             """
             SELECT quote.id, quote.current_revision, quote.row_version,
-                   revision.finality, revision.status, revision.snapshot_hash,
-                   revision.display_total_min_vnd, revision.display_total_max_vnd,
-                   revision.valid_until
+                   r.finality, r.status, r.snapshot_hash,
+                   r.display_total_min_vnd, r.display_total_max_vnd,
+                   r.valid_until, quote.bound_order_request_id, request.contact_binding_id,
+            """
+            + PRICED_FULFILLMENT_MODE_SQL
+            + """ AS priced_mode
             FROM quotes AS quote
-            JOIN quote_revisions AS revision
-              ON revision.quote_id = quote.id
-             AND revision.revision = quote.current_revision
+            JOIN quote_revisions AS r
+              ON r.quote_id = quote.id
+             AND r.revision = quote.current_revision
+            LEFT JOIN order_requests AS request
+              ON request.id = quote.bound_order_request_id AND request.store_id = quote.store_id
             WHERE quote.store_id = %s
             ORDER BY quote.created_at DESC, quote.id DESC
             LIMIT %s
@@ -440,9 +477,54 @@ class QuoteRepository:
                 _optional_amount(row[6]),
                 _optional_amount(row[7]),
                 _optional_timestamp(row[8]),
+                order_request_id=_optional_uuid(row[9]),
+                contact_binding_id=_optional_uuid(row[10]),
+                fulfillment_mode=None if row[11] is None else str(row[11]),
             )
             for row in cursor.fetchall()
         )
+
+    @staticmethod
+    def binding_for_revision(
+        cursor: Any, *, store_id: UUID, quote_id: UUID, revision: int
+    ) -> QuoteBinding | None:
+        """The request, customer and priced mode of one revision of this store's quote.
+
+        `READ-ENRICH-001`. The caller has already proven membership of `store_id`; the store is in
+        the predicate so another store's quote id reads as nothing, the `find_container_by_id` rule.
+        """
+
+        cursor.execute(
+            """
+            SELECT quote.bound_order_request_id, request.contact_binding_id,
+            """
+            + PRICED_FULFILLMENT_MODE_SQL
+            + """ AS priced_mode
+            FROM quotes AS quote
+            JOIN quote_revisions AS r ON r.quote_id = quote.id AND r.revision = %s
+            LEFT JOIN order_requests AS request
+              ON request.id = quote.bound_order_request_id AND request.store_id = quote.store_id
+            WHERE quote.id = %s AND quote.store_id = %s
+            """,
+            (revision, quote_id, store_id),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        order_request_id = _optional_uuid(row[0])
+        if order_request_id is None:  # pragma: no cover - the column is NOT NULL
+            return None
+        return QuoteBinding(
+            order_request_id=order_request_id,
+            contact_binding_id=_optional_uuid(row[1]),
+            fulfillment_mode=None if row[2] is None else str(row[2]),
+        )
+
+
+def _optional_uuid(value: object) -> UUID | None:
+    if value is None:
+        return None
+    return value if isinstance(value, UUID) else UUID(str(value))
 
 
 def _optional_amount(value: object) -> int | None:

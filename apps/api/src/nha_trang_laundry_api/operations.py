@@ -69,7 +69,8 @@ from nha_trang_laundry_db.message_drafts import (
 from nha_trang_laundry_db.orders import (
     CreateOrderCommand,
     OrderRepository,
-    OrderStateError,
+    OrderStepCommand,
+    OrderStepResult,
     OrderTransitionCommand,
     OrderView,
     StoredOrder,
@@ -143,6 +144,7 @@ from nha_trang_laundry_domain.catalog import (
     ServiceDefinition,
     Unit,
 )
+from nha_trang_laundry_domain.order_steps import OrderStep
 from nha_trang_laundry_domain.orders import IntakeReadiness
 from nha_trang_laundry_domain.pricebook_import import PricebookImportError, published_price_rules
 from nha_trang_laundry_domain.quote_composition import (
@@ -313,6 +315,12 @@ class QuoteRevisionView:
     #: When the customer agreed the price that produced this revision (`DEC-021`), read from the
     #: attestation. Null for a revision no acceptance produced.
     customer_accepted_at: datetime | None = None
+    #: `READ-ENRICH-001`: the intake request the quote is bound to, its customer reference, and the
+    #: fulfilment mode this revision was priced under -- what an order create needs, read rather
+    #: than pasted. See `QuoteBinding`.
+    order_request_id: UUID | None = None
+    contact_binding_id: UUID | None = None
+    fulfillment_mode: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -644,47 +652,46 @@ class OperationsService:
         that promise -- a non-member and a stranger's identifier produce the same empty row.
         """
 
-        cursor.execute(
-            """
-            SELECT o.intake_status, r.finality, r.status, r.snapshot,
-                   EXISTS (
-                       SELECT 1 FROM quote_acceptances a
-                       WHERE a.quote_id = r.quote_id AND a.final_revision = r.revision
-                   ) AS customer_agreed
-            FROM orders o
-            JOIN quote_revisions r
-              ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
-            WHERE o.id = %s
-              AND EXISTS (
-                  SELECT 1 FROM staff_store_assignments s
-                  WHERE s.staff_user_id = %s
-                    AND s.store_id = o.store_id
-                    AND s.revoked_at IS NULL
-              )
-            """,
-            (order_id, staff_user_id),
+        # ORDER-STEPS-001: one derivation. The five facts are read by the same columns and decided
+        # by the same `derive_intake_readiness` the `RECEIVE` step and `next_steps` use, so the
+        # per-axis route and the composite step cannot disagree about whether an order may be
+        # accepted. The membership filter lives in that statement, unchanged.
+        return OrderRepository.intake_readiness_for(
+            cursor, order_id=order_id, staff_user_id=staff_user_id, slot_approved=slot_approved
         )
-        row = cursor.fetchone()
-        if row is None:
-            raise OrderStateError("order is missing")
-        snapshot = row[3] if isinstance(row[3], dict) else {}
-        lines = snapshot.get("lines") or []
-        return IntakeReadiness(
-            # Custody: the laundry is physically here, which is what leaving AWAITING_HANDOFF means.
-            custody_recorded=str(row[0]) != IntakeStatus.AWAITING_HANDOFF.value,
-            # The accepted revision may not rest on a quantity the customer guessed. Acceptance
-            # already refuses that, so this reads the stored snapshot rather than re-deciding it.
-            quantity_basis_approved=bool(lines)
-            and all(str(line.get("quantity_basis")) != "CUSTOMER_ESTIMATE" for line in lines),
-            # Every line names a service the published pricebook priced; a quote cannot exist
-            # otherwise.
-            service_classified=bool(lines) and all(line.get("service_code") for line in lines),
-            exact_price_approved=str(row[1]) == "APPROVED_EXACT"
-            and str(row[2]) == "ACCEPTED_FINAL",
-            # The attestation a named staff member wrote when the customer agreed (`DEC-021`).
-            customer_reconfirmation_satisfied=bool(row[4]),
-            slot_approved=slot_approved,
-        )
+
+    def execute_order_step(
+        self,
+        *,
+        order_id: UUID,
+        step: OrderStep,
+        expected_row_version: int,
+        idempotency_key: str,
+        principal: StaffPrincipal,
+        slot_approved: bool = False,
+        custody_resolution: CustodyResolution | None = None,
+    ) -> OrderStepResult:
+        """`ORDER-STEPS-001`: one named business step, as its domain transitions, all or nothing.
+
+        A pass-through: the plan, the readiness facts, the authorization and the atomicity are all
+        `OrderRepository.execute_step`'s. `slot_approved` is the operator's attestation and the only
+        readiness fact a caller supplies, exactly as on the per-axis intake route.
+        """
+
+        with self._connection_factory(self._database_url) as connection:
+            return self._orders.execute_step(
+                connection,
+                OrderStepCommand(
+                    order_id=order_id,
+                    expected_row_version=expected_row_version,
+                    principal=principal,
+                    idempotency_key=idempotency_key,
+                    correlation_id=uuid4(),
+                    step=step,
+                    slot_approved=slot_approved,
+                    custody_resolution=custody_resolution,
+                ),
+            )
 
     def list_orders(
         self,
@@ -1830,14 +1837,25 @@ class OperationsService:
             accepted_at = QuoteAcceptanceRepository.accepted_at_for_final_revision(
                 cursor, store_id=store_id, quote_id=quote_id, final_revision=target
             )
+            binding = QuoteRepository.binding_for_revision(
+                cursor, store_id=store_id, quote_id=quote_id, revision=target
+            )
         if stored is None:
             raise QuoteStateError("quote revision is missing")
         priced = parse_quote_revision(json.loads(stored.document.canonical_json))
-        return _quote_revision_view(
+        view = _quote_revision_view(
             priced,
             snapshot_hash=stored.document.snapshot_hash,
             row_version=container.row_version,
             customer_accepted_at=accepted_at,
+        )
+        if binding is None:
+            return view
+        return replace(
+            view,
+            order_request_id=binding.order_request_id,
+            contact_binding_id=binding.contact_binding_id,
+            fulfillment_mode=binding.fulfillment_mode,
         )
 
     def _bound_band_revision(
@@ -2500,6 +2518,32 @@ class OperationsService:
         ):
             return self._incidents.list_for_store(
                 cursor, store_id=store_id, principal=principal, limit=limit
+            )
+
+    def list_order_incidents(
+        self, *, store_id: UUID, order_id: UUID, principal: StaffPrincipal, limit: int
+    ) -> tuple[IncidentSummary, ...]:
+        """`READ-ENRICH-001`: one order's incidents. Membership is the repository's."""
+
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return self._incidents.list_for_order(
+                cursor, store_id=store_id, order_id=order_id, principal=principal, limit=limit
+            )
+
+    def read_incident(
+        self, *, store_id: UUID, incident_id: UUID, principal: StaffPrincipal
+    ) -> IncidentSummary | None:
+        """`READ-ENRICH-001`: one incident of this store, or `None`."""
+
+        with (
+            self._connection_factory(self._database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            return self._incidents.read_for_store(
+                cursor, store_id=store_id, incident_id=incident_id, principal=principal
             )
 
     # --- READ-PATHS-001 -----------------------------------------------------------------

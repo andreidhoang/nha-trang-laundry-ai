@@ -20,7 +20,7 @@ may never originate, mutate or rank one.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -69,6 +69,14 @@ _SLA_BOARD_SQL = """
       )
     ORDER BY production_accepted_at, id
     LIMIT %(limit)s
+"""
+
+#: The walk-in tickets of one board page's orders, within each order's own store.
+_SLA_BOARD_TICKETS_SQL = """
+    SELECT o.id, t.ticket_number, t.issued_on
+    FROM orders o
+    JOIN counter_tickets t ON t.id = o.bound_contact_id AND t.store_id = o.store_id
+    WHERE o.store_id = %(store)s AND o.id = ANY(%(ids)s)
 """
 
 #: The published identifier of the board's rule.
@@ -238,6 +246,13 @@ class SlaRisk:
     remaining_microseconds: int | None
     breach_microseconds: int
     evaluated_at: datetime
+    #: `READ-ENRICH-001`. The walk-in ticket of the order ("Phiếu 17"), null for an order whose
+    #: customer is a channel binding. Read by a second statement keyed on this page's order ids
+    #: (`_SLA_BOARD_TICKETS_SQL`), deliberately not joined into `_SLA_BOARD_SQL`: the ticket is a
+    #: label, not part of the rule behind a board figure, and the published query version
+    #: `sla-risk-board-v1` hashes that statement.
+    ticket_number: int | None = None
+    ticket_issued_on: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -994,6 +1009,15 @@ class ShadowConsoleRepository:
                 },
             )
             rows = cursor.fetchall()
+            tickets: dict[UUID, tuple[int, date]] = {}
+            if rows:
+                cursor.execute(
+                    _SLA_BOARD_TICKETS_SQL,
+                    {"store": store_id, "ids": [_uuid(row[0]) for row in rows]},
+                )
+                tickets = {
+                    _uuid(found[0]): (int(found[1]), found[2]) for found in cursor.fetchall()
+                }
         board = []
         for row in rows:
             accepted_at = row[2]
@@ -1026,6 +1050,10 @@ class ShadowConsoleRepository:
                     remaining_microseconds=_remaining_microseconds(result, accepted_at),
                     breach_microseconds=result.trace.breach_microseconds,
                     evaluated_at=timestamp,
+                    ticket_number=tickets[_uuid(row[0])][0] if _uuid(row[0]) in tickets else None,
+                    ticket_issued_on=(
+                        tickets[_uuid(row[0])][1] if _uuid(row[0]) in tickets else None
+                    ),
                 )
             )
         return tuple(board)

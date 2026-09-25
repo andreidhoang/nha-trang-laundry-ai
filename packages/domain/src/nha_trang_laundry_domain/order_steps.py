@@ -45,6 +45,21 @@ Composite steps, executed by ``POST /internal/v1/orders/{id}/steps``:
   has begun); on an ACTIVE order, commercial -> CANCELLATION_REVIEW -> CANCELLED with
   ``custody_resolution``; from CANCELLATION_REVIEW, -> CANCELLED with ``custody_resolution``.
 * ``REOPEN`` -- commercial CANCELLATION_REVIEW -> ACTIVE: the cancellation is withdrawn.
+* ``REWASH`` -- ``ORDER-STEPS-002``, founder ruling R1. Laundry found wanting at quality check or on
+  the shelf, before it leaves, is washed again inside the same order: production -> EXCEPTION
+  (interrupting where it was), then EXCEPTION -> IN_PROCESS -- backwards, which only an exception
+  permits (`transition_production`'s DEC-024 branch). Legal only on an ACTIVE order at
+  QUALITY_CHECK or READY_AT_STORE whose customer has not been recorded as taking the goods; it
+  requires ``rewash_reason``. The price is untouched: a rewash costs the customer nothing.
+* ``REJECT_INTAKE`` -- ``ORDER-STEPS-002``, founder ruling R2. The shop refuses laundry that is on
+  the counter but not yet accepted for work: intake -> REJECTED, then commercial -> CANCELLED
+  directly (REJECTED is in `CUSTODY_NOT_HELD_INTAKE_STATUSES`, so the domain's "work has begun"
+  guard admits it). Legal only while intake is RECEIVED_PENDING_INSPECTION, WAITING_PRICE_APPROVAL,
+  WAITING_CUSTOMER_RECONFIRMATION or WAITING_SLOT_APPROVAL and commercial is before ACTIVE; it
+  requires ``rejection_reason``. No money moves: none can have, prepayment needs an active order.
+
+Neither ``REWASH`` nor ``REJECT_INTAKE`` is ever the primary step. They are exceptions to the day's
+flow, offered beside it, and the reason each records is on the first transition's event and audit.
 
 Steps served by their own existing routes, listed so the console has one source of the next action:
 
@@ -59,7 +74,7 @@ Steps served by their own existing routes, listed so the console has one source 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Final
@@ -69,9 +84,11 @@ from nha_trang_laundry_domain.catalog import (
     MODES_EXPECTING_RETURN,
     CommercialOrderStatus,
     CustodyResolution,
+    IntakeRejectionReason,
     IntakeStatus,
     OrderBalanceStatus,
     ProductionStatus,
+    RewashReason,
 )
 from nha_trang_laundry_domain.orders import (
     IntakeReadiness,
@@ -100,10 +117,12 @@ class OrderStep(StrEnum):
     MARK_READY = "MARK_READY"
     HOLD = "HOLD"
     RESUME = "RESUME"
+    REWASH = "REWASH"
     RELEASE = "RELEASE"
     HAND_OVER = "HAND_OVER"
     COMPLETE = "COMPLETE"
     CANCEL = "CANCEL"
+    REJECT_INTAKE = "REJECT_INTAKE"
     REOPEN = "REOPEN"
     SETTLE = "SETTLE"
     PREPAY = "PREPAY"
@@ -121,11 +140,47 @@ COMPOSITE_STEPS: Final = frozenset(
         OrderStep.MARK_READY,
         OrderStep.HOLD,
         OrderStep.RESUME,
+        OrderStep.REWASH,
         OrderStep.RELEASE,
         OrderStep.HAND_OVER,
         OrderStep.COMPLETE,
         OrderStep.CANCEL,
+        OrderStep.REJECT_INTAKE,
         OrderStep.REOPEN,
+    }
+)
+
+#: `ORDER-STEPS-002`: steps that are never the primary step, whatever else is legal. A rewash and a
+#: refusal are exceptions a person decides on, not the natural next event; a big button inviting
+#: either would be pressed by a thumb looking for the ordinary one.
+NEVER_PRIMARY_STEPS: Final = frozenset({OrderStep.REWASH, OrderStep.REJECT_INTAKE})
+
+#: Where a rewash may start (founder ruling R1): the laundry has been washed and is being checked,
+#: or is finished and waiting on the shelf. Earlier, it is still being washed (HOLD is the
+#: interruption); later, it has left the shop and a bring-back is a complaint (`DEC-004`).
+REWASH_FROM_PRODUCTION: Final = frozenset(
+    {ProductionStatus.QUALITY_CHECK, ProductionStatus.READY_AT_STORE}
+)
+
+#: Where goods may be refused (founder ruling R2): received and on the counter, not yet accepted.
+#: Never AWAITING_HANDOFF (nothing was received: that is a plain cancellation) and never ACCEPTED
+#: (the shop took the work on: that is a cancellation through review).
+REJECT_INTAKE_FROM: Final = frozenset(
+    {
+        IntakeStatus.RECEIVED_PENDING_INSPECTION,
+        IntakeStatus.WAITING_PRICE_APPROVAL,
+        IntakeStatus.WAITING_CUSTOMER_RECONFIRMATION,
+        IntakeStatus.WAITING_SLOT_APPROVAL,
+    }
+)
+
+#: The commercial states before the order is live. `REJECT_INTAKE` is legal only in these.
+_COMMERCIAL_BEFORE_ACTIVE: Final = frozenset(
+    {
+        CommercialOrderStatus.DRAFT,
+        CommercialOrderStatus.REQUESTED,
+        CommercialOrderStatus.STORE_CONFIRMATION_PENDING,
+        CommercialOrderStatus.CONFIRMED,
     }
 )
 
@@ -210,6 +265,10 @@ class PlannedTransition:
     production_target: ProductionStatus | None = None
     intake_readiness: IntakeReadiness | None = None
     custody_resolution: CustodyResolution | None = None
+    #: `ORDER-STEPS-002`: the reason a `REWASH` / `REJECT_INTAKE` records. Set on the step's first
+    #: transition only, so the event that starts the step says why, once.
+    rewash_reason: RewashReason | None = None
+    rejection_reason: IntakeRejectionReason | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,15 +277,18 @@ class NextStep:
 
     `requires` names the request fields the caller must supply for the step to be accepted:
     `slot_approved` for `RECEIVE` (the operator attests capacity), `custody_resolution` for a
-    cancellation that goes through review. `custody_resolutions` lists, for such a cancellation,
-    exactly the resolutions the domain would accept for this order -- each one dry-run -- so the
-    console offers only answers the server will take.
+    cancellation that goes through review, `rewash_reason` for `REWASH`, `rejection_reason` for
+    `REJECT_INTAKE`. `custody_resolutions`, `rewash_reasons` and `rejection_reasons` list exactly
+    the answers the domain would accept for this order -- each one dry-run -- so the console offers
+    only answers the server will take.
     """
 
     step: OrderStep
     primary: bool
     requires: tuple[str, ...] = ()
     custody_resolutions: tuple[CustodyResolution, ...] = ()
+    rewash_reasons: tuple[RewashReason, ...] = ()
+    rejection_reasons: tuple[IntakeRejectionReason, ...] = ()
 
 
 class StepRequiresHuman(OrderTransitionError):
@@ -302,18 +364,34 @@ def plan_step(
     slot_approved: bool,
     custody_resolution: CustodyResolution | None,
     accepted_at: datetime,
+    rewash_reason: RewashReason | None = None,
+    rejection_reason: IntakeRejectionReason | None = None,
 ) -> tuple[PlannedTransition, ...]:
     """The single-axis transitions `step` is made of for this order, or a refusal.
 
     Every transition is applied to a simulated state by the real domain function before the next is
     planned, so a refusal anywhere refuses the whole step and the caller writes nothing. Raises
     `OrderTransitionError` (its message carries the domain's own `INVALID_STATE_TRANSITION:` /
-    `HUMAN_APPROVAL_REQUIRED:` prefix) or its subclass `StepRequiresHuman`.
+    `HUMAN_APPROVAL_REQUIRED:` / `VALIDATION_ERROR:` prefix) or its subclass `StepRequiresHuman`.
+
+    A reason is taken only by the step it belongs to, and that step refuses to run without it: a
+    reason attached to a different step would be recorded nowhere, and silently dropping what a
+    person said is how a ledger stops being believed.
     """
 
     if step not in COMPOSITE_STEPS:
         raise OrderTransitionError(
             f"INVALID_STATE_TRANSITION: {step.value} is recorded on its own route, not as a step"
+        )
+    if rewash_reason is not None and step is not OrderStep.REWASH:
+        raise OrderTransitionError("VALIDATION_ERROR: rewash_reason is taken only by REWASH")
+    if rejection_reason is not None and step is not OrderStep.REJECT_INTAKE:
+        raise OrderTransitionError(
+            "VALIDATION_ERROR: rejection_reason is taken only by REJECT_INTAKE"
+        )
+    if custody_resolution is not None and step in NEVER_PRIMARY_STEPS:
+        raise OrderTransitionError(
+            f"VALIDATION_ERROR: custody_resolution is not taken by {step.value}"
         )
     simulation = _Simulation(facts.state)
     state = facts.state
@@ -376,6 +454,10 @@ def plan_step(
         if state.commercial is not CommercialOrderStatus.CANCELLATION_REVIEW:
             raise OrderTransitionError(_NOTHING_TO_DO)
         simulation.commercial(CommercialOrderStatus.ACTIVE)
+    elif step is OrderStep.REWASH:
+        _plan_rewash(simulation, rewash_reason)
+    elif step is OrderStep.REJECT_INTAKE:
+        _plan_reject_intake(simulation, rejection_reason)
     if not simulation.planned:  # pragma: no cover - every branch above plans or raises
         raise OrderTransitionError(_NOTHING_TO_DO)
     return tuple(simulation.planned)
@@ -440,8 +522,71 @@ def _plan_cancel(simulation: _Simulation, resolution: CustodyResolution | None) 
     simulation.commercial(CommercialOrderStatus.CANCELLED, resolution)
 
 
+def _plan_rewash(simulation: _Simulation, reason: RewashReason | None) -> None:
+    """`REWASH`: interrupt production with an exception, then send it back through the wash.
+
+    The pins are the founder ruling's, stated before the domain is asked: the domain alone would
+    also accept an exception from `QUEUED` or `IN_PROCESS`, and an exception during cancellation
+    review -- neither of which is "wash it again".
+    """
+
+    state = simulation.state
+    if state.commercial is not CommercialOrderStatus.ACTIVE:
+        raise OrderTransitionError(
+            "INVALID_STATE_TRANSITION: laundry is washed again only on an active order"
+        )
+    if state.production not in REWASH_FROM_PRODUCTION:
+        raise OrderTransitionError(
+            "INVALID_STATE_TRANSITION: a rewash starts at quality check or from the shelf, "
+            "before the goods leave the shop"
+        )
+    if state.self_collection_recorded:
+        # R1: once the record says the customer took the laundry, a garment brought back is a
+        # complaint (`DEC-004`, the remedy flow), not a rewash inside this order.
+        raise OrderTransitionError(
+            "INVALID_STATE_TRANSITION: the customer is recorded as having taken the goods; "
+            "a garment brought back is a complaint"
+        )
+    if reason is None:
+        raise OrderTransitionError("VALIDATION_ERROR: REWASH requires rewash_reason")
+    simulation.production(ProductionStatus.EXCEPTION)
+    simulation.production(ProductionStatus.IN_PROCESS)
+    simulation.planned[0] = replace(simulation.planned[0], rewash_reason=reason)
+
+
+def _plan_reject_intake(simulation: _Simulation, reason: IntakeRejectionReason | None) -> None:
+    """`REJECT_INTAKE`: refuse the goods on the counter, and close the order they came with."""
+
+    state = simulation.state
+    if state.commercial not in _COMMERCIAL_BEFORE_ACTIVE:
+        raise OrderTransitionError(
+            "INVALID_STATE_TRANSITION: goods are refused only before the order is accepted for work"
+        )
+    if state.intake is IntakeStatus.AWAITING_HANDOFF:
+        raise OrderTransitionError(
+            "INVALID_STATE_TRANSITION: nothing was received, so there is nothing to refuse"
+        )
+    if state.intake not in REJECT_INTAKE_FROM:
+        raise OrderTransitionError(
+            "INVALID_STATE_TRANSITION: goods are refused only while they wait on the counter"
+        )
+    if reason is None:
+        raise OrderTransitionError("VALIDATION_ERROR: REJECT_INTAKE requires rejection_reason")
+    simulation.intake(IntakeStatus.REJECTED)
+    # The direct edge. After REJECTED the shop holds nothing (`CUSTODY_NOT_HELD_INTAKE_STATUSES`),
+    # nothing was washed and nothing paid, so the domain's "work has begun" guard admits it; if any
+    # of that were untrue it would refuse, and the whole step with it.
+    simulation.commercial(CommercialOrderStatus.CANCELLED)
+    simulation.planned[0] = replace(simulation.planned[0], rejection_reason=reason)
+
+
 def _legal(
-    step: OrderStep, facts: StepFacts, *, custody_resolution: CustodyResolution | None = None
+    step: OrderStep,
+    facts: StepFacts,
+    *,
+    custody_resolution: CustodyResolution | None = None,
+    rewash_reason: RewashReason | None = None,
+    rejection_reason: IntakeRejectionReason | None = None,
 ) -> bool:
     """Dry-run `step`. `slot_approved` is taken as attested: the listing says what the caller may
     do once they attest it, and `requires` tells them that they must."""
@@ -453,6 +598,8 @@ def _legal(
             slot_approved=True,
             custody_resolution=custody_resolution,
             accepted_at=_DRY_RUN_INSTANT,
+            rewash_reason=rewash_reason,
+            rejection_reason=rejection_reason,
         )
     except OrderTransitionError:
         return False
@@ -485,7 +632,7 @@ def _legal_steps(facts: StepFacts) -> dict[OrderStep, NextStep]:
     state = facts.state
     found: dict[OrderStep, NextStep] = {}
 
-    for step in COMPOSITE_STEPS - {OrderStep.CANCEL, OrderStep.RECEIVE}:
+    for step in COMPOSITE_STEPS - {OrderStep.CANCEL, OrderStep.RECEIVE} - NEVER_PRIMARY_STEPS:
         if _legal(step, facts):
             found[step] = NextStep(step, False)
     if _legal(OrderStep.RECEIVE, facts):
@@ -502,6 +649,24 @@ def _legal_steps(facts: StepFacts) -> dict[OrderStep, NextStep]:
             found[OrderStep.CANCEL] = NextStep(
                 OrderStep.CANCEL, False, ("custody_resolution",), accepted
             )
+    # ORDER-STEPS-002: each reason dry-run, as the custody answers are, so `rewash_reasons` and
+    # `rejection_reasons` can only ever name answers the step would take.
+    rewash = tuple(
+        reason for reason in RewashReason if _legal(OrderStep.REWASH, facts, rewash_reason=reason)
+    )
+    if rewash:
+        found[OrderStep.REWASH] = NextStep(
+            OrderStep.REWASH, False, ("rewash_reason",), rewash_reasons=rewash
+        )
+    rejection = tuple(
+        reason
+        for reason in IntakeRejectionReason
+        if _legal(OrderStep.REJECT_INTAKE, facts, rejection_reason=reason)
+    )
+    if rejection:
+        found[OrderStep.REJECT_INTAKE] = NextStep(
+            OrderStep.REJECT_INTAKE, False, ("rejection_reason",), rejection_reasons=rejection
+        )
     # HAND_OVER is RELEASE followed by COMPLETE; while it is legal, RELEASE alone is the same
     # button with the order left open, so only the complete one is offered. And at RELEASED,
     # HAND_OVER is exactly COMPLETE, so it is offered under that name alone.
@@ -576,34 +741,35 @@ def _primary_order(facts: StepFacts) -> tuple[OrderStep, ...]:
 
 
 def next_steps(facts: StepFacts) -> tuple[NextStep, ...]:
-    """Every legal step for this order, in `STEP_ORDER`, with exactly one marked primary.
+    """Every legal step for this order, in `STEP_ORDER`, with at most one marked primary.
 
     Empty for a closed order. The primary is the first legal step of `_primary_order`; when none of
     those is legal, the first legal step that is neither `CANCEL` nor `HOLD`; and only when nothing
-    else is legal, the first legal step at all.
+    else is legal, the first legal step at all. A step in `NEVER_PRIMARY_STEPS` is never chosen
+    (`ORDER-STEPS-002`), so when a rewash or a refusal is the only legal step the list has no
+    primary at all: exactly one entry is primary whenever any ordinary step is legal.
     """
 
     found = _legal_steps(facts)
     if not found:
         return ()
+    candidates = [step for step in STEP_ORDER if step in found and step not in NEVER_PRIMARY_STEPS]
     primary = next((step for step in _primary_order(facts) if step in found), None)
     if primary is None:
         primary = next(
-            (
-                step
-                for step in STEP_ORDER
-                if step in found and step not in {OrderStep.CANCEL, OrderStep.HOLD}
-            ),
+            (step for step in candidates if step not in {OrderStep.CANCEL, OrderStep.HOLD}),
             None,
         )
     if primary is None:
-        primary = next(step for step in STEP_ORDER if step in found)
+        primary = next(iter(candidates), None)
     return tuple(
         NextStep(
             item.step,
             item.step is primary,
             item.requires,
             item.custody_resolutions,
+            item.rewash_reasons,
+            item.rejection_reasons,
         )
         for step in STEP_ORDER
         if (item := found.get(step)) is not None
@@ -612,7 +778,10 @@ def next_steps(facts: StepFacts) -> tuple[NextStep, ...]:
 
 __all__ = [
     "COMPOSITE_STEPS",
+    "NEVER_PRIMARY_STEPS",
     "READINESS_BLOCKER_CODES",
+    "REJECT_INTAKE_FROM",
+    "REWASH_FROM_PRODUCTION",
     "STEP_ORDER",
     "NextStep",
     "OrderStep",

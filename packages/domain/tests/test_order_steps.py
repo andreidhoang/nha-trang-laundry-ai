@@ -16,12 +16,15 @@ from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     CustodyResolution,
     FulfillmentMode,
+    IntakeRejectionReason,
     IntakeStatus,
     OrderBalanceStatus,
     ProductionStatus,
+    RewashReason,
 )
 from nha_trang_laundry_domain.order_steps import (
     COMPOSITE_STEPS,
+    NEVER_PRIMARY_STEPS,
     NextStep,
     OrderStep,
     PlannedTransition,
@@ -33,7 +36,13 @@ from nha_trang_laundry_domain.order_steps import (
     plan_step,
     readiness_blockers,
 )
-from nha_trang_laundry_domain.orders import OrderState, OrderTransitionError
+from nha_trang_laundry_domain.orders import (
+    OrderState,
+    OrderTransitionError,
+    transition_commercial,
+    transition_intake,
+    transition_production,
+)
 from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
 
 NOW = datetime(2026, 9, 25, 9, 0, tzinfo=UTC)
@@ -142,7 +151,7 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
     (
         "checking",
         _active(production=P.QUALITY_CHECK),
-        [S.MARK_READY, S.HOLD, S.CANCEL, S.PREPAY],
+        [S.MARK_READY, S.HOLD, S.REWASH, S.CANCEL, S.PREPAY],
         S.MARK_READY,
     ),
     (
@@ -162,7 +171,7 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
         "self ready unpaid",
         _active(SELF, production=P.READY_AT_STORE),
         # Founder ruling 2026-09-25: no RELEASE while unpaid for a customer who collects.
-        [S.HOLD, S.CANCEL, S.SETTLE, S.PREPAY],
+        [S.HOLD, S.REWASH, S.CANCEL, S.SETTLE, S.PREPAY],
         S.SETTLE,
     ),
     (
@@ -197,7 +206,7 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
             balance=OrderBalanceStatus.PAID,
             shape=SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION,
         ),
-        [S.HOLD, S.RELEASE, S.CANCEL, S.COLLECT],
+        [S.HOLD, S.REWASH, S.RELEASE, S.CANCEL, S.COLLECT],
         S.COLLECT,
     ),
     (
@@ -216,7 +225,7 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
     (
         "pickup-only ready unpaid",
         _active(P_ONLY, production=P.READY_AT_STORE, pickup_done=True),
-        [S.HOLD, S.CANCEL, S.SETTLE, S.PREPAY],
+        [S.HOLD, S.REWASH, S.CANCEL, S.SETTLE, S.PREPAY],
         S.SETTLE,
     ),
     (
@@ -228,7 +237,7 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
             shape=SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION,
             pickup_done=True,
         ),
-        [S.HOLD, S.RELEASE, S.CANCEL, S.COLLECT],
+        [S.HOLD, S.REWASH, S.RELEASE, S.CANCEL, S.COLLECT],
         S.COLLECT,
     ),
     # --- delivery back to the customer (DEC-023: paid at the counter before it leaves)
@@ -236,7 +245,7 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
         (
             f"{mode} ready unpaid",
             _active(mode, production=P.READY_AT_STORE, pickup_done=True),
-            [S.HOLD, S.RELEASE, S.CANCEL, S.PREPAY, S.DELIVERY_RETURN],
+            [S.HOLD, S.REWASH, S.RELEASE, S.CANCEL, S.PREPAY, S.DELIVERY_RETURN],
             S.PREPAY,
         )
         for mode in (P_AND_R, R_ONLY)
@@ -251,7 +260,7 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
                 shape=SettlementShape.EXACT_PAYMENT_PREPAID_DELIVERY,
                 pickup_done=True,
             ),
-            [S.HOLD, S.RELEASE, S.CANCEL, S.DELIVERY_RETURN],
+            [S.HOLD, S.REWASH, S.RELEASE, S.CANCEL, S.DELIVERY_RETURN],
             S.RELEASE,
         )
         for mode in (P_AND_R, R_ONLY)
@@ -291,7 +300,7 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
     (
         "old UI stopped at CONFIRMED",
         _facts(commercial=C.CONFIRMED, intake=I.RECEIVED_PENDING_INSPECTION),
-        [S.RECEIVE],
+        [S.RECEIVE, S.REJECT_INTAKE],
         S.RECEIVE,
     ),
     (
@@ -484,12 +493,14 @@ def test_every_listed_composite_step_plans_successfully_and_every_other_is_refus
         listed = {item.step: item for item in next_steps(facts)}
         for step in COMPOSITE_STEPS:
             if step in listed:
-                resolution = (
-                    listed[step].custody_resolutions[0]
-                    if listed[step].custody_resolutions
-                    else None
+                entry = listed[step]
+                assert _plan(
+                    step,
+                    facts,
+                    custody_resolution=next(iter(entry.custody_resolutions), None),
+                    rewash_reason=next(iter(entry.rewash_reasons), None),
+                    rejection_reason=next(iter(entry.rejection_reasons), None),
                 )
-                assert _plan(step, facts, custody_resolution=resolution)
             elif step in {S.RELEASE, S.HAND_OVER}:
                 continue  # one of the pair is suppressed in favour of the other on purpose
             else:
@@ -536,3 +547,233 @@ def test_an_unpaid_self_collect_order_is_not_released_on_its_own() -> None:
                 custody_resolution=None,
                 accepted_at=datetime(2026, 9, 25, tzinfo=UTC),
             )
+
+
+# --- ORDER-STEPS-002: rewash and refuse-at-intake ------------------------------------------------
+
+_RESUME_FOR: dict[ProductionStatus, ProductionStatus] = {
+    P.ON_HOLD: P.IN_PROCESS,
+    P.EXCEPTION: P.QUALITY_CHECK,
+}
+
+
+def _apply(facts: StepFacts, plan: tuple[PlannedTransition, ...]) -> StepFacts:
+    """Run a plan through the real transition functions, as the repository writes it."""
+
+    state = facts.state
+    for planned in plan:
+        if planned.production_target is not None:
+            state = transition_production(state, planned.production_target)
+        elif planned.intake_target is not None:
+            state = transition_intake(
+                state,
+                planned.intake_target,
+                readiness=planned.intake_readiness,
+                production_accepted_at=NOW,
+            )
+        else:
+            assert planned.commercial_target is not None
+            resolved = planned.custody_resolution is not None
+            state = transition_commercial(
+                state,
+                planned.commercial_target,
+                cancellation_approved=resolved,
+                custody_and_financial_resolution_recorded=resolved,
+                custody_resolution=planned.custody_resolution,
+            )
+    return replace(facts, state=state)
+
+
+@pytest.mark.parametrize("production", list(ProductionStatus))
+@pytest.mark.parametrize(
+    "commercial", [C.ACTIVE, C.CONFIRMED, C.CANCELLATION_REVIEW, C.COMPLETED, C.CANCELLED]
+)
+def test_rewash_is_legal_exactly_at_quality_check_or_on_the_shelf_of_an_active_order(
+    commercial: CommercialOrderStatus, production: ProductionStatus
+) -> None:
+    facts = _facts(
+        commercial=commercial,
+        intake=I.ACCEPTED,
+        production=production,
+        resume=_RESUME_FOR.get(production),
+    )
+    legal = commercial is C.ACTIVE and production in {P.QUALITY_CHECK, P.READY_AT_STORE}
+    listed = {item.step: item for item in next_steps(facts)}
+    assert (S.REWASH in listed) is legal
+    if legal:
+        plan = _plan(S.REWASH, facts, rewash_reason=RewashReason.NOT_CLEAN)
+        assert _targets(plan) == ["production:EXCEPTION", "production:IN_PROCESS"]
+        assert listed[S.REWASH] == NextStep(
+            S.REWASH, False, ("rewash_reason",), rewash_reasons=tuple(RewashReason)
+        )
+    else:
+        with pytest.raises(OrderTransitionError, match="INVALID_STATE_TRANSITION"):
+            _plan(S.REWASH, facts, rewash_reason=RewashReason.NOT_CLEAN)
+
+
+_BEFORE_ACTIVE = (C.DRAFT, C.REQUESTED, C.STORE_CONFIRMATION_PENDING, C.CONFIRMED)
+_RECEIVED_WAITING = (
+    I.RECEIVED_PENDING_INSPECTION,
+    I.WAITING_PRICE_APPROVAL,
+    I.WAITING_CUSTOMER_RECONFIRMATION,
+    I.WAITING_SLOT_APPROVAL,
+)
+
+
+@pytest.mark.parametrize("intake", list(IntakeStatus))
+@pytest.mark.parametrize("commercial", list(CommercialOrderStatus))
+def test_goods_are_refused_only_on_the_counter_before_the_order_is_live(
+    commercial: CommercialOrderStatus, intake: IntakeStatus
+) -> None:
+    facts = _facts(commercial=commercial, intake=intake)
+    legal = commercial in _BEFORE_ACTIVE and intake in _RECEIVED_WAITING
+    listed = {item.step: item for item in next_steps(facts)}
+    assert (S.REJECT_INTAKE in listed) is legal
+    if legal:
+        plan = _plan(S.REJECT_INTAKE, facts, rejection_reason=IntakeRejectionReason.NOT_SERVICEABLE)
+        assert _targets(plan) == ["intake:REJECTED", "commercial:CANCELLED"]
+        # A direct cancellation: no custody answer is asked for or carried.
+        assert all(item.custody_resolution is None for item in plan)
+        assert listed[S.REJECT_INTAKE] == NextStep(
+            S.REJECT_INTAKE,
+            False,
+            ("rejection_reason",),
+            rejection_reasons=tuple(IntakeRejectionReason),
+        )
+    else:
+        with pytest.raises(OrderTransitionError):
+            _plan(S.REJECT_INTAKE, facts, rejection_reason=IntakeRejectionReason.OTHER)
+
+
+def test_the_reason_rides_on_the_first_transition_of_the_step_only() -> None:
+    rewash = _plan(
+        S.REWASH, _active(production=P.READY_AT_STORE), rewash_reason=RewashReason.MACHINE_FAULT
+    )
+    assert [item.rewash_reason for item in rewash] == [RewashReason.MACHINE_FAULT, None]
+    assert all(item.rejection_reason is None for item in rewash)
+    refused = _plan(
+        S.REJECT_INTAKE,
+        _facts(intake=I.WAITING_PRICE_APPROVAL),
+        rejection_reason=IntakeRejectionReason.DAMAGED_ON_ARRIVAL,
+    )
+    assert [item.rejection_reason for item in refused] == [
+        IntakeRejectionReason.DAMAGED_ON_ARRIVAL,
+        None,
+    ]
+    assert all(item.rewash_reason is None for item in refused)
+
+
+def test_each_step_needs_its_reason_and_takes_no_other() -> None:
+    checking = _active(production=P.QUALITY_CHECK)
+    received = _facts(intake=I.RECEIVED_PENDING_INSPECTION)
+    with pytest.raises(OrderTransitionError, match="VALIDATION_ERROR: REWASH requires"):
+        _plan(S.REWASH, checking)
+    with pytest.raises(OrderTransitionError, match="VALIDATION_ERROR: REJECT_INTAKE requires"):
+        _plan(S.REJECT_INTAKE, received)
+    with pytest.raises(OrderTransitionError, match="rewash_reason is taken only by REWASH"):
+        _plan(S.MARK_READY, checking, rewash_reason=RewashReason.NOT_CLEAN)
+    with pytest.raises(OrderTransitionError, match="rewash_reason is taken only by REWASH"):
+        _plan(
+            S.REJECT_INTAKE,
+            received,
+            rewash_reason=RewashReason.NOT_CLEAN,
+            rejection_reason=IntakeRejectionReason.OTHER,
+        )
+    with pytest.raises(OrderTransitionError, match="rejection_reason is taken only by"):
+        _plan(S.RECEIVE, received, rejection_reason=IntakeRejectionReason.OTHER)
+    with pytest.raises(OrderTransitionError, match="custody_resolution is not taken by REWASH"):
+        _plan(
+            S.REWASH,
+            checking,
+            rewash_reason=RewashReason.OTHER,
+            custody_resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE,
+        )
+    with pytest.raises(OrderTransitionError, match="not taken by REJECT_INTAKE"):
+        _plan(
+            S.REJECT_INTAKE,
+            received,
+            rejection_reason=IntakeRejectionReason.OTHER,
+            custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        )
+
+
+def test_no_rewash_once_the_customer_is_recorded_as_having_taken_the_goods() -> None:
+    """R1: a garment brought back after collection is a complaint (DEC-004), not a rewash."""
+
+    collected = _active(
+        production=P.READY_AT_STORE,
+        balance=OrderBalanceStatus.PAID,
+        collected=True,
+        shape=SettlementShape.EXACT_PAYMENT_SELF_COLLECTION,
+    )
+    assert S.REWASH not in _listed(collected)[0]
+    with pytest.raises(OrderTransitionError, match="complaint"):
+        _plan(S.REWASH, collected, rewash_reason=RewashReason.NOT_CLEAN)
+
+
+def test_a_prepaid_order_is_rewashed_and_its_balance_is_untouched() -> None:
+    """R1: a rewash costs the customer nothing; the plan never touches money."""
+
+    prepaid = _active(
+        production=P.READY_AT_STORE,
+        balance=OrderBalanceStatus.PAID,
+        shape=SettlementShape.EXACT_PAYMENT_PREPAID_SELF_COLLECTION,
+    )
+    after = _apply(prepaid, _plan(S.REWASH, prepaid, rewash_reason=RewashReason.NOT_CLEAN))
+    assert after.state.balance is OrderBalanceStatus.PAID
+    assert after.quoted_total == prepaid.quoted_total
+
+
+@pytest.mark.parametrize("start", [P.QUALITY_CHECK, P.READY_AT_STORE])
+def test_after_a_rewash_the_order_walks_forward_again(start: ProductionStatus) -> None:
+    facts = _active(production=start)
+    after = _apply(facts, _plan(S.REWASH, facts, rewash_reason=RewashReason.NOT_CLEAN))
+    assert after.state.production is P.IN_PROCESS
+    assert after.state.production_resume_status is None
+    assert _listed(after)[1] is S.QUALITY_CHECK
+    checked = _apply(after, _plan(S.QUALITY_CHECK, after))
+    ready = _apply(checked, _plan(S.MARK_READY, checked))
+    assert ready.state.production is P.READY_AT_STORE
+    assert _listed(ready)[1] is S.SETTLE
+
+
+def test_after_a_refusal_the_order_is_cancelled_and_offers_nothing() -> None:
+    facts = _facts(commercial=C.CONFIRMED, intake=I.WAITING_SLOT_APPROVAL)
+    after = _apply(
+        facts,
+        _plan(S.REJECT_INTAKE, facts, rejection_reason=IntakeRejectionReason.NOT_SERVICEABLE),
+    )
+    assert (after.state.commercial, after.state.intake) == (C.CANCELLED, I.REJECTED)
+    assert after.state.balance is OrderBalanceStatus.UNPAID
+    assert next_steps(after) == ()
+
+
+def test_neither_step_is_ever_primary() -> None:
+    assert frozenset({S.REWASH, S.REJECT_INTAKE}) == NEVER_PRIMARY_STEPS
+    for stage, facts, _expected, _primary in LIFECYCLE:
+        for item in next_steps(facts):
+            assert not (item.primary and item.step in NEVER_PRIMARY_STEPS), stage
+
+
+def test_a_refusal_alone_is_listed_without_any_primary() -> None:
+    """Goods on the counter whose quote is not final: RECEIVE is blocked, refusing is not.
+
+    The one position where a never-primary step is the only legal one. The list names it and marks
+    nothing primary, rather than promoting "Không nhận đồ" to the big button.
+    """
+
+    blocked = _facts(
+        intake=I.RECEIVED_PENDING_INSPECTION, quote=QuoteReadinessFacts(True, True, False, False)
+    )
+    steps = next_steps(blocked)
+    assert [item.step for item in steps] == [S.REJECT_INTAKE]
+    assert not any(item.primary for item in steps)
+
+
+def test_rewash_is_not_the_resume_of_an_exception_or_a_hold() -> None:
+    """An order already interrupted resumes; it is not rewashed a second time from there."""
+
+    for production in (P.ON_HOLD, P.EXCEPTION):
+        facts = _active(production=production, resume=P.QUALITY_CHECK)
+        with pytest.raises(OrderTransitionError, match="quality check or from the shelf"):
+            _plan(S.REWASH, facts, rewash_reason=RewashReason.NOT_CLEAN)

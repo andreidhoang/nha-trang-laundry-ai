@@ -179,6 +179,37 @@ class CustodyResolution(StrEnum):
     SHOP_FAULT_NO_CHARGE = "SHOP_FAULT_NO_CHARGE"
 
 
+class RewashReason(StrEnum):
+    """Why laundry found wanting before it left the shop is washed again (`ORDER-STEPS-002`).
+
+    Founder ruling R1 (`COUNTER_COMPLETENESS_SPEC_V1.md` section 2). A rewash happens inside the
+    same order and costs the customer nothing: the order's price is not touched. A garment brought
+    back *after* the customer took it is a complaint (`DEC-004`, the remedy flow), never this.
+    """
+
+    #: A stain or smell is still there at quality check or at the counter.
+    NOT_CLEAN = "NOT_CLEAN"
+    #: The machine failed during the cycle (stopped, did not rinse or spin).
+    MACHINE_FAULT = "MACHINE_FAULT"
+    #: Anything else a named staff member judged worth washing again.
+    OTHER = "OTHER"
+
+
+class IntakeRejectionReason(StrEnum):
+    """Why the shop refused the laundry on the counter before accepting it (`ORDER-STEPS-002`).
+
+    Founder ruling R2. The goods go back to the customer and the order closes as cancelled; no
+    money can have moved, because prepayment needs an active order.
+    """
+
+    #: The shop does not wash this kind of item.
+    NOT_SERVICEABLE = "NOT_SERVICEABLE"
+    #: The item arrived already damaged and the shop will not take responsibility for it.
+    DAMAGED_ON_ARRIVAL = "DAMAGED_ON_ARRIVAL"
+    #: Anything else a named staff member judged a reason to refuse.
+    OTHER = "OTHER"
+
+
 class AcquisitionSource(StrEnum):
     """Where the customer says they found the shop, attested by the staff member taking the order.
 

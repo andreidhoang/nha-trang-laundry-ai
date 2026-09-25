@@ -146,8 +146,10 @@ from nha_trang_laundry_domain.catalog import (
     CustodyResolution,
     ErrorCode,
     FulfillmentMode,
+    IntakeRejectionReason,
     IntakeStatus,
     ProductionStatus,
+    RewashReason,
     ServiceDefinition,
     Unit,
 )
@@ -692,6 +694,8 @@ class OperationsService:
         principal: StaffPrincipal,
         slot_approved: bool = False,
         custody_resolution: CustodyResolution | None = None,
+        rewash_reason: RewashReason | None = None,
+        rejection_reason: IntakeRejectionReason | None = None,
     ) -> OrderStepResult:
         """`ORDER-STEPS-001`: one named business step, as its domain transitions, all or nothing.
 
@@ -712,6 +716,8 @@ class OperationsService:
                     step=step,
                     slot_approved=slot_approved,
                     custody_resolution=custody_resolution,
+                    rewash_reason=rewash_reason,
+                    rejection_reason=rejection_reason,
                 ),
             )
 

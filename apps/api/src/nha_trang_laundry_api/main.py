@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from secrets import token_urlsafe
 from time import perf_counter
-from typing import Annotated, Literal, NoReturn
+from typing import Annotated, Literal, NoReturn, Self
 from urllib.parse import urlencode
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -84,9 +84,11 @@ from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     CustodyResolution,
     FulfillmentMode,
+    IntakeRejectionReason,
     IntakeStatus,
     ProductionStatus,
     QuantityBasis,
+    RewashReason,
     Unit,
 )
 from nha_trang_laundry_domain.order_steps import COMPOSITE_STEPS, OrderStep
@@ -103,7 +105,15 @@ from nha_trang_laundry_observability import (
     current_correlation,
 )
 from opentelemetry import metrics, trace
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse, StreamingResponse
 
@@ -323,6 +333,11 @@ class OrderStepRequest(StrictRequest):
     #: `CANCEL` through review only (`DEC-024`): what happened to the laundry and the money. The
     #: order's `next_steps` entry lists exactly the resolutions the domain accepts for it.
     custody_resolution: CustodyResolution | None = None
+    #: `REWASH` only, and required by it (`ORDER-STEPS-002`, founder ruling R1): why the laundry is
+    #: washed again. Recorded on the step's first event and audit row.
+    rewash_reason: RewashReason | None = None
+    #: `REJECT_INTAKE` only, and required by it (founder ruling R2): why the shop refused the goods.
+    rejection_reason: IntakeRejectionReason | None = None
 
     @field_validator("step")
     @classmethod
@@ -330,6 +345,30 @@ class OrderStepRequest(StrictRequest):
         if value not in COMPOSITE_STEPS:
             raise ValueError(f"{value.value} is recorded on its own route, not as a step")
         return value
+
+    @model_validator(mode="after")
+    def _reason_belongs_to_its_step(self) -> Self:
+        """A reason is required by its own step and refused on any other (422, nothing written).
+
+        Refused rather than ignored: a reason sent with the wrong step is a client that thinks it
+        is doing something else, and a reason the server dropped would be a statement a person made
+        that the ledger never holds. `custody_resolution` is refused on the two reason steps for
+        the same reason: neither is a cancellation through review.
+        """
+
+        rewash = self.step is OrderStep.REWASH
+        reject = self.step is OrderStep.REJECT_INTAKE
+        if rewash and self.rewash_reason is None:
+            raise ValueError("REWASH requires rewash_reason")
+        if reject and self.rejection_reason is None:
+            raise ValueError("REJECT_INTAKE requires rejection_reason")
+        if not rewash and self.rewash_reason is not None:
+            raise ValueError("rewash_reason is taken only by REWASH")
+        if not reject and self.rejection_reason is not None:
+            raise ValueError("rejection_reason is taken only by REJECT_INTAKE")
+        if (rewash or reject) and self.custody_resolution is not None:
+            raise ValueError(f"custody_resolution is not taken by {self.step.value}")
+        return self
 
 
 class ApprovalRequest(StrictRequest):
@@ -595,22 +634,27 @@ class NextStepResponse(BaseModel):
     """One legal next step for the order (`ORDER-STEPS-001`), decided by the domain.
 
     `step` is one of: `RECEIVE`, `START_WASH`, `QUALITY_CHECK`, `MARK_READY`, `HOLD`, `RESUME`,
-    `RELEASE`, `HAND_OVER`, `COMPLETE`, `CANCEL`, `REOPEN` (executed by `POST
-    /internal/v1/orders/{order_id}/steps`); `SETTLE` (`POST .../settlement` with
+    `REWASH`, `RELEASE`, `HAND_OVER`, `COMPLETE`, `CANCEL`, `REJECT_INTAKE`, `REOPEN` (executed by
+    `POST /internal/v1/orders/{order_id}/steps`); `SETTLE` (`POST .../settlement` with
     `collected_by_customer=true`), `PREPAY` (`POST .../settlement` with
     `collected_by_customer=false`), `COLLECT` (`POST .../collection`), `DELIVERY_PICKUP` /
-    `DELIVERY_RETURN` (`POST .../delivery-legs` with that `leg_kind`). Exactly one entry of a
-    non-empty list has `primary=true`: the natural next real-world event.
+    `DELIVERY_RETURN` (`POST .../delivery-legs` with that `leg_kind`). At most one entry has
+    `primary=true`: the natural next real-world event. `REWASH` and `REJECT_INTAKE` are never
+    primary (`ORDER-STEPS-002`), so a list holding only them has no primary entry.
 
-    `requires` names request fields the step needs: `slot_approved` (RECEIVE) or
-    `custody_resolution` (a cancellation through review). `custody_resolutions` lists the
-    resolutions the domain would accept for this order, each dry-run; empty otherwise.
+    `requires` names request fields the step needs: `slot_approved` (RECEIVE),
+    `custody_resolution` (a cancellation through review), `rewash_reason` (REWASH) or
+    `rejection_reason` (REJECT_INTAKE). `custody_resolutions`, `rewash_reasons` and
+    `rejection_reasons` list the answers the domain would accept for this order, each dry-run;
+    empty otherwise.
     """
 
     step: OrderStep
     primary: bool
     requires: list[str]
     custody_resolutions: list[CustodyResolution]
+    rewash_reasons: list[RewashReason]
+    rejection_reasons: list[IntakeRejectionReason]
 
 
 class DeliveryLegViewResponse(BaseModel):
@@ -1987,6 +2031,10 @@ def execute_order_step(
     nothing. `If-Match` is the row version the caller read (428 when absent, 400 when malformed,
     409 `STALE_VERSION` when it moved); `Idempotency-Key` replays the first answer.
 
+    `REWASH` requires `rewash_reason` and `REJECT_INTAKE` requires `rejection_reason`
+    (`ORDER-STEPS-002`); each is refused with 422 on any other step, as is `custody_resolution` on
+    those two. The reason is recorded on the step's first event and audit row.
+
     Refusals: 409 with the domain's `INVALID_STATE_TRANSITION: ...` / `HUMAN_APPROVAL_REQUIRED: ...`
     text, as on the per-axis routes; 422 `{"outcome": "REQUIRE_HUMAN", "reason_codes": [...]}` when
     `RECEIVE` is missing a readiness fact (`SLOT_APPROVAL_REQUIRED`, `QUANTITY_NOT_MEASURED`,
@@ -2005,6 +2053,8 @@ def execute_order_step(
             principal=principal,
             slot_approved=request.slot_approved,
             custody_resolution=request.custody_resolution,
+            rewash_reason=request.rewash_reason,
+            rejection_reason=request.rejection_reason,
         )
     except OrderStepRequiresHuman as error:
         raise HTTPException(
@@ -4144,6 +4194,8 @@ def _order_view_response(view: OrderView, *, replayed: bool = False) -> OrderVie
                 primary=item.primary,
                 requires=list(item.requires),
                 custody_resolutions=list(item.custody_resolutions),
+                rewash_reasons=list(item.rewash_reasons),
+                rejection_reasons=list(item.rejection_reasons),
             )
             for item in view.next_steps
         ],
@@ -4282,6 +4334,10 @@ class AuditEntryResponse(BaseModel):
     aggregate_id: UUID
     transition_dimension: str | None = None
     transition_target: str | None = None
+    #: `ORDER-STEPS-002`: on the row that starts a `REWASH` / `REJECT_INTAKE`, the step and the
+    #: reason token staff gave; null on every other row.
+    transition_step: str | None = None
+    transition_reason: str | None = None
 
 
 @app.get(
@@ -4490,6 +4546,8 @@ def shadow_audit_timeline(
             aggregate_id=entry.aggregate_id,
             transition_dimension=entry.transition_dimension,
             transition_target=entry.transition_target,
+            transition_step=entry.transition_step,
+            transition_reason=entry.transition_reason,
         )
         for entry in entries
     ]

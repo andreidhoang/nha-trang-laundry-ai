@@ -45,6 +45,7 @@ import socketserver
 import sys
 import threading
 import time
+import urllib.parse
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -530,6 +531,69 @@ ORDER_REQUEST = {
 }
 ORDER_REQUEST_CREATED = {**ORDER_REQUEST, "store_id": STORE, "replayed": False}
 
+#: CUSTOMER-001 (DEC-034): one regular of the store, as `GET …/customers?q=` returns them, the
+#: notice before and after the owner publishes it, and the record `POST …/customers` answers with.
+CUSTOMER_ID = "77777777-8888-4333-8444-aaaaaaaaaaa1"
+CUSTOMER_PHONE = "0905123456"
+CUSTOMER_SUMMARY = {
+    "customer_id": CUSTOMER_ID,
+    "display_name": "chị Lan",
+    "phone": CUSTOMER_PHONE,
+    "phone_last4": "3456",
+    "phone_visible": True,
+    "kind": "RETAIL",
+    "marketing_consent": False,
+    "last_activity_at": "2026-09-20T02:00:00+00:00",
+    "open_order_count": 1,
+}
+CUSTOMER_PROFILE = {
+    "customer_id": "77777777-8888-4333-8444-aaaaaaaaaaa2",
+    "store_id": STORE,
+    "display_name": "anh Tuấn",
+    "phone": "0382000111",
+    "phone_last4": "0111",
+    "phone_visible": True,
+    "kind": "RETAIL",
+    "delivery_address": None,
+    "note": None,
+    "marketing_consent": False,
+    "marketing_consent_at": None,
+    "marketing_withdrawn_at": None,
+    "service_consent_at": "2026-09-25T03:00:00+00:00",
+    "service_consent_notice_version": 1,
+    "last_activity_at": "2026-09-25T03:00:00+00:00",
+    "created_at": "2026-09-25T03:00:00+00:00",
+    "erased_at": None,
+    "erasure_reason": None,
+    "row_version": 1,
+}
+NOTICE_UNPUBLISHED = {
+    "published": False,
+    "version": None,
+    "notice_version": None,
+    "title": None,
+    "text": None,
+    "consent_sentence": None,
+    "service_consent_label": None,
+    "marketing_consent_label": None,
+    "retention_months": None,
+    "legal_entity": None,
+}
+NOTICE_PUBLISHED = {
+    "published": True,
+    "version": 1,
+    "notice_version": "V1",
+    "title": "Thông tin của anh/chị ở tiệm Giặt Là Sạch Cộng",
+    "text": "**Ai giữ thông tin.** CÔNG TY TNHH A & T CARE. Hotline 0382 318 492.\n\n"
+    "**Giữ bao lâu.** 24 tháng không có đơn thì tiệm tự xoá.",
+    "consent_sentence": "Dạ, tiệm xin lưu số điện thoại để báo khi đồ xong. "
+    "Anh/chị đồng ý không ạ?",
+    "service_consent_label": "Khách đã nghe và đồng ý cho tiệm lưu thông tin để phục vụ đơn",
+    "marketing_consent_label": "Khách muốn nhận tin ưu đãi của tiệm (không bắt buộc)",
+    "retention_months": 24,
+    "legal_entity": "CÔNG TY TNHH A & T CARE",
+}
+
 #: CONTACT-PICK-001: one returning channel customer of the store, as `GET …/contacts/recent` returns
 #: it, and a second binding the conversation hand-off names. Neither is typed anywhere.
 RECENT_CONTACT = "55555555-6666-4333-8444-999999999991"
@@ -610,6 +674,11 @@ RECEIPT_ORDER = {
     "required_delivery_legs_succeeded": False,
     "settlement_shape": None,
     "next_steps": [],
+    # CUSTOMER-001: a regular with a number on record, so R4's "Tiệm sẽ báo" is a promise the shop
+    # can keep. The walk-in variant is checked by clearing these three.
+    "customer_id": "77777777-8888-4333-8444-aaaaaaaaaaa1",
+    "customer_name": "chị Lan",
+    "customer_has_phone": True,
 }
 RECEIPT_DETAIL = {
     "quote_id": RECEIPT_QUOTE_ID,
@@ -1878,6 +1947,32 @@ with sync_playwright() as playwright:
             body = expense_month(asked)
         elif url.endswith("/internal/v1/stores"):
             body = {"store_ids": [STORE]}
+        elif "/customer-privacy-notice" in url:
+            body = NOTICE_PUBLISHED if state.get("notice_published") else NOTICE_UNPUBLISHED
+        elif url.split("?")[0].endswith("/customers") and route.request.method == "POST":
+            # CUSTOMER-001: what the sheet sends, under what key. Never a query string.
+            state.setdefault("customer_posts", []).append(
+                (
+                    json.loads(route.request.post_data or "{}"),
+                    route.request.headers.get("idempotency-key"),
+                )
+            )
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps({"customer": CUSTOMER_PROFILE, "replayed": False}),
+            )
+            return
+        elif url.split("?")[0].endswith("/customers"):
+            state.setdefault("customer_searches", []).append(url)
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("q", [""])[0]
+            body = {
+                "store_id": STORE,
+                "mode": "LAST4" if query == "3456" else "PHONE_INCOMPLETE",
+                "limit": 20,
+                "truncated": False,
+                "customers": [CUSTOMER_SUMMARY] if query == "3456" else [],
+            }
         elif "/contacts/recent" in url:
             state.setdefault("recent_reads", []).append(url)
             body = RECENT_CONTACTS
@@ -2536,10 +2631,22 @@ with sync_playwright() as playwright:
                         route.request.headers.get("idempotency-key"),
                     )
                 )
+                sent = json.loads(route.request.post_data or "{}")
+                # CUSTOMER-001: an intake for a customer record is answered with the ticket the
+                # server issued for it in the same write.
                 route.fulfill(
                     status=201,
                     content_type="application/json",
-                    body=json.dumps(ORDER_REQUEST_CREATED),
+                    body=json.dumps(
+                        {
+                            **ORDER_REQUEST_CREATED,
+                            "customer_id": sent["customer_id"],
+                            "ticket_number": 31,
+                            "ticket_issued_on": "2026-09-25",
+                        }
+                        if sent.get("customer_id")
+                        else ORDER_REQUEST_CREATED
+                    ),
                 )
                 return
             body = [ORDER_REQUEST]
@@ -3034,8 +3141,8 @@ with sync_playwright() as playwright:
         f"activeElement={page.evaluate('document.activeElement?.id')}",
     )
     check(
-        "the screen says why a code is typed at all: there is no contact search",
-        "Chưa tìm được khách theo tên hay số điện thoại" in page.content(),
+        "the screen says why a code is typed at all: only for a code read somewhere else",
+        "Chỉ dùng khi có mã khách đọc được ở nơi khác." in page.content(),
     )
 
     page.locator("#new-contact-submit").click()
@@ -6793,6 +6900,10 @@ with sync_playwright() as playwright:
         and "hẹn" not in paper.inner_text().lower(),
     )
     check(
+        "CUSTOMER-001: the paper names the customer the order was taken for",
+        paper.locator("[data-field=customer]").inner_text().strip() == "chị Lan",
+    )
+    check(
         "a store the server holds no name for gets no name line: nothing is invented",
         paper.locator("[data-field=store]").count() == 0,
     )
@@ -6867,6 +6978,23 @@ with sync_playwright() as playwright:
         and "Tiệm sẽ báo khi đồ sẵn sàng." in text
         and re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-", text, re.I) is None,
         text[:200],
+    )
+
+    # CUSTOMER-001: a walk-in who left no number is not promised a call; the slip is how they
+    # get their laundry back.
+    state["receipt_order"] = {
+        **RECEIPT_ORDER,
+        "customer_id": None,
+        "customer_name": None,
+        "customer_has_phone": False,
+    }
+    page.reload()
+    page.wait_for_timeout(1500)
+    check(
+        "a walk-in with no number is told to keep the slip, and no name is printed",
+        paper.locator("[data-field=closing]").inner_text().strip() == "Giữ phiếu này để nhận đồ."
+        and paper.locator("[data-field=customer]").count() == 0,
+        paper.locator("[data-field=closing]").inner_text(),
     )
 
     # A closed order: the receipt says so instead of promising to call.
@@ -7331,6 +7459,138 @@ with sync_playwright() as playwright:
         repr(state["report_reads"]),
     )
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
+
+    # ============================================================================================
+    # 22. CUSTOMER-001 (DEC-034) -- Nhận đồ step 1 is one search field above the walk-in button; a
+    #     regular is one tap; "Thêm khách mới" offers nothing to save until the owner publishes the
+    #     notice, and afterwards sends two separate consents. Nothing typed is kept on the device.
+    # ============================================================================================
+    print()
+    print("[22] Khách quen: one field, one tap, consent before a record")
+    state["customer_searches"] = []
+    state["customer_posts"] = []
+    state["intake_posts"] = []
+    state["notice_published"] = False
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    field = page.locator("#new-customer-search")
+    order = page.evaluate(
+        """() => {
+            const a = document.querySelector('#new-customer-search');
+            const b = document.querySelector('#new-walk-in');
+            return a && b ? Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+                          : false;
+        }"""
+    )
+    check(
+        "step 1 is one field, 'SĐT hoặc tên khách', above the walk-in button",
+        field.count() == 1 and field.get_attribute("aria-label") == "SĐT hoặc tên khách" and order,
+    )
+    check("nothing is searched before anything is typed", not state["customer_searches"])
+    field.click()
+    page.keyboard.type("3456", delay=20)
+    page.wait_for_timeout(900)
+    row = page.locator(f"#new-customer-search-list [data-customer='{CUSTOMER_ID}']")
+    check(
+        "four digits list the regular by name and number, read aloud-style",
+        row.count() == 1
+        and "chị Lan" in row.inner_text()
+        and "0905 123 456" in row.inner_text()
+        and "1 đơn mở" in row.inner_text(),
+        row.inner_text() if row.count() else "absent",
+    )
+    check(
+        "the search is a read (q in the request), never an address the console navigates to",
+        any("q=3456" in url for url in state["customer_searches"])
+        and "3456" not in page.url
+        and page.evaluate("() => JSON.stringify(Object.keys(localStorage))")
+        == '["staff_store_id"]',
+        repr(state["customer_searches"][-1:]) + " " + page.url,
+    )
+    row.click()
+    page.wait_for_timeout(900)
+    posted = state["intake_posts"][-1] if state["intake_posts"] else ({}, None)
+    check(
+        "one tap opens the intake for the record -- customer_id only, under a key",
+        posted[0] == {"customer_id": CUSTOMER_ID} and bool(posted[1]),
+        repr(posted),
+    )
+    check(
+        "and the flow is on step 2 with the ticket the server issued and the customer's name",
+        page.locator("#new-ticket").count() == 1
+        and "31" in page.locator("#new-ticket").inner_text()
+        and page.locator("#new-ticket [data-field=customer]").inner_text() == "chị Lan",
+        page.locator("#new-ticket").inner_text() if page.locator("#new-ticket").count() else "",
+    )
+
+    # Not yet published: the sheet says what the owner must do and offers nothing to fill.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    page.locator("#new-customer-search").click()
+    page.keyboard.type("0382 000 111", delay=10)
+    page.wait_for_timeout(700)
+    page.locator("#new-customer-add").click()
+    page.wait_for_timeout(700)
+    sheet_text = page.locator("#customer-new-sheet").inner_text()
+    check(
+        "unpublished: tier 1 says the owner must publish; no field to fill, 'Lưu' off",
+        "Chủ tiệm cần công bố thông báo bảo mật trước khi lưu khách" in sheet_text
+        and not page.locator("#customer-new-phone").is_visible()
+        and page.locator("#customer-new-save").is_disabled()
+        and not state["customer_posts"],
+        sheet_text[:120].replace("\n", " | "),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # Published: the sentence to read, the number carried over, two ticks, promotions off.
+    state["notice_published"] = True
+    page.locator("#new-customer-add").click()
+    page.wait_for_timeout(900)
+    check(
+        "published: the notice's sentence to read aloud, the typed number carried into the sheet",
+        "Anh/chị đồng ý không ạ?"
+        in page.locator("#customer-new-sheet .customer-consent__sentence").inner_text()
+        and page.locator("#customer-new-phone").input_value() == "0382 000 111",
+    )
+    check(
+        "'Lưu' stays off until the customer's consent is ticked; promotions start unticked",
+        page.locator("#customer-new-save").is_disabled()
+        and not page.locator("#customer-new-marketing").is_checked(),
+    )
+    page.locator("#customer-new-name").click()
+    page.keyboard.type("anh Tuấn", delay=10)
+    page.locator("#customer-new-consent").check()
+    page.wait_for_timeout(200)
+    state["intake_posts"] = []
+    page.locator("#customer-new-save").click()
+    page.wait_for_timeout(1200)
+    sent = state["customer_posts"][-1] if state["customer_posts"] else ({}, None)
+    check(
+        "the record is sent with the attestation, promotions false, under its own key",
+        sent[0].get("phone") == "0382 000 111"
+        and sent[0].get("display_name") == "anh Tuấn"
+        and sent[0].get("service_consent") is True
+        and sent[0].get("marketing_consent") is False
+        and bool(sent[1]),
+        repr(sent),
+    )
+    check(
+        "then the intake is opened for the new record, and step 2 names them",
+        state["intake_posts"]
+        and state["intake_posts"][-1][0] == {"customer_id": CUSTOMER_PROFILE["customer_id"]}
+        and "anh Tuấn" in page.locator("#new-ticket").inner_text(),
+        repr(state["intake_posts"][-1:]),
+    )
+    check(
+        "nothing a customer said is left on the device",
+        page.evaluate("() => JSON.stringify(Object.keys(localStorage))") == '["staff_store_id"]'
+        and page.evaluate("() => sessionStorage.length") == 0
+        and "0382" not in page.url,
+    )
+    state["notice_published"] = False
 
     print()
     print("=" * 74)

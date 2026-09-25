@@ -5,15 +5,18 @@
  * The ticket number used to be spoken and remembered. This screen puts it on paper — sized for an
  * 80 mm or 58 mm thermal roll and for A5 — or hands it to the phone's share sheet as plain text.
  *
- *   - **It prints only what the server holds.** The store's registered name, the ticket and its
- *     business day, each priced line with its quantity, the promotion or remedy credit applied, the
- *     total, when the order was taken, and a short reference. A store minted before the registry
- *     has no name, and then the receipt has no name line — it never invents one.
+ *   - **It prints only what the server holds.** The store's registered name, the customer's name
+ *     when the order has a record (`CUSTOMER-001`), the ticket and its business day, each priced
+ *     line with its quantity, the promotion or remedy credit applied, the total, when the order was
+ *     taken, and a short reference. A store minted before the registry has no name, and then the
+ *     receipt has no name line — it never invents one.
  *   - **The promised-ready time, when the order has one** (`PROMISE-001`, `DEC-037`, replacing
  *     R4's line): "Hẹn trả: 13:00 thứ Sáu 26/9" — the time the server stored at Nhận đồ under the
  *     owner's published turnaround rules, or the later one a Hẹn lại set. An order taken before the
  *     owner published those rules has none, and the receipt says "Tiệm sẽ báo khi đồ sẵn sàng"
- *     (R4) — and something else once either sentence would be false: the laundry is already done,
+ *     (R4) where the shop can reach the customer (a phone on their record, or the chat the order
+ *     came from; `CUSTOMER-001`), and "Giữ phiếu này để nhận đồ" to a walk-in who left only a
+ *     ticket — and something else once any of these would be false: the laundry is already done,
  *     the order is closed, or it was cancelled.
  *   - **Every figure is a server integer through `money()`.** The lines print at their list amount
  *     and the adjustments (promotion, credit, delivery fee) under them, all read off the stored
@@ -51,6 +54,11 @@ import { orderName } from "./orders.js";
 
 /** R4, verbatim: what the receipt says for an order without a promised-ready time. */
 export const READY_NOTICE = "Tiệm sẽ báo khi đồ sẵn sàng.";
+/**
+ * CUSTOMER-001: R4 promises a call, and a walk-in with only a ticket left no number to call. The
+ * paper says what is true for them instead: the slip is how they get their laundry back.
+ */
+export const KEEP_TICKET_NOTICE = "Giữ phiếu này để nhận đồ.";
 
 // --- the hand-off from ＋ Nhận đồ -------------------------------------------------------------
 
@@ -114,8 +122,15 @@ function closingLine(order) {
   if (order.production === "READY_AT_STORE" || order.production === "RELEASED") {
     return "Đồ đã giặt xong.";
   }
+  // PROMISE-001: the time the server stored at Nhận đồ, or the later one a Hẹn lại set.
   if (order.current_promise_at) return `Hẹn trả: ${promiseTime(order.current_promise_at)}`;
-  return READY_NOTICE;
+  // CUSTOMER-001: without a promise, "Tiệm sẽ báo" only where the shop can reach the customer -- a
+  // phone on their record, or the chat channel the order came from. A ticket alone reaches nobody.
+  const reachable =
+    order.customer_has_phone === true ||
+    order.ticket_number === null ||
+    order.ticket_number === undefined;
+  return reachable ? READY_NOTICE : KEEP_TICKET_NOTICE;
 }
 
 /**
@@ -151,6 +166,7 @@ function lineAmount(line) {
  *
  * @typedef {object} ReceiptModel
  * @property {string|null} store
+ * @property {string|null} customer the name the customer gave, when the order has a record
  * @property {string} ticket
  * @property {string|null} day
  * @property {string} taken
@@ -170,6 +186,7 @@ function receiptModel(order, detail, catalog) {
   const numbered = order.ticket_number !== null && order.ticket_number !== undefined;
   return {
     store: state.storeNames?.[String(order.store_id)] || null,
+    customer: order.customer_name ? String(order.customer_name) : null,
     ticket: orderName(order),
     // Numbers restart every morning, so the paper carries the ticket's business day beside it.
     day: numbered ? dateOnly(order.ticket_issued_on) : null,
@@ -204,6 +221,7 @@ function receiptModel(order, detail, catalog) {
 export function receiptText(model) {
   return [
     model.store,
+    model.customer,
     [model.ticket, model.day].filter(Boolean).join(" · "),
     ...(model.lines || []).map((line) => `${line.name} — ${line.quantity}: ${line.amount}`),
     ...model.adjustments.map((item) => `${item.label}: ${item.amount}`),
@@ -248,6 +266,9 @@ function paper(model, linesFallback) {
       "header",
       { class: "receipt-paper__head" },
       model.store ? h("p", { class: "receipt-paper__store", dataField: "store" }, model.store) : null,
+      model.customer
+        ? h("p", { class: "receipt-paper__customer", dataField: "customer" }, model.customer)
+        : null,
       h("p", { class: "receipt-paper__ticket", dataField: "ticket" }, model.ticket),
       model.day ? h("p", { class: "receipt-paper__day" }, model.day) : null,
     ),
@@ -310,14 +331,17 @@ export function render_(context) {
     h(
       "p",
       null,
-      "Phiếu in đúng những gì máy chủ đã lưu: tên cửa hàng, số phiếu, từng món với số lượng và " +
-        "giá, khuyến mãi hoặc khoản giảm trừ đã áp, tổng khách trả, lúc nhận đơn và mã đơn.",
+      "Phiếu in đúng những gì máy chủ đã lưu: tên cửa hàng, tên khách (nếu khách có hồ sơ), số " +
+        "phiếu, từng món với số lượng và giá, khuyến mãi hoặc khoản giảm trừ đã áp, tổng khách " +
+        "trả, lúc nhận đơn và mã đơn.",
     ),
     h(
       "p",
       { class: "hint" },
       "Giờ hẹn trả in trên phiếu là giờ máy chủ đã ghi lúc nhận đồ (hoặc giờ hẹn lại sau đó). Đơn " +
-        "nhận trước khi chủ tiệm công bố quy tắc hẹn trả thì phiếu ghi “Tiệm sẽ báo khi đồ sẵn sàng”.",
+        "chưa có giờ hẹn (nhận trước khi chủ tiệm công bố quy tắc hẹn trả) thì phiếu ghi “Tiệm sẽ " +
+        "báo khi đồ sẵn sàng” khi tiệm có số điện thoại hoặc kênh chat của khách, và “Giữ phiếu này " +
+        "để nhận đồ” khi khách chỉ có số phiếu.",
     ),
     h(
       "p",

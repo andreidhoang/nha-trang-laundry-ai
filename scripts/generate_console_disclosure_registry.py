@@ -114,6 +114,13 @@ CAPABILITY_REPOSITORY_ROLES: dict[str, tuple[str, str]] = {
     # to the repository set for the reason EXPORT_DATA is: equality, where a route rewrite cannot
     # drop it.
     "REPORTS_READ": ("nha_trang_laundry_db.reports", "REPORT_READ_ROLES"),
+    # CUSTOMER-001 (`DEC-034`). The routes gate on `require_customer_reader`,
+    # `require_operations_staff` and `require_approval_staff`; `CustomerRepository` re-checks the
+    # exact sets below with MFA and store membership. Bound to the repository sets for the reason
+    # EXPORT_DATA is: equality, where a route rewrite cannot drop it.
+    "CUSTOMERS_READ": ("nha_trang_laundry_db.customers", "CUSTOMER_READ_ROLES"),
+    "CUSTOMERS_WRITE": ("nha_trang_laundry_db.customers", "CUSTOMER_WRITE_ROLES"),
+    "CUSTOMERS_ERASE": ("nha_trang_laundry_db.customers", "CUSTOMER_ERASE_ROLES"),
 }
 
 #: Authored bindings, keyed by slot id. A slot absent from this table is registered `DESCRIPTIVE`.
@@ -132,16 +139,16 @@ BINDINGS: dict[str, dict[str, Any]] = {
         "tables": ["custody_units", "custody_events", "batches"],
         "why": "Same shape: the custody context is measured empty and the disclosure says so.",
     },
-    # Re-keyed by COUNTER-DEFECTS-001 from `c4f99531cea6`. The old text also claimed no source
-    # produces a `bound_contact_id`, which stopped being true when COUNTER-TICKET-001 shipped
-    # DEC-013's counter ticket on 26/08. The binding is unchanged in substance -- these three
-    # tables are still absent and DEC-015 is still what governs them -- so it is re-keyed rather
-    # than retired, deliberately and with the reason recorded here.
-    "screens/gaps.js#missing:e87c11974df5": {
+    # Re-keyed by COUNTER-DEFECTS-001 from `c4f99531cea6`, and again by CUSTOMER-001 from
+    # `e87c11974df5`: the old text said the system stores no name, phone or address, which stopped
+    # being true when DEC-034's `customers` table shipped on 25/09. The three party tables it binds
+    # are still absent -- a customer has one number and one address, not the spec's party model --
+    # so the binding is re-keyed rather than retired, with the reason recorded here.
+    "screens/gaps.js#missing:e00143a62418": {
         "kind": "ABSENT_TABLE",
         "tables": ["parties", "contact_points", "addresses"],
-        "why": "The party/CRM aggregates. This is the disclosure DEC-015 is about, and it must "
-        "change the day a customer record exists.",
+        "why": "The spec's party/CRM aggregates. DEC-034 built a one-number customer record "
+        "instead; the day several numbers or addresses per customer exist, this sentence is false.",
     },
     "screens/assistant.js#screen__lede:96537d9c63dd": {
         "kind": "MODEL_SEAM",

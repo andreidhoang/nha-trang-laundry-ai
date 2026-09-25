@@ -226,6 +226,19 @@ DECLARED_CONTROLS = (
     "machines.add",
     "machines.rename",
     "machines.retire",
+    # CUSTOMER-001 (DEC-034): the one search field on Nhận đồ, recording a regular with consent,
+    # finding them again by four digits, their page with Gọi and Zalo, and erasure on request.
+    "shell.nav.customers",
+    "newOrder.customer-search",
+    "newOrder.customer-add",
+    "customer.consent",
+    "customer.save",
+    "newOrder.customer-pick",
+    "customers.search",
+    "customers.open",
+    "customer.call",
+    "customer.zalo",
+    "customer.erase",
 )
 
 PASS: list[str] = []
@@ -2512,11 +2525,14 @@ def scenario_receipt(console: Console) -> None:
         ticket.first.inner_text() if ticket.count() else "absent",
     )
     closing = paper.locator("[data-field=closing]")
+    # CUSTOMER-001: R4's "Tiệm sẽ báo" is a promise to call, and this walk-in left no number. The
+    # paper tells them what is true instead; the customer-record walk proves the R4 line.
     ok(
-        "it promises no ready time: it says the shop will tell the customer (R4)",
+        "it promises no ready time, and no call to a walk-in with no number: keep the slip",
         closing.count() == 1
-        and closing.first.inner_text().strip() == "Tiệm sẽ báo khi đồ sẵn sàng."
-        and "hẹn" not in paper.inner_text().lower(),
+        and closing.first.inner_text().strip() == "Giữ phiếu này để nhận đồ."
+        and "hẹn" not in paper.inner_text().lower()
+        and paper.locator("[data-field=customer]").count() == 0,
         closing.first.inner_text() if closing.count() else "absent",
     )
     visible = console.text()
@@ -4728,6 +4744,352 @@ def scenario_shop_capture(console: Console) -> None:
     console.sign_in("demo-owner")
 
 
+def _customer_rows(phone_digits: str) -> str:
+    """How many ledger rows hold the number, in any table that keeps history. Must be 0."""
+
+    return sql(
+        "SELECT (SELECT count(*) FROM domain_events WHERE payload::text LIKE '%"
+        + phone_digits
+        + "%') + (SELECT count(*) FROM audit_events WHERE details::text LIKE '%"
+        + phone_digits
+        + "%') + (SELECT count(*) FROM outbox_events WHERE payload::text LIKE '%"
+        + phone_digits
+        + "%') + (SELECT count(*) FROM command_idempotency_records WHERE response::text LIKE '%"
+        + phone_digits
+        + "%')"
+    )
+
+
+def _customer_refusal_then_publish(console: Console, digits: str, spaced: str) -> None:
+    """Before publication: the sheet offers nothing to save and the server refuses; then publish."""
+
+    console.type_into("#new-customer-search", spaced, "newOrder.customer-search")
+    console.page.wait_for_timeout(1200)
+    console.page.locator("#new-customer-add").click()
+    touched("newOrder.customer-add")
+    console.page.wait_for_timeout(1400)
+    sheet = console.page.locator("#customer-new-sheet")
+    ok(
+        "'Thêm khách mới' says in tier 1 what the owner must do, and offers nothing to save",
+        "Chủ tiệm cần công bố thông báo bảo mật trước khi lưu khách" in sheet.inner_text()
+        and console.page.locator("#customer-new-save").is_disabled()
+        and not console.page.locator("#customer-new-phone").is_visible(),
+        sheet.inner_text()[:160].replace("\n", " | "),
+    )
+    refused = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/customers",
+        {"phone": spaced, "display_name": "chị Lan", "service_consent": True},
+    )
+    ok(
+        "the server itself refuses the record: 422 PRIVACY_NOTICE_UNPUBLISHED (DEC-034), no phone "
+        "in the answer, nothing written",
+        refused["status"] == 422
+        and (refused.get("body") or {}).get("detail", {}).get("reason_code")
+        == "PRIVACY_NOTICE_UNPUBLISHED"
+        and digits[1:] not in refused["text"]
+        and sql("SELECT count(*) FROM customers") == "0",
+        refused["text"][:200],
+    )
+    console.page.keyboard.press("Escape")
+
+    head("16a", "CÔNG BỐ — the owner publishes the notice with the script")
+    owner = sql("SELECT id FROM staff_users WHERE oidc_subject = 'demo-owner'")
+    publish = subprocess.run(
+        [
+            sys.executable,
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "publish_privacy_notice.py"),
+            "--actor-id",
+            owner,
+            "--database-url",
+            arguments.database_url,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    ok(
+        "scripts/publish_privacy_notice.py publishes it (the owner's act, not the console's)",
+        publish.returncode == 0 and "published" in publish.stdout,
+        (publish.stdout or publish.stderr).strip()[:160],
+    )
+
+
+def scenario_customers(console: Console) -> None:
+    """`CUSTOMER-001` (`DEC-034`): refused until the owner publishes the notice; then a regular is
+    recorded at the counter with consent, found again by four digits in one tap, their history is
+    on their page, and their record is erased on request -- the orders kept."""
+
+    head("16", "KHÁCH HÀNG — refused until the owner publishes the privacy notice")
+    if not arguments.database_url:
+        ok(
+            "publishing the notice uses the owner's script, which needs --database-url",
+            False,
+        )
+        return
+    console.sign_in("demo-operations")
+    notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
+    unpublished = (notice.get("body") or {}).get("published") is False
+    ok(
+        "the notice is not published on this stack yet (the refusal can only be proven before it)",
+        unpublished,
+        notice["text"][:120],
+    )
+    digits = "09" + str(uuid.uuid4().int)[:8]
+    spaced = f"{digits[:4]} {digits[4:7]} {digits[7:]}"
+    console.open("#/new", settle=1600)
+    search = console.page.locator("#new-customer-search")
+    ok(
+        "step 1 opens on one field, 'SĐT hoặc tên khách', above the walk-in button",
+        (
+            search.count() == 1
+            and search.first.get_attribute("aria-label") == "SĐT hoặc tên khách"
+            and console.page.locator("#new-walk-in").count() == 1
+        ),
+        "",
+    )
+    if unpublished:
+        _customer_refusal_then_publish(console, digits, spaced)
+    else:
+        note(
+            "the notice was published before this scenario began, so its refusal is not provable "
+            "here: run it on a stack that has not published the notice"
+        )
+
+    head("16b", "KHÁCH MỚI — recorded at the counter, with the consent read aloud")
+    console.open("#/new", settle=1600)
+    console.type_into("#new-customer-search", spaced, "newOrder.customer-search")
+    console.page.wait_for_timeout(1200)
+    console.page.locator("#new-customer-add").click()
+    touched("newOrder.customer-add")
+    console.page.wait_for_timeout(1400)
+    sheet = console.page.locator("#customer-new-sheet")
+    sentence = console.page.locator("#customer-new-sheet .customer-consent__sentence")
+    ok(
+        "now the sheet has the notice's sentence to read, the number prefilled, and two separate "
+        "ticks -- promotions off",
+        sentence.count() == 1
+        and "đồng ý" in sentence.inner_text()
+        and console.page.locator("#customer-new-phone").input_value() == spaced
+        and not console.page.locator("#customer-new-consent").is_checked()
+        and not console.page.locator("#customer-new-marketing").is_checked()
+        and console.page.locator("#customer-new-save").is_disabled(),
+        sheet.inner_text()[:200].replace("\n", " | "),
+    )
+    console.type_into("#customer-new-name", "chị Lan")
+    console.type_into("#customer-new-note", "Giặt riêng đồ trắng")
+    console.page.locator("#customer-new-consent").check()
+    touched("customer.consent")
+    created, intake = console.press_capturing(
+        console.page.locator("#customer-new-save"), "/customers", "/order-requests"
+    )
+    touched("customer.save")
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#new-ticket", timeout=15000)
+    customer = (created.get("body") or {}).get("customer") or {}
+    customer_id = str(customer.get("customer_id") or "")
+    ok(
+        "one press records the customer and opens their intake with its ticket",
+        created["status"] == 201
+        and intake["status"] == 201
+        and (intake.get("body") or {}).get("customer_id") == customer_id
+        and isinstance((intake.get("body") or {}).get("ticket_number"), int),
+        f"{created['text'][:120]} || {intake['text'][:120]}",
+    )
+    ok(
+        "and the flow is on step 2 with the customer's name under the ticket",
+        console.page.locator("#new-ticket [data-field=customer]").count() == 1
+        and "chị Lan" in console.page.locator("#new-ticket").inner_text(),
+        console.page.locator("#new-ticket").inner_text()[:80]
+        if console.page.locator("#new-ticket").count()
+        else "",
+    )
+    stored = sql(
+        "SELECT phone_last4 || '|' || (phone_ciphertext IS NOT NULL) || '|' "
+        "|| (position('" + digits[1:] + "' in encode(phone_ciphertext, 'escape')) = 0) "
+        f"FROM customers WHERE id = '{customer_id}'"
+    )
+    ok(
+        "the row holds the last four digits and a sealed number -- never the number in clear",
+        stored == f"{digits[-4:]}|true|true",
+        stored,
+    )
+    console.add_line("STANDARD_WASH_DRY", "5")
+    priced = console.price()
+    done = console.confirm(source="WALK_IN")
+    order = (done["order"] or {}).get("body") or {}
+    order_id = str(order.get("order_id") or "")
+    ok(
+        "priced, agreed and ordered for the customer",
+        priced["status"] < 300 and (done["order"] or {}).get("status") == 201,
+        (done["order"] or {}).get("text", "")[:120],
+    )
+    console.page.wait_for_timeout(1500)
+    link = console.page.locator("#order-info [data-field=customer], [data-field=customer]")
+    ok(
+        "the order page names the customer and links to them",
+        link.count() >= 1
+        and link.first.inner_text().strip() == "chị Lan"
+        and (link.first.get_attribute("href") or "").endswith(f"#/customers/{customer_id}"),
+        link.first.inner_text() if link.count() else "absent",
+    )
+    console.open(f"#/orders/{order_id}/receipt", settle=2500)
+    paper = console.page.locator("#receipt-paper")
+    ok(
+        "the receipt carries the customer's name and, with a number on record, R4's promise",
+        paper.locator("[data-field=customer]").inner_text().strip() == "chị Lan"
+        and paper.locator("[data-field=closing]").inner_text().strip()
+        == "Tiệm sẽ báo khi đồ sẵn sàng.",
+        paper.inner_text()[:160].replace("\n", " | "),
+    )
+
+    head("16c", "LẦN SAU — found by the last four digits, one tap to step 2")
+    console.open("#/new", settle=1600)
+    console.type_into("#new-customer-search", digits[-4:], "newOrder.customer-search")
+    console.page.wait_for_timeout(1500)
+    rows = console.page.locator(f"#new-customer-search-list [data-customer='{customer_id}']")
+    ok(
+        "four digits find them, by name, with their open order counted",
+        rows.count() == 1
+        and "chị Lan" in rows.first.inner_text()
+        and "1 đơn mở" in rows.first.inner_text(),
+        rows.first.inner_text().replace("\n", " | ") if rows.count() else console.text()[:120],
+    )
+    before = sql(f"SELECT count(*) FROM order_requests WHERE customer_id = '{customer_id}'")
+    (again,) = console.press_capturing(rows.first, "/order-requests")
+    touched("newOrder.customer-pick")
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#new-ticket", timeout=15000)
+    ok(
+        "one tap: a new ticket and intake for them, and the flow is on step 2",
+        again["status"] == 201
+        and (again.get("body") or {}).get("customer_id") == customer_id
+        and console.page.locator("#new-add-line").count() == 1
+        and sql(f"SELECT count(*) FROM order_requests WHERE customer_id = '{customer_id}'")
+        == str(int(before or 0) + 1),
+        again["text"][:160],
+    )
+
+    head("16d", "LỊCH SỬ — the customer's page: Gọi, Zalo, open orders first")
+    console.open("#/", settle=1400)
+    link = console.page.locator("nav a", has_text="Khách hàng").first
+    if link.count() and not link.is_visible():
+        # On a phone it is under "Thêm", the way a person reaches it there.
+        console.page.locator("nav a", has_text="Thêm").first.click()
+        console.page.wait_for_timeout(700)
+        link = console.page.locator("main a[data-nav='/customers']").first
+    if link.count():
+        link.click()
+        touched("shell.nav.customers")
+        console.page.wait_for_timeout(1800)
+    ok(
+        "the navigation reaches Khách hàng",
+        console.page.url.endswith("#/customers"),
+        console.page.url,
+    )
+    console.type_into("#customers-search", digits[-4:], "customers.search")
+    console.page.wait_for_timeout(1500)
+    entry = console.page.locator(f"#customers-search-list [data-customer='{customer_id}']")
+    ok("the list finds them by four digits too", entry.count() == 1, console.text()[:120])
+    if entry.count():
+        entry.first.click()
+        touched("customers.open")
+        console.page.wait_for_timeout(1800)
+    call = console.page.locator("#customer-call")
+    zalo = console.page.locator("#customer-zalo")
+    ok(
+        "Gọi is a tel: link and Zalo a zalo.me link, built from the number the server returned",
+        call.count() == 1
+        and call.get_attribute("href") == f"tel:+84{digits[1:]}"
+        and zalo.count() == 1
+        and zalo.get_attribute("href") == f"https://zalo.me/{digits}",
+        [item.get_attribute("href") for item in (call, zalo) if item.count()],
+    )
+    touched("customer.call", "customer.zalo")
+    opened = console.page.locator(f"#customer-open [data-order='{order_id}']")
+    ok(
+        "their open order is listed first, with its ticket and total",
+        opened.count() == 1 and "Phiếu" in opened.first.inner_text(),
+        console.text()[:160],
+    )
+
+    console.sign_in("demo-auditor")
+    console.open(f"#/customers/{customer_id}", settle=1800)
+    ok(
+        "an auditor reads the page masked: last four digits, no Gọi, no Zalo",
+        console.page.locator("#customer-call").count() == 0
+        and digits[-4:] in console.text()
+        and digits[1:] not in console.text(),
+        console.text()[:120],
+    )
+
+    head("16e", "XOÁ — the customer asks to be forgotten; the orders stay")
+    console.sign_in("demo-approver")
+    console.open(f"#/customers/{customer_id}", settle=1800)
+    erase = console.page.locator("#customer-erase")
+    ok("an approver is offered the erasure", erase.count() == 1 and erase.is_enabled(), "")
+    if erase.count():
+        erase.click()
+        console.page.wait_for_timeout(300)
+        answers = console.press_capturing(erase, "/erase")
+        touched("customer.erase")
+        console.page.wait_for_timeout(1800)
+        ok(
+            "two presses erase it (If-Match on the version the page read)",
+            answers[0]["status"] == 200
+            and ((answers[0].get("body") or {}).get("customer") or {}).get("erased_at"),
+            answers[0]["text"][:160],
+        )
+    ok(
+        "the page says so, and the order is still listed",
+        "Thông tin cá nhân của khách đã được xoá" in console.text()
+        and console.page.locator(f"[data-order='{order_id}']").count() == 1,
+        console.text()[:160],
+    )
+    erased = sql(
+        "SELECT (phone_ciphertext IS NULL AND phone_digest IS NULL AND phone_last4 IS NULL "
+        "AND display_name IS NULL AND note IS NULL) || '|' || erasure_reason "
+        f"FROM customers WHERE id = '{customer_id}'"
+    )
+    ok(
+        "every personal column is null, the reason recorded",
+        erased == "true|CUSTOMER_REQUEST",
+        erased,
+    )
+    ok(
+        "the order keeps its customer key",
+        sql(f"SELECT customer_id FROM orders WHERE id = '{order_id}'") == customer_id,
+        "",
+    )
+    console.open(f"#/orders/{order_id}", settle=2000)
+    ok(
+        "the order page still links the record, with no name left to show",
+        "Đã xoá thông tin" in console.text(),
+        console.text()[:120],
+    )
+    ok(
+        "no domain event, audit row, outbox row or idempotency record ever held the number",
+        _customer_rows(digits[1:]) == "0",
+        _customer_rows(digits[1:]),
+    )
+    # The API's own log, when this run can read it: the searches above put the number in a query
+    # string, which the access log must not print. `API_LOG` names the file the stack writes.
+    api_log = os.environ.get("API_LOG", "")
+    if api_log and os.path.isfile(api_log):
+        with open(api_log, encoding="utf-8", errors="replace") as handle:
+            logged = handle.read()
+        ok(
+            "the API log shows the searches, and not one line holds the number",
+            "customers?[query redacted]" in logged
+            and digits[1:] not in logged
+            and spaced not in logged
+            and spaced.replace(" ", "%20") not in logged,
+            "customers?[query redacted]" if "customers?[query redacted]" in logged else "",
+        )
+    else:
+        note("API_LOG is not set, so the API log is not read here; the ledger scan above still ran")
+    console.sign_in("demo-owner")
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -4750,6 +5112,9 @@ SCENARIOS = {
     "contact_pick": scenario_contact_pick,
     "report": scenario_report,
     "shop_capture": scenario_shop_capture,
+    # CUSTOMER-001. Before promise: it proves the refusal on a shop that has not published the
+    # privacy notice, then publishes it; nothing after it depends on the notice being unpublished.
+    "customers": scenario_customers,
     # PROMISE-001. Last: it publishes the turnaround policy, and every scenario above proves its
     # own workflow on a shop that has not (the receipt's R4 line, the report's assumed rule).
     "promise": scenario_promise,

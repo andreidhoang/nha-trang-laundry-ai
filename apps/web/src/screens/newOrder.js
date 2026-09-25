@@ -4,8 +4,12 @@
  *
  * Three steps on one screen, state in memory, back without loss:
  *
- *   1. **Khách** — one press issues a counter ticket and opens the intake for it (`DEC-013`: nothing
- *      about the person is stored); a channel customer this shop has served before is one tap in
+ *   1. **Khách** — one field, "SĐT hoặc tên khách" (`CUSTOMER-001`, `DEC-034`): a regular found by
+ *      full phone, last four digits or name is one tap, which issues their ticket and opens the
+ *      intake in one write (`POST …/order-requests` with `customer_id`); "Thêm khách mới" records a
+ *      new one with consent, once the owner has published the privacy notice. Below it, one press
+ *      still issues a walk-in ticket and opens the intake for it (`DEC-013`: nothing about the
+ *      person is stored); a channel customer this shop has served before is one tap in
  *      "Khách nhắn tin gần đây" (`CONTACT-PICK-001`, `GET …/contacts/recent` — not a search: there
  *      is no name or phone to search, `DEC-015`), and one who is new arrives from the conversation
  *      itself as `#/new?contact=<binding>`, which opens the intake and lands on step 2. Typing the
@@ -95,6 +99,8 @@ import {
   serviceName,
   unitShort,
 } from "../ui/quoting.js";
+// CUSTOMER-001: the one search field and the "Thêm khách mới" sheet, shared with #/customers.
+import { customerSearch, newCustomerSheet } from "../ui/customers.js";
 // A screen importing a screen, as `orderDetail.js` does with `incidents.js`: an in-memory,
 // consumed-once hand-off (RECEIPT-PRINT-001), not a shared helper.
 import { offerReceipt } from "./receipt.js";
@@ -157,6 +163,9 @@ export function render_(context) {
   const quoteWrite = can(who, "QUOTES_WRITE");
   const orderWrite = can(who, "ORDERS_WRITE");
   const creditWrite = can(who, "INCIDENTS_WRITE");
+  // CUSTOMER-001: searching the list, and recording a new customer.
+  const customerRead = can(who, "CUSTOMERS_READ");
+  const customerWrite = can(who, "CUSTOMERS_WRITE");
   // One verdict for the last press, which writes both an acceptance and an order.
   const confirmVerdict = quoteWrite.allowed ? orderWrite : quoteWrite;
 
@@ -204,6 +213,7 @@ export function render_(context) {
   const ticketSub = new Submission("counter-ticket");
   const walkInRequestSub = new Submission("order-request-walk-in");
   const channelRequestSub = new Submission("order-request-channel");
+  const customerRequestSub = new Submission("order-request-customer");
   const quoteSub = new Submission("quote-create");
   const orderSub = new Submission("order-create");
   const creditSub = new Submission("remedy-credit-redeem");
@@ -287,7 +297,14 @@ export function render_(context) {
       acceptedAt: null,
       acceptedRevision: 0,
     });
-    for (const sub of [ticketSub, walkInRequestSub, channelRequestSub, quoteSub, orderSub]) {
+    for (const sub of [
+      ticketSub,
+      walkInRequestSub,
+      channelRequestSub,
+      customerRequestSub,
+      quoteSub,
+      orderSub,
+    ]) {
       sub.reset();
     }
     accepting = null;
@@ -314,6 +331,7 @@ export function render_(context) {
     return h(
       "div",
       { class: "stack" },
+      customerSection(),
       section({
         card: false,
         children: h(
@@ -430,6 +448,126 @@ export function render_(context) {
             : null,
           errorNotice(error),
         ),
+      );
+    }
+  }
+
+  // --- CUSTOMER-001: a regular, by phone, last four digits or name --------------------------------
+
+  /** The customer the customer-intake key was minted for: another customer is another intent. */
+  let customerKeyFor = "";
+
+  /** "Thêm khách mới": after saving, straight on to the bag for the customer just recorded. */
+  const addSheet = newCustomerSheet({
+    store,
+    saveLabel: "Lưu và tiếp tục",
+    onSaved: async (customer) => {
+      addSheet.close();
+      await bindCustomer(customer, customerAlert, null);
+    },
+    // The number is already on the list: continue with that record, as a tap on it would.
+    existingLabel: "Chọn khách này",
+    onExisting: async (customerId) => {
+      try {
+        const detail = await request(
+          `/internal/v1/stores/${encodeURIComponent(store)}/customers/${encodeURIComponent(customerId)}`,
+        );
+        await bindCustomer(detail.customer, customerAlert, null);
+      } catch (error) {
+        show(customerAlert, errorNotice(error));
+      }
+    },
+  });
+  let addSheetQuery = "";
+  const customerAlert = h("div");
+  /** @type {ReturnType<typeof customerSearch>|null} */
+  let lookup = null;
+
+  /**
+   * "SĐT hoặc tên khách" — the one field above the walk-in button. A result is one tap: the
+   * customer's waiting intake is resumed, or their ticket and intake are opened in one write.
+   */
+  function customerSection() {
+    if (!customerRead.allowed) {
+      return h("p", { class: "hint", id: "new-customer-denied" }, customerRead.reason);
+    }
+    const add = button({
+      label: "Thêm khách mới",
+      icon: "plus",
+      variant: "secondary",
+      id: "new-customer-add",
+      onClick: () => {
+        addSheetQuery = lookup ? lookup.query() : "";
+        addSheet.open(addSheetQuery);
+      },
+    });
+    lookup = customerSearch({
+      id: "new-customer-search",
+      store,
+      onPick: (customer, row) => void bindCustomer(customer, customerAlert, row),
+      addControl: gated(add, customerWrite.allowed ? quoteWrite : customerWrite),
+    });
+    return h("div", { class: "stack stack--tight new-customer", id: "new-customer" }, lookup.node, customerAlert);
+  }
+
+  /**
+   * Open the intake for a customer record: resume the one already waiting for them, or issue their
+   * ticket and open the intake in one write. Two presses on the same customer replay one key.
+   *
+   * @param {any} customer a `CustomerSummaryResponse` or `CustomerProfileResponse`
+   * @param {HTMLElement} alertHost
+   * @param {HTMLElement|null} control the pressed row, marked busy while the write is in flight
+   */
+  async function bindCustomer(customer, alertHost, control) {
+    if (flow.busy) return;
+    const customerId = String(customer?.customer_id || "");
+    if (!UUID.test(customerId)) return;
+    if (customerKeyFor !== customerId) {
+      customerRequestSub.reset();
+      customerKeyFor = customerId;
+    }
+    flow.busy = true;
+    control?.setAttribute("aria-busy", "true");
+    render(alertHost, h("p", { class: "hint", role: "status" }, "Đang mở lượt tiếp nhận…"));
+    try {
+      const items = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/order-requests?limit=${WAITING_LIMIT}`,
+      );
+      const waiting = (Array.isArray(items) ? items : []).find(
+        (item) => item.customer_id === customerId && !item.order_id && item.status !== "CANCELLED",
+      );
+      if (waiting) {
+        flow.busy = false;
+        render(alertHost);
+        await resumeFromRequest(waiting);
+        return;
+      }
+      const created = await request(`/internal/v1/stores/${encodeURIComponent(store)}/order-requests`, {
+        method: "POST",
+        body: { customer_id: customerId },
+        idempotencyKey: customerRequestSub.key(),
+      });
+      customerRequestSub.reset();
+      customerKeyFor = "";
+      flow.busy = false;
+      render(alertHost);
+      flow.request = {
+        ...created,
+        order_id: null,
+        customer_name: customer.display_name || null,
+      };
+      go(2);
+    } catch (error) {
+      flow.busy = false;
+      control?.removeAttribute("aria-busy");
+      show(
+        alertHost,
+        errorNotice(error, {
+          title:
+            /** @type {any} */ (error).reasonCodes?.includes("CUSTOMER_UNKNOWN")
+              ? "Không tìm thấy khách này trong cửa hàng (có thể vừa bị xoá). Tìm lại."
+              : undefined,
+        }),
       );
     }
   }
@@ -569,8 +707,8 @@ export function render_(context) {
           "p",
           { class: "hint" },
           "Là những khách đã nhắn tiệm qua kênh chat và đã có lượt tiếp nhận hoặc đơn ở cửa hàng " +
-            "này, mới nhất lên trên. Không có tên hay số điện thoại: tiệm không lưu những thứ đó " +
-            "(DEC-015), nên nhận ra khách qua đơn gần nhất và lúc gần nhất.",
+            "này, mới nhất lên trên. Kênh chat không cho biết tên hay số điện thoại, nên nhận ra " +
+            "khách qua đơn gần nhất và lúc gần nhất. Khách đã có hồ sơ thì tìm ở ô trên cùng.",
         ),
         h(
           "p",
@@ -712,15 +850,15 @@ export function render_(context) {
         h(
           "div",
           { class: "fact-line" },
-          h("p", { class: "hint" }, "Chưa tìm được khách theo tên hay số điện thoại."),
+          h("p", { class: "hint" }, "Chỉ dùng khi có mã khách đọc được ở nơi khác."),
           infoButton(
-            "Vì sao không tìm theo tên?",
+            "Mã khách là gì?",
             h(
               "p",
               { class: "hint" },
-              "Tiệm không lưu tên, số điện thoại hay đoạn chat của khách (DEC-015), nên không có gì " +
-                "để tìm. Khách đã nhắn qua kênh chính thức thì bấm từ cuộc trò chuyện của khách, " +
-                "hoặc chọn ở danh sách trên; ô này chỉ dành cho mã đọc được ở nơi khác.",
+              "Là mã máy chủ gán cho một người nhắn tiệm qua kênh chat. Khách có hồ sơ thì tìm bằng " +
+                "số điện thoại hoặc tên ở ô trên cùng; khách nhắn tin thì bấm từ cuộc trò chuyện " +
+                "của khách, hoặc chọn ở danh sách trên. Ô này chỉ dành cho mã đọc được ở nơi khác.",
             ),
           ),
         ),
@@ -977,6 +1115,9 @@ export function render_(context) {
         numbered ? h("span", { class: "ticket-hero__word" }, "Phiếu") : null,
         numbered ? ` ${item.ticket_number}` : customerLabel(item),
       ),
+      item?.customer_name
+        ? h("p", { class: "ticket-hero__customer", dataField: "customer" }, String(item.customer_name))
+        : null,
       h(
         "p",
         { class: "ticket-hero__meta" },
@@ -2363,6 +2504,7 @@ export function render_(context) {
     body,
     picker.node,
     creditSheet.node,
+    addSheet.node,
   );
 }
 

@@ -132,6 +132,11 @@ def test_create_returns_the_typed_201(client: TestClient) -> None:
         "row_version": 1,
         "created_at": body["created_at"],
         "replayed": False,
+        # CUSTOMER-001, additive: an intake for a binding or a ticket names no customer record and
+        # was issued no ticket by this call.
+        "customer_id": None,
+        "ticket_number": None,
+        "ticket_issued_on": None,
     }
     datetime.fromisoformat(body["created_at"])
 
@@ -310,6 +315,9 @@ def test_the_list_route_returns_newest_first_typed_items(client: TestClient) -> 
         "ticket_number": None,
         "ticket_issued_on": None,
         "order_id": None,
+        # CUSTOMER-001, additive: the stubbed summary names no customer record.
+        "customer_id": None,
+        "customer_name": None,
     }
     datetime.fromisoformat(item["created_at"])
 

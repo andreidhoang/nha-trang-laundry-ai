@@ -294,6 +294,13 @@ class OrderView:
     production_ready_at: datetime | None = None
     promise_basis: str | None = None
     promise_rule_id: str | None = None
+    #: `CUSTOMER-001`. The customer record the order was taken for (null for a walk-in ticket or a
+    #: channel binding with no record), the name they gave, and whether a phone is on record. Read
+    #: live on every read; a replayed step result, which the idempotency ledger stored, carries
+    #: none of the three -- a ledger row is append-only and a name must be erasable.
+    customer_id: UUID | None = None
+    customer_name: str | None = None
+    customer_has_phone: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,6 +351,12 @@ _PROMISE_VIEW_COLUMNS: Final = """,
     o.promise_rule_id
 """
 _VIEW_PROMISED_READY_AT: Final = 27
+#: `CUSTOMER-001` (columns 32-34, after the promise's five): the customer the order was taken for,
+#: read live. The name is personal data an erasure removes, so it is never copied into a stored
+#: step result.
+_CUSTOMER_VIEW_COLUMNS: Final = """,
+    o.customer_id, cu.display_name, (cu.phone_digest IS NOT NULL) AS customer_has_phone
+"""
 
 #: The read model, shared by the board and the read by id so the two cannot disagree about a field.
 #: `CASE` rather than `display_total_min_vnd` alone: a range has no single amount owed, and the
@@ -385,12 +398,15 @@ _ORDER_VIEW_SELECT: Final = (
     """
     + _QUOTE_READINESS_COLUMNS
     + _PROMISE_VIEW_COLUMNS
+    + _CUSTOMER_VIEW_COLUMNS
     + """
     FROM orders o
     JOIN quote_revisions r
       ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
     LEFT JOIN counter_tickets t
       ON t.id = o.bound_contact_id AND t.store_id = o.store_id
+    LEFT JOIN customers cu
+      ON cu.id = o.customer_id AND cu.store_id = o.store_id
 """
 )
 
@@ -1617,6 +1633,9 @@ def _order_view_row(row: tuple[object, ...]) -> OrderView:
         production_ready_at=_optional_datetime(row[29]),
         promise_basis=None if row[30] is None else str(row[30]),
         promise_rule_id=None if row[31] is None else str(row[31]),
+        customer_id=_uuid_or_none(row[32]),
+        customer_name=None if row[33] is None else str(row[33]),
+        customer_has_phone=bool(row[34]),
     )
 
 

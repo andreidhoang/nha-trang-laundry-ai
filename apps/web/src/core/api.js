@@ -76,7 +76,7 @@ async function readBody(response) {
 
 /**
  * @typedef {object} RequestOptions
- * @property {"GET"|"POST"} [method]
+ * @property {"GET"|"POST"|"PATCH"} [method]
  * @property {unknown} [body] serialized as JSON when present
  * @property {string} [idempotencyKey] required by every mutating route in this API
  * @property {number} [ifMatch] a row version; sent strong-quoted, which is the only form accepted

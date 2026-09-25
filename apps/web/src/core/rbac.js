@@ -188,6 +188,25 @@ export const CAPABILITIES = {
     mfa: true,
     why: "Xuất hồ sơ ra ngoài hệ thống chỉ dành cho chủ hoặc người duyệt, và vẫn phải có chủ tiệm duyệt từng lần.",
   },
+  // CUSTOMER-001 (`DEC-034`). Each bound to the exact role set the repository enforces
+  // (`nha_trang_laundry_db.customers`), with MFA and store membership. An auditor reads, masked.
+  CUSTOMERS_READ: {
+    roles: [OWNER, APPROVER, OPERATOR, AUDITOR],
+    mfa: true,
+    why:
+      "Danh sách khách dành cho người làm ở cửa hàng đã xác thực hai bước; kiểm toán chỉ thấy 4 số " +
+      "cuối của số điện thoại.",
+  },
+  CUSTOMERS_WRITE: {
+    roles: [OWNER, APPROVER, OPERATOR],
+    mfa: true,
+    why: "Thêm và sửa khách cần vai trò vận hành đã xác thực hai bước.",
+  },
+  CUSTOMERS_ERASE: {
+    roles: [OWNER, APPROVER],
+    mfa: true,
+    why: "Chỉ chủ tiệm hoặc người duyệt xoá thông tin khách khi khách yêu cầu.",
+  },
   ASSISTANT: {
     roles: [OWNER, APPROVER, OPERATOR],
     mfa: true,

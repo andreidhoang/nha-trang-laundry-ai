@@ -25,14 +25,14 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 
 | | Làm gì | Ở màn hình |
 |---|---|---|
-| 1 | Bấm **＋ Nhận đồ**, rồi **Khách vãng lai — phát phiếu**. Đọc to số phiếu màn hình hiện cho khách, ghi số lên túi đồ | Nhận đồ |
+| 1 | Bấm **＋ Nhận đồ**. Khách quen: gõ số điện thoại, **4 số cuối** hoặc tên vào ô **SĐT hoặc tên khách**, bấm đúng khách — máy phát phiếu luôn. Khách lạ không muốn lưu: bấm **Khách vãng lai — phát phiếu**. Đọc to số phiếu màn hình hiện cho khách, ghi số lên túi đồ | Nhận đồ |
 | 2 | Chọn cách giao nhận — khách tự mang tới và tự lấy là *Tại quầy* (đã chọn sẵn) | Nhận đồ |
 | 3 | Cân đồ. Bấm **Chọn dịch vụ**, chọn món, gõ số kg ngay vào ô vừa hiện | Nhận đồ |
 | 4 | Bấm **Tính giá**, đọc **Tổng khách trả** cho khách | Nhận đồ |
 | 5 | Bấm **Tiếp tục**, hỏi khách biết tiệm qua đâu (chưa hỏi thì để *Chưa biết*) | Nhận đồ |
 | 6 | Khách đồng ý → bấm **Khách đồng ý — tạo đơn**. Máy ghi lời đồng ý, tạo đơn, rồi mở luôn trang đơn | Nhận đồ |
 | 7 | Nhận túi đồ từ khách → bấm **Nhận đồ**. Màn hình hiện giờ hẹn, ví dụ *Hẹn trả: 13:00 thứ Sáu 26/9* — đọc cho khách. Có giày, rèm, chăn: chọn **24 giờ** hoặc **48 giờ** (máy chọn sẵn 48 giờ). Có gấu bông, túi, đồ da, gối, topper…: máy ghi *Bạn chọn ngày giờ trả cho đơn này* — chọn ngày giờ trong ô *Ngày giờ trả*. Tích **Tiệm làm kịp đơn này**, bấm **Nhận đồ** lần nữa | Chi tiết đơn |
-| 7a | Khách cần phiếu → bấm **In phiếu cho khách** ngay đầu trang đơn, rồi **In phiếu** (máy in nhiệt 80 mm, 58 mm hoặc giấy A5). Máy có nút **Chia sẻ** thì gửi được phiếu qua điện thoại. In **sau** khi bấm Nhận đồ thì phiếu ghi *Hẹn trả: …*; đơn chưa có giờ hẹn (chủ tiệm chưa công bố quy tắc hẹn trả) thì phiếu ghi *Tiệm sẽ báo khi đồ sẵn sàng* | Phiếu cho khách |
+| 7a | Khách cần phiếu → bấm **In phiếu cho khách** ngay đầu trang đơn, rồi **In phiếu** (máy in nhiệt 80 mm, 58 mm hoặc giấy A5). Máy có nút **Chia sẻ** thì gửi được phiếu qua điện thoại. Khách có hồ sơ thì phiếu ghi tên khách. In **sau** khi bấm Nhận đồ thì phiếu ghi *Hẹn trả: …*; đơn chưa có giờ hẹn (chủ tiệm chưa công bố quy tắc hẹn trả) thì phiếu ghi *Tiệm sẽ báo khi đồ sẵn sàng* nếu tiệm có số điện thoại hoặc kênh chat của khách, còn khách vãng lai chỉ có số phiếu thì ghi *Giữ phiếu này để nhận đồ* | Phiếu cho khách |
 | 8 | Bỏ đồ vào máy → bấm **Bắt đầu giặt**, rồi bấm đúng máy vừa bỏ đồ vào (máy vừa dùng đứng đầu). Không kịp chọn thì bấm **Bỏ qua** — đơn vẫn bắt đầu giặt | Chi tiết đơn |
 | 9 | Giặt xong → **Giặt xong, kiểm tra đồ**; kiểm xong → **Báo đồ đã sẵn sàng** | Chi tiết đơn |
 | 10 | Khách tới lấy → ở **Đơn hàng** gõ số vào ô **Số phiếu…** rồi bấm **Tìm** (phiếu ngày khác thì bấm **Hôm nay** để chọn ngày), mở đơn | Đơn hàng |
@@ -63,7 +63,7 @@ nằm ở nút **Khác**.
   nhắn ở **Duyệt**, **Bản nháp AI** hoặc **Gửi tay** — bấm **Tạo đơn cho khách này**: máy mở lượt
   tiếp nhận và đi thẳng tới bước 2. Khách từng đặt ở tiệm thì chọn ở mục **Khách nhắn tin gần đây**
   ngay dưới nút phát phiếu (một dòng đang chờ báo giá thì mở lại đúng lượt đó, không tạo thêm).
-  Không tìm được theo tên hay số điện thoại — tiệm không lưu những thứ đó. *Nhập mã thủ công* (gập
+  Khách nhắn tin chưa có hồ sơ thì không có tên hay số điện thoại để tìm. *Nhập mã thủ công* (gập
   sẵn) chỉ dành cho mã đọc được ở nơi khác: nhập rồi bấm **Ghi nhận tiếp nhận**. Mã lạ bị từ chối,
   không tự tạo.
 - **Khách đã có phiếu nhưng chưa thành đơn** (mất mạng, khách quay lại sau): mở **＋ Nhận đồ**, chọn
@@ -72,6 +72,25 @@ nằm ở nút **Khác**.
 - Sửa món sau khi đã tính giá thì nút đổi thành **Tính lại**; bấm để ra giá mới rồi đọc lại cho khách.
 - Nếu máy báo từ chối ở bước 6, đọc lý do ngay dưới nút. Bấm lại chỉ làm tiếp bước còn thiếu: lời
   đồng ý đã ghi thì không ghi lại, và nút đổi thành **Tạo đơn**.
+
+### Khách quen: lưu một lần, lần sau tìm bằng 4 số cuối
+
+Chủ tiệm đã quyết cho tiệm giữ danh sách khách (quyết định DEC-034, 25/09/2026) — **chỉ khi khách
+đồng ý**.
+
+| Khi nào | Làm gì | Ở màn hình |
+|---|---|---|
+| Khách mới muốn được nhớ | Ở ô **SĐT hoặc tên khách** gõ số của khách, bấm **Thêm khách mới**. **Đọc to câu trên màn hình** cho khách; khách đồng ý thì tích ô đầu. Ô tin ưu đãi **chỉ tích khi khách muốn** (mặc định là không). Bấm **Lưu và tiếp tục** — máy lưu khách, phát phiếu, sang bước 2 | Nhận đồ |
+| Khách quay lại | Gõ **4 số cuối** (hoặc cả số, hoặc tên, không cần dấu) → bấm đúng tên khách. Một lần bấm là xong bước 1 | Nhận đồ |
+| Cần gọi hay nhắn Zalo cho khách | **Thêm → Khách hàng** (hoặc **Tìm theo khách** ở **Đơn hàng**), mở khách, bấm **Gọi** hoặc **Zalo**. Trang của khách có đơn đang mở, lịch sử và khoản giảm trừ chưa dùng | Khách hàng |
+| Khách xin xoá thông tin | Chủ tiệm hoặc người duyệt mở trang của khách, bấm **Xoá thông tin (khách yêu cầu)** hai lần. Tên, số, địa chỉ, ghi chú bị xoá; **đơn và tiền vẫn giữ** | Khách hàng |
+
+- Màn hình báo **Chủ tiệm cần công bố thông báo bảo mật trước khi lưu khách** → chưa lưu được ai.
+  Phát phiếu vãng lai như bình thường và báo chủ tiệm.
+- Ô ghi chú **chỉ ghi cách giặt** ("giặt riêng đồ trắng"). Không ghi sức khoẻ, tôn giáo hay chuyện
+  riêng của khách.
+- Số đã có trong danh sách thì máy báo và cho **Chọn khách này** — không tạo trùng.
+- Khách không đồng ý cũng không sao: bấm **Khách vãng lai — phát phiếu**.
 
 ### Khách muốn trả tiền ngay lúc gửi đồ
 

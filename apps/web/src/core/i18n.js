@@ -827,6 +827,13 @@ export const ENUM_GLOSS = {
   // `ChannelProvider` — the channel a contact binding was recorded on (`CONTACT-PICK-001`: the
   // title of a row in "Khách nhắn tin gần đây"). A product name, never a handle.
   ZALO_OA: "Zalo",
+  // CUSTOMER-001 (`DEC-034`): a customer's kind, why a record was erased, what was linked.
+  RETAIL: "khách lẻ",
+  BUSINESS: "doanh nghiệp",
+  CUSTOMER_REQUEST: "khách yêu cầu xoá",
+  RETENTION: "24 tháng không có đơn",
+  COUNTER_TICKET: "phiếu quầy",
+  CHANNEL_BINDING: "khách nhắn tin",
   TELEGRAM_SANDBOX: "Telegram (thử nghiệm)",
   FACEBOOK_MESSENGER: "Messenger",
 };
@@ -962,4 +969,5 @@ export const NAV = {
   reports: "Báo cáo",
   expenses: "Sổ thu chi",
   machines: "Máy giặt, sấy",
+  customers: "Khách hàng",
 };

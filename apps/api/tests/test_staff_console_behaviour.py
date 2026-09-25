@@ -665,6 +665,17 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Sắp tới hẹn",
         "Hẹn lại",
         "Lưu giờ hẹn mới",
+        # CUSTOMER-001 (`DEC-034`): the one search field, recording a regular with consent, the
+        # refusal until the owner publishes the notice, the customer's page, erasure on request,
+        # and what the receipt says to a walk-in who left no number.
+        "SĐT hoặc tên khách",
+        "Thêm khách mới",
+        "Lưu và tiếp tục",
+        "Chọn khách này",
+        "Chủ tiệm cần công bố thông báo bảo mật trước khi lưu khách",
+        "Tìm theo khách",
+        "Xoá thông tin (khách yêu cầu)",
+        "Giữ phiếu này để nhận đồ",
     ]
 
     absent_from_guide = [phrase for phrase in quoted if phrase not in guide]

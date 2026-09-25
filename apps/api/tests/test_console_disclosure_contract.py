@@ -216,7 +216,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     assert counts.get("SERVER_GATE") == 15
     # 7 since REPORT-DASHBOARD-001: `REPORTS_READ` binds to `REPORT_READ_ROLES`, re-checked inside
     # `ReportRepository.store_report` behind the route's own `require_report_reader`.
-    assert counts.get("REPOSITORY_ROLES") == 7
+    # 10 since CUSTOMER-001: `CUSTOMERS_READ`, `CUSTOMERS_WRITE` and `CUSTOMERS_ERASE` bind to the
+    # exact sets `CustomerRepository` re-checks with MFA and store membership. 7 + 3 = 10.
+    assert counts.get("REPOSITORY_ROLES") == 10
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
     # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
@@ -907,8 +909,15 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   facts they stated: reports.js's "why margin is empty" (margin now shows when the month is
     #   complete), the three entries' "nothing records machines / trip costs / cost" missing, the
     #   machine entry's blockedBy, the margin entry's today, and the old measurement lede.
-    # Merged (round 7 wave 1, PROMISE-001 + SHOP-CAPTURE-001): 490 + 24 - 7 = 507, as regenerated.
-    assert sum(counts.values()) == _registry()["total"] == 507
+    # CUSTOMER-001 (round 7, DEC-034) on its own branch: 475 + 17 - 8 = 484. Retired with the
+    #   facts they stated (no name/phone is stored, DEC-015): the gaps entry's
+    #   missing/blockedBy/today, Nhận đồ's two "không tìm theo tên" lines and the recent-list ⓘ, the
+    #   Đơn hàng ⓘ, and the receipt's R4 ⓘ. Added: their true replacements (7), three
+    #   REPOSITORY_ROLES `why` (CUSTOMERS_READ/WRITE/ ERASE), five customers.js lines, one
+    #   ui/customers.js line, and Nhận đồ's new ⓘ.
+    # Merged (round 7 wave 1, PROMISE-001 + SHOP-CAPTURE-001 + CUSTOMER-001): 490 + 24 - 7 + 17 - 8
+    #   = 516, as regenerated; the receipt's hint is one slot reworded in place to say both facts.
+    assert sum(counts.values()) == _registry()["total"] == 516
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -919,11 +928,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 21 after CONSENT-TRANSACTIONAL-001: + `SERVICE_MESSAGING_RELEASE`, on its route's gate.
     # 22 after SESSION-LIST-001: + `SESSIONS_REVOKE_OTHER`, on `require_owner`.
     # 23 with REPORT-DASHBOARD-001 merged on top: + `REPORTS_READ`.
+    # 26 after CUSTOMER-001: + `CUSTOMERS_READ`, `CUSTOMERS_WRITE`, `CUSTOMERS_ERASE`, each on the
+    #   exact role set `CustomerRepository` enforces.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 23
+        == 26
     )
 
 

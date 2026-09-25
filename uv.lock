@@ -552,6 +552,7 @@ name = "nha-trang-laundry-db"
 version = "0.1.0"
 source = { editable = "packages/db" }
 dependencies = [
+    { name = "cryptography" },
     { name = "nha-trang-laundry-contracts" },
     { name = "nha-trang-laundry-domain" },
     { name = "opentelemetry-api" },
@@ -561,6 +562,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=50.0.0,<51" },
     { name = "nha-trang-laundry-contracts", editable = "packages/contracts" },
     { name = "nha-trang-laundry-domain", editable = "packages/domain" },
     { name = "opentelemetry-api", specifier = ">=1.36,<2" },

@@ -57,13 +57,13 @@ The commonest workflow in the shop, and the one every other workflow is a variat
 
 | # | What the person does | Screen | Control | Server | Result |
 |---|---|---|---|---|---|
-| 1 | Customer arrives with a bag | `#/order-requests` | **Phát phiếu** | `POST /internal/v1/stores/{id}/counter-tickets` | A ticket number to say out loud. **The ticket is the customer's identity** — no name, no phone (`DEC-013`) |
+| 1 | Customer arrives with a bag | `#/new` | a regular: **SĐT hoặc tên khách** → tap the customer; anyone else: **Khách vãng lai — phát phiếu** | regular: `POST …/order-requests` with `customer_id` (ticket issued in the same transaction); walk-in: `POST /internal/v1/stores/{id}/counter-tickets` | A ticket number to say out loud. For a walk-in **the ticket is the customer's identity** — no name, no phone (`DEC-013`); for a regular it is their ticket for this visit, and the order carries their record (`DEC-034`) |
 | 2 | Record that a bag was taken in | same | **Ghi nhận tiếp nhận** | `POST …/order-requests` | An intake row, and a one-tap path to pricing |
 | 3 | Weigh the bag, pick the service | `#/quotes` | **Dịch vụ**, **Khối lượng** | — | Near 6 kg the screen warns about the tier before anything is sent |
 | 4 | Price it | same | **Tính giá** | `POST …/quotes` | A revision, its total, and its seal (`snapshot_hash`) |
 | 5 | Read the price to the customer; they agree | same | **Khách đã chốt giá** | `POST …/quotes/{id}/acceptance` | An attestation naming the staff member and the exact revision |
 | 6 | Open the order | `#/orders` | **Tạo đơn** | `POST …/orders` | commercial `REQUESTED`, intake `AWAITING_HANDOFF`, production `NOT_STARTED`, balance `UNPAID` |
-| 6a | Hand the customer a receipt (`RECEIPT-PRINT-001`) | `#/orders/{id}/receipt` | **In phiếu cho khách** on the order page Nhận đồ opens (later: **Khác → In phiếu**), then **In phiếu** or, where the phone can share, **Chia sẻ** | reads only: `GET /internal/v1/orders/{id}`, `GET …/quotes/{id}?revision=` | A slip for an 80 mm / 58 mm roll or A5: the store's registered name, the ticket and its day, each line at its list price, the promotion / credit / delivery fee as their own rows, the server's total, when the order was taken, an 8-character reference. **The promised-ready time** once Nhận đồ has set one (`PROMISE-001`, `DEC-037`, replacing founder ruling R4's line): "Hẹn trả: 13:00 thứ Sáu 26/9"; an order without a promise (taken while no turnaround policy was published) still says "Tiệm sẽ báo khi đồ sẵn sàng" |
+| 6a | Hand the customer a receipt (`RECEIPT-PRINT-001`) | `#/orders/{id}/receipt` | **In phiếu cho khách** on the order page Nhận đồ opens (later: **Khác → In phiếu**), then **In phiếu** or, where the phone can share, **Chia sẻ** | reads only: `GET /internal/v1/orders/{id}`, `GET …/quotes/{id}?revision=` | A slip for an 80 mm / 58 mm roll or A5: the store's registered name, the customer's name when the order has a record (`CUSTOMER-001`), the ticket and its day, each line at its list price, the promotion / credit / delivery fee as their own rows, the server's total, when the order was taken, an 8-character reference. **The promised-ready time** once Nhận đồ has set one (`PROMISE-001`, `DEC-037`, replacing founder ruling R4's line): "Hẹn trả: 13:00 thứ Sáu 26/9"; an order without a promise (taken while no turnaround policy was published) says "Tiệm sẽ báo khi đồ sẵn sàng" when the shop can reach the customer (a phone on record, or the chat the order came from), and "Giữ phiếu này để nhận đồ" to a walk-in who left only a ticket |
 | 7 | Take the bag over the counter | `#/orders` | dimension **nhận đồ** → `RECEIVED_PENDING_INSPECTION` | `POST /orders/{id}/intake-transition` | The shop now holds the goods, and cancelling is no longer a single press |
 | 8 | Accept the order for work | same | → `ACCEPTED` + **Đã duyệt lịch** | same | `production_accepted_at` is stamped: **the SLA clock starts here**. On the counter's **Nhận đồ** step (`RECEIVE`), after the owner ran `scripts/publish_turnaround_policy.py`, the same transaction stores the **promised-ready time** (`PROMISE-001`, `DEC-037`): standard clothing 8 opening hours (08:00–20:00, published closed days skipped); shoes, curtains, blankets 24 or 48 calendar hours by the staff member's choice (48 when silent), rolled into opening hours; special items and express 2 h only by the staff member's choice; the latest line wins; a promise running through an unpublished Tết needs a person. Refused `PROMISE_REQUIRED` when a person must set it and nobody did. **Hẹn lại** (`POST /orders/{id}/promise`) moves what the customer was told, with a reason; the first promise never moves |
 | 9 | Confirm the sale | same | dimension **thương mại** → `STORE_CONFIRMATION_PENDING` → `CONFIRMED` → `ACTIVE` | `POST /orders/{id}/transition` | `ACTIVE` is refused unless intake is `ACCEPTED` |
@@ -85,8 +85,19 @@ somebody else has already moved is refused, and the screen offers a fresh board 
   `#/new?contact=<binding>` with the binding from its own server read: the intake is created and the
   flow lands on pricing. A customer this store has served before is one tap in **Khách nhắn tin gần
   đây** (`GET …/stores/{id}/contacts/recent` — bindings with an order or intake *in this store*
-  only, no handle, no message text). It is not a search: there is nothing to search by (`DEC-015`).
-  `POST …/order-requests` still refuses a binding the server never recorded.
+  only, no handle, no message text). The channel gives no name or number, so this list is not a
+  search. `POST …/order-requests` still refuses a binding the server never recorded.
+- *A regular* (`CUSTOMER-001`, `DEC-034`, 2026-09-25) is found by the one field **SĐT hoặc tên
+  khách** above the walk-in button: `GET …/stores/{id}/customers?q=` matches a full phone by its keyed
+  digest, four digits by the stored last four, anything else as a diacritic-insensitive name; one tap
+  issues their ticket and opens the intake in one write, or resumes the intake already waiting for
+  them. **Thêm khách mới** records a new one — phone, optional name and a laundry-only note — after the
+  staff member reads the notice's sentence aloud and ticks the customer's consent; promotions are a
+  separate tick, off by default. Until the owner runs `scripts/publish_privacy_notice.py`, creating a
+  record is refused `PRIVACY_NOTICE_UNPUBLISHED` and the counter issues walk-in tickets as before.
+  `#/customers/{id}` shows **Gọi** / **Zalo**, open orders, history and unused credits; an owner or
+  approver erases a record on the customer's request (orders kept), and
+  `scripts/run_customer_retention.py` erases records with no order for 24 months.
 - *A customer returning with a remedy credit* is not asked for its code: after pricing, **Dùng khoản
   giảm trừ** lists the store's unused credits (`GET …/stores/{id}/remedy-credits`) as "Phiếu N ·
   day · amount", and a tap spends that credit on the revision on screen through the existing
@@ -305,7 +316,7 @@ Recorded so the gap is visible rather than discovered at the counter. Each is in
 
 | Capability | Status |
 |---|---|
-| Customer records, names, phone numbers, addresses | Not built. A walk-in is a ticket number (`DEC-013`), and no customer aggregate exists (`DEC-015`) |
+| Customer records, names, phone numbers, addresses | **Built, 2026-09-25** (`CUSTOMER-001`, `DEC-034`): one record per phone per store, with consent, encrypted phone + keyed digest + last four, erasure keeping orders, 24-month retention. Not built: the spec's party model (several numbers or addresses per customer) and a console control to attach an old ticket or a chat to a record (`POST …/customers/{id}/links` exists) |
 | ~~Opening an incident at the counter~~ | **Built, 2026-09-18.** `DEC-028` derives the contact scope on the server from the order's binding and stores the complaint in a disposable side table on the `INCIDENT_EVIDENCE` schedule. The two sha256 fields left the request model entirely: a staff member who could name a contact scope could file against a customer of their choosing. `INCIDENT-INTAKE-001` |
 | Remedies: rewash, discount, credit | No tables. Every incident stays `OPEN`. The policy is settled (`DEC-004`) and is applied on paper |
 | Naming the exact price inside a published range | No path. Range-priced services refuse to quote |

@@ -83,32 +83,22 @@ const GROUPS = [
         what:
           "Tạo và tra cứu khách hàng cùng số liên hệ và địa chỉ của họ, để một hỏi mới gắn được " +
           "vào đúng người.",
-        // The second half of this used to read "không có nguồn nào sinh ra bound_contact_id, nên
-        // hiện tại hệ thống không ghi nhận được khách hàng từ bất kỳ nguồn nào" — no source
-        // produces a bound_contact_id, so no customer can be recorded at all. COUNTER-TICKET-001
-        // shipped one under DEC-013 on 26/08: the counter issues a number and that number is the
-        // order's customer reference. What DEC-015 still declines is a customer *record*, which is
-        // a different thing and is what this entry now says.
+        // CUSTOMER-001 (DEC-034, 25/09) built the customer record DEC-015 had declined: this entry
+        // said "hệ thống không lưu tên, số điện thoại hay địa chỉ của khách", and that stopped being
+        // true. What is still absent is the spec's party model -- several numbers and addresses per
+        // customer -- and a console control to attach an old ticket or a chat to a record, which the
+        // server does (`POST …/customers/{id}/links`) and no screen offers yet.
         missing:
-          "Không tồn tại aggregate parties, contact_points hay addresses nào: hệ thống không lưu " +
-          "tên, số điện thoại hay địa chỉ của khách. Khách vãng lai được nhận diện bằng số phiếu " +
-          "do quầy phát (DEC-013, 26/08), và số phiếu đó là bound_contact_id của đơn — nên đơn " +
-          "tạo được, còn hồ sơ khách thì chưa có.",
-        // DEC-015 is RESOLVED (26/08), not pending: the owner decided *not* to build a customer
-        // record layer yet, and named the trigger that reopens it. "Still being decided" and
-        // "decided not to, on purpose" are different things to plan a shop around — the sentence
-        // COUNTER-DEFECTS-001 wrote when it fixed the same defect on DEC-010, in the very commit
-        // that left this one.
+          "Hồ sơ khách đã có (bảng customers, DEC-034): một số điện thoại, tên gọi, một địa chỉ và " +
+          "ghi chú. Chưa có aggregate parties, contact_points hay addresses như đặc tả — một khách " +
+          "chỉ có một số và một địa chỉ — và chưa có nút gắn một phiếu cũ hay một kênh chat vào hồ " +
+          "sơ: máy chủ làm được, màn hình chưa có.",
         blockedBy:
-          "DEC-015 (đã chốt 26/08) — chủ tiệm quyết chưa xây lớp hồ sơ khách hàng; mở lại khi có " +
-          "kênh liên lạc chính thức",
-        // CONTACT-PICK-001 corrected this line, which read as if a channel customer could only
-        // be bound by a code: "Khách nhắn tin gần đây" on ＋ Nhận đồ lists the bindings that
-        // already have an order or intake in this store, and every conversation surface hands its
-        // binding over. There is still no customer record and no search by name or phone.
+          "DEC-034 (đã chốt 25/09) chọn một hồ sơ cho mỗi số điện thoại; nhiều số hay nhiều địa " +
+          "chỉ cho một khách chưa có quyết định",
         today:
-          "Khách vãng lai nhận số phiếu. Khách nhắn tin: bấm “Tạo đơn cho khách này” từ cuộc trò " +
-          "chuyện, hoặc chọn ở “Khách nhắn tin gần đây”. Không tìm theo tên hay số điện thoại.",
+          "Tìm khách ở ô “SĐT hoặc tên khách” của Nhận đồ hoặc ở màn Khách hàng. Khách mới: “Thêm " +
+          "khách mới” (sau khi chủ tiệm công bố thông báo bảo mật). Khách vãng lai vẫn nhận số phiếu.",
       },
       {
         ref: "M3 · MÀN 9",

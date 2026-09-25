@@ -500,7 +500,16 @@ export function render_(context) {
         "Tìm",
       ),
     ),
-    h("div", { class: "orders__lookup-row orders__lookup-row--meta" }, dateChip, dateRow),
+    h(
+      "div",
+      { class: "orders__lookup-row orders__lookup-row--meta" },
+      dateChip,
+      dateRow,
+      // CUSTOMER-001: a regular is found by phone or name, on the customer's own page.
+      can(principal(), "CUSTOMERS_READ").allowed
+        ? h("a", { href: "#/customers", class: "link-action", id: "orders-customers" }, "Tìm theo khách")
+        : null,
+    ),
   );
 
   void board.reload();
@@ -534,12 +543,13 @@ export function render_(context) {
         ? linkButton({ href: "#/new", label: "Nhận đồ", icon: "plus", variant: "primary" })
         : gated(button({ label: "Nhận đồ", icon: "plus", variant: "primary" }), newOrderVerdict),
       info: infoButton(
-        "Vì sao không có tên hay số điện thoại khách?",
+        "Tìm đơn của một khách thế nào?",
         h(
           "p",
           { class: "hint" },
-          "Chủ tiệm đã chốt: khách vãng lai chỉ được ghi bằng số phiếu, tiệm không lưu tên, số " +
-            "điện thoại hay địa chỉ (DEC-013). Tìm đơn bằng số phiếu ở ô “Số phiếu…”.",
+          "Khách vãng lai chỉ có số phiếu, tiệm không lưu gì khác (DEC-013): tìm đơn bằng số phiếu " +
+            "ở ô “Số phiếu…”. Khách quen có hồ sơ (DEC-034): bấm “Tìm theo khách”, tìm bằng số " +
+            "điện thoại, 4 số cuối hoặc tên, rồi mở đơn từ trang của khách.",
         ),
       ),
     }),

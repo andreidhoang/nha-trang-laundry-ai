@@ -199,6 +199,14 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         # lifted by hand in the database, which is the one way it must never be lifted.
         "/internal/v1/stores/{}/contacts/{}/service-messaging",
         "/internal/v1/stores/{}/contacts/{}/service-messaging/release",
+        # CUSTOMER-001 (DEC-034). Nhận đồ's one search field, the consent sheet's notice and create,
+        # and the customer's page with its correction and erasure. A screen that stops calling the
+        # notice would offer a consent tick with no sentence to read; one that stops calling erase
+        # leaves a customer's request to be forgotten with no way to honour it.
+        "/internal/v1/stores/{}/customers",
+        "/internal/v1/stores/{}/customers/{}",
+        "/internal/v1/stores/{}/customers/{}/erase",
+        "/internal/v1/stores/{}/customer-privacy-notice",
     }
     missing = sorted(required - referenced)
     assert not missing, f"no screen calls these routes any more: {missing}"

@@ -25,6 +25,7 @@ from nha_trang_laundry_db.approvals import (
 from nha_trang_laundry_db.assistant import AssistantAuthorizationError
 from nha_trang_laundry_db.channel import ChannelBindingError
 from nha_trang_laundry_db.connection import DatabaseUnavailableError
+from nha_trang_laundry_db.consent_egress import EgressRefusedError
 from nha_trang_laundry_db.counter_tickets import CounterTicketError
 from nha_trang_laundry_db.delivery_legs import (
     DeliveryLegError,
@@ -68,6 +69,12 @@ from nha_trang_laundry_db.shadow_console import (
     ShadowStateError,
 )
 from nha_trang_laundry_db.store_access import StoreAccessError
+from nha_trang_laundry_db.transactional_consent import (
+    ServiceMessagingState,
+    TransactionalConsentAuthorizationError,
+    TransactionalConsentNotFoundError,
+    TransactionalConsentStateError,
+)
 from nha_trang_laundry_domain.approvals import ApprovalEnvelopeError
 from nha_trang_laundry_domain.canonical import MAX_CANONICAL_INT
 from nha_trang_laundry_domain.catalog import (
@@ -120,6 +127,7 @@ from nha_trang_laundry_api.operations import (
     QuotePromotionView,
     StoredIncidentResult,
     StoredManualSendResult,
+    StoredTransactionalReleaseResult,
     UnresolvedQuoteResult,
 )
 from nha_trang_laundry_api.ops_board import OpsBoardService, OpsBoardUnavailable
@@ -334,6 +342,18 @@ class ManualSendPrepareRequest(StrictRequest):
     observed_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     observed_rendered_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     channel: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,49}$")
+
+
+class TransactionalReleaseRequest(StrictRequest):
+    """Lift a TRANSACTIONAL suppression on one channel (`DEC-033`).
+
+    `evidence_webhook_event_id` is picked from `release_evidence` on the service-messaging read,
+    never typed: the server offers only inbound messages from this contact, on this channel,
+    received after the stop, and re-verifies the one cited before anything is written.
+    """
+
+    channel: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,49}$")
+    evidence_webhook_event_id: UUID
 
 
 class ManualSendAttestationRequest(StrictRequest):
@@ -637,6 +657,64 @@ class MessageDraftBindingResponse(BaseModel):
     snapshot_hash: str
     rendered_hash: str
     policy_version: str
+
+
+class ServiceEgressResponse(BaseModel):
+    """What the TRANSACTIONAL guard answers for this contact and channel now. Advice on a read."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["ALLOW", "SUPPRESSED", "REQUIRE_HUMAN"]
+    #: `SUPPRESSED`, `PENDING_REVIEW`, `SUPPRESSION_UNKNOWN`, `MESSAGING_POLICY_UNPUBLISHED` or
+    #: `NO_SERVICE_BASIS` when refused; null when allowed.
+    reason_code: str | None
+    #: `CUSTOMER_INITIATED` or `OPEN_ORDER` when allowed; null when refused.
+    basis: str | None
+    policy_version: int | None
+    suppression_state: str
+
+
+class ReleaseEvidenceResponse(BaseModel):
+    """An inbound message a release may cite: its id and when it arrived, never its words."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    webhook_event_id: UUID
+    received_at: datetime
+
+
+class ServiceMessagingStateResponse(BaseModel):
+    """A contact's service-messaging state on one channel (`CONSENT-TRANSACTIONAL-001`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    contact_binding_id: UUID
+    channel: str
+    purpose: Literal["TRANSACTIONAL"]
+    #: `NONE` (nobody wrote STOP here), `CLEAR`, `SUPPRESSED` or `PENDING_REVIEW_BLOCKED`.
+    transactional_state: str
+    blocked_since: datetime | None
+    releasable: bool
+    #: Shown beside the release so nobody reads it as lifting marketing: it does not.
+    marketing_state: str
+    egress: ServiceEgressResponse
+    #: Newest first, at most 20. Empty unless `releasable`.
+    release_evidence: list[ReleaseEvidenceResponse]
+
+
+class TransactionalReleaseResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    release_consent_event_id: UUID
+    contact_binding_id: UUID
+    channel: str
+    purpose: Literal["TRANSACTIONAL"]
+    previous_state: str
+    state: Literal["CLEAR"]
+    evidence_webhook_event_id: UUID
+    released_at: datetime
+    replayed: bool
 
 
 class ManualSendResponse(BaseModel):
@@ -1911,6 +1989,7 @@ def request_approval(
         ApprovalEnvelopeError,
         ApprovalStateError,
         ApprovalAuthorizationError,
+        EgressRefusedError,
         IdempotencyConflictError,
     ) as error:
         _raise_operations_error(error)
@@ -2886,7 +2965,12 @@ def prepare_manual_send(
             idempotency_key=idempotency_key,
             principal=principal,
         )
-    except (ManualSendAuthorizationError, ManualSendStateError, IdempotencyConflictError) as error:
+    except (
+        ManualSendAuthorizationError,
+        ManualSendStateError,
+        EgressRefusedError,
+        IdempotencyConflictError,
+    ) as error:
         _raise_operations_error(error)
     return _manual_send_response(result)
 
@@ -2915,9 +2999,101 @@ def attest_manual_send(
             idempotency_key=idempotency_key,
             principal=principal,
         )
-    except (ManualSendAuthorizationError, ManualSendStateError, IdempotencyConflictError) as error:
+    except (
+        ManualSendAuthorizationError,
+        ManualSendStateError,
+        EgressRefusedError,
+        IdempotencyConflictError,
+    ) as error:
         _raise_operations_error(error)
     return _manual_send_response(result)
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/contacts/{contact_binding_id}/service-messaging",
+    response_model=ServiceMessagingStateResponse,
+)
+def read_service_messaging(
+    store_id: UUID,
+    contact_binding_id: UUID,
+    channel: Annotated[str, Query(pattern=r"^[A-Z][A-Z0-9_]{1,49}$")],
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> ServiceMessagingStateResponse:
+    """Whether the shop may send this contact a service message on this channel, and why not.
+
+    `CONSENT-TRANSACTIONAL-001` (`DEC-033`). The TRANSACTIONAL suppression state, what the egress
+    guard would answer now (decision, reason, basis, policy version), the MARKETING state for
+    contrast, and -- only while a block is releasable -- the inbound messages a release may cite:
+    identifiers and arrival times, never words. A pure read: no lock, nothing reserved, nothing
+    decided; the send asks the guard again under the lock.
+
+    Role and MFA at the route and again in the repository, then membership of the named store (one
+    opaque 403 for both, so an unknown store is indistinguishable from somebody else's), then the
+    contact's footprint in the shop -- a draft, an intake request or an order. A contact the shop
+    has never dealt with is a 404, exactly as a contact that does not exist.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        state = service.read_service_messaging_state(
+            store_id=store_id,
+            contact_binding_id=contact_binding_id,
+            channel=channel,
+            principal=principal,
+        )
+    except (
+        TransactionalConsentAuthorizationError,
+        TransactionalConsentNotFoundError,
+        TransactionalConsentStateError,
+        StoreAccessError,
+    ) as error:
+        _raise_consent_error(error)
+    return _service_messaging_response(state)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/contacts/{contact_binding_id}/service-messaging/release",
+    response_model=TransactionalReleaseResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def release_service_messaging(
+    store_id: UUID,
+    contact_binding_id: UUID,
+    request: TransactionalReleaseRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
+    service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
+) -> TransactionalReleaseResponse:
+    """Lift a TRANSACTIONAL suppression on server-verified evidence (`DEC-033` ruling 2).
+
+    `OWNER_ADMIN` or `OPS_APPROVER` with MFA, a member of the store. The cited inbound message must
+    be from this contact, on this channel, a customer message that was not itself an opt-out, and
+    received after the event the block rests on; anything else is `RELEASE_EVIDENCE_INVALID`. A
+    contact with nothing to release is `NOTHING_TO_RELEASE`. MARKETING suppression is never touched.
+    Appends a RELEASE consent event and moves the entry to CLEAR with its event, audit and outbox
+    rows in one transaction, under the advisory lock the STOP writer takes.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        stored = service.release_transactional_suppression(
+            store_id=store_id,
+            contact_binding_id=contact_binding_id,
+            channel=request.channel,
+            evidence_webhook_event_id=request.evidence_webhook_event_id,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except (
+        TransactionalConsentAuthorizationError,
+        TransactionalConsentNotFoundError,
+        TransactionalConsentStateError,
+        StoreAccessError,
+        IdempotencyConflictError,
+    ) as error:
+        _raise_consent_error(error)
+    return _transactional_release_response(stored)
 
 
 @app.post(
@@ -3494,7 +3670,99 @@ def _parse_if_match(value: str | None) -> int:
     return parsed
 
 
+def _egress_refusal_detail(error: EgressRefusedError) -> dict[str, object]:
+    """The body of a service send the egress guard refused (`DEC-033`).
+
+    Structured, for the reason `_raise_remedy_error` is: the console renders each `reason_code` as
+    a Vietnamese sentence, and the contact, channel and store let it open the service-messaging
+    panel for exactly the contact that was refused. The contact is the opaque binding the
+    manual-send response already returns; no message content is in it.
+    """
+
+    check = error.check
+    return {
+        "outcome": check.decision.value,
+        "reason_code": check.reason_code or check.decision.value,
+        "purpose": check.purpose,
+        "suppression_state": check.suppression_state,
+        "policy_version": check.policy_version,
+        "contact_binding_id": str(error.contact_binding_id),
+        "channel": error.channel,
+        "store_id": None if error.store_id is None else str(error.store_id),
+        "decision": "DEC-033",
+    }
+
+
+def _raise_consent_error(error: Exception) -> NoReturn:
+    """Map a service-messaging refusal. Authorization stays the one opaque 403."""
+
+    if isinstance(error, (TransactionalConsentAuthorizationError, StoreAccessError)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="operation denied") from error
+    if isinstance(error, TransactionalConsentNotFoundError):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="contact not found") from error
+    if isinstance(error, IdempotencyConflictError):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
+    if isinstance(error, TransactionalConsentStateError):
+        if error.reason_code == "SUPPRESSION_STALE":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, detail=f"STALE_VERSION: {error}"
+            ) from error
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"reason_code": error.reason_code, "decision": "DEC-033"},
+        ) from error
+    _raise_operations_error(error)
+
+
+def _service_messaging_response(state: ServiceMessagingState) -> ServiceMessagingStateResponse:
+    egress = state.egress
+    return ServiceMessagingStateResponse(
+        store_id=state.store_id,
+        contact_binding_id=state.contact_binding_id,
+        channel=state.channel,
+        purpose="TRANSACTIONAL",
+        transactional_state=state.transactional_state,
+        blocked_since=state.blocked_since,
+        releasable=state.releasable,
+        marketing_state=state.marketing_state,
+        egress=ServiceEgressResponse(
+            decision=egress.decision.value,
+            reason_code=egress.reason_code,
+            basis=egress.basis,
+            policy_version=egress.policy_version,
+            suppression_state=egress.suppression_state,
+        ),
+        release_evidence=[
+            ReleaseEvidenceResponse(
+                webhook_event_id=item.webhook_event_id, received_at=item.received_at
+            )
+            for item in state.evidence
+        ],
+    )
+
+
+def _transactional_release_response(
+    stored: StoredTransactionalReleaseResult,
+) -> TransactionalReleaseResponse:
+    return TransactionalReleaseResponse(
+        release_consent_event_id=stored.release_consent_event_id,
+        contact_binding_id=stored.contact_binding_id,
+        channel=stored.channel,
+        purpose="TRANSACTIONAL",
+        previous_state=stored.previous_state,
+        state="CLEAR",
+        evidence_webhook_event_id=stored.evidence_webhook_event_id,
+        released_at=stored.released_at,
+        replayed=stored.replayed,
+    )
+
+
 def _raise_operations_error(error: Exception) -> NoReturn:
+    if isinstance(error, EgressRefusedError):
+        # Before the generic 409 below, which would have flattened it to its English message.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_egress_refusal_detail(error)
+        ) from error
     if isinstance(
         error,
         (

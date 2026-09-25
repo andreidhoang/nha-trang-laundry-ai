@@ -32,7 +32,7 @@ from nha_trang_laundry_db.manual_sends import (
 from nha_trang_laundry_domain.catalog import ActorRole, ApprovalAction
 
 from .fixtures import SyntheticFixtureBundle
-from .synthetic_store import seed_message_draft, seed_store_membership
+from .synthetic_store import seed_message_draft, seed_service_basis, seed_store_membership
 
 
 class SyntheticManualSendError(ValueError):
@@ -112,6 +112,14 @@ def execute_manual_worker_double_send_preflight(
             uuid4(),
             occurred_at + timedelta(seconds=1),
         ),
+    )
+    # A service send needs a published policy and a basis the server can prove (`DEC-033`):
+    # here, the customer's own message a moment before the send.
+    seed_service_basis(
+        connection,
+        contact_binding_id=binding.recipient_binding_id,
+        channel=binding.channel,
+        occurred_at=occurred_at + timedelta(seconds=1),
     )
     manual = ManualSendRepository()
     prepared = manual.prepare(

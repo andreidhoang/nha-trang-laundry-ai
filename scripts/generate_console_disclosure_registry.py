@@ -68,6 +68,9 @@ CAPABILITY_GATES: dict[str, str] = {
     "APPROVALS_DECIDE": "require_approval_staff",
     "QUEUE_READ": "require_approval_staff",
     "MANUAL_SEND": "require_operations_staff",
+    # DEC-033. The release route's own gate; the repository re-checks role and MFA, then store
+    # membership, then the evidence -- none of which the console can predict beyond the role.
+    "SERVICE_MESSAGING_RELEASE": "require_approval_staff",
     "STAFF_ADMIN": "require_owner",
     "ASSISTANT": "require_operations_staff",
     # OPS-BOARD-001. The day summary is the only one of the three new capabilities whose route gate

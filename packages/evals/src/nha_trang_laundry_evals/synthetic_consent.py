@@ -167,6 +167,9 @@ def execute_ambiguous_opt_out_preflight(
             """
             SELECT count(*) FROM consent_events
             WHERE contact_binding_id = %s AND event_type = 'PENDING_REVIEW_BLOCK'
+              -- One review per opt-out. Since DEC-033 the opt-out is recorded for both purposes,
+              -- so the marketing event is the one that stands for the review.
+              AND purpose = 'MARKETING'
             """,
             (contact_id,),
         )

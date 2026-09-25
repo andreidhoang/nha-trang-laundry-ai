@@ -1071,3 +1071,46 @@ decisions:
       total, either when collecting or in advance at the counter before the laundry is finished,
       with the handover then recorded by the collection command; no payment by or to the courier
       (DEC-023).
+  - id: DEC-033
+    title: Does a STOP stop service messages, and what grounds a service message
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW, ORDER_STATUS]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_CONSENT_2026-09-25.md
+    opened_at: '2026-09-25'
+    question: >-
+      A manual send is TRANSACTIONAL and ran no consent or suppression check: the egress guard
+      modelled only MARKETING, suppression rows could only be MARKETING, and the ingress STOP wrote
+      a marketing row only, so a customer who wrote STOP could still be sent a service message by
+      staff. Nothing said whether a STOP covers service messages, how a block is lifted, or what
+      grounds a service message at all.
+    resolved_at: '2026-09-25'
+    decision_record: docs/DECISION_RECORD_CONSENT_2026-09-25.md
+    decided_under: >-
+      Delegated authority, not an owner ratification, recorded as such so the registry stays true.
+      The business owner wrote on 2026-09-25: "continue with the remaining follow-up items and make
+      decisions as real founder of the business and lead engineer", extending the delegation
+      recorded under DEC-028. Boundary kept: DEC-028's delegation asserts no legal basis, so the
+      grounds for a service message (which bases, how many hours) are not decided here; they are
+      shipped as a recommendation the owner confirms by publishing the policy, and until then every
+      service send is refused with MESSAGING_POLICY_UNPUBLISHED.
+    resolution: >-
+      (1) An exact STOP suppresses MARKETING and TRANSACTIONAL on that contact and channel; an
+      ambiguous opt-out blocks both pending review; migration 0053 backfills a TRANSACTIONAL twin
+      for every existing SUPPRESSED or PENDING_REVIEW_BLOCKED marketing row. (2) A TRANSACTIONAL
+      block is released only by an OWNER_ADMIN or OPS_APPROVER with MFA in the store, citing an
+      inbound message the server verifies is the customer's own, on that channel, after the STOP;
+      atomic with event, audit and outbox; marketing is never released this way. (3) A service
+      send needs no TRANSACTIONAL block and a basis named by the owner's published policy
+      (CUSTOMER_INITIATED within service_window_hours, or OPEN_ORDER / completed within
+      closed_order_grace_hours); recommended 48 h, 72 h, both bases, in
+      templates/transactional-messaging-policy-dec-033.json, published only by an owner via
+      scripts/publish_messaging_policy.py. (4) Enforced at manual-send prepare and again at
+      attest, advisory-early (suppression only) when a SEND_MESSAGE approval is raised; no
+      automated TRANSACTIONAL sender exists.
+    reversal: >-
+      (1) Drop the TRANSACTIONAL tuple from inbox._insert_suppression; written rows stay and are
+      released one by one. (2) Withdraw the release route, or narrow RELEASE_ROLES to OWNER_ADMIN.
+      (3) Publish a changed policy document; it is the next version with no deploy. (4) Removing an
+      enforcement point reopens the gap it closes and needs a replacement, not a revert.

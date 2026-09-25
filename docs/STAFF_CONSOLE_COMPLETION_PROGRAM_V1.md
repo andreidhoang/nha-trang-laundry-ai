@@ -64,6 +64,12 @@ a change whose expensive half is blocked on three unresolved things:
    (`packages/db/.../consent_egress.py:84-92`) returns `REQUIRE_HUMAN` for every purpose except
    `MARKETING`, and manual send is hardcoded `TRANSACTIONAL`. A spec-faithful preview would refuse
    to render content **100% of the time**.
+   *Status note, 2026-09-25:* `CONSENT-TRANSACTIONAL-001` (`DEC-033`) modelled it. A STOP now
+   suppresses both purposes; `check_egress_allowed(purpose="TRANSACTIONAL")` refuses a suppressed
+   contact and otherwise requires a basis the owner's published messaging policy names; manual-send
+   prepare and attest both run it. With no published policy it still refuses every service send --
+   now with `MESSAGING_POLICY_UNPUBLISHED`, which the owner lifts by publishing, rather than with an
+   unmodelled purpose.
 
 The projection widening is still worth doing and is item **P7** below. It must not be allowed to
 absorb the producer problem, because an item that ships "the approval queue now returns the binding

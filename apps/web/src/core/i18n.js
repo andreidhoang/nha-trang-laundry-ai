@@ -571,6 +571,15 @@ export const ENUM_GLOSS = {
   CONFIRMED_NOT_SENT: "xác nhận chưa gửi",
   APPROVED_FOR_MANUAL_SEND: "đã khoá để gửi thủ công",
   MANUAL_SEND_RECORDED: "đã ghi nhận người gửi tay",
+  // Consent and suppression (`DEC-033`). The service-messaging read's `NONE` ("no row: nobody
+  // wrote STOP on this channel") is glossed where it is read, not here: `NONE` is also a remedy
+  // next step, and one flat map cannot say both.
+  SUPPRESSED: "khách đã yêu cầu dừng",
+  PENDING_REVIEW_BLOCKED: "đang chặn chờ người đọc lại",
+  UNKNOWN_BLOCKED: "chặn vì không rõ",
+  CLEAR: "không chặn",
+  CUSTOMER_INITIATED: "khách nhắn cho tiệm gần đây",
+  OPEN_ORDER: "khách có đơn đang mở hoặc vừa đóng",
   // Actor types on the audit timeline
   STAFF: "nhân viên",
   AGENT_RUNNER: "tiến trình chạy agent",

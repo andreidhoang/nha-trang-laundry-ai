@@ -520,6 +520,50 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/contacts/{contact_binding_id}/service-messaging:
+    get:
+      operationId: read_service_messaging
+      summary: Whether the shop may send this contact a service message on this channel, and why not.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: contact_binding_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/contacts/{contact_binding_id}/service-messaging/release:
+    post:
+      operationId: release_service_messaging
+      summary: Lift a TRANSACTIONAL suppression on server-verified evidence (`DEC-033` ruling 2).
+      x-authorization-dependencies:
+      - require_approval_staff
+      - get_operations_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: contact_binding_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/counter-tickets:
     post:
       operationId: issue_counter_ticket

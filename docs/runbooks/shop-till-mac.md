@@ -184,7 +184,18 @@ first sign-in, including you. Then:
 ./scripts/shop-admin publish_pricebook.py --actor-id '<owner staff uuid>'
 ./scripts/shop-admin publish_remedy_policy.py --actor-id '<owner staff uuid>'
 ./scripts/shop-admin publish_promotion_policy.py --actor-id '<owner staff uuid>'
+# The owner's own confirmation -- read docs/POLICY_TRANSACTIONAL_MESSAGING_V1.md first (DEC-033):
+./scripts/shop-admin publish_messaging_policy.py --actor-id '<owner staff uuid>'
 ```
+
+**The last line is yours to decide, not a setup step.** Publishing the transactional messaging
+policy is the owner confirming, in Vietnamese and English inside the document, that these are the
+shop's grounds for sending service messages: the customer wrote on that channel within 48 hours, or
+has an order open or completed within 72 hours. It refuses any `--actor-id` that is not an active
+`OWNER_ADMIN`. Until it is published, every manual send is refused with *"Chủ tiệm chưa công bố chính
+sách tin dịch vụ"* -- fail-closed on purpose. A customer who wrote STOP is sent nothing on that
+channel either way, until you or an approver release it on the customer's own later message
+(`#/exceptions`, Gửi thủ công).
 
 The last two were in no runbook. Without the remedy policy, the first complaint a customer brings
 reaches the counter and every remedy request refuses with `REMEDY_POLICY_UNPUBLISHED` -- fail-closed,

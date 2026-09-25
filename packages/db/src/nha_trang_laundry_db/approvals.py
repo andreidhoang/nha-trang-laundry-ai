@@ -15,6 +15,10 @@ from uuid import UUID, uuid4
 from nha_trang_laundry_domain.approvals import build_approval_envelope
 from nha_trang_laundry_domain.catalog import ActorRole, ApprovalAction
 
+from nha_trang_laundry_db.consent_egress import (
+    EgressRefusedError,
+    transactional_suppression_refusal,
+)
 from nha_trang_laundry_db.idempotency import (
     IdempotencyRepository,
     IdempotentCommand,
@@ -212,6 +216,7 @@ class ApprovalRepository:
                     error=ApprovalAuthorizationError,
                 )
             _require_resolvable_resource(cursor, command)
+            _require_recipient_not_suppressed(cursor, command)
         request_payload: dict[str, object] = {
             "action": command.action.value,
             "resource_type": command.resource_type,
@@ -848,6 +853,38 @@ def _require_resolvable_resource(cursor: Any, command: ApprovalRequestCommand) -
         raise ApprovalStateError("the approval names a resource this store does not have")
     if not hmac.compare_digest(str(row[2]), command.snapshot_hash):
         raise ApprovalStateError("the approval names a content digest this resource does not have")
+
+
+def _require_recipient_not_suppressed(cursor: Any, command: ApprovalRequestCommand) -> None:
+    """`DEC-033` ruling 4(iii): a `SEND_MESSAGE` over a draft whose recipient wrote STOP is refused
+    when it is raised, so staff learn now rather than at the send.
+
+    Advisory-early, and deliberately narrower than the guard: it refuses on a TRANSACTIONAL
+    suppression on any channel a manual send may use -- SUPPRESSED, or an opt-out awaiting review --
+    and judges neither the policy nor a service basis, both of which can change before the send.
+    The definitive check is the guard at prepare and again at attest, under the advisory lock.
+    """
+    if (
+        command.action is not ApprovalAction.SEND_MESSAGE
+        or command.resource_type != "MESSAGE_DRAFT"
+    ):
+        return
+    # Imported here: `manual_sends` is the owner of its channel list, and importing it at module
+    # level would make this module's import order depend on it for one constant.
+    from nha_trang_laundry_db.manual_sends import MANUAL_SEND_CHANNELS
+
+    content = _message_draft_content(cursor, command.resource_id)
+    if content is None:
+        return
+    contact = _uuid(content.contact_binding_id)
+    for channel in sorted(MANUAL_SEND_CHANNELS):
+        refusal = transactional_suppression_refusal(
+            cursor, contact_binding_id=contact, channel=channel
+        )
+        if refusal is not None:
+            raise EgressRefusedError(
+                refusal, contact_binding_id=contact, channel=channel, store_id=command.store_id
+            )
 
 
 # --- Decision time: is the resource still what the envelope binds? ------------------------------

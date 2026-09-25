@@ -7,6 +7,14 @@ approval had ever named X. The prepare command no longer has a recipient field a
 repository reads it off the `MESSAGE_DRAFT` the approval binds, after proving that draft's current
 content is still the content that was approved. Migration `0049` makes the schema refuse an envelope
 whose recipient is not its draft's.
+
+`CONSENT-TRANSACTIONAL-001` (`DEC-033`): a manual send is a TRANSACTIONAL send, and it now runs the
+egress guard twice, each time inside the transaction that writes -- at `prepare`, before the
+envelope that makes the content copyable exists, and again at `attest`, which closes the
+claim-to-send window: a STOP that arrived after the envelope was locked refuses the attestation. A
+refusal raises `EgressRefusedError` before anything is written. What the guard answered -- decision,
+suppression state, basis and policy version -- is recorded on both events, so the audit shows why a
+send was allowed.
 """
 
 from __future__ import annotations
@@ -20,6 +28,11 @@ from uuid import UUID, uuid4
 from nha_trang_laundry_contracts import AgentDeploymentStage
 from nha_trang_laundry_domain.catalog import ApprovalAction
 
+from nha_trang_laundry_db.consent_egress import (
+    TRANSACTIONAL,
+    EgressRefusedError,
+    check_egress_allowed,
+)
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.message_drafts import (
     MESSAGE_DRAFT_RESOURCE_TYPE,
@@ -28,6 +41,11 @@ from nha_trang_laundry_db.message_drafts import (
 )
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
+
+#: The channels a manual send may name. One today: this deployment has no real channel configured,
+#: so `INTERNAL_TEST` is the whole list, and the `SEND_MESSAGE` approval pre-check reads suppression
+#: on exactly these.
+MANUAL_SEND_CHANNELS = frozenset({"INTERNAL_TEST"})
 
 
 class ManualSendAuthorizationError(PermissionError):
@@ -112,6 +130,24 @@ class ManualSendRepository:
             )
             if cursor.fetchone() is not None:
                 raise ManualSendStateError("manual-send envelope already exists")
+            # SECURITY spec §7.1: before the content becomes copyable the server rechecks
+            # purpose-specific consent and suppression. The guard takes the advisory lock the STOP
+            # writer takes, so a STOP committing now is either seen here or waits for this
+            # transaction. Refused means nothing is written: no envelope, no event, no content.
+            egress = check_egress_allowed(
+                cursor,
+                contact_binding_id=recipient_binding_id,
+                channel=channel,
+                purpose=TRANSACTIONAL,
+                at=prepared_at,
+            )
+            if not egress.send_allowed:
+                raise EgressRefusedError(
+                    egress,
+                    contact_binding_id=recipient_binding_id,
+                    channel=channel,
+                    store_id=_uuid(approval[10]),
+                )
             envelope_id = uuid4()
 
             def mutation(change_cursor: Any) -> None:
@@ -149,6 +185,7 @@ class ManualSendRepository:
                     event_payload={
                         "approval_request_id": str(command.approval_request_id),
                         "resource_version": command.observed_resource_version,
+                        "egress": egress.record(),
                     },
                     audit_action="MANUAL_SEND_PREPARE",
                     actor_type="STAFF",
@@ -208,6 +245,23 @@ class ManualSendRepository:
                 snapshot_hash=str(envelope[4]),
                 rendered_hash=str(envelope[5]),
             )
+            # The claim-to-send re-check (`DEC-033`). Suppression is read as it stands now, under
+            # the advisory lock: a STOP that arrived after the envelope was locked refuses the
+            # attestation. The basis is judged at `sent_at`, the moment the message left.
+            egress = check_egress_allowed(
+                cursor,
+                contact_binding_id=_uuid(envelope[6]),
+                channel=str(envelope[7]),
+                purpose=TRANSACTIONAL,
+                at=sent_at,
+            )
+            if not egress.send_allowed:
+                raise EgressRefusedError(
+                    egress,
+                    contact_binding_id=_uuid(envelope[6]),
+                    channel=str(envelope[7]),
+                    store_id=_uuid(approval[10]),
+                )
             attestation_id = uuid4()
 
             def mutation(change_cursor: Any) -> None:
@@ -252,7 +306,10 @@ class ManualSendRepository:
                     aggregate_id=command.manual_send_envelope_id,
                     aggregate_version=int(str(envelope[10])) + 1,
                     event_type="MANUAL_SEND_RECORDED",
-                    event_payload={"approval_request_id": str(envelope[1])},
+                    event_payload={
+                        "approval_request_id": str(envelope[1]),
+                        "egress": egress.record(),
+                    },
                     audit_action="MANUAL_SEND_ATTEST",
                     actor_type="STAFF",
                     actor_id=command.principal.staff_user_id,
@@ -384,7 +441,7 @@ def _require_manual_sender(cursor: Any, principal: StaffPrincipal, store_id: obj
 
 def _channel(value: str) -> str:
     normalized = value.strip()
-    if normalized != "INTERNAL_TEST":
+    if normalized not in MANUAL_SEND_CHANNELS:
         raise ManualSendStateError("manual-send channel is not configured")
     return normalized
 

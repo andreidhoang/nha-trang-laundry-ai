@@ -186,6 +186,22 @@ thu tiền.
 
 ---
 
+## Khách đã nhắn “dừng” — gửi tin dịch vụ (`DEC-033`)
+
+Khách nhắn **dừng / STOP** trên kênh nào thì tiệm **không chủ động gửi gì** trên kênh đó — kể cả tin
+báo đồ đã xong. Ở *Ngoại lệ → Gửi thủ công*, máy sẽ từ chối và nói rõ lý do:
+
+| Máy nói | Làm gì |
+|---|---|
+| **Khách đã yêu cầu dừng nhận tin trên kênh này** | Không gửi. Nếu khách nhắn lại cho tiệm, chủ tiệm hoặc người duyệt chọn **đúng tin nhắn mới đó** trong danh sách máy đưa ra rồi bấm **“Gỡ chặn tin dịch vụ”**. Không gỡ theo lời kể hay cuộc gọi. Tin quảng cáo vẫn bị chặn |
+| **Khách vừa nhắn một câu có thể là yêu cầu dừng** | Chủ tiệm hoặc người duyệt đọc lại rồi quyết |
+| **Chủ tiệm chưa công bố chính sách tin dịch vụ** | Báo chủ tiệm. Chỉ chủ tiệm công bố được |
+| **Chưa có căn cứ để gửi tin dịch vụ** | Khách không nhắn gần đây và không có đơn đang mở. Đợi khách nhắn cho tiệm trước |
+
+Nếu lỡ gửi tay rồi mới thấy máy từ chối ghi nhận: **báo chủ tiệm ngay**, đừng tìm cách ghi lại.
+
+---
+
 ## Khi có sự cố
 
 | Màn hình nói | Nghĩa là | Làm gì |

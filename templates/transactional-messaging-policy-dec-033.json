@@ -1,0 +1,11 @@
+{
+  "schema": "transactional-messaging-policy-v1",
+  "decision": "DEC-033",
+  "source": "docs/POLICY_TRANSACTIONAL_MESSAGING_V1.md",
+  "recommended_on": "2026-09-25",
+  "service_window_hours": 48,
+  "closed_order_grace_hours": 72,
+  "bases": ["CUSTOMER_INITIATED", "OPEN_ORDER"],
+  "owner_confirmation_vi": "Khi công bố tài liệu này, chủ tiệm xác nhận đây là căn cứ của tiệm để gửi tin dịch vụ cho khách: khách đã nhắn cho tiệm trên kênh đó trong vòng 48 giờ, hoặc khách có đơn chưa đóng hay đã đóng chưa quá 72 giờ. Tin dịch vụ không phải tin quảng cáo. Khách đã nhắn dừng (STOP) trên kênh nào thì tiệm không chủ động gửi gì trên kênh đó cho đến khi chủ tiệm hoặc người duyệt gỡ chặn dựa trên một tin nhắn mới của chính khách.",
+  "owner_confirmation_en": "By publishing this document the shop owner confirms these are the shop's grounds for sending service messages to a customer: the customer wrote to the shop on that channel within 48 hours, or has an order that is open or closed no more than 72 hours ago. A service message is not marketing. A customer who wrote STOP on a channel is sent nothing the shop initiates on that channel until the owner or an approver releases the block on a new message from that customer."
+}

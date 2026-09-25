@@ -27,7 +27,7 @@ from nha_trang_laundry_domain.catalog import ApprovalAction
 # See `test_ops_board_postgres.py`: the real draft fixture lives beside the repository tests.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "db" / "tests"))
 
-from message_draft_test_data import current_binding, seed_message_draft
+from message_draft_test_data import current_binding, grant_service_basis, seed_message_draft
 
 
 def _principal(role: StaffRole) -> StaffPrincipal:
@@ -107,6 +107,8 @@ def test_real_service_manual_send_is_idempotent_version_bound_and_atomic() -> No
         # used to name `uuid4()` with the literal "a"/"b" digests, which is now refused as content
         # that does not exist.
         draft = seed_message_draft(connection, store_id)
+        # DEC-033: a manual send needs a published policy and a basis; the customer wrote.
+        grant_service_basis(connection, draft.contact_binding_id, received_at=requested_at)
         binding = current_binding(connection, draft.agent_run_id)
         hash_a, hash_b = binding.snapshot_hash, binding.rendered_hash
         approval = ApprovalRepository().request(

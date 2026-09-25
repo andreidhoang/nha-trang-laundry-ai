@@ -338,4 +338,5 @@ def test_ingress_suppression_and_its_audit_commit_together(
         )
         row = cursor.fetchone()
     assert row is not None
-    assert cast(tuple[int, int], row) == (1, 1)
+    # DEC-033: one STOP writes both purposes, each with its own consent event.
+    assert cast(tuple[int, int], row) == (2, 2)

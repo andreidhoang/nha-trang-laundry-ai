@@ -40,7 +40,7 @@ from nha_trang_laundry_domain.remedies import (
     RemedyCredit,
     RemedyRefusal,
 )
-from test_promotion_wiring import live
+from test_promotion_wiring import expired, live
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = datetime(2026, 9, 18, 3, 0, tzinfo=UTC)
@@ -191,26 +191,75 @@ def test_the_same_credit_cannot_be_reserved_twice_on_one_bill() -> None:
     assert again.reason_codes == (RemedyRefusal.REMEDY_CREDIT_ALREADY_ON_QUOTE.value,)
 
 
-def test_a_carried_credit_withholds_a_non_stacking_programme_until_it_is_released() -> None:
-    """The credit was on the bag first, so the programme that may not stack is withheld -- and if
-    the credit turns out not to fit and is released, the programme applies after all."""
+def _released_reason(snapshot: object, credit: RemedyCredit) -> bytes:
+    trace = next(
+        t
+        for t in snapshot.data.calculation_traces  # type: ignore[attr-defined]
+        if t.component == f"REMEDY_CREDIT_RELEASED_{credit.credit_id.hex.upper()}"
+    )
+    return trace.trace.canonical_json  # type: ignore[no-any-return]
+
+
+def test_a_non_stacking_programme_applies_and_the_carried_credit_waits() -> None:
+    """`DEC-030`, option A, in the order the old code got backwards: credit reserved first,
+    programme priced after.
+
+    Rewritten from `test_a_carried_credit_withholds_a_non_stacking_programme_until_it_is_released`,
+    which pinned the opposite: the credit was "on the bag first", so the programme was withheld and
+    the bill came to 120.000 - 30.000 = 90.000 d with `PROMOTION_STACKING_REQUIRES_HUMAN`. DEC-030
+    (2026-09-25) ruled the promotion applies and the credit waits, unspent, for a later order. So
+    the 6 kg bag is 84.000 d, the credit is released from the quote -- whole, stated, and naming the
+    non-stacking programme as the reason -- and the quote reserves nothing.
+    """
 
     programme = live()
     quote_id = uuid4()
     credit = _credit(30_000)
     credited = _reserve(_price(quote_id, 1, "4"), credit)
+    assert credited.snapshot.data.totals.display_total_min_vnd == 70_000
 
-    # 6 kg under a live 30% programme would be 84.000 d. With the credit carried, the programme is
-    # withheld and the credit applies to the list price: 120.000 - 30.000.
-    carried = _price(
+    repriced = _price(
         quote_id, 3, "6", carried=reserved_remedy_credits(credited.snapshot), promotion=programme
     )
-    data = carried.snapshot.data
-    assert data.totals.display_total_min_vnd == 90_000
-    assert PromotionReason.PROMOTION_STACKING_REQUIRES_HUMAN.value in data.reason_codes
+    data = repriced.snapshot.data
+    # 120.000 d at the 6 kg rate, 30% off: the promoted price, not list less the credit.
+    assert data.totals.display_total_min_vnd == 84_000
+    assert PromotionReason.PROMOTION_APPLIED.value in data.reason_codes
+    assert PromotionReason.PROMOTION_STACKING_REQUIRES_HUMAN.value not in data.reason_codes
+    # The credit is not on this bill and not spent: released, whole, with the reason stated.
+    assert reserved_remedy_credits(repriced.snapshot) == ()
+    assert released_remedy_credit_ids(repriced.snapshot) == {credit.credit_id}
+    assert REMEDY_CREDIT_RELEASED in data.reason_codes
+    reason = _released_reason(repriced.snapshot, credit)
+    assert b'"reason_code":"REMEDY_CREDIT_PROMOTION_NOT_STACKABLE"' in reason
+    assert b'"credit_vnd":30000' in reason
 
-    # 1 kg: the credit cannot fit and is released, so nothing is stacking and the programme
-    # applies -- 25.000 less 30% is 17.500.
+    # And the bill sells at that price: acceptance re-verifies the promotion and finds it unchanged.
+    accepted = accept_quote_revision(
+        priced=repriced.snapshot, revision=4, promotion=programme, accepted_at=NOW
+    )
+    assert isinstance(accepted, ComposedQuote), accepted
+    assert accepted.snapshot.data.totals.display_total_min_vnd == 84_000
+    assert reserved_remedy_credits(accepted.snapshot) == ()
+
+
+def test_the_original_order_is_the_same_rule_promotion_first_credit_refused_unspent() -> None:
+    """Programme priced first, credit presented after: refused before anything moves (DEC-030)."""
+
+    promoted = _price(uuid4(), 1, "6", promotion=live())
+    assert promoted.snapshot.data.totals.display_total_min_vnd == 84_000
+    refused = redeem_remedy_credit(priced=promoted.snapshot, revision=2, credit=_credit(30_000))
+    assert isinstance(refused, UnresolvedQuote)
+    assert refused.reason_codes == (RemedyRefusal.REMEDY_CREDIT_PROMOTION_NOT_STACKABLE.value,)
+
+
+def test_a_credit_that_would_not_fit_is_still_released_under_the_programme() -> None:
+    """1 kg: 25.000 d less 30% is 17.500 d. The credit is released; the programme is why."""
+
+    programme = live()
+    quote_id = uuid4()
+    credit = _credit(30_000)
+    credited = _reserve(_price(quote_id, 1, "4"), credit)
     released = _price(
         quote_id, 3, "1", carried=reserved_remedy_credits(credited.snapshot), promotion=programme
     )
@@ -218,6 +267,26 @@ def test_a_carried_credit_withholds_a_non_stacking_programme_until_it_is_release
     assert REMEDY_CREDIT_RELEASED in data.reason_codes
     assert PromotionReason.PROMOTION_STACKING_REQUIRES_HUMAN.value not in data.reason_codes
     assert data.totals.display_total_min_vnd == 17_500
+
+
+def test_a_stacking_or_empty_programme_leaves_the_credit_on_the_bill() -> None:
+    """DEC-030 is about a promotion that may not stack *and* takes dong off. Otherwise the credit
+    stays reserved exactly as before: stacking allowed means both apply, and a programme outside its
+    window grants nothing to rank against the credit."""
+
+    quote_id = uuid4()
+    credit = _credit(30_000)
+    credited = _reserve(_price(quote_id, 1, "4"), credit)
+    carried = reserved_remedy_credits(credited.snapshot)
+
+    stacking = _price(quote_id, 3, "6", carried=carried, promotion=live(stacking_allowed=True))
+    assert stacking.snapshot.data.totals.display_total_min_vnd == 84_000 - 30_000
+    assert reserved_remedy_credits(stacking.snapshot) == (credit,)
+
+    outside = _price(quote_id, 3, "6", carried=carried, promotion=expired())
+    assert outside.snapshot.data.totals.display_total_min_vnd == 120_000 - 30_000
+    assert reserved_remedy_credits(outside.snapshot) == (credit,)
+    assert released_remedy_credit_ids(outside.snapshot) == set()
 
 
 @given(

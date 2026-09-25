@@ -359,10 +359,11 @@ class RemedyProposalRequest(StrictRequest):
     state either would be authorising its own bound. The same applies to the window: it is measured
     from a recorded handover, not from a date a form supplies.
 
-    `amount_vnd` is an integer of dong and is legal for exactly one kind. `DAMAGE_COMPENSATION` is
-    the only remedy where a person chooses the figure -- a rewash moves no money, a late-delivery
-    credit is computed, and loss has no figure at all -- so supplying it anywhere else is refused
-    with `REMEDY_AMOUNT_NOT_APPLICABLE` rather than ignored.
+    `amount_vnd` is an integer of dong and is legal for exactly two kinds. `DAMAGE_COMPENSATION`
+    and, since `DEC-031`, `LOST_ITEM` are the remedies where a person proposes the figure -- a
+    rewash moves no money and a late-delivery credit is computed -- so supplying it anywhere else
+    is refused with `REMEDY_AMOUNT_NOT_APPLICABLE` rather than ignored. A loss always goes to the
+    owner, whatever the figure.
     """
 
     kind: RemedyKind
@@ -389,9 +390,10 @@ class RemedyCreditRedemptionRequest(StrictRequest):
 class RemedyProposalResponse(BaseModel):
     """The recorded proposal, with the figures the server computed for it.
 
-    `outcome` is `REQUIRE_HUMAN` and `reason_code` is `LOSS_POLICY_UNRESOLVED` for a loss, on a 201
-    rather than an error: the complaint was recorded, and for a loss the record *is* the outcome.
-    Every other field is then null, because `DEC-004` gives loss no figure of any kind.
+    Before `DEC-031` a loss came back `REQUIRE_HUMAN` with `reason_code = LOSS_POLICY_UNRESOLVED`
+    and no figure. A loss is now proposed like damage and always comes back
+    `OWNER_APPROVAL_REQUIRED`; `owner_reasons` says why the owner is needed, so the counter can say
+    so without guessing from the amount.
     """
 
     proposal_id: UUID
@@ -407,10 +409,12 @@ class RemedyProposalResponse(BaseModel):
     ceiling_vnd: int | None
     window_opened_at: str | None
     window_closes_at: str | None
-    #: The `APPROVE_REMEDY` envelope, present exactly when the amount is above the staff ceiling.
+    #: The `APPROVE_REMEDY` envelope, present exactly when `owner_reasons` is not empty.
     approval_id: UUID | None
     reason_code: str | None
     replayed: bool
+    #: `LOSS_CLAIM`, `ORDER_REFUNDED`, `ITEM_FEE_NOT_RECORDED`, `ABOVE_STAFF_LIMIT`, in that order.
+    owner_reasons: list[str] = Field(default_factory=list)
 
 
 class RemedyExecutionResponse(BaseModel):
@@ -425,6 +429,30 @@ class RemedyExecutionResponse(BaseModel):
     replayed: bool
 
 
+class RemedyLineOptionResponse(BaseModel):
+    """One item a damage or loss claim may name, with the terms the server will decide it on."""
+
+    line_id: str
+    service_code: str
+    #: From the pricebook version the order was priced under; null when it cannot be read.
+    service_name: str | None
+    unit: str
+    quantity: str
+    #: `UNIT` (one piece's price), `BAG` (weight-priced: the bag's fee), `NOT_RECORDED`.
+    item_fee_basis: str
+    item_fee_vnd: int
+    #: One item's ceiling: the most one proposal may ask for.
+    ceiling_vnd: int
+    #: Items on the line, and what they may carry together. Equal to `ceiling_vnd` when `pieces`
+    #: is 1 (a bag, a single piece, or a fee that was never recorded).
+    pieces: int
+    line_ceiling_vnd: int
+    #: What live or paid damage and loss proposals already hold against this line.
+    committed_vnd: int
+    #: Reasons every damage amount on this item needs the owner. A loss always does besides.
+    owner_always: list[str]
+
+
 class RemedyOptionsResponse(BaseModel):
     """What the form must show before a staff member types anything.
 
@@ -432,6 +460,9 @@ class RemedyOptionsResponse(BaseModel):
     that the owner has not published the figures -- not render an empty form. A null
     `late_delivery_credit_vnd` means no delivery this system recorded could have been late, and is
     rendered as unavailable rather than as 0.
+
+    `damage_lines` is `DEC-031`'s counter half: per item the fee basis, the ceiling and what the
+    item already carries, so the form predicts "staff can approve" exactly as `propose` decides it.
     """
 
     incident_id: UUID
@@ -444,9 +475,13 @@ class RemedyOptionsResponse(BaseModel):
     defect_window_closes_at: str | None
     defect_window_open: bool
     damage_line_ceilings_vnd: dict[str, int] | None
+    damage_lines: list[RemedyLineOptionResponse] | None
     late_delivery_credit_vnd: int | None
     late_delivery_threshold_minutes: int | None
-    loss_reason_code: str
+    #: `DEC-031`: every loss claim needs the owner. Replaces `loss_reason_code`.
+    loss_requires_owner: bool
+    #: `DEC-031`: the order was refunded, so every compensation on it needs the owner.
+    order_refunded: bool
 
 
 class RemedyCreditRedemptionResponse(BaseModel):
@@ -2736,9 +2771,31 @@ def remedy_options(
             if options.damage_line_ceilings_vnd is None
             else dict(options.damage_line_ceilings_vnd)
         ),
+        damage_lines=(
+            None
+            if options.damage_lines is None
+            else [
+                RemedyLineOptionResponse(
+                    line_id=line.line_id,
+                    service_code=line.service_code,
+                    service_name=line.service_name,
+                    unit=line.unit,
+                    quantity=line.quantity,
+                    item_fee_basis=line.item_fee_basis,
+                    item_fee_vnd=line.item_fee_vnd,
+                    ceiling_vnd=line.ceiling_vnd,
+                    pieces=line.pieces,
+                    line_ceiling_vnd=line.line_ceiling_vnd,
+                    committed_vnd=line.committed_vnd,
+                    owner_always=list(line.owner_always),
+                )
+                for line in options.damage_lines
+            ]
+        ),
         late_delivery_credit_vnd=options.late_delivery_credit_vnd,
         late_delivery_threshold_minutes=options.late_delivery_threshold_minutes,
-        loss_reason_code=options.loss_reason_code,
+        loss_requires_owner=options.loss_requires_owner,
+        order_refunded=options.order_refunded,
     )
 
 

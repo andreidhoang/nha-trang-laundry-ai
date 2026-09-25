@@ -51,7 +51,11 @@ from nha_trang_laundry_domain.quote_composition import (
     redeem_remedy_credit,
     reserved_remedy_credits,
 )
-from nha_trang_laundry_domain.quotes import ExactLineAmounts, parse_quote_revision
+from nha_trang_laundry_domain.quotes import (
+    ConfigurationSnapshotReference,
+    ImmutableQuoteSnapshot,
+    parse_quote_revision,
+)
 from nha_trang_laundry_domain.remedies import (
     REMEDY_POLICY_CONFIG_TYPE,
     REMEDY_POLICY_VERSION,
@@ -66,9 +70,10 @@ from nha_trang_laundry_domain.remedies import (
     RemedyRefused,
     RemedyRequest,
     RemedyStatus,
-    RemedyUnresolved,
     evaluate_remedy,
+    item_compensation_terms,
     parse_remedy_policy,
+    remedy_line_facts,
     remedy_proposal_document,
 )
 
@@ -284,8 +289,45 @@ class StoredRemedyProposal:
     window_opened_at: datetime | None = None
     window_closes_at: datetime | None = None
     approval_id: UUID | None = None
-    #: `LOSS_POLICY_UNRESOLVED` for the one kind that is recorded and stopped; `None` otherwise.
+    #: Was `LOSS_POLICY_UNRESOLVED` for a loss before `DEC-031`. No proposal is recorded in that
+    #: shape any more, so this is `None`; the field stays because the response contract carries it.
     reason_code: str | None = None
+    #: `OwnerReason` values, in order, when the owner is needed; empty when staff may authorise.
+    #: What lets the counter say *why* a 20.000 d loss waits for the owner.
+    owner_reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RemedyLineOption:
+    """One line a damage or loss claim may name, with the terms `propose` will decide it on.
+
+    `DEC-031` and the staging review: the counter picked "line-0" from a list of bare identifiers
+    and could not see what the item already carried, so the form said "staff can approve" and the
+    server answered "needs the owner". Every figure here comes from
+    `domain.remedies.item_compensation_terms` and the same committed-total read `propose` uses.
+    """
+
+    line_id: str
+    service_code: str
+    #: The display name in the pricebook version the order was priced under, or `None` when that
+    #: version cannot be read or does not carry the code. Never today's catalogue.
+    service_name: str | None
+    unit: str
+    quantity: str
+    #: `ItemFeeBasis`: `UNIT` (one piece), `BAG` (weight), or `NOT_RECORDED` (owner decides).
+    item_fee_basis: str
+    item_fee_vnd: int
+    #: One item's ceiling: the most a single proposal may ask for.
+    ceiling_vnd: int
+    #: How many items the line counts, and what they may carry together (per-item ceiling x pieces,
+    #: never above 5x the line's charge). Equal to `ceiling_vnd` for a bag or a single piece.
+    pieces: int
+    line_ceiling_vnd: int
+    #: What live or paid damage and loss proposals already committed against this line.
+    committed_vnd: int
+    #: `OwnerReason` values that send *every* damage amount on this line to the owner. A loss adds
+    #: `LOSS_CLAIM` on top, whatever this says.
+    owner_always: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,16 +351,21 @@ class RemedyOptions:
     rewash_window_open: bool = False
     defect_window_closes_at: datetime | None = None
     defect_window_open: bool = False
-    #: The 5x cap per priced line of the order's own revision, keyed by `line_id`.
+    #: The 5x cap per priced line of the order's own revision, keyed by `line_id`. Kept for callers
+    #: that read it; `damage_lines` carries the same ceilings with what the counter needs besides.
     damage_line_ceilings_vnd: Mapping[str, int] | None = None
+    #: Per damageable line: service, fee basis, ceiling, what it already carries. `DEC-031`.
+    damage_lines: tuple[RemedyLineOption, ...] | None = None
     #: The 10% the server computed, or `None` when the order records no settled total, no
     #: succeeded return leg, or already has a late-delivery credit proposed or paid -- in which case
     #: the credit is not available and the form must say so.
     late_delivery_credit_vnd: int | None = None
     late_delivery_threshold_minutes: int | None = None
-    #: Always `LOSS_POLICY_UNRESOLVED`. Present so the console can render `components.unsupported`
-    #: with a reason rather than a broken form.
-    loss_reason_code: str = RemedyRefusal.LOSS_POLICY_UNRESOLVED.value
+    #: `DEC-031` rule 2, stated by the server rather than assumed by the form: a loss always needs
+    #: the owner. Replaces `loss_reason_code`, which told the form to render loss as unsupported.
+    loss_requires_owner: bool = True
+    #: `DEC-031` rule 3: the order's money was refunded, so every compensation needs the owner.
+    order_refunded: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,9 +381,11 @@ class _OrderRecord:
     #: domain decides nothing from it -- it is persistence provenance.
     quote_snapshot_hash: str
     facts: RemedyOrderFacts
+    #: The pricebook version the order's revision was priced under, for display names only.
+    pricebook: ConfigurationSnapshotReference | None
     #: The incident's status when it was read, unlocked. The pre-check refuses on it so a closed
     #: incident is answered before an approval envelope is raised; the binding check is repeated
-    #: under the row lock in the proposal's own transaction.
+    #: under the row lock in the proposal's own transaction. Empty when read by order.
     incident_status: str
 
 
@@ -373,7 +422,10 @@ class RemedyProposalRepository:
         published = read_published_remedy_policy(cursor)
         if published is None:
             return RemedyOptions(
-                incident_id=incident_id, order_id=record.order_id, policy_published=False
+                incident_id=incident_id,
+                order_id=record.order_id,
+                policy_published=False,
+                order_refunded=record.facts.refunded,
             )
         # Only the order-level count matters to the probe below: a late-delivery credit already
         # proposed or paid for this order means there is no second one to offer.
@@ -398,6 +450,31 @@ class RemedyProposalRepository:
                 committed=prior,
             )
             credit = probe.amount_vnd if isinstance(probe, RemedyAuthorized) else None
+        # Per line, the terms `evaluate_remedy` will apply -- the same domain function, the same
+        # committed-total filter -- so the form's "staff can approve" is the server's answer.
+        committed_by_line = _read_line_commitments(cursor, order_id=record.order_id)
+        names = _service_names(cursor, record.pricebook)
+        lines: list[RemedyLineOption] = []
+        for line_id in sorted(facts.lines):
+            terms = item_compensation_terms(policy, facts, line_id)
+            assert terms is not None
+            line = facts.lines[line_id]
+            lines.append(
+                RemedyLineOption(
+                    line_id=line_id,
+                    service_code=line.service_code,
+                    service_name=names.get(line.service_code),
+                    unit=line.unit.value,
+                    quantity=line.quantity,
+                    item_fee_basis=terms.basis.value,
+                    item_fee_vnd=terms.item_fee_vnd,
+                    ceiling_vnd=terms.ceiling_vnd,
+                    pieces=terms.pieces,
+                    line_ceiling_vnd=terms.line_ceiling_vnd,
+                    committed_vnd=committed_by_line.get(line_id, 0),
+                    owner_always=tuple(reason.value for reason in terms.owner_always),
+                )
+            )
         return RemedyOptions(
             incident_id=incident_id,
             order_id=record.order_id,
@@ -408,12 +485,11 @@ class RemedyProposalRepository:
             rewash_window_open=rewash_closes is not None and at <= rewash_closes,
             defect_window_closes_at=defect_closes,
             defect_window_open=defect_closes is not None and at <= defect_closes,
-            damage_line_ceilings_vnd={
-                line_id: amount * policy.damage_compensation_multiple
-                for line_id, amount in facts.line_amounts_vnd.items()
-            },
+            damage_line_ceilings_vnd={line.line_id: line.ceiling_vnd for line in lines},
+            damage_lines=tuple(lines),
             late_delivery_credit_vnd=credit,
             late_delivery_threshold_minutes=policy.late_delivery_threshold_minutes,
+            order_refunded=facts.refunded,
         )
 
     def propose(self, connection: Any, command: RemedyProposalCommand) -> StoredRemedyProposal:
@@ -476,17 +552,6 @@ class RemedyProposalRepository:
             raise _refusal_error(outcome)
 
         proposal_id = uuid4()
-        if isinstance(outcome, RemedyUnresolved):
-            return self._record_unresolved(
-                connection,
-                command,
-                record=record,
-                published=published,
-                proposal_id=proposal_id,
-                outcome=outcome,
-                proposed_at=proposed_at,
-            )
-
         document = remedy_proposal_document(
             proposal_id=proposal_id,
             incident_id=command.incident_id,
@@ -575,6 +640,10 @@ class RemedyProposalRepository:
                     "status": status.value,
                     "amount_vnd": outcome.amount_vnd,
                     "ceiling_vnd": outcome.ceiling_vnd,
+                    "item_fee_basis": (
+                        None if outcome.item_fee_basis is None else outcome.item_fee_basis.value
+                    ),
+                    "owner_reasons": [reason.value for reason in outcome.owner_reasons],
                     "policy_version": published.version,
                     "proposal_hash": document.snapshot_hash,
                 },
@@ -608,117 +677,7 @@ class RemedyProposalRepository:
             window_opened_at=outcome.window_opened_at,
             window_closes_at=outcome.window_closes_at,
             approval_id=approval_id,
-        )
-
-    def _record_unresolved(
-        self,
-        connection: Any,
-        command: RemedyProposalCommand,
-        *,
-        record: _OrderRecord,
-        published: PublishedRemedyPolicy,
-        proposal_id: UUID,
-        outcome: RemedyUnresolved,
-        proposed_at: datetime,
-    ) -> StoredRemedyProposal:
-        """Write down a loss and stop. `DEC-004` carries loss forward as not yet decided.
-
-        The record is the point. The alternative -- refusing the request outright -- would leave the
-        shop exactly where it was before this item: a customer says a garment is missing, nothing is
-        written down, and the owner has nothing to decide the policy from when they come to decide
-        it. So the complaint is stored, `POLICY_UNRESOLVED` is a status no update can leave, and no
-        ceiling, window or amount is computed for it anywhere.
-        """
-
-        document = remedy_proposal_document(
-            proposal_id=proposal_id,
-            incident_id=command.incident_id,
-            order_id=record.order_id,
-            authorized=RemedyAuthorized(
-                kind=RemedyKind.LOST_ITEM,
-                amount_vnd=None,
-                direction=None,
-                ceiling_vnd=None,
-                window_opened_at=None,
-                window_closes_at=None,
-                requires_owner_approval=False,
-                outcome=PolicyOutcome.REQUIRE_HUMAN,
-            ),
-            policy_version_id=published.version_id,
-            policy_version=published.version,
-            order_line_id=None,
-            proposed_at=proposed_at,
-        )
-
-        def mutation(cursor: Any) -> None:
-            # A loss record moves no money, so nothing is summed; the incident rule still applies.
-            locked_status = _lock_proposable_incident(
-                cursor, order_id=record.order_id, incident_id=command.incident_id
-            )
-            _insert_proposal(
-                cursor,
-                proposal_id=proposal_id,
-                command=command,
-                record=record,
-                published=published,
-                status=RemedyStatus.POLICY_UNRESOLVED,
-                amount_vnd=None,
-                direction=None,
-                ceiling_vnd=None,
-                window_opened_at=None,
-                window_closes_at=None,
-                proposal_hash=document.snapshot_hash,
-                approval_id=None,
-                proposed_at=proposed_at,
-            )
-            _open_incident_review(
-                cursor,
-                command.incident_id,
-                fault=command.store_fault_attested,
-                locked_status=locked_status,
-            )
-
-        commit_material_change(
-            connection,
-            MaterialChange(
-                aggregate_type="REMEDY_PROPOSAL",
-                aggregate_id=proposal_id,
-                aggregate_version=1,
-                event_type=REMEDY_PROPOSAL_RECORDED,
-                event_payload={
-                    "incident_id": str(command.incident_id),
-                    "order_id": str(record.order_id),
-                    "kind": RemedyKind.LOST_ITEM.value,
-                    "status": RemedyStatus.POLICY_UNRESOLVED.value,
-                    "outcome": PolicyOutcome.REQUIRE_HUMAN.value,
-                    "reason_code": outcome.reason_code,
-                },
-                audit_action="REMEDY_PROPOSE",
-                actor_type="STAFF",
-                actor_id=command.principal.staff_user_id,
-                correlation_id=command.correlation_id,
-                outbox_events=(
-                    OutboxEvent(
-                        "remedy.proposal_recorded.v1",
-                        {"proposal_id": str(proposal_id), "reason_code": outcome.reason_code},
-                        f"remedy:{proposal_id}:proposed",
-                    ),
-                ),
-                occurred_at=proposed_at,
-            ),
-            mutation,
-        )
-        return StoredRemedyProposal(
-            proposal_id=proposal_id,
-            incident_id=command.incident_id,
-            order_id=record.order_id,
-            kind=RemedyKind.LOST_ITEM,
-            status=RemedyStatus.POLICY_UNRESOLVED,
-            outcome=PolicyOutcome.REQUIRE_HUMAN,
-            proposal_hash=document.snapshot_hash,
-            policy_version_id=published.version_id,
-            policy_version=published.version,
-            reason_code=outcome.reason_code,
+            owner_reasons=tuple(reason.value for reason in outcome.owner_reasons),
         )
 
     def _request_owner_approval(
@@ -731,7 +690,10 @@ class RemedyProposalRepository:
         rendered_hash: str,
         requested_at: datetime,
     ) -> UUID:
-        """Raise the `APPROVE_REMEDY` envelope `DEC-004` requires above the staff ceiling.
+        """Raise the `APPROVE_REMEDY` envelope a proposal with any `OwnerReason` needs.
+
+        `DEC-004` requires it above the staff ceiling; `DEC-031` adds every loss, every
+        compensation on a refunded order, and every claim on an item whose fee was never recorded.
 
         `APPROVAL_POLICIES` is not touched: `APPROVE_REMEDY` already maps to `_OWNER_FINANCIAL` with
         `REMEDY_PROPOSAL`, which is owner policy and not this item's to edit. The resource type
@@ -805,13 +767,21 @@ class RemedyProposalRepository:
 
         kind = RemedyKind(str(row[3]))
         status = RemedyStatus(str(row[4]))
-        if kind is RemedyKind.LOST_ITEM or status is RemedyStatus.POLICY_UNRESOLVED:
-            # The wall. A loss record can never be executed, and there is no amount on it to pay
-            # even if somebody tried.
+        if status is RemedyStatus.POLICY_UNRESOLVED:
+            # The wall, for the loss records written before `DEC-031`. They carry no amount and no
+            # envelope, and nothing may pay them; a new loss proposal goes to the owner instead.
             raise RemedyStateError(
                 "loss policy is not resolved, so no remedy may be paid against this record",
                 reason_code=RemedyRefusal.LOSS_POLICY_UNRESOLVED.value,
                 authority="DEC-004",
+            )
+        if kind is RemedyKind.LOST_ITEM and row[6] is None:
+            # `DEC-031` rule 2, in code as well as in migration 0051: a loss without the owner's
+            # envelope is not a loss anybody may pay.
+            raise RemedyStateError(
+                "a loss is paid only with the owner's approval",
+                reason_code="REMEDY_APPROVAL_REQUIRED",
+                authority="DEC-031",
             )
         if status is RemedyStatus.EXECUTED:
             raise RemedyStateError(
@@ -1307,6 +1277,30 @@ def _read_order_for_incident(cursor: Any, *, store_id: UUID, incident_id: UUID) 
 
     cursor.execute(
         """
+        SELECT i.order_id, i.status FROM customer_incidents i
+        WHERE i.id = %s AND i.store_id = %s AND i.order_id IS NOT NULL
+        """,
+        (incident_id, store_id),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise RemedyStateError(
+            "the incident is missing, not this store's, or names no order",
+            reason_code="REMEDY_INCIDENT_NOT_FOUND",
+        )
+    return _read_order_record(cursor, order_id=_uuid(row[0]), incident_status=str(row[1]))
+
+
+def _read_order_record(cursor: Any, *, order_id: UUID, incident_status: str = "") -> _OrderRecord:
+    """One order's stored facts, by order. `propose`, the options read and `execute` all use it.
+
+    `execute` re-reads through this rather than trusting what `propose` recorded, because two facts
+    here can change after a proposal is written: the order can be refunded, and a proposal written
+    before `DEC-031` was checked against a line-wide ceiling the ruling has since lowered.
+    """
+
+    cursor.execute(
+        """
         SELECT o.id, o.store_id, o.bound_contact_id, o.fulfillment_mode, o.production_released_at,
                o.current_quote_snapshot_hash, r.snapshot, s.paid_amount_vnd,
                (
@@ -1315,9 +1309,13 @@ def _read_order_for_incident(cursor: Any, *, store_id: UUID, incident_id: UUID) 
                    ORDER BY dl.recorded_at
                    LIMIT 1
                ) AS returned_at,
-               i.status
-        FROM customer_incidents i
-        JOIN orders o ON o.id = i.order_id
+               -- `DEC-031` rule 3. Either fact is enough: the balance `CANCEL-REFUND-001` writes,
+               -- or a refund row. Reading both fails closed if one is ever written without the
+               -- other.
+               o.balance_status = 'REFUNDED'
+                   OR EXISTS (SELECT 1 FROM order_refunds rf WHERE rf.order_id = o.id)
+                   AS refunded
+        FROM orders o
         JOIN quote_revisions r
           ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
         -- A settlement that has been refunded is not a charge. `order_refunds` keeps the
@@ -1327,9 +1325,9 @@ def _read_order_for_incident(cursor: Any, *, store_id: UUID, incident_id: UUID) 
         LEFT JOIN order_settlements s
           ON s.order_id = o.id
          AND NOT EXISTS (SELECT 1 FROM order_refunds rf WHERE rf.settlement_id = s.id)
-        WHERE i.id = %s AND i.store_id = %s
+        WHERE o.id = %s
         """,
-        (incident_id, store_id),
+        (order_id,),
     )
     row = cursor.fetchone()
     if row is None:
@@ -1340,6 +1338,7 @@ def _read_order_for_incident(cursor: Any, *, store_id: UUID, incident_id: UUID) 
     mode = FulfillmentMode(str(row[3]))
     expects_return = mode in _MODES_EXPECTING_RETURN
     delivered_at = _optional_datetime(row[8])
+    revision = _stored_revision(row[6])
     return _OrderRecord(
         order_id=_uuid(row[0]),
         store_id=_uuid(row[1]),
@@ -1352,12 +1351,31 @@ def _read_order_for_incident(cursor: Any, *, store_id: UUID, incident_id: UUID) 
             # window from an event the customer was not present at.
             goods_returned_at=delivered_at if expects_return else _optional_datetime(row[4]),
             settled_total_vnd=None if row[7] is None else int(row[7]),
-            line_amounts_vnd=_line_amounts(row[6]),
+            lines=remedy_line_facts(revision.data.lines),
             expects_return_leg=expects_return,
             return_leg_succeeded=delivered_at is not None,
+            refunded=bool(row[9]),
         ),
-        incident_status=str(row[9]),
+        pricebook=next(
+            (
+                reference
+                for reference in revision.data.configuration_snapshots
+                if reference.config_type == "PRICEBOOK"
+            ),
+            None,
+        ),
+        incident_status=incident_status,
     )
+
+
+#: What "committed" excludes, shared by both committed-total reads so they cannot disagree: a
+#: proposal waiting on an owner envelope that can never be approved any more.
+_LIVE_PROPOSAL_FILTER = """
+    NOT (
+        p.status = 'OWNER_APPROVAL_REQUIRED'
+        AND coalesce(s.status, 'REQUESTED') = ANY(%s)
+    )
+"""
 
 
 def _read_commitments(
@@ -1371,6 +1389,8 @@ def _read_commitments(
     hand over, so it is committed. Fail-closed at every edge: a missing envelope state row reads as
     live, and an envelope that dies concurrently is still counted by the reader that raced it.
 
+    Damage and loss on one line share the sum since `DEC-031`: both pay against the same item.
+
     Called twice by `propose`: once unlocked to decide whether the owner is needed before anything
     is written, and once under the order-row lock inside the transaction that inserts, which is the
     read that binds. The second is what stops two counters both reading "nothing committed yet".
@@ -1380,22 +1400,93 @@ def _read_commitments(
         """
         SELECT
             coalesce(sum(p.amount_vnd) FILTER (
-                WHERE p.kind = 'DAMAGE_COMPENSATION' AND p.order_line_id = %s
+                WHERE p.kind IN ('DAMAGE_COMPENSATION', 'LOST_ITEM') AND p.order_line_id = %s
             ), 0),
             count(*) FILTER (WHERE p.kind = 'LATE_DELIVERY_CREDIT')
         FROM remedy_proposals p
         LEFT JOIN approval_request_states s ON s.approval_request_id = p.approval_id
-        WHERE p.order_id = %s
-          AND NOT (
-              p.status = 'OWNER_APPROVAL_REQUIRED'
-              AND coalesce(s.status, 'REQUESTED') = ANY(%s)
-          )
-        """,
+        WHERE p.order_id = %s AND
+        """
+        + _LIVE_PROPOSAL_FILTER,
         (order_line_id, order_id, list(_DEAD_ENVELOPE_STATUSES)),
     )
     row = cursor.fetchone()
     assert row is not None
     return RemedyCommitments(line_committed_vnd=int(row[0]), late_delivery_credits=int(row[1]))
+
+
+def _read_line_commitments(cursor: Any, *, order_id: UUID) -> dict[str, int]:
+    """`_read_commitments`'s line total for every line at once, for the options read."""
+
+    cursor.execute(
+        """
+        SELECT p.order_line_id, coalesce(sum(p.amount_vnd), 0)
+        FROM remedy_proposals p
+        LEFT JOIN approval_request_states s ON s.approval_request_id = p.approval_id
+        WHERE p.order_id = %s
+          AND p.kind IN ('DAMAGE_COMPENSATION', 'LOST_ITEM')
+          AND p.order_line_id IS NOT NULL AND
+        """
+        + _LIVE_PROPOSAL_FILTER
+        + " GROUP BY p.order_line_id",
+        (order_id, list(_DEAD_ENVELOPE_STATUSES)),
+    )
+    return {str(row[0]): int(row[1]) for row in cursor.fetchall()}
+
+
+def _service_names(cursor: Any, reference: ConfigurationSnapshotReference | None) -> dict[str, str]:
+    """Display names from the pricebook version the order was priced under. Display only.
+
+    The version the snapshot cites, not the one in force: a service renamed since would otherwise
+    label an old order with a name its customer never saw. Digest-checked like every configuration
+    read; a version that cannot be read, or does not match the digest the snapshot recorded, gives
+    no names at all and the console shows the service code. Nothing here reaches a money decision.
+    """
+
+    if reference is None:
+        return {}
+    cursor.execute(
+        """
+        SELECT payload, snapshot_hash FROM configuration_versions
+        WHERE id = %s AND config_type = 'PRICEBOOK' AND lifecycle IN ('PUBLISHED', 'RETIRED')
+        """,
+        (reference.version_id,),
+    )
+    row = cursor.fetchone()
+    if row is None or not isinstance(row[0], Mapping):
+        return {}
+    stored = str(row[1]).removeprefix(_DIGEST_PREFIX)
+    cited = reference.snapshot_hash.removeprefix(_DIGEST_PREFIX)
+    if not (
+        hmac.compare_digest(snapshot_hash(row[0]).removeprefix(_DIGEST_PREFIX), stored)
+        and hmac.compare_digest(cited, stored)
+    ):
+        return {}
+    services = row[0].get("services")
+    if not isinstance(services, list):
+        return {}
+    return {
+        str(item["code"]): str(item["display_name"])
+        for item in services
+        if isinstance(item, Mapping) and "code" in item and "display_name" in item
+    }
+
+
+_DIGEST_PREFIX = "JCS-SHA256-V1:"
+
+
+def _stored_revision(snapshot: object) -> ImmutableQuoteSnapshot:
+    """The order's stored revision, through the domain's own parser.
+
+    A revision this system cannot parse produces no ceilings rather than a plausible wrong one.
+    """
+
+    if not isinstance(snapshot, Mapping):
+        raise RemedyStateError(
+            "the order's stored quote revision is unreadable",
+            reason_code="REMEDY_ORDER_REVISION_UNREADABLE",
+        )
+    return parse_quote_revision(snapshot)
 
 
 def _lock_proposable_incident(cursor: Any, *, order_id: UUID, incident_id: UUID) -> str:
@@ -1435,28 +1526,6 @@ def _require_proposable_incident(status: str) -> None:
             reason_code="REMEDY_INCIDENT_NOT_OPEN",
             authority="DEC-004",
         )
-
-
-def _line_amounts(snapshot: object) -> dict[str, int]:
-    """What the shop charged for each line of the order's current revision.
-
-    The **net** amount, not the list amount: `DEC-004` caps compensation at a multiple of "what the
-    store charged", and a line sold with a discount was charged at its net. Read from the stored
-    immutable snapshot through the domain's own parser, so a revision this system cannot parse
-    produces no ceilings rather than a plausible wrong one.
-    """
-
-    if not isinstance(snapshot, Mapping):
-        raise RemedyStateError(
-            "the order's stored quote revision is unreadable",
-            reason_code="REMEDY_ORDER_REVISION_UNREADABLE",
-        )
-    revision = parse_quote_revision(snapshot)
-    return {
-        line.line_id: line.amounts.net_amount_vnd
-        for line in revision.data.lines
-        if isinstance(line.amounts, ExactLineAmounts)
-    }
 
 
 def _window_close(
@@ -1642,6 +1711,14 @@ def _recheck_before_paying(
       item had every earlier one in its committed total, so under the rule this sum can never
       exceed the limit; a row set where it does was not written under the rule.
 
+    `DEC-031` adds, for damage and loss alike, terms re-derived from the order's stored snapshot
+    rather than trusted from the row: one claim is paid within the lower of the ceiling it recorded
+    and one item's ceiling now (a row written under the line-wide rule is not paid past the
+    per-piece cap); everything paid on the line stays within its items' ceilings together (the
+    founder's per-item clarification); and a staff-authorised row is refused if the line now needs
+    the owner whatever the amount -- the order was refunded after it was proposed, or its fee was
+    never recorded.
+
     And one late-delivery credit per order. The order row is locked first, as `propose` locks it,
     so a proposal and a payment on the same order serialise rather than each checking a sum the
     other is changing.
@@ -1665,7 +1742,7 @@ def _recheck_before_paying(
                 authority="DEC-004",
             )
         return
-    if kind is not RemedyKind.DAMAGE_COMPENSATION:
+    if kind not in (RemedyKind.DAMAGE_COMPENSATION, RemedyKind.LOST_ITEM):
         return
     assert amount_vnd is not None and ceiling_vnd is not None and order_line_id is not None
     cursor.execute(
@@ -1673,32 +1750,64 @@ def _recheck_before_paying(
         SELECT coalesce(sum(amount_vnd), 0),
                coalesce(sum(amount_vnd) FILTER (WHERE approval_id IS NULL), 0)
         FROM remedy_proposals
-        WHERE order_id = %s AND kind = 'DAMAGE_COMPENSATION' AND order_line_id = %s
-          AND status = 'EXECUTED' AND id <> %s
+        WHERE order_id = %s AND kind IN ('DAMAGE_COMPENSATION', 'LOST_ITEM')
+          AND order_line_id = %s AND status = 'EXECUTED' AND id <> %s
         """,
         (order_id, order_line_id, proposal_id),
     )
     sums = cursor.fetchone()
     assert sums is not None
     paid_total, paid_by_staff = int(sums[0]), int(sums[1])
-    if paid_total + amount_vnd > ceiling_vnd:
-        raise RemedyStateError(
-            "paying this would take the item past its compensation ceiling",
-            reason_code=RemedyRefusal.REMEDY_CEILING_EXCEEDED.value,
-            authority="DEC-004",
-            ceiling_vnd=ceiling_vnd,
-            committed_vnd=paid_total,
-        )
-    if not staff_authorized:
-        return
     policy = _policy_by_version(cursor, policy_version_id)
     if policy is None:
-        # The staff limit this proposal was checked against cannot be read back, so whether staff
-        # alone may pay it cannot be answered. Invariant 11: that is a stop.
+        # The figures this proposal was checked against cannot be read back, so neither the item's
+        # ceiling nor whether staff alone may pay it can be answered. Invariant 11: that is a stop.
         raise RemedyStateError(
             "the remedy policy this proposal cites cannot be read",
             reason_code=RemedyRefusal.REMEDY_POLICY_UNPUBLISHED.value,
             authority="INVARIANT-11",
+        )
+    # `DEC-031`, applied to rows written before it: the item's terms are re-derived from the
+    # order's own stored snapshot, and the lower of the recorded and the re-derived ceiling binds.
+    # The ruling only ever lowers exposure, so a proposal checked against a line-wide 750.000 d is
+    # not paid past the per-piece 75.000 d, and one whose order was refunded since is the owner's.
+    terms = item_compensation_terms(
+        policy, _read_order_record(cursor, order_id=order_id).facts, order_line_id
+    )
+    if terms is None:
+        raise RemedyStateError(
+            "the order's revision no longer prices this line",
+            reason_code=RemedyRefusal.REMEDY_LINE_NOT_PRICED.value,
+            authority="INVARIANT-3",
+        )
+    # One claim, one item: the lower of the ceiling the row recorded and one item's ceiling now.
+    # A row written under the line-wide rule recorded the whole line's cap, and is not paid past
+    # one item's.
+    item_ceiling = min(ceiling_vnd, terms.ceiling_vnd)
+    if amount_vnd > item_ceiling:
+        raise RemedyStateError(
+            "paying this would give one item more than its compensation ceiling",
+            reason_code=RemedyRefusal.REMEDY_CEILING_EXCEEDED.value,
+            authority="DEC-004",
+            ceiling_vnd=item_ceiling,
+        )
+    # Everything paid on the line, this included, within every item's ceiling together.
+    if paid_total + amount_vnd > terms.line_ceiling_vnd:
+        raise RemedyStateError(
+            "paying this would take the line past its compensation ceiling",
+            reason_code=RemedyRefusal.REMEDY_CEILING_EXCEEDED.value,
+            authority="DEC-004",
+            ceiling_vnd=terms.line_ceiling_vnd,
+            committed_vnd=paid_total,
+        )
+    if not staff_authorized:
+        return
+    if terms.owner_always:
+        raise RemedyStateError(
+            "this item's compensation now needs the owner: "
+            + ", ".join(reason.value for reason in terms.owner_always),
+            reason_code="REMEDY_APPROVAL_REQUIRED",
+            authority="DEC-031",
         )
     if paid_by_staff + amount_vnd > policy.staff_approval_ceiling_vnd:
         raise RemedyStateError(

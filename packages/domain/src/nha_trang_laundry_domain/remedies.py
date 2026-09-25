@@ -12,21 +12,39 @@ reason `CURRENT_PROMOTION` is a cautionary tale: a hardcoded `100_000` would mak
 liability ceiling a code deploy. With nothing published, `REMEDY_POLICY_UNPUBLISHED` refuses every
 request; there is no fallback, no default and no minimum.
 
-**Loss refuses, and this is the most likely way the item goes wrong.** The decision packet says
-loss is *not* covered by the damage figures and must be confirmed with the owner before any of them
-is applied to it by analogy. So `RemedyKind.LOST_ITEM` is accepted as a **record** -- the complaint
-is written down, which is the whole point of the item -- and answers `REQUIRE_HUMAN` with
-`LOSS_POLICY_UNRESOLVED`. It inherits no ceiling, no window and no staff authority, and nothing
-below computes a number for it. "Unknown means stop", applied to the one sub-case nobody answered.
+**`DEC-031` read `DEC-004` where its words stop (2026-09-25), and four rules here are its.**
+
+1. *"The item's cleaning fee."* A line priced per piece, pair, set, plush animal or case: the fee of
+   one item is the **unit price** the immutable quote snapshot recorded -- three shirts at 50.000 d
+   cap each shirt at 250.000 d, not the 750.000 d the line used to give. It is read, never divided
+   out of the line and rounded. A line priced by weight has no per-item fee, so the fee is the
+   **bag's** (the line's). Where neither number exists -- a per-piece line whose snapshot recorded
+   no unit price across several pieces, or a measure the ruling does not name (m2) -- the rule does
+   not guess: the line's own fee bounds the claim and **every amount goes to the owner**.
+2. *Loss.* The ratified ceiling already reads "loss/damage". What "case-by-case" adds is that
+   **every loss claim needs the owner**, whatever the amount: staff record and propose a figure, the
+   owner approves or refuses it. Window: the same 24 hours from the handover as a visible defect.
+3. *A refunded order.* Compensation stays available, capped against the fee the shop quoted, and
+   **always** needs the owner: refunding and compensating on one order is where money can be paid
+   twice. The late-delivery credit stays refused on a refunded bill (10% of nothing).
+4. The ceiling is per item (the founder's clarification, 2026-09-25). A line of N pieces carries
+   5 x the item fee x N in total -- never more than 5x what the line was charged -- and each single
+   proposal stays capped at one item's 5 x the item fee. The 100.000 d staff limit stays cumulative
+   per line, as `REMEDY-CUMULATIVE-001` built, so a claim split across pieces reaches the owner
+   rather than being refused. Loss and damage on the same line share both.
+
+Until `DEC-031`, loss was recorded and refused with `LOSS_POLICY_UNRESOLVED`. Rows written then
+still carry `POLICY_UNRESOLVED`, which nothing moves out of, and `execute` still refuses them; no
+new row is written in that shape.
 
 **Money direction, under invariant 2.** A remedy is money owed *to* the customer and is never a
 negative settlement. A proposal carries a non-negative `amount_vnd` and an explicit
 `AdjustmentDirection.CREDIT`; the direction carries the sign, so the amount needs no special case.
 
-**Staff never type a ceiling.** The server computes 5x from the order line's own priced amount and
-10% from the order's settled total, both already stored. A proposal above its computed ceiling is
-refused **with the ceiling named**, never truncated to it -- truncating would silently rewrite what
-a person asked for into a number they did not choose.
+**Staff never type a ceiling.** The server computes 5x from the item fee the order's own stored
+snapshot records (rule 1 above) and 10% from the order's settled total, both already stored. A
+proposal above its computed ceiling is refused **with the ceiling named**, never truncated to it
+-- truncating would silently rewrite what a person asked for into a number they did not choose.
 
 **Windows run from a recorded fact, not from staff input, and the fact is the customer's.**
 `CUSTOMER_SERVICE_POLICY_DRAFT.md` s5 states the report window as "trong 24 gio sau khi *nhan* do"
@@ -49,21 +67,24 @@ the counter gained a form.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any, Final
 from uuid import UUID
 
 from nha_trang_laundry_domain.canonical import CanonicalDocument, canonical_document
-from nha_trang_laundry_domain.catalog import AdjustmentDirection, PolicyOutcome
+from nha_trang_laundry_domain.catalog import AdjustmentDirection, PolicyOutcome, Unit
+from nha_trang_laundry_domain.pricing import COUNT_UNITS
 from nha_trang_laundry_domain.promotion import (
     LARGEST_REMAINDER_RULE,
     RATE_DENOMINATOR,
     LargestRemainderAllocation,
     allocate_largest_remainder,
 )
+from nha_trang_laundry_domain.quotes import ExactLineAmounts, QuoteLineSnapshot
 
 #: The same ceiling `quotes._money` enforces. An amount above it cannot survive canonicalization.
 MAX_JCS_INTEGER: Final = 9_007_199_254_740_991
@@ -78,11 +99,13 @@ REMEDY_POLICY_SCHEMA: Final = "remedy-policy-v1"
 #: The rule version an approval envelope names, so the envelope records which reading of `DEC-004`
 #: was in force when it was signed. It moves when what counts as an authorised remedy changes -- not
 #: when the owner republishes a figure, which is what the configuration version records.
-REMEDY_POLICY_VERSION: Final = "remedy-dec-004-v1"
+#: `v2` is `DEC-031`: the per-piece item fee, loss and refunded orders to the owner.
+REMEDY_POLICY_VERSION: Final = "remedy-dec-004-dec-031-v2"
 
 #: The canonical document type a proposal's `rendered_hash` is taken over. Named inside the document
-#: so a digest can never be mistaken for the digest of some other kind of content.
-REMEDY_PROPOSAL_DOCUMENT_SCHEMA: Final = "remedy-proposal-attestation-v1"
+#: so a digest can never be mistaken for the digest of some other kind of content. `v2` adds the
+#: item fee the ceiling multiplied and why the owner is needed, so the owner approves those too.
+REMEDY_PROPOSAL_DOCUMENT_SCHEMA: Final = "remedy-proposal-attestation-v2"
 
 #: `reason_code` on the quote adjustment a redeemed credit becomes. `quotes.CODE_PATTERN` applies.
 REMEDY_CREDIT_REASON_CODE: Final = "REMEDY_CREDIT_DEC_004"
@@ -110,7 +133,8 @@ class RemedyKind(StrEnum):
     #: The 10% credit on the next bill the owner confirmed for a delivery more than two hours late
     #: by store fault.
     LATE_DELIVERY_CREDIT = "LATE_DELIVERY_CREDIT"
-    #: Recorded, never priced. `DEC-004` explicitly carries loss forward as unresolved.
+    #: Compensation for an item the shop lost. `DEC-031`: the damage ceiling applies, and every
+    #: claim needs the owner whatever the amount. (Before `DEC-031`: recorded, never priced.)
     LOST_ITEM = "LOST_ITEM"
 
 
@@ -125,8 +149,36 @@ class RemedyStatus(StrEnum):
     OWNER_APPROVAL_REQUIRED = "OWNER_APPROVAL_REQUIRED"
     #: The remedy happened: a credit was issued, or a rewash was commanded.
     EXECUTED = "EXECUTED"
-    #: Recorded and stopped. Only `LOST_ITEM` reaches this, and nothing moves it out.
+    #: Recorded and stopped. Only a `LOST_ITEM` recorded before `DEC-031` carries this, and nothing
+    #: moves it out. No proposal is written in this state any more; a loss now goes to the owner.
     POLICY_UNRESOLVED = "POLICY_UNRESOLVED"
+
+
+class ItemFeeBasis(StrEnum):
+    """Which recorded number "the item's cleaning fee" is, for one line. `DEC-031` rule 1."""
+
+    #: Priced per piece, pair, set, plush animal or case: the fee of one item is the unit price the
+    #: snapshot recorded (or, for a line of exactly one piece, the line itself -- no division).
+    UNIT = "UNIT"
+    #: Priced by weight: no garment in the bag has a fee of its own, so the fee is the bag's.
+    BAG = "BAG"
+    #: No recorded number is the fee of one item -- several pieces with no recorded unit price, or a
+    #: measure `DEC-031` does not name. The line's fee bounds the claim; the owner decides every
+    #: amount inside it.
+    NOT_RECORDED = "NOT_RECORDED"
+
+
+class OwnerReason(StrEnum):
+    """Why a proposal needs the owner. A proposal needs the owner exactly when it has one."""
+
+    #: `DEC-031` rule 2: a loss is never staff-authorised.
+    LOSS_CLAIM = "LOSS_CLAIM"
+    #: `DEC-031` rule 3: the order's money was refunded, so compensating on it is the owner's call.
+    ORDER_REFUNDED = "ORDER_REFUNDED"
+    #: `DEC-031` rule 1: no recorded number is the fee of one item on this line.
+    ITEM_FEE_NOT_RECORDED = "ITEM_FEE_NOT_RECORDED"
+    #: `DEC-004`: the item's running total is above what staff may approve.
+    ABOVE_STAFF_LIMIT = "ABOVE_STAFF_LIMIT"
 
 
 class RemedyRefusal(StrEnum):
@@ -136,7 +188,8 @@ class RemedyRefusal(StrEnum):
     #: none may be assumed. Every kind fails closed on this, including the ones that move no money:
     #: the 7-day rewash window is itself a published figure.
     REMEDY_POLICY_UNPUBLISHED = "REMEDY_POLICY_UNPUBLISHED"
-    #: `DEC-004` carries loss forward as unresolved. The record is kept; no figure is applied.
+    #: A loss recorded before `DEC-031`, when `DEC-004` still carried loss as unresolved. Such a
+    #: record is kept and can never be paid; a new loss proposal goes to the owner instead.
     LOSS_POLICY_UNRESOLVED = "LOSS_POLICY_UNRESOLVED"
     #: The amount asked for is above the ceiling the server computed from the shop's own stored
     #: numbers. Refused with the ceiling named, never truncated to it.
@@ -152,8 +205,8 @@ class RemedyRefusal(StrEnum):
     #: An amount was supplied for a kind whose amount the server computes or that moves no money, or
     #: none was supplied for the one kind that needs one.
     REMEDY_AMOUNT_NOT_APPLICABLE = "REMEDY_AMOUNT_NOT_APPLICABLE"
-    #: Damage compensation names a line the order's own priced revision does not contain, so there
-    #: is no cleaning fee to take a multiple of.
+    #: Damage or loss names a line the order's own priced revision does not contain, so there is no
+    #: cleaning fee to take a multiple of.
     REMEDY_LINE_NOT_PRICED = "REMEDY_LINE_NOT_PRICED"
     #: A 10% credit on a total nobody has settled has nothing to be 10% of.
     REMEDY_ORDER_NOT_SETTLED = "REMEDY_ORDER_NOT_SETTLED"
@@ -172,10 +225,10 @@ class RemedyRefusal(StrEnum):
     #: A credit is a bearer instrument redeemable exactly once, and this one is spent.
     REMEDY_CREDIT_ALREADY_REDEEMED = "REMEDY_CREDIT_ALREADY_REDEEMED"
     #: The revision this credit would land on already carries a discount from a programme whose own
-    #: document forbids compounding. Two instruments, one bill, and only one of them may be taken:
-    #: `DEC-004` does not rank a debt the shop owes this customer against an offer the shop chose to
-    #: make, and this code will not rank them on the owner's behalf. Refused before the credit is
-    #: touched, so it stays unredeemed and a person can spend it on a bill with no programme on it.
+    #: document forbids compounding. Two instruments, one bill, and only one of them may be taken.
+    #: `DEC-030` (2026-09-25, option A) ranked them, and this refusal is its answer unchanged: the
+    #: promotion applies to this order, and the credit is not spent -- refused before it is touched,
+    #: so it stays unredeemed and waits for a later bill.
     REMEDY_CREDIT_PROMOTION_NOT_STACKABLE = "REMEDY_CREDIT_PROMOTION_NOT_STACKABLE"
     #: A late-delivery credit has already been proposed or paid for this order. `DEC-004` gives one
     #: 10% credit for one late delivery; a second incident about the same delivery, or a second
@@ -191,7 +244,7 @@ class RemedyRefusal(StrEnum):
 REMEDY_REFUSAL_AUTHORITIES: Final = {
     # Invariant 11: missing or unpublished policy fails closed.
     RemedyRefusal.REMEDY_POLICY_UNPUBLISHED: "INVARIANT-11",
-    # DEC-004 itself: loss is carried forward as not yet decided, and must not inherit by analogy.
+    # DEC-004 as it stood before DEC-031: a loss recorded then is kept and never paid.
     RemedyRefusal.LOSS_POLICY_UNRESOLVED: "DEC-004",
     # DEC-004 set the ceiling; invariant 3 makes deterministic code, not a person, apply it.
     RemedyRefusal.REMEDY_CEILING_EXCEEDED: "DEC-004",
@@ -211,10 +264,10 @@ REMEDY_REFUSAL_AUTHORITIES: Final = {
     RemedyRefusal.REMEDY_CREDIT_REVISION_NOT_OPEN: "INVARIANT-4",
     # DEC-015: there is no customer ledger, so the credit is a bearer instrument spent once.
     RemedyRefusal.REMEDY_CREDIT_ALREADY_REDEEMED: "DEC-015",
-    # DEC-004 owns what a credit is worth and when it may be given. It does not say what happens
-    # when the shop's own promotion forbids compounding with it, and the promotion engine's answer
-    # to that question is REQUIRE_HUMAN. Naming DEC-004 as the authority is the caller being told
-    # exactly what would have to change: the owner deciding which instrument wins, not this code.
+    # DEC-004 owns what a credit is worth and when it may be given; DEC-030 (option A) then said
+    # which instrument wins when a non-stacking promotion is on the same bill -- the promotion, with
+    # the credit kept for later -- which is what this refusal already did. The authority string is
+    # left as it was because DEC-030 was ruled as "no server behaviour change".
     RemedyRefusal.REMEDY_CREDIT_PROMOTION_NOT_STACKABLE: "DEC-004",
     # DEC-004 gives one 10% credit per late delivery, not one per complaint about it.
     RemedyRefusal.REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED: "DEC-004",
@@ -301,6 +354,53 @@ def _policy_integer(payload: Mapping[str, Any], field: str) -> int:
 
 
 @dataclass(frozen=True, slots=True)
+class RemedyLineFacts:
+    """One exactly priced line of the order's stored revision, as the snapshot recorded it.
+
+    Only recorded numbers: the unit, the quantity text, the unit price where the pricing engine
+    recorded one, and the net the line was charged. `item_compensation_terms` decides from these;
+    nothing here is derived.
+    """
+
+    service_code: str
+    unit: Unit
+    #: The canonical decimal text the snapshot stores. Compared, never used to divide money.
+    quantity: str
+    #: `ExactLineAmounts.unit_price_vnd`. `None` for a line closed inside a published band, where
+    #: the amount is a judgement about the garment rather than a rate times a quantity.
+    unit_price_vnd: int | None
+    #: What the shop charged for the line after any discount.
+    net_amount_vnd: int
+
+
+@dataclass(frozen=True, slots=True)
+class ItemCompensationTerms:
+    """The item fee, the ceilings it gives, and what sends every amount on the line to the owner.
+
+    Two ceilings since the founder's clarification of `DEC-031` rule 1: `ceiling_vnd` is one item's
+    (5x its fee) and binds each proposal; `line_ceiling_vnd` is every item on the line together
+    and binds what the line carries in total. They are equal for a bag, for a single piece, and
+    for a line whose per-item fee was never recorded.
+    """
+
+    line_id: str
+    service_code: str
+    basis: ItemFeeBasis
+    item_fee_vnd: int
+    #: One item's ceiling: the most a single proposal may ask for.
+    ceiling_vnd: int
+    #: How many items the line holds for the ceiling's purposes: the count of a per-piece line with
+    #: a recorded unit price, and 1 otherwise.
+    pieces: int
+    #: Every item on the line together, never above 5x what the line was charged.
+    line_ceiling_vnd: int
+    #: Reasons that apply to a damage claim on this item whatever its amount (`ORDER_REFUNDED`,
+    #: `ITEM_FEE_NOT_RECORDED`). A loss adds `LOSS_CLAIM`; the staff limit adds `ABOVE_STAFF_LIMIT`
+    #: only once an amount exists. Empty means the staff limit alone decides.
+    owner_always: tuple[OwnerReason, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RemedyOrderFacts:
     """What the order already records. Every field is read from stored state, never from a request.
 
@@ -314,14 +414,18 @@ class RemedyOrderFacts:
     #: order records neither, which stops every window rather than defaulting one.
     goods_returned_at: datetime | None
     #: `order_settlements.paid_amount_vnd`, which the schema constrains to equal the quoted total.
+    #: `None` when nothing was settled or the settlement was refunded.
     settled_total_vnd: int | None
-    #: Each priced line of the order's current revision, by `line_id`, at its net amount -- what the
-    #: shop actually charged for that item after any discount, which is what `DEC-004` caps against.
-    line_amounts_vnd: Mapping[str, int]
+    #: Each exactly priced line of the order's current revision, by `line_id`. `DEC-031` rule 1
+    #: decides from these which number is "the item's cleaning fee".
+    lines: Mapping[str, RemedyLineFacts]
     #: Whether the order's fulfilment mode expects the shop's courier to hand the laundry over.
     expects_return_leg: bool
     #: Whether a `RETURN` leg has actually succeeded.
     return_leg_succeeded: bool
+    #: Whether the order's money went back (`balance_status = 'REFUNDED'`, `CANCEL-REFUND-001`).
+    #: Required and without a default: a caller that has not looked must not read as "not refunded".
+    refunded: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,7 +449,8 @@ class RemedyCommitments:
     reads and this type does not need to know about.
     """
 
-    #: Sum of `amount_vnd` over live-or-paid `DAMAGE_COMPENSATION` proposals on the same order line.
+    #: Sum of `amount_vnd` over live-or-paid `DAMAGE_COMPENSATION` and `LOST_ITEM` proposals on the
+    #: same order line. Loss joined the sum with `DEC-031`: it pays against the same item ceiling.
     line_committed_vnd: int
     #: How many live-or-paid `LATE_DELIVERY_CREDIT` proposals the order already has.
     late_delivery_credits: int
@@ -365,10 +470,11 @@ class RemedyRequest:
     kind: RemedyKind
     #: A staff member determined the store was at fault. `DEC-004` rests every remedy on this.
     store_fault_attested: bool
-    #: Which priced line was damaged. Required for `DAMAGE_COMPENSATION` and forbidden otherwise.
+    #: Which priced line was damaged or lost. Required for `DAMAGE_COMPENSATION` and `LOST_ITEM`,
+    #: forbidden otherwise.
     order_line_id: str | None = None
-    #: The compensation asked for. Required for `DAMAGE_COMPENSATION` and forbidden otherwise -- the
-    #: late-delivery credit is computed by the server, and the other two move no money.
+    #: The compensation asked for. Required for `DAMAGE_COMPENSATION` and `LOST_ITEM`, forbidden
+    #: otherwise -- the late-delivery credit is computed by the server and a rewash moves no money.
     amount_vnd: int | None = None
     #: How late the delivery was, attested by the staff member who handled it. The shop records no
     #: promised arrival time, so this cannot be derived; what *is* checkable -- that a return leg
@@ -388,27 +494,19 @@ class RemedyAuthorized:
     window_closes_at: datetime | None
     requires_owner_approval: bool
     outcome: PolicyOutcome = PolicyOutcome.ALLOW
+    #: Why the owner is needed, in `OwnerReason` order; empty exactly when staff may authorise.
+    owner_reasons: tuple[OwnerReason, ...] = ()
+    #: For damage and loss: which recorded number the ceiling multiplied, and that number.
+    item_fee_basis: ItemFeeBasis | None = None
+    item_fee_vnd: int | None = None
+    #: For damage and loss: what every item on the line may carry together. `ceiling_vnd` above is
+    #: one item's, and bounds this proposal alone.
+    line_ceiling_vnd: int | None = None
 
-
-@dataclass(frozen=True, slots=True)
-class RemedyUnresolved:
-    """Accepted as a record and stopped, because the owner has not decided this case.
-
-    Only `LOST_ITEM` reaches here. It carries no amount, no ceiling and no window, and there is
-    deliberately nothing on this type that a caller could read a figure out of.
-    """
-
-    kind: RemedyKind
-    refusal: RemedyRefusal
-    outcome: PolicyOutcome = PolicyOutcome.REQUIRE_HUMAN
-
-    @property
-    def reason_code(self) -> str:
-        return self.refusal.value
-
-    @property
-    def authority(self) -> str:
-        return REMEDY_REFUSAL_AUTHORITIES[self.refusal]
+    def __post_init__(self) -> None:
+        # One fact, stated twice for the callers that only need the yes/no. They may never disagree.
+        if self.requires_owner_approval is not bool(self.owner_reasons):
+            raise RemedyPolicyError("owner approval must follow from its reasons")
 
 
 @dataclass(frozen=True, slots=True)
@@ -433,7 +531,115 @@ class RemedyRefused:
         return REMEDY_REFUSAL_AUTHORITIES[self.refusal]
 
 
-RemedyOutcome = RemedyAuthorized | RemedyUnresolved | RemedyRefused
+RemedyOutcome = RemedyAuthorized | RemedyRefused
+
+#: The units `DEC-031` calls "priced per piece": a piece, a pair, a set, a plush animal, a case.
+#: The pricing engine's own set, so the two cannot drift apart.
+PER_PIECE_UNITS: Final = COUNT_UNITS
+
+
+def remedy_line_facts(lines: Iterable[QuoteLineSnapshot]) -> dict[str, RemedyLineFacts]:
+    """The exactly priced lines of a stored revision, as the facts `DEC-031` decides from.
+
+    A line still carrying a band has no exact fee of any kind and is left out, so a claim against
+    it is refused `REMEDY_LINE_NOT_PRICED` rather than capped against a bound nobody charged.
+    """
+
+    return {
+        line.line_id: RemedyLineFacts(
+            service_code=line.service_code,
+            unit=line.unit,
+            quantity=line.quantity,
+            unit_price_vnd=line.amounts.unit_price_vnd,
+            net_amount_vnd=line.amounts.net_amount_vnd,
+        )
+        for line in lines
+        if isinstance(line.amounts, ExactLineAmounts)
+    }
+
+
+def item_fee(line: RemedyLineFacts) -> tuple[ItemFeeBasis, int]:
+    """`DEC-031` rule 1: which recorded number is "the item's cleaning fee" on this line.
+
+    Never a division. A per-piece line reads the unit price the snapshot recorded, and never more
+    than the line's own net: `REMEDY-001` capped against what the shop *charged*, `DEC-031` says the
+    rule lowers exposure, and on a single discounted piece only the lower of the two keeps both
+    true. A single piece with no recorded unit price is its line. Weight is the bag. Anything else
+    has no recorded per-item fee and is `NOT_RECORDED`, bounded by the line.
+    """
+
+    if line.unit is Unit.KG:
+        return ItemFeeBasis.BAG, line.net_amount_vnd
+    if line.unit in PER_PIECE_UNITS:
+        if line.unit_price_vnd is not None:
+            return ItemFeeBasis.UNIT, min(line.unit_price_vnd, line.net_amount_vnd)
+        if _is_exactly_one(line.quantity):
+            return ItemFeeBasis.UNIT, line.net_amount_vnd
+    return ItemFeeBasis.NOT_RECORDED, line.net_amount_vnd
+
+
+def item_compensation_terms(
+    policy: RemedyPolicy, facts: RemedyOrderFacts, line_id: str
+) -> ItemCompensationTerms | None:
+    """The ceiling one item carries and what sends a claim on it to the owner, or `None`.
+
+    The single place the ceiling is computed, used by `evaluate_remedy` for a proposal and by the
+    options read for the form, so the counter can never be shown one ceiling and refused on another.
+    """
+
+    line = facts.lines.get(line_id)
+    if line is None:
+        return None
+    basis, fee = item_fee(line)
+    owner_always: list[OwnerReason] = []
+    if facts.refunded:
+        owner_always.append(OwnerReason.ORDER_REFUNDED)
+    if basis is ItemFeeBasis.NOT_RECORDED:
+        owner_always.append(OwnerReason.ITEM_FEE_NOT_RECORDED)
+    # Per item, then per line. Only a per-piece line with a recorded unit price has pieces to count;
+    # its line total is the item fee times the count, never above what the line was charged -- the
+    # same lower-of-two the single-piece fee takes, so a discounted line cannot owe more than 5x
+    # its charge. Every other basis is one ceiling for the whole line.
+    pieces = (
+        _whole_pieces(line.quantity)
+        if basis is ItemFeeBasis.UNIT and line.unit_price_vnd is not None
+        else 1
+    )
+    line_fee = min(fee * pieces, line.net_amount_vnd) if pieces > 1 else fee
+    return ItemCompensationTerms(
+        line_id=line_id,
+        service_code=line.service_code,
+        basis=basis,
+        item_fee_vnd=fee,
+        ceiling_vnd=fee * policy.damage_compensation_multiple,
+        pieces=pieces,
+        line_ceiling_vnd=line_fee * policy.damage_compensation_multiple,
+        owner_always=tuple(owner_always),
+    )
+
+
+def _is_exactly_one(quantity: str) -> bool:
+    try:
+        return Decimal(quantity) == 1
+    except InvalidOperation:
+        return False
+
+
+def _whole_pieces(quantity: str) -> int:
+    """A count unit's quantity as a whole number of items; 1 for anything that is not one.
+
+    The snapshot already refuses a fractional count, so the fallback is unreachable today. It is 1
+    rather than a rounding because 1 is the smallest total a line can be given -- the direction
+    that pays less, never more.
+    """
+
+    try:
+        value = Decimal(quantity)
+    except InvalidOperation:
+        return 1
+    if not value.is_finite() or value < 1 or value != value.to_integral_value():
+        return 1
+    return int(value)
 
 
 def evaluate_remedy(
@@ -446,19 +652,15 @@ def evaluate_remedy(
 ) -> RemedyOutcome:
     """Decide one remedy request against the published figures and the order's recorded facts.
 
-    Loss is answered first and alone, before fault, window, amount or ceiling are looked at. That
-    ordering is the point: every later branch reads a published figure, and the figures do not apply
-    to loss. A loss case that reached them would be answered by analogy, which is exactly what the
-    decision packet forbids without asking the owner first.
+    Loss used to be answered first and alone, as a record with no figure. Since `DEC-031` it walks
+    the damage path -- fault, the 24-hour window, the item ceiling -- and then always needs the
+    owner, whatever the amount.
 
     `committed` is required and has no default, deliberately: a caller that has not summed what the
     item already carries has not asked the question `DEC-004` asks. See `RemedyCommitments`.
     """
 
     _require_aware(requested_at)
-    if request.kind is RemedyKind.LOST_ITEM:
-        return RemedyUnresolved(RemedyKind.LOST_ITEM, RemedyRefusal.LOSS_POLICY_UNRESOLVED)
-
     shape = _refuse_wrong_shape(request)
     if shape is not None:
         return shape
@@ -496,36 +698,54 @@ def evaluate_remedy(
             requires_owner_approval=False,
         )
 
-    assert request.kind is RemedyKind.DAMAGE_COMPENSATION
+    assert request.kind in _ITEM_KINDS
     assert request.order_line_id is not None and request.amount_vnd is not None
-    line_amount = facts.line_amounts_vnd.get(request.order_line_id)
-    if line_amount is None:
-        return RemedyRefused(RemedyRefusal.REMEDY_LINE_NOT_PRICED)
     # `DEC-004`: capped at 5x *that item's* cleaning fee -- what the store charged, not retail or
-    # replacement value. The multiple is published; the fee is the order's own stored line amount.
-    ceiling = line_amount * policy.damage_compensation_multiple
-    # Both figures are about the item, so both are compared against the item's running total: what
-    # earlier proposals on this line already committed, plus this one. Owner approval answers the
-    # staff limit; it is not a way past the item's own ceiling, so the ceiling is checked first and
+    # replacement value. `DEC-031` rule 1 says which recorded number that fee is; see `item_fee`.
+    terms = item_compensation_terms(policy, facts, request.order_line_id)
+    if terms is None:
+        return RemedyRefused(RemedyRefusal.REMEDY_LINE_NOT_PRICED)
+    # One proposal is about one item, so it may not ask for more than one item's ceiling -- on a
+    # line of three shirts, 300.000 d in one claim is more than any one shirt can be owed.
+    if request.amount_vnd > terms.ceiling_vnd:
+        return RemedyRefused(RemedyRefusal.REMEDY_CEILING_EXCEEDED, ceiling_vnd=terms.ceiling_vnd)
+    # The line's total and the staff limit are compared against its running total: what earlier
+    # proposals on this line already committed, plus this one. Owner approval answers the staff
+    # limit; it is not a way past the line's ceiling, so the ceiling is checked first and
     # regardless of who would approve.
     total = committed.line_committed_vnd + request.amount_vnd
-    if total > ceiling:
+    if total > terms.line_ceiling_vnd:
         return RemedyRefused(
             RemedyRefusal.REMEDY_CEILING_EXCEEDED,
-            ceiling_vnd=ceiling,
+            ceiling_vnd=terms.line_ceiling_vnd,
             committed_vnd=committed.line_committed_vnd,
         )
+    reasons: list[OwnerReason] = []
+    if request.kind is RemedyKind.LOST_ITEM:
+        # `DEC-031` rule 2: never staff-authorised, at any amount.
+        reasons.append(OwnerReason.LOSS_CLAIM)
+    reasons.extend(terms.owner_always)
+    if total > policy.staff_approval_ceiling_vnd:
+        # Inclusive, as it always was: "staff may approve up to 100.000 d" -- of the item's total,
+        # so a claim split into pieces reaches the owner exactly when the whole would have.
+        reasons.append(OwnerReason.ABOVE_STAFF_LIMIT)
     return RemedyAuthorized(
         kind=request.kind,
         amount_vnd=request.amount_vnd,
         direction=AdjustmentDirection.CREDIT,
-        ceiling_vnd=ceiling,
+        ceiling_vnd=terms.ceiling_vnd,
         window_opened_at=opened_at,
         window_closes_at=closes_at,
-        # Inclusive, as it always was: "staff may approve up to 100.000 d" -- now of the item's
-        # total, so a claim split into pieces reaches the owner exactly when the whole would have.
-        requires_owner_approval=total > policy.staff_approval_ceiling_vnd,
+        requires_owner_approval=bool(reasons),
+        owner_reasons=tuple(reasons),
+        item_fee_basis=terms.basis,
+        item_fee_vnd=terms.item_fee_vnd,
+        line_ceiling_vnd=terms.line_ceiling_vnd,
     )
+
+
+#: The two kinds that pay against one item's ceiling: damage and, since `DEC-031`, loss.
+_ITEM_KINDS: Final = frozenset({RemedyKind.DAMAGE_COMPENSATION, RemedyKind.LOST_ITEM})
 
 
 def _evaluate_late_delivery(
@@ -557,6 +777,7 @@ def _evaluate_late_delivery(
     if facts.settled_total_vnd is None:
         return RemedyRefused(RemedyRefusal.REMEDY_ORDER_NOT_SETTLED)
     credit = _round_half_up(facts.settled_total_vnd * policy.late_delivery_credit_rate_bps)
+    over_staff = credit > policy.staff_approval_ceiling_vnd
     return RemedyAuthorized(
         kind=request.kind,
         amount_vnd=credit,
@@ -567,7 +788,8 @@ def _evaluate_late_delivery(
         ceiling_vnd=credit,
         window_opened_at=None,
         window_closes_at=None,
-        requires_owner_approval=credit > policy.staff_approval_ceiling_vnd,
+        requires_owner_approval=over_staff,
+        owner_reasons=(OwnerReason.ABOVE_STAFF_LIMIT,) if over_staff else (),
     )
 
 
@@ -580,7 +802,7 @@ def _refuse_wrong_shape(request: RemedyRequest) -> RemedyRefused | None:
     """
 
     kind = request.kind
-    if kind is RemedyKind.DAMAGE_COMPENSATION:
+    if kind in _ITEM_KINDS:
         if (
             request.order_line_id is None
             or not _valid_amount(request.amount_vnd)
@@ -635,6 +857,12 @@ def remedy_proposal_document(
             "amount_vnd": authorized.amount_vnd,
             "direction": None if authorized.direction is None else authorized.direction.value,
             "ceiling_vnd": authorized.ceiling_vnd,
+            "item_fee_basis": (
+                None if authorized.item_fee_basis is None else authorized.item_fee_basis.value
+            ),
+            "item_fee_vnd": authorized.item_fee_vnd,
+            "line_ceiling_vnd": authorized.line_ceiling_vnd,
+            "owner_reasons": [reason.value for reason in authorized.owner_reasons],
             "order_line_id": order_line_id,
             "policy_version_id": str(policy_version_id),
             "policy_version": policy_version,
@@ -739,6 +967,7 @@ NO_PRIOR_COMMITMENTS: Final = RemedyCommitments(line_committed_vnd=0, late_deliv
 __all__ = [
     "MAX_JCS_INTEGER",
     "NO_PRIOR_COMMITMENTS",
+    "PER_PIECE_UNITS",
     "REMEDY_CREDIT_APPLIED",
     "REMEDY_CREDIT_REASON_CODE",
     "REMEDY_POLICY_CONFIG_TYPE",
@@ -747,9 +976,13 @@ __all__ = [
     "REMEDY_PROPOSAL_DOCUMENT_SCHEMA",
     "REMEDY_REFUSAL_AUTHORITIES",
     "CreditAllocation",
+    "ItemCompensationTerms",
+    "ItemFeeBasis",
+    "OwnerReason",
     "RemedyCommitments",
     "RemedyCredit",
     "RemedyKind",
+    "RemedyLineFacts",
     "RemedyOrderFacts",
     "RemedyOutcome",
     "RemedyPolicy",
@@ -758,9 +991,11 @@ __all__ = [
     "RemedyRefused",
     "RemedyRequest",
     "RemedyStatus",
-    "RemedyUnresolved",
     "allocate_remedy_credit",
     "evaluate_remedy",
+    "item_compensation_terms",
+    "item_fee",
     "parse_remedy_policy",
+    "remedy_line_facts",
     "remedy_proposal_document",
 ]

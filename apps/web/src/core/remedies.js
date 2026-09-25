@@ -4,26 +4,38 @@
  * `core/bands.js` set the precedent this follows and its reasoning carries over unchanged: this
  * module *compares*, it does not compute. Every figure below arrives from
  * `GET …/incidents/{incident}/remedy-options`, which the repository builds by asking
- * `domain.remedies` itself — the 5× damage cap per priced line, the 10% late-delivery credit, the
- * 100.000 ₫ staff ceiling, and the two windows measured from the recorded handover. Nothing here
- * multiplies, adds or rounds anything, and the server re-decides all of it on the proposal.
+ * `domain.remedies` itself — the item fee and 5× cap per priced line, what each line already
+ * carries, the 10% late-delivery credit, the 100.000 ₫ staff ceiling, and the two windows measured
+ * from the recorded handover. The one piece of arithmetic here is the sum the server itself makes:
+ * what the item already carries plus what is typed now, because `DEC-004`'s two limits are about
+ * the item and not about one form. Nothing is multiplied or rounded, and the server re-decides all
+ * of it on the proposal.
  *
  * What it buys is the thing `TASK-remedy-001` calls the point of the whole screen: **before staff
  * type an amount** they already see the kind, the server-computed ceiling, the window and whether
  * it is still open, and whether this proposal will need the owner. A staff member must never
- * discover that the owner is required after filling the form in, with a customer waiting.
+ * discover that the owner is required after filling the form in, with a customer waiting — which
+ * is exactly what the staging review watched happen, because this module compared the typed amount
+ * alone while the server compared the item's running total.
  *
- * Three rules have teeth:
+ * `DEC-031` (2026-09-25) changed three answers, and each is read here from the server rather than
+ * restated:
  *
- *   - **`LOST_ITEM` never reaches a figure.** It is answered first and alone, exactly as
- *     `evaluate_remedy` answers it first and alone, because every other branch reads a published
- *     number and `DEC-004` carries loss forward as undecided. There is deliberately no ceiling,
- *     no window and no owner threshold on a loss plan, so a caller cannot read one out of it.
+ *   - **The item fee.** A per-piece line caps each piece at 5× its unit price, a weight-priced line
+ *     caps against its bag; the line's `item_fee_basis` says which, and `NOT_RECORDED` means the
+ *     owner decides every amount on it (`owner_always`).
+ *   - **Loss.** No longer a wall. A loss names an item and an amount like damage, and **always**
+ *     needs the owner, whatever the amount. `requiresOwner` is `true` on every loss plan.
+ *   - **A refunded order.** Every compensation on it needs the owner; the server lists that in each
+ *     line's `owner_always` (`ORDER_REFUNDED`).
+ *
+ * Two rules keep their teeth:
+ *
  *   - **A missing figure is never a zero and never a default.** No published policy is
  *     `POLICY_UNPUBLISHED`, no recorded handover is `WINDOW_EVIDENCE_MISSING`, and a null
- *     late-delivery credit is `CREDIT_UNAVAILABLE`. None of the three is "0 ₫", and none is the
- *     minimum, the midpoint or the maximum of anything.
- *   - **A ceiling refuses; it never truncates.** An amount above the line's computed cap is
+ *     late-delivery credit is `CREDIT_UNAVAILABLE`. A server that sends no per-line terms offers no
+ *     line at all rather than a ceiling guessed from an older field.
+ *   - **A ceiling refuses; it never truncates.** An item total above the line's computed cap is
  *     `ABOVE_CEILING` with the cap named, which is what the server does with it
  *     (`REMEDY_CEILING_EXCEEDED`, refused with the ceiling in the body, never capped to it).
  *
@@ -48,6 +60,21 @@ export const REMEDY_KIND_ORDER = [
   REMEDY_KIND.LOST_ITEM,
 ];
 
+/** The two kinds that pay against one item's ceiling. `_ITEM_KINDS` in the domain. */
+const ITEM_KINDS = new Set([REMEDY_KIND.DAMAGE_COMPENSATION, REMEDY_KIND.LOST_ITEM]);
+
+/**
+ * Why the owner is needed. `OwnerReason`, verbatim, in the order the server lists them — the
+ * console builds the same list so that "what the form predicted" and "what the server answered"
+ * can be compared token for token.
+ */
+export const OWNER_REASON = {
+  LOSS_CLAIM: "LOSS_CLAIM",
+  ORDER_REFUNDED: "ORDER_REFUNDED",
+  ITEM_FEE_NOT_RECORDED: "ITEM_FEE_NOT_RECORDED",
+  ABOVE_STAFF_LIMIT: "ABOVE_STAFF_LIMIT",
+};
+
 /**
  * What the console can say about a proposal before it is sent.
  *
@@ -58,21 +85,19 @@ export const REMEDY_KIND_ORDER = [
 export const PLAN = {
   /** Invariant 11: no `REMEDY_POLICY` version is published, so every kind fails closed. */
   POLICY_UNPUBLISHED: "POLICY_UNPUBLISHED",
-  /** `DEC-004` carries loss forward as undecided. Recorded, never priced. */
-  LOSS_UNRESOLVED: "LOSS_UNRESOLVED",
   /** Nothing recorded says when this customer got their laundry back. */
   WINDOW_EVIDENCE_MISSING: "WINDOW_EVIDENCE_MISSING",
   /** The published window measured from that handover has closed. */
   WINDOW_CLOSED: "WINDOW_CLOSED",
   /** No delivery this system recorded could have been late, or no total was ever settled. */
   CREDIT_UNAVAILABLE: "CREDIT_UNAVAILABLE",
-  /** Damage names a priced line and none is chosen yet. */
+  /** Damage or loss names a priced line and none is chosen yet. */
   LINE_NOT_CHOSEN: "LINE_NOT_CHOSEN",
-  /** The one kind a person chooses a figure for, with no figure yet. */
+  /** A kind a person chooses a figure for, with no figure yet. */
   AMOUNT_MISSING: "AMOUNT_MISSING",
   /** Typed, but not an integer number of đồng. */
   NOT_AN_AMOUNT: "NOT_AN_AMOUNT",
-  /** Above the cap the server computed from the shop's own stored line amount. */
+  /** The item's total would pass the cap the server computed from the order's own snapshot. */
   ABOVE_CEILING: "ABOVE_CEILING",
   /** The lateness attested does not reach the published threshold. */
   BELOW_LATENESS_THRESHOLD: "BELOW_LATENESS_THRESHOLD",
@@ -87,6 +112,7 @@ export const PLAN = {
  *
  * `LATE_DELIVERY_CREDIT` has no elapsed-time window at all — `DEC-004` gates it on the lateness and
  * the fault, not on how long ago it happened — so it gets `null` here rather than a borrowed one.
+ * Loss shares the visible-defect window: `DEC-031` gives it the same 24 hours from the handover.
  *
  * @param {string} kind
  * @param {any} options a `RemedyOptionsResponse`
@@ -99,7 +125,7 @@ export function remedyWindow(kind, options) {
       open: Boolean(options?.rewash_window_open),
     };
   }
-  if (kind === REMEDY_KIND.DAMAGE_COMPENSATION) {
+  if (ITEM_KINDS.has(kind)) {
     return {
       closesAt: options?.defect_window_closes_at ?? null,
       open: Boolean(options?.defect_window_open),
@@ -109,23 +135,49 @@ export function remedyWindow(kind, options) {
 }
 
 /**
- * The priced lines a damage proposal may name, with the cap the server computed for each.
+ * The priced lines a damage or loss proposal may name, with the terms the server will apply.
  *
- * Returned as a sorted array rather than the map the wire carries, so the picker's order is stable
- * between renders and between staff members reading the same screen.
+ * Read from `damage_lines` only. `damage_line_ceilings_vnd` carries the ceilings alone, without
+ * what each item already holds or what sends it to the owner, and a prediction made from it is the
+ * one the staging review caught saying "staff can approve" over an owner-only answer — so a
+ * response without the per-line terms offers no line, and the form says so.
  *
  * @param {any} options
- * @returns {Array<{lineId: string, ceiling: number|null}>}
+ * @returns {Array<{
+ *   lineId: string, serviceCode: string, serviceName: string|null, label: string,
+ *   unit: string|null, quantity: string|null, basis: string|null, itemFee: number|null,
+ *   ceiling: number|null, pieces: number|null, lineCeiling: number|null,
+ *   committed: number|null, ownerAlways: string[],
+ * }>}
  */
 export function damageLines(options) {
-  const table = options?.damage_line_ceilings_vnd;
-  if (!table || typeof table !== "object") return [];
-  return Object.keys(table)
-    .sort()
-    .map((lineId) => {
-      const cap = table[lineId];
-      return { lineId, ceiling: Number.isInteger(cap) ? cap : null };
-    });
+  const lines = options?.damage_lines;
+  if (!Array.isArray(lines)) return [];
+  return lines
+    .filter((line) => line && typeof line.line_id === "string")
+    .map((line) => {
+      const code = typeof line.service_code === "string" ? line.service_code : "";
+      const name = typeof line.service_name === "string" && line.service_name ? line.service_name : null;
+      return {
+        lineId: line.line_id,
+        serviceCode: code,
+        serviceName: name,
+        // The name the pricebook the order was priced under gave it, or its code — never the bare
+        // line identifier, which means nothing to the person at the counter.
+        label: name || code || line.line_id,
+        unit: typeof line.unit === "string" ? line.unit : null,
+        quantity: typeof line.quantity === "string" ? line.quantity : null,
+        basis: typeof line.item_fee_basis === "string" ? line.item_fee_basis : null,
+        itemFee: Number.isInteger(line.item_fee_vnd) ? line.item_fee_vnd : null,
+        // One item's ceiling (the most one proposal may ask) and the line's (every item together).
+        ceiling: Number.isInteger(line.ceiling_vnd) ? line.ceiling_vnd : null,
+        pieces: Number.isInteger(line.pieces) ? line.pieces : null,
+        lineCeiling: Number.isInteger(line.line_ceiling_vnd) ? line.line_ceiling_vnd : null,
+        committed: Number.isInteger(line.committed_vnd) ? line.committed_vnd : null,
+        ownerAlways: Array.isArray(line.owner_always) ? line.owner_always.map(String) : [],
+      };
+    })
+    .sort((a, b) => (a.lineId < b.lineId ? -1 : a.lineId > b.lineId ? 1 : 0));
 }
 
 /**
@@ -135,7 +187,7 @@ export function damageLines(options) {
  * @param {any} draft.options the `RemedyOptionsResponse` for this incident
  * @param {string} draft.kind
  * @param {boolean} [draft.storeFaultAttested]
- * @param {string} [draft.lineId] the priced line a damage proposal names
+ * @param {string} [draft.lineId] the priced line a damage or loss proposal names
  * @param {string} [draft.typedAmount] what is in the money box, exactly as typed
  * @param {string} [draft.typedLateness] what is in the lateness box, exactly as typed
  * @returns {{
@@ -143,12 +195,19 @@ export function damageLines(options) {
  *   kind: string,
  *   amountVnd: number|null,
  *   ceilingVnd: number|null,
+ *   lineCeilingVnd: number|null,
+ *   pieces: number|null,
+ *   ceilingBreached: "ITEM"|"LINE"|null,
+ *   committedVnd: number|null,
+ *   itemFeeVnd: number|null,
+ *   itemFeeBasis: string|null,
  *   hasCeiling: boolean,
  *   windowClosesAt: string|null,
  *   windowOpen: boolean|null,
  *   ownerThresholdVnd: number|null,
  *   ownerPossible: boolean,
  *   requiresOwner: boolean|null,
+ *   ownerReasons: string[],
  *   needsAmount: boolean,
  *   needsLine: boolean,
  *   needsLateness: boolean,
@@ -157,27 +216,9 @@ export function damageLines(options) {
 export function remedyPlan(draft) {
   const options = draft.options || null;
   const kind = draft.kind;
+  const isLoss = kind === REMEDY_KIND.LOST_ITEM;
 
-  /** Nothing below may read a figure out of a loss, so it is answered before any figure is read. */
-  if (kind === REMEDY_KIND.LOST_ITEM) {
-    return {
-      state: PLAN.LOSS_UNRESOLVED,
-      kind,
-      amountVnd: null,
-      ceilingVnd: null,
-      hasCeiling: false,
-      windowClosesAt: null,
-      windowOpen: null,
-      ownerThresholdVnd: null,
-      ownerPossible: false,
-      requiresOwner: null,
-      needsAmount: false,
-      needsLine: false,
-      needsLateness: false,
-    };
-  }
-
-  const needsLine = kind === REMEDY_KIND.DAMAGE_COMPENSATION;
+  const needsLine = ITEM_KINDS.has(kind);
   const needsLateness = kind === REMEDY_KIND.LATE_DELIVERY_CREDIT;
   const threshold = Number.isInteger(options?.staff_approval_ceiling_vnd)
     ? options.staff_approval_ceiling_vnd
@@ -190,13 +231,22 @@ export function remedyPlan(draft) {
     kind,
     amountVnd: null,
     ceilingVnd: null,
+    lineCeilingVnd: null,
+    pieces: null,
+    ceilingBreached: null,
+    committedVnd: null,
+    itemFeeVnd: null,
+    itemFeeBasis: null,
     hasCeiling: false,
     windowClosesAt: window ? window.closesAt : null,
     windowOpen: window ? window.open : null,
     ownerThresholdVnd: threshold,
-    ownerPossible: false,
-    requiresOwner: null,
-    // `needsAmount` defaults to false for every kind and every state, and only the damage branch
+    // `DEC-031`: a loss needs the owner before anything else is known, so it is said from the
+    // first render — the one fact about a loss that does not wait for a line or an amount.
+    ownerPossible: isLoss,
+    requiresOwner: isLoss ? true : null,
+    ownerReasons: isLoss ? [OWNER_REASON.LOSS_CLAIM] : [],
+    // `needsAmount` defaults to false for every kind and every state, and only the item branch
     // turns it on, once it holds a line whose cap the server computed. The screen renders the
     // money box from this flag, so defaulting it to "damage wants an amount" put the box on screen
     // while the ceiling above it was still `—`: a person could type 400.000 ₫ into a form that had
@@ -242,6 +292,7 @@ export function remedyPlan(draft) {
       hasCeiling: true,
       ownerPossible: overOwner,
       requiresOwner: overOwner,
+      ownerReasons: overOwner ? [OWNER_REASON.ABOVE_STAFF_LIMIT] : [],
     };
     const minutes = readMinutes(draft.typedLateness);
     if (minutes === null) return plan(PLAN.AMOUNT_MISSING, ready);
@@ -253,29 +304,72 @@ export function remedyPlan(draft) {
     return plan(PLAN.READY, ready);
   }
 
-  // DAMAGE_COMPENSATION. The cap belongs to one priced line, so there is nothing to show until a
-  // line is named: a per-order damage ceiling does not exist and inventing one would be a figure.
+  // DAMAGE_COMPENSATION or LOST_ITEM. The cap belongs to one priced item, so there is nothing to
+  // show until a line is named: a per-order ceiling does not exist and inventing one would be a
+  // figure.
   const line = damageLines(options).find((candidate) => candidate.lineId === draft.lineId);
-  if (!draft.lineId || !line || line.ceiling === null) return plan(PLAN.LINE_NOT_CHOSEN);
+  if (
+    !draft.lineId ||
+    !line ||
+    line.ceiling === null ||
+    line.lineCeiling === null ||
+    line.committed === null
+  ) {
+    return plan(PLAN.LINE_NOT_CHOSEN);
+  }
+  // Two ceilings, per the founder's per-item ruling: `cap` is one item's and bounds one claim;
+  // `lineCap` is every item on the line together and bounds the running total. Equal on a bag
+  // or a single piece.
   const cap = line.ceiling;
+  const lineCap = line.lineCeiling;
+  const committed = line.committed;
+  // Before an amount exists: which reasons already apply whatever it will be. The server's order.
+  const standing = [
+    ...(isLoss ? [OWNER_REASON.LOSS_CLAIM] : []),
+    ...line.ownerAlways.filter((reason) => reason !== OWNER_REASON.LOSS_CLAIM),
+  ];
   const bound = {
     ceilingVnd: cap,
+    lineCeilingVnd: lineCap,
+    pieces: line.pieces,
+    committedVnd: committed,
+    itemFeeVnd: line.itemFee,
+    itemFeeBasis: line.basis,
     hasCeiling: true,
     // The cap is known, so the money box may exist. This is the only place it is switched on.
     needsAmount: true,
-    // Before a single digit is typed: this line's cap is above what a staff member may approve, so
-    // some amounts on it will need the owner. That is the sentence the packet asks for.
-    ownerPossible: threshold !== null && cap > threshold,
+    // Before a single digit is typed: either something already sends every amount on this line
+    // to the owner, or the most the line can still reach -- what it carries plus the largest
+    // claim both ceilings allow -- is above what a staff member may approve, so some amounts on
+    // it will. That is the sentence the packet asks for.
+    ownerPossible:
+      standing.length > 0 ||
+      (threshold !== null && committed + Math.min(cap, lineCap - committed) > threshold),
+    requiresOwner: standing.length > 0 ? true : null,
+    ownerReasons: standing,
   };
 
   const typed = String(draft.typedAmount ?? "").trim();
   if (!typed) return plan(PLAN.AMOUNT_MISSING, bound);
   const amount = parseDong(typed);
   if (amount === null) return plan(PLAN.NOT_AN_AMOUNT, bound);
+  // The same sum `evaluate_remedy` makes: what the item already carries plus what is asked now.
+  // Both limits are about the item, so both are compared against it — comparing the typed amount
+  // alone is how the form said "staff" where the server said "owner".
+  const total = committed + amount;
+  const overStaff = threshold !== null && total > threshold;
+  const reasons = overStaff ? [...standing, OWNER_REASON.ABOVE_STAFF_LIMIT] : standing;
   // Read once, and carried onto every state below it, including the ones that refuse. What the
   // owner has to decide does not depend on whether the person at the counter has ticked a box yet.
-  const read = { ...bound, amountVnd: amount, requiresOwner: threshold !== null && amount > threshold };
-  if (amount > cap) return plan(PLAN.ABOVE_CEILING, read);
+  const read = {
+    ...bound,
+    amountVnd: amount,
+    requiresOwner: reasons.length > 0,
+    ownerReasons: reasons,
+  };
+  // One claim, one item; then the line's running total. The server's order, and its two answers.
+  if (amount > cap) return plan(PLAN.ABOVE_CEILING, { ...read, ceilingBreached: "ITEM" });
+  if (total > lineCap) return plan(PLAN.ABOVE_CEILING, { ...read, ceilingBreached: "LINE" });
   if (draft.storeFaultAttested !== true) return plan(PLAN.FAULT_NOT_ATTESTED, read);
   return plan(PLAN.READY, read);
 }
@@ -302,7 +396,7 @@ export function readMinutes(typed) {
  * It is a `StrictRequest`, so a key that does not belong to the kind is a 422 rather than a field
  * quietly ignored — and `_refuse_wrong_shape` refuses a stray one with
  * `REMEDY_AMOUNT_NOT_APPLICABLE` even when it would have been harmless. Each kind owns one shape
- * and this builds exactly that shape.
+ * and this builds exactly that shape. Damage and loss share theirs.
  *
  * @param {ReturnType<typeof remedyPlan>} plan
  * @param {{lineId?: string, typedLateness?: string}} draft
@@ -310,7 +404,7 @@ export function readMinutes(typed) {
  */
 export function remedyProposalBody(plan, draft) {
   if (plan.state !== PLAN.READY) return null;
-  if (plan.kind === REMEDY_KIND.DAMAGE_COMPENSATION) {
+  if (ITEM_KINDS.has(plan.kind)) {
     return {
       kind: plan.kind,
       store_fault_attested: true,
@@ -331,7 +425,8 @@ export function remedyProposalBody(plan, draft) {
 /**
  * Whether a recorded proposal still needs somebody before it can be carried out.
  *
- * `RemedyStatus`, verbatim. `POLICY_UNRESOLVED` is the loss wall and nothing moves it out.
+ * `RemedyStatus`, verbatim. `POLICY_UNRESOLVED` is the wall for losses recorded before `DEC-031`
+ * and nothing moves it out.
  *
  * @param {string|null|undefined} status
  * @returns {boolean}

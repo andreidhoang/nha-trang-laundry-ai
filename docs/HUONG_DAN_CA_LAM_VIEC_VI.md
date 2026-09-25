@@ -127,13 +127,21 @@ Trước đây phần này làm bằng lời rồi quên. Nay có màn hình **B
 | Loại | Máy chủ tính gì | Hạn | Ai duyệt |
 |---|---|---|---|
 | Giặt lại miễn phí | Không có tiền nào chuyển | 7 ngày kể từ khi khách nhận đồ | Nhân viên |
-| Bồi thường món hỏng | Trần = 5 lần phí giặt **đúng món đó** | 24 giờ kể từ khi khách nhận đồ | Tới 100.000đ là nhân viên, trên mức đó **chủ tiệm** |
+| Bồi thường món hỏng | Trần = 5 lần phí giặt **một món** (xem dưới) | 24 giờ kể từ khi khách nhận đồ | Tới 100.000đ **cho cả dòng** là nhân viên, trên mức đó **chủ tiệm** |
 | Giảm trừ do giao trễ | Máy tính 10% tổng đã thu | Không tính theo hạn, tính theo mức trễ | Theo số tiền, như trên |
-| **Mất đồ** | **Không có mức nào** | — | **Chưa ai** — xem bên dưới |
+| **Mất đồ** | Trần như món hỏng | 24 giờ kể từ khi khách nhận đồ | **Luôn là chủ tiệm**, dù số tiền nhỏ |
 
-> **Mất đồ thì màn hình không mở biểu mẫu**, và đó là đúng. Chủ tiệm chưa quyết chính sách cho
-> trường hợp này, nên máy hiện **“Mất đồ — chưa có chính sách để áp dụng”**. Đừng mượn mức của
-> hàng hỏng. Ghi sự cố, **báo chủ tiệm ngay trong ngày**, đừng hứa con số nào ở quầy.
+**“Phí giặt một món” là gì (DEC-031):** đồ tính theo cái, đôi, bộ thì lấy **giá một cái** — ba
+áo sơ mi 50.000đ thì **mỗi đề nghị** tối đa 250.000đ (một áo), cả ba áo cộng lại tối đa 750.000đ.
+Đồ tính theo ký thì lấy **tiền cả túi** giặt chung, một trần cho cả túi. Máy hiện sẵn phí này, trần,
+và **số đã ghi đền cho dòng đó** cạnh từng dòng. Mức 100.000đ nhân viên được duyệt tính cộng dồn cho
+cả dòng: chia nhỏ ra từng áo thì phần vượt mức vẫn phải chờ chủ tiệm.
+
+> **Mất đồ: nhân viên ghi và đề nghị số tiền, chủ tiệm duyệt mới được trả.** Màn hình hiện
+> **“Mất đồ — luôn chờ chủ tiệm duyệt”** ngay khi chọn loại này. Nói trước với khách là phải chờ,
+> đừng hứa con số nào như đã chốt.
+>
+> **Đơn đã hoàn tiền** vẫn đền được món hỏng hay mất, nhưng mọi khoản đều chờ chủ tiệm duyệt.
 
 **Ba điều dễ sai ở màn hình này:**
 

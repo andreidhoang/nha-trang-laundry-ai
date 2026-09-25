@@ -1142,6 +1142,47 @@ MESSAGE_BINDING = {
 }
 
 
+#: SESSION-LIST-001 (section 20): this browser's session, another device of the same owner, and
+#: the ORDER envelope whose order is `ORDER_VIEW` (row version 14).
+SESSION_CURRENT = "5e551011-0000-4000-8000-000000000001"
+SESSION_OTHER = "5e551011-0000-4000-8000-000000000002"
+ORDER_APPROVAL = "0a0a0a0a-1111-4333-8444-555555555555"
+STAFF_DEVICE_IDS = ("5e551011-0000-4000-8000-0000000000a1", "5e551011-0000-4000-8000-0000000000a2")
+
+
+def device(session_id: str, current: bool, last_seen: str) -> dict[str, object]:
+    """One `StaffSessionEntryResponse`: timestamps and an identifier, never a secret or a hash."""
+
+    return {
+        "session_id": session_id,
+        "issued_at": "2026-09-25T01:00:00+00:00",
+        "last_seen_at": last_seen,
+        "idle_expires_at": "2026-09-25T11:00:00+00:00",
+        "absolute_expires_at": "2026-09-26T01:00:00+00:00",
+        "current": current,
+    }
+
+
+def order_queue_item() -> dict[str, object]:
+    """An `ACCEPT_ORDER` envelope over `ORDER_VIEW`, binding whichever version section 20 sets."""
+
+    return {
+        "approval_request_id": ORDER_APPROVAL,
+        "status": "REQUESTED",
+        "envelope_hash": "JCS-SHA256-V1:" + "7" * 64,
+        "required_role": "OPS_APPROVER",
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=15)).isoformat(),
+        "replayed": False,
+        "resource_type": "ORDER",
+        "resource_id": ORDER_VIEW_ID,
+        "resource_version": state.get("order_envelope_version", 14),
+        "snapshot_hash": "JCS-SHA256-V1:" + "3" * 64,
+        "rendered_hash": "JCS-SHA256-V1:" + "4" * 64,
+        "action": "ACCEPT_ORDER",
+        "store_id": None if state.get("order_envelope_storeless") else STORE,
+    }
+
+
 def message_queue_item() -> dict[str, object]:
     """The envelope as `GET /internal/v1/approvals` returns it, with the store it belongs to."""
 
@@ -1254,6 +1295,8 @@ SESSION_OK = {
     "staff_user_id": "00000000-0000-4000-8000-0000000000aa",
     "roles": ["OWNER_ADMIN"],
     "mfa_verified": True,
+    # SESSION-LIST-001: the session this cookie is. Section 20 reads it; nothing earlier does.
+    "session_id": SESSION_CURRENT,
 }
 
 state = {
@@ -1579,7 +1622,9 @@ with sync_playwright() as playwright:
             )
             return
         elif url.split("?")[0].endswith("/internal/v1/approvals"):
-            if state.get("remedy_listed"):
+            if state.get("order_listed"):
+                body = [order_queue_item()]
+            elif state.get("remedy_listed"):
                 body = [owner_remedy_queue_item()]
             elif state.get("message_listed"):
                 body = [message_queue_item()]
@@ -1720,6 +1765,47 @@ with sync_playwright() as playwright:
         elif "/orders/" in url and "/remedy-credits" in url:
             state.setdefault("credit_reads", []).append(url)
             body = ORDER_CREDITS
+        elif (
+            "/internal/v1/sessions/" in url
+            and url.split("?")[0].endswith("/revoke")
+            and route.request.method == "POST"
+        ):
+            # SESSION-LIST-001, section 20: one device signed out. Captured with its key; a 404 is
+            # the route's own answer for a session that is already gone.
+            state.setdefault("revoke_posts", []).append(
+                (url.split("?")[0], route.request.headers.get("idempotency-key"))
+            )
+            if state.get("revoke_status") == 404:
+                route.fulfill(
+                    status=404,
+                    content_type="application/json",
+                    body=json.dumps({"detail": "session unavailable"}),
+                )
+                return
+            gone = url.split("/internal/v1/sessions/")[1].split("/")[0]
+            state["sessions_live"] = [
+                row for row in state.get("sessions_live", []) if row["session_id"] != gone
+            ]
+            route.fulfill(status=204, content_type="application/json", body="")
+            return
+        elif url.split("?")[0].endswith("/internal/v1/sessions") or (
+            "/internal/v1/staff/" in url and url.split("?")[0].endswith("/sessions")
+        ):
+            state.setdefault("session_reads", []).append(url)
+            owner_view = "/internal/v1/staff/" in url
+            body = {
+                "staff_user_id": STAFF_ACTIVE_ID if owner_view else SESSION_OK["staff_user_id"],
+                "truncated": False,
+                # Another person's devices are never this browser's session.
+                "sessions": (
+                    [
+                        device(STAFF_DEVICE_IDS[0], False, "2026-09-25T02:00:00+00:00"),
+                        device(STAFF_DEVICE_IDS[1], False, "2026-09-24T09:00:00+00:00"),
+                    ]
+                    if owner_view
+                    else state.get("sessions_live", [])
+                ),
+            }
         elif "/internal/v1/staff" in url and route.request.method != "GET":
             # CONSOLE-REDESIGN-006: the person sheet's writes, captured with their keys so section
             # 17 can prove each carries an Idempotency-Key and names the person the owner tapped.
@@ -1744,6 +1830,15 @@ with sync_playwright() as playwright:
             state.setdefault("staff_reads", []).append(url)
             body = STAFF_DIRECTORY
         elif url.split("?")[0].endswith(f"/internal/v1/orders/{ORDER_VIEW_ID}"):
+            state.setdefault("order_view_reads", []).append(url)
+            if state.get("order_read_fails"):
+                # Section 20: an order that cannot be read. The card must not guess it unchanged.
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps({"detail": "operations unavailable"}),
+                )
+                return
             body = ORDER_VIEW
         elif "remedy-proposals" in url and route.request.method == "POST":
             # Captured rather than merely answered: the property section 11 proves is that the
@@ -5449,6 +5544,257 @@ with sync_playwright() as playwright:
     )
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
     state["service_state"] = None
+
+    print()
+    print("=" * 74)
+    print("20. THIẾT BỊ VÀ DUYỆT ĐƠN — sign one device out; an ORDER card says if the order moved")
+    print("=" * 74)
+
+    # SESSION-LIST-001. What only a browser can prove: the account sheet names this device and
+    # never offers to sign it out; the others are signed out with two presses under a key; a role
+    # that may not do it sees the control shut with the reason before the rows; the owner reads a
+    # person's devices on their sheet; and an ORDER card compares the order's current version with
+    # the envelope's before it lets anyone press Duyệt.
+    for flag in ("remedy_listed", "message_listed", "export_listed", "approvals_listed"):
+        state[flag] = False
+    state["sessions_live"] = [
+        device(SESSION_CURRENT, True, "2026-09-25T03:00:00+00:00"),
+        device(SESSION_OTHER, False, "2026-09-25T01:30:00+00:00"),
+    ]
+    # Section 19 hands back the owner's roles without a reload; the principal is re-read here.
+    page.evaluate("location.hash = '#/'")
+    page.reload()
+    page.wait_for_timeout(1500)
+    page.locator("button.appbar__account").first.click()
+    page.wait_for_timeout(1000)
+    rows = page.locator("#account-devices [data-session-id]")
+    check(
+        "the account sheet lists this person's devices, this one first, named “Thiết bị này”",
+        rows.count() == 2
+        and rows.first.get_attribute("data-session-id") == SESSION_CURRENT
+        and "Thiết bị này" in (rows.first.inner_text() or ""),
+        f"{rows.count()} rows",
+    )
+    check(
+        "this device is never offered a sign-out from the list",
+        page.locator(f"button[data-revoke-session='{SESSION_CURRENT}']").count() == 0,
+    )
+    other = page.locator(f"#account-devices button[data-revoke-session='{SESSION_OTHER}']")
+    check(
+        "the other device offers “Đăng xuất thiết bị này”, live for the owner",
+        other.count() == 1
+        and other.is_enabled()
+        and "Đăng xuất thiết bị này" in (other.inner_text() or ""),
+    )
+    sheet_text = page.locator("dialog[open]").first.inner_text() or ""
+    check(
+        "no session identifier is visible outside the technical drawer",
+        SESSION_OTHER not in sheet_text and SESSION_CURRENT not in sheet_text,
+    )
+    other.click()
+    page.wait_for_timeout(250)
+    check("one press only arms it", not state.get("revoke_posts"))
+    other.click()
+    page.wait_for_timeout(1200)
+    posts = state.get("revoke_posts", [])
+    check(
+        "the second press signs that one device out, under an idempotency key",
+        len(posts) == 1
+        and posts[0][0].endswith(f"/internal/v1/sessions/{SESSION_OTHER}/revoke")
+        and bool(posts[0][1]),
+        repr(posts),
+    )
+    check(
+        "and the list is read again: this device is still there, the other is gone",
+        page.locator("#account-devices [data-session-id]").count() == 1
+        and page.locator(f"#account-devices [data-session-id='{SESSION_CURRENT}']").count() == 1,
+    )
+
+    # A device already signed out (its own Thoát, an idle expiry): the goal state, not an error.
+    state["sessions_live"].append(device(SESSION_OTHER, False, "2026-09-25T01:30:00+00:00"))
+    state["revoke_status"] = 404
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    page.locator("button.appbar__account").first.click()
+    page.wait_for_timeout(1000)
+    again = page.locator(f"#account-devices button[data-revoke-session='{SESSION_OTHER}']")
+    again.click()
+    page.wait_for_timeout(200)
+    again.click()
+    page.wait_for_timeout(1200)
+    check(
+        "a device that was already signed out is said so, and is not shown as a failure",
+        "đã đăng xuất rồi" in (page.content() or "")
+        and page.locator("#account-devices .notice").count() == 0,
+    )
+    state["revoke_status"] = None
+    state["revoke_posts"] = []
+    page.keyboard.press("Escape")
+
+    # A member of staff: their other device is shown, its sign-out shut, the reason said first.
+    state["sessions_live"] = [
+        device(SESSION_CURRENT, True, "2026-09-25T03:00:00+00:00"),
+        device(SESSION_OTHER, False, "2026-09-25T01:30:00+00:00"),
+    ]
+    SESSION_OK["roles"] = ["OPERATOR"]
+    page.reload()
+    page.wait_for_timeout(1500)
+    page.locator("button.appbar__account").first.click()
+    page.wait_for_timeout(1000)
+    shut = page.locator(f"#account-devices button[data-revoke-session='{SESSION_OTHER}']")
+    reason = page.locator("#account-devices-revoke-reason")
+    check(
+        "an operator sees the other device's sign-out shut, marked denied, with who may do it",
+        shut.count() == 1
+        and not shut.is_enabled()
+        and shut.get_attribute("data-denied") == "true"
+        and shut.get_attribute("aria-describedby") == "account-devices-revoke-reason"
+        and "Chỉ chủ đăng xuất được một thiết bị khác" in (reason.inner_text() or ""),
+    )
+    check(
+        "and the reason is read before the rows, not under them",
+        page.evaluate(
+            """() => {
+                const reason = document.querySelector('#account-devices-revoke-reason');
+                const list = document.querySelector('#account-devices ul.rows');
+                return Boolean(reason && list &&
+                  (reason.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING));
+            }"""
+        ),
+    )
+    page.keyboard.press("Escape")
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    page.reload()
+    page.wait_for_timeout(1500)
+
+    # The owner, on a person's sheet.
+    page.evaluate("location.hash = '#/staff'")
+    page.wait_for_timeout(1200)
+    page.locator(f"#staff-directory [data-staff-id='{STAFF_ACTIVE_ID}']").first.click()
+    page.wait_for_timeout(1200)
+    check(
+        "the owner reads the person's devices on their sheet, from that person's list",
+        any(
+            f"/internal/v1/staff/{STAFF_ACTIVE_ID}/sessions" in u
+            for u in state.get("session_reads", [])
+        )
+        and page.locator("#staff-devices [data-session-id]").count() == 2
+        and page.locator("#staff-devices button[data-revoke-session]").count() == 2,
+        repr(state.get("session_reads", [])[-2:]),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # The ORDER card, order unchanged.
+    state["order_listed"] = True
+    state["order_envelope_version"] = 14
+    state["decision_posts"] = []
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(1400)
+    card = page.locator(f"article.card[data-approval-id='{ORDER_APPROVAL}']")
+    approve = card.get_by_role("button", name="Duyệt", exact=True)
+    refuse = card.get_by_role("button", name="Từ chối", exact=True)
+    check(
+        "the ORDER card read the order the envelope names",
+        any(ORDER_VIEW_ID in u for u in state.get("order_view_reads", [])),
+    )
+    check(
+        "an unchanged order says so in words, above a live Duyệt",
+        card.locator("[data-order-version='current']").count() == 1
+        and "Đơn chưa thay đổi kể từ khi gửi duyệt" in (card.inner_text() or "")
+        and "Phiếu 17" in (card.inner_text() or "")
+        and approve.is_enabled()
+        and page.evaluate(
+            """() => {
+                const card = document.querySelector("article.card[data-approval-id]");
+                const said = card.querySelector("[data-order-version='current']");
+                const press = [...card.querySelectorAll("button")].find(
+                  (b) => b.textContent.trim() === "Duyệt");
+                return Boolean(said && press &&
+                  (said.compareDocumentPosition(press) & Node.DOCUMENT_POSITION_FOLLOWING));
+            }"""
+        ),
+    )
+    check(
+        "no version number is put in front of the approver",
+        "v14" not in (card.inner_text() or ""),
+    )
+    approve.click()
+    page.wait_for_timeout(1200)
+    sent = [json.loads(body or "{}") for body in state.get("decision_posts", [])]
+    check(
+        "Duyệt sends back the envelope's own version and digests",
+        len(sent) == 1
+        and sent[0].get("decision") == "APPROVED"
+        and sent[0].get("resource_version") == 14
+        and sent[0].get("snapshot_hash") == "JCS-SHA256-V1:" + "3" * 64
+        and sent[0].get("rendered_hash") == "JCS-SHA256-V1:" + "4" * 64,
+        repr(sent),
+    )
+
+    # The order moved after the envelope was raised.
+    state["order_envelope_version"] = 13
+    state["decision_posts"] = []
+    page.reload()
+    page.wait_for_timeout(1600)
+    card = page.locator(f"article.card[data-approval-id='{ORDER_APPROVAL}']")
+    approve = card.get_by_role("button", name="Duyệt", exact=True)
+    refuse = card.get_by_role("button", name="Từ chối", exact=True)
+    check(
+        "a moved order says so, links to the order, and shuts Duyệt with the reason",
+        card.locator("[data-order-version='changed']").count() == 1
+        and "Đơn đã thay đổi sau khi gửi duyệt — mở đơn để xem lại" in (card.inner_text() or "")
+        and card.locator(f"a[href='#/orders/{ORDER_VIEW_ID}']").count() >= 1
+        and not approve.is_enabled()
+        and approve.get_attribute("aria-describedby") == "approval-decision-blocked"
+        and "đơn đã đổi sau khi gửi duyệt" in (card.inner_text() or ""),
+    )
+    check(
+        "the moved order's summary is withheld, and Từ chối still works",
+        "Phiếu 17 ·" not in (card.inner_text() or "") and refuse.is_enabled(),
+    )
+    refuse.click()
+    page.wait_for_timeout(1200)
+    sent = [json.loads(body or "{}") for body in state.get("decision_posts", [])]
+    check(
+        "Từ chối sends REJECTED with the envelope's own version",
+        len(sent) == 1
+        and sent[0].get("decision") == "REJECTED"
+        and sent[0].get("resource_version") == 13,
+        repr(sent),
+    )
+
+    # The order cannot be read: unknown, so nothing is pressable.
+    state["order_envelope_version"] = 14
+    state["order_read_fails"] = True
+    page.reload()
+    page.wait_for_timeout(1600)
+    card = page.locator(f"article.card[data-approval-id='{ORDER_APPROVAL}']")
+    check(
+        "an order that cannot be read leaves both buttons shut and says why",
+        not card.get_by_role("button", name="Duyệt", exact=True).is_enabled()
+        and not card.get_by_role("button", name="Từ chối", exact=True).is_enabled()
+        and "Chưa đối chiếu được đơn với phiếu" in (card.inner_text() or "")
+        and "Đơn chưa thay đổi" not in (card.inner_text() or ""),
+    )
+    state["order_read_fails"] = False
+
+    # An envelope with no store: refused before anything is read.
+    state["order_envelope_storeless"] = True
+    reads_before = len(state.get("order_view_reads", []))
+    page.reload()
+    page.wait_for_timeout(1600)
+    card = page.locator(f"article.card[data-approval-id='{ORDER_APPROVAL}']")
+    check(
+        "a store-less ORDER envelope is refused before the order is read",
+        not card.get_by_role("button", name="Duyệt", exact=True).is_enabled()
+        and "Không biết đơn thuộc cửa hàng nào" in (card.inner_text() or "")
+        and len(state.get("order_view_reads", [])) == reads_before,
+    )
+    state["order_envelope_storeless"] = False
+    state["order_listed"] = False
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

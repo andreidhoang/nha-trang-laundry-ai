@@ -197,6 +197,16 @@ without the third:
 **Disabling somebody** revokes every live session in the same transaction. The last active owner
 cannot be disabled — the shop cannot be left without one.
 
+**Signing out one device** (a lost phone, a tablet left signed in) no longer means disabling the
+person (`SESSION-LIST-001`). Everyone's account sheet lists **Thiết bị đang đăng nhập** — the
+sessions that would still be accepted, each named by when it signed in and was last used (no device
+name is stored), with **Thiết bị này** marking the one in hand — and a person's sheet on `#/staff`
+shows the owner the same list for them. **Đăng xuất thiết bị này** (two presses) ends that one
+session at its next request; every other device of the person keeps working. The revoke rule is the
+server's and is unchanged: a session may end itself, and only `OWNER_ADMIN` may end any other — so a
+member of staff who lost their phone asks the owner, and the console shows them the control shut
+with that reason.
+
 **What each role may actually do**, measured against the running server rather than read from the
 published matrix:
 
@@ -248,7 +258,7 @@ Recorded so the gap is visible rather than discovered at the counter. Each is in
 | Remedies: rewash, discount, credit | No tables. Every incident stays `OPEN`. The policy is settled (`DEC-004`) and is applied on paper |
 | Naming the exact price inside a published range | No path. Range-priced services refuse to quote |
 | Promotions | The engine exists and is not wired into the quote path. Every revision discounts 0 |
-| ~~Deciding an approval from the console~~ | **Built.** `list_pending` projects `resource_version`, `snapshot_hash` and `rendered_hash`, so a decision can bind exactly what it approved. `ORDER` is decidable with a link to the resource; `QUOTE_REVISION` and `MESSAGE_DRAFT` stay disabled by name, because approving what the console cannot show you is blind approval in a politer font. **Since superseded for both:** `RANGE-PRICE-001` made a quote revision readable, and `MESSAGE-DRAFT-BINDING-001` (2026-09-25) added `GET /internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding`, so a `SEND_MESSAGE` card prints the exact stored words above its buttons, refuses to approve a draft edited or rejected after the envelope was raised (the server refuses too), and `#/exceptions` raises the envelope from that read. The send itself is still a named person's manual send; nothing sends automatically |
+| ~~Deciding an approval from the console~~ | **Built.** `list_pending` projects `resource_version`, `snapshot_hash` and `rendered_hash`, so a decision can bind exactly what it approved. `ORDER` is decidable with a link to the resource; `QUOTE_REVISION` and `MESSAGE_DRAFT` stay disabled by name, because approving what the console cannot show you is blind approval in a politer font. **Since superseded for both:** `RANGE-PRICE-001` made a quote revision readable, and `MESSAGE-DRAFT-BINDING-001` (2026-09-25) added `GET /internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding`, so a `SEND_MESSAGE` card prints the exact stored words above its buttons, refuses to approve a draft edited or rejected after the envelope was raised (the server refuses too), and `#/exceptions` raises the envelope from that read. The send itself is still a named person's manual send; nothing sends automatically. **`ORDER` since `SESSION-LIST-001`:** the card reads the order's current `row_version` and says "Đơn chưa thay đổi kể từ khi gửi duyệt", or "Đơn đã thay đổi sau khi gửi duyệt — mở đơn để xem lại" with **Duyệt** shut and only **Từ chối** live; the server refuses a moved order's approval regardless |
 | ~~An SLA board~~ | **Built, 2026-09-22.** The read model was never the missing half: `ShadowConsoleRepository.sla_risk_board` already existed with migration `0037`'s clock fix, and building a second one would have re-introduced a bug already paid for once. What was missing was a surface — `GET /internal/v1/stores/{store_id}/sla-board` and `#/sla-board`, ordered by the server, each row carrying the query version and the one stated rule that produced it. Per-order `ProductionSlaPolicy` is still undecided and the board says so in the assistant's own words. `OPS-BOARD-001` |
 | Payment methods, part payments, deposits, credit | One shape only (§4) |
 | Batches, chain of custody, machine cycles, delivery cost capture | Blocked on `SHOP-INSTRUMENT-001` |

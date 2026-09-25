@@ -603,3 +603,26 @@ def test_the_exempt_staff_screen_builds_its_store_url_only_with_a_store() -> Non
         "staff.js must render a no-store notice instead of the directory when no store is set"
     )
     assert "Chưa chọn cửa hàng" in text
+
+
+def test_every_stylesheet_has_balanced_braces() -> None:
+    """An unclosed rule swallows every rule after it, silently.
+
+    Found at integration of the V2 redesign: three slices appended blocks to `styles/kit.css`, the
+    merge interleaved them, two braces were left open, and every later rule — including the one
+    that hides the Duyệt queue pane when the range-price pane is shown — stopped applying. No test
+    noticed; the stubbed browser suite did, one screen later. Comments are stripped first so a
+    brace inside prose cannot mask or cause a failure.
+    """
+
+    unbalanced = []
+    for sheet in sorted((ROOT / "apps/web/styles").glob("*.css")):
+        text = re.sub(r"/\*.*?\*/", "", sheet.read_text(encoding="utf-8"), flags=re.S)
+        depth = 0
+        for char in text:
+            depth += (char == "{") - (char == "}")
+            if depth < 0:
+                break
+        if depth != 0:
+            unbalanced.append(f"{sheet.relative_to(ROOT)}: depth {depth}")
+    assert not unbalanced, "stylesheets with unbalanced braces:\n" + "\n".join(unbalanced)

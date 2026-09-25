@@ -2,8 +2,10 @@
  * Thêm: every destination the phone's five-slot tab bar has no room for, grouped by the kind of
  * work, each with one line saying what it is for (spec V2 §3.2).
  *
- * A destination this role may not open is listed, disabled, with the server's reason as visible
- * text — never removed (V1 invariant 5), and never only in a tooltip a thumb cannot reach. The
+ * A destination this role may not open is listed, disabled, with whom to ask as visible text
+ * ("Chỉ Chủ / quản trị, …") — never removed (V1 invariant 5). The full reason is the row's
+ * `title`, and tapping the row opens the route's guard screen, which prints it in full — never
+ * only in a tooltip a thumb cannot reach. The
  * table is `core/nav.js`, the same one the desktop sidebar renders, so the two cannot drift.
  *
  * Reads nothing from the server and writes nothing.
@@ -35,15 +37,28 @@ function build() {
         children: list(
           items.map((item) => {
             const verdict = navVerdict(who, item);
-            return listRow({
+            const row = listRow({
               href: `#${item.path}`,
               leading: item.icon,
               title: item.label,
               meta: item.hint,
               disabled: !verdict.allowed,
-              reason: verdict.reason,
+              reason: verdict.short || verdict.reason,
               data: { nav: item.path },
             });
+            if (verdict.allowed) return row;
+            // Still a way in: the guard screen prints the whole reason, as the sidebar's link does.
+            return h(
+              "a",
+              {
+                class: "row-link",
+                href: `#${item.path}`,
+                title: `${item.label} — ${verdict.reason}`,
+                "aria-disabled": "true",
+                dataNavDenied: item.path,
+              },
+              row,
+            );
           }),
           { label: group },
         ),

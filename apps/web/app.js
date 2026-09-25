@@ -90,12 +90,13 @@ function isActive(item, path) {
 
 /**
  * One nav destination. A capability this role lacks is shown and marked, never removed — hiding it
- * teaches staff the feature does not exist; marking it teaches them whom to ask. The reason rides
- * in a `nav__reason` span that CSS reveals where there is room for it (the desktop sidebar), and
- * `#/more` lists it in full, because a `title` tooltip is unreachable on touch.
+ * teaches staff the feature does not exist; marking it teaches them whom to ask. The short form
+ * ("Chỉ Chủ / quản trị, Người duyệt vận hành") rides in a `nav__reason` span that CSS reveals where
+ * there is room for it (the desktop sidebar), as `#/more` shows it; the full reason is the `title`,
+ * and the guard screen this link opens prints it -- a `title` alone is unreachable on touch.
  *
  * @param {(typeof NAV_ITEMS)[number]} item
- * @param {{allowed: boolean, reason?: string}} verdict
+ * @param {import("./src/core/nav.js").NavVerdict} verdict
  * @returns {HTMLElement}
  */
 function navLink(item, verdict) {
@@ -114,7 +115,7 @@ function navLink(item, verdict) {
     item.path === "/approvals" && approvalsBadge
       ? h("span", { class: "nav__badge" }, approvalsBadge)
       : null,
-    verdict.allowed ? null : h("span", { class: "nav__reason" }, verdict.reason),
+    verdict.allowed ? null : h("span", { class: "nav__reason" }, verdict.short || verdict.reason),
   );
 }
 

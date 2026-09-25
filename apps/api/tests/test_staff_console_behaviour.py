@@ -637,6 +637,11 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Máy chủ gặp lỗi",
         "Chưa đọc được danh sách cửa hàng",
         "Chưa hỗ trợ",
+        # MANUAL-SEND-RESUME: reopening a draft lands on the right step. The two presses the
+        # guide names for it -- the one-press lock once approved, and asking again when the words
+        # moved or the approval lapsed.
+        "Khoá phong bì cho người gửi tay",
+        "Xin duyệt lại",
     ]
 
     absent_from_guide = [phrase for phrase in quoted if phrase not in guide]

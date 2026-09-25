@@ -70,6 +70,16 @@
     display: revert;
   }
 
+  /* The same for the technical drawer (`techDetails`, and the one inside every `errorNotice`):
+   * a printed refusal keeps its correlation id and reason codes, the link to the server log. */
+  details.tech::details-content {
+    content-visibility: visible !important;
+  }
+
+  details.tech:not([open]) > :not(summary) {
+    display: revert;
+  }
+
   a {
     color: inherit;
     text-decoration: none;

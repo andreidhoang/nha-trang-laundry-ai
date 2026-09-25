@@ -262,6 +262,7 @@ export function render_(context) {
   const decideVerdict = can(who, "SHADOW_DECIDE");
   const sendVerdict = can(who, "MANUAL_SEND");
   const releaseVerdict = can(who, "SERVICE_MESSAGING_RELEASE");
+  const approveVerdict = can(who, "APPROVALS_DECIDE");
   const draftId = String(context?.query?.get("draft") || "").trim();
 
   // `gated()` prints the verdict's reason under every control it disables. The SHADOW_DECIDE reason
@@ -433,7 +434,7 @@ export function render_(context) {
   const sendSection = section({
     title: "Gửi tay",
     card: false,
-    children: manualSendPanel({ sendVerdict, releaseVerdict, store, draftId }),
+    children: manualSendPanel({ sendVerdict, releaseVerdict, approveVerdict, store, draftId }),
   });
 
   /* --- The switch ---------------------------------------------------------------------------- */

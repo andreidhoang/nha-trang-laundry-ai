@@ -5,10 +5,15 @@
  *
  * Rebuilt on the V2 kit (`CONSOLE-REDESIGN-005`, spec V2 §5.7) as four numbered steps —
  * 1 Đọc tin sẽ gửi → 2 Xin duyệt → 3 Khoá phong bì → 4 Ghi nhận đã gửi — each carrying every value
- * the previous server response returned, so nothing is retyped within a session. The one thing no
- * route can supply is the approval id (or envelope id) from *another* device: the queue lists only
- * `REQUESTED` envelopes and no route lists manual-send envelopes, so those values can still be
- * entered by hand, but only under "Nhập mã thủ công" (spec V2 principle 2).
+ * the previous server response returned, so nothing is retyped within a session.
+ *
+ * Across sessions too (`MANUAL-SEND-RESUME`, spec V2 principle 2 — zero paste). The binding read
+ * carries `send_progress`: the latest `SEND_MESSAGE` over this draft in this store, with the
+ * version and digests it bound and, once locked, its envelope's id, state and row version. So a
+ * person who reopens `#/exceptions?draft=<id>` after the approver decided on another device lands
+ * on the right step with every value carried: waiting → step 2 says so; approved → one press locks;
+ * locked by you → step 4; recorded → done; stale or lapsed → "Xin duyệt lại". The fields under
+ * "Nhập mã thủ công" remain only as a fallback for an envelope other than the latest.
  *
  * Step 1 is `MESSAGE-DRAFT-BINDING-001`: it reads a draft's binding and prints the exact words the
  * envelope will bind. The draft is picked from the store's recently approved drafts, or arrives
@@ -235,6 +240,8 @@ function localNow() {
  * @param {object} spec
  * @param {import("../core/rbac.js").Verdict} spec.sendVerdict
  * @param {import("../core/rbac.js").Verdict} [spec.releaseVerdict] SERVICE_MESSAGING_RELEASE
+ * @param {import("../core/rbac.js").Verdict} [spec.approveVerdict] APPROVALS_DECIDE — whether
+ *   "Đang chờ duyệt" offers the way to Duyệt
  * @param {string|null} [spec.store] the selected store; the draft read is scoped to it
  * @param {string} [spec.draftId] a draft to open step 1 on, from `#/exceptions?draft=<id>`
  * @returns {HTMLElement}
@@ -242,6 +249,7 @@ function localNow() {
 export function manualSendPanel({
   sendVerdict,
   releaseVerdict = { allowed: false, reason: "" },
+  approveVerdict = { allowed: false, reason: "" },
   store = null,
   draftId = "",
 }) {
@@ -260,6 +268,23 @@ export function manualSendPanel({
   let locked = /** @type {any} */ (null);
   /** The attestation step 4 recorded in this session, if it did. */
   let recorded = /** @type {any} */ (null);
+  /**
+   * The latest `SEND_MESSAGE` over the draft on screen, as the server last said it
+   * (`send_progress` on the binding read) or as this session's own writes moved it. The one thing
+   * that says which step is next; null when nobody has asked yet.
+   *
+   * @type {{approvalId: string, status: string, expiresAt: string|null, pastExpiry: boolean,
+   *   resourceVersion: number, snapshotHash: string, renderedHash: string,
+   *   requestedByYou: boolean, envelopeId: string, envelopeStatus: string,
+   *   envelopeRowVersion: number|null, preparedByYou: boolean}|null}
+   */
+  let progress = null;
+  /**
+   * What the contact's service-messaging read last said (`DEC-033`): the server's own prediction
+   * of whether steps 2 and 3 would be refused. `decision` is empty while unknown -- loading, or the
+   * read failed -- and then nothing is predicted: the server decides on the press, as always.
+   */
+  const service = { loading: false, decision: "", reasonCode: "" };
 
   const raiseResult = resultLine();
   const raiseErrorHost = h("div");
@@ -332,10 +357,7 @@ export function manualSendPanel({
   /** @returns {string} */
   function validatePrepare() {
     if (!prepare.approvalId) {
-      return (
-        "Chưa có phiếu duyệt để khoá: làm bước 2 rồi chờ người duyệt quyết, hoặc nhập mã thủ công " +
-        "nếu phiếu tạo ở máy khác."
-      );
+      return "Chưa có phiếu duyệt để khoá: làm bước 2 rồi chờ người duyệt quyết.";
     }
     if (!UUID.test(prepare.approvalId)) return "Mã phê duyệt phải là một UUID.";
     if (!POSITIVE_INT.test(prepare.resourceVersion)) {
@@ -353,10 +375,7 @@ export function manualSendPanel({
   /** @returns {string} */
   function validateAttest() {
     if (!attest.envelopeId) {
-      return (
-        "Chưa có phong bì để ghi nhận: khoá phong bì ở bước 3, hoặc nhập mã thủ công nếu phong bì " +
-        "được khoá ở máy khác."
-      );
+      return "Chưa có phong bì để ghi nhận: khoá phong bì ở bước 3 trước.";
     }
     if (!UUID.test(attest.envelopeId)) return "Mã phong bì gửi tay phải là một UUID.";
     if (!POSITIVE_INT.test(attest.resourceVersion)) {
@@ -377,6 +396,134 @@ export function manualSendPanel({
     return "";
   }
 
+  /* ---- where the send stands (MANUAL-SEND-RESUME) ------------------------------------------ */
+
+  /**
+   * `MessageDraftSendProgressResponse` as this panel keeps it. Anything malformed is "no
+   * progress": the panel then offers step 2, and the server refuses a duplicate it would not want.
+   *
+   * @param {any} body
+   */
+  function progressFrom(body) {
+    if (!body || !UUID.test(String(body.approval_request_id || ""))) return null;
+    const envelopeId = UUID.test(String(body.envelope_id || "")) ? String(body.envelope_id) : "";
+    return {
+      approvalId: String(body.approval_request_id),
+      status: String(body.status || ""),
+      expiresAt: body.expires_at ? String(body.expires_at) : null,
+      pastExpiry: body.past_expiry === true,
+      resourceVersion: Number(body.resource_version),
+      snapshotHash: String(body.snapshot_hash || ""),
+      renderedHash: String(body.rendered_hash || ""),
+      requestedByYou: body.requested_by_you === true,
+      envelopeId,
+      envelopeStatus: envelopeId ? String(body.envelope_status || "") : "",
+      envelopeRowVersion: envelopeId ? Number(body.envelope_row_version) : null,
+      preparedByYou: envelopeId ? body.prepared_by_you === true : false,
+    };
+  }
+
+  /**
+   * Which step is next, from the read on screen and the latest send over it. A reading of stored
+   * values, not a decision: every write re-checks all of it under its own lock.
+   *
+   * @returns {"none"|"waiting"|"approved"|"locked"|"lockedByOther"|"recorded"|"stale"|"lapsed"|"rejected"|"other"}
+   */
+  function phase() {
+    if (!bound || !progress) return "none";
+    if (progress.envelopeStatus === "MANUAL_SEND_RECORDED") return "recorded";
+    // The draft moved past what was approved (a reviewer's edit): nothing bound to the old words
+    // may go out, and a new approval is the only way forward.
+    if (progress.resourceVersion !== Number(bound.resource_version)) return "stale";
+    if (progress.envelopeStatus === "APPROVED_FOR_MANUAL_SEND") {
+      if (progress.pastExpiry) return "lapsed";
+      return progress.preparedByYou ? "locked" : "lockedByOther";
+    }
+    if (progress.status === "REQUESTED") return progress.pastExpiry ? "lapsed" : "waiting";
+    if (progress.status === "APPROVED") return progress.pastExpiry ? "lapsed" : "approved";
+    if (progress.status === "REJECTED") return "rejected";
+    if (progress.status === "EXPIRED" || progress.status === "CANCELLED") return "lapsed";
+    return "other";
+  }
+
+  /**
+   * Carry the latest send's values into the lock and the attestation, exactly as stored. Runs
+   * after a server answer, never on a keystroke, so it never overwrites what someone is typing
+   * under "Nhập mã thủ công".
+   */
+  function adoptProgress() {
+    const now = phase();
+    if (now === "stale" || now === "lapsed" || now === "rejected") {
+      // Values bound to an approval that can no longer be spent would only be refused.
+      for (const key of Object.keys(prepare)) prepare[key] = "";
+      for (const key of ["envelopeId", "resourceVersion", "renderedHash", "rowVersion"]) {
+        attest[key] = "";
+      }
+      return;
+    }
+    if (progress && (now === "waiting" || now === "approved")) {
+      prepare.approvalId = progress.approvalId;
+      prepare.resourceVersion = String(progress.resourceVersion);
+      prepare.snapshotHash = progress.snapshotHash;
+      prepare.renderedHash = progress.renderedHash;
+      prepareSubmission.reset();
+    }
+    if (progress && now === "locked") {
+      attest.envelopeId = progress.envelopeId;
+      attest.resourceVersion = String(progress.resourceVersion);
+      attest.renderedHash = progress.renderedHash;
+      attest.rowVersion =
+        progress.envelopeRowVersion && progress.envelopeRowVersion > 0
+          ? String(progress.envelopeRowVersion)
+          : "";
+      attestSubmission.reset();
+    }
+  }
+
+  /**
+   * Steps 2 and 3 as the server's own consent read predicts them: while that read is out, and
+   * when it says the send is not allowed, the control is shut with the reason under it. A
+   * prediction, never a rule -- the server re-checks on every press -- and the reason names the
+   * card rather than repeating its sentence, so no refusal is said twice on one screen.
+   *
+   * @param {string} doing what the control would do, for the reason line
+   * @returns {import("../core/rbac.js").Verdict}
+   */
+  function consentVerdict(doing) {
+    if (!sendVerdict.allowed) return sendVerdict;
+    if (service.loading) {
+      return { allowed: false, reason: "Đang kiểm tra khách này có nhận tin dịch vụ không…" };
+    }
+    if (service.decision && service.decision !== "ALLOW") {
+      return {
+        allowed: false,
+        reason: `Chưa ${doing} được: khách này đang không nhận tin dịch vụ — xem thẻ phía trên.`,
+      };
+    }
+    return sendVerdict;
+  }
+
+  /**
+   * `gated()` with the consent prediction. A control shut by it says so on the element, and its
+   * reason is styled as the warning it is rather than as a hint.
+   *
+   * @param {HTMLElement} control
+   * @param {string} doing
+   * @returns {HTMLElement}
+   */
+  function consentGated(control, doing) {
+    const verdict = consentVerdict(doing);
+    const wrapped = gated(control, verdict);
+    if (!verdict.allowed && sendVerdict.allowed) {
+      control.setAttribute(
+        "data-consent-blocked",
+        service.loading ? "LOADING" : service.reasonCode || service.decision,
+      );
+      wrapped.lastElementChild?.classList.add("step__blocked");
+    }
+    return wrapped;
+  }
+
   /* ---- step 1: read the words ------------------------------------------------------------- */
 
   /**
@@ -389,8 +536,16 @@ export function manualSendPanel({
     // Whatever was on screen belonged to the previous read. An envelope must never be raised from
     // words that are not the ones currently displayed, so the old read goes before the new one.
     bound = null;
-    // Re-reading the same draft keeps the envelope already raised over it; another draft does not.
-    if (raisedDraftId !== raise.draftId) raised = null;
+    // Re-reading the same draft keeps the envelope already raised over it; another draft does not,
+    // and neither does anything this session locked or recorded for the previous one.
+    if (raisedDraftId !== raise.draftId) {
+      raised = null;
+      locked = null;
+      recorded = null;
+      render(prepareOutcomeHost);
+      render(attestOutcomeHost);
+    }
+    progress = null;
     render(raiseErrorHost);
     render(askErrorHost);
     setResult(askResult, null, null);
@@ -416,11 +571,18 @@ export function manualSendPanel({
       bound = read;
       reading = false;
       raiseSubmission.reset();
+      // Where the send over this draft stands, from the same read: the step to land on, and every
+      // value it needs, with nothing pasted (`MANUAL-SEND-RESUME`).
+      progress = progressFrom(read.send_progress);
+      adoptProgress();
       setResult(
         raiseResult,
         "ok",
-        "Đã đọc. Đọc kỹ đúng những chữ bên dưới trước khi xin duyệt; chưa có gì được ghi.",
+        progress
+          ? "Đã đọc tin và tình trạng phiếu gửi mới nhất; chưa có gì được ghi."
+          : "Đã đọc. Đọc kỹ đúng những chữ bên dưới trước khi xin duyệt; chưa có gì được ghi.",
       );
+      service.loading = true;
       redraw();
       // Before anything is asked of it: can this customer be sent a service message at all?
       void loadServiceMessaging({
@@ -676,6 +838,21 @@ export function manualSendPanel({
       toast("Đã tạo phiếu xin duyệt gửi");
       // Carried into step 3, which needs exactly these four. The approver still has to decide
       // first: step 3 is refused until the envelope is APPROVED, and that refusal is correct.
+      // The previous session's lock and record belonged to the approval this one replaces.
+      locked = null;
+      recorded = null;
+      render(prepareOutcomeHost);
+      render(attestOutcomeHost);
+      progress = progressFrom({
+        approval_request_id: approval.approval_request_id,
+        status: approval.status || "REQUESTED",
+        expires_at: approval.expires_at,
+        past_expiry: false,
+        resource_version: read.resource_version,
+        snapshot_hash: read.snapshot_hash,
+        rendered_hash: read.rendered_hash,
+        requested_by_you: true,
+      });
       prepare.approvalId = String(approval.approval_request_id || "");
       prepare.resourceVersion = String(read.resource_version);
       prepare.snapshotHash = String(read.snapshot_hash);
@@ -683,7 +860,7 @@ export function manualSendPanel({
       prepareSubmission.reset();
       redraw();
     } catch (error) {
-      if (showConsentRefusal(error, askResult, askErrorHost)) return;
+      if (showConsentRefusal(error, askResult, askErrorHost, "Chưa xin duyệt được.")) return;
       setResult(
         askResult,
         error.kind === "DENIED" ? "warn" : "danger",
@@ -709,58 +886,166 @@ export function manualSendPanel({
           "ở bước 4.",
       ),
     );
-    if (raised) {
+    const now = phase();
+    const raiseButton = (label) =>
+      h(
+        "div",
+        { class: "step__actions" },
+        consentGated(
+          button({
+            label,
+            variant: "primary",
+            network: true,
+            block: true,
+            data: { raiseEnvelope: "true" },
+            onClick: () => void raiseEnvelope(),
+          }),
+          "xin duyệt",
+        ),
+      );
+    const approvalFacts = () =>
+      keyValues([
+        [
+          "Phiếu xin duyệt",
+          h("span", { class: "mono" }, shortId(progress?.approvalId || raised?.approval_request_id)),
+        ],
+        ["Hết hạn lúc", dateTime(progress?.expiresAt || raised?.expires_at)],
+      ]);
+
+    if (!bound) {
+      return stepCard({
+        number: 2,
+        title: "Xin duyệt",
+        state: "todo",
+        info,
+        summary: "Đọc tin ở bước 1 trước.",
+      });
+    }
+
+    if (now === "waiting") {
+      // Somebody else decides, on Duyệt. Who may decide is offered the way there; the person who
+      // asked is told it is not them -- the server refuses a self-decision.
+      const mayDecide = approveVerdict.allowed && !progress?.requestedByYou;
+      return stepCard({
+        number: 2,
+        id: "manual-step-2",
+        title: "Xin duyệt",
+        state: "current",
+        info,
+        summary: h(
+          "span",
+          { dataSendPhase: "waiting" },
+          statusPill({ state: "warn", text: "Đang chờ duyệt", token: "REQUESTED" }),
+        ),
+        children: [
+          askResult,
+          approvalFacts(),
+          progress?.requestedByYou && !raised
+            ? h(
+                "p",
+                { class: "hint step__fact" },
+                "Bạn đã xin duyệt. Một người duyệt khác — không phải bạn — quyết ở màn hình Duyệt.",
+              )
+            : null,
+          h(
+            "div",
+            { class: "step__actions" },
+            mayDecide
+              ? linkButton({ href: "#/approvals", label: "Mở màn hình Duyệt", variant: "secondary" })
+              : null,
+            button({
+              label: "Kiểm tra lại",
+              variant: "quiet",
+              icon: "refresh",
+              network: true,
+              data: { refreshProgress: "true" },
+              onClick: () => void readBinding(),
+            }),
+          ),
+          askErrorHost,
+        ],
+      });
+    }
+
+    if (now === "stale" || now === "lapsed" || now === "rejected") {
+      const why =
+        now === "stale"
+          ? `Tin đã đổi sau khi xin duyệt: phiếu duyệt bản v${String(progress?.resourceVersion)}, ` +
+            `tin giờ là v${String(bound.resource_version)}. Phải xin duyệt lại đúng tin mới.`
+          : now === "lapsed"
+            ? "Phiếu xin duyệt trước đã hết hạn. Phải xin duyệt lại."
+            : "Người duyệt đã từ chối phiếu trước. Muốn gửi thì phải xin duyệt lại.";
+      return stepCard({
+        number: 2,
+        id: "manual-step-2",
+        title: "Xin duyệt",
+        state: "current",
+        info,
+        summary: null,
+        children: [
+          h(
+            "div",
+            { class: "notice", dataState: "warn", dataSendPhase: now },
+            h("p", { class: "notice__title" }, why),
+          ),
+          raiseButton("Xin duyệt lại"),
+          askResult,
+          askErrorHost,
+        ],
+      });
+    }
+
+    if (now === "other") {
+      return stepCard({
+        number: 2,
+        id: "manual-step-2",
+        title: "Xin duyệt",
+        state: "current",
+        info,
+        children: [
+          h(
+            "div",
+            { class: "notice", dataState: "warn", dataSendPhase: "other" },
+            h(
+              "p",
+              { class: "notice__title" },
+              `Phiếu gửi mới nhất đang ở trạng thái “${enumVi(progress?.status)}”, không gửi tay ` +
+                "tiếp được từ đây.",
+            ),
+          ),
+          approvalFacts(),
+        ],
+      });
+    }
+
+    if (now !== "none") {
+      // Approved, locked or recorded: this step is behind us.
       return stepCard({
         number: 2,
         title: "Xin duyệt",
         state: "done",
         info,
-        summary: "Đã tạo phiếu · chờ một người duyệt khác quyết",
-        children: [
-          askResult,
-          keyValues([
-            ["Phiếu xin duyệt", h("span", { class: "mono" }, shortId(raised.approval_request_id))],
-            ["Hết hạn lúc", dateTime(raised.expires_at)],
-          ]),
-          h(
-            "div",
-            { class: "step__actions" },
-            linkButton({ href: "#/approvals", label: "Mở màn hình Duyệt", variant: "quiet" }),
-          ),
-        ],
+        summary: "Đã được duyệt",
+        children: [approvalFacts()],
       });
     }
+
     return stepCard({
       number: 2,
+      id: "manual-step-2",
       title: "Xin duyệt",
-      state: bound ? "current" : "todo",
+      state: "current",
       info,
-      summary: bound ? null : "Đọc tin ở bước 1 trước.",
-      children: bound
-        ? [
-            h(
-              "p",
-              { class: "hint step__fact" },
-              "Một người khác sẽ duyệt đúng những chữ trên. Chưa có gì được gửi.",
-            ),
-            h(
-              "div",
-              { class: "step__actions" },
-              gated(
-                button({
-                  label: "Xin duyệt gửi đúng tin này",
-                  variant: "primary",
-                  network: true,
-                  block: true,
-                  onClick: () => void raiseEnvelope(),
-                }),
-                sendVerdict,
-              ),
-            ),
-            askResult,
-            askErrorHost,
-          ]
-        : null,
+      children: [
+        h(
+          "p",
+          { class: "hint step__fact" },
+          "Một người khác sẽ duyệt đúng những chữ trên. Chưa có gì được gửi.",
+        ),
+        raiseButton("Xin duyệt gửi đúng tin này"),
+        askResult,
+        askErrorHost,
+      ],
     });
   }
 
@@ -815,13 +1100,38 @@ export function manualSendPanel({
       attest.rowVersion = integer(result.row_version) === UNKNOWN ? "" : String(result.row_version);
       attest.resourceVersion = prepare.resourceVersion;
       attestSubmission.reset();
+      // And where the send now stands: locked by you, which is what a re-read would say too.
+      const approvalId = String(result.approval_request_id || prepare.approvalId);
+      const base =
+        progress && progress.approvalId === approvalId
+          ? progress
+          : {
+              approvalId,
+              status: "APPROVED",
+              expiresAt: null,
+              pastExpiry: false,
+              resourceVersion: Number.parseInt(prepare.resourceVersion, 10),
+              snapshotHash: prepare.snapshotHash,
+              renderedHash: prepare.renderedHash,
+              requestedByYou: false,
+            };
+      progress = {
+        ...base,
+        status: "APPROVED",
+        envelopeId: attest.envelopeId,
+        envelopeStatus: String(result.status || "APPROVED_FOR_MANUAL_SEND"),
+        envelopeRowVersion: Number(result.row_version) || null,
+        preparedByYou: true,
+      };
       redraw();
       // The next thing to do is step 4, below the fold on a phone: bring it up.
       stepsHost
         .querySelector("#manual-step-4")
         ?.scrollIntoView({ block: "start", behavior: "smooth" });
     } catch (error) {
-      if (showConsentRefusal(error, prepareResult, prepareErrorHost)) return;
+      if (showConsentRefusal(error, prepareResult, prepareErrorHost, "Chưa khoá được phong bì.")) {
+        return;
+      }
       setResult(
         prepareResult,
         error.kind === "DENIED" || error.kind === "REQUIRE_HUMAN" ? "warn" : "danger",
@@ -836,8 +1146,13 @@ export function manualSendPanel({
 
   /** @returns {HTMLElement} */
   function stepLock() {
-    const carried = Boolean(raised) && !locked;
-    const ready = Boolean(prepare.approvalId);
+    const now = phase();
+    // Locked already -- by you in this session, or as the server says -- leaves nothing to press.
+    const done = Boolean(locked) || now === "locked" || now === "lockedByOther" || now === "recorded";
+    // The lock is offered outside "Nhập mã thủ công" only for the latest approval, while it is
+    // still waiting (one press once the approver has decided; the server refuses it before) or
+    // approved. Everything else keeps the fallback fields and nothing more.
+    const ready = !done && (now === "waiting" || now === "approved") && Boolean(prepare.approvalId);
     const channelField = h("input", {
       type: "text",
       value: CHANNEL,
@@ -853,18 +1168,15 @@ export function manualSendPanel({
       h(
         "div",
         { class: "stack" },
-        // This used to say the four values "không đọc lại được từ bất kỳ đường nào" because the
-        // approval list returned only `envelope_hash`. APPROVAL-DECIDE-001 projected the other
-        // three, which made half of that sentence false. The remaining half is still true and is
-        // the reason there is no picker: the queue lists `WHERE s.status = 'REQUESTED'`, and
-        // `prepare` refuses any approval that is not already `APPROVED`. The two sets are
-        // disjoint, so the row that carries these values is never the row that may be sent.
+        // This said the four values had to be asked of whoever raised the approval, because the
+        // queue lists only REQUESTED rows and `prepare` takes only APPROVED ones. MANUAL-SEND-RESUME
+        // made that false: the binding read carries the latest approval's id, version and digests,
+        // so these boxes fill themselves. They stay for an envelope other than the latest.
         h(
           "p",
           { class: "hint" },
-          "Xin duyệt ở bước 2 thì bốn ô này đã được điền sẵn. Phiếu mở ở phiên khác thì phải xin " +
-            "bốn giá trị từ người đã tạo phiếu: hàng chờ duyệt chỉ hiện phiếu đang chờ quyết — mà " +
-            "gửi tay chỉ làm được sau khi phiếu đã được duyệt.",
+          "Mở bản nháp là bốn ô này tự điền từ phiếu xin duyệt mới nhất của nó. Chỉ nhập tay khi " +
+            "cần khoá một phiếu khác phiếu đó.",
         ),
         labelled({
           id: "manual-approval-id",
@@ -933,7 +1245,15 @@ export function manualSendPanel({
 
     // The lock itself. Once locked there is nothing left to press here; before anything was
     // carried in, it waits inside "Nhập mã thủ công" with the fields it would need.
-    const main = locked
+    const lockButton = button({
+      type: "submit",
+      label: "Khoá phong bì cho người gửi tay",
+      variant: "primary",
+      network: true,
+      block: true,
+      data: { lockEnvelope: "true" },
+    });
+    const main = done
       ? []
       : [
           ready
@@ -950,30 +1270,24 @@ export function manualSendPanel({
           h(
             "div",
             { class: "step__actions" },
-            gated(
-              button({
-                type: "submit",
-                label: "Khoá phong bì cho người gửi tay",
-                variant: "primary",
-                network: true,
-                block: true,
-              }),
-              sendVerdict,
-            ),
+            // For the latest approval, the consent read predicts the lock too; a lock typed in by
+            // hand is the server's to judge alone.
+            ready ? consentGated(lockButton, "khoá phong bì") : gated(lockButton, sendVerdict),
           ),
         ];
     const results = [prepareResult, prepareErrorHost, prepareOutcomeHost];
-    if (!ready && !locked) manual.lastElementChild?.append(...main.filter(Boolean));
+    if (!ready && !done) manual.lastElementChild?.append(...main.filter(Boolean));
     const form = h(
       "form",
       { class: "form", onSubmit: submitPrepare },
-      ready ? [main, results, manual] : [manual, results],
+      ready ? [main, results, manual] : done ? results : [manual, results],
     );
 
     return stepCard({
       number: 3,
+      id: "manual-step-3",
       title: "Khoá phong bì",
-      state: locked ? "done" : ready ? "current" : "todo",
+      state: done ? "done" : ready ? "current" : "todo",
       info: infoButton(
         "Khoá phong bì là gì?",
         h(
@@ -990,13 +1304,22 @@ export function manualSendPanel({
             "về trong kết quả; một yêu cầu tự ghi người nhận bị từ chối.",
         ),
       ),
-      summary: locked
-        ? "Đã khoá · giờ bạn tự gửi tin"
-        : carried
-          ? "Khi người duyệt đã duyệt phiếu, bấm khoá. Máy chủ từ chối nếu chưa duyệt."
-          : ready
-            ? null
-            : "Chờ phiếu ở bước 2 được duyệt.",
+      summary:
+        now === "lockedByOther"
+          ? "Người khác đã khoá phong bì này để tự gửi"
+          : now === "recorded"
+            ? "Đã khoá"
+            : done
+              ? "Đã khoá · giờ bạn tự gửi tin"
+              : now === "waiting"
+                ? "Khi người duyệt đã duyệt phiếu, bấm khoá. Máy chủ từ chối nếu chưa duyệt."
+                : now === "approved"
+                  ? h(
+                      "span",
+                      { dataSendPhase: "approved" },
+                      statusPill({ state: "ok", text: "Đã được duyệt", token: "APPROVED" }),
+                    )
+                  : "Chờ phiếu ở bước 2 được duyệt.",
       children: gatedFields(form, sendVerdict),
     });
   }
@@ -1046,6 +1369,13 @@ export function manualSendPanel({
         attestOutcomeHost,
         manualSendResult(result, { title: "Đã ghi nhận gửi tay", attested: true }),
       );
+      if (progress && progress.envelopeId === attest.envelopeId) {
+        progress = {
+          ...progress,
+          envelopeStatus: String(result.status || "MANUAL_SEND_RECORDED"),
+          envelopeRowVersion: Number(result.row_version) || progress.envelopeRowVersion,
+        };
+      }
       redraw();
     } catch (error) {
       if (
@@ -1053,8 +1383,8 @@ export function manualSendPanel({
           error,
           attestResult,
           attestErrorHost,
-          "Lời chứng thực không được ghi. Nếu bạn đã lỡ gửi tin này sau khi khách yêu cầu dừng, " +
-            "báo chủ tiệm ngay.",
+          "Lời chứng thực không được ghi.",
+          "Nếu bạn đã lỡ gửi tin này sau khi khách yêu cầu dừng, báo chủ tiệm ngay.",
         )
       ) {
         return;
@@ -1073,7 +1403,11 @@ export function manualSendPanel({
 
   /** @returns {HTMLElement} */
   function stepRecord() {
-    const ready = Boolean(attest.envelopeId);
+    const now = phase();
+    const done = Boolean(recorded) || now === "recorded";
+    // Ready for an envelope locked by you -- in this session or, as the server says, in another;
+    // or, before any read, for one entered under "Nhập mã thủ công".
+    const ready = !done && Boolean(attest.envelopeId) && (now === "locked" || now === "none");
     const sentAtEcho = h("p", { class: "hint" });
 
     const updateEcho = () => {
@@ -1119,13 +1453,22 @@ export function manualSendPanel({
               { class: "notice", dataState: "info" },
               "Các ô này đã được điền từ kết quả khoá phong bì ở bước 3. Không sửa chúng bằng tay.",
             )
-          : null,
+          : attest.envelopeId && now === "locked"
+            ? h(
+                "div",
+                { class: "notice", dataState: "info" },
+                "Các ô này đã được điền từ phong bì bạn đã khoá, theo máy chủ. Không sửa chúng " +
+                  "bằng tay.",
+              )
+            : null,
         labelled({
           id: "attest-envelope-id",
           label: "Mã phong bì gửi tay (manual_send_envelope_id)",
+          // Said "no route reads envelopes back" until MANUAL-SEND-RESUME: the binding read now
+          // carries the latest approval's envelope, so the box fills itself for the one who locked.
           hint:
-            "Bước 3 trả về giá trị này. Nếu phong bì được khoá ở phiên khác, dán mã đó vào đây — " +
-            "không có đường nào đọc lại danh sách phong bì.",
+            "Bước 3 trả về giá trị này; mở lại bản nháp thì nó tự điền nếu chính bạn đã khoá phong " +
+            "bì của phiếu mới nhất. Chỉ dán tay cho một phong bì khác.",
           control: boundInput({
             target: attest,
             key: "envelopeId",
@@ -1176,7 +1519,7 @@ export function manualSendPanel({
       ),
     );
 
-    const main = recorded
+    const main = done
       ? []
       : [
           ready
@@ -1226,18 +1569,35 @@ export function manualSendPanel({
           ),
         ];
     const results = [attestResult, attestErrorHost, attestOutcomeHost];
-    if (!ready && !recorded) manual.lastElementChild?.append(...main.filter(Boolean));
+    // Recorded before this session opened: the record is the server's, and what it does not mean
+    // is said here exactly as it is under a record made now.
+    const recordedEarlier =
+      done && !recorded
+        ? h(
+            "div",
+            { class: "stack stack--tight", dataSendPhase: "recorded" },
+            keyValues([
+              [
+                "Phong bì",
+                h("span", { class: "mono" }, shortId(progress?.envelopeId || "")),
+              ],
+              ["Trạng thái", enumVi("MANUAL_SEND_RECORDED")],
+            ]),
+            notDeliveredNotice(),
+          )
+        : null;
+    if (!ready && !done) manual.lastElementChild?.append(...main.filter(Boolean));
     const form = h(
       "form",
       { class: "form", onSubmit: submitAttest },
-      ready ? [main, results, manual] : [manual, results],
+      ready ? [main, results, manual] : done ? [recordedEarlier, results] : [manual, results],
     );
 
     return stepCard({
       number: 4,
       id: "manual-step-4",
       title: "Ghi nhận đã gửi",
-      state: recorded ? "done" : ready ? "current" : "todo",
+      state: done ? "done" : ready ? "current" : "todo",
       info: infoButton(
         "Bốn bước gửi tay là gì?",
         h(
@@ -1257,9 +1617,13 @@ export function manualSendPanel({
       ),
       summary: recorded
         ? "Đã ghi lời chứng thực của bạn"
-        : ready
-          ? "Gửi tin bằng tay, rồi ghi lại lúc bạn gửi."
-          : "Chờ khoá phong bì ở bước 3.",
+        : done
+          ? "Tin này đã được ghi nhận gửi tay"
+          : ready
+            ? "Gửi tin bằng tay, rồi ghi lại lúc bạn gửi."
+            : now === "lockedByOther"
+              ? "Người khác đã khoá phong bì này — người đó tự gửi và ghi nhận."
+              : "Chờ khoá phong bì ở bước 3.",
       children: gatedFields(form, sendVerdict),
     });
   }
@@ -1269,39 +1633,70 @@ export function manualSendPanel({
   /**
    * Render a `DEC-033` refusal where the step's own refusal would go, and open the contact's card.
    *
-   * The headline is the server's reason in Vietnamese, not the step's generic "không khoá được":
-   * "the customer asked the shop to stop" and "the envelope is stale" call for different people.
+   * The reason is the server's, in Vietnamese, not the step's generic "không khoá được": "the
+   * customer asked the shop to stop" and "the envelope is stale" call for different people. It is
+   * said once. The contact's card is re-read with the refusal and states the same reason, so once
+   * it does, this notice keeps only what failed here and points at the card; if the card says
+   * something else -- or could not be read -- the notice keeps the full sentence. The codes, the
+   * owner decision and the correlation id stay in the notice's technical drawer either way.
    *
    * @param {any} error
    * @param {HTMLElement} resultNode
    * @param {HTMLElement} errorHost
+   * @param {string} stepLine what did not happen at this step, e.g. "Chưa khoá được phong bì."
    * @param {string} [extra] a sentence only this step needs
    * @returns {boolean} whether the error was one
    */
-  function showConsentRefusal(error, resultNode, errorHost, extra = "") {
+  function showConsentRefusal(error, resultNode, errorHost, stepLine, extra = "") {
     if (!error?.consent) return false;
-    setResult(resultNode, "warn", error.message);
-    render(
-      errorHost,
-      h(
-        "div",
-        { dataConsentRefusal: String(error.consent.reasonCode || "") },
-        errorNotice(error),
-        extra ? h("p", { class: "hint" }, extra) : null,
-      ),
-    );
+    const code = String(error.consent.reasonCode || "");
+    setResult(resultNode, null, null);
+    /** @param {boolean} cardSaysIt */
+    const paint = (cardSaysIt) =>
+      render(
+        errorHost,
+        h(
+          "div",
+          { dataConsentRefusal: code, dataReasonOnCard: cardSaysIt ? "true" : "false" },
+          errorNotice(
+            error,
+            cardSaysIt
+              ? { title: `${stepLine} Lý do ở thẻ “Tin dịch vụ cho khách này” phía trên.` }
+              : {},
+          ),
+          extra ? h("p", { class: "hint" }, extra) : null,
+        ),
+      );
+    paint(false);
     revealError(errorHost);
-    void loadServiceMessaging(error.consent);
+    void loadServiceMessaging(error.consent).then((read) => {
+      const egress = read?.egress || {};
+      if (egress.decision && egress.decision !== "ALLOW" && String(egress.reason_code) === code) {
+        paint(true);
+      }
+    });
     return true;
   }
 
   /**
    * Read the contact's service-messaging state and render the card. A pure read.
    *
+   * What it says is also the prediction steps 2 and 3 are drawn with (`consentVerdict`), so the
+   * steps are redrawn when that prediction changes.
+   *
    * @param {{storeId: string, contactBindingId: string, channel: string}} subject
+   * @returns {Promise<any>} the read, or null when there was none
    */
   async function loadServiceMessaging(subject) {
-    if (!UUID.test(subject.storeId) || !UUID.test(subject.contactBindingId)) return;
+    const before = `${service.loading}|${service.decision}|${service.reasonCode}`;
+    const settle = () => {
+      if (`${service.loading}|${service.decision}|${service.reasonCode}` !== before) redraw();
+    };
+    if (!UUID.test(subject.storeId) || !UUID.test(subject.contactBindingId)) {
+      Object.assign(service, { loading: false, decision: "", reasonCode: "" });
+      settle();
+      return null;
+    }
     serviceSubject = subject;
     serviceHost.hidden = false;
     render(serviceCardHost, skeleton(1));
@@ -1315,12 +1710,23 @@ export function manualSendPanel({
       release.evidenceId = String(read.release_evidence?.[0]?.webhook_event_id || "");
       releaseSubmission.reset();
       render(serviceCardHost, serviceMessagingCard(read));
+      Object.assign(service, {
+        loading: false,
+        decision: String(read.egress?.decision || ""),
+        reasonCode: String(read.egress?.reason_code || ""),
+      });
+      settle();
+      return read;
     } catch (error) {
       render(
         serviceCardHost,
         h("p", { class: "consent__label" }, "Tin dịch vụ cho khách này"),
         errorNotice(error, { title: "Không đọc được trạng thái tin dịch vụ của khách này." }),
       );
+      // Unknown predicts nothing: the steps stay pressable and the server decides on the press.
+      Object.assign(service, { loading: false, decision: "", reasonCode: "" });
+      settle();
+      return null;
     }
   }
 

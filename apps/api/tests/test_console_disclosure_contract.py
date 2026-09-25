@@ -825,7 +825,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # panel left `#/remedies` (spending a credit moves onto the quote receipt in `#/new`,
     # CONSOLE-REDESIGN-001), taking its guardrail and its "phiếu đã dùng xong" hint with it.
     # 441 after merging the concurrent slices above (lead, at integration).
-    assert sum(counts.values()) == _registry()["total"] == 441
+    # 444 after CONSOLE-FIXES-S8 (441 + 3), all DESCRIPTIVE. Added: the resumed "Bạn đã xin duyệt"
+    # hint, the "filled from the envelope you locked, per the server" notice (manualSend.js), and
+    # errorNotice's owner-rule line, which no longer names the decision id (moved to its technical
+    # drawer). Reworded because the behaviour changed: the manual-entry hint (the four values now
+    # fill from the server, MANUAL-SEND-RESUME) and NOT_SUPPORTED's "Mã lý do bên dưới" (the notes
+    # are visible, the codes are in the drawer). None removed.
+    assert sum(counts.values()) == _registry()["total"] == 444
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

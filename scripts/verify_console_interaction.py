@@ -1398,6 +1398,8 @@ with sync_playwright() as playwright:
                 }
             else:
                 body = MESSAGE_BINDING
+            # MANUAL-SEND-RESUME, section 16: how far the latest send over the draft has gone.
+            body = {**body, "send_progress": state.get("send_progress")}
         elif "/remedy-proposals/" in url and url.split("?")[0].endswith("/approval-binding"):
             # The read section 18 exists for: the owner's view of one `APPROVE_REMEDY` envelope.
             # Stale means the order's quote digest moved under the envelope, which the server
@@ -4286,6 +4288,201 @@ with sync_playwright() as playwright:
         and "không có nghĩa là khách đã nhận" in (outcome.text_content() or ""),
     )
 
+    # MANUAL-SEND-RESUME (spec V2 principle 2 -- zero paste). A new session on the same draft:
+    # the binding read carries `send_progress`, and the panel lands on the right step with every
+    # value carried. "Nhập mã thủ công" is never opened in any of these, and every write sends
+    # exactly the values the read returned.
+
+    def progress_body(**overrides: object) -> dict[str, object]:
+        return {
+            "approval_request_id": MESSAGE_APPROVAL,
+            "status": "REQUESTED",
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=40)).isoformat(),
+            "past_expiry": False,
+            "resource_version": 1,
+            "snapshot_hash": MESSAGE_SNAPSHOT,
+            "rendered_hash": MESSAGE_RENDERED,
+            "requested_by_you": True,
+            "envelope_id": None,
+            "envelope_status": None,
+            "envelope_row_version": None,
+            "prepared_by_you": None,
+            **overrides,
+        }
+
+    def reopen(progress: dict[str, object] | None) -> str:
+        state["send_progress"] = progress
+        page.evaluate("location.hash = '#/orders'")
+        page.wait_for_timeout(400)
+        page.evaluate(f"location.hash = '#/exceptions?draft={MESSAGE_DRAFT_ID}'")
+        page.wait_for_timeout(1100)
+        return rendered_text()
+
+    def manual_entry_opened() -> bool:
+        return bool(
+            page.evaluate(
+                """() => [...document.querySelectorAll("details.manual-entry")]
+                         .some((d) => d.open)"""
+            )
+        )
+
+    # Waiting: step 2 says so, offers Duyệt to someone who may decide, and no second raise.
+    posts_before = len(state.get("approval_posts", []))
+    reopen(progress_body(requested_by_you=False))
+    waiting = page.locator("#manual-step-2 [data-send-phase='waiting']")
+    check(
+        "a reopened draft whose approval is REQUESTED shows step 2 'Đang chờ duyệt'",
+        waiting.count() == 1 and "Đang chờ duyệt" in (waiting.text_content() or ""),
+    )
+    check(
+        "with the way to Duyệt for someone who may decide, and no second 'Xin duyệt' press",
+        page.locator("#manual-step-2 a[href='#/approvals']").count() == 1
+        and page.locator("button[data-raise-envelope]").count() == 0,
+    )
+    reopen(progress_body(requested_by_you=True))
+    check(
+        "the person who asked is told a different person decides, and is not sent to decide it",
+        page.locator("#manual-step-2 a[href='#/approvals']").count() == 0
+        and "không phải bạn" in (page.locator("#manual-step-2").text_content() or ""),
+    )
+    check(
+        "and nothing was raised again by opening the page",
+        len(state.get("approval_posts", [])) == posts_before,
+    )
+
+    # Approved, no envelope: one press locks, from the read alone.
+    state["prepare_refusal"] = None
+    state["prepare_posts"] = []
+    reopen(progress_body(status="APPROVED"))
+    check(
+        "an APPROVED approval lands on step 3, ready, with its approval named",
+        page.locator("#manual-step-3[data-state='current'] [data-send-phase='approved']").count()
+        == 1
+        and MESSAGE_APPROVAL[:8] in (page.locator("#manual-step-3").text_content() or ""),
+    )
+    page.locator("button[data-lock-envelope]").first.click()
+    page.wait_for_timeout(800)
+    prepared = [json.loads(p or "{}") for p in state.get("prepare_posts", [])]
+    check(
+        "one press 'Khoá phong bì' sends the approval's own version and digests",
+        len(prepared) == 1
+        and prepared[0]
+        == {
+            "observed_resource_version": 1,
+            "observed_snapshot_hash": MESSAGE_SNAPSHOT,
+            "observed_rendered_hash": MESSAGE_RENDERED,
+            "channel": "INTERNAL_TEST",
+        },
+        repr(prepared),
+    )
+    check(
+        "and the manual-entry fields were never needed",
+        not manual_entry_opened() and "Phong bì đã khoá" in rendered_text(),
+    )
+
+    # Locked by you, in another session: step 4 is ready and attests from the read alone.
+    state["attest_posts"] = []
+    reopen(
+        progress_body(
+            status="APPROVED",
+            envelope_id=MANUAL_ENVELOPE_ID,
+            envelope_status="APPROVED_FOR_MANUAL_SEND",
+            envelope_row_version=1,
+            prepared_by_you=True,
+        )
+    )
+    check(
+        "an envelope locked by you lands on step 4, ready",
+        page.locator("#manual-step-4[data-state='current']").count() == 1
+        and page.locator("#manual-step-3[data-state='done']").count() == 1,
+    )
+    page.locator("button", has_text="Vừa gửi xong").first.click()
+    page.wait_for_timeout(150)
+    page.locator("button", has_text="Chứng thực rằng tôi đã gửi tin này").first.click()
+    page.wait_for_timeout(900)
+    attests = state.get("attest_posts", [])
+    body = json.loads(attests[-1][0] or "{}") if attests else {}
+    check(
+        "the attestation goes to the envelope the server named, If-Match its row version",
+        len(attests) == 1
+        and attests[0][1] == '"1"'
+        and attests[0][3].split("?")[0].endswith(f"/manual-sends/{MANUAL_ENVELOPE_ID}/attest")
+        and body.get("observed_resource_version") == 1
+        and body.get("exact_rendered_hash") == MESSAGE_RENDERED,
+        repr((attests, body)),
+    )
+    check("with nothing pasted", not manual_entry_opened())
+
+    # Locked by somebody else: step 4 is theirs, and nothing is prefilled for you.
+    reopen(
+        progress_body(
+            status="APPROVED",
+            envelope_id=MANUAL_ENVELOPE_ID,
+            envelope_status="APPROVED_FOR_MANUAL_SEND",
+            envelope_row_version=1,
+            prepared_by_you=False,
+        )
+    )
+    check(
+        "an envelope somebody else locked is theirs to attest, and says so",
+        "Người khác đã khoá phong bì này" in rendered_text()
+        and page.locator("#attest-envelope-id").input_value() == "",
+    )
+
+    # Recorded: done, and the not-delivered fact is still on screen.
+    reopen(
+        progress_body(
+            status="APPROVED",
+            envelope_id=MANUAL_ENVELOPE_ID,
+            envelope_status="MANUAL_SEND_RECORDED",
+            envelope_row_version=2,
+            prepared_by_you=True,
+        )
+    )
+    recorded_block = page.locator("#manual-step-4 [data-send-phase='recorded']")
+    check(
+        "a recorded send is the done state, and still says recorded is not delivered",
+        page.locator("#manual-step-4[data-state='done']").count() == 1
+        and recorded_block.count() == 1
+        and "không có nghĩa là khách đã nhận" in (recorded_block.text_content() or "")
+        and page.locator("button", has_text="Chứng thực rằng tôi đã gửi tin này").count() == 0,
+    )
+
+    # Stale: the draft moved past what was approved. Say so; ask again from the new read.
+    state["message_edited"] = True
+    posts_before = len(state.get("approval_posts", []))
+    reopen(progress_body(status="APPROVED"))
+    stale = page.locator("#manual-step-2 [data-send-phase='stale']")
+    check(
+        "a draft edited after its approval says the approval is stale, with both versions",
+        stale.count() == 1
+        and "v1" in (stale.text_content() or "")
+        and "v2" in (stale.text_content() or "")
+        # The lock waits, shut away under the fallback fields, for an approval that can be spent.
+        and not page.locator("button[data-lock-envelope]").first.is_visible()
+        and page.locator("#manual-step-3[data-state='todo']").count() == 1,
+    )
+    page.locator("button[data-raise-envelope]", has_text="Xin duyệt lại").first.click()
+    page.wait_for_timeout(700)
+    raised = [json.loads(p or "{}") for p in state.get("approval_posts", [])]
+    check(
+        "'Xin duyệt lại' raises a new approval over the new words, from the new read",
+        len(raised) == posts_before + 1
+        and raised[-1].get("resource_version") == 2
+        and raised[-1].get("rendered_hash") == "JCS-SHA256-V1:" + "9" * 64,
+        repr(raised[-1:]),
+    )
+    state["message_edited"] = False
+
+    # Lapsed: stored REQUESTED, past its expiry by the server's clock.
+    reopen(progress_body(past_expiry=True))
+    check(
+        "a lapsed approval says so and offers 'Xin duyệt lại'",
+        page.locator("#manual-step-2 [data-send-phase='lapsed']").count() == 1
+        and page.locator("button[data-raise-envelope]", has_text="Xin duyệt lại").count() == 1,
+    )
+    state["send_progress"] = None
+
     print()
     print("=" * 74)
     print("17. ĐỌC LẠI — who works here, what an order issued, what an incident holds, and where")
@@ -4786,6 +4983,31 @@ with sync_playwright() as playwright:
         "and says a release lifts service messages only, marketing stays blocked",
         "Tin quảng cáo vẫn bị chặn" in card_text,
     )
+
+    # A blocked send looks blocked. The server's own consent read says the send is not allowed, so
+    # step 2's press is shut with the reason as visible text under it -- a prediction; the server
+    # still re-checks on any press -- and the refusal sentence is said once, on the card.
+    raise_control = page.locator("button[data-raise-envelope]")
+    check(
+        "with the send suppressed, 'Xin duyệt gửi đúng tin này' is shut, marked with the reason",
+        raise_control.count() == 1
+        and not raise_control.is_enabled()
+        and raise_control.get_attribute("data-consent-blocked") == "SUPPRESSED",
+    )
+    check(
+        "and the reason is visible text under it, pointing at the card rather than repeating it",
+        "khách này đang không nhận tin dịch vụ"
+        in (page.locator("#manual-step-2").inner_text() or ""),
+    )
+
+    def visible_count(sentence: str) -> int:
+        return (page.locator("main").inner_text() or "").count(sentence)
+
+    check(
+        "the STOP sentence appears exactly once on the visible screen",
+        visible_count("Khách đã yêu cầu dừng nhận tin trên kênh này") == 1,
+        str(visible_count("Khách đã yêu cầu dừng nhận tin trên kênh này")),
+    )
     options = page.evaluate(
         """() => [...document.querySelectorAll("#service-release-evidence option")]
                  .map((o) => o.value)"""
@@ -4842,14 +5064,25 @@ with sync_playwright() as playwright:
         repr(result_text),
     )
 
-    # Step 1 refused: raise the envelope so the four boxes fill, then press the lock.
+    # Released: the server's read now allows the send, so the press is live again.
+    check(
+        "after the release the 'Xin duyệt' press is live again",
+        page.locator("button[data-raise-envelope]").count() == 1
+        and page.locator("button[data-raise-envelope]").is_enabled()
+        and page.locator("button[data-raise-envelope]").get_attribute("data-consent-blocked")
+        is None,
+    )
+
+    # Step 3 refused: raise the envelope so the four boxes fill, then press the lock. The server
+    # refuses although the card said ALLOW (it re-checks on every press). SUPPRESSED goes last:
+    # after it the card says the send is blocked and the lock is shut, as it should be.
     page.locator("button", has_text="Xin duyệt gửi đúng tin này").first.click()
     page.wait_for_timeout(700)
     refusals = {
-        "SUPPRESSED": "Khách đã yêu cầu dừng nhận tin trên kênh này",
         "MESSAGING_POLICY_UNPUBLISHED": "Chủ tiệm chưa công bố chính sách tin dịch vụ",
         "NO_SERVICE_BASIS": "Chưa có căn cứ để gửi tin dịch vụ",
         "PENDING_REVIEW": "có thể là yêu cầu dừng nhận tin",
+        "SUPPRESSED": "Khách đã yêu cầu dừng nhận tin trên kênh này",
     }
     for reason, sentence in refusals.items():
         state["prepare_refusal"] = reason
@@ -4858,18 +5091,43 @@ with sync_playwright() as playwright:
         page.locator("button", has_text="Khoá phong bì cho người gửi tay").first.click()
         page.wait_for_timeout(800)
         refused = page.locator(f"[data-consent-refusal='{reason}']")
-        refused_text = (refused.text_content() or "") if refused.count() else ""
+        notice = refused.locator(".notice[data-reason-codes]")
         panel_text = rendered_text()
+        visible = page.locator("main").inner_text() or ""
+        on_card = refused.get_attribute("data-reason-on-card") if refused.count() else None
+        card_says = sentence in (page.locator("#manual-service-messaging").inner_text() or "")
         check(
-            f"a {reason} refusal at step 1 is headed by the server's reason in Vietnamese",
-            refused.count() == 1 and sentence in refused_text and "DEC-033" in refused_text,
-            repr(refused_text[:200]),
+            f"a {reason} refusal at step 3 says the server's reason in Vietnamese, exactly once",
+            refused.count() == 1
+            and visible.count(sentence) == 1
+            # Where it is said: on the card when the card's re-read says the same, else here.
+            and (
+                (on_card == "true" and card_says)
+                or (on_card == "false" and sentence in (refused.inner_text() or ""))
+            ),
+            f"{visible.count(sentence)} times; on card: {on_card}",
+        )
+        check(
+            f"and the {reason} refusal keeps its codes and owner decision in the tech drawer",
+            notice.count() == 1
+            and reason in (notice.get_attribute("data-reason-codes") or "").split()
+            and notice.get_attribute("data-decision") == "DEC-033"
+            and "DEC-033" in (notice.locator("details.tech").text_content() or "")
+            and "DEC-033" not in (notice.inner_text() or ""),
+            repr(notice.get_attribute("data-reason-codes") if notice.count() else None),
         )
         check(
             f"and the {reason} refusal locks nothing and opens the contact's card again",
             "Phong bì đã khoá" not in panel_text
             and len(state.get("service_reads", [])) > reads_before,
         )
+    lock_control = page.locator("button[data-lock-envelope]")
+    check(
+        "once the card says the send is blocked, the lock is shut with the reason under it",
+        lock_control.count() == 1
+        and not lock_control.is_enabled()
+        and lock_control.get_attribute("data-consent-blocked") == "SUPPRESSED",
+    )
     state["prepare_refusal"] = None
 
     # No message from the customer since the STOP: nothing to cite, so no release control at all.

@@ -1,4 +1,4 @@
-# Staging readiness — measured 2026-09-24, updated 2026-09-25 (three times)
+# Staging readiness — measured 2026-09-24, updated 2026-09-25 (three times) and 2026-09-26
 
 **Question:** can real counter staff use this application for staging and feature testing in daily
 operation?
@@ -39,15 +39,15 @@ the reads the screens lacked), the consent checks (`DEC-033`) and the last two A
 workflow was then filmed **at phone size** against the real API and reviewed as a user and as an
 engineer; every finding was fixed and filmed again.
 
-| Gate | `9287596` (before) | 2026-09-24 | 2026-09-25 | 2026-09-25 evening | 2026-09-25 night |
-|---|---|---|---|---|---|
-| `pytest --require-postgres-integration` | 1574 passed | 1749 passed, 0 failed | 2105 passed, 0 failed | 2274 passed, 0 failed | **2472 passed, 0 failed** |
-| `mypy apps packages` | 249 files | 257 files | 290 files, clean | 304 files, clean | 316 files, clean |
-| `verify_contracts.py` | 57 ops, 348 disclosures | 58 ops, 381 | 61 ops, 396 | 66 ops, 419 | 71 ops, 457 |
-| Real API, shop day (`verify_daily_operations.py`) | 70 / 0 | 71 / 0 | 71 / 0 | 72 / 0, filmed | **78 / 0 at desk and at phone size, filmed** |
-| Real API, every other workflow | 86 / 1 | 86 / 1 | 86 / 1 (coverage line only) | 159 / 0, all 49 controls | **187 / 0 at desk and at phone size**, all 66 controls |
-| Real API, consent walk (`verify_consent_walk.py`) | — | — | — | — | **38 / 0, filmed** |
-| Stubbed API, console interaction | 170 / 0 | 170 / 0 | 171 / 0 | 251 / 0 | **358 / 0** |
+| Gate | `9287596` (before) | 2026-09-24 | 2026-09-25 | 2026-09-25 evening | 2026-09-25 night | 2026-09-26 (round 6) |
+|---|---|---|---|---|---|---|
+| `pytest --require-postgres-integration` | 1574 passed | 1749 passed, 0 failed | 2105 passed, 0 failed | 2274 passed, 0 failed | 2472 passed, 0 failed | **2679 passed, 0 failed** |
+| `mypy apps packages` | 249 files | 257 files | 290 files, clean | 304 files, clean | 316 files, clean | 325 files, clean |
+| `verify_contracts.py` | 57 ops, 348 disclosures | 58 ops, 381 | 61 ops, 396 | 66 ops, 419 | 71 ops, 457 | 77 ops, 475 |
+| Real API, shop day (`verify_daily_operations.py`) | 70 / 0 | 71 / 0 | 71 / 0 | 72 / 0, filmed | 78 / 0 at desk and at phone size, filmed | **78 / 0 at desk and at phone size** |
+| Real API, every other workflow | 86 / 1 | 86 / 1 | 86 / 1 (coverage line only) | 159 / 0, all 49 controls | 187 / 0 at desk and at phone size, all 66 controls | **317 / 0 at desk and at phone size, all 96 controls; new flows filmed** |
+| Real API, consent walk (`verify_consent_walk.py`) | — | — | — | — | 38 / 0, filmed | — (unchanged code) |
+| Stubbed API, console interaction | 170 / 0 | 170 / 0 | 171 / 0 | 251 / 0 | 358 / 0 | **433 / 0** |
 
 Every real-API run starts from a database created empty and migrated to the latest migration
 (`0052` in the evening), with the remedy and promotion policies published. The "every other
@@ -73,6 +73,22 @@ green. On both days the real-API browser run on the merged tree caught problems 
 passing tests and the stubbed browser suite did not.
 
 ## What changed for the person at the counter
+
+**2026-09-26, round 6 — nothing typed at Nhận đồ any more, and the owner has numbers:**
+
+- **Giặt lại / Không nhận đồ** are steps under "Khác", each with a reason the history names
+  ("Giặt lại · Chưa sạch"). A rewash costs the customer nothing.
+- **Nothing typed at Nhận đồ:** a returning channel customer is one tap under "Khách nhắn tin gần
+  đây", and "Tạo đơn cho khách này" opens an order from any conversation; an unused credit is one
+  tap from a list ("Phiếu 7 · 60.000 ₫").
+- **A receipt** the customer takes home: "In phiếu cho khách" straight after the order, one page
+  at 80 mm, 58 mm or A5.
+- **Báo cáo** for the owner, accountant and auditor: money collected net of refunds, new /
+  completed / cancelled orders, on-time and rewash shares with both numbers shown, complaints,
+  compensation paid, day by day. Margin says it cannot be computed yet, rather than guessing.
+- **Export any window up to 92 days**, the window inside what the owner approves.
+- **A lost phone** can be signed out by the owner from the person's sheet; an order approval says
+  whether the order changed since it was sent.
 
 **The night redesign, measured on a 390 px phone against the real API:**
 
@@ -153,6 +169,8 @@ owner's approval rather than out by rule.
 | `DEC-031` addendum | The staff limit and ceiling are per garment; the owner has until the end of the next day to decide; a complaint closes when every claim on it has an outcome. |
 | `DEC-033` | A STOP blocks service messages too; only the customer's own later message lets an owner or approver lift it; a service send needs the owner's published policy and a basis the server can show. |
 | Order steps | Washing starts on an active order only; an unpaid counter order leaves the shop only by taking the payment. |
+| Round 6 (R1–R6) | Rewash is free inside the order; refused goods close the order with no money moved; unused credits are listed in their store; the receipt promises no time until one exists; the report calls money "Tiền đã thu"; the accountant and auditor read the report. |
+| `DEC-034`–`DEC-039` | On the owner's instruction of 2026-09-25: a customer list with consent; part payments and business tabs; unclaimed laundry (20 days free, fee, owner-approved disposal from day 60); a promised-ready time from the owner-confirmed turnaround rules; measuring the shop inside existing taps; the evening summary as a template, not a model. Every fee, promise and the privacy notice wait for the owner's publication. `docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md`. In build (round 7). |
 
 ## Still the owner's, and why
 
@@ -169,8 +187,8 @@ owner's approval rather than out by rule.
 | `SHOP-ALERT-DELIVERY-001` | Blocked on the owner's phone test (condition 2). |
 | Publishing the messaging policy | The owner's legal confirmation (condition 4); nothing sends until then. |
 | A real customer channel | No channel adapter or inbound webhook route exists; the consent walk's customer messages are recorded through the same ingress code, by the harness, and the film says so. |
-| Contact search, a customer's unused credits | No read exists for either; the channel code and a credit code are the only values still typed, each under "Nhập mã thủ công" and stated in an ⓘ. |
-| Marking a rewash or rejecting goods at intake as a step | Not in the step vocabulary yet; listed on `#/gaps` with the workaround. |
+| A staff member signing out their own lost phone | The owner can; the staff member cannot. Widening the revoke rule was stopped by the permission guard as a security loosening and waits for the owner's word. |
+| Customers, part payments, unclaimed laundry, promised times, measurement, the evening summary | Decided (`DEC-034`–`DEC-039`); in build as round 7. |
 | apk `-rN` pins | Assessed, left, with a recovery step in §8. |
 | Remote branch cleanup | Deleting remote refs is refused in this environment; `archive/…` and `codex/…` hold the only copy of the original lineage (ADR-0004). |
 

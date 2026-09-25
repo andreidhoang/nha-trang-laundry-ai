@@ -1,8 +1,44 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-09-25 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **166 queue items.** Migrations run `0001`–`0053`.
+**Last reconciled:** 2026-09-26 (Asia/Ho_Chi_Minh)
+**Active work item:** round 7 wave 1 in build (`CUSTOMER-001`, `PAYMENT-001`, `PROMISE-001`,
+`SHOP-CAPTURE-001`). **182 queue items.** Migrations run `0001`–`0054` (`0055`–`0058` reserved
+for wave 1).
 Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
+
+## The owner's six open questions decided; round 7 queued, 2026-09-26
+
+The owner instructed: decide customer records, part payments, unclaimed laundry, the per-order
+turnaround rule, shop measurement and the AI daily summary "as founder, on Vietnamese business
+thinking". `docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md` records `DEC-034`–`DEC-039`
+(delegated, not signed; `DEC-015` and `DEC-010` are marked superseded). Most substance was already
+owner-confirmed in `BUSINESS_TRUTH_INTAKE.md` and `templates/service-sla.csv` (8 h standard
+turnaround, 20-day pickup then storage fee, 60-day disposal, cash or transfer, B2B credit after
+approval) and had never been wired. Boundaries: every fee, promise and the privacy notice run only
+after the owner publishes them (`scripts/publish_privacy_notice.py`,
+`publish_storage_policy.py`, `publish_turnaround_policy.py`); `DEC-006` (model provider) stays the
+owner's, so the evening summary is a deterministic template. Unclaimed laundry was mis-cited as
+`DEC-005` in two documents; corrected. Build contract: `docs/SHOP_OPERATIONS_SPEC_V1.md`, packet
+`context/tasks/TASK-shop-operations-001.md`, waves in §8.
+
+## Counter completeness built and filmed, 2026-09-26 (round 6)
+
+`context/tasks/TASK-counter-completeness-001.md`, eight items, contract
+`docs/COUNTER_COMPLETENESS_SPEC_V1.md` (founder rulings R1–R6). Built: Giặt lại / Không nhận đồ as
+steps with reasons (`ORDER-STEPS-002`); picking an unused credit and a returning channel customer
+instead of typing codes, and "Tạo đơn cho khách này" from every conversation surface
+(`CREDIT-PICK-001`, `CONTACT-PICK-001`); the customer's receipt, printable at 80/58 mm and A5
+(`RECEIPT-PRINT-001`); the owner's report `#/reports`, `report-v2` (`REPORT-DASHBOARD-001`);
+export by date range with the window inside the approval binding, migration `0054`
+(`EXPORT-RANGE-001`); signed-in devices and an ORDER approval card that says whether the order
+moved (`SESSION-LIST-001`). The filmed review found the report dividing completions by orders
+*created* in the window (two populations); completed and cancelled are counts in `report-v2`.
+**Open for the owner:** the revoke route still lets a non-owner sign out only the session in use,
+so a staff member's lost phone is the owner's press; the lead's attempt to widen it to "any of
+one's own sessions" was stopped by the permission guard as a security loosening and is left for
+the owner to decide. **Lessons:** six parallel slices appending to the same files
+(`kit.css`, the conformance script, the disclosure pin) cost a merge each; a diff3 that
+interleaves two CSS rule blocks is rebuilt as base + the slice's own block, never hand-merged.
 
 ## The console redesigned, consent built, every workflow filmed at phone size, 2026-09-25 (night)
 

@@ -5158,7 +5158,7 @@ items:
 - id: ORDER-STEPS-002
   phase: PRODUCTION_HARDENING
   title: Rewash and refuse-at-intake as named order steps, planned by the domain
-  status: PENDING
+  status: COMPLETE
   priority: 320
   depends_on: []
   context_domains:
@@ -5186,7 +5186,7 @@ items:
 - id: CREDIT-PICK-001
   phase: PRODUCTION_HARDENING
   title: Pick an unused remedy credit from a list instead of typing its code
-  status: PENDING
+  status: COMPLETE
   priority: 321
   depends_on: []
   context_domains:
@@ -5212,8 +5212,9 @@ items:
   blocked_by_decisions: []
 - id: CONTACT-PICK-001
   phase: PRODUCTION_HARDENING
-  title: 'Start an order for a channel customer without pasting: hand-off from the conversation and a returning-customer list'
-  status: PENDING
+  title: 'Start an order for a channel customer without pasting: hand-off from the
+    conversation and a returning-customer list'
+  status: COMPLETE
   priority: 322
   depends_on: []
   context_domains:
@@ -5240,8 +5241,9 @@ items:
   blocked_by_decisions: []
 - id: RECEIPT-PRINT-001
   phase: PRODUCTION_HARDENING
-  title: A printable and shareable receipt for the customer, with no promised-ready time
-  status: PENDING
+  title: A printable and shareable receipt for the customer, with no promised-ready
+    time
+  status: COMPLETE
   priority: 323
   depends_on: []
   context_domains:
@@ -5266,8 +5268,9 @@ items:
   blocked_by_decisions: []
 - id: REPORT-DASHBOARD-001
   phase: PRODUCTION_HARDENING
-  title: 'The owner''s numbers: a versioned report read model with numerator, denominator, window and data quality'
-  status: PENDING
+  title: 'The owner''s numbers: a versioned report read model with numerator, denominator,
+    window and data quality'
+  status: COMPLETE
   priority: 324
   depends_on:
   - ORDER-STEPS-002
@@ -5297,7 +5300,7 @@ items:
 - id: EXPORT-RANGE-001
   phase: PRODUCTION_HARDENING
   title: Export a date range through the owner-approved envelope that binds the window
-  status: PENDING
+  status: COMPLETE
   priority: 325
   depends_on: []
   context_domains:
@@ -5323,8 +5326,9 @@ items:
   blocked_by_decisions: []
 - id: SESSION-LIST-001
   phase: PRODUCTION_HARDENING
-  title: List and revoke sessions one by one, and an order approval card that says whether the order changed
-  status: PENDING
+  title: List and revoke sessions one by one, and an order approval card that says
+    whether the order changed
+  status: COMPLETE
   priority: 326
   depends_on: []
   context_domains:
@@ -5350,8 +5354,9 @@ items:
   blocked_by_decisions: []
 - id: COUNTER-FILMED-REVIEW-003
   phase: PRODUCTION_HARDENING
-  title: Every new flow filmed at phone size against the real API, reviewed as a counter worker and as an engineer, and every finding fixed
-  status: PENDING
+  title: Every new flow filmed at phone size against the real API, reviewed as a counter
+    worker and as an engineer, and every finding fixed
+  status: COMPLETE
   priority: 327
   depends_on:
   - ORDER-STEPS-002
@@ -5384,7 +5389,8 @@ items:
   blocked_by_decisions: []
 - id: CUSTOMER-001
   phase: PRODUCTION_HARDENING
-  title: 'A customer list with consent: phone, name, address, note; search by phone, last four digits or name'
+  title: 'A customer list with consent: phone, name, address, note; search by phone,
+    last four digits or name'
   status: PENDING
   priority: 330
   depends_on:
@@ -5416,7 +5422,8 @@ items:
   blocked_by_decisions: []
 - id: PAYMENT-001
   phase: PRODUCTION_HARDENING
-  title: Part payments and deposits with a method (cash or transfer); goods leave only when paid
+  title: Part payments and deposits with a method (cash or transfer); goods leave
+    only when paid
   status: PENDING
   priority: 331
   depends_on:
@@ -5447,7 +5454,8 @@ items:
   blocked_by_decisions: []
 - id: PAYMENT-002
   phase: PRODUCTION_HARDENING
-  title: 'Account customers (công nợ): owner-set limit, monthly statement, overdue block'
+  title: 'Account customers (công nợ): owner-set limit, monthly statement, overdue
+    block'
   status: PENDING
   priority: 332
   depends_on:
@@ -5479,7 +5487,8 @@ items:
   blocked_by_decisions: []
 - id: PROMISE-001
   phase: PRODUCTION_HARDENING
-  title: A promised-ready time on every order, in opening hours, from the owner-confirmed turnaround rules
+  title: A promised-ready time on every order, in opening hours, from the owner-confirmed
+    turnaround rules
   status: PENDING
   priority: 333
   depends_on:
@@ -5510,7 +5519,8 @@ items:
   blocked_by_decisions: []
 - id: UNCLAIMED-001
   phase: PRODUCTION_HARDENING
-  title: 'Laundry waiting for pickup: contact attempts, storage fee after day 20, owner-approved disposal after day 60'
+  title: 'Laundry waiting for pickup: contact attempts, storage fee after day 20,
+    owner-approved disposal after day 60'
   status: PENDING
   priority: 334
   depends_on:
@@ -5540,7 +5550,8 @@ items:
   blocked_by_decisions: []
 - id: SHOP-CAPTURE-001
   phase: PRODUCTION_HARDENING
-  title: 'Measure the shop inside existing taps: machine per wash cycle, trip costs, Sổ thu chi, margin only when complete'
+  title: 'Measure the shop inside existing taps: machine per wash cycle, trip costs,
+    Sổ thu chi, margin only when complete'
   status: PENDING
   priority: 335
   depends_on:
@@ -5571,7 +5582,8 @@ items:
   blocked_by_decisions: []
 - id: DAILY-SUMMARY-001
   phase: PRODUCTION_HARDENING
-  title: The owner's evening summary from a versioned template over the report read model, no language model
+  title: The owner's evening summary from a versioned template over the report read
+    model, no language model
   status: PENDING
   priority: 336
   depends_on:
@@ -5603,7 +5615,8 @@ items:
   blocked_by_decisions: []
 - id: SHOP-FILMED-REVIEW-004
   phase: PRODUCTION_HARDENING
-  title: Every shop-operations flow filmed at phone size against the real API, reviewed as the counter worker and the owner, every finding fixed
+  title: Every shop-operations flow filmed at phone size against the real API, reviewed
+    as the counter worker and the owner, every finding fixed
   status: PENDING
   priority: 337
   depends_on:

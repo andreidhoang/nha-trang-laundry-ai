@@ -1,0 +1,59 @@
+schema_version: 1
+work_item: CONTACT-PICK-001
+recorded_at: '2026-09-26T01:00:00+07:00'
+requirement_contract: 'GET /stores/{s}/contacts/recent lists only channel bindings with an order or order
+  request in this store, no handle and no message text; #/new?contact=<binding> hand-off from the approvals
+  card, manual send and shadow drafts; the server still refuses an unknown binding.'
+rollback_impact: Additive read route and console links; no migration. Revert the merge. Rolling data back
+  is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before every
+  upgrade.
+unresolved_assumptions: Store exclusion is proven in API tests only (the demo has one store). A reload
+  during the first in-flight ?contact= write can open a second draft intake; harmless.
+evidence:
+  a_contact_is_listed_only_when_the_store_link_is_server_side: test_the_counter_sees_the_channel_customers_this_store_served_and_no_one_else.
+  no_message_text_or_provider_handle_is_returned: Response model carries binding, channels, last activity,
+    latest order and counts only; asserted in the API test.
+  the_server_still_refuses_an_unknown_binding: test_the_hand_off_creates_the_intake_and_the_server_still_refuses_an_unknown_binding;
+    conformance contact_pick checks CONTACT_BINDING_UNKNOWN on screen.
+  walked_on_the_real_api_at_phone_size: 'filmed at phone size (contact_pick): 24 ok, 0 failed'
+  rollback_assessment: Additive read route and console links; no migration. Revert the merge. Rolling
+    data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes
+    before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 657 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 325 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2679 passed, 5 skipped, 1 warning in 839.54s (0:13:59)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 77 served
+    internal API operations against their contract. Validated 475 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 182 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 433 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 78 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 317 ok, 0 failed, 96/96 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 78 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 317 ok, 0 failed, 96/96 declared controls

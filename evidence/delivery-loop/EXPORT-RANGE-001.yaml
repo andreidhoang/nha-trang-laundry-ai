@@ -1,0 +1,59 @@
+schema_version: 1
+work_item: EXPORT-RANGE-001
+recorded_at: '2026-09-26T01:00:00+07:00'
+requirement_contract: An export envelope binds a window [from, to] of at most 92 shop-local days in its
+  snapshot hash and signed statement; approving one window cannot release another; a one-day export binds
+  exactly the pre-change digests; the file opens with five header rows naming the query version and window.
+rollback_impact: Migration 0054 is forward-only and additive (nullable business_date_to); older code ignores
+  it and a window request fails closed under it. Revert the merge. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: Only an OWNER_ADMIN decides an export (owner policy), so in the conformance run
+  the approver defines the window and the owner approves.
+evidence:
+  an_approval_releases_only_the_window_it_bound: 'packages/db/tests/test_export_range.py: release refused
+    EXPORT_APPROVAL_NOT_BOUND for another window; the window''s digests cover both dates.'
+  a_one_day_export_is_unchanged: 'One-day digests pinned against the pre-change module''s own output;
+    test_migration_0054_populated.py: an envelope written before 0054 still approves and releases.'
+  walked_on_the_real_api_at_phone_size: 'filmed at phone size (export_range): 21 ok, 0 failed'
+  rollback_assessment: Migration 0054 is forward-only and additive (nullable business_date_to); older
+    code ignores it and a window request fails closed under it. Revert the merge. Rolling data back is
+    docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before every
+    upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 657 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 325 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2679 passed, 5 skipped, 1 warning in 839.54s (0:13:59)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 77 served
+    internal API operations against their contract. Validated 475 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 182 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 433 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 78 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 317 ok, 0 failed, 96/96 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 78 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 317 ok, 0 failed, 96/96 declared controls

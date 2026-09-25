@@ -1,0 +1,59 @@
+schema_version: 1
+work_item: CREDIT-PICK-001
+recorded_at: '2026-09-26T01:00:00+07:00'
+requirement_contract: GET /stores/{s}/remedy-credits?state=UNUSED lists unspent credits newest first,
+  bounded with truncated, with the issuing order's ticket and no contact field; Nhận đồ applies one with
+  a tap through the existing redemption route; manual code entry stays as a collapsed fallback.
+rollback_impact: Additive read route; no migration. Revert the merge; the typed code path is still there.
+  Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8
+  takes before every upgrade.
+unresolved_assumptions: A credit reserved on another open quote is still listed; the first quote to convert
+  spends it and the server refuses a second reservation on the same quote.
+evidence:
+  the_list_is_store_scoped_bounded_and_carries_no_contact: 'apps/api/tests/test_counter_picks_postgres.py:
+    newest first with ticket, a channel customer''s credit with no ticket, bounded and truncated, read
+    from remedy_credits_open_idx (EXPLAIN), roles and auditor.'
+  a_picked_credit_redeems_through_the_existing_route: 'Conformance credit_pick: total drops 140.000 ->
+    100.000, exactly the server''s 40.000 figure, and the credit leaves the list once the order is created.'
+  walked_on_the_real_api_at_phone_size: 'filmed at phone size (credit_pick): 18 ok, 0 failed'
+  rollback_assessment: Additive read route; no migration. Revert the merge; the typed code path is still
+    there. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section
+    8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 657 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 325 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 2679 passed, 5 skipped, 1 warning in 839.54s (0:13:59)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 77 served
+    internal API operations against their contract. Validated 475 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 182 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 433 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 78 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 317 ok, 0 failed, 96/96 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 78 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 317 ok, 0 failed, 96/96 declared controls

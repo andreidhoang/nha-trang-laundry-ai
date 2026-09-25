@@ -431,8 +431,13 @@ class RemedyLineOptionResponse(BaseModel):
     #: `UNIT` (one piece's price), `BAG` (weight-priced: the bag's fee), `NOT_RECORDED`.
     item_fee_basis: str
     item_fee_vnd: int
+    #: One item's ceiling: the most one proposal may ask for.
     ceiling_vnd: int
-    #: What live or paid damage and loss proposals already hold against this item.
+    #: Items on the line, and what they may carry together. Equal to `ceiling_vnd` when `pieces`
+    #: is 1 (a bag, a single piece, or a fee that was never recorded).
+    pieces: int
+    line_ceiling_vnd: int
+    #: What live or paid damage and loss proposals already hold against this line.
     committed_vnd: int
     #: Reasons every damage amount on this item needs the owner. A loss always does besides.
     owner_always: list[str]
@@ -2604,6 +2609,8 @@ def remedy_options(
                     item_fee_basis=line.item_fee_basis,
                     item_fee_vnd=line.item_fee_vnd,
                     ceiling_vnd=line.ceiling_vnd,
+                    pieces=line.pieces,
+                    line_ceiling_vnd=line.line_ceiling_vnd,
                     committed_vnd=line.committed_vnd,
                     owner_always=list(line.owner_always),
                 )

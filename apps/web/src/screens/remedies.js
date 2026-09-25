@@ -112,7 +112,7 @@ const OWNER_REASON_NOTE = {
   ORDER_REFUNDED: "đơn này đã hoàn tiền, nên mọi khoản đền đều do chủ tiệm duyệt",
   ITEM_FEE_NOT_RECORDED:
     "bản giá không ghi giá của từng món trên dòng này, nên chủ tiệm quyết mọi số tiền",
-  ABOVE_STAFF_LIMIT: "tổng đền cho món này vượt mức nhân viên được duyệt",
+  ABOVE_STAFF_LIMIT: "tổng đền cho dòng này vượt mức nhân viên được duyệt",
 };
 
 /**
@@ -162,8 +162,9 @@ const PLAN_NOTE = {
     "Số tiền phải là số nguyên đồng. “150.000” đọc là 150000; không nhận dấu phẩy và không nhận " +
     "số lẻ. Chưa có gì được gửi đi.",
   ABOVE_CEILING:
-    "Số này cộng với số đã ghi cho món này vượt trần máy chủ tính. Máy chủ từ chối và không tự hạ " +
-    "xuống bằng trần — hạ xuống là trả cho khách ít hơn con số bạn vừa thoả thuận với họ.",
+    "Số này vượt trần một món, hoặc cộng với số đã ghi cho dòng này thì vượt trần cả dòng. Máy chủ " +
+    "từ chối và không tự hạ xuống bằng trần — hạ xuống là trả cho khách ít hơn con số bạn vừa thoả " +
+    "thuận với họ.",
   BELOW_LATENESS_THRESHOLD:
     "Số phút khai chưa vượt ngưỡng chủ tiệm công bố, nên đây chưa phải chuyến giao trễ theo " +
     "chính sách. Không có gì được ghi.",
@@ -201,8 +202,17 @@ function ceilingSummary(plan, options) {
   const window = remedyWindow(plan.kind, options);
   const threshold = plan.ownerThresholdVnd;
 
+  // Several pieces on one line: one item's ceiling per claim, and the line's for all of them.
   const ceilingCell = plan.hasCeiling
-    ? h("span", { class: "money" }, money(plan.ceilingVnd))
+    ? Number.isInteger(plan.pieces) && plan.pieces > 1
+      ? h(
+          "span",
+          null,
+          h("span", { class: "money" }, money(plan.ceilingVnd)),
+          ` mỗi món · cả dòng ${plan.pieces} món tối đa `,
+          h("span", { class: "money" }, money(plan.lineCeilingVnd)),
+        )
+      : h("span", { class: "money" }, money(plan.ceilingVnd))
     : plan.kind === REMEDY_KIND.FREE_REWASH
       ? h("span", null, "Không có trần — không có đồng nào chuyển đi")
       : h(
@@ -247,7 +257,7 @@ function ceilingSummary(plan, options) {
       ? h(
           "span",
           null,
-          `Tuỳ số tiền. Nhân viên duyệt được tới ${money(threshold)} cho mỗi món, tính cả số đã ` +
+          `Tuỳ số tiền. Nhân viên duyệt được tới ${money(threshold)} cho cả dòng, tính cả số đã ` +
             "ghi trước; trên mức đó phải có chủ tiệm.",
         )
       : threshold === null
@@ -278,7 +288,7 @@ function ceilingSummary(plan, options) {
       ["Trần máy chủ tính", ceilingCell, { span: true }],
       ...(plan.committedVnd === null
         ? []
-        : [["Món này đã ghi đền", money(plan.committedVnd), { span: true }]]),
+        : [["Dòng này đã ghi đền", money(plan.committedVnd), { span: true }]]),
       ["Cửa sổ thời gian", windowCell, { span: true }],
       ["Cần chủ tiệm duyệt?", ownerCell, { span: true }],
       ["Khách nhận đồ lúc", dateTime(options?.goods_returned_at), { span: true }],
@@ -664,8 +674,14 @@ export function render_() {
    * @returns {string}
    */
   function planTitle(plan) {
+    if (plan.state === PLAN.ABOVE_CEILING && plan.ceilingBreached === "LINE") {
+      return (
+        `Vượt trần cả dòng: tối đa ${money(plan.lineCeilingVnd)}, ` +
+        `đã ghi ${money(plan.committedVnd)}`
+      );
+    }
     if (plan.state === PLAN.ABOVE_CEILING) {
-      return `Vượt trần: trần của dòng này là ${money(plan.ceilingVnd)}`;
+      return `Vượt trần một món: mỗi đề nghị tối đa ${money(plan.ceilingVnd)}`;
     }
     if (plan.state === PLAN.WINDOW_CLOSED) {
       return `Đã quá hạn: cửa sổ đóng lúc ${dateTime(plan.windowClosesAt)}`;
@@ -718,7 +734,7 @@ export function render_() {
           : "Món bị hỏng (dòng đã có giá trên đơn)",
       hint:
         "Trần là 5 lần phí giặt của một món: đồ tính theo cái lấy giá một cái, đồ tính theo ký " +
-        "lấy tiền cả túi. “Đã ghi” là số các đề nghị trước đã giữ cho món đó. Không có dòng nào " +
+        "lấy tiền cả túi. “Đã ghi” là số các đề nghị trước đã giữ cho dòng đó. Không có dòng nào " +
         "ở đây nghĩa là máy chủ chưa gửi điều kiện từng món.",
       control: select,
     });
@@ -736,7 +752,11 @@ export function render_() {
     const count = line.quantity && unit ? ` × ${quantity(line.quantity)} ${unit}` : "";
     const held = line.committed ? ` · đã ghi ${money(line.committed)}` : "";
     const owner = line.ownerAlways.length ? " · chủ tiệm duyệt" : "";
-    return `${line.label}${count} · trần ${money(line.ceiling)}${held}${owner}`;
+    const cap =
+      line.pieces && line.pieces > 1
+        ? `trần ${money(line.ceiling)}/món, cả dòng ${money(line.lineCeiling)}`
+        : `trần ${money(line.ceiling)}`;
+    return `${line.label}${count} · ${cap}${held}${owner}`;
   }
 
   /** @returns {HTMLElement} */

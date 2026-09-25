@@ -107,9 +107,10 @@ const REASON_TO_WARNING = {
   // between, and PROMO-FIX-003 had the domain choose for them, which turned out to raise the bill
   // above the total the customer had just been read. The choice is a person's again — but it is
   // taken at the redemption, which `REMEDY_CREDIT_PROMOTION_NOT_STACKABLE` refuses outright while
-  // the credit is still unspent. What is left wearing this code is a quote that was already
-  // carrying a credit when it was priced: the programme is withheld, the bag is charged at list
-  // less the credit, nothing is pending and the quote sells.
+  // the credit is still unspent. DEC-030 (2026-09-25) then made pricing follow the same rule:
+  // a reprice releases a reserved credit when a non-stacking programme takes dong off. What is
+  // left wearing this code is acceptance of a bill whose credit was already on the agreed price
+  // before the programme began; the agreed price stands (DEC-021), nothing is pending, it sells.
   //
   // The rest are genuinely unfinished: eligibility resolves at acceptance, a band has to be closed
   // before a promotion can be computed against it, a discount that moved between the quote and the
@@ -186,13 +187,12 @@ export const REASON_NOTE = {
     "Chủ tiệm chưa quyết định dịch vụ này có nằm trong chương trình hay không, nên khuyến mãi không " +
     "áp cho dòng này: tính đúng giá niêm yết. Không có gì phải chờ duyệt, cứ nhận đồ bình thường. " +
     "Muốn dòng này được giảm thì chủ tiệm công bố lại chương trình có tên dịch vụ; đừng tự giảm ở quầy.",
-  // DEC-030 (2026-09-25) states the rule; this code is the one case the system does not follow it
-  // on, and the gloss says both rather than letting the rule read as what this bill did.
+  // DEC-030 (2026-09-25): pricing now applies the programme and releases the credit, so this code
+  // is left only on a bill whose credit was already on the price the customer agreed.
   PROMOTION_STACKING_REQUIRES_HUMAN:
-    "Quy tắc của tiệm (DEC-030): khuyến mãi không cộng dồn thì đơn này hưởng khuyến mãi, còn phiếu " +
-    "bồi hoàn giữ nguyên, chưa dùng, cho đơn sau. Riêng bản này phiếu đã được trừ vào trước khi " +
-    "tính khuyến mãi, nên số giảm là của phiếu và khuyến mãi không tính. Máy chưa gỡ được phiếu " +
-    "khỏi bản này: nếu khách muốn giữ phiếu để hưởng khuyến mãi, báo chủ tiệm trước khi chốt.",
+    "Quy tắc của tiệm (DEC-030): khuyến mãi không cộng dồn thì đơn hưởng khuyến mãi, còn phiếu bồi " +
+    "hoàn giữ nguyên, chưa dùng, cho đơn sau. Bản này có phiếu trên giá khách đã đồng ý từ trước " +
+    "khi chương trình bắt đầu, nên giữ đúng giá đó. Không phải chờ ai duyệt.",
   PROMOTION_PENDING_BAND_CLOSE:
     "Dòng khoảng giá chưa được chốt nên chưa xét khuyến mãi được: khuyến mãi áp trên số tiền nhân viên " +
     "chọn, không áp trên khoảng. Chốt giá trong khoảng xong thì mức giảm mới hiện ra.",
@@ -294,10 +294,10 @@ export const REASON_NOTE = {
   // what earlier proposals on the same garment already committed plus this one, and the refusal
   // carries both numbers (`ceiling_vnd`, `committed_vnd`).
   REMEDY_CEILING_EXCEEDED:
-    "Tổng đền cho món này vượt trần máy chủ tính (5 lần phí giặt món đó: giá một cái, hoặc tiền " +
-    "cả túi nếu tính theo ký) — tính cả các đề nghị hỏng và mất trước đã ghi cho cùng món, dù ai " +
-    "duyệt. Máy chủ từ chối kèm con số trần và số đã ghi, và không tự hạ xuống. Chỉ còn được đề " +
-    "nghị phần chênh lệch; báo chủ tiệm nếu vụ này cần khác đi.",
+    "Vượt trần máy chủ tính. Mỗi đề nghị tối đa 5 lần phí giặt một món (giá một cái, hoặc tiền cả " +
+    "túi nếu tính theo ký); cả dòng tối đa bằng trần của mọi món trên dòng, tính cả các đề nghị " +
+    "hỏng và mất đã ghi trước, dù ai duyệt. Máy chủ từ chối kèm con số trần (và số đã ghi nếu vượt " +
+    "trần cả dòng), không tự hạ xuống. Báo chủ tiệm nếu vụ này cần khác đi.",
   REMEDY_INCIDENT_NOT_OPEN:
     "Sự cố này đã có kết quả và đã đóng, nên không ghi thêm đề nghị bồi hoàn nào vào đó. Nếu khách " +
     "báo một vấn đề mới, mở một sự cố mới cho đơn; các mức trần vẫn tính chung theo từng món.",
@@ -309,11 +309,14 @@ export const REASON_NOTE = {
     "không có gì được ghi và tổng không đổi.",
   // A quote reason code, not a refusal: a re-priced revision that could not carry a credit its
   // previous revision reserved. The credit is not spent and not shrunk, so the customer still has it.
+  // DEC-030 added the fourth reason: a non-stacking programme applies to this bill, so the
+  // promotion is taken and the credit waits for a later order.
   REMEDY_CREDIT_RELEASED:
-    "Bản báo giá trước có phiếu giảm trừ, nhưng bản vừa tính lại không trừ được phiếu đó — hoá đơn " +
-    "mới nhỏ hơn giá trị phiếu, là khoảng giá, hoặc phiếu đã được dùng cho đơn khác. Phiếu KHÔNG bị " +
-    "trừ và không bị cắt bớt: nếu chưa dùng ở đơn khác thì khách vẫn còn nguyên. Nói rõ với khách " +
-    "trước khi chốt; muốn trừ lại thì trừ vào một hoá đơn đủ lớn.",
+    "Bản báo giá trước có phiếu giảm trừ, nhưng bản vừa tính lại không trừ phiếu đó: hoá đơn mới " +
+    "nhỏ hơn giá trị phiếu, là khoảng giá, phiếu đã dùng cho đơn khác, hoặc đơn này đang hưởng " +
+    "khuyến mãi không cộng dồn (DEC-030: đơn hưởng khuyến mãi, phiếu để dành). Phiếu KHÔNG bị trừ " +
+    "và không bị cắt bớt: nếu chưa dùng ở đơn khác thì khách vẫn còn nguyên cho lần sau. Nói rõ " +
+    "với khách trước khi chốt.",
   REMEDY_WINDOW_CLOSED:
     "Đã quá cửa sổ chủ tiệm công bố cho loại này, đo từ lúc khách nhận đồ. Nói với khách đúng mốc " +
     "đã qua chứ không chỉ nói là hết hạn. Muốn làm ngoài cửa sổ thì phải hỏi chủ tiệm.",

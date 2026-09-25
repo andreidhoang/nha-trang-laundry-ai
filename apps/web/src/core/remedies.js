@@ -146,7 +146,8 @@ export function remedyWindow(kind, options) {
  * @returns {Array<{
  *   lineId: string, serviceCode: string, serviceName: string|null, label: string,
  *   unit: string|null, quantity: string|null, basis: string|null, itemFee: number|null,
- *   ceiling: number|null, committed: number|null, ownerAlways: string[],
+ *   ceiling: number|null, pieces: number|null, lineCeiling: number|null,
+ *   committed: number|null, ownerAlways: string[],
  * }>}
  */
 export function damageLines(options) {
@@ -168,7 +169,10 @@ export function damageLines(options) {
         quantity: typeof line.quantity === "string" ? line.quantity : null,
         basis: typeof line.item_fee_basis === "string" ? line.item_fee_basis : null,
         itemFee: Number.isInteger(line.item_fee_vnd) ? line.item_fee_vnd : null,
+        // One item's ceiling (the most one proposal may ask) and the line's (every item together).
         ceiling: Number.isInteger(line.ceiling_vnd) ? line.ceiling_vnd : null,
+        pieces: Number.isInteger(line.pieces) ? line.pieces : null,
+        lineCeiling: Number.isInteger(line.line_ceiling_vnd) ? line.line_ceiling_vnd : null,
         committed: Number.isInteger(line.committed_vnd) ? line.committed_vnd : null,
         ownerAlways: Array.isArray(line.owner_always) ? line.owner_always.map(String) : [],
       };
@@ -191,6 +195,9 @@ export function damageLines(options) {
  *   kind: string,
  *   amountVnd: number|null,
  *   ceilingVnd: number|null,
+ *   lineCeilingVnd: number|null,
+ *   pieces: number|null,
+ *   ceilingBreached: "ITEM"|"LINE"|null,
  *   committedVnd: number|null,
  *   itemFeeVnd: number|null,
  *   itemFeeBasis: string|null,
@@ -224,6 +231,9 @@ export function remedyPlan(draft) {
     kind,
     amountVnd: null,
     ceilingVnd: null,
+    lineCeilingVnd: null,
+    pieces: null,
+    ceilingBreached: null,
     committedVnd: null,
     itemFeeVnd: null,
     itemFeeBasis: null,
@@ -298,10 +308,20 @@ export function remedyPlan(draft) {
   // show until a line is named: a per-order ceiling does not exist and inventing one would be a
   // figure.
   const line = damageLines(options).find((candidate) => candidate.lineId === draft.lineId);
-  if (!draft.lineId || !line || line.ceiling === null || line.committed === null) {
+  if (
+    !draft.lineId ||
+    !line ||
+    line.ceiling === null ||
+    line.lineCeiling === null ||
+    line.committed === null
+  ) {
     return plan(PLAN.LINE_NOT_CHOSEN);
   }
+  // Two ceilings, per the founder's per-item ruling: `cap` is one item's and bounds one claim;
+  // `lineCap` is every item on the line together and bounds the running total. Equal on a bag
+  // or a single piece.
   const cap = line.ceiling;
+  const lineCap = line.lineCeiling;
   const committed = line.committed;
   // Before an amount exists: which reasons already apply whatever it will be. The server's order.
   const standing = [
@@ -310,16 +330,21 @@ export function remedyPlan(draft) {
   ];
   const bound = {
     ceilingVnd: cap,
+    lineCeilingVnd: lineCap,
+    pieces: line.pieces,
     committedVnd: committed,
     itemFeeVnd: line.itemFee,
     itemFeeBasis: line.basis,
     hasCeiling: true,
     // The cap is known, so the money box may exist. This is the only place it is switched on.
     needsAmount: true,
-    // Before a single digit is typed: either something already sends every amount on this item to
-    // the owner, or the item's cap is above what a staff member may approve, so some amounts on it
-    // will. That is the sentence the packet asks for.
-    ownerPossible: standing.length > 0 || (threshold !== null && cap > threshold),
+    // Before a single digit is typed: either something already sends every amount on this line
+    // to the owner, or the most the line can still reach -- what it carries plus the largest
+    // claim both ceilings allow -- is above what a staff member may approve, so some amounts on
+    // it will. That is the sentence the packet asks for.
+    ownerPossible:
+      standing.length > 0 ||
+      (threshold !== null && committed + Math.min(cap, lineCap - committed) > threshold),
     requiresOwner: standing.length > 0 ? true : null,
     ownerReasons: standing,
   };
@@ -342,7 +367,9 @@ export function remedyPlan(draft) {
     requiresOwner: reasons.length > 0,
     ownerReasons: reasons,
   };
-  if (total > cap) return plan(PLAN.ABOVE_CEILING, read);
+  // One claim, one item; then the line's running total. The server's order, and its two answers.
+  if (amount > cap) return plan(PLAN.ABOVE_CEILING, { ...read, ceilingBreached: "ITEM" });
+  if (total > lineCap) return plan(PLAN.ABOVE_CEILING, { ...read, ceilingBreached: "LINE" });
   if (draft.storeFaultAttested !== true) return plan(PLAN.FAULT_NOT_ATTESTED, read);
   return plan(PLAN.READY, read);
 }

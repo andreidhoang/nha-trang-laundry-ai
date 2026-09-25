@@ -612,6 +612,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #     name loss and the per-piece fee), the `#/gaps` entry's `missing` and `today` (no loss
     #     queue waits on a policy any more), and nine on the remedies screen whose claims about
     #     the 5x basis, loss and the owner notice changed with the ruling.
+    #
+    # Still 385 after the two follow-up rulings on the same branch: 0 added, 0 retired, 5
+    # re-keyed. DEC-030 made pricing release a reserved credit when a non-stacking programme
+    # applies, so `PROMOTION_STACKING_REQUIRES_HUMAN` lost its "ask the owner" clause and
+    # `REMEDY_CREDIT_RELEASED` names the programme as a reason. The per-item ceiling ruling reworded
+    # `REMEDY_CEILING_EXCEEDED` and `PLAN_NOTE.ABOVE_CEILING` (one claim per item, a total per
+    # line) and `OWNER_REASON_NOTE.ABOVE_STAFF_LIMIT` (the staff limit is the line's).
     assert sum(counts.values()) == _registry()["total"] == 385
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002

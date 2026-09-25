@@ -417,13 +417,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_STACKING_REQUIRES_HUMAN:fe4831b5b10b
+- slot_id: core/i18n.js#REASON_NOTE.PROMOTION_STACKING_REQUIRES_HUMAN:8dbcbe4d8ed5
   module: core/i18n.js
   key: REASON_NOTE.PROMOTION_STACKING_REQUIRES_HUMAN
-  text: 'Quy tắc của tiệm (DEC-030): khuyến mãi không cộng dồn thì đơn này hưởng khuyến mãi, còn phiếu
-    bồi hoàn giữ nguyên, chưa dùng, cho đơn sau. Riêng bản này phiếu đã được trừ vào trước khi tính khuyến
-    mãi, nên số giảm là của phiếu và khuyến mãi không tính. Máy chưa gỡ được phiếu khỏi bản này: nếu khách
-    muốn giữ phiếu để hưởng khuyến mãi, báo chủ tiệm trước khi chốt.'
+  text: 'Quy tắc của tiệm (DEC-030): khuyến mãi không cộng dồn thì đơn hưởng khuyến mãi, còn phiếu bồi
+    hoàn giữ nguyên, chưa dùng, cho đơn sau. Bản này có phiếu trên giá khách đã đồng ý từ trước khi chương
+    trình bắt đầu, nên giữ đúng giá đó. Không phải chờ ai duyệt.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -642,13 +641,13 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CEILING_EXCEEDED:023b6cde9286
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CEILING_EXCEEDED:a56b8ddd9645
   module: core/i18n.js
   key: REASON_NOTE.REMEDY_CEILING_EXCEEDED
-  text: 'Tổng đền cho món này vượt trần máy chủ tính (5 lần phí giặt món đó: giá một cái, hoặc tiền cả
-    túi nếu tính theo ký) — tính cả các đề nghị hỏng và mất trước đã ghi cho cùng món, dù ai duyệt. Máy
-    chủ từ chối kèm con số trần và số đã ghi, và không tự hạ xuống. Chỉ còn được đề nghị phần chênh lệch;
-    báo chủ tiệm nếu vụ này cần khác đi.'
+  text: Vượt trần máy chủ tính. Mỗi đề nghị tối đa 5 lần phí giặt một món (giá một cái, hoặc tiền cả túi
+    nếu tính theo ký); cả dòng tối đa bằng trần của mọi món trên dòng, tính cả các đề nghị hỏng và mất
+    đã ghi trước, dù ai duyệt. Máy chủ từ chối kèm con số trần (và số đã ghi nếu vượt trần cả dòng), không
+    tự hạ xuống. Báo chủ tiệm nếu vụ này cần khác đi.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -680,13 +679,13 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CREDIT_RELEASED:ff3dec0cc884
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CREDIT_RELEASED:6b5584700077
   module: core/i18n.js
   key: REASON_NOTE.REMEDY_CREDIT_RELEASED
-  text: 'Bản báo giá trước có phiếu giảm trừ, nhưng bản vừa tính lại không trừ được phiếu đó — hoá đơn
-    mới nhỏ hơn giá trị phiếu, là khoảng giá, hoặc phiếu đã được dùng cho đơn khác. Phiếu KHÔNG bị trừ
-    và không bị cắt bớt: nếu chưa dùng ở đơn khác thì khách vẫn còn nguyên. Nói rõ với khách trước khi
-    chốt; muốn trừ lại thì trừ vào một hoá đơn đủ lớn.'
+  text: 'Bản báo giá trước có phiếu giảm trừ, nhưng bản vừa tính lại không trừ phiếu đó: hoá đơn mới nhỏ
+    hơn giá trị phiếu, là khoảng giá, phiếu đã dùng cho đơn khác, hoặc đơn này đang hưởng khuyến mãi không
+    cộng dồn (DEC-030: đơn hưởng khuyến mãi, phiếu để dành). Phiếu KHÔNG bị trừ và không bị cắt bớt: nếu
+    chưa dùng ở đơn khác thì khách vẫn còn nguyên cho lần sau. Nói rõ với khách trước khi chốt.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2784,10 +2783,10 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/remedies.js#OWNER_REASON_NOTE.ABOVE_STAFF_LIMIT:840cf7635e54
+- slot_id: screens/remedies.js#OWNER_REASON_NOTE.ABOVE_STAFF_LIMIT:6b7f6734b608
   module: screens/remedies.js
   key: OWNER_REASON_NOTE.ABOVE_STAFF_LIMIT
-  text: tổng đền cho món này vượt mức nhân viên được duyệt
+  text: tổng đền cho dòng này vượt mức nhân viên được duyệt
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2857,11 +2856,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/remedies.js#PLAN_NOTE.ABOVE_CEILING:5da7b3118652
+- slot_id: screens/remedies.js#PLAN_NOTE.ABOVE_CEILING:b2418361954c
   module: screens/remedies.js
   key: PLAN_NOTE.ABOVE_CEILING
-  text: Số này cộng với số đã ghi cho món này vượt trần máy chủ tính. Máy chủ từ chối và không tự hạ xuống
-    bằng trần — hạ xuống là trả cho khách ít hơn con số bạn vừa thoả thuận với họ.
+  text: Số này vượt trần một món, hoặc cộng với số đã ghi cho dòng này thì vượt trần cả dòng. Máy chủ
+    từ chối và không tự hạ xuống bằng trần — hạ xuống là trả cho khách ít hơn con số bạn vừa thoả thuận
+    với họ.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

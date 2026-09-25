@@ -46,6 +46,7 @@ from test_remedies import (
     _advance,
     _approve,
     _execute,
+    _incident,
     _propose,
     _shop,
 )
@@ -208,32 +209,39 @@ def test_a_loss_outside_the_24_hour_window_is_refused(connection: psycopg.Connec
 
 
 def test_loss_and_damage_on_one_line_share_its_ceiling(connection: psycopg.Connection[Any]) -> None:
-    store_id, staff, _, incident_id = _shop(connection, lines=(SHIRTS,))
+    """On the bag, which has one ceiling (650.000 d): 600.000 d of damage leaves 50.000 d for loss.
+
+    Moved from the three-shirt line when the founder ruled the ceiling is per item: that line now
+    carries 750.000 d in total, so the old figures no longer reached its ceiling. The sharing this
+    test exists for is unchanged, and the bag states it with one ceiling and no pieces.
+    """
+
+    store_id, staff, _, incident_id = _shop(connection, lines=(BAG,))
     _claim(
-        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 200_000
+        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-1", 600_000
     )
     with pytest.raises(RemedyStateError) as refused:
-        _claim(connection, store_id, incident_id, staff, RemedyKind.LOST_ITEM, "line-0", 50_001)
+        _claim(connection, store_id, incident_id, staff, RemedyKind.LOST_ITEM, "line-1", 50_001)
     assert refused.value.reason_code == RemedyRefusal.REMEDY_CEILING_EXCEEDED.value
-    assert (refused.value.ceiling_vnd, refused.value.committed_vnd) == (250_000, 200_000)
+    assert (refused.value.ceiling_vnd, refused.value.committed_vnd) == (650_000, 600_000)
 
 
 def test_a_loss_already_on_an_item_counts_against_later_damage(
     connection: psycopg.Connection[Any],
 ) -> None:
-    """The other order: a loss proposed first is money the item already carries.
+    """The other order: a loss proposed first is money the line already carries.
 
-    A 20.000 d loss waits for the owner; 80.000 d of damage on the same shirts after it takes the
-    item to 100.000 d -- still inside what staff may approve -- and one dong more is the owner's.
-    The options read shows the loss in what the item carries, so the form predicts the same.
+    A 20.000 d loss waits for the owner; 80.000 d of damage on the same bag after it takes the line
+    to 100.000 d -- still inside what staff may approve -- and one dong more is the owner's. The
+    options read shows the loss in what the line carries, so the form predicts the same.
     """
 
-    store_id, staff, _, incident_id = _shop(connection, lines=(SHIRTS,))
-    _claim(connection, store_id, incident_id, staff, RemedyKind.LOST_ITEM, "line-0", 20_000)
+    store_id, staff, _, incident_id = _shop(connection, lines=(BAG,))
+    _claim(connection, store_id, incident_id, staff, RemedyKind.LOST_ITEM, "line-1", 20_000)
     [line] = _options(connection, store_id, incident_id, staff).damage_lines
     assert line.committed_vnd == 20_000
     over_staff = _claim(
-        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 80_001
+        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-1", 80_001
     )
     assert over_staff.status is RemedyStatus.OWNER_APPROVAL_REQUIRED
     assert over_staff.owner_reasons == ("ABOVE_STAFF_LIMIT",)
@@ -244,11 +252,11 @@ def test_a_loss_already_on_an_item_counts_against_later_damage(
             incident_id,
             staff,
             RemedyKind.DAMAGE_COMPENSATION,
-            "line-0",
-            150_000,
+            "line-1",
+            550_000,
         )
     assert refused.value.reason_code == RemedyRefusal.REMEDY_CEILING_EXCEEDED.value
-    assert (refused.value.ceiling_vnd, refused.value.committed_vnd) == (250_000, 100_001)
+    assert (refused.value.ceiling_vnd, refused.value.committed_vnd) == (650_000, 100_001)
 
 
 def test_payment_counts_a_paid_loss_against_the_item_ceiling(
@@ -257,8 +265,8 @@ def test_payment_counts_a_paid_loss_against_the_item_ceiling(
     """The second line: a staff-authorised damage row that never went through `propose` -- forged
     here as a pre-fix writer could have -- is not paid past the ceiling a paid loss already used."""
 
-    store_id, staff, _, incident_id = _shop(connection, lines=(SHIRTS,))
-    loss = _claim(connection, store_id, incident_id, staff, RemedyKind.LOST_ITEM, "line-0", 200_000)
+    store_id, staff, _, incident_id = _shop(connection, lines=(BAG,))
+    loss = _claim(connection, store_id, incident_id, staff, RemedyKind.LOST_ITEM, "line-1", 600_000)
     assert loss.approval_id is not None
     _approve(connection, store_id, loss.approval_id, NOW + timedelta(minutes=1))
     _execute(connection, loss.proposal_id, staff, NOW + timedelta(minutes=2))
@@ -283,7 +291,100 @@ def test_payment_counts_a_paid_loss_against_the_item_ceiling(
     with pytest.raises(RemedyStateError) as refused:
         _execute(connection, forged, staff, NOW + timedelta(minutes=3))
     assert refused.value.reason_code == RemedyRefusal.REMEDY_CEILING_EXCEEDED.value
-    assert (refused.value.ceiling_vnd, refused.value.committed_vnd) == (250_000, 200_000)
+    assert (refused.value.ceiling_vnd, refused.value.committed_vnd) == (650_000, 600_000)
+
+
+def test_several_pieces_on_one_line_each_carry_their_own_ceiling(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The founder's per-item ruling, end to end: three shirts at 50.000 d.
+
+    One claim of 250.000 d goes to the owner; a second of 250.000 d on the same line goes to the
+    owner too -- the line holds 750.000 d -- and both are paid once approved. A single claim of
+    300.000 d is refused: no one shirt can be owed that. Past 750.000 d on the line is refused.
+    """
+
+    store_id, staff, order_id, incident_id = _shop(connection, lines=(SHIRTS,))
+    with pytest.raises(RemedyStateError) as single:
+        _claim(
+            connection,
+            store_id,
+            incident_id,
+            staff,
+            RemedyKind.DAMAGE_COMPENSATION,
+            "line-0",
+            300_000,
+        )
+    assert single.value.reason_code == RemedyRefusal.REMEDY_CEILING_EXCEEDED.value
+    assert single.value.ceiling_vnd == 250_000
+
+    # Both proposed on the complaint before either is carried out (carrying one out closes it).
+    proposals = [
+        _claim(connection, store_id, incident_id, staff, kind, "line-0", 250_000)
+        for kind in (RemedyKind.DAMAGE_COMPENSATION, RemedyKind.LOST_ITEM)
+    ]
+    paid = []
+    for minute, proposal in zip((1, 3), proposals, strict=True):
+        assert proposal.status is RemedyStatus.OWNER_APPROVAL_REQUIRED
+        assert proposal.ceiling_vnd == 250_000
+        assert proposal.approval_id is not None
+        _approve(connection, store_id, proposal.approval_id, NOW + timedelta(minutes=minute))
+        executed = _execute(
+            connection, proposal.proposal_id, staff, NOW + timedelta(minutes=minute + 1)
+        )
+        paid.append(executed.amount_vnd)
+    # Both paid: the payment-time check binds the line's 750.000 d, not one shirt's 250.000 d.
+    assert paid == [250_000, 250_000]
+
+    # A new complaint about the same order: the line's total is per order line, across incidents.
+    incident_id = _incident(connection, store_id, order_id, staff)
+
+    [line] = _options(connection, store_id, incident_id, staff).damage_lines
+    assert (line.pieces, line.ceiling_vnd, line.line_ceiling_vnd, line.committed_vnd) == (
+        3,
+        250_000,
+        750_000,
+        500_000,
+    )
+    with pytest.raises(RemedyStateError) as past:
+        _claim(
+            connection,
+            store_id,
+            incident_id,
+            staff,
+            RemedyKind.DAMAGE_COMPENSATION,
+            "line-0",
+            250_001,
+        )
+    assert past.value.ceiling_vnd == 250_000
+    # The third shirt takes the line to exactly 750.000 d, inclusive; one dong more is refused.
+    third = _claim(
+        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 250_000
+    )
+    assert third.status is RemedyStatus.OWNER_APPROVAL_REQUIRED
+    with pytest.raises(RemedyStateError) as line_full:
+        _claim(
+            connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 1
+        )
+    assert line_full.value.reason_code == RemedyRefusal.REMEDY_CEILING_EXCEEDED.value
+    assert (line_full.value.ceiling_vnd, line_full.value.committed_vnd) == (750_000, 750_000)
+
+
+def test_the_staff_limit_stays_per_line_when_a_claim_is_split_across_pieces(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """60.000 d on one shirt, then 50.000 d on another: the second is the owner's, not refused."""
+
+    store_id, staff, _, incident_id = _shop(connection, lines=(SHIRTS,))
+    first = _claim(
+        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 60_000
+    )
+    assert first.status is RemedyStatus.STAFF_AUTHORIZED
+    second = _claim(
+        connection, store_id, incident_id, staff, RemedyKind.DAMAGE_COMPENSATION, "line-0", 50_000
+    )
+    assert second.status is RemedyStatus.OWNER_APPROVAL_REQUIRED
+    assert second.owner_reasons == ("ABOVE_STAFF_LIMIT",)
 
 
 def test_the_schema_refuses_a_staff_authorised_loss(connection: psycopg.Connection[Any]) -> None:
@@ -487,6 +588,8 @@ def test_the_counter_sees_the_item_and_what_it_already_carries(
     )
     assert shirts.committed_vnd == 30_000
     assert shirts.owner_always == ()
+    # Per item: one claim up to 250.000 d, the three shirts together up to 750.000 d.
+    assert (shirts.pieces, shirts.line_ceiling_vnd) == (3, 750_000)
 
     bag = by_line["line-1"]
     assert bag.service_name == "Giặt sấy tiêu chuẩn"
@@ -496,12 +599,14 @@ def test_the_counter_sees_the_item_and_what_it_already_carries(
         650_000,
         0,
     )
+    assert (bag.pieces, bag.line_ceiling_vnd) == (1, 650_000)
 
     pillows = by_line["line-2"]
     assert pillows.service_name == "Gối"
     assert pillows.item_fee_basis == "NOT_RECORDED"
     assert pillows.owner_always == ("ITEM_FEE_NOT_RECORDED",)
-    # The legacy map is kept for callers that read it, and agrees with the per-line terms.
+    assert (pillows.pieces, pillows.line_ceiling_vnd) == (1, 700_000)
+    # The legacy map is kept for callers that read it: one claim's ceiling per line.
     assert options.damage_line_ceilings_vnd == {
         "line-0": 250_000,
         "line-1": 650_000,

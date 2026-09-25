@@ -113,6 +113,8 @@ REMEDY_OPTIONS = {
             "item_fee_basis": "UNIT",
             "item_fee_vnd": 120_000,
             "ceiling_vnd": 600_000,
+            "pieces": 1,
+            "line_ceiling_vnd": 600_000,
             "committed_vnd": 0,
             "owner_always": [],
         },
@@ -125,6 +127,8 @@ REMEDY_OPTIONS = {
             "item_fee_basis": "UNIT",
             "item_fee_vnd": 18_000,
             "ceiling_vnd": 90_000,
+            "pieces": 1,
+            "line_ceiling_vnd": 90_000,
             "committed_vnd": 0,
             "owner_always": [],
         },
@@ -1903,8 +1907,9 @@ with sync_playwright() as playwright:
         "an amount over the line's cap is refused with the cap named",
         # The whole sentence, not the two words separately: "Vượt trần" is also in the money box's
         # own hint and "600.000" is in the line picker, so testing for each on its own passed
-        # before the refusal was rendered at all.
-        "Vượt trần: trần của dòng này là 600.000" in content,
+        # before the refusal was rendered at all. Reworded with the founder's per-item ruling:
+        # a single claim is capped at one item, and this line is one item.
+        "Vượt trần một món: mỗi đề nghị tối đa 600.000" in content,
     )
     check(
         "and the box still holds what was typed — nothing was silently reduced to the cap",

@@ -651,6 +651,8 @@ REMEDY_OPTIONS = {
             "item_fee_basis": "UNIT",
             "item_fee_vnd": 120_000,
             "ceiling_vnd": 600_000,
+            "pieces": 1,
+            "line_ceiling_vnd": 600_000,
             "committed_vnd": 0,
             "owner_always": [],
         },
@@ -663,6 +665,8 @@ REMEDY_OPTIONS = {
             "item_fee_basis": "UNIT",
             "item_fee_vnd": 18_000,
             "ceiling_vnd": 90_000,
+            "pieces": 1,
+            "line_ceiling_vnd": 90_000,
             "committed_vnd": 0,
             "owner_always": [],
         },
@@ -1086,6 +1090,8 @@ DEC_031_OPTIONS = {
             "item_fee_basis": "UNIT",
             "item_fee_vnd": 50_000,
             "ceiling_vnd": 250_000,
+            "pieces": 3,
+            "line_ceiling_vnd": 750_000,
             "committed_vnd": 30_000,
             "owner_always": [],
         },
@@ -1098,6 +1104,8 @@ DEC_031_OPTIONS = {
             "item_fee_basis": "NOT_RECORDED",
             "item_fee_vnd": 140_000,
             "ceiling_vnd": 700_000,
+            "pieces": 1,
+            "line_ceiling_vnd": 700_000,
             "committed_vnd": 0,
             "owner_always": ["ITEM_FEE_NOT_RECORDED"],
         },
@@ -1120,9 +1128,37 @@ def test_the_form_predicts_the_owner_from_what_the_item_already_carries() -> Non
     assert at["committedVnd"] == 30_000
     assert over["state"] == "READY" and over["requiresOwner"] is True
     assert over["ownerReasons"] == ["ABOVE_STAFF_LIMIT"]
-    # And the ceiling is the item's too: 30.000 already on it leaves 220.000 under 250.000.
-    ceiling = _plan({**base, "typedAmount": "220001"}, options=DEC_031_OPTIONS)
+    # One claim is one shirt: 250.001 ₫ is refused whatever the line still has room for. This used
+    # to assert 220.001 ₫ was refused, when the three shirts shared one 250.000 ₫ ceiling; the
+    # founder's per-item ruling gives the line 750.000 ₫ and each claim 250.000 ₫.
+    ceiling = _plan({**base, "typedAmount": "250001"}, options=DEC_031_OPTIONS)
     assert ceiling["state"] == "ABOVE_CEILING" and ceiling["ceilingVnd"] == 250_000
+    assert ceiling["ceilingBreached"] == "ITEM"
+
+
+def _with_line_committed(committed: int) -> dict[str, Any]:
+    lines = [dict(line) for line in DEC_031_OPTIONS["damage_lines"]]  # type: ignore[attr-defined]
+    lines[0]["committed_vnd"] = committed
+    return {**DEC_031_OPTIONS, "damage_lines": lines}
+
+
+def test_each_piece_on_a_line_has_its_own_ceiling_on_the_form_too() -> None:
+    """Three shirts: a second full 250.000 ₫ claim goes to the owner; it is not refused.
+
+    The same answer `evaluate_remedy` gives: one claim within one item's 250.000 ₫, the line within
+    750.000 ₫, and the staff limit on the line's running total.
+    """
+
+    base = {"kind": "DAMAGE_COMPENSATION", "storeFaultAttested": True, "lineId": "line-0"}
+    second = _plan({**base, "typedAmount": "250000"}, options=_with_line_committed(250_000))
+    assert second["state"] == "READY"
+    assert second["requiresOwner"] is True and second["ownerReasons"] == ["ABOVE_STAFF_LIMIT"]
+    assert (second["ceilingVnd"], second["lineCeilingVnd"]) == (250_000, 750_000)
+
+    full = _plan({**base, "typedAmount": "200000"}, options=_with_line_committed(600_000))
+    assert full["state"] == "ABOVE_CEILING"
+    assert full["ceilingBreached"] == "LINE"
+    assert full["lineCeilingVnd"] == 750_000
 
 
 def test_an_item_whose_fee_was_never_recorded_needs_the_owner_before_an_amount_is_typed() -> None:

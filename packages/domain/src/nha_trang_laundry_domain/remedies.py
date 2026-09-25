@@ -27,8 +27,11 @@ request; there is no fallback, no default and no minimum.
 3. *A refunded order.* Compensation stays available, capped against the fee the shop quoted, and
    **always** needs the owner: refunding and compensating on one order is where money can be paid
    twice. The late-delivery credit stays refused on a refunded bill (10% of nothing).
-4. The staff limit and the ceiling stay cumulative per item, as `REMEDY-CUMULATIVE-001` built; loss
-   and damage on the same line share them.
+4. The ceiling is per item (the founder's clarification, 2026-09-25). A line of N pieces carries
+   5 x the item fee x N in total -- never more than 5x what the line was charged -- and each single
+   proposal stays capped at one item's 5 x the item fee. The 100.000 d staff limit stays cumulative
+   per line, as `REMEDY-CUMULATIVE-001` built, so a claim split across pieces reaches the owner
+   rather than being refused. Loss and damage on the same line share both.
 
 Until `DEC-031`, loss was recorded and refused with `LOSS_POLICY_UNRESOLVED`. Rows written then
 still carry `POLICY_UNRESOLVED`, which nothing moves out of, and `execute` still refuses them; no
@@ -372,13 +375,25 @@ class RemedyLineFacts:
 
 @dataclass(frozen=True, slots=True)
 class ItemCompensationTerms:
-    """The item fee, the ceiling it gives, and what sends every amount on it to the owner."""
+    """The item fee, the ceilings it gives, and what sends every amount on the line to the owner.
+
+    Two ceilings since the founder's clarification of `DEC-031` rule 1: `ceiling_vnd` is one item's
+    (5x its fee) and binds each proposal; `line_ceiling_vnd` is every item on the line together
+    and binds what the line carries in total. They are equal for a bag, for a single piece, and
+    for a line whose per-item fee was never recorded.
+    """
 
     line_id: str
     service_code: str
     basis: ItemFeeBasis
     item_fee_vnd: int
+    #: One item's ceiling: the most a single proposal may ask for.
     ceiling_vnd: int
+    #: How many items the line holds for the ceiling's purposes: the count of a per-piece line with
+    #: a recorded unit price, and 1 otherwise.
+    pieces: int
+    #: Every item on the line together, never above 5x what the line was charged.
+    line_ceiling_vnd: int
     #: Reasons that apply to a damage claim on this item whatever its amount (`ORDER_REFUNDED`,
     #: `ITEM_FEE_NOT_RECORDED`). A loss adds `LOSS_CLAIM`; the staff limit adds `ABOVE_STAFF_LIMIT`
     #: only once an amount exists. Empty means the staff limit alone decides.
@@ -484,6 +499,9 @@ class RemedyAuthorized:
     #: For damage and loss: which recorded number the ceiling multiplied, and that number.
     item_fee_basis: ItemFeeBasis | None = None
     item_fee_vnd: int | None = None
+    #: For damage and loss: what every item on the line may carry together. `ceiling_vnd` above is
+    #: one item's, and bounds this proposal alone.
+    line_ceiling_vnd: int | None = None
 
     def __post_init__(self) -> None:
         # One fact, stated twice for the callers that only need the yes/no. They may never disagree.
@@ -578,12 +596,24 @@ def item_compensation_terms(
         owner_always.append(OwnerReason.ORDER_REFUNDED)
     if basis is ItemFeeBasis.NOT_RECORDED:
         owner_always.append(OwnerReason.ITEM_FEE_NOT_RECORDED)
+    # Per item, then per line. Only a per-piece line with a recorded unit price has pieces to count;
+    # its line total is the item fee times the count, never above what the line was charged -- the
+    # same lower-of-two the single-piece fee takes, so a discounted line cannot owe more than 5x
+    # its charge. Every other basis is one ceiling for the whole line.
+    pieces = (
+        _whole_pieces(line.quantity)
+        if basis is ItemFeeBasis.UNIT and line.unit_price_vnd is not None
+        else 1
+    )
+    line_fee = min(fee * pieces, line.net_amount_vnd) if pieces > 1 else fee
     return ItemCompensationTerms(
         line_id=line_id,
         service_code=line.service_code,
         basis=basis,
         item_fee_vnd=fee,
         ceiling_vnd=fee * policy.damage_compensation_multiple,
+        pieces=pieces,
+        line_ceiling_vnd=line_fee * policy.damage_compensation_multiple,
         owner_always=tuple(owner_always),
     )
 
@@ -593,6 +623,23 @@ def _is_exactly_one(quantity: str) -> bool:
         return Decimal(quantity) == 1
     except InvalidOperation:
         return False
+
+
+def _whole_pieces(quantity: str) -> int:
+    """A count unit's quantity as a whole number of items; 1 for anything that is not one.
+
+    The snapshot already refuses a fractional count, so the fallback is unreachable today. It is 1
+    rather than a rounding because 1 is the smallest total a line can be given -- the direction
+    that pays less, never more.
+    """
+
+    try:
+        value = Decimal(quantity)
+    except InvalidOperation:
+        return 1
+    if not value.is_finite() or value < 1 or value != value.to_integral_value():
+        return 1
+    return int(value)
 
 
 def evaluate_remedy(
@@ -658,15 +705,19 @@ def evaluate_remedy(
     terms = item_compensation_terms(policy, facts, request.order_line_id)
     if terms is None:
         return RemedyRefused(RemedyRefusal.REMEDY_LINE_NOT_PRICED)
-    # Both figures are about the item, so both are compared against the item's running total: what
-    # earlier proposals on this line already committed, plus this one. Owner approval answers the
-    # staff limit; it is not a way past the item's own ceiling, so the ceiling is checked first and
+    # One proposal is about one item, so it may not ask for more than one item's ceiling -- on a
+    # line of three shirts, 300.000 d in one claim is more than any one shirt can be owed.
+    if request.amount_vnd > terms.ceiling_vnd:
+        return RemedyRefused(RemedyRefusal.REMEDY_CEILING_EXCEEDED, ceiling_vnd=terms.ceiling_vnd)
+    # The line's total and the staff limit are compared against its running total: what earlier
+    # proposals on this line already committed, plus this one. Owner approval answers the staff
+    # limit; it is not a way past the line's ceiling, so the ceiling is checked first and
     # regardless of who would approve.
     total = committed.line_committed_vnd + request.amount_vnd
-    if total > terms.ceiling_vnd:
+    if total > terms.line_ceiling_vnd:
         return RemedyRefused(
             RemedyRefusal.REMEDY_CEILING_EXCEEDED,
-            ceiling_vnd=terms.ceiling_vnd,
+            ceiling_vnd=terms.line_ceiling_vnd,
             committed_vnd=committed.line_committed_vnd,
         )
     reasons: list[OwnerReason] = []
@@ -689,6 +740,7 @@ def evaluate_remedy(
         owner_reasons=tuple(reasons),
         item_fee_basis=terms.basis,
         item_fee_vnd=terms.item_fee_vnd,
+        line_ceiling_vnd=terms.line_ceiling_vnd,
     )
 
 
@@ -809,6 +861,7 @@ def remedy_proposal_document(
                 None if authorized.item_fee_basis is None else authorized.item_fee_basis.value
             ),
             "item_fee_vnd": authorized.item_fee_vnd,
+            "line_ceiling_vnd": authorized.line_ceiling_vnd,
             "owner_reasons": [reason.value for reason in authorized.owner_reasons],
             "order_line_id": order_line_id,
             "policy_version_id": str(policy_version_id),

@@ -317,7 +317,12 @@ class RemedyLineOption:
     #: `ItemFeeBasis`: `UNIT` (one piece), `BAG` (weight), or `NOT_RECORDED` (owner decides).
     item_fee_basis: str
     item_fee_vnd: int
+    #: One item's ceiling: the most a single proposal may ask for.
     ceiling_vnd: int
+    #: How many items the line counts, and what they may carry together (per-item ceiling x pieces,
+    #: never above 5x the line's charge). Equal to `ceiling_vnd` for a bag or a single piece.
+    pieces: int
+    line_ceiling_vnd: int
     #: What live or paid damage and loss proposals already committed against this line.
     committed_vnd: int
     #: `OwnerReason` values that send *every* damage amount on this line to the owner. A loss adds
@@ -464,6 +469,8 @@ class RemedyProposalRepository:
                     item_fee_basis=terms.basis.value,
                     item_fee_vnd=terms.item_fee_vnd,
                     ceiling_vnd=terms.ceiling_vnd,
+                    pieces=terms.pieces,
+                    line_ceiling_vnd=terms.line_ceiling_vnd,
                     committed_vnd=committed_by_line.get(line_id, 0),
                     owner_always=tuple(reason.value for reason in terms.owner_always),
                 )
@@ -1704,11 +1711,13 @@ def _recheck_before_paying(
       item had every earlier one in its committed total, so under the rule this sum can never
       exceed the limit; a row set where it does was not written under the rule.
 
-    `DEC-031` adds two, for damage and loss alike, re-derived from the order's stored snapshot
-    rather than trusted from the row: the ceiling that binds is the lower of the recorded one and
-    the per-item one (a row written under the line-wide rule is not paid past the per-piece cap),
-    and a staff-authorised row is refused if the item now needs the owner whatever the amount --
-    the order was refunded after it was proposed, or its fee was never recorded.
+    `DEC-031` adds, for damage and loss alike, terms re-derived from the order's stored snapshot
+    rather than trusted from the row: one claim is paid within the lower of the ceiling it recorded
+    and one item's ceiling now (a row written under the line-wide rule is not paid past the
+    per-piece cap); everything paid on the line stays within its items' ceilings together (the
+    founder's per-item clarification); and a staff-authorised row is refused if the line now needs
+    the owner whatever the amount -- the order was refunded after it was proposed, or its fee was
+    never recorded.
 
     And one late-delivery credit per order. The order row is locked first, as `propose` locks it,
     so a proposal and a payment on the same order serialise rather than each checking a sum the
@@ -1771,13 +1780,24 @@ def _recheck_before_paying(
             reason_code=RemedyRefusal.REMEDY_LINE_NOT_PRICED.value,
             authority="INVARIANT-3",
         )
-    binding_ceiling = min(ceiling_vnd, terms.ceiling_vnd)
-    if paid_total + amount_vnd > binding_ceiling:
+    # One claim, one item: the lower of the ceiling the row recorded and one item's ceiling now.
+    # A row written under the line-wide rule recorded the whole line's cap, and is not paid past
+    # one item's.
+    item_ceiling = min(ceiling_vnd, terms.ceiling_vnd)
+    if amount_vnd > item_ceiling:
         raise RemedyStateError(
-            "paying this would take the item past its compensation ceiling",
+            "paying this would give one item more than its compensation ceiling",
             reason_code=RemedyRefusal.REMEDY_CEILING_EXCEEDED.value,
             authority="DEC-004",
-            ceiling_vnd=binding_ceiling,
+            ceiling_vnd=item_ceiling,
+        )
+    # Everything paid on the line, this included, within every item's ceiling together.
+    if paid_total + amount_vnd > terms.line_ceiling_vnd:
+        raise RemedyStateError(
+            "paying this would take the line past its compensation ceiling",
+            reason_code=RemedyRefusal.REMEDY_CEILING_EXCEEDED.value,
+            authority="DEC-004",
+            ceiling_vnd=terms.line_ceiling_vnd,
             committed_vnd=paid_total,
         )
     if not staff_authorized:

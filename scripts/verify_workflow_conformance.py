@@ -274,6 +274,27 @@ class Console:
     def said(self) -> str:
         return f"{self.results()} || {self.notices()}"
 
+    def reason_codes(self) -> set[str]:
+        """The reason codes the error notices on screen carry, read from the element.
+
+        `errorNotice` shows the plain-language note visibly and keeps the codes verbatim in its
+        collapsed "Chi tiết kỹ thuật" and on `data-reason-codes`, so they are read from the DOM.
+        """
+        try:
+            values = self.page.eval_on_selector_all(
+                "main [data-reason-codes]", "(els) => els.map((e) => e.dataset.reasonCodes)"
+            )
+        except Exception:
+            return set()
+        return {code for value in values for code in str(value or "").split()}
+
+    def tech_text(self) -> str:
+        """Everything the technical drawers in the error notices say, open or closed."""
+        try:
+            return " | ".join(self.page.locator("main .notice details.tech").all_text_contents())
+        except Exception:
+            return ""
+
     # -- typing ----------------------------------------------------------------------
     def type_into(self, selector: str, value: str, control: str = "") -> None:
         """Type, keystroke by keystroke. `fill()` sets a value in one shot and a human does not.
@@ -768,8 +789,9 @@ def scenario_money(console: Console) -> None:
     )
     ok(
         "the refusal names the reason code, in words the counter can act on",
-        "AMOUNT_IS_NOT_THE_EXACT_TOTAL" in said and "đúng tổng đã báo" in sheet,
-        "",
+        # The code travels verbatim in the notice's technical drawer; the words are visible.
+        "AMOUNT_IS_NOT_THE_EXACT_TOTAL" in console.reason_codes() and "đúng tổng đã báo" in sheet,
+        repr(sorted(console.reason_codes())),
     )
     ok(
         "and names the decision that owns it, so staff know it is policy and not a fault",
@@ -1133,7 +1155,10 @@ def scenario_pricing(console: Console) -> None:
         "an unknown channel code is refused by the server with its reason, and the screen says so",
         refused["status"] == 422
         and "CONTACT_BINDING_UNKNOWN" in refused["text"]
-        and "CONTACT_BINDING_UNKNOWN" in console.text(),
+        # Said in words on screen, with the code verbatim in the notice's technical drawer.
+        and "CONTACT_BINDING_UNKNOWN" in console.reason_codes()
+        and "CONTACT_BINDING_UNKNOWN" in console.tech_text()
+        and "Không có liên hệ nào mang mã này" in console.text(),
         f"HTTP {refused['status']} {refused['text'][:120]}",
     )
 

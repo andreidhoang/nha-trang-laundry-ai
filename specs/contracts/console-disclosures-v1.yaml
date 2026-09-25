@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 425
+  DESCRIPTIVE: 428
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 14
-total: 454
+total: 457
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -83,11 +83,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/errors.js#MESSAGES.NOT_SUPPORTED:21cb195444b1
+- slot_id: core/errors.js#MESSAGES.NOT_SUPPORTED:68500398445f
   module: core/errors.js
   key: MESSAGES.NOT_SUPPORTED
-  text: Máy chủ không ghi nhận khoản này. Mã lý do bên dưới nói rõ vì sao và cần làm gì; đừng nhập kiểu
-    khác để lách.
+  text: Máy chủ không ghi nhận khoản này. Lý do bên dưới nói rõ vì sao và cần làm gì; đừng nhập kiểu khác
+    để lách.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2591,6 +2591,14 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#hint:53f4ef304274
+  module: screens/manualSend.js
+  key: hint
+  text: Bạn đã xin duyệt. Một người duyệt khác — không phải bạn — quyết ở màn hình Duyệt.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/manualSend.js#hint:5fdfa328f0a6
   module: screens/manualSend.js
   key: hint
@@ -2599,12 +2607,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/manualSend.js#hint:90bcb0e300bc
+- slot_id: screens/manualSend.js#hint:6aca522d62f3
   module: screens/manualSend.js
   key: hint
-  text: 'Xin duyệt ở bước 2 thì bốn ô này đã được điền sẵn. Phiếu mở ở phiên khác thì phải xin bốn giá
-    trị từ người đã tạo phiếu: hàng chờ duyệt chỉ hiện phiếu đang chờ quyết — mà gửi tay chỉ làm được
-    sau khi phiếu đã được duyệt.'
+  text: Mở bản nháp là bốn ô này tự điền từ phiếu xin duyệt mới nhất của nó. Chỉ nhập tay khi cần khoá
+    một phiếu khác phiếu đó.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2640,6 +2647,14 @@ disclosures:
   module: screens/manualSend.js
   key: notice
   text: Các ô này đã được điền từ kết quả khoá phong bì ở bước 3. Không sửa chúng bằng tay.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#notice:6c0eaf2d4976
+  module: screens/manualSend.js
+  key: notice
+  text: Các ô này đã được điền từ phong bì bạn đã khoá, theo máy chủ. Không sửa chúng bằng tay.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3954,6 +3969,14 @@ disclosures:
   key: notice
   text: 'Nằm trong khoảng đã niêm yết. Đây vẫn chưa phải giá: chủ tiệm phải duyệt, rồi bạn bấm áp dụng
     thì máy chủ mới ghi thành giá của bản báo giá.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/components.js#notice:e43bb97a0efc
+  module: ui/components.js
+  key: notice
+  text: Đây là quy định của chủ tiệm; quầy không tự đổi được.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

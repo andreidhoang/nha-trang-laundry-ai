@@ -27,6 +27,7 @@ Revisions follow content, not decisions:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -197,6 +198,93 @@ def read_message_draft_binding_for_store(
     return binding
 
 
+@dataclass(frozen=True, slots=True)
+class MessageDraftSendProgress:
+    """How far the latest `SEND_MESSAGE` over one draft has gone, as stored (`MANUAL-SEND-RESUME`).
+
+    Spec V2 principle 2 (zero paste). A person who reopens a draft in a new session -- after the
+    approver decided on another device -- used to have to paste the approval id, the bound version
+    and two digests to lock the envelope, and the envelope id and row version to attest. Every one
+    of those values is a stored column; this carries them back.
+
+    Nothing here is a decision. `status` is the approval's state row verbatim, `past_expiry` is the
+    database clock compared with the stored `expires_at` (a `REQUESTED` or `APPROVED` row is not
+    rewritten when it lapses), and every write this enables still re-checks all of it -- the
+    approval's state, expiry, digests, the draft revision, the envelope's row version and the
+    contact's consent -- under its own lock.
+    """
+
+    approval_request_id: UUID
+    status: str
+    expires_at: datetime
+    past_expiry: bool
+    resource_version: int
+    snapshot_hash: str
+    rendered_hash: str
+    requested_by_you: bool
+    envelope_id: UUID | None
+    envelope_status: str | None
+    envelope_row_version: int | None
+    prepared_by_you: bool | None
+
+
+def read_message_draft_send_state_for_store(
+    cursor: Any, *, store_id: UUID, agent_run_id: UUID, principal: StaffPrincipal
+) -> tuple[MessageDraftBinding, MessageDraftSendProgress | None] | None:
+    """One store's draft binding and how far its latest `SEND_MESSAGE` has gone, in one read.
+
+    `MANUAL-SEND-RESUME`. The binding read -- role and MFA, then membership of the named store,
+    then the draft of that store -- runs first and unchanged, on this cursor; only a caller it
+    admits reaches the progress read, and the progress read is bounded by the same store, so an
+    approval another shop raised over the same identifier can never surface here.
+
+    The latest approval is the most recently requested one over this `MESSAGE_DRAFT` in this store.
+    `None` progress means nobody has asked for approval of this draft yet.
+    """
+
+    binding = read_message_draft_binding_for_store(
+        cursor, store_id=store_id, agent_run_id=agent_run_id, principal=principal
+    )
+    if binding is None:
+        return None
+    cursor.execute(
+        """
+        SELECT r.id, s.status, r.expires_at, r.expires_at <= now(), r.resource_version,
+               r.snapshot_hash, r.rendered_hash, r.requested_by,
+               e.id, e.status, e.row_version, e.prepared_by
+        FROM approval_requests r
+        JOIN approval_request_states s ON s.approval_request_id = r.id
+        LEFT JOIN manual_send_envelopes e ON e.approval_request_id = r.id
+        WHERE r.store_id = %s
+          AND r.action = 'SEND_MESSAGE'
+          AND r.resource_type = %s
+          AND r.resource_id = %s
+        ORDER BY r.requested_at DESC, r.id DESC
+        LIMIT 1
+        """,
+        (store_id, MESSAGE_DRAFT_RESOURCE_TYPE, agent_run_id),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return binding, None
+    you = principal.staff_user_id
+    envelope_id = None if row[8] is None else _uuid(row[8])
+    return binding, MessageDraftSendProgress(
+        approval_request_id=_uuid(row[0]),
+        status=str(row[1]),
+        expires_at=row[2],
+        past_expiry=bool(row[3]),
+        resource_version=int(str(row[4])),
+        snapshot_hash=str(row[5]),
+        rendered_hash=str(row[6]),
+        requested_by_you=_uuid(row[7]) == you,
+        envelope_id=envelope_id,
+        envelope_status=None if envelope_id is None else str(row[9]),
+        envelope_row_version=None if envelope_id is None else int(str(row[10])),
+        prepared_by_you=None if envelope_id is None else _uuid(row[11]) == you,
+    )
+
+
 def _uuid(value: object) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))
 
@@ -210,7 +298,9 @@ __all__ = [
     "MessageDraftBinding",
     "MessageDraftFacts",
     "MessageDraftRendering",
+    "MessageDraftSendProgress",
     "message_draft_binding",
     "read_message_draft_binding",
     "read_message_draft_binding_for_store",
+    "read_message_draft_send_state_for_store",
 ]

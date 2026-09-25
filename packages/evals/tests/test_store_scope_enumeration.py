@@ -272,10 +272,11 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "shadow_console", "ShadowConsoleRepository.list_pending_drafts"
     ),
     # MESSAGE-DRAFT-BINDING-001. The words a SEND_MESSAGE envelope binds, with its digests. A
-    # module-level function rather than a repository method, checked mechanically all the same:
+    # module-level function rather than a repository method, checked mechanically all the same
+    # (MANUAL-SEND-RESUME: it now also returns the latest send's progress, read after the check):
     # role and MFA, then membership of the named store, then a draft of another store answers None.
     ("GET", "/internal/v1/stores/{store_id}/message-drafts/{agent_run_id}/binding"): (
-        store_scoped("message_drafts", "read_message_draft_binding_for_store")
+        store_scoped("message_drafts", "read_message_draft_send_state_for_store")
     ),
     # CONSENT-TRANSACTIONAL-001 (DEC-033). A contact's TRANSACTIONAL state and the messages a
     # release may cite, and the release itself. Module-level functions, checked mechanically: role

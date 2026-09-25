@@ -117,7 +117,7 @@ const MESSAGES = {
   // kept a keystroke error on the till. That code now has its own sentence in `REFUSAL` below; this
   // one no longer claims anything about the input.
   NOT_SUPPORTED:
-    "Máy chủ không ghi nhận khoản này. Mã lý do bên dưới nói rõ vì sao và cần làm gì; đừng nhập " +
+    "Máy chủ không ghi nhận khoản này. Lý do bên dưới nói rõ vì sao và cần làm gì; đừng nhập " +
     "kiểu khác để lách.",
   INVALID: "Dữ liệu nhập không hợp lệ.",
   PRECONDITION_REQUIRED: "Thiếu phiên bản dòng dữ liệu. Hãy tải lại màn hình.",

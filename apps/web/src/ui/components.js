@@ -668,8 +668,18 @@ export function skeleton(rows = 3) {
 /**
  * Render an `ApiError` as something an operator can act on.
  *
- * The correlation id is always shown. It is the one string that appears both here and in the
- * server log, so "lỗi khi tạo báo giá" becomes a searchable event rather than a story.
+ * Human first (`CONSOLE-FIX-ERROR-NOTICE`). The visible body is the Vietnamese sentence, the
+ * plain-language note behind each reason code, the owner-rule line, field problems, the server's
+ * wait, and the ways out -- what a person at the counter reads and does. The machine-readable
+ * evidence -- the reason codes verbatim, the owner decision id, the correlation id, the server's
+ * own words -- sits in one collapsed "Chi tiết kỹ thuật" inside the notice.
+ *
+ * The correlation id is always rendered, one tap away and printed (`print.css` expands the
+ * drawer). It is the one string that appears both here and in the server log, so "lỗi khi tạo
+ * báo giá" becomes a searchable event rather than a story -- and it is copyable, because an id
+ * read aloud over the phone is an id mistyped. The codes stay verbatim too: they are what an
+ * engineer greps for and what an eval asserts on. They also ride on the notice as `data-*`
+ * attributes, so a test reads the same evidence from the element rather than from prose.
  *
  * `title` replaces the kind's generic sentence when the caller knows something more exact about
  * *this* control -- for example that it still holds the same idempotency key, so pressing again
@@ -696,25 +706,38 @@ export function errorNotice(error, options = {}) {
       : api.kind === "REQUIRE_HUMAN" || api.kind === "DENIED"
         ? "warn"
         : "danger";
+  const codes = isApi ? api.reasonCodes : [];
+  // Each code's plain-language note, without the token: the token is in the drawer below.
+  const notes = [...new Set(codes.map((code) => REASON_NOTE[code]).filter(Boolean))];
+  const technical = [
+    codes.length ? ["Mã lý do", codes.join(", ")] : null,
+    isApi && api.decision ? ["Quyết định của chủ tiệm", api.decision] : null,
+    isApi && api.correlationId
+      ? ["Mã theo dõi", copyable({ value: api.correlationId }), "correlation"]
+      : null,
+    // The server's own words, verbatim -- English prose, or the raw JSON envelope of a 422 -- kept
+    // for whoever greps the log, and never the first thing a counter reads.
+    isApi && api.detail && api.detail !== error.message ? ["Máy chủ trả lời", api.detail] : null,
+  ].filter(Boolean);
 
   return h(
     "div",
-    { class: "notice", dataState: state, role: "alert" },
+    {
+      class: "notice",
+      dataState: state,
+      role: "alert",
+      dataReasonCodes: codes.length ? codes.join(" ") : null,
+      dataCorrelationId: isApi && api.correlationId ? api.correlationId : null,
+      dataDecision: isApi && api.decision ? api.decision : null,
+    },
     h("p", { class: "notice__title" }, options.title || error.message),
-    isApi && api.reasonCodes.length ? reasonCodeList(api.reasonCodes, "Mã lý do") : null,
-    // A `NOT_SUPPORTED` refusal names the owner decision behind it, and it is the string the
-    // operator repeats when they ask. This line used to say "Quyết định còn bỏ ngỏ" -- still
-    // open -- for every value the server sends, and every one of them (DEC-001, DEC-003, DEC-010)
-    // is resolved. The sentence now says only what is true either way: the rule is the owner's,
-    // and the counter does not change it.
+    notes.length ? h("ul", { class: "notice__reasons" }, notes.map((note) => h("li", null, note))) : null,
+    // A `NOT_SUPPORTED` refusal names the owner decision behind it. This line used to say "Quyết
+    // định còn bỏ ngỏ" -- still open -- for every value the server sends, and every one of them
+    // (DEC-001, DEC-003, DEC-010) is resolved. The sentence says only what is true either way: the
+    // rule is the owner's, and the counter does not change it. Which decision is in the drawer.
     isApi && api.decision
-      ? h(
-          "p",
-          null,
-          "Quy định này theo quyết định ",
-          h("span", { class: "mono" }, api.decision),
-          " của chủ tiệm; quầy không tự đổi được.",
-        )
+      ? h("p", null, "Đây là quy định của chủ tiệm; quầy không tự đổi được.")
       : null,
     isApi && api.fieldErrors.length
       ? h(
@@ -730,21 +753,31 @@ export function errorNotice(error, options = {}) {
     isApi && (api.kind === "RATE_LIMITED" || api.kind === "BUSY") && api.retryAfterSeconds
       ? h("p", null, `Thử lại sau ${api.retryAfterSeconds} giây.`)
       : null,
-    isApi && api.correlationId
-      ? h("p", { class: "hint mono" }, `mã theo dõi: ${api.correlationId}`)
-      : null,
-    // The server's own words, verbatim -- English prose, or the raw JSON envelope of a 422 -- kept
-    // for whoever greps the log, and collapsed so they are never the first thing a counter reads.
-    // The Vietnamese title above and the reason codes carry the meaning; this carries the evidence.
-    isApi && api.detail && api.detail !== error.message
-      ? explain("Chi tiết kỹ thuật", h("p", { class: "mono" }, api.detail))
-      : null,
     options.actions?.length ? h("div", { class: "form__actions" }, options.actions) : null,
     options.onRetry && isApi && api.retryable
       ? h(
           "div",
           { class: "form__actions" },
           h("button", { type: "button", onClick: options.onRetry }, "Thử lại"),
+        )
+      : null,
+    technical.length
+      ? h(
+          "details",
+          { class: "tech notice__tech", dataTech: "error" },
+          h("summary", null, "Chi tiết kỹ thuật"),
+          h(
+            "dl",
+            { class: "tech__list" },
+            technical.map(([term, value, key]) =>
+              h(
+                "div",
+                { class: "tech__row", dataTechKey: key || null },
+                h("dt", null, term),
+                h("dd", { class: "mono" }, value),
+              ),
+            ),
+          ),
         )
       : null,
   );

@@ -66,9 +66,11 @@ REC = Recorder(arguments.video, arguments.slow_mo, "dong-y-nhan-tin")
 RESULTS: list[tuple[str, bool]] = []
 
 
-def ok(name: str, passed: bool) -> bool:
+def ok(name: str, passed: bool, detail: str = "") -> bool:
     RESULTS.append((name, bool(passed)))
-    print(f"  {'PASS' if passed else 'FAIL'}  {name}", flush=True)
+    print(
+        f"  {'PASS' if passed else 'FAIL'}  {name}{f'  — {detail}' if detail else ''}", flush=True
+    )
     REC.check(name, bool(passed))
     return bool(passed)
 
@@ -251,12 +253,50 @@ def main() -> int:
             "the operator reads why, in Vietnamese",
             "dừng nhận tin" in console.main_text(),
         )
-        page.get_by_role("button", name="Xin duyệt gửi đúng tin này").click()
-        page.wait_for_timeout(1500)
-        refused = page.locator("[data-consent-refusal]").first
+        # A blocked send looks blocked: the press is shut, with the reason as visible text, and
+        # the STOP sentence is said once -- on the card.
+        raise_control = page.locator("button[data-raise-envelope]")
         ok(
-            "asking to approve the send is refused by the server, not just hidden",
-            refused.count() == 1 and refused.get_attribute("data-consent-refusal") == "SUPPRESSED",
+            "asking to approve is shut on screen, with the reason written under it",
+            raise_control.count() == 1
+            and not raise_control.is_enabled()
+            and raise_control.get_attribute("data-consent-blocked") == "SUPPRESSED"
+            and "không nhận tin dịch vụ" in page.locator("#manual-step-2").inner_text(),
+        )
+        visible = page.locator("main").inner_text()
+        ok(
+            "the STOP sentence is on screen exactly once",
+            visible.count("Khách đã yêu cầu dừng nhận tin trên kênh này") == 1,
+        )
+        # And the shut press is only the screen's prediction: the server refuses the same request
+        # on its own, from this session, with the same reason.
+        refusal = page.evaluate(
+            """async (draft) => {
+              const csrf = document.cookie.split("; ").find((c) => c.startsWith("staff_csrf="));
+              const store = localStorage.getItem("staff_store_id");
+              const read = await (await fetch(
+                `/internal/v1/stores/${store}/message-drafts/${draft}/binding`,
+                {credentials: "include"})).json();
+              const answer = await fetch("/internal/v1/approvals", {
+                method: "POST", credentials: "include",
+                headers: {"Content-Type": "application/json",
+                          "Idempotency-Key": "walk-" + crypto.randomUUID(),
+                          "X-CSRF-Token": decodeURIComponent((csrf || "=").split("=")[1])},
+                body: JSON.stringify({
+                  store_id: read.store_id, action: read.action,
+                  resource_type: read.resource_type, resource_id: read.resource_id,
+                  resource_version: read.resource_version, snapshot_hash: read.snapshot_hash,
+                  rendered_hash: read.rendered_hash, policy_version: read.policy_version})});
+              return {status: answer.status, body: await answer.json()};
+            }""",
+            draft_id,
+        )
+        note(f"máy chủ trả lời yêu cầu xin duyệt: {refusal.get('status')}")
+        ok(
+            "asking to approve the send is refused by the server, not just shut on screen",
+            refusal.get("status") == 422
+            and (refusal.get("body") or {}).get("detail", {}).get("reason_code") == "SUPPRESSED",
+            json.dumps(refusal, ensure_ascii=False)[:200],
         )
         ok(
             "the operator cannot lift the block themselves",
@@ -297,7 +337,17 @@ def main() -> int:
         )
         ok("marketing stays blocked", marketing == "SUPPRESSED")
 
-        head("6", "XIN DUYỆT → NGƯỜI DUYỆT DUYỆT → KHOÁ → GHI NHẬN ĐÃ GỬI")
+        head("6", "XIN DUYỆT → NGƯỜI DUYỆT DUYỆT → KHOÁ → GHI NHẬN ĐÃ GỬI — không dán mã nào")
+
+        def manual_entry_touched() -> bool:
+            """Was any "Nhập mã thủ công" drawer opened, or any of its fields typed into?"""
+            return bool(
+                page.evaluate(
+                    """() => [...document.querySelectorAll("details.manual-entry")]
+                             .some((d) => d.open)"""
+                )
+            )
+
         ok("the operator signs in", console.sign_in("demo-operations") in (200, 201))
         console.open(f"#/exceptions?draft={draft_id}", settle=2200)
         ok(
@@ -313,6 +363,19 @@ def main() -> int:
         ok("an approval is raised for exactly this draft", approval_id is not None)
         console.shot("06-raised")
 
+        # A new session on the same draft: the server says where the send stands.
+        note("phiên mới — mở lại bản nháp: máy chủ cho biết phiếu đang chờ duyệt")
+        ok("the operator signs in again", console.sign_in("demo-operations") in (200, 201))
+        console.open(f"#/exceptions?draft={draft_id}", settle=2200)
+        waiting = page.locator("#manual-step-2 [data-send-phase='waiting']")
+        ok(
+            "reopened, step 2 says 'Đang chờ duyệt' for the approval the server names",
+            waiting.count() == 1
+            and str(approval_id)[:8] in page.locator("#manual-step-2").inner_text()
+            and page.locator("button[data-raise-envelope]").count() == 0,
+        )
+        console.shot("06b-resumed-waiting")
+
         ok("the approver signs in", console.sign_in("demo-approver") in (200, 201))
         console.open("#/approvals", settle=2200)
         card = page.locator("article.card", has_text=draft.text).first
@@ -326,12 +389,28 @@ def main() -> int:
         )
         ok("the approver approves the envelope", decision == "APPROVED")
 
+        # Zero paste (spec V2 principle 2). The approver decided on another device; the operator
+        # reopens the draft and the server hands back the approval id, version and both digests.
+        # The harness types nothing: the fields under "Nhập mã thủ công" are never opened.
         ok("the operator signs in", console.sign_in("demo-operations") in (200, 201))
         console.open(f"#/exceptions?draft={draft_id}", settle=2200)
-        details = page.locator("details.manual-entry", has=page.locator("#manual-approval-id"))
-        if details.count():
-            details.first.locator("summary").click()
-        note("phiếu duyệt đến từ máy khác — nhập mã phiếu dưới “Nhập mã thủ công”")
+        note("phiếu được duyệt ở máy khác — mở lại bản nháp, bước 3 đã sẵn sàng, không dán mã")
+        ok(
+            "reopened, step 3 is ready with the approval the server names",
+            page.locator(
+                "#manual-step-3[data-state='current'] [data-send-phase='approved']"
+            ).count()
+            == 1
+            and str(approval_id)[:8] in page.locator("#manual-step-3").inner_text(),
+        )
+        prefilled = page.evaluate(
+            """() => ({
+              approval: document.querySelector("#manual-approval-id")?.value,
+              version: document.querySelector("#manual-resource-version")?.value,
+              snapshot: document.querySelector("#manual-snapshot-hash")?.value,
+              rendered: document.querySelector("#manual-rendered-hash")?.value,
+            })"""
+        )
         with connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select resource_version, snapshot_hash, rendered_hash from approval_requests "
@@ -339,17 +418,39 @@ def main() -> int:
                 (approval_id,),
             )
             version, snapshot, rendered = cursor.fetchone()
-        page.fill("#manual-approval-id", str(approval_id))
-        page.fill("#manual-resource-version", str(version))
-        page.fill("#manual-snapshot-hash", snapshot)
-        page.fill("#manual-rendered-hash", rendered)
-        page.get_by_role("button", name="Khoá phong bì cho người gửi tay").click()
+        ok(
+            "the four values came from the server, equal to the approval's own",
+            prefilled
+            == {
+                "approval": str(approval_id),
+                "version": str(version),
+                "snapshot": snapshot,
+                "rendered": rendered,
+            },
+        )
+        console.shot("08a-resumed-approved")
+        page.locator("button[data-lock-envelope]").click()
         page.wait_for_timeout(1800)
         envelope = sql(
             "select id from manual_send_envelopes where approval_request_id = %s", approval_id
         )
-        ok("the envelope is locked for the operator who will send by hand", envelope is not None)
+        ok(
+            "one press locks the envelope for the operator who will send by hand",
+            envelope is not None,
+        )
+        ok("the manual-entry fields were never needed", not manual_entry_touched())
         console.shot("08-locked")
+
+        # Another new session: the envelope this operator locked is carried into step 4.
+        note("phiên mới — phong bì bạn đã khoá: bước 4 sẵn sàng, không dán mã")
+        ok("the operator signs in again", console.sign_in("demo-operations") in (200, 201))
+        console.open(f"#/exceptions?draft={draft_id}", settle=2200)
+        ok(
+            "reopened, step 4 is ready for the envelope the server names",
+            page.locator("#manual-step-4[data-state='current']").count() == 1
+            and page.locator("#attest-envelope-id").input_value() == str(envelope),
+        )
+        console.shot("08b-resumed-locked")
         page.get_by_role("button", name="Vừa gửi xong").click()
         attest = page.get_by_role("button", name="Chứng thực rằng tôi đã gửi tin này")
         attest.click()
@@ -363,7 +464,17 @@ def main() -> int:
             "the screen says recorded is not the same as delivered",
             "không có nghĩa là khách đã nhận" in console.main_text(),
         )
+        ok("and still nothing was pasted", not manual_entry_touched())
         console.shot("09-recorded")
+
+        console.open(f"#/exceptions?draft={draft_id}", settle=2200)
+        ok(
+            "reopened once more, the send is done, and still not called delivered",
+            page.locator("#manual-step-4[data-state='done'] [data-send-phase='recorded']").count()
+            == 1
+            and "không có nghĩa là khách đã nhận" in console.main_text(),
+        )
+        console.shot("09b-resumed-recorded")
 
         ok("no screen showed [object Object], undefined ₫ or NaN", not defects)
         REC.finish()

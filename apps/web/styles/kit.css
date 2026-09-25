@@ -3076,3 +3076,28 @@ input.money-entry__field {
   font-size: var(--text-sm);
   padding: 0 var(--space-2);
 }
+
+/* --- CONSOLE-FIXES-S8 ------------------------------------------------------------------------ */
+
+/* `#/more`: a denied destination stays a way in -- its guard screen prints the full reason -- so
+ * the disabled row is wrapped in a plain link that adds nothing visual of its own. */
+a.row-link {
+  color: inherit;
+  display: block;
+  text-decoration: none;
+}
+
+/* `errorNotice`: the reason notes are the visible body; the technical drawer sits last and quiet. */
+.notice .notice__reasons {
+  margin-top: var(--space-1);
+}
+
+.notice > details.notice__tech {
+  margin-top: var(--space-2);
+}
+
+/* A control the server's own read predicts it would refuse: the reason under it, in full. */
+.step__blocked {
+  color: var(--warn-fg);
+  font-size: var(--text-sm);
+}

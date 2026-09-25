@@ -7,8 +7,8 @@
  * @module core/nav
  */
 
-import { NAV } from "./i18n.js";
-import { can } from "./rbac.js";
+import { NAV, enumVi } from "./i18n.js";
+import { CAPABILITIES, can } from "./rbac.js";
 
 /**
  * Navigation, grouped by the kind of work (spec V2 §3.2). `tab` places an entry on the phone's
@@ -148,12 +148,39 @@ export const NAV_ITEMS = [
 ];
 
 /**
+ * @typedef {{allowed: boolean, reason: string, short?: string}} NavVerdict
+ * `reason` is `can()`'s full sentence -- the bound SERVER_GATE disclosure plus the roles the
+ * server admits -- for a `title` and for the guard screen a tap opens. `short` is what fits under
+ * a nav entry: whom to ask, in words ("Chỉ Chủ / quản trị, Người duyệt vận hành"), never a
+ * paragraph in the navigation.
+ */
+
+/**
  * @param {ReturnType<typeof session.principal>} principal
  * @param {(typeof NAV_ITEMS)[number]} item
+ * @returns {NavVerdict}
  */
 export function navVerdict(principal, item) {
-  return item.capability
+  const verdict = item.capability
     ? can(principal, item.capability)
     : { allowed: Boolean(principal), reason: "Chưa có phiên đăng nhập." };
+  if (verdict.allowed) return verdict;
+  return { ...verdict, short: shortReason(principal, item.capability) };
+}
+
+/**
+ * The short form of a denial, derived from the same table `can()` reads, so it can never name a
+ * role the full reason does not. Display only: the server decides.
+ *
+ * @param {ReturnType<typeof session.principal>} principal
+ * @param {string|undefined} capability
+ * @returns {string}
+ */
+function shortReason(principal, capability) {
+  const rule = capability ? CAPABILITIES[capability] : undefined;
+  if (!principal || !rule) return "Chưa đăng nhập";
+  const held = principal.roles.filter((role) => rule.roles.includes(role));
+  if (held.length === 0) return `Chỉ ${rule.roles.map((role) => enumVi(role)).join(", ")}`;
+  return "Cần xác thực hai bước";
 }
 

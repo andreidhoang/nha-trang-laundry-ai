@@ -212,7 +212,8 @@ và bấm **“Áp dụng khoản giảm trừ”**. Bản báo giá được m�
 ## Khách đã nhắn “dừng” — gửi tin dịch vụ (`DEC-033`)
 
 Khách nhắn **dừng / STOP** trên kênh nào thì tiệm **không chủ động gửi gì** trên kênh đó — kể cả tin
-báo đồ đã xong. Ở *Ngoại lệ & gửi tay → Gửi tay*, máy sẽ từ chối và nói rõ lý do:
+báo đồ đã xong. Ở *Ngoại lệ & gửi tay → Gửi tay*, thẻ *Tin dịch vụ cho khách này* nói rõ lý do và nút
+**Xin duyệt** bị khoá, lý do ghi ngay dưới nút (máy vẫn kiểm tra lại ở mỗi bước):
 
 | Máy nói | Làm gì |
 |---|---|
@@ -231,7 +232,9 @@ Nếu lỡ gửi tay rồi mới thấy máy từ chối ghi nhận: **báo ch�
 4. **Ghi nhận đã gửi** — gửi xong bấm *Vừa gửi xong*, rồi chứng thực. Ghi nhận **không có nghĩa là
    khách đã nhận**.
 
-*Nhập mã thủ công* chỉ dùng khi phiếu được tạo ở máy khác.
+Người duyệt duyệt ở máy khác cũng không sao: mở lại bản nháp là trang tự nhảy tới đúng bước, mọi mã
+đã điền sẵn — chờ duyệt, bấm **Khoá phong bì cho người gửi tay**, hay ghi nhận. Tin đã đổi hoặc phiếu hết
+hạn thì bấm **Xin duyệt lại**. *Nhập mã thủ công* chỉ dùng cho một phiếu khác phiếu mới nhất.
 
 ---
 
@@ -242,14 +245,14 @@ Nếu lỡ gửi tay rồi mới thấy máy từ chối ghi nhận: **báo ch�
 | **Đang ngoại tuyến** | Máy mất mạng. Không có lệnh nào được gửi đi | Kiểm tra mạng. Trong lúc đó ghi tay, nhập lại sau khi có mạng |
 | **Chưa biết lệnh có tới máy chủ hay không** | Lệnh có thể đã chạy | **Đừng bấm lại.** Tải lại đơn và xem trạng thái thật |
 | **Đơn này vừa được người khác đổi** | Người kia bấm trước | Bấm **Đơn vừa đổi — tải lại**, rồi làm theo nút mới |
-| **Máy chủ không ghi nhận khoản này** | Số tiền hoặc tình huống không được hỗ trợ | Đọc mã lý do ngay bên dưới — nó nói rõ phải làm gì |
+| **Máy chủ không ghi nhận khoản này** | Số tiền hoặc tình huống không được hỗ trợ | Đọc lý do ngay bên dưới — nó nói rõ phải làm gì |
 | **Chưa nhận đồ được** | Đơn còn thiếu điều kiện (thường là chưa tích *Tiệm làm kịp đơn này*) | Đọc từng dòng lý do ngay bên dưới, làm đúng việc đó rồi bấm lại |
 | Huỷ một đơn đã nhận đồ | Phải nói đồ và tiền đã xử lý thế nào | **Khác** → **Huỷ đơn**, chọn một cách xử lý, bấm hai lần |
 | **Phiên đăng nhập đã kết thúc** | Hết phiên | Đăng nhập lại. Không mất dữ liệu |
 | **Máy chủ gặp lỗi** | Lỗi thật | **Đừng thử lại.** Xem bảng đơn để biết lệnh đã vào hay chưa, chụp màn hình, báo chủ tiệm |
 
 **Quy tắc chung khi hoang mang:** không bấm lại lệnh vừa hỏng. Mở bảng đơn, đọc trạng thái thật của
-đơn, rồi mới quyết định. Mỗi lỗi đều có **mã theo dõi** — chụp lại, đó là thứ tra ra được chuyện gì
+đơn, rồi mới quyết định. Mỗi lỗi đều có **mã theo dõi** trong ô *Chi tiết kỹ thuật* của lỗi — mở ra, chụp lại, đó là thứ tra ra được chuyện gì
 đã xảy ra.
 
 ---

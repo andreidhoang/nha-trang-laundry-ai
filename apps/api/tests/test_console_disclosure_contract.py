@@ -848,7 +848,14 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   002's "bấm Đề xuất bồi hoàn", a button 004 retired) merged into +1 "mở một khiếu nại trong
     #   danh sách này; bồi hoàn làm ngay trên trang của khiếu nại đó", and +1 the credit section's
     #   hint pointing at "Dùng khoản giảm trừ" on the Nhận đồ receipt. 455 - 3 + 2 = 454.
-    assert sum(counts.values()) == _registry()["total"] == 454
+    # 444 after CONSOLE-FIXES-S8 (441 + 3), all DESCRIPTIVE. Added: the resumed "Bạn đã xin duyệt"
+    # hint, the "filled from the envelope you locked, per the server" notice (manualSend.js), and
+    # errorNotice's owner-rule line, which no longer names the decision id (moved to its technical
+    # drawer). Reworded because the behaviour changed: the manual-entry hint (the four values now
+    # fill from the server, MANUAL-SEND-RESUME) and NOT_SUPPORTED's "Mã lý do bên dưới" (the notes
+    # are visible, the codes are in the drawer). None removed.
+    # 457 after merging the concurrent slices above (lead, at integration).
+    assert sum(counts.values()) == _registry()["total"] == 457
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

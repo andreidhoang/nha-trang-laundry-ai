@@ -1703,13 +1703,21 @@ def main() -> int:
 
         head("8", "MỌI NÚT — the controls this run actually touched")
         missed = [control for control in DECLARED_CONTROLS if control not in TOUCHED]
-        for control in missed:
-            note(f"not exercised: {control}")
-        ok(
-            f"every declared control was exercised ({len(TOUCHED)}/{len(DECLARED_CONTROLS)})",
-            not missed,
-            f"{len(missed)} untouched" if missed else "",
-        )
+        if arguments.only:
+            # One scenario cannot touch every control, so the line would fail by construction --
+            # and a filmed single scenario would end on a "1 hỏng" that is not a defect.
+            note(
+                f"--only {arguments.only}: coverage is a whole-run property and is not checked "
+                f"({len(TOUCHED)}/{len(DECLARED_CONTROLS)} touched by this scenario)"
+            )
+        else:
+            for control in missed:
+                note(f"not exercised: {control}")
+            ok(
+                f"every declared control was exercised ({len(TOUCHED)}/{len(DECLARED_CONTROLS)})",
+                not missed,
+                f"{len(missed)} untouched" if missed else "",
+            )
         extra = sorted(TOUCHED - set(DECLARED_CONTROLS))
         if extra:
             note(f"touched but not declared (add them to DECLARED_CONTROLS): {extra}")

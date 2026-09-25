@@ -90,14 +90,14 @@ const TILES = [
     id: "unknown-sends",
     eyebrow: "Cần đối soát",
     title: "Gửi chưa rõ kết quả",
-    capability: "SHADOW_READ",
-    needsStore: false,
+    capability: "UNKNOWN_SENDS_READ",
+    needsStore: true,
     limit: 50,
     href: "/exceptions",
     action: "Mở ngoại lệ",
-    hint: "Toàn hệ thống.",
     zero: "Không có lần gửi nào chưa rõ kết quả.",
-    url: () => "/internal/v1/shadow/unknown-sends?limit=50",
+    url: (store) =>
+      `/internal/v1/stores/${encodeURIComponent(store)}/shadow/unknown-sends?limit=50`,
   },
   {
     id: "incidents",

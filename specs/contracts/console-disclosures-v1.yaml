@@ -10,13 +10,13 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 354
+  DESCRIPTIVE: 355
   MODEL_SEAM: 2
   POLICY_BOUND: 1
-  REPOSITORY_ROLES: 5
+  REPOSITORY_ROLES: 6
   RESPONSE_SHAPE: 1
   SERVER_GATE: 13
-total: 381
+total: 383
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1197,13 +1197,27 @@ disclosures:
     gate: require_approval_staff
     why: The console declares which roles and MFA state this capability needs. The test probes the named
       server gate and requires the console to be no more permissive than it is.
-- slot_id: core/rbac.js#why:f0bdf0cf51e3
+- slot_id: core/rbac.js#why:dd934c090498
   module: core/rbac.js
   key: why
-  text: Đọc bản nháp, ngoại lệ và dòng thời gian kiểm toán mở cho bốn vai trò.
+  text: Đọc bản nháp và dòng thời gian kiểm toán mở cho bốn vai trò; hàng chờ gửi chưa rõ kết quả cần
+    thêm xác thực hai bước.
   binding:
     kind: REPOSITORY_ROLES
     capability: SHADOW_READ
+    module: nha_trang_laundry_db.shadow_console
+    symbol: SHADOW_READ_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
+- slot_id: core/rbac.js#why:82d4fba821f5
+  module: core/rbac.js
+  key: why
+  text: Hàng chờ gửi chưa rõ kết quả chỉ gồm biên nhận của cửa hàng bạn được gán, và cần đã xác thực hai
+    bước.
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: UNKNOWN_SENDS_READ
     module: nha_trang_laundry_db.shadow_console
     symbol: SHADOW_READ_ROLES
     why: The route gate for this capability admits every role, so binding to it could never fail. The
@@ -1565,12 +1579,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/exceptions.js#notice:d7e95d96d102
+- slot_id: screens/exceptions.js#notice:0015878bff82
   module: screens/exceptions.js
   key: notice
-  text: Route trả biên nhận của mọi cửa hàng trong hệ thống, không lọc theo cửa hàng bạn đang chọn ở thanh
-    trên. Một biên nhận ở đây có thể thuộc cửa hàng khác, và người bên đó có thể đang xử lý nó cùng lúc
-    với bạn — nên hãy đọc lại danh sách trước khi quyết định.
+  text: Hàng chờ này lọc theo cửa hàng bạn đang chọn ở thanh trên. Người của cửa hàng khác không thấy
+    và không đối soát được các biên nhận này, và bạn cũng không thấy của họ.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2239,6 +2252,15 @@ disclosures:
   key: notice
   text: 'Kết quả được phát lại: cùng khoá thao tác và cùng nội dung đã gửi trước đó. Không có bản ghi
     mới nào được tạo.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/manualSend.js#hint:2e83d90effe9
+  module: screens/manualSend.js
+  key: hint
+  text: Không có ô người nhận. Máy chủ lấy người nhận từ chính bản nháp đã được duyệt và trả nó về trong
+    kết quả; một yêu cầu tự ghi người nhận bị từ chối.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

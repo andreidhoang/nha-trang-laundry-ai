@@ -772,28 +772,44 @@ class ShadowConsoleRepository:
 
     # --- unknown-outcome reconciliation -------------------------------------------------------
 
-    @staticmethod
+    @classmethod
     def list_unknown_sends(
-        connection: Any, *, principal: StaffPrincipal, limit: int = 50
+        cls, connection: Any, *, store_id: UUID, principal: StaffPrincipal, limit: int = 50
     ) -> tuple[UnknownSend, ...]:
-        if not principal.roles & SHADOW_READ_ROLES:
-            raise ShadowAuthorizationError("exception queue access is not authorized")
+        """One store's sends whose outcome nobody observed, oldest first.
+
+        `API-INTEGRITY-002`. This read had no store at all -- `channel_send_receipts` had no store
+        column -- so any Shadow reader of any shop listed every shop's receipts, without MFA. It
+        is now the store's, like the draft queue beside it: a Shadow read role, membership of this
+        store, and MFA. MFA because this is the input to a decision a person makes on the shop's
+        behalf, exactly as the approval queue is; `AUDITOR` holds MFA by construction
+        (`SENSITIVE_MFA_ROLES`), so the one reader this drops is an unverified `OPERATOR`.
+
+        A receipt written before `0049` whose store could not be derived has a NULL store and so is
+        in no store's queue: unattributed means unshown, never shown to everyone.
+        """
         # The same bound every other list in this repository applies. Without it a negative limit
         # reaches `LIMIT %s` and PostgreSQL raises, which surfaces as a 500 on a read that a client
         # is allowed to make, and an unbounded limit returns the whole table in one page.
         if not 1 <= limit <= 200:
             raise ShadowStateError("exception queue limit must be between 1 and 200")
         with connection.transaction(), connection.cursor() as cursor:
+            if not principal.mfa_verified:
+                raise ShadowAuthorizationError("exception queue access requires MFA")
+            cls._require_store_access(
+                cursor, principal=principal, store_id=store_id, roles=SHADOW_READ_ROLES
+            )
             cursor.execute(
                 """
                 SELECT receipt_id, outbox_id, provider, message_kind, attempt_number,
                        reconciliation_state, recorded_at
                 FROM channel_send_receipts
-                WHERE reconciliation_state IN ('UNKNOWN', 'UNKNOWN_REQUIRES_HUMAN')
+                WHERE store_id = %s
+                  AND reconciliation_state IN ('UNKNOWN', 'UNKNOWN_REQUIRES_HUMAN')
                 ORDER BY recorded_at, receipt_id
                 LIMIT %s
                 """,
-                (limit,),
+                (store_id, limit),
             )
             return tuple(
                 UnknownSend(
@@ -819,18 +835,45 @@ class ShadowConsoleRepository:
         note: str | None = None,
         now: datetime | None = None,
     ) -> None:
-        """Resolve one unknown send by a named human. There is no automatic path to this method."""
+        """Resolve one unknown send by a named human. There is no automatic path to this method.
+
+        `API-INTEGRITY-002`: by a named human *of the shop the send belongs to*. Any approver of
+        any store could resolve any receipt before, recording as settled a send in a shop they had
+        no access to. The store is read off the receipt row, locked in the same transaction as the
+        update, and never taken from the request.
+
+        A receipt that does not exist, belongs to another store, or has no attributable store at
+        all is one refusal -- `ShadowAuthorizationError`, the route's opaque 403 -- so probing
+        receipt identifiers teaches a caller nothing about another shop's sends.
+        """
 
         if resolution not in {
             ReconciliationState.CONFIRMED_SENT,
             ReconciliationState.CONFIRMED_NOT_SENT,
         }:
             raise ShadowStateError("resolution must be CONFIRMED_SENT or CONFIRMED_NOT_SENT")
-        if not principal.roles & SHADOW_DECIDE_ROLES:
-            raise ShadowAuthorizationError("resolving an unknown send is not authorized")
+        refused = "resolving this unknown send is not authorized"
+        if not principal.roles & SHADOW_DECIDE_ROLES or not principal.mfa_verified:
+            raise ShadowAuthorizationError(refused)
         timestamp = now or datetime.now(UTC)
 
         def mutation(cursor: Any) -> None:
+            cursor.execute(
+                "SELECT store_id FROM channel_send_receipts WHERE receipt_id = %s FOR UPDATE",
+                (receipt_id,),
+            )
+            owner = cursor.fetchone()
+            if owner is None or owner[0] is None:
+                raise ShadowAuthorizationError(refused)
+            try:
+                self._require_store_access(
+                    cursor,
+                    principal=principal,
+                    store_id=_uuid(owner[0]),
+                    roles=SHADOW_DECIDE_ROLES,
+                )
+            except ShadowAuthorizationError as error:
+                raise ShadowAuthorizationError(refused) from error
             cursor.execute(
                 """
                 UPDATE channel_send_receipts

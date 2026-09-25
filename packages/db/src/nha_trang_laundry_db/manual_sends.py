@@ -1,4 +1,13 @@
-"""Exact-hash manual-send attestations for pre-channel Shadow only."""
+"""Exact-hash manual-send attestations for pre-channel Shadow only.
+
+`API-INTEGRITY-002`: the recipient is the approved draft's, never the caller's. It used to arrive in
+the request body, was never compared with anything, and was copied into the envelope and then into
+the attestation -- so the ledger could say that approver B's message went to recipient X when no
+approval had ever named X. The prepare command no longer has a recipient field at all; the
+repository reads it off the `MESSAGE_DRAFT` the approval binds, after proving that draft's current
+content is still the content that was approved. Migration `0049` makes the schema refuse an envelope
+whose recipient is not its draft's.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +21,11 @@ from nha_trang_laundry_contracts import AgentDeploymentStage
 from nha_trang_laundry_domain.catalog import ApprovalAction
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.message_drafts import (
+    MESSAGE_DRAFT_RESOURCE_TYPE,
+    MessageDraftBinding,
+    read_message_draft_binding,
+)
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -30,7 +44,9 @@ class ManualSendPrepareCommand:
     observed_resource_version: int
     observed_snapshot_hash: str
     observed_rendered_hash: str
-    recipient_binding_id: UUID
+    #: No `recipient_binding_id`, deliberately. Who receives the message is a fact about the
+    #: approved draft (invariant 9: server-derived contact binding is never an input), and a field
+    #: here would only ever be either redundant or a way to send approved words to somebody else.
     channel: str
     purpose: str
     deployment_stage: AgentDeploymentStage
@@ -80,6 +96,16 @@ class ManualSendRepository:
             # After the lock, because the store to check membership against is on the row.
             _require_manual_sender(cursor, command.principal, approval[10])
             _require_approved_transactional_binding(approval, command, prepared_at)
+            draft = _require_draft_as_approved(
+                cursor,
+                resource_type=str(approval[11]),
+                resource_id=_uuid(approval[0]),
+                store_id=_uuid(approval[10]),
+                resource_version=int(str(approval[1])),
+                snapshot_hash=str(approval[2]),
+                rendered_hash=str(approval[3]),
+            )
+            recipient_binding_id = draft.contact_binding_id
             cursor.execute(
                 "SELECT id FROM manual_send_envelopes WHERE approval_request_id = %s",
                 (command.approval_request_id,),
@@ -105,7 +131,7 @@ class ManualSendRepository:
                         command.observed_resource_version,
                         command.observed_snapshot_hash,
                         command.observed_rendered_hash,
-                        command.recipient_binding_id,
+                        recipient_binding_id,
                         channel,
                         command.principal.staff_user_id,
                         prepared_at,
@@ -143,7 +169,7 @@ class ManualSendRepository:
             envelope_id,
             command.approval_request_id,
             "APPROVED_FOR_MANUAL_SEND",
-            command.recipient_binding_id,
+            recipient_binding_id,
             command.observed_rendered_hash,
         )
 
@@ -168,6 +194,20 @@ class ManualSendRepository:
                 str(envelope[5]), command.exact_rendered_hash
             ):
                 raise ManualSendStateError("manual-send content binding is stale")
+            # Invariant 8 up to the moment the send is recorded: a reviewer's edit or rejection
+            # after the envelope was locked means the words being attested are no longer the words
+            # the draft says, so the attestation is refused rather than recorded against them.
+            # The recipient needs no second look: a draft's contact is immutable, and `0049` binds
+            # the envelope's recipient to it in the schema.
+            _require_draft_as_approved(
+                cursor,
+                resource_type=str(approval[11]),
+                resource_id=_uuid(envelope[2]),
+                store_id=_uuid(approval[10]),
+                resource_version=int(str(envelope[3])),
+                snapshot_hash=str(envelope[4]),
+                rendered_hash=str(envelope[5]),
+            )
             attestation_id = uuid4()
 
             def mutation(change_cursor: Any) -> None:
@@ -242,7 +282,7 @@ def _lock_approval(cursor: Any, approval_id: UUID) -> tuple[object, ...]:
         """
         SELECT r.resource_id, r.resource_version, r.snapshot_hash, r.rendered_hash,
                r.action, r.policy_version, r.expires_at, s.status, s.row_version, r.requested_by,
-               r.store_id
+               r.store_id, r.resource_type
         FROM approval_requests r JOIN approval_request_states s ON s.approval_request_id = r.id
         WHERE r.id = %s FOR UPDATE OF s
         """,
@@ -289,6 +329,38 @@ def _require_approved_transactional_binding(
         raise ManualSendStateError("manual-send content binding is stale")
 
 
+def _require_draft_as_approved(
+    cursor: Any,
+    *,
+    resource_type: str,
+    resource_id: UUID,
+    store_id: UUID,
+    resource_version: int,
+    snapshot_hash: str,
+    rendered_hash: str,
+) -> MessageDraftBinding:
+    """The approved draft as it stands now, refused unless it is exactly what was approved.
+
+    The binding is recomputed from `agent_drafts` / `agent_draft_reviews` rather than trusted from
+    the approval row, so an approval raised before `API-INTEGRITY-002` over a draft that never
+    existed, a draft a reviewer has since rejected, and a draft edited since approval all stop here
+    with one refusal. The draft's store must be the approval's store, which is the store membership
+    was just checked against.
+    """
+    if resource_type != MESSAGE_DRAFT_RESOURCE_TYPE:
+        raise ManualSendStateError("approval is not available for manual send")
+    draft = read_message_draft_binding(cursor, resource_id)
+    if (
+        draft is None
+        or draft.store_id != store_id
+        or draft.resource_version != resource_version
+        or not hmac.compare_digest(draft.snapshot_hash, snapshot_hash)
+        or not hmac.compare_digest(draft.rendered_hash, rendered_hash)
+    ):
+        raise ManualSendStateError("manual-send content binding is stale")
+    return draft
+
+
 def _require_manual_sender(cursor: Any, principal: StaffPrincipal, store_id: object) -> None:
     """Role, MFA, and membership of the shop whose approval is being spent.
 
@@ -296,7 +368,8 @@ def _require_manual_sender(cursor: Any, principal: StaffPrincipal, store_id: obj
     non-member operator could prepare and attest against another store's one-time SEND_MESSAGE
     approval, permanently burning it and recording their own staff id as having sent that store's
     approved message to a recipient the store never named. The owning store comes from the approval
-    row this call has already locked, never from the request.
+    row this call has already locked, never from the request -- and since `API-INTEGRITY-002` so
+    does the recipient.
     """
     permitted = {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.OPERATOR}
     if not principal.mfa_verified or not principal.roles.intersection(permitted):

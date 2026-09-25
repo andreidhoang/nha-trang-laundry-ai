@@ -181,9 +181,22 @@ class ChannelSendReceiptRepository:
         connection: Any,
         receipt: ChannelOutboundReceipt,
         *,
+        store_id: UUID,
         correlation_id: UUID,
         now: datetime | None = None,
     ) -> UUID:
+        """Record one attempt for the shop whose send it was.
+
+        `store_id` is required and keyword-only (`API-INTEGRITY-002`). A receipt with no store was
+        listed to, and resolvable by, every shop's staff. The sender worker knows the store of the
+        outbox row it is sending; it is not in `ChannelOutboundReceipt` because that document is the
+        provider-facing contract and a store is our fact, not the provider's.
+
+        When the send was authorised by a human approval, the approval must exist and belong to
+        this same store -- checked here so the refusal is a `ChannelReceiptError`, and enforced
+        again by `0049`'s composite key so no other writer can file one shop's approved send under
+        another's.
+        """
         _reject_unreconcilable(receipt)
         timestamp = now or datetime.now(UTC)
         authorization = receipt.authorization
@@ -191,6 +204,14 @@ class ChannelSendReceiptRepository:
         resolution = receipt.resolution
 
         def mutation(cursor: Any) -> None:
+            if authorization.approval_ref is not None:
+                cursor.execute(
+                    "SELECT store_id FROM approval_requests WHERE id = %s",
+                    (authorization.approval_ref,),
+                )
+                approval = cursor.fetchone()
+                if approval is None or _uuid(approval[0]) != store_id:
+                    raise ChannelReceiptError("the receipt names an approval of another store")
             cursor.execute(
                 """
                 INSERT INTO channel_send_receipts (
@@ -199,10 +220,10 @@ class ChannelSendReceiptRepository:
                     messaging_window, attempt_number, attempt_started_at, attempt_completed_at,
                     attempt_outcome, provider_message_ref, provider_error_code, rate_limited,
                     delivery_status, reconciliation_state, resolved_by, resolved_at,
-                    resolution_actor_id, resolution_note, recorded_at
+                    resolution_actor_id, resolution_note, recorded_at, store_id
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -232,6 +253,7 @@ class ChannelSendReceiptRepository:
                     resolution.actor_id if resolution else None,
                     resolution.note if resolution else None,
                     timestamp,
+                    store_id,
                 ),
             )
 
@@ -248,6 +270,7 @@ class ChannelSendReceiptRepository:
                 event_type="CHANNEL_SEND_ATTEMPT_RECORDED",
                 event_payload={
                     "receipt_id": str(receipt.receipt_id),
+                    "store_id": str(store_id),
                     "provider": receipt.provider.value,
                     "message_kind": receipt.message_kind.value,
                     "attempt_number": attempt.attempt_number,

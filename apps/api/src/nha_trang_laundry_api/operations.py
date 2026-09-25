@@ -785,11 +785,11 @@ class OperationsService:
         )
 
     def shadow_unknown_sends(
-        self, *, principal: StaffPrincipal, limit: int = 50
+        self, *, store_id: UUID, principal: StaffPrincipal, limit: int = 50
     ) -> tuple[UnknownSend, ...]:
         with self._connection_factory(self._database_url) as connection:
             return ShadowConsoleRepository.list_unknown_sends(
-                connection, principal=principal, limit=limit
+                connection, store_id=store_id, principal=principal, limit=limit
             )
 
     def shadow_resolve_unknown_send(
@@ -797,18 +797,56 @@ class OperationsService:
         *,
         receipt_id: UUID,
         resolution: ReconciliationState,
+        idempotency_key: str,
         principal: StaffPrincipal,
         note: str | None,
-    ) -> None:
+    ) -> bool:
+        """Record a person's reading of an unknown send, once. True when this call was a replay.
+
+        `API-INTEGRITY-002`. The route took no `Idempotency-Key`, so a resent resolution -- a
+        double tap, a retry after a dropped response -- reached the repository a second time and
+        was answered 409 "not awaiting human reconciliation", telling the person who had just
+        succeeded that they had failed. Now the same key and body replay the first answer without
+        touching the receipt again; the same key with a different body is `IDEMPOTENCY_CONFLICT`.
+
+        A refused resolution (wrong store, wrong role, already settled) raises inside the wrapper,
+        which rolls the key's claim back with it, so a refusal never burns a key.
+        """
+
+        resolved_at = datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
-            ShadowConsoleRepository().resolve_unknown_send(
+
+            def commit() -> dict[str, object]:
+                ShadowConsoleRepository().resolve_unknown_send(
+                    connection,
+                    receipt_id=receipt_id,
+                    resolution=resolution,
+                    principal=principal,
+                    correlation_id=uuid4(),
+                    note=note,
+                    now=resolved_at,
+                )
+                return {
+                    "receipt_id": str(receipt_id),
+                    "reconciliation_state": resolution.value,
+                    "resolved_at": resolved_at.isoformat(),
+                }
+
+            result = self._idempotency.execute(
                 connection,
-                receipt_id=receipt_id,
-                resolution=resolution,
-                principal=principal,
-                correlation_id=uuid4(),
-                note=note,
+                IdempotentCommand(
+                    scope=f"staff-shadow-reconcile:{principal.staff_user_id}",
+                    key=idempotency_key,
+                    payload={
+                        "receipt_id": str(receipt_id),
+                        "resolution": resolution.value,
+                        "note": note,
+                    },
+                    occurred_at=resolved_at,
+                ),
+                commit,
             )
+        return result.replayed
 
     def shadow_audit_timeline(
         self, *, store_id: UUID, aggregate_id: UUID, principal: StaffPrincipal
@@ -1805,7 +1843,6 @@ class OperationsService:
         observed_resource_version: int,
         observed_snapshot_hash: str,
         observed_rendered_hash: str,
-        recipient_binding_id: UUID,
         channel: str,
         idempotency_key: str,
         principal: StaffPrincipal,
@@ -1821,7 +1858,6 @@ class OperationsService:
                         "observed_resource_version": observed_resource_version,
                         "observed_snapshot_hash": observed_snapshot_hash,
                         "observed_rendered_hash": observed_rendered_hash,
-                        "recipient_binding_id": str(recipient_binding_id),
                         "channel": channel,
                     },
                 ),
@@ -1833,7 +1869,6 @@ class OperationsService:
                             observed_resource_version=observed_resource_version,
                             observed_snapshot_hash=observed_snapshot_hash,
                             observed_rendered_hash=observed_rendered_hash,
-                            recipient_binding_id=recipient_binding_id,
                             channel=channel,
                             purpose="TRANSACTIONAL",
                             deployment_stage=AgentDeploymentStage.SHADOW,

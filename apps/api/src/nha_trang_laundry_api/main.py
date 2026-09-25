@@ -315,10 +315,18 @@ class ApprovalDecisionRequest(StrictRequest):
 
 
 class ManualSendPrepareRequest(StrictRequest):
+    """Lock one approved `SEND_MESSAGE` envelope for a manual send.
+
+    `API-INTEGRITY-002` removed `recipient_binding_id`. The recipient is the approved draft's, read
+    by the server; nothing legitimate needs the caller to name it, and the field was how an
+    attestation came to record a recipient no approval had named. `StrictRequest` forbids unknown
+    fields, so a client still sending it is refused with 422 rather than silently ignored -- a
+    console built against the old contract finds out, instead of believing its choice took effect.
+    """
+
     observed_resource_version: StrictInt = Field(ge=1, le=MAX_CANONICAL_INT)
     observed_snapshot_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
     observed_rendered_hash: str = Field(pattern=r"^JCS-SHA256-V1:[0-9a-f]{64}$")
-    recipient_binding_id: UUID
     channel: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,49}$")
 
 
@@ -2426,7 +2434,6 @@ def prepare_manual_send(
             observed_resource_version=request.observed_resource_version,
             observed_snapshot_hash=request.observed_snapshot_hash,
             observed_rendered_hash=request.observed_rendered_hash,
-            recipient_binding_id=request.recipient_binding_id,
             channel=request.channel,
             idempotency_key=idempotency_key,
             principal=principal,
@@ -3055,16 +3062,26 @@ def decide_shadow_draft(
     )
 
 
-@app.get("/internal/v1/shadow/unknown-sends", response_model=list[UnknownSendResponse])
+@app.get(
+    "/internal/v1/stores/{store_id}/shadow/unknown-sends",
+    response_model=list[UnknownSendResponse],
+)
 def list_unknown_sends(
+    store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
     limit: int = 50,
 ) -> list[UnknownSendResponse]:
+    """One store's sends whose outcome nobody observed. Membership of the store and MFA required.
+
+    `API-INTEGRITY-002` replaced `GET /internal/v1/shadow/unknown-sends`, which listed every
+    store's receipts to any Shadow reader. The role, MFA and membership checks are the
+    repository's, as for the draft queue this sits beside; the refusal is the same opaque 403.
+    """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
     try:
-        items = service.shadow_unknown_sends(principal=principal, limit=limit)
+        items = service.shadow_unknown_sends(store_id=store_id, principal=principal, limit=limit)
     except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
         _raise_shadow_error(error)
     return [
@@ -3088,19 +3105,28 @@ def list_unknown_sends(
 def reconcile_unknown_send(
     receipt_id: UUID,
     request: ReconcileRequest,
+    idempotency_key: IdempotencyKey,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
 ) -> None:
-    """Only a human leaves UNKNOWN. There is no automatic caller for this route."""
+    """Only a human leaves UNKNOWN. There is no automatic caller for this route.
+
+    Only a human of the receipt's own store, and exactly once per `Idempotency-Key`: a replay with
+    the same key and body answers 204 again without touching the receipt, a changed body under the
+    same key is 409 `IDEMPOTENCY_CONFLICT` (`API-INTEGRITY-002`).
+    """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
     try:
         service.shadow_resolve_unknown_send(
             receipt_id=receipt_id,
             resolution=ReconciliationState(request.resolution),
+            idempotency_key=idempotency_key,
             principal=principal,
             note=request.note,
         )
+    except IdempotencyConflictError as error:
+        _raise_operations_error(error)
     except (ShadowAuthorizationError, ShadowStateError, ValueError) as error:
         _raise_shadow_error(error)
 

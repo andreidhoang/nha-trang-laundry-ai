@@ -14,7 +14,7 @@ keyed by something other than `store_id` too, so the enumeration is made mechani
   * every route classified `STORE_SCOPED` must name a repository method that really calls
     `require_store_membership`, verified by reading the source, so deleting the call fails the
     build;
-  * the two routes that are deliberately not membership-checked are named here with the item or
+  * the routes that are deliberately not membership-checked are named here with the item or
     decision that owns them, so they cannot be silently ratified by absence.
 
 The check reads source rather than behaviour on purpose. A behavioural test proves one path is
@@ -242,20 +242,21 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "Named in context/tasks/TASK-store-scoping-002.md as out of scope for that item and "
         "scoped to its own; recorded here so the enumeration does not report it as compliant.",
     ),
-    ("GET", "/internal/v1/shadow/unknown-sends"): RouteScope(
-        "GLOBAL_BY_DESIGN",
-        None,
-        "The unknown-send queue is global and gated by role alone. A send whose outcome is "
-        "unknown has no confirmed recipient and therefore no reliable store, and leaving one "
-        "unreconciled is the failure this queue exists to prevent — so scoping it by membership "
-        "would hide work rather than protect data. It exposes provider, message kind, attempt "
-        "number and reconciliation state, and no customer content. Classified deliberately.",
+    # API-INTEGRITY-002 reversed the GLOBAL_BY_DESIGN classification these two carried. Its
+    # premise -- "a receipt with no confirmed recipient has no store to scope to" -- confused the
+    # recipient with the shop: the send was the shop's whatever happened to it, and a
+    # human-approved send names its approval, which names its store. Migration 0049 records the
+    # store on every receipt; an old receipt whose store cannot be derived stays unattributed and is
+    # shown to nobody rather than to everybody.
+    ("GET", "/internal/v1/stores/{store_id}/shadow/unknown-sends"): store_scoped(
+        "shadow_console", "ShadowConsoleRepository.list_unknown_sends"
     ),
     ("POST", "/internal/v1/shadow/unknown-sends/{receipt_id}/reconcile"): RouteScope(
-        "GLOBAL_BY_DESIGN",
-        None,
-        "The write side of the global queue above, restricted to operations staff with MFA. "
-        "Same reasoning: a receipt with no confirmed recipient has no store to scope to.",
+        "STORE_SCOPED",
+        ("shadow_console", "ShadowConsoleRepository.resolve_unknown_send"),
+        "keyed by receipt_id; the repository locks the receipt, reads its store and requires "
+        "membership of it in the same transaction as the update. A missing, foreign or "
+        "unattributed receipt is one opaque refusal.",
     ),
     ("POST", "/internal/v1/shadow/drafts/{agent_run_id}/decision"): RouteScope(
         "STORE_SCOPED",
@@ -585,6 +586,11 @@ def test_known_gaps_and_global_routes_each_carry_a_reason() -> None:
     assert audit.classification == "KNOWN_GAP"
     assert "aggregate_id" in audit.note
 
-    unknown_sends = ROUTE_SCOPE[("GET", "/internal/v1/shadow/unknown-sends")]
-    assert unknown_sends.classification == "GLOBAL_BY_DESIGN"
-    assert "no confirmed recipient" in unknown_sends.note
+    # API-INTEGRITY-002: the unknown-send queue is no longer an exception. Pinned in the stricter
+    # direction, so parking it back on GLOBAL_BY_DESIGN fails here rather than passing silently.
+    for route in (
+        ("GET", "/internal/v1/stores/{store_id}/shadow/unknown-sends"),
+        ("POST", "/internal/v1/shadow/unknown-sends/{receipt_id}/reconcile"),
+    ):
+        assert ROUTE_SCOPE[route].classification == "STORE_SCOPED"
+        assert ROUTE_SCOPE[route].enforced_in is not None

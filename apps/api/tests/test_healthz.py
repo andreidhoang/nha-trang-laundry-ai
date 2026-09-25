@@ -362,7 +362,6 @@ def test_staff_shadow_workflow_is_typed_hash_bound_and_observation_only() -> Non
         "observed_resource_version": 1,
         "observed_snapshot_hash": HASH_A,
         "observed_rendered_hash": HASH_B,
-        "recipient_binding_id": str(RECIPIENT_ID),
         "channel": "INTERNAL_TEST",
     }
     try:
@@ -373,6 +372,12 @@ def test_staff_shadow_workflow_is_typed_hash_bound_and_observation_only() -> Non
             f"/internal/v1/approvals/{APPROVAL_ID}/manual-send",
             headers={"Idempotency-Key": "manual-authority-injection"},
             json={**prepare_body, "deployment_stage": "AUTONOMOUS"},
+        )
+        # API-INTEGRITY-002: the recipient is the approved draft's, so naming one is an injection.
+        recipient_injection = client.post(
+            f"/internal/v1/approvals/{APPROVAL_ID}/manual-send",
+            headers={"Idempotency-Key": "manual-recipient-injection"},
+            json={**prepare_body, "recipient_binding_id": str(RECIPIENT_ID)},
         )
         prepared = client.post(
             f"/internal/v1/approvals/{APPROVAL_ID}/manual-send",
@@ -437,6 +442,7 @@ def test_staff_shadow_workflow_is_typed_hash_bound_and_observation_only() -> Non
     assert queue.status_code == 200
     assert queue.json()["replay_available"] is False
     assert authority_injection.status_code == 422
+    assert recipient_injection.status_code == 422
     assert prepared.status_code == 201
     assert prepared.json()["status"] == "APPROVED_FOR_MANUAL_SEND"
     assert missing_version.status_code == 428
@@ -461,7 +467,6 @@ def test_staff_mutations_require_mfa_before_service_dispatch() -> None:
                 "observed_resource_version": 1,
                 "observed_snapshot_hash": HASH_A,
                 "observed_rendered_hash": HASH_B,
-                "recipient_binding_id": str(RECIPIENT_ID),
                 "channel": "INTERNAL_TEST",
             },
         )

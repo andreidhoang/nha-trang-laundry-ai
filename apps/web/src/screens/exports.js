@@ -264,6 +264,10 @@ function contentsNotice(created) {
     "div",
     { class: "notice", dataState: "info" },
     h("p", { class: "notice__title" }, "Bản xuất này mang gì, và cố ý không mang gì"),
+    // EXPORT-PAYMENTS-001: the money columns in one tier-1 line, the server's own signed sentence.
+    created.money_line_vi
+      ? h("p", { class: "export-money-line" }, h("strong", null, String(created.money_line_vi)))
+      : null,
     h(
       "p",
       null,
@@ -281,6 +285,20 @@ function contentsNotice(created) {
     ),
     h("p", null, created.statement_vi || UNKNOWN),
   );
+}
+
+/**
+ * Which ledger each money column is read from and what cuts it, as the server signed it (tier 3).
+ *
+ * @param {any} created
+ * @returns {string}
+ */
+function moneySources(created) {
+  const sources = Array.isArray(created.money_sources) ? created.money_sources : [];
+  if (!sources.length) return UNKNOWN;
+  return sources
+    .map((/** @type {any} */ item) => `${item.column} ← ${item.ledger} · ${item.cut_on}`)
+    .join("; ");
 }
 
 /**
@@ -601,7 +619,15 @@ export function render_() {
                   )
                 : null,
               contentsNotice(created),
-              step === 1
+              step === 1 && created.shape_retired === true
+                ? h(
+                    "p",
+                    { class: "hint", dataState: "danger" },
+                    "Yêu cầu này theo mẫu tệp cũ, không mang tiền trả từng lần — không xin duyệt được. " +
+                      "Bấm Tạo lại yêu cầu.",
+                  )
+                : null,
+              step === 1 && created.shape_retired !== true
                 ? h(
                     "p",
                     { class: "hint", dataState: "danger" },
@@ -635,6 +661,7 @@ export function render_() {
                 ],
                 ["Vân tay nội dung được duyệt", shortHash(created.rendered_hash)],
                 ["Cắt ngày theo", created.day_boundary || UNKNOWN],
+                ["Nguồn các cột tiền", moneySources(created)],
                 ["Truy vấn", created.query_version],
                 stage.approvalId
                   ? ["Phong bì duyệt", stage.approvalId, { copy: stage.approvalId }]
@@ -653,6 +680,22 @@ export function render_() {
         gated(
           button({
             label: "Tạo yêu cầu xuất",
+            variant: "primary",
+            network: true,
+            block: true,
+            id: "export-create",
+            onClick: () => void createRequest(),
+          }),
+          verdict,
+        ),
+      );
+    } else if (step === 1 && created?.shape_retired === true) {
+      // EXPORT-PAYMENTS-001: a replay of a request stored in the retired shape. Its envelope could
+      // never be approved or released, so the next step is a new request for the same days.
+      next.push(
+        gated(
+          button({
+            label: "Tạo lại yêu cầu",
             variant: "primary",
             network: true,
             block: true,
@@ -752,7 +795,8 @@ export function render_() {
           "p",
           { class: "hint" },
           "Lấy bản sao hồ sơ của chính cửa hàng cho một ngày hoặc một khoảng ngày (tối đa 92 ngày): " +
-            "mã đơn, trạng thái, mốc thời gian và số tiền đã thu của những đơn mở trong những ngày đó. " +
+            "mã đơn, trạng thái, mốc thời gian và tiền của những đơn mở trong những ngày đó — đã trả " +
+            "theo sổ thu từng lần (tiền mặt, chuyển khoản), còn lại và đã hoàn, tính tới lúc xuất. " +
             "Ngày cắt theo lúc mở đơn, nên tổng tiền trong tệp không bằng các ô “tiền đã thu hôm nay” " +
             "ở màn hình Hôm nay — ô đó cộng theo lúc thu. Mỗi lần xuất đều cần chủ tiệm duyệt và đều " +
             "được ghi lại.",

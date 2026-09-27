@@ -253,10 +253,13 @@ const GROUPS = [
         what:
           "Xuất số liệu vận hành cho một khoảng thời gian tự chọn, kèm các chỉ số của bảng điều " +
           "hành, để gửi cho kế toán.",
+        // EXPORT-PAYMENTS-001: the per-order money is now the payment ledger's (cash, transfer,
+        // remaining, refunded) rather than the settlement alone; the KPI half is unchanged.
         missing:
           "Khoảng ngày thì đã chọn được (tối đa 92 ngày), nhưng tệp chỉ mang hồ sơ thô của từng " +
-          "đơn: mã đơn, trạng thái, mốc thời gian, tiền đã thu và đã hoàn. Tệp không kèm chỉ số " +
-          "nào — không đơn mới, không tỉ lệ đúng hẹn, không giặt lại.",
+          "đơn: mã đơn, trạng thái, mốc thời gian, tiền đã trả (tiền mặt, chuyển khoản), còn lại " +
+          "và đã hoàn. Tệp không kèm chỉ số nào — không đơn mới, không tỉ lệ đúng hẹn, không giặt " +
+          "lại.",
         blockedBy:
           "Chưa làm: tệp xuất chỉ có một bộ dữ liệu (hồ sơ đơn); bộ mang chỉ số chưa được xây",
         today:

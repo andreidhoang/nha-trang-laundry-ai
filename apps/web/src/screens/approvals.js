@@ -668,6 +668,11 @@ function exportContents(record) {
     "div",
     { class: "notice", dataState: "warn" },
     h("p", { class: "notice__title" }, "Dữ liệu bạn đang được đề nghị cho rời khỏi hệ thống"),
+    // EXPORT-PAYMENTS-001: the money columns in one tier-1 line — the server's own sentence,
+    // hashed into what the owner signs, so the glance and the document cannot disagree.
+    record.money_line_vi
+      ? h("p", { class: "export-money-line" }, h("strong", null, String(record.money_line_vi)))
+      : null,
     facts([
       [several ? "Khoảng ngày" : "Ngày làm việc", exportWindow(record), { span: several }],
       ["Múi giờ", record.business_timezone || UNKNOWN, { mono: true }],
@@ -740,6 +745,26 @@ async function loadExportRequest(item, contentHost, controlsHost, onDecided, ver
             null,
             "Phiếu này xin cho dữ liệu rời khỏi hệ thống, nhưng máy chủ không nói được tệp sẽ " +
               "mang những cột nào. Không duyệt. Báo kỹ thuật và để phiếu tự hết hạn.",
+          ),
+        ),
+      );
+      return;
+    }
+    if (record.rendered_hash !== item.rendered_hash && record.bound_shape_retired === true) {
+      // EXPORT-PAYMENTS-001: the envelope binds the file shape that read money from settlements
+      // alone. The server recognised it by its digest and names it; the release would refuse with
+      // `EXPORT_QUERY_VERSION_RETIRED`. Said as what it is, not as a generic mismatch.
+      block(
+        "Không bấm được: phiếu này xin theo mẫu tệp cũ, máy chủ không còn xuất theo mẫu đó.",
+        h(
+          "div",
+          { class: "notice", dataState: "danger" },
+          h("p", { class: "notice__title" }, "Phiếu theo mẫu tệp cũ"),
+          h(
+            "p",
+            null,
+            "Phiếu này được mở trước khi bản xuất mang tiền trả từng lần. Mẫu cũ ghi đơn mới trả " +
+              "một phần như chưa trả gì, nên đã ngừng. Tạo lại yêu cầu xuất và xin duyệt lại.",
           ),
         ),
       );

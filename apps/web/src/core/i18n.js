@@ -509,6 +509,16 @@ export const REASON_NOTE = {
     "bản mà chủ tiệm đã ký. Máy chủ không tự viết lại nội dung ấy: viết lại là đưa chủ tiệm duyệt " +
     "một văn bản khác với văn bản đã niêm phong. Tạo một yêu cầu xuất mới; chưa có dữ liệu nào ra " +
     "khỏi hệ thống.",
+  // EXPORT-PAYMENTS-001: the envelope binds the file shape that read money from settlements alone,
+  // and a ledger contradiction the export will not write into a signed file.
+  EXPORT_QUERY_VERSION_RETIRED:
+    "Phiếu duyệt này được mở theo mẫu tệp cũ, khi bản xuất chưa mang tiền trả từng lần. Mẫu đó " +
+    "ghi đơn mới trả một phần như chưa trả, nên máy chủ không xuất theo nó. Tạo lại yêu cầu xuất " +
+    "và xin duyệt lại; chưa có dữ liệu nào ra khỏi hệ thống.",
+  EXPORT_MONEY_INCONSISTENT:
+    "Sổ thu của một đơn trong khoảng này không khớp với số tiền đơn phải trả, nên máy chủ dừng lại " +
+    "và không tạo tệp. Đây là lỗi dữ liệu, không phải việc bạn làm sai: chụp màn hình và báo kỹ " +
+    "thuật.",
   // ORDER-STEPS-001: why "Nhận đồ" was refused. `RECEIVE` checks six readiness facts in one go and
   // refuses the whole step if any is missing -- nothing is half-applied -- and names each missing
   // one. Five are read by the server off the order and its quote; only the slot is the operator's.

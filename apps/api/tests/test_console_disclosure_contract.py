@@ -926,7 +926,11 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   `blockedBy`, the payment sheet's hint, and three REASON_NOTE entries whose advice named a
     #   button that no longer exists ("Khách trả trước") or a refusal that no longer holds.
     # PAYMENT-001 merged on top (round 7 wave 1, all four slices): 516 + 8 = 524, as regenerated.
-    assert sum(counts.values()) == _registry()["total"] == 524
+    # EXPORT-PAYMENTS-001 (round 7 wave 2): 524 + 4 = 528. Two `REASON_NOTE` entries
+    #   (EXPORT_QUERY_VERSION_RETIRED, EXPORT_MONEY_INCONSISTENT), the approvals card's
+    #   retired-shape notice and #/exports' retired-request hint. Re-keyed, none retired: the
+    #   #/exports ⓘ and the export gap's `missing` now say the money is the payment ledger's.
+    assert sum(counts.values()) == _registry()["total"] == 528
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

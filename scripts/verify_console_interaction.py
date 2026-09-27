@@ -1587,22 +1587,44 @@ EXPORT_REQUEST_CONTENT = {
         "balance_status",
         "refunded_amount_vnd",
         "refunded_at",
+        # `EXPORT-PAYMENTS-001`: the payment ledger's sums and the domain's position.
+        "owed_vnd",
+        "paid_cash_vnd",
+        "paid_transfer_vnd",
+        "paid_vnd",
+        "remaining_vnd",
     ],
     "excludes": [
         "customer_incident_evidence.summary",
         "assistant_turn_payloads.question",
         "assistant_turn_payloads.answer",
         "orders.bound_contact_id",
+        "orders.customer_id",
+        "order_payments.bank_ref_last",
     ],
-    "query_version": "store-day-orders-export-v2:3f884e227d6a2d05",
+    "query_version": "store-day-orders-export-v3:7b7e01eef9314061",
     "statement_vi": (
         "Xuất bản sao hồ sơ của chính cửa hàng cho ngày 2026-09-16 (theo giờ Việt Nam): mã đơn, "
-        "trạng thái, mốc thời gian và số tiền đã thu của những đơn MỞ trong ngày đó. Ngày được "
-        "cắt theo lúc mở đơn, không phải theo lúc thu tiền."
+        "trạng thái, mốc thời gian và tiền của những đơn MỞ trong ngày đó. Tiền đã trả lấy từ sổ "
+        "thu từng lần (order_payments). Ngày được cắt theo lúc mở đơn, không phải theo lúc thu "
+        "tiền."
     ),
     "rendered_hash": EXPORT_RENDERED,
     "requested_at": "2026-09-16T03:00:00+00:00",
     "requested_by_you": False,
+    "money_sources": [
+        {
+            "column": "paid_cash_vnd",
+            "ledger": "order_payments.amount_vnd [method = TIEN_MAT]",
+            "cut_on": "order_payments.recorded_at, every row up to produced_at",
+        },
+    ],
+    "money_line_vi": (
+        "Tiền trong tệp: đã trả (tiền mặt, chuyển khoản) theo sổ thu từng lần, còn lại, đã hoàn — "
+        "tính tới lúc xuất."
+    ),
+    "bound_query_version": "store-day-orders-export-v3:7b7e01eef9314061",
+    "bound_shape_retired": False,
 }
 
 
@@ -4696,6 +4718,35 @@ with sync_playwright() as playwright:
         "the card says which event cuts the shop's day, because two figures here share a name",
         "orders.created_at" in text and "không phải theo lúc thu tiền" in text,
     )
+    # `EXPORT-PAYMENTS-001`: the money columns in one tier-1 line, the server's signed sentence,
+    # above the approve control -- and the payment ledger's columns in the list.
+    money_line = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          const line = card && card.querySelector(".export-money-line");
+          const approve = card && [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          if (!line || !approve) return "missing";
+          return {
+            text: line.textContent,
+            before: Boolean(
+              line.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING
+            ),
+          };
+        }"""
+    )
+    check(
+        "the money columns are stated in one line above the approve control",
+        isinstance(money_line, dict)
+        and money_line.get("text") == EXPORT_REQUEST_CONTENT["money_line_vi"]
+        and money_line.get("before") is True
+        and len(str(money_line.get("text")).split()) <= 25,
+        repr(money_line),
+    )
+    check(
+        "and the list names the payment ledger's columns",
+        "paid_cash_vnd" in text and "paid_transfer_vnd" in text and "remaining_vnd" in text,
+    )
 
     # The whole item, in one assertion, asked the only honest way: both nodes could exist with the
     # button first and every string above would still be on the page.
@@ -4832,6 +4883,37 @@ with sync_playwright() as playwright:
         "and the card names that as the reason, so it reads as a moved column list and not a bug",
         "Nội dung không khớp phiếu" in content,
     )
+    # `EXPORT-PAYMENTS-001`: the same mismatch, recognised by the server as an envelope signed
+    # over the retired settlement-only shape. The card names it as that, and stays shut.
+    EXPORT_REQUEST_CONTENT["bound_shape_retired"] = True
+    EXPORT_REQUEST_CONTENT["bound_query_version"] = "store-day-orders-export-v2:3f884e227d6a2d05"
+    page.evaluate("location.hash = '#/orders'")
+    page.wait_for_timeout(400)
+    page.evaluate("location.hash = '#/approvals'")
+    page.wait_for_timeout(900)
+    content = page.content()
+    retired = page.evaluate(
+        """() => {
+          const card = document.querySelector("article.card");
+          if (!card) return "no card";
+          const approve = [...card.querySelectorAll("button")]
+            .find((b) => b.textContent.trim() === "Duyệt");
+          return approve ? approve.disabled : "no approve control";
+        }"""
+    )
+    check(
+        "an envelope signed over the retired file shape is named as such, with the control shut",
+        retired is True
+        and "Phiếu theo mẫu tệp cũ" in content
+        and "settlement_attested_at" not in rendered_text(),
+        repr(retired),
+    )
+    check(
+        "and the retired query version stays out of the visible words",
+        "store-day-orders-export-v2" not in rendered_text(),
+    )
+    EXPORT_REQUEST_CONTENT["bound_shape_retired"] = False
+    EXPORT_REQUEST_CONTENT["bound_query_version"] = EXPORT_REQUEST_CONTENT["query_version"]
     EXPORT_REQUEST_CONTENT["rendered_hash"] = EXPORT_RENDERED
 
     # `EXPORT-RANGE-001`: a window. Both ends are inside what the owner signs, so both ends -- and

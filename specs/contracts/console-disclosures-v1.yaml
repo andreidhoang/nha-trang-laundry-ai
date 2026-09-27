@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 4
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 491
+  DESCRIPTIVE: 495
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 10
   SERVER_GATE: 15
-total: 524
+total: 528
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1369,6 +1369,25 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.EXPORT_QUERY_VERSION_RETIRED:937c7e7048cf
+  module: core/i18n.js
+  key: REASON_NOTE.EXPORT_QUERY_VERSION_RETIRED
+  text: Phiếu duyệt này được mở theo mẫu tệp cũ, khi bản xuất chưa mang tiền trả từng lần. Mẫu đó ghi
+    đơn mới trả một phần như chưa trả, nên máy chủ không xuất theo nó. Tạo lại yêu cầu xuất và xin duyệt
+    lại; chưa có dữ liệu nào ra khỏi hệ thống.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.EXPORT_MONEY_INCONSISTENT:8e41757ed3bf
+  module: core/i18n.js
+  key: REASON_NOTE.EXPORT_MONEY_INCONSISTENT
+  text: 'Sổ thu của một đơn trong khoảng này không khớp với số tiền đơn phải trả, nên máy chủ dừng lại
+    và không tạo tệp. Đây là lỗi dữ liệu, không phải việc bạn làm sai: chụp màn hình và báo kỹ thuật.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: core/i18n.js#REASON_NOTE.SLOT_APPROVAL_REQUIRED:4dc0b574a579
   module: core/i18n.js
   key: REASON_NOTE.SLOT_APPROVAL_REQUIRED
@@ -1989,6 +2008,15 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/approvals.js#notice:4706d4199986
+  module: screens/approvals.js
+  key: notice
+  text: Phiếu này được mở trước khi bản xuất mang tiền trả từng lần. Mẫu cũ ghi đơn mới trả một phần như
+    chưa trả gì, nên đã ngừng. Tạo lại yêu cầu xuất và xin duyệt lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/approvals.js#notice:76b706086a42
   module: screens/approvals.js
   key: notice
@@ -2527,6 +2555,15 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/exports.js#hint:96e7ba68429d
+  module: screens/exports.js
+  key: hint
+  text: Yêu cầu này theo mẫu tệp cũ, không mang tiền trả từng lần — không xin duyệt được. Bấm Tạo lại
+    yêu cầu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/exports.js#hint:017f05f8a386
   module: screens/exports.js
   key: hint
@@ -2552,13 +2589,14 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/exports.js#hint:7c1e1759d39a
+- slot_id: screens/exports.js#hint:ff7ac9a2b5e3
   module: screens/exports.js
   key: hint
   text: 'Lấy bản sao hồ sơ của chính cửa hàng cho một ngày hoặc một khoảng ngày (tối đa 92 ngày): mã đơn,
-    trạng thái, mốc thời gian và số tiền đã thu của những đơn mở trong những ngày đó. Ngày cắt theo lúc
-    mở đơn, nên tổng tiền trong tệp không bằng các ô “tiền đã thu hôm nay” ở màn hình Hôm nay — ô đó cộng
-    theo lúc thu. Mỗi lần xuất đều cần chủ tiệm duyệt và đều được ghi lại.'
+    trạng thái, mốc thời gian và tiền của những đơn mở trong những ngày đó — đã trả theo sổ thu từng lần
+    (tiền mặt, chuyển khoản), còn lại và đã hoàn, tính tới lúc xuất. Ngày cắt theo lúc mở đơn, nên tổng
+    tiền trong tệp không bằng các ô “tiền đã thu hôm nay” ở màn hình Hôm nay — ô đó cộng theo lúc thu.
+    Mỗi lần xuất đều cần chủ tiệm duyệt và đều được ghi lại.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2771,12 +2809,12 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:cd70a188e046
+- slot_id: screens/gaps.js#missing:a869d6abfe8c
   module: screens/gaps.js
   key: missing
   text: 'Khoảng ngày thì đã chọn được (tối đa 92 ngày), nhưng tệp chỉ mang hồ sơ thô của từng đơn: mã
-    đơn, trạng thái, mốc thời gian, tiền đã thu và đã hoàn. Tệp không kèm chỉ số nào — không đơn mới,
-    không tỉ lệ đúng hẹn, không giặt lại.'
+    đơn, trạng thái, mốc thời gian, tiền đã trả (tiền mặt, chuyển khoản), còn lại và đã hoàn. Tệp không
+    kèm chỉ số nào — không đơn mới, không tỉ lệ đúng hẹn, không giặt lại.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

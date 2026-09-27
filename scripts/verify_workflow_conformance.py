@@ -5296,6 +5296,282 @@ def scenario_deposit(console: Console) -> None:
         )
 
 
+# --- EXPORT-PAYMENTS-001 --------------------------------------------------------------------------
+
+
+def _file_rows(content: str) -> tuple[dict[str, str], list[str], dict[str, dict[str, str]]]:
+    """A produced export: its `key,value` header rows, its columns, and its rows by order id."""
+    import csv
+    import io
+
+    lines = list(csv.reader(io.StringIO(content)))
+    header: dict[str, str] = {}
+    index = 0
+    while index < len(lines) and len(lines[index]) == 2 and lines[index][0] != "order_id":
+        header[lines[index][0]] = lines[index][1]
+        index += 1
+    columns = lines[index] if index < len(lines) else []
+    rows = {line[0]: dict(zip(columns, line, strict=False)) for line in lines[index + 1 :] if line}
+    return header, columns, rows
+
+
+def scenario_export_payments(console: Console) -> None:
+    """`EXPORT-PAYMENTS-001`: the owner's one-day export carries part payments by method.
+
+    One order takes a 50.000 ₫ deposit by transfer and the rest in cash, both through Thu tiền; a
+    second order is taken and nothing is paid. Then two envelopes for today's export:
+
+    * one bound to the RETIRED file shape (money from settlements alone) -- the digest the code
+      deployed before this item signed, computed here by this harness from the retired document,
+      never taken from the server. The owner's card names it and keeps Duyệt shut, the live server
+      refuses to record the decision, and the release is refused by name
+      (`EXPORT_QUERY_VERSION_RETIRED`). With the database in reach it is then marked approved the
+      way the old code would have recorded it, and the release is still refused, nothing written;
+    * one through the screens: Hôm nay → Tạo yêu cầu → Xin chủ tiệm duyệt → the owner approves on
+      the card, reading the money in one line → Xuất tệp → the downloaded CSV. The paid order's row
+      carries the transfer and the cash apart; the unpaid order's row has `remaining_vnd` equal to
+      its total. Every figure compared is the server's order read, never computed here.
+    """
+
+    head(
+        "22",
+        "XUẤT KÈM TIỀN TRẢ TỪNG LẦN — cọc chuyển khoản, phần còn lại tiền mặt, một đơn chưa trả",
+    )
+    from datetime import datetime as _datetime
+    from pathlib import Path
+    from zoneinfo import ZoneInfo
+
+    import workspace_env  # noqa: F401  (the workspace packages, as every scripts/ entry point)
+    from nha_trang_laundry_db import exports as export_rules
+    from nha_trang_laundry_domain.canonical import canonical_document
+
+    console.sign_in("demo-operations")
+    paid_id = console.build_order(kg="7", stop="active")["order_id"]
+    console.pay(paid_id, "50.000", method="CHUYEN_KHOAN", seen=True)
+    console.pay(paid_id)
+    unpaid_id = console.build_order(kg="7", stop="active")["order_id"]
+
+    def read(order_id: str) -> dict:
+        return console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}
+
+    paid_view, unpaid_view = read(paid_id), read(unpaid_id)
+    ok(
+        "the first order is paid: 50.000 ₫ by transfer, then the rest in cash (server figures)",
+        paid_view.get("balance") == "PAID"
+        and [(p["method"], p["amount_vnd"]) for p in paid_view.get("payments", [])][:1]
+        == [("CHUYEN_KHOAN", 50_000)]
+        and [p["method"] for p in paid_view.get("payments", [])] == ["CHUYEN_KHOAN", "TIEN_MAT"],
+        {k: paid_view.get(k) for k in ("balance", "owed_vnd", "paid_vnd")},
+    )
+    ok(
+        "the second order is unpaid: nothing on its ledger",
+        unpaid_view.get("balance") == "UNPAID" and unpaid_view.get("paid_vnd") == 0,
+        {k: unpaid_view.get(k) for k in ("balance", "owed_vnd", "paid_vnd")},
+    )
+    owed_paid = int(paid_view.get("owed_vnd") or 0)
+    owed_unpaid = int(unpaid_view.get("owed_vnd") or 0)
+    today = _datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+
+    browser = console.context.browser
+    context = browser.new_context(viewport=viewport(), accept_downloads=True)
+    requester = Console(context.new_page(), context)
+    requester.sign_in("demo-approver")
+
+    # -- the envelope signed over the retired shape -------------------------------------------
+    created = requester.call(
+        "POST", f"/internal/v1/stores/{STORE}/exports", {"business_date": today.isoformat()}
+    )
+    body = created.get("body") or {}
+    facts = export_rules._facts("STORE_DAY_ORDERS_V1", uuid.UUID(STORE), today, None)
+    retired_hash = canonical_document(export_rules._retired_statement(facts)).snapshot_hash
+    ok(
+        "a one-day request today is answered in the live shape, not the retired one",
+        created["status"] == 201
+        and str(body.get("query_version", "")).startswith("store-day-orders-export-v3:")
+        and body.get("rendered_hash") not in ("", retired_hash)
+        and body.get("shape_retired") is False,
+        {k: body.get(k) for k in ("query_version", "shape_retired")},
+    )
+    retired_envelope = requester.call(
+        "POST",
+        "/internal/v1/approvals",
+        {
+            "store_id": STORE,
+            "action": "EXPORT_SANITIZED_DATA",
+            "resource_type": body.get("resource_type"),
+            "resource_id": body.get("export_request_id"),
+            "resource_version": body.get("resource_version"),
+            "snapshot_hash": body.get("snapshot_hash"),
+            "rendered_hash": retired_hash,
+            "policy_version": body.get("policy_version"),
+        },
+    )
+    retired_id = (retired_envelope.get("body") or {}).get("approval_request_id", "")
+    ok(
+        "an envelope over the retired rendering can still be raised (the request is the same one)",
+        retired_envelope["status"] in (200, 201) and bool(retired_id),
+        retired_envelope["text"][:160],
+    )
+
+    console.sign_in("demo-owner")
+    console.open("#/approvals", settle=2500)
+    retired_card = console.page.locator("article.card", has_text="Phiếu theo mẫu tệp cũ")
+    shut = (
+        retired_card.first.locator("button", has_text="Duyệt").first.is_disabled()
+        if retired_card.count()
+        else None
+    )
+    ok(
+        "the owner's card names it as the old file shape, with Duyệt shut",
+        retired_card.count() == 1 and shut is True,
+        console.said()[:160],
+    )
+    decided = console.call(
+        "POST",
+        f"/internal/v1/approvals/{retired_id}/decisions",
+        {
+            "decision": "APPROVED",
+            "reason_code": "APPROVED_AFTER_CONSOLE_REVIEW",
+            "resource_version": body.get("resource_version"),
+            "snapshot_hash": body.get("snapshot_hash"),
+            "rendered_hash": retired_hash,
+        },
+    )
+    ok(
+        "and the live server will not record an approval of it",
+        decided["status"] >= 400 and "RESOURCE_CHANGED_SINCE_REQUEST" in decided["text"],
+        f"{decided['status']} {decided['text'][:120]}",
+    )
+    execution = f"/internal/v1/stores/{STORE}/exports/{body.get('export_request_id')}/execution"
+    refused = requester.call("POST", execution, {"approval_id": retired_id})
+    ok(
+        "its release is refused by name, EXPORT_QUERY_VERSION_RETIRED",
+        refused["status"] == 422
+        and (refused.get("body") or {}).get("detail")
+        == {"outcome": "REQUIRE_HUMAN", "reason_code": "EXPORT_QUERY_VERSION_RETIRED"},
+        f"{refused['status']} {refused['text'][:160]}",
+    )
+    if READS_DATABASE:
+        # Approved the way the code deployed before this item recorded it: the decision row and
+        # the state move `ApprovalRepository.decide` writes once its checks pass, by the owner.
+        sql(
+            "insert into approval_decisions (id, approval_request_id, decision_type, decision, "
+            "decided_by, reason_code, note, observed_resource_version, observed_snapshot_hash, "
+            "observed_rendered_hash, decided_at) "
+            f"select gen_random_uuid(), r.id, r.action, 'APPROVED', s.id, "
+            "'OWNER_APPROVED_EXPORT', null, r.resource_version, r.snapshot_hash, "
+            f"r.rendered_hash, now() from approval_requests r, staff_users s "
+            f"where r.id = '{retired_id}' and s.oidc_subject = 'demo-owner'; "
+            "update approval_request_states set status = 'APPROVED', "
+            "row_version = row_version + 1, updated_at = now() "
+            f"where approval_request_id = '{retired_id}'"
+        )
+        ok(
+            "(the retired envelope now reads APPROVED, as the old code would have left it)",
+            sql(
+                "select status from approval_request_states "
+                f"where approval_request_id = '{retired_id}'"
+            )
+            == "APPROVED",
+        )
+        again = requester.call("POST", execution, {"approval_id": retired_id})
+        ok(
+            "an approved envelope over the retired shape is refused by the same name",
+            again["status"] == 422 and "EXPORT_QUERY_VERSION_RETIRED" in again["text"],
+            f"{again['status']} {again['text'][:160]}",
+        )
+        ok(
+            "and nothing was released under it: no data_exports row for the request",
+            sql(
+                "select count(*) from data_exports "
+                f"where export_request_id = '{body.get('export_request_id')}'"
+            )
+            == "0",
+        )
+
+    # -- the live flow, through the screens ----------------------------------------------------
+    requester.open("#/exports", settle=1500)
+    page = requester.page
+    page.locator("#export-range [data-value='today']").click()
+    page.wait_for_timeout(300)
+    touched("exports.range-preset")
+    page.locator("#export-create").click()
+    page.wait_for_timeout(1600)
+    touched("exports.create")
+    line = page.locator(".export-money-line")
+    shown_line = line.first.inner_text() if line.count() else ""
+    ok(
+        "the request's screen states the money columns in one line (at most 25 words)",
+        shown_line.startswith("Tiền trong tệp:") and 0 < len(shown_line.split()) <= 25,
+        shown_line,
+    )
+    page.locator("#export-approval").click()
+    page.wait_for_timeout(1600)
+    touched("exports.request-approval")
+    ok(
+        "the envelope is raised and the screen waits for an owner",
+        "Chờ chủ tiệm duyệt" in requester.text(),
+        requester.said()[:140],
+    )
+
+    console.open("#/approvals", settle=2500)
+    live_card = console.page.locator("article.card", has_text="Tiền trong tệp:")
+    card_text = live_card.first.inner_text() if live_card.count() else ""
+    ok(
+        "the owner's card reads the same money line above Duyệt",
+        live_card.count() >= 1 and shown_line in card_text,
+        card_text.replace("\n", " | ")[:200],
+    )
+    if live_card.count():
+        live_card.first.locator("button", has_text="Duyệt").first.click()
+        console.page.wait_for_timeout(2200)
+        touched("approvals.export-approve")
+
+    page.locator("#export-execute").click()
+    page.wait_for_timeout(2200)
+    touched("exports.execute")
+    content = ""
+    download = page.locator("#export-download")
+    if download.count():
+        with page.expect_download() as caught:
+            download.click()
+        touched("exports.download")
+        path = caught.value.path()
+        content = Path(path).read_text(encoding="utf-8") if path else ""
+    header, columns, rows = _file_rows(content)
+    ok(
+        "a one-day file, its header naming the v3 rule and when the money stood so",
+        header.get("business_date_from") == header.get("business_date_to") == today.isoformat()
+        and header.get("export_query_version", "").startswith("store-day-orders-export-v3:")
+        and bool(header.get("produced_at")),
+        header,
+    )
+    paid_row, unpaid_row = rows.get(paid_id, {}), rows.get(unpaid_id, {})
+    ok(
+        "the paid order's row carries the transfer and the cash apart, and nothing remaining",
+        paid_row.get("paid_transfer_vnd") == "50000"
+        and paid_row.get("paid_cash_vnd") == str(owed_paid - 50_000)
+        and paid_row.get("paid_vnd") == str(owed_paid)
+        and paid_row.get("remaining_vnd") == "0"
+        and paid_row.get("balance_status") == "PAID",
+        {k: paid_row.get(k) for k in ("paid_transfer_vnd", "paid_cash_vnd", "remaining_vnd")},
+    )
+    ok(
+        "the unpaid order's row has remaining equal to its total, and 0 paid",
+        unpaid_row.get("remaining_vnd") == unpaid_row.get("owed_vnd") == str(owed_unpaid)
+        and unpaid_row.get("paid_vnd") == "0"
+        and unpaid_row.get("balance_status") == "UNPAID",
+        {k: unpaid_row.get(k) for k in ("owed_vnd", "paid_vnd", "remaining_vnd")},
+    )
+    ok(
+        "and no customer or bank-reference column is in the file",
+        bool(columns)
+        and not [c for c in columns if any(w in c for w in ("customer", "phone", "bank_ref"))],
+        columns,
+    )
+    context.close()
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -5320,6 +5596,9 @@ SCENARIOS = {
     "shop_capture": scenario_shop_capture,
     # PAYMENT-001: a deposit at drop-off, the rest at pickup. Before the two that publish a policy.
     "deposit": scenario_deposit,
+    # EXPORT-PAYMENTS-001: today's export carries the deposit order's split and the unpaid order's
+    # remaining; an envelope over the retired shape is refused by name.
+    "export_payments": scenario_export_payments,
     # CUSTOMER-001. Before promise: it proves the refusal on a shop that has not published the
     # privacy notice, then publishes it; nothing after it depends on the notice being unpublished.
     "customers": scenario_customers,

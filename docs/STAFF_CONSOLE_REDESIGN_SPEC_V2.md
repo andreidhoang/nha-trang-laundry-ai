@@ -9,6 +9,14 @@ needs and that must not be faked client-side.
 Audience: the counter operator at a Nha Trang laundry, on a 390 px phone, standing, one hand; the
 owner at 7am reading "is anything waiting for me"; an approver deciding against a 10-minute TTL.
 
+**Amended 2026-09-27 (owner): the primary device is the shop's desktop.** The pilot runs on one Mac
+at the counter with the console on loopback only (`docs/runbooks/shop-till-mac.md`), so no phone can
+reach it there; the owner confirmed the app is used on desktop. Every screen is designed, reviewed
+and filmed first at desk size (1366×900 and wider). The phone layout stays supported and tested
+(`CONSOLE_VIEWPORT=phone`) for the day the console is served to tablets and phones on the shop
+network, and for the owner away from the counter, but it is the secondary target, not the one the
+review is judged on.
+
 ## 1. Diagnosis (measured 2026-09-25, real API, DB migrated from empty, one filmed day of work)
 
 The V1 console is *correct* and *honest* and nearly unusable for daily work, because its unit of

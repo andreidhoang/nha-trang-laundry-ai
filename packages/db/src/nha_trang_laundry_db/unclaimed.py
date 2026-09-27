@@ -68,6 +68,7 @@ from nha_trang_laundry_db.orders import (
     _read_view_row,
 )
 from nha_trang_laundry_db.personal_data import open_phone
+from nha_trang_laundry_db.query_version import QueryVersion, query_version
 from nha_trang_laundry_db.storage_fees import (
     STORAGE_POLICY_UNPUBLISHED,
     PublishedStoragePolicy,
@@ -107,6 +108,34 @@ AWAITING_PICKUP_SQL: Final = (
     "o.commercial_status = 'ACTIVE' AND o.production_status = 'READY_AT_STORE' "
     "AND NOT o.self_collection_recorded "
     "AND o.fulfillment_mode NOT IN ('PICKUP_AND_RETURN', 'RETURN_ONLY')"
+)
+
+
+#: `DAILY-SUMMARY-001`'s waiting line (round 7 wave 2 integration): the days the evening summary
+#: counts past -- "chờ quá 20 ngày", "quá 60 ngày" -- in the same shop-local calendar days the list
+#: prints (`unclaimed.days_waiting`). The summary's own words, not the owner's published figures:
+#: the list and its count work before the storage policy is published, and so does the line.
+WAITING_SUMMARY_THRESHOLDS: Final = (20, 60)
+#: How many waiting orders the count reads. A shop's shelf is far smaller; past it the count would
+#: be a floor, and the caller omits the line (`SOURCE_TRUNCATED`) rather than print it low.
+WAITING_COUNT_READ_LIMIT: Final = 5000
+
+#: The count's statement: the waiting population of the list, exactly (`AWAITING_PICKUP_SQL`), and
+#: each order's ready time, from which the domain counts the days.
+_WAITING_COUNT_SQL: Final = f"""
+    SELECT o.production_ready_at
+    FROM orders o
+    WHERE o.store_id = %s AND {AWAITING_PICKUP_SQL}
+    ORDER BY o.production_ready_at ASC NULLS FIRST, o.id
+    LIMIT %s
+"""
+
+#: The published version of the count, carried among the evening summary's sources.
+WAITING_COUNT_QUERY: Final[QueryVersion] = query_version(
+    "awaiting-pickup-count-v1",
+    _WAITING_COUNT_SQL,
+    ",".join(str(days) for days in WAITING_SUMMARY_THRESHOLDS),
+    str(WAITING_COUNT_READ_LIMIT),
 )
 
 
@@ -189,6 +218,18 @@ class AwaitingPickupList:
     truncated: bool
     phone_visible: bool
     orders: tuple[AwaitingPickupRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class WaitingCounts:
+    """Đồ chờ lấy, counted: how many orders wait, and how many have waited past each threshold."""
+
+    evaluated_at: datetime
+    waiting: int
+    #: `(days, count)` for each of `WAITING_SUMMARY_THRESHOLDS`: orders waiting MORE than `days`.
+    over: tuple[tuple[int, int], ...]
+    #: More waiting orders than the count reads; the figures are then a floor.
+    truncated: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,6 +494,42 @@ class UnclaimedRepository:
             truncated=len(rows) > limit,
             phone_visible=visible,
             orders=tuple(found),
+        )
+
+    @staticmethod
+    def count_waiting(
+        cursor: Any, *, store_id: UUID, principal: StaffPrincipal, as_of: datetime
+    ) -> WaitingCounts:
+        """The waiting list's population, counted past the summary's thresholds at `as_of`.
+
+        The list's own conditions (`AWAITING_PICKUP_SQL`) and the list's own day rule
+        (`unclaimed.days_waiting`): an order is "over 20 days" exactly when the list would print
+        more than 20 beside it. Counts only -- no customer, no phone -- under the list's own gate.
+        """
+
+        _require(principal, UNCLAIMED_READ_ROLES, "counting laundry waiting for pickup")
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=UnclaimedAuthorizationError,
+        )
+        cursor.execute(_WAITING_COUNT_SQL, (store_id, WAITING_COUNT_READ_LIMIT + 1))
+        rows = cursor.fetchall()
+        truncated = len(rows) > WAITING_COUNT_READ_LIMIT
+        waited = [
+            days_waiting(row[0], as_of)
+            for row in rows[:WAITING_COUNT_READ_LIMIT]
+            if isinstance(row[0], datetime)
+        ]
+        return WaitingCounts(
+            evaluated_at=as_of,
+            waiting=min(len(rows), WAITING_COUNT_READ_LIMIT),
+            over=tuple(
+                (threshold, sum(1 for days in waited if days > threshold))
+                for threshold in WAITING_SUMMARY_THRESHOLDS
+            ),
+            truncated=truncated,
         )
 
     @staticmethod
@@ -1094,6 +1171,9 @@ __all__ = [
     "LIST_MAX_LIMIT",
     "PHONE_VISIBLE_ROLES",
     "UNCLAIMED_READ_ROLES",
+    "WAITING_COUNT_QUERY",
+    "WAITING_COUNT_READ_LIMIT",
+    "WAITING_SUMMARY_THRESHOLDS",
     "WAIVER_ROLES",
     "AwaitingPickupList",
     "AwaitingPickupRow",
@@ -1108,6 +1188,7 @@ __all__ = [
     "UnclaimedOrderResult",
     "UnclaimedRefused",
     "UnclaimedRepository",
+    "WaitingCounts",
     "WaiverCommand",
     "WaiverView",
 ]

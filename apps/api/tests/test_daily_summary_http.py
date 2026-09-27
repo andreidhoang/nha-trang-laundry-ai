@@ -113,9 +113,11 @@ def test_the_summary_of_a_closed_day_on_the_wire(
     assert {item["key"]: item["reason"] for item in body["omitted"]} == {
         "LATE_AGAINST_PROMISE": "LIVE_ONLY_TODAY",
         "WITHOUT_PROMISE": "LIVE_ONLY_TODAY",
-        "WAITING_PICKUP": "SOURCE_NOT_BUILT",
+        # Round 7 wave 2 integration: the waiting list is live (today only), and this shop has
+        # opened no customer account.
+        "WAITING_PICKUP": "LIVE_ONLY_TODAY",
         "COMPLAINTS_OPEN": "LIVE_ONLY_TODAY",
-        "ACCOUNTS_DUE": "SOURCE_NOT_BUILT",
+        "ACCOUNTS_DUE": "NO_ACCOUNTS",
     }
     for item in body["omitted"]:
         assert set(item) == {"key", "reason", "source", "note"} and item["note"]

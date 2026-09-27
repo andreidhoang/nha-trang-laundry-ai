@@ -77,7 +77,7 @@ def test_the_card_says_it_is_a_fixed_template_not_ai_and_that_nothing_is_sent_by
 
 
 def test_the_summarys_statements_select_no_personal_column() -> None:
-    from nha_trang_laundry_db import daily_summary
+    from nha_trang_laundry_db import accounts, daily_summary, unclaimed
 
     statements = [
         value
@@ -85,6 +85,10 @@ def test_the_summarys_statements_select_no_personal_column() -> None:
         if name.endswith("_SQL") and isinstance(value, str)
     ]
     assert statements, "the summary module has no statement to check"
+    # Round 7 wave 2 integration: the two wired hooks' own statements, which the summary runs
+    # through `UnclaimedRepository.count_waiting` and `AccountRepository.accounts_due` -- counts and
+    # sums over the waiting list and the account ledgers, never a customer's column.
+    statements += [unclaimed._WAITING_COUNT_SQL, accounts._ACCOUNTS_DUE_SQL]
     for statement in statements:
         lowered = statement.lower()
         for column in (

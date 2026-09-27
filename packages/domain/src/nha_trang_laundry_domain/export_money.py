@@ -16,6 +16,18 @@ cancelled order never becomes active again, so nothing more will ever be taken o
 `owed - paid` there -- a cancelled deposit order would read "70.000 đ còn lại" -- would put a debt
 in the owner's accountant's hands that nobody owes.
 
+Round 7 wave 2 integration (`UNCLAIMED-001` x `PAYMENT-002`), two more facts the file states:
+
+* **What is owed includes the storage fee** (`DEC-036`): the same list of charges the order page
+  reads (`payments.owed_charges`), so a fee-bearing order's `owed_vnd` is its quoted total plus the
+  fee -- the fee fixed by its settlement or its account charge, or, while it still waits on the
+  shelf, the fee accrued at the moment the file is made. Without it a settled fee-bearing order's
+  payments exceed what it "owes", and the whole file would be refused as inconsistent.
+* **An order on the customer's account is owed, not paid** (`PAYMENT-002`): its goods left without
+  money changing hands, so `paid_vnd` holds only what the account has since paid against it (the
+  allocations are ordinary ledger rows) and `remaining_vnd` the rest. Nothing here reads the
+  balance to decide that: the ledger already says it.
+
 Pure: no clock, no database, no environment. Integer đồng only.
 """
 
@@ -51,6 +63,7 @@ def exported_money(
     paid_cash_vnd: int,
     paid_transfer_vnd: int,
     paid_vnd: int,
+    storage_fee_vnd: int = 0,
 ) -> ExportedMoney:
     """The money cells for one exported order, from the SQL sums of its payment ledger.
 
@@ -59,6 +72,9 @@ def exported_money(
     (there are exactly two methods), or payments exceeding what is owed (`payment_position`). The
     database's `0056` triggers make each of these unreachable; a file that carried one anyway would
     be a signed document with a wrong number in it, so none is produced.
+
+    `storage_fee_vnd` is `unclaimed.order_storage_fee`'s amount for the order at the moment the file
+    is made, computed by the caller from the order's stored facts exactly as the order read does.
     """
 
     for amount in (paid_cash_vnd, paid_transfer_vnd, paid_vnd):
@@ -66,7 +82,7 @@ def exported_money(
             raise ValueError("a ledger sum must be a non-negative whole number of đồng")
     if paid_cash_vnd + paid_transfer_vnd != paid_vnd:
         raise ValueError("the cash and transfer sums do not add up to the ledger's total")
-    position = payment_position(owed_charges(quoted), paid_vnd)
+    position = payment_position(owed_charges(quoted, storage_fee_vnd=storage_fee_vnd), paid_vnd)
     remaining = 0 if commercial is CommercialOrderStatus.CANCELLED else position.remaining_vnd
     return ExportedMoney(
         owed_vnd=position.owed_vnd,

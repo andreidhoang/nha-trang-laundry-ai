@@ -373,8 +373,14 @@ def test_the_export_query_version_is_pinned_to_the_rule_it_names() -> None:
     # `order_settlements` alone, which since `PAYMENT-001` is written only once an order is paid in
     # full, so a partly paid order exported as unpaid. An envelope signed over v2 is refused by
     # name (`EXPORT_QUERY_VERSION_RETIRED`, `test_export_payments.py`).
-    assert EXPORT_QUERY.identifier == "store-day-orders-export-v3"
-    assert EXPORT_QUERY.label == "store-day-orders-export-v3:7b7e01eef9314061"
+    #
+    # v4 (round 7 wave 2 integration): `owed_vnd` includes the storage fee (`UNCLAIMED-001`) -- the
+    # SELECT reads the fixed fee and the waiver, and the money sources and the signed sentence say
+    # so -- and an order on account is named as owed, not paid (`PAYMENT-002`). v3
+    # (`7b7e01eef9314061`) read the quoted total alone and refused a fee-settled day as
+    # inconsistent.
+    assert EXPORT_QUERY.identifier == "store-day-orders-export-v4"
+    assert EXPORT_QUERY.label == "store-day-orders-export-v4:c2ce1e9e6379d784"
 
 
 # --- refusals -----------------------------------------------------------------------------------

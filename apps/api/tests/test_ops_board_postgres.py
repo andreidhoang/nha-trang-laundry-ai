@@ -661,7 +661,7 @@ def test_an_export_window_approved_for_one_week_releases_that_week_and_no_other(
         "2026-09-07",
     )
     assert week_body["window_days"] == 7
-    assert week_body["query_version"].startswith("store-window-orders-export-v2:")
+    assert week_body["query_version"].startswith("store-window-orders-export-v3:")
     assert "từ 2026-09-01 đến hết 2026-09-07 (7 ngày" in week_body["statement_vi"]
     next_week = _post(
         client,
@@ -794,7 +794,8 @@ def test_a_one_day_export_request_answers_exactly_as_before(
         assert body["window_days"] == 1
         # `EXPORT-PAYMENTS-001` moved the one-day rule to v3 (the payment ledger's columns);
         # v2 (`3f884e227d6a2d05`) is retired, and an envelope bound to it is refused by name.
-        assert body["query_version"] == "store-day-orders-export-v3:7b7e01eef9314061"
+        # v4 since the round 7 wave 2 integration: `owed_vnd` includes the storage fee.
+        assert body["query_version"] == "store-day-orders-export-v4:c2ce1e9e6379d784"
         assert body["shape_retired"] is False
         assert [item["column"] for item in body["money_sources"]] == [
             "expected_total_vnd",

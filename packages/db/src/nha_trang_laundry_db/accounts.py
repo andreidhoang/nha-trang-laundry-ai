@@ -92,6 +92,7 @@ from nha_trang_laundry_db.customers import CUSTOMER_READ_ROLES
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.query_version import QueryVersion, query_version
 from nha_trang_laundry_db.settlement import SETTLEMENT_ROLES, collected_by_for_shape
+from nha_trang_laundry_db.storage_fees import storage_fee_for_order
 from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -191,6 +192,40 @@ STATEMENT_QUERY: Final[QueryVersion] = query_version(
     "account-statement-v1", _STATEMENT_SQL, _STANDING_SQL, ACCOUNT_TIMEZONE
 )
 
+#: `DAILY-SUMMARY-001`'s accounts line (round 7 wave 2 integration): every account of the store, as
+#: of an instant, split into money **due** -- on a statement already closed (charged before the
+#: current month) whose due date has not passed -- and money **overdue** -- charged before the end
+#: of the latest month whose due date has passed (`_due_upper`, the bound `_STANDING_SQL` uses) --
+#: each less every payment the account made before the instant. Payments settle the oldest money
+#: first, so "billed less paid" and "past due less paid" are exactly what of each is still unpaid
+#: (the same reasoning as `_STANDING_SQL`). Counts and sums only, by PostgreSQL; no customer.
+_ACCOUNTS_DUE_SQL: Final = """
+    WITH per_account AS (
+        SELECT
+            (SELECT coalesce(sum(p.amount_vnd), 0) FROM customer_account_payments p
+             WHERE p.account_id = a.id AND p.recorded_at < %(as_of)s) AS paid,
+            (SELECT coalesce(sum(c.amount_vnd), 0) FROM customer_account_charges c
+             WHERE c.account_id = a.id AND c.charged_at < %(billed_upper)s) AS billed,
+            (SELECT coalesce(sum(c.amount_vnd), 0) FROM customer_account_charges c
+             WHERE c.account_id = a.id AND c.charged_at < %(due_upper)s) AS past_due
+        FROM customer_accounts a
+        WHERE a.store_id = %(store)s AND a.opened_at < %(as_of)s
+    ), owed AS (
+        SELECT greatest(past_due - paid, 0) AS overdue_vnd,
+               greatest(billed - paid, 0) - greatest(past_due - paid, 0) AS due_vnd
+        FROM per_account
+    )
+    SELECT count(*) FILTER (WHERE due_vnd > 0), coalesce(sum(due_vnd), 0),
+           count(*) FILTER (WHERE overdue_vnd > 0), coalesce(sum(overdue_vnd), 0),
+           count(*)
+    FROM owed
+"""
+
+#: The published version of the accounts-due rule, carried among the evening summary's sources.
+ACCOUNTS_DUE_QUERY: Final[QueryVersion] = query_version(
+    "accounts-due-v1", _ACCOUNTS_DUE_SQL, _STANDING_SQL, ACCOUNT_TIMEZONE
+)
+
 #: The orders on the account with money still owed, oldest charge first -- the order a payment
 #: reaches them in. `remaining_vnd` is the charge less its allocations, by PostgreSQL.
 _OPEN_CHARGES_SQL: Final = """
@@ -286,6 +321,18 @@ class AccountView:
     opened_at: datetime
     row_version: int
     query_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class AccountsDue:
+    """The store's accounts, counted: money due on a closed statement, and money past due."""
+
+    as_of: datetime
+    accounts: int
+    due_accounts: int
+    due_vnd: int
+    overdue_accounts: int
+    overdue_vnd: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -622,6 +669,40 @@ class AccountRepository:
             query_version=STATEMENT_QUERY.label,
         )
 
+    def accounts_due(
+        self, cursor: Any, *, store_id: UUID, principal: StaffPrincipal, day: date, as_of: datetime
+    ) -> AccountsDue:
+        """Where the store's accounts stand at `as_of`, judged on the shop day `day`.
+
+        `day` decides which statements are closed (charged before `day`'s month) and which are past
+        due (`latest_due_month(day)`, as the overdue block decides it); `as_of` bounds the payments
+        counted. For a past day the caller passes that day's end: the ledgers are append-only, so
+        the figures are what they were then. Counts and sums only -- no customer, no name -- under
+        the account read's gate.
+        """
+
+        _aware(as_of)
+        self.authorize_read(cursor, store_id=store_id, principal=principal)
+        cursor.execute(
+            _ACCOUNTS_DUE_SQL,
+            {
+                "store": store_id,
+                "as_of": as_of,
+                "billed_upper": month_start_instant(date(day.year, day.month, 1)),
+                "due_upper": month_start_instant(next_month(latest_due_month(day))),
+            },
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        return AccountsDue(
+            as_of=as_of,
+            accounts=int(row[4]),
+            due_accounts=int(row[0]),
+            due_vnd=int(row[1]),
+            overdue_accounts=int(row[2]),
+            overdue_vnd=int(row[3]),
+        )
+
     def order_handover(
         self, cursor: Any, *, order_id: UUID, principal: StaffPrincipal, now: datetime
     ) -> OrderAccountHandover | None:
@@ -646,7 +727,14 @@ class AccountRepository:
             return None
         standing = _standing(standing_row, now)
         paid = _ledger_sum(cursor, order_id)
-        charges = owed_charges(QuotedTotal(_optional_int(order[8]), _optional_int(order[9])))
+        # UNCLAIMED-001 (`DEC-036`): laundry that waited past the free days owes its storage fee
+        # too, so the limit is measured against everything the order owes -- the same charges the
+        # order page and the charge itself read (round 7 wave 2 integration).
+        storage = storage_fee_for_order(cursor, order_id=order_id, moment=now)
+        charges = owed_charges(
+            QuotedTotal(_optional_int(order[8]), _optional_int(order[9])),
+            storage_fee_vnd=storage.fee.amount_vnd,
+        )
         owed = None if charges is None else owed_total(charges)
         mode = FulfillmentMode(str(order[5]))
         collected = mode not in MODES_EXPECTING_RETURN
@@ -993,7 +1081,18 @@ class AccountRepository:
                 account_id = _uuid(standing_row[0])
                 account_version = int(standing_row[6])
                 paid = _ledger_sum(cursor, command.order_id)
-            charges = owed_charges(QuotedTotal(_optional_int(order[8]), _optional_int(order[9])))
+                # UNCLAIMED-001 (`DEC-036`), round 7 wave 2 integration: the storage fee the order
+                # owes at the moment it leaves, under the order lock held above. The goods leave
+                # now, so the fee stops now: it is fixed with this charge (`0061`), and the account
+                # is charged the quoted total plus the fee, less what was already paid.
+                storage = storage_fee_for_order(
+                    cursor, order_id=command.order_id, moment=command.at
+                )
+            storage_fee_vnd = storage.fee.amount_vnd
+            charges = owed_charges(
+                QuotedTotal(_optional_int(order[8]), _optional_int(order[9])),
+                storage_fee_vnd=storage_fee_vnd,
+            )
             outcome = evaluate_account_charge(
                 commercial=CommercialOrderStatus(str(order[2])),
                 production=ProductionStatus(str(order[3])),
@@ -1032,6 +1131,32 @@ class AccountRepository:
                         command.at,
                     ),
                 )
+                if storage_fee_vnd > 0:
+                    # The fee this charge includes, fixed now and never again (`0061` checks at
+                    # commit that the charge owes exactly the quoted total plus this amount).
+                    trace = storage.fee.fee
+                    assert trace is not None and storage.published is not None
+                    cursor.execute(
+                        """
+                        INSERT INTO order_storage_fees (
+                            id, order_id, store_id, settlement_id, account_charge_id, amount_vnd,
+                            days_waiting, chargeable_days, policy_version_id, fixed_by_staff_id,
+                            fixed_at
+                        ) VALUES (%s, %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            uuid4(),
+                            command.order_id,
+                            store_id,
+                            charge_id,
+                            storage_fee_vnd,
+                            trace.days_waiting,
+                            trace.chargeable_days,
+                            storage.published.version_id,
+                            command.principal.staff_user_id,
+                            command.at,
+                        ),
+                    )
                 cursor.execute(
                     """
                     UPDATE orders
@@ -1081,6 +1206,8 @@ class AccountRepository:
                         "collected_by_customer": outcome.collected_by_customer,
                         "balance_status": OrderBalanceStatus.ON_ACCOUNT.value,
                         "decision": ACCOUNT_DECISION,
+                        # UNCLAIMED-001: present only when a storage fee is part of the charge.
+                        **({"storage_fee_vnd": storage_fee_vnd} if storage_fee_vnd > 0 else {}),
                     },
                     audit_action="ORDER_ACCOUNT_CHARGE",
                     actor_type="STAFF",
@@ -1621,6 +1748,15 @@ def _allocate(
             (order_id,),
         )
         ledger = cursor.fetchone()
+        # UNCLAIMED-001: the storage fee fixed with this charge (`0061`), 0 when none. The charge
+        # owes the quoted total plus it; the settlement's shape is decided over the quoted total.
+        cursor.execute(
+            "SELECT coalesce(sum(amount_vnd), 0) FROM order_storage_fees "
+            "WHERE account_charge_id = %s",
+            (charge_id,),
+        )
+        fee_row = cursor.fetchone()
+    charge_fee_vnd = int(fee_row[0])
     paid_before, entries = int(ledger[0]), int(ledger[1])
     balance = OrderBalanceStatus(str(order[4]))
     if balance is not OrderBalanceStatus.ON_ACCOUNT:
@@ -1635,7 +1771,7 @@ def _allocate(
     if settles:
         settled = evaluate_settlement(
             quoted=quoted,
-            tendered_vnd=charge_owed_vnd,
+            tendered_vnd=charge_owed_vnd - charge_fee_vnd,
             collected_by_customer=False,
             fulfillment_mode=FulfillmentMode(str(order[5])),
             on_account=True,
@@ -1825,6 +1961,7 @@ def _optional_int(value: object) -> int | None:
 
 
 __all__ = [
+    "ACCOUNTS_DUE_QUERY",
     "ACCOUNT_COUNTER_ROLES",
     "ACCOUNT_OPEN_CHARGES_LIMIT",
     "ACCOUNT_OWNER_ROLES",
@@ -1844,6 +1981,7 @@ __all__ = [
     "AccountStateError",
     "AccountStatement",
     "AccountView",
+    "AccountsDue",
     "FreezeOutcome",
     "FrozenStatement",
     "LiftBlockCommand",

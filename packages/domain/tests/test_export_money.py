@@ -92,3 +92,64 @@ def test_a_contradiction_is_refused_rather_than_written(
             paid_transfer_vnd=transfer,
             paid_vnd=paid,
         )
+
+
+# --- round 7 wave 2 integration: the storage fee and the account ---------------------------------
+
+
+@pytest.mark.parametrize(
+    ("commercial", "cash", "transfer", "paid", "fee", "expected"),
+    [
+        # UNCLAIMED-001: a fee-bearing order settled at pickup -- the fee is owed, so the payments
+        # equal what is owed and nothing remains (without the fee the file refused itself).
+        (
+            COMPLETED,
+            135_000,
+            0,
+            135_000,
+            25_000,
+            ExportedMoney(135_000, 135_000, 0, 135_000, 0),
+        ),
+        # Still on the shelf, a 50.000 đ deposit taken: the accrued fee is owed on top.
+        (ACTIVE, 50_000, 0, 50_000, 25_000, ExportedMoney(135_000, 50_000, 0, 50_000, 85_000)),
+        # PAYMENT-002: an order on the account is owed, not paid -- nothing in the ledger yet...
+        (COMPLETED, 0, 0, 0, 0, ExportedMoney(110_000, 0, 0, 0, 110_000)),
+        # ...then part of an account payment by transfer reached it: that part is paid.
+        (COMPLETED, 0, 40_000, 40_000, 0, ExportedMoney(110_000, 0, 40_000, 40_000, 70_000)),
+        # An account order that waited past the free days: the fee fixed with its charge is owed.
+        (COMPLETED, 0, 0, 0, 25_000, ExportedMoney(135_000, 0, 0, 0, 135_000)),
+        # A disposed-of order (thanh lý) closes CANCELLED: what was paid is kept, nothing remains.
+        (CANCELLED, 30_000, 0, 30_000, 25_000, ExportedMoney(135_000, 30_000, 0, 30_000, 0)),
+    ],
+)
+def test_the_storage_fee_is_owed_and_an_account_order_is_owed_not_paid(
+    commercial: CommercialOrderStatus,
+    cash: int,
+    transfer: int,
+    paid: int,
+    fee: int,
+    expected: ExportedMoney,
+) -> None:
+    assert (
+        exported_money(
+            commercial=commercial,
+            quoted=EXACT,
+            paid_cash_vnd=cash,
+            paid_transfer_vnd=transfer,
+            paid_vnd=paid,
+            storage_fee_vnd=fee,
+        )
+        == expected
+    )
+
+
+def test_payments_above_the_total_and_the_fee_are_still_refused() -> None:
+    with pytest.raises(ValueError):
+        exported_money(
+            commercial=COMPLETED,
+            quoted=EXACT,
+            paid_cash_vnd=140_000,
+            paid_transfer_vnd=0,
+            paid_vnd=140_000,
+            storage_fee_vnd=25_000,
+        )

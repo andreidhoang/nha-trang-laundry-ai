@@ -69,6 +69,16 @@ digest and refused by name, `EXPORT_QUERY_VERSION_RETIRED`, rather than released
 document promised "số tiền đã thu" and would now ship a partly paid order as unpaid. See
 `_RETIRED_SHAPE`.
 
+**What is owed includes the storage fee, since the round 7 wave 2 integration.** `UNCLAIMED-001`
+made the storage fee a second charge on an order and `PAYMENT-002` let an order leave on its
+customer's account. The file's `owed_vnd` is now the order's charges -- the quoted total plus the
+storage fee fixed by its settlement or account charge, or accrued at `produced_at` while it still
+waits -- exactly what the order page reads, and an order on account is money owed, not paid. The
+meaning of `owed_vnd` and `remaining_vnd` changed for a fee-bearing order, so both query versions
+moved again (`store-day-orders-export-v4`, `store-window-orders-export-v3`). An envelope signed over
+v3 / window v2 in the ten minutes around the deploy no longer matches the document and is refused
+`EXPORT_APPROVAL_NOT_BOUND`; the remedy is one new request.
+
 The bytes are produced here and never stored. What is stored is `data_exports`: the approval that
 authorised the release, the versioned query that produced its columns, the row count and a digest of
 the bytes — written with its domain event, audit event and outbox record in one transaction under
@@ -89,15 +99,22 @@ from uuid import UUID, uuid4
 
 from nha_trang_laundry_domain.approvals import APPROVAL_RESOURCE_TYPES
 from nha_trang_laundry_domain.canonical import canonical_document
-from nha_trang_laundry_domain.catalog import ApprovalAction, CommercialOrderStatus
+from nha_trang_laundry_domain.catalog import (
+    ApprovalAction,
+    CommercialOrderStatus,
+    FulfillmentMode,
+    ProductionStatus,
+)
 from nha_trang_laundry_domain.export_money import exported_money
 from nha_trang_laundry_domain.settlement import QuotedTotal
+from nha_trang_laundry_domain.unclaimed import StoragePolicy, awaiting_pickup, order_storage_fee
 from psycopg.errors import UniqueViolation
 
 from .approvals import ApprovalBinding, read_approval_binding
 from .idempotency import IdempotencyRepository, IdempotentCommand
 from .identity import StaffPrincipal, StaffRole
 from .query_version import query_version
+from .storage_fees import read_published_storage_policy
 from .store_access import require_store_membership
 from .transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -231,7 +248,9 @@ EXPORT_MONEY_SOURCES: tuple[ExportMoneySource, ...] = (
     ),
     ExportMoneySource(
         "owed_vnd",
-        "quote_revisions.display_total_min_vnd (current revision, when min = max)",
+        "quote_revisions.display_total_min_vnd (current revision, when min = max)"
+        " + the storage fee (order_storage_fees.amount_vnd once fixed; DEC-036's accrual while"
+        " the order waits for pickup)",
         "produced_at",
     ),
     ExportMoneySource(
@@ -283,9 +302,10 @@ EXPORT_DAY_BOUNDARY = "orders.created_at"
 #:
 #: `EXPORT-PAYMENTS-001`: the payment ledger is summed here, by method, in one LATERAL aggregate per
 #: order (an aggregate without GROUP BY always returns its one row), and the order's current quote
-#: revision is joined for what is owed. The last five selected values are not cells:
-#: `_money_rows` hands them to `export_money.exported_money`, and the domain decides what is owed
-#: and what remains.
+#: revision is joined for what is owed. The last nine selected values are not cells:
+#: `_money_rows` hands them to `export_money.exported_money` -- with the storage fee
+#: `unclaimed.order_storage_fee` computes from the last four and the leading cells' production
+#: status, ready time and settlement -- and the domain decides what is owed and what remains.
 _EXPORT_SQL = """
     SELECT o.id, o.created_at, o.commercial_status, o.intake_status, o.production_status,
            o.production_accepted_at, o.production_ready_at, o.production_released_at,
@@ -293,7 +313,10 @@ _EXPORT_SQL = """
            s.expected_total_vnd, s.paid_amount_vnd, s.attested_at,
            o.balance_status, rf.refunded_amount_vnd, rf.refunded_at,
            q.display_total_min_vnd, q.display_total_max_vnd,
-           coalesce(p.cash, 0), coalesce(p.transfer, 0), coalesce(p.paid, 0)
+           coalesce(p.cash, 0), coalesce(p.transfer, 0), coalesce(p.paid, 0),
+           o.fulfillment_mode, o.self_collection_recorded,
+           (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = o.id),
+           EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id)
     FROM orders o
     LEFT JOIN order_settlements s ON s.order_id = o.id
     LEFT JOIN order_refunds rf ON rf.order_id = o.id
@@ -326,7 +349,9 @@ def _money_sources_text(sources: tuple[ExportMoneySource, ...]) -> str:
 #: (`store-day-orders-export-v2:3f884e227d6a2d05`) read money from `order_settlements` alone and is
 #: retired; see `_RETIRED_SHAPE`.
 EXPORT_QUERY = query_version(
-    "store-day-orders-export-v3",
+    # v4 (round 7 wave 2 integration): `owed_vnd` includes the storage fee (`UNCLAIMED-001`), so it
+    # and `remaining_vnd` mean something new on a fee-bearing order. v3 read the quoted total alone.
+    "store-day-orders-export-v4",
     _EXPORT_SQL,
     BUSINESS_TIMEZONE,
     EXPORT_DAY_BOUNDARY,
@@ -348,7 +373,10 @@ _EXPORT_WINDOW_SQL = """
            s.expected_total_vnd, s.paid_amount_vnd, s.attested_at,
            o.balance_status, rf.refunded_amount_vnd, rf.refunded_at,
            q.display_total_min_vnd, q.display_total_max_vnd,
-           coalesce(p.cash, 0), coalesce(p.transfer, 0), coalesce(p.paid, 0)
+           coalesce(p.cash, 0), coalesce(p.transfer, 0), coalesce(p.paid, 0),
+           o.fulfillment_mode, o.self_collection_recorded,
+           (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = o.id),
+           EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id)
     FROM orders o
     LEFT JOIN order_settlements s ON s.order_id = o.id
     LEFT JOIN order_refunds rf ON rf.order_id = o.id
@@ -371,7 +399,8 @@ _EXPORT_WINDOW_SQL = """
 #: columns, moving the boundary or re-sourcing a money column moves both. v2 since
 #: `EXPORT-PAYMENTS-001`; v1 (`store-window-orders-export-v1:b0ae2bdf3725ab24`) is retired.
 EXPORT_WINDOW_QUERY = query_version(
-    "store-window-orders-export-v2",
+    # v3 (round 7 wave 2 integration): the storage fee in `owed_vnd`, as the day's v4.
+    "store-window-orders-export-v3",
     _EXPORT_WINDOW_SQL,
     BUSINESS_TIMEZONE,
     EXPORT_DAY_BOUNDARY,
@@ -995,6 +1024,10 @@ class SanitizedExportRepository:
             # One day runs the one-day statement and a window the window statement. The label
             # written below is the one hashed into what was signed; an envelope signed over a
             # retired shape never reaches this line (`EXPORT_QUERY_VERSION_RETIRED` above).
+            #
+            # UNCLAIMED-001: the storage policy in force, read once for the file (one per shop),
+            # before the rows -- on this cursor, after them, it would replace the rows' result.
+            published = read_published_storage_policy(cursor)
             cursor.execute(
                 _EXPORT_SQL if last is None else _EXPORT_WINDOW_SQL,
                 {
@@ -1004,7 +1037,11 @@ class SanitizedExportRepository:
                     "business_date_to": last or business_date,
                 },
             )
-            rows = _money_rows(cursor.fetchall())
+            rows = _money_rows(
+                cursor.fetchall(),
+                policy=None if published is None else published.policy,
+                produced_at=executed_at,
+            )
 
         label = released.query_version
         content = _csv_bytes(
@@ -1160,9 +1197,12 @@ _MONEY_STATEMENT_VI = (
     "Tiền đã trả lấy từ sổ thu từng lần (order_payments): paid_cash_vnd là tiền mặt, "
     "paid_transfer_vnd là chuyển khoản, paid_vnd là tổng hai khoản — cộng mọi lần thu đã ghi "
     "cho đơn tới lúc tạo tệp (produced_at ở đầu tệp), dù thu vào ngày nào; đơn chưa thu lần nào "
-    "ghi 0. owed_vnd là tổng tiền của báo giá đang gắn với đơn; remaining_vnd là owed_vnd trừ "
-    "paid_vnd, và bằng 0 khi đơn đã huỷ vì đơn huỷ không thu thêm; hai ô này để trống khi báo giá "
-    "chưa ra một con số duy nhất. expected_total_vnd, paid_amount_vnd và settlement_attested_at "
+    "ghi 0. owed_vnd là tổng tiền của báo giá đang gắn với đơn, cộng phí lưu kho nếu đồ chờ lấy "
+    "quá số ngày miễn phí (phí đã chốt khi trả đủ hoặc khi ghi công nợ; đơn còn chờ thì phí tính "
+    "tới lúc tạo tệp); remaining_vnd là owed_vnd trừ paid_vnd, và bằng 0 khi đơn đã huỷ vì đơn huỷ "
+    "không thu thêm; hai ô này để trống khi báo giá chưa ra một con số duy nhất. Đơn ghi công nợ "
+    "(balance_status là ON_ACCOUNT) là tiền khách còn nợ, chưa thu: paid_vnd chỉ gồm phần khách "
+    "công nợ đã trả cho đơn đó. expected_total_vnd, paid_amount_vnd và settlement_attested_at "
     "lấy từ sổ tất toán (order_settlements): chỉ có khi đơn đã trả đủ, cắt theo lúc trả đủ — đơn "
     "mới trả một phần thì ba ô này trống. refunded_amount_vnd và refunded_at lấy từ sổ hoàn tiền "
     "(order_refunds), cắt theo lúc hoàn. Đơn đã thu tiền rồi bị huỷ và hoàn tiền vẫn hiện số tiền "
@@ -1551,12 +1591,17 @@ def _csv_bytes(rows: list[tuple[Any, ...]], *, header: tuple[object, ...]) -> st
     return buffer.getvalue()
 
 
-#: How many values `_EXPORT_SQL` selects before the five that feed the domain: the fifteen cells
+#: How many values `_EXPORT_SQL` selects before the nine that feed the domain: the fifteen cells
 #: the file has always carried, in `EXPORT_COLUMNS` order.
 _LEADING_CELLS = 15
 
 
-def _money_rows(fetched: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+def _money_rows(
+    fetched: list[tuple[Any, ...]],
+    *,
+    policy: StoragePolicy | None,
+    produced_at: datetime,
+) -> list[tuple[Any, ...]]:
     """Each fetched order as its file row: the leading cells as read, then the money cells.
 
     The SQL sums the payment ledger by method; `export_money.exported_money` decides what is owed
@@ -1568,14 +1613,40 @@ def _money_rows(fetched: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
     shaped: list[tuple[Any, ...]] = []
     for row in fetched:
         leading = tuple(row[:_LEADING_CELLS])
-        minimum, maximum, cash, transfer, paid = row[_LEADING_CELLS:]
+        (minimum, maximum, cash, transfer, paid, mode, collected, fixed, waived) = row[
+            _LEADING_CELLS:
+        ]
+        commercial = CommercialOrderStatus(str(leading[2]))
+        quoted = QuotedTotal(_optional_int(minimum), _optional_int(maximum))
+        # UNCLAIMED-001: the storage fee this order owes at `produced_at`, from the same stored
+        # facts and the same domain rule the order read uses (`orders._storage_fee_of_row`).
+        storage = order_storage_fee(
+            policy,
+            awaiting=awaiting_pickup(
+                commercial=commercial,
+                production=ProductionStatus(str(leading[4])),
+                fulfillment_mode=FulfillmentMode(str(mode)),
+                self_collection_recorded=bool(collected),
+            ),
+            ready_at=leading[6] if isinstance(leading[6], datetime) else None,
+            as_of=produced_at,
+            quoted_total_vnd=(
+                quoted.minimum_vnd
+                if quoted.minimum_vnd is not None and quoted.minimum_vnd == quoted.maximum_vnd
+                else None
+            ),
+            waived=bool(waived),
+            settled=leading[9] is not None,
+            fixed_vnd=_optional_int(fixed),
+        )
         try:
             money = exported_money(
-                commercial=CommercialOrderStatus(str(leading[2])),
-                quoted=QuotedTotal(_optional_int(minimum), _optional_int(maximum)),
+                commercial=commercial,
+                quoted=quoted,
                 paid_cash_vnd=int(cash),
                 paid_transfer_vnd=int(transfer),
                 paid_vnd=int(paid),
+                storage_fee_vnd=storage.amount_vnd,
             )
         except ValueError as error:
             raise ExportStateError(

@@ -450,3 +450,17 @@ def test_the_template_reads_no_clock_no_network_and_no_model() -> None:
         "random",
     ):
         assert forbidden not in source, forbidden
+
+
+def test_a_shop_with_no_account_omits_the_accounts_line_in_its_own_words() -> None:
+    """v2 (round 7 wave 2 integration): "feature empty" (spec §7) is an omission, not a zero."""
+
+    summary = render_summary(
+        _inputs(accounts_due=Unavailable(OmissionReason.NO_ACCOUNTS, "PAYMENT-002"))
+    )
+    omitted = {item.key: item for item in summary.omitted}
+    assert omitted[LineKey.ACCOUNTS_DUE].reason is OmissionReason.NO_ACCOUNTS
+    assert omitted[LineKey.ACCOUNTS_DUE].note == (
+        "Công nợ đến hạn: cửa hàng chưa mở công nợ cho khách nào."
+    )
+    assert "công nợ" not in summary.text

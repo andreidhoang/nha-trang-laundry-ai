@@ -34,7 +34,12 @@ from typing import Final
 #: The template's published identifier. The digest beside it is taken over this module's rules
 #: (`nha_trang_laundry_db.daily_summary.daily_summary_template_version`), and a test pins it: a
 #: changed sentence fails the suite until the identifier is read and moved.
-DAILY_SUMMARY_TEMPLATE_IDENTIFIER: Final = "daily-summary-v1"
+#:
+#: v2 (round 7 wave 2 integration): the two hooks are wired -- "Đồ chờ lấy lâu ngày" from
+#: `UNCLAIMED-001`'s waiting list and "Công nợ đến hạn" from `PAYMENT-002`'s ledgers -- so a summary
+#: that left both out as not built now prints them, and a shop that has opened no account omits the
+#: accounts line with its own reason (`NO_ACCOUNTS`).
+DAILY_SUMMARY_TEMPLATE_IDENTIFIER: Final = "daily-summary-v2"
 
 #: `Asia/Ho_Chi_Minh` weekday names, Monday first, as the counter says them.
 _WEEKDAY_VI: Final = ("thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy", "Chủ nhật")
@@ -87,6 +92,9 @@ class OmissionReason(StrEnum):
     #: The source answered with more rows than the summary reads; a count of a truncated list is a
     #: floor, not a figure.
     SOURCE_TRUNCATED = "SOURCE_TRUNCATED"
+    #: The shop has opened no customer account (`PAYMENT-002`, `DEC-035`): "0 khách công nợ đến hạn"
+    #: would be a figure about a feature the shop does not use (spec §7: "feature empty").
+    NO_ACCOUNTS = "NO_ACCOUNTS"
 
 
 #: The reason in the owner's words, shown with the omitted line. Fixed text, part of the template.
@@ -98,6 +106,7 @@ _OMISSION_NOTE_VI: Final = {
         "chủ tiệm chưa công bố quy tắc hẹn trả, chưa đơn nào có giờ hẹn"
     ),
     OmissionReason.SOURCE_TRUNCATED: "danh sách quá dài để đếm đủ",
+    OmissionReason.NO_ACCOUNTS: "cửa hàng chưa mở công nợ cho khách nào",
 }
 
 #: What each omissible line is about, in the owner's words.

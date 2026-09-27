@@ -20,15 +20,24 @@ partly paid order left the building with empty money cells, under a signed sente
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Generator
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
 import pytest
 from nha_trang_laundry_db import exports
+from nha_trang_laundry_db.account_terms import publish_account_terms
+from nha_trang_laundry_db.accounts import (
+    AccountChargeCommand,
+    AccountPaymentCommand,
+    AccountRepository,
+    OpenAccountCommand,
+)
 from nha_trang_laundry_db.approvals import ApprovalResourceChangedError
 from nha_trang_laundry_db.customers import CustomerRepository
 from nha_trang_laundry_db.exports import (
@@ -51,23 +60,33 @@ from nha_trang_laundry_db.orders import CreateOrderCommand, OrderRepository
 from nha_trang_laundry_db.payments import PaymentCommand, PaymentRepository
 from nha_trang_laundry_db.privacy_notice import publish_privacy_notice
 from nha_trang_laundry_db.query_version import query_version
+from nha_trang_laundry_db.storage_fees import publish_storage_policy
 from nha_trang_laundry_domain.canonical import canonical_document
 from nha_trang_laundry_domain.catalog import AcquisitionSource, CustodyResolution, FulfillmentMode
 from nha_trang_laundry_domain.customers import CustomerKind
 from nha_trang_laundry_domain.order_steps import OrderStep
 from nha_trang_laundry_domain.payments import PaymentMethod
+from nha_trang_laundry_domain.unclaimed import withdrawal_document
 from quote_test_data import accepted_quote
 from test_customer_notice import notice_payload
 from test_export_range import PRE_WINDOW_RENDERED, STORE, _request
 from test_order_step_repository import TOTAL_VND, _order, _read, _step
 from test_order_step_repository import _staff as _operator
 from test_sanitized_export import _approve, _decide, _local_date, _raise_envelope, _Shop
+from test_unclaimed_laundry import policy_payload as storage_payload
 
 #: The rendered digest the retired code (`exports.py` at `abb9ce2`, window query
 #: `store-window-orders-export-v1`) produced for `STORE` and the window 1-30 September 2026,
 #: computed by calling that module's own `_statement` before `EXPORT-PAYMENTS-001` changed it.
 RETIRED_WINDOW_RENDERED = (
     "JCS-SHA256-V1:48265918e1ada5f95806275463e67a279a20b78059254e159f802f139c4c3d7e"
+)
+
+#: `PAYMENT-002`'s account terms, as the owner publishes them (round 7 wave 2 integration).
+ACCOUNT_TERMS = json.loads(
+    (Path(__file__).resolve().parents[3] / "templates/account-terms-dec-035.json").read_text(
+        encoding="utf-8"
+    )
 )
 
 CASH = PaymentMethod.TIEN_MAT
@@ -92,6 +111,7 @@ def _pay(
     method: PaymentMethod,
     *,
     ref: str | None = None,
+    collected: bool = False,
 ) -> None:
     PaymentRepository().record(
         connection,
@@ -102,7 +122,7 @@ def _pay(
             method=method,
             transfer_seen=method is TRANSFER,
             bank_ref_last=ref,
-            collected_by_customer=False,
+            collected_by_customer=collected,
             principal=staff,
             correlation_id=uuid4(),
         ),
@@ -497,3 +517,196 @@ def test_no_customer_personal_data_reaches_the_file(connection: psycopg.Connecti
         assert column not in header, column
     # The exclusions say so by name, in the document the owner signs.
     assert {"orders.customer_id", "order_payments.bank_ref_last"} <= set(created.excludes)
+
+
+# --- round 7 wave 2 integration: the storage fee and the account ----------------------------------
+
+
+def test_the_storage_fee_is_owed_and_an_account_order_is_owed_not_paid(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """`UNCLAIMED-001` and `PAYMENT-002` on the export, one shop-local day, four orders:
+
+    * waited 25 days and paid at pickup, the fee included: before this the file refused itself
+      (`EXPORT_MONEY_INCONSISTENT`), since the payments exceeded the quoted total it called owed;
+    * waited 25 days, a deposit taken, still on the shelf: the fee accrued so far is owed;
+    * a hotel's order that left on its account, then half paid through the account: owed, and paid
+      only what the account paid -- `balance_status` says `ON_ACCOUNT`;
+    * a hotel's order that waited 25 days and left on the account: the fee fixed with the charge.
+    """
+    shop = _Shop(connection, datetime.now(UTC))
+    owner = shop.owner
+    publish_privacy_notice(connection, actor_id=owner.staff_user_id, payload=notice_payload())
+    publish_account_terms(connection, actor_id=owner.staff_user_id, payload=ACCOUNT_TERMS)
+    publish_storage_policy(connection, actor_id=owner.staff_user_id, payload=storage_payload())
+    staff = _operator(connection, shop.store_id)
+    try:
+        hotel = CustomerRepository().create(
+            connection,
+            store_id=shop.store_id,
+            principal=staff,
+            phone=f"09{uuid4().int % 10**8:08d}",
+            display_name="Khách sạn Xuất-Công-Nợ",
+            delivery_address=None,
+            note=None,
+            kind=CustomerKind.BUSINESS,
+            service_consent=True,
+            marketing_consent=False,
+            at=shop.now,
+            correlation_id=uuid4(),
+        )
+        AccountRepository().open(
+            connection,
+            OpenAccountCommand(
+                store_id=shop.store_id,
+                customer_id=hotel,
+                credit_limit_vnd=2_000_000,
+                principal=owner,
+                correlation_id=uuid4(),
+                at=shop.now,
+            ),
+        )
+        settled = _ready_for(connection, shop, staff, None)
+        waiting = _ready_for(connection, shop, staff, None)
+        on_account = _ready_for(connection, shop, staff, hotel)
+        waited_on_account = _ready_for(connection, shop, staff, hotel)
+        for order_id in (settled, waiting, waited_on_account):
+            _age_ready(connection, order_id, 25)
+        fee = _read(connection, settled, staff).owed_vnd - TOTAL_VND
+        assert fee > 0
+        _pay(connection, settled, staff, TOTAL_VND + fee, CASH, collected=True)
+        _pay(connection, waiting, staff, 50_000, CASH)
+        for order_id in (on_account, waited_on_account):
+            AccountRepository().charge(
+                connection,
+                AccountChargeCommand(
+                    order_id=order_id,
+                    expected_row_version=_read(connection, order_id, staff).row_version,
+                    collected_by_customer=True,
+                    principal=staff,
+                    correlation_id=uuid4(),
+                    at=datetime.now(UTC),
+                ),
+            )
+        half = TOTAL_VND // 2
+        with connection.cursor() as cursor:
+            account = AccountRepository().read(
+                cursor,
+                store_id=shop.store_id,
+                customer_id=hotel,
+                principal=owner,
+                now=datetime.now(UTC),
+            )
+        assert account.account is not None
+        AccountRepository().record_payment(
+            connection,
+            AccountPaymentCommand(
+                store_id=shop.store_id,
+                customer_id=hotel,
+                expected_row_version=account.account.row_version,
+                amount_vnd=half,
+                method=TRANSFER,
+                transfer_seen=True,
+                bank_ref_last=None,
+                principal=staff,
+                correlation_id=uuid4(),
+                at=datetime.now(UTC),
+            ),
+        )
+
+        created = _request(connection, shop, _local_date(shop.now), None)
+        produced = _release(connection, shop, created, _approve(connection, shop, created))
+    finally:
+        publish_storage_policy(
+            connection, actor_id=owner.staff_user_id, payload=withdrawal_document()
+        )
+
+    rows = _body(produced.content_csv)
+    total, with_fee = TOTAL_VND, TOTAL_VND + fee
+
+    row = rows[str(settled)]
+    assert row["balance_status"] == "PAID"
+    assert (row["owed_vnd"], row["paid_cash_vnd"], row["paid_vnd"], row["remaining_vnd"]) == (
+        str(with_fee),
+        str(with_fee),
+        str(with_fee),
+        "0",
+    )
+    assert (row["expected_total_vnd"], row["paid_amount_vnd"]) == (str(with_fee), str(with_fee))
+
+    row = rows[str(waiting)]
+    assert row["balance_status"] == "PARTIALLY_PAID"
+    assert (row["owed_vnd"], row["paid_vnd"], row["remaining_vnd"]) == (
+        str(with_fee),
+        "50000",
+        str(with_fee - 50_000),
+    )
+
+    # The account's payment reaches the oldest charge first: this order, half paid by transfer.
+    row = rows[str(on_account)]
+    assert row["balance_status"] == "ON_ACCOUNT"
+    assert (
+        row["owed_vnd"],
+        row["paid_cash_vnd"],
+        row["paid_transfer_vnd"],
+        row["paid_vnd"],
+        row["remaining_vnd"],
+    ) == (str(total), "0", str(half), str(half), str(total - half))
+    # Owed, not paid: nothing settled, so the settlement ledger has nothing to say.
+    assert (row["expected_total_vnd"], row["paid_amount_vnd"]) == ("", "")
+
+    row = rows[str(waited_on_account)]
+    assert row["balance_status"] == "ON_ACCOUNT"
+    assert (row["owed_vnd"], row["paid_vnd"], row["remaining_vnd"]) == (
+        str(with_fee),
+        "0",
+        str(with_fee),
+    )
+    # And no account customer's name reaches the file.
+    assert "Xuất-Công-Nợ" not in produced.content_csv
+
+
+def _ready_for(connection: Any, shop: _Shop, staff: Any, customer_id: UUID | None) -> UUID:
+    """An order taken today (for `customer_id`, when given) and washed to ready."""
+    quote_id, revision, quote, contact_id = accepted_quote(
+        connection, store_id=shop.store_id, principal=staff, customer_id=customer_id
+    )
+    order_id = (
+        OrderRepository()
+        .create(
+            connection,
+            CreateOrderCommand(
+                shop.store_id,
+                contact_id,
+                quote_id,
+                revision,
+                quote.document.snapshot_hash,
+                FulfillmentMode.SELF_DROP_SELF_COLLECT,
+                staff,
+                f"order-{uuid4().hex}",
+                uuid4(),
+                shop.now,
+                AcquisitionSource.WALK_IN,
+            ),
+        )
+        .order_id
+    )
+    view = _step(connection, order_id, staff, 1, OrderStep.RECEIVE, slot_approved=True).view
+    for step in (OrderStep.START_WASH, OrderStep.QUALITY_CHECK, OrderStep.MARK_READY):
+        view = _step(connection, order_id, staff, view.row_version, step).view
+    return order_id
+
+
+def _age_ready(connection: Any, order_id: UUID, days: int) -> None:
+    """The documented harness step (`test_unclaimed_laundry._age`): ready `days` days earlier."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE orders
+            SET production_ready_at = production_ready_at - make_interval(days => %s),
+                production_accepted_at = production_accepted_at - make_interval(days => %s),
+                row_version = row_version + 1
+            WHERE id = %s
+            """,
+            (days, days, order_id),
+        )

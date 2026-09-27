@@ -69,6 +69,8 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0059", "account_customers"),
         # UNCLAIMED-001: 0060 is the number reserved for this slice; 0059 is another wave-2 slice's.
         ("0060", "unclaimed_laundry"),
+        # Round 7 wave 2 integration: a storage fee fixed by the account charge the goods left on.
+        ("0061", "account_storage_fee"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

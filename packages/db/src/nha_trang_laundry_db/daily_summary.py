@@ -15,9 +15,12 @@ already computes. It gathers, in one read-only snapshot:
 * **Sổ thu chi** for the day, through `expense_totals`, the statement the report's months use;
 * **complaints open now** (`OPEN` or `UNDER_REVIEW`): the one count here with no other home, a
   single versioned statement, today only for the same reason as the board;
-* two **hooks** for reads that wave-2 slices build in parallel -- `waiting_pickup_figures`
-  (`UNCLAIMED-001`) and `accounts_due_figures` (`PAYMENT-002`). Until they are wired each answers
-  `SOURCE_NOT_BUILT`, and the summary lists the line as omitted with that reason. Nothing guesses.
+* two **hooks** for reads that wave-2 slices built in parallel, wired at their integration:
+  `waiting_pickup_figures` counts `UNCLAIMED-001`'s waiting list (`UnclaimedRepository.
+  count_waiting`: the list's own population and day rule), today only, since the list describes
+  the shelf now; `accounts_due_figures` sums `PAYMENT-002`'s ledgers (`AccountRepository.
+  accounts_due`), as of the day's end for a past day, since those ledgers are append-only. Each is
+  read under its own source's role set, like the board, and answers in counts and money only.
 
 The words are `nha_trang_laundry_domain.daily_summary.render_summary`'s. The version beside the
 text hashes that template's rules and this module's own statements, so a changed sentence or a
@@ -28,7 +31,7 @@ the digest).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from typing import Any, Final
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -50,6 +53,11 @@ from nha_trang_laundry_domain.daily_summary import (
 )
 from nha_trang_laundry_domain.sla import ProductionSlaPolicy
 
+from nha_trang_laundry_db.accounts import (
+    ACCOUNT_READ_ROLES,
+    ACCOUNTS_DUE_QUERY,
+    AccountRepository,
+)
 from nha_trang_laundry_db.identity import StaffPrincipal
 from nha_trang_laundry_db.promise_policy import read_published_turnaround_policy
 from nha_trang_laundry_db.query_version import QueryVersion, query_version, rule_source
@@ -71,6 +79,12 @@ from nha_trang_laundry_db.shadow_console import (
 )
 from nha_trang_laundry_db.shop_capture import _EXPENSE_TOTALS_SQL, expense_totals
 from nha_trang_laundry_db.store_access import require_store_membership
+from nha_trang_laundry_db.unclaimed import (
+    UNCLAIMED_READ_ROLES,
+    WAITING_COUNT_QUERY,
+    WAITING_SUMMARY_THRESHOLDS,
+    UnclaimedRepository,
+)
 
 #: The summary restates the report, so it is read by exactly the report's readers.
 DAILY_SUMMARY_READ_ROLES: Final = REPORT_READ_ROLES
@@ -110,6 +124,9 @@ def daily_summary_template_version() -> QueryVersion:
         str(BOARD_MAX_PAGES),
         str(SLA_BOARD_MAX_LIMIT),
         BUSINESS_TIMEZONE,
+        # v2: the two wired hooks' statements, so a changed count moves the summary's version.
+        WAITING_COUNT_QUERY.label,
+        ACCOUNTS_DUE_QUERY.label,
     )
 
 
@@ -208,8 +225,16 @@ class DailySummaryRepository:
                     (total.category.value, total.amount_vnd, total.entries) for total in totals
                 ),
             )
-            waiting = waiting_pickup_figures(cursor, store_id=store_id, day=day, live=live)
-            accounts = accounts_due_figures(cursor, store_id=store_id, day=day, live=live)
+            waiting = waiting_pickup_figures(
+                cursor, store_id=store_id, principal=principal, live=live, as_of=as_of
+            )
+            if isinstance(waiting, WaitingFigures):
+                sources.append(("awaiting_pickup", WAITING_COUNT_QUERY.label))
+            accounts = accounts_due_figures(
+                cursor, store_id=store_id, principal=principal, day=day, live=live, as_of=as_of
+            )
+            if isinstance(accounts, AccountsDueFigures):
+                sources.append(("accounts", ACCOUNTS_DUE_QUERY.label))
 
         rendered = render_summary(
             SummaryInputs(
@@ -240,38 +265,69 @@ class DailySummaryRepository:
         )
 
 
-# --- hooks for the wave-2 reads -------------------------------------------------------------------
+# --- the wave-2 reads: waiting for pickup, and accounts ------------------------------------------
 
 
 def waiting_pickup_figures(
-    cursor: Any, *, store_id: UUID, day: date, live: bool
+    cursor: Any, *, store_id: UUID, principal: StaffPrincipal, live: bool, as_of: datetime
 ) -> WaitingFigures | Unavailable:
-    """HOOK for `UNCLAIMED-001` (`DEC-036`): laundry ready and not collected, over 20 / 60 days.
+    """`UNCLAIMED-001` (`DEC-036`): laundry ready and not collected for over 20 / 60 days.
 
-    Not built on this base: the awaiting-pickup read (`GET …/orders/awaiting-pickup`, days waiting
-    per order) is `UNCLAIMED-001`'s. Wiring it: call that repository's count over the store (the
-    same population and the same "days waiting" rule its list uses -- never a second definition
-    here), return `WaitingFigures(over_20_days=…, over_60_days=…)` for today, and
-    `Unavailable(LIVE_ONLY_TODAY)` for a past day unless the read can answer as of that day; add
-    its query version to `sources`; and move `DAILY_SUMMARY_TEMPLATE_IDENTIFIER`, because the
-    summary's content changes. The line's words already exist and are golden-tested.
+    `UnclaimedRepository.count_waiting` -- the waiting list's own population (`AWAITING_PICKUP_SQL`)
+    and its own shop-day rule, never a second definition here. The list describes the shelf now
+    and keeps no history (a collected order is no longer on it), so a past day's line is omitted
+    `LIVE_ONLY_TODAY`, as the board's are. A reader the list does not admit (an accountant) gets
+    `ROLE_NOT_PERMITTED`; more waiting orders than the count reads, `SOURCE_TRUNCATED`.
     """
-    del cursor, store_id, day, live
-    return Unavailable(OmissionReason.SOURCE_NOT_BUILT, "UNCLAIMED-001")
+    if not live:
+        return Unavailable(OmissionReason.LIVE_ONLY_TODAY, "UNCLAIMED-001")
+    if not principal.roles & UNCLAIMED_READ_ROLES:
+        return Unavailable(OmissionReason.ROLE_NOT_PERMITTED, "UNCLAIMED-001")
+    counts = UnclaimedRepository.count_waiting(
+        cursor, store_id=store_id, principal=principal, as_of=as_of
+    )
+    if counts.truncated:
+        return Unavailable(OmissionReason.SOURCE_TRUNCATED, "UNCLAIMED-001")
+    over = dict(counts.over)
+    low, high = WAITING_SUMMARY_THRESHOLDS
+    return WaitingFigures(over_20_days=over[low], over_60_days=over[high])
 
 
 def accounts_due_figures(
-    cursor: Any, *, store_id: UUID, day: date, live: bool
+    cursor: Any,
+    *,
+    store_id: UUID,
+    principal: StaffPrincipal,
+    day: date,
+    live: bool,
+    as_of: datetime,
 ) -> AccountsDueFigures | Unavailable:
-    """HOOK for `PAYMENT-002` (`DEC-035`, B2B half): account balances coming due, and overdue.
+    """`PAYMENT-002` (`DEC-035`, B2B half): account money due on a closed statement, and overdue.
 
-    Not built on this base: `customer_accounts` and `account_statements` are `PAYMENT-002`'s.
-    Wiring it: count the statements due and unpaid (and past due) with that slice's own read and
-    its SQL-summed amounts, return `AccountsDueFigures(...)`, add its version to `sources`, and move
-    `DAILY_SUMMARY_TEMPLATE_IDENTIFIER`. The line's words already exist and are golden-tested.
+    `AccountRepository.accounts_due` -- PostgreSQL's sums over the account ledgers, split by the
+    statement rule the overdue block uses. Counts and money only: no account customer's name
+    reaches the summary. The ledgers are append-only, so a past day is answered as of its end.
+    Omitted `NO_ACCOUNTS` while the shop has opened no account (spec §7, "feature empty"), and
+    `ROLE_NOT_PERMITTED` for a reader the account card does not admit (an accountant).
     """
-    del cursor, store_id, day, live
-    return Unavailable(OmissionReason.SOURCE_NOT_BUILT, "PAYMENT-002")
+    if not principal.roles & ACCOUNT_READ_ROLES:
+        return Unavailable(OmissionReason.ROLE_NOT_PERMITTED, "PAYMENT-002")
+    day_end = datetime.combine(day + timedelta(days=1), time(0, 0), ZoneInfo(BUSINESS_TIMEZONE))
+    due = AccountRepository().accounts_due(
+        cursor,
+        store_id=store_id,
+        principal=principal,
+        day=day,
+        as_of=as_of if live else min(as_of, day_end),
+    )
+    if due.accounts == 0:
+        return Unavailable(OmissionReason.NO_ACCOUNTS, "PAYMENT-002")
+    return AccountsDueFigures(
+        due_accounts=due.due_accounts,
+        due_vnd=due.due_vnd,
+        overdue_accounts=due.overdue_accounts,
+        overdue_vnd=due.overdue_vnd,
+    )
 
 
 # --- the report and the board, copied into the template's inputs ----------------------------------

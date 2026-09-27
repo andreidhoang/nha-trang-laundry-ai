@@ -183,8 +183,10 @@ def test_the_window_query_version_is_pinned_to_the_rule_it_names() -> None:
     """
     # v2 since `EXPORT-PAYMENTS-001` (the payment ledger's columns); v1 (`b0ae2bdf3725ab24`) is
     # retired and an envelope bound to it is refused by name -- `test_export_payments.py`.
-    assert EXPORT_WINDOW_QUERY.identifier == "store-window-orders-export-v2"
-    assert EXPORT_WINDOW_QUERY.label == "store-window-orders-export-v2:b95cdf70557262f8"
+    # v3 (round 7 wave 2 integration): the storage fee in `owed_vnd`, as the day's v4; v2
+    # (`b95cdf70557262f8`) read the quoted total alone.
+    assert EXPORT_WINDOW_QUERY.identifier == "store-window-orders-export-v3"
+    assert EXPORT_WINDOW_QUERY.label == "store-window-orders-export-v3:43d07dec2e624992"
     assert EXPORT_WINDOW_QUERY.label != EXPORT_QUERY.label
 
 

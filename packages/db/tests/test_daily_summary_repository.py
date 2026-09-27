@@ -5,8 +5,13 @@ What only a database can prove:
 * **the summary restates the report** -- on the report's own seeded shop, a closed day's lines are
   the report's one-day figures, word for word as the template writes them, and every figure beside
   a sentence equals the report's;
-* **a live source is today's only** -- a past day omits the SLA board lines and the open-complaint
-  count as `LIVE_ONLY_TODAY`, and the two wave-2 hooks as `SOURCE_NOT_BUILT`;
+* **a live source is today's only** -- a past day omits the SLA board lines, the open-complaint
+  count and the waiting list as `LIVE_ONLY_TODAY`; a shop with no account omits the accounts line
+  as `NO_ACCOUNTS`;
+* **the wave-2 hooks, wired** (round 7 wave 2 integration) -- the waiting list counted past 20 and
+  60 days with the list's own population and day rule (an order that left on account is not on
+  it), and the accounts' money due and overdue on a fixed past day, equal to the account card's
+  own figures -- in counts and money only, no account customer's name;
 * **today, every source answers** -- a promised order past its promise, an unpromised order past
   the stated mark, an open complaint and a line of Sổ thu chi each land in their line, with the
   report's figures unchanged;
@@ -26,7 +31,7 @@ import json
 import os
 import random
 from collections.abc import Generator, Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -53,6 +58,7 @@ from nha_trang_laundry_db.reports import (
     shop_today,
 )
 from nha_trang_laundry_db.shop_capture import ExpenseRepository, RecordExpenseCommand
+from nha_trang_laundry_db.unclaimed import UnclaimedRepository
 from nha_trang_laundry_domain.catalog import AcquisitionSource, FulfillmentMode
 from nha_trang_laundry_domain.customers import CustomerKind
 from nha_trang_laundry_domain.daily_summary import format_day
@@ -63,13 +69,18 @@ from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 from quote_test_data import accepted_quote
+from test_customer_accounts import Shop as AccountShop
+from test_customer_accounts import _local as _account_local
 from test_customer_notice import notice_payload
 from test_order_promise_repository import STANDARD, _document, _receive
+from test_order_step_repository import TOTAL_VND
 from test_reports import AS_OF, DAY, _Order, _person, _seeded_shop, _store
 
-#: `daily-summary-v1`, pinned. A changed sentence, unit, order of lines, omission rule or statement
+#: `daily-summary-v2`, pinned. A changed sentence, unit, order of lines, omission rule or statement
 #: moves the digest; the suite then fails here until the change is read and the identifier moved.
-PINNED_TEMPLATE_VERSION = "daily-summary-v1:935e9e90a50bd6a8"
+#: v2 (round 7 wave 2 integration): the waiting-list and accounts hooks wired, `NO_ACCOUNTS` added,
+#: and the two hooks' statements hashed in. v1 was `daily-summary-v1:935e9e90a50bd6a8`.
+PINNED_TEMPLATE_VERSION = "daily-summary-v2:13441b651e00127d"
 
 
 def _database_url() -> str:
@@ -150,7 +161,7 @@ def _as_json(summary: DailySummary) -> str:
 
 def test_the_template_version_is_pinned() -> None:
     version = daily_summary_template_version()
-    assert version.identifier == "daily-summary-v1"
+    assert version.identifier == "daily-summary-v2"
     assert version.label == PINNED_TEMPLATE_VERSION
 
 
@@ -187,9 +198,9 @@ def test_a_closed_day_restates_the_report_word_for_word(
     assert _omitted(summary) == {
         "LATE_AGAINST_PROMISE": ("LIVE_ONLY_TODAY", "SLA_BOARD"),
         "WITHOUT_PROMISE": ("LIVE_ONLY_TODAY", "SLA_BOARD"),
-        "WAITING_PICKUP": ("SOURCE_NOT_BUILT", "UNCLAIMED-001"),
+        "WAITING_PICKUP": ("LIVE_ONLY_TODAY", "UNCLAIMED-001"),
         "COMPLAINTS_OPEN": ("LIVE_ONLY_TODAY", "INCIDENTS"),
-        "ACCOUNTS_DUE": ("SOURCE_NOT_BUILT", "PAYMENT-002"),
+        "ACCOUNTS_DUE": ("NO_ACCOUNTS", "PAYMENT-002"),
     }
     assert summary.rendered.text == "\n".join(text for text, _ in _lines(summary).values())
 
@@ -384,11 +395,13 @@ def test_today_every_source_answers_and_no_name_or_phone_reaches_the_text(
         before_figure(before, "complaints_opened") + 1
     )
     assert lines["HEADER"][0].startswith(f"Tóm tắt {format_day(today)}, tính đến ")
-    assert _omitted(after) == {
-        "WAITING_PICKUP": ("SOURCE_NOT_BUILT", "UNCLAIMED-001"),
-        "ACCOUNTS_DUE": ("SOURCE_NOT_BUILT", "PAYMENT-002"),
-    }
-    assert [key for key, _ in after.sources] == ["report", "sla_board"]
+    # Nothing of this shop has waited on the shelf, and it has opened no account.
+    assert lines["WAITING_PICKUP"] == (
+        "0 đơn giặt xong chờ khách lấy quá 20 ngày.",
+        {"over_20_days": 0, "over_60_days": 0},
+    )
+    assert _omitted(after) == {"ACCOUNTS_DUE": ("NO_ACCOUNTS", "PAYMENT-002")}
+    assert [key for key, _ in after.sources] == ["report", "sla_board", "awaiting_pickup"]
 
     # No personal data: every written form of every number, every name, the address and the
     # notes are absent from everything the summary carries.
@@ -403,6 +416,9 @@ def test_today_every_source_answers_and_no_name_or_phone_reaches_the_text(
     seen = _summary(connection, store_id, accountant, today, now)
     assert _omitted(seen)["LATE_AGAINST_PROMISE"] == ("ROLE_NOT_PERMITTED", "SLA_BOARD")
     assert _omitted(seen)["WITHOUT_PROMISE"] == ("ROLE_NOT_PERMITTED", "SLA_BOARD")
+    # Nor the waiting list or the account card, which are not an accountant's reads either.
+    assert _omitted(seen)["WAITING_PICKUP"] == ("ROLE_NOT_PERMITTED", "UNCLAIMED-001")
+    assert _omitted(seen)["ACCOUNTS_DUE"] == ("ROLE_NOT_PERMITTED", "PAYMENT-002")
     assert _lines(seen)["COMPLAINTS_OPEN"] == lines["COMPLAINTS_OPEN"]
     assert _lines(seen)["MONEY"] == lines["MONEY"]
 
@@ -495,3 +511,111 @@ def test_with_no_turnaround_policy_and_no_promise_late_against_promise_is_omitte
             {"unpromised": 1, "unpromised_late": 0},
         )
         assert "trễ giờ hẹn" not in summary.rendered.text
+
+
+# --- round 7 wave 2 integration: the two hooks, wired ---------------------------------------------
+
+
+def _age_ready(connection: Any, order_id: UUID, days: int) -> None:
+    """The documented harness step `test_unclaimed_laundry._age` takes: the laundry was accepted
+    and reported ready `days` days earlier, both stamps moved together."""
+
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE orders
+            SET production_ready_at = production_ready_at - make_interval(days => %s),
+                production_accepted_at = production_accepted_at - make_interval(days => %s),
+                row_version = row_version + 1
+            WHERE id = %s
+            """,
+            (days, days, order_id),
+        )
+
+
+def test_the_waiting_line_is_the_waiting_list_counted_and_an_account_order_is_not_on_it(
+    connection: psycopg.Connection[Any],
+) -> None:
+    shop = AccountShop(connection)
+    retail = shop.customer(CustomerKind.RETAIL)
+    hotel = shop.customer()
+    shop.open(hotel, 5_000_000)
+    waited_25 = shop.ready_order(retail)
+    waited_65 = shop.ready_order(retail)
+    shop.ready_order(retail)  # ready today: waiting, not past any threshold
+    on_account = shop.ready_order(hotel)
+    for order_id, days in ((waited_25, 25), (waited_65, 65), (on_account, 30)):
+        _age_ready(connection, order_id, days)
+    # The hotel takes its laundry on the account: it has left the shop, so it is not waiting.
+    shop.charge(on_account)
+    now = datetime.now(UTC)
+
+    summary = _summary(connection, shop.store_id, shop.owner, shop_today(now), now)
+
+    assert _lines(summary)["WAITING_PICKUP"] == (
+        "2 đơn giặt xong chờ khách lấy quá 20 ngày. 1 đơn đã chờ quá 60 ngày.",
+        {"over_20_days": 2, "over_60_days": 1},
+    )
+    # The list the counter reads says the same: its population, its days.
+    with connection.cursor() as cursor:
+        listed = UnclaimedRepository.list_awaiting_pickup(
+            cursor, store_id=shop.store_id, principal=shop.owner, as_of=now
+        )
+    assert on_account not in {row.order_id for row in listed.orders}
+    waited = [row.days_waiting or 0 for row in listed.orders]
+    assert (sum(days > 20 for days in waited), sum(days > 60 for days in waited)) == (2, 1)
+    # The hotel's account now exists, so its line is printed: charged today, nothing due yet.
+    assert _lines(summary)["ACCOUNTS_DUE"] == (
+        "0 khách công nợ đến hạn trả, tổng 0đ.",
+        {"due_accounts": 0, "due_vnd": 0, "overdue_accounts": 0, "overdue_vnd": 0},
+    )
+    assert [key for key, _ in summary.sources][-2:] == ["awaiting_pickup", "accounts"]
+    # Counts and money only: the account customer's name is nowhere in it.
+    assert "Homestay" not in _as_json(summary) and "Biển Xanh" not in _as_json(summary)
+
+
+def test_the_accounts_line_is_the_ledgers_due_and_overdue_on_a_past_day(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """A spa charged in July and in August, paying one order's worth on 12 September.
+
+    On the 10th, July is past due (its statement was due on 15 August) and August is due on the
+    15th; on the 13th the payment has covered July and August is still only due; on the 16th August
+    is past due too. The ledgers are append-only, so each past day is answered as of its end, and
+    an account with no activity is counted as an account and in neither figure.
+    """
+
+    shop = AccountShop(connection)
+    spa = shop.customer()
+    idle = shop.customer()
+    opened = _account_local(date(2026, 7, 1), 9)
+    shop.open(spa, 2_000_000, at=opened)
+    shop.open(idle, 1_000_000, at=opened)
+    shop.charge(shop.ready_order(spa), at=_account_local(date(2026, 7, 20)))
+    shop.charge(shop.ready_order(spa), at=_account_local(date(2026, 8, 10)))
+    shop.pay(spa, TOTAL_VND, at=_account_local(date(2026, 9, 12)))
+    now = datetime.now(UTC)
+
+    def accounts_line(day: date) -> tuple[str, dict[str, Any]]:
+        summary = _summary(connection, shop.store_id, shop.owner, day, now)
+        assert summary.so_far is False
+        assert "Homestay" not in _as_json(summary) and "Biển Xanh" not in _as_json(summary)
+        return _lines(summary)["ACCOUNTS_DUE"]
+
+    assert accounts_line(date(2026, 9, 10)) == (
+        "1 khách công nợ đến hạn trả, tổng 110.000đ. 1 khách công nợ đã quá hạn, tổng 110.000đ.",
+        {"due_accounts": 1, "due_vnd": 110_000, "overdue_accounts": 1, "overdue_vnd": 110_000},
+    )
+    assert accounts_line(date(2026, 9, 13)) == (
+        "1 khách công nợ đến hạn trả, tổng 110.000đ.",
+        {"due_accounts": 1, "due_vnd": 110_000, "overdue_accounts": 0, "overdue_vnd": 0},
+    )
+    sixteenth = accounts_line(date(2026, 9, 16))
+    assert sixteenth == (
+        "0 khách công nợ đến hạn trả, tổng 0đ. 1 khách công nợ đã quá hạn, tổng 110.000đ.",
+        {"due_accounts": 0, "due_vnd": 0, "overdue_accounts": 1, "overdue_vnd": 110_000},
+    )
+    # The account card's own overdue figure, on the same day, is the summary's.
+    card = shop.account(spa, _account_local(date(2026, 9, 16), 20)).account
+    assert card.overdue_vnd == sixteenth[1]["overdue_vnd"]
+    assert card.outstanding_vnd == TOTAL_VND
